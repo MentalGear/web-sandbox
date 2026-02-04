@@ -1,6 +1,6 @@
 # Security Research Breakout
 
-This repo is meant to document your research trying to break out of the sandbox provided by [https://github.com/MentalGear/iframe-sandbox-security-research-breakout](https://github.com/MentalGear/iframe-sandbox).
+This repo is meant to document your research trying to break out of the sandbox provided by [https://github.com/MentalGear/iframe-sandbox](https://github.com/MentalGear/iframe-sandbox).
 
 ## Steps
 
