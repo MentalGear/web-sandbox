@@ -23,6 +23,8 @@ This allows a malicious payload to simply unregister the Service Worker. Once un
 
 ## Mitigation
 
-The `inner-frame` must NOT have `allow-same-origin` if it is to be isolated from the Service Worker. However, removing `allow-same-origin` breaks the current architecture (opaque origin cannot use SW). Alternatively, the `navigator.serviceWorker` property could be deleted or frozen in the `outer-frame` before the `inner-frame` is loaded? No, because `inner-frame` is a separate document.
+1.  **Remove `allow-same-origin`**: As with Research 01, removing `allow-same-origin` is the only way to prevent access to `navigator.serviceWorker`. The user code must run in an opaque origin.
+    *   *Implementation*: Adopt the "Middle Frame" architecture. The Middle Frame (Same Origin) manages the SW. The User Frame (Opaque) runs the code and has no access to `navigator.serviceWorker`.
 
-The only robust fix is to redesign the communication to avoid `allow-same-origin` on the user-code frame (e.g., use a "middle" frame that is same-origin for SW comms, and a nested opaque-origin frame for user code).
+2.  **API Hardening (Partial)**: In the `outer-frame` (before loading `inner-frame`), one could try to delete `ServiceWorkerContainer.prototype.unregister`. However, since `inner-frame` is a fresh document, it gets a fresh set of prototypes.
+    *   *Note*: This mitigation is ineffective because the iframe gets a clean global scope.
