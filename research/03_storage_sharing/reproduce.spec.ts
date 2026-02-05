@@ -1,17 +1,12 @@
 import { test, expect } from '@playwright/test';
 
-test('Storage Sharing Between Instances', async ({ page }) => {
-  // 1. Setup
+test('Storage Sharing Between Instances - Mitigated', async ({ page }) => {
   await page.goto('http://localhost:3333/playground/security.html');
   await page.waitForFunction(() => window.SandboxControl !== undefined);
+  await page.evaluate(() => window.SandboxControl.sandboxElement.setAttribute('script-unsafe', 'true'));
+  await page.waitForTimeout(1000);
 
-  // Enable scripts
-  await page.evaluate(() => {
-     window.SandboxControl.sandboxElement.setAttribute('script-unsafe', 'true');
-  });
-  await page.waitForTimeout(2000);
-
-  // 2. Exploit: Write to LocalStorage in Instance A
+  // 1. Write in Session A
   const writePayload = `
     localStorage.setItem('SECRET_KEY', 'my-super-secret-123');
     window.top.postMessage({ type: 'PWN_WRITE_DONE' }, '*');
@@ -21,7 +16,6 @@ test('Storage Sharing Between Instances', async ({ page }) => {
     window.SandboxControl.execute(code);
   }, writePayload);
 
-  // Wait for write
   await page.waitForFunction(() => {
       return new Promise(resolve => {
           window.addEventListener('message', m => {
@@ -30,13 +24,11 @@ test('Storage Sharing Between Instances', async ({ page }) => {
       });
   });
 
-  // 3. Reset Sandbox (Simulate new session or another user)
-  // The 'reset' method reloads the iframe.
-  console.log("Resetting sandbox...");
-  await page.evaluate(() => window.SandboxControl.reset());
-  await page.waitForTimeout(2000); // Wait for reload
+  // 2. Reset (New Session -> New Unique Origin)
+  await page.evaluate(() => window.SandboxControl.reset()); // Reset creates new session
+  await page.waitForTimeout(2000);
 
-  // 4. Exploit: Read from LocalStorage in Instance B
+  // 3. Read in Session B
   const readPayload = `
     const secret = localStorage.getItem('SECRET_KEY');
     window.top.postMessage({ type: 'PWN_READ_RESULT', secret }, '*');
@@ -46,7 +38,6 @@ test('Storage Sharing Between Instances', async ({ page }) => {
     window.SandboxControl.execute(code);
   }, readPayload);
 
-  // 5. Verify: Secret leaked
   const result = await page.evaluate(() => {
       return new Promise(resolve => {
           window.addEventListener('message', m => {
@@ -55,6 +46,6 @@ test('Storage Sharing Between Instances', async ({ page }) => {
       });
   });
 
-  expect(result.secret).toBe('my-super-secret-123');
-  console.log("Exploit Success: Leaked Secret =", result.secret);
+  // Expect NULL because Session B is a different origin
+  expect(result.secret).toBeNull();
 });
