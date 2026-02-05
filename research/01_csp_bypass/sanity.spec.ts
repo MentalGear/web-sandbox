@@ -1,29 +1,43 @@
 import { test, expect } from '@playwright/test';
 
-test('Basic Sandbox Interaction', async ({ page }) => {
+test('Basic Sandbox Interaction & Logging', async ({ page }) => {
   // 1. Go to the host page
   await page.goto('http://localhost:3333/playground/security.html');
-
-  // 2. Wait for SandboxControl to be available
   await page.waitForFunction(() => window.SandboxControl !== undefined);
 
-  // 3. Clear logs
+  // 2. Clear logs
   await page.evaluate(() => window.SandboxControl.clearLogs());
 
-  // 4. Execute a simple log command in the sandbox
+  // 3. Console Logging (via proxy)
   await page.evaluate(() => {
     window.SandboxControl.execute('console.log("Hello from Sandbox")');
   });
 
-  // 5. Verify the log appears in the host
-  // The host captures logs and appends them to a capturedLogs array or DOM
   await page.waitForFunction(() => {
     const logs = window.SandboxControl.getLogs();
     return logs.some(l => l.message.includes("Hello from Sandbox"));
   });
 
+  // 4. Network Logging (via monkey-patch)
+  // We need to enable unsafe scripts first to run fetch code?
+  // No, execute() runs code. But does fetch() work?
+  // The default CSP connects to 'self'.
+  // Let's try to fetch 'inner-frame.html' (self).
+
+  await page.evaluate(() => {
+    window.SandboxControl.execute(`
+        fetch('inner-frame.html').then(r => console.log('Fetch Done: ' + r.status));
+    `);
+  });
+
+  // Check for the "Fetch: GET ..." log
+  await page.waitForFunction(() => {
+      const logs = window.SandboxControl.getLogs();
+      return logs.some(l => l.message.includes("Fetch: GET"));
+  });
+
   const logs = await page.evaluate(() => window.SandboxControl.getLogs());
-  const myLog = logs.find(l => l.message.includes("Hello from Sandbox"));
-  expect(myLog).toBeDefined();
-  console.log("Found log:", myLog);
+  const fetchLog = logs.find(l => l.message.includes("Fetch: GET"));
+  expect(fetchLog).toBeDefined();
+  console.log("Found network log:", fetchLog);
 });
