@@ -44,13 +44,23 @@ export class LofiSandbox extends HTMLElement {
             ? "'self' 'unsafe-inline' 'unsafe-eval'"
             : "'self' 'unsafe-inline'"; // inline needed for the bootstrapper
 
+        // Strict CSP:
+        // default-src 'none': Blocks img, font, media, object, frame by default
+        // script-src: 'self' + vfs (if enabled) + unsafe-inline (for bootstrapper)
+        // connect-src: Explicit allow list
+        // style-src: unsafe-inline (for convenience, can be tightened)
+        // frame-src 'none': Prevents nested iframes
+        // base-uri 'none': Prevents base tag hijacking
+
         const csp = [
             "default-src 'none'",
             `script-src ${scriptDirectives} ${vfsBase ? vfsBase : ''}`,
             `connect-src ${connectSrc} ${vfsBase ? vfsBase : ''}`,
             "style-src 'unsafe-inline'",
-            "base-uri 'none'", // Strict base-uri
-            "frame-src 'none'" // No nested frames by default
+            "base-uri 'none'",
+            "frame-src 'none'",
+            "object-src 'none'", // Explicit block
+            "form-action 'none'" // Block form submissions
         ].join("; ");
 
         const html = `
