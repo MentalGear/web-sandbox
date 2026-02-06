@@ -1,0 +1,639 @@
+[2m[WebServer] [22mLofi Server on 4444
+
+Running 33 tests using 2 workers
+
+  ✘   1 [chromium] › test/lofi/basic.spec.ts:3:5 › Lofi Sandbox Basic Execution (30.1s)
+  ✘   2 [chromium] › test/lofi/hard-security.spec.ts:13:9 › Lofi Sandbox Hard Security › Block Popups (window.open) (30.1s)
+  ✓   3 [chromium] › test/lofi/local-html.spec.ts:3:5 › Lofi Sandbox Local HTML Asset Loading (298ms)
+  ✘   4 [chromium] › test/lofi/hard-security.spec.ts:38:9 › Lofi Sandbox Hard Security › Block about:blank Bypass (30.1s)
+  ✘   5 [chromium] › test/lofi/security.spec.ts:13:9 › Lofi Sandbox Security › Block Nested Iframes (CSP Bypass) (30.1s)
+  ✓   6 [chromium] › test/lofi/hard-security.spec.ts:64:9 › Lofi Sandbox Hard Security › Block CSS Exfiltration (283ms)
+  ✘   7 [chromium] › test/lofi/security.spec.ts:40:9 › Lofi Sandbox Security › Block Parent Access (Isolation) (30.1s)
+  ✘   8 [chromium] › test/lofi/vfs.spec.ts:3:5 › Lofi Sandbox VFS Loading (30.1s)
+  ✘   9 [chromium] › test/lofi/security.spec.ts:57:9 › Lofi Sandbox Security › No Service Worker Access (30.1s)
+  ✘  10 [chromium] › test/lofi/virtual-files-real.spec.ts:3:5 › Lofi Sandbox Real Virtual Files (30.1s)
+  ✓  12 [firefox] › test/lofi/basic.spec.ts:3:5 › Lofi Sandbox Basic Execution (1.9s)
+  ✘  11 [chromium] › test/lofi/security.spec.ts:76:9 › Lofi Sandbox Security › Storage Ephemerality (30.1s)
+  ✘  13 [firefox] › test/lofi/hard-security.spec.ts:13:9 › Lofi Sandbox Hard Security › Block Popups (window.open) (30.1s)
+  ✘  14 [firefox] › test/lofi/local-html.spec.ts:3:5 › Lofi Sandbox Local HTML Asset Loading (30.1s)
+  ✘  15 [firefox] › test/lofi/hard-security.spec.ts:38:9 › Lofi Sandbox Hard Security › Block about:blank Bypass (30.2s)
+  ✓  17 [firefox] › test/lofi/hard-security.spec.ts:64:9 › Lofi Sandbox Hard Security › Block CSS Exfiltration (3.8s)
+  ✘  16 [firefox] › test/lofi/security.spec.ts:13:9 › Lofi Sandbox Security › Block Nested Iframes (CSP Bypass) (30.1s)
+  ✘  18 [firefox] › test/lofi/vfs.spec.ts:3:5 › Lofi Sandbox VFS Loading (30.1s)
+  ✘  19 [firefox] › test/lofi/security.spec.ts:40:9 › Lofi Sandbox Security › Block Parent Access (Isolation) (30.1s)
+  ✘  20 [firefox] › test/lofi/virtual-files-real.spec.ts:3:5 › Lofi Sandbox Real Virtual Files (30.1s)
+  ✘  22 [webkit] › test/lofi/basic.spec.ts:3:5 › Lofi Sandbox Basic Execution (4ms)
+  ✘  23 [webkit] › test/lofi/hard-security.spec.ts:13:9 › Lofi Sandbox Hard Security › Block Popups (window.open) (5ms)
+  ✘  24 [webkit] › test/lofi/hard-security.spec.ts:38:9 › Lofi Sandbox Hard Security › Block about:blank Bypass (4ms)
+  ✘  25 [webkit] › test/lofi/hard-security.spec.ts:64:9 › Lofi Sandbox Hard Security › Block CSS Exfiltration (4ms)
+  ✘  26 [webkit] › test/lofi/local-html.spec.ts:3:5 › Lofi Sandbox Local HTML Asset Loading (4ms)
+  ✘  27 [webkit] › test/lofi/security.spec.ts:13:9 › Lofi Sandbox Security › Block Nested Iframes (CSP Bypass) (5ms)
+  ✘  28 [webkit] › test/lofi/security.spec.ts:40:9 › Lofi Sandbox Security › Block Parent Access (Isolation) (5ms)
+  ✘  29 [webkit] › test/lofi/security.spec.ts:57:9 › Lofi Sandbox Security › No Service Worker Access (4ms)
+  ✘  30 [webkit] › test/lofi/security.spec.ts:76:9 › Lofi Sandbox Security › Storage Ephemerality (4ms)
+  ✘  31 [webkit] › test/lofi/vfs.spec.ts:3:5 › Lofi Sandbox VFS Loading (4ms)
+  ✘  32 [webkit] › test/lofi/virtual-files-real.spec.ts:3:5 › Lofi Sandbox Real Virtual Files (4ms)
+  ✘  21 [firefox] › test/lofi/security.spec.ts:57:9 › Lofi Sandbox Security › No Service Worker Access (30.1s)
+  ✘  33 [firefox] › test/lofi/security.spec.ts:76:9 › Lofi Sandbox Security › Storage Ephemerality (30.1s)
+
+
+  1) [chromium] › test/lofi/basic.spec.ts:3:5 › Lofi Sandbox Basic Execution ───────────────────────
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      20 |
+      21 |   // Listen for console log from sandbox (proxy)
+    > 22 |   const msg = await page.waitForEvent('console', m => m.text().includes('Hello Lofi'));
+         |                          ^
+      23 |   expect(msg).toBeTruthy();
+      24 | });
+      25 |
+        at /app/test/lofi/basic.spec.ts:22:26
+
+    Error Context: test-results/basic-Lofi-Sandbox-Basic-Execution-chromium/error-context.md
+
+  2) [chromium] › test/lofi/hard-security.spec.ts:13:9 › Lofi Sandbox Hard Security › Block Popups (window.open)
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      32 |         // We accept either Blocked or Opened (if sandboxed).
+      33 |         // The important part is checking if we can break out via it.
+    > 34 |         const msg = await page.waitForEvent('console', m => m.text().includes('Popup'), { timeout: 2000 });
+         |                                ^
+      35 |         expect(msg).toBeTruthy();
+      36 |     });
+      37 |
+        at /app/test/lofi/hard-security.spec.ts:34:32
+
+    Error Context: test-results/hard-security-Lofi-Sandbox-bcb6e-y-Block-Popups-window-open--chromium/error-context.md
+
+  3) [chromium] › test/lofi/hard-security.spec.ts:38:9 › Lofi Sandbox Hard Security › Block about:blank Bypass
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoContain[2m([22m[32mexpected[39m[2m) // indexOf[22m
+
+    Expected substring: [32m"Timeout"[39m
+    Received string:    [31m"page.waitForEvent: Test timeout of 30000ms exceeded.[39m
+    [31m=========================== logs ===========================[39m
+    [31mwaiting for event \"console\"[39m
+    [31m============================================================"[39m
+
+      58 |         } catch (e) {
+      59 |             // Timeout matches expectation (Secure)
+    > 60 |             expect(e.message).toContain('Timeout');
+         |                               ^
+      61 |         }
+      62 |     });
+      63 |
+        at /app/test/lofi/hard-security.spec.ts:60:31
+
+    Error Context: test-results/hard-security-Lofi-Sandbox-fb373-ty-Block-about-blank-Bypass-chromium/error-context.md
+
+  4) [chromium] › test/lofi/security.spec.ts:13:9 › Lofi Sandbox Security › Block Nested Iframes (CSP Bypass)
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error Context: test-results/security-Lofi-Sandbox-Secu-b63ef--Nested-Iframes-CSP-Bypass--chromium/error-context.md
+
+  5) [chromium] › test/lofi/security.spec.ts:40:9 › Lofi Sandbox Security › Block Parent Access (Isolation)
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      51 |         });
+      52 |
+    > 53 |         const msg = await page.waitForEvent('console', m => m.text().includes('Parent Access Blocked'));
+         |                                ^
+      54 |         expect(msg).toBeTruthy();
+      55 |     });
+      56 |
+        at /app/test/lofi/security.spec.ts:53:32
+
+    Error Context: test-results/security-Lofi-Sandbox-Secu-db334-ck-Parent-Access-Isolation--chromium/error-context.md
+
+  6) [chromium] › test/lofi/security.spec.ts:57:9 › Lofi Sandbox Security › No Service Worker Access
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      70 |
+      71 |         // Opaque origin -> No SW API, or throws SecurityError
+    > 72 |         const msg = await page.waitForEvent('console', m => m.text().includes('No SW API') || m.text().includes('SecurityError'));
+         |                                ^
+      73 |         expect(msg).toBeTruthy();
+      74 |     });
+      75 |
+        at /app/test/lofi/security.spec.ts:72:32
+
+    Error Context: test-results/security-Lofi-Sandbox-Security-No-Service-Worker-Access-chromium/error-context.md
+
+  7) [chromium] › test/lofi/security.spec.ts:76:9 › Lofi Sandbox Security › Storage Ephemerality ───
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      89 |
+      90 |         // Opaque origins usually throw on localStorage access
+    > 91 |         const msg = await page.waitForEvent('console', m => m.text().includes('Write Failed'));
+         |                                ^
+      92 |         expect(msg.text()).toContain('SecurityError'); // or similar
+      93 |     });
+      94 | });
+        at /app/test/lofi/security.spec.ts:91:32
+
+    Error Context: test-results/security-Lofi-Sandbox-Security-Storage-Ephemerality-chromium/error-context.md
+
+  8) [chromium] › test/lofi/vfs.spec.ts:3:5 › Lofi Sandbox VFS Loading ─────────────────────────────
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      32 |
+      33 |   // Verify log from VFS script
+    > 34 |   const msg = await page.waitForEvent('console', m => m.text().includes('VFS Loaded'));
+         |                          ^
+      35 |   expect(msg).toBeTruthy();
+      36 | });
+      37 |
+        at /app/test/lofi/vfs.spec.ts:34:26
+
+    Error Context: test-results/vfs-Lofi-Sandbox-VFS-Loading-chromium/error-context.md
+
+  9) [chromium] › test/lofi/virtual-files-real.spec.ts:3:5 › Lofi Sandbox Real Virtual Files ───────
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      35 |
+      36 |   // 4. Verify log
+    > 37 |   const msg = await page.waitForEvent('console', m => m.text().includes('VFS Success'));
+         |                          ^
+      38 |   expect(msg).toBeTruthy();
+      39 | });
+      40 |
+        at /app/test/lofi/virtual-files-real.spec.ts:37:26
+
+    Error Context: test-results/virtual-files-real-Lofi-Sandbox-Real-Virtual-Files-chromium/error-context.md
+
+  10) [firefox] › test/lofi/hard-security.spec.ts:13:9 › Lofi Sandbox Hard Security › Block Popups (window.open)
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      32 |         // We accept either Blocked or Opened (if sandboxed).
+      33 |         // The important part is checking if we can break out via it.
+    > 34 |         const msg = await page.waitForEvent('console', m => m.text().includes('Popup'), { timeout: 2000 });
+         |                                ^
+      35 |         expect(msg).toBeTruthy();
+      36 |     });
+      37 |
+        at /app/test/lofi/hard-security.spec.ts:34:32
+
+    Error Context: test-results/hard-security-Lofi-Sandbox-bcb6e-y-Block-Popups-window-open--firefox/error-context.md
+
+  11) [firefox] › test/lofi/hard-security.spec.ts:38:9 › Lofi Sandbox Hard Security › Block about:blank Bypass
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoContain[2m([22m[32mexpected[39m[2m) // indexOf[22m
+
+    Expected substring: [32m"Timeout"[39m
+    Received string:    [31m"page.waitForEvent: Test timeout of 30000ms exceeded.[39m
+    [31m=========================== logs ===========================[39m
+    [31mwaiting for event \"console\"[39m
+    [31m============================================================"[39m
+
+      58 |         } catch (e) {
+      59 |             // Timeout matches expectation (Secure)
+    > 60 |             expect(e.message).toContain('Timeout');
+         |                               ^
+      61 |         }
+      62 |     });
+      63 |
+        at /app/test/lofi/hard-security.spec.ts:60:31
+
+    Error Context: test-results/hard-security-Lofi-Sandbox-fb373-ty-Block-about-blank-Bypass-firefox/error-context.md
+
+  12) [firefox] › test/lofi/local-html.spec.ts:3:5 › Lofi Sandbox Local HTML Asset Loading ─────────
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      40 |
+      41 |   // Verify log
+    > 42 |   const msg = await page.waitForEvent('console', m => m.text().includes('Asset Loaded Success'));
+         |                          ^
+      43 |   expect(msg).toBeTruthy();
+      44 | });
+      45 |
+        at /app/test/lofi/local-html.spec.ts:42:26
+
+    Error Context: test-results/local-html-Lofi-Sandbox-Local-HTML-Asset-Loading-firefox/error-context.md
+
+  13) [firefox] › test/lofi/security.spec.ts:13:9 › Lofi Sandbox Security › Block Nested Iframes (CSP Bypass)
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error Context: test-results/security-Lofi-Sandbox-Secu-b63ef--Nested-Iframes-CSP-Bypass--firefox/error-context.md
+
+  14) [firefox] › test/lofi/security.spec.ts:40:9 › Lofi Sandbox Security › Block Parent Access (Isolation)
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      51 |         });
+      52 |
+    > 53 |         const msg = await page.waitForEvent('console', m => m.text().includes('Parent Access Blocked'));
+         |                                ^
+      54 |         expect(msg).toBeTruthy();
+      55 |     });
+      56 |
+        at /app/test/lofi/security.spec.ts:53:32
+
+    Error Context: test-results/security-Lofi-Sandbox-Secu-db334-ck-Parent-Access-Isolation--firefox/error-context.md
+
+  15) [firefox] › test/lofi/security.spec.ts:57:9 › Lofi Sandbox Security › No Service Worker Access
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      70 |
+      71 |         // Opaque origin -> No SW API, or throws SecurityError
+    > 72 |         const msg = await page.waitForEvent('console', m => m.text().includes('No SW API') || m.text().includes('SecurityError'));
+         |                                ^
+      73 |         expect(msg).toBeTruthy();
+      74 |     });
+      75 |
+        at /app/test/lofi/security.spec.ts:72:32
+
+    Error Context: test-results/security-Lofi-Sandbox-Security-No-Service-Worker-Access-firefox/error-context.md
+
+  16) [firefox] › test/lofi/security.spec.ts:76:9 › Lofi Sandbox Security › Storage Ephemerality ───
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      89 |
+      90 |         // Opaque origins usually throw on localStorage access
+    > 91 |         const msg = await page.waitForEvent('console', m => m.text().includes('Write Failed'));
+         |                                ^
+      92 |         expect(msg.text()).toContain('SecurityError'); // or similar
+      93 |     });
+      94 | });
+        at /app/test/lofi/security.spec.ts:91:32
+
+    Error Context: test-results/security-Lofi-Sandbox-Security-Storage-Ephemerality-firefox/error-context.md
+
+  17) [firefox] › test/lofi/vfs.spec.ts:3:5 › Lofi Sandbox VFS Loading ─────────────────────────────
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      32 |
+      33 |   // Verify log from VFS script
+    > 34 |   const msg = await page.waitForEvent('console', m => m.text().includes('VFS Loaded'));
+         |                          ^
+      35 |   expect(msg).toBeTruthy();
+      36 | });
+      37 |
+        at /app/test/lofi/vfs.spec.ts:34:26
+
+    Error Context: test-results/vfs-Lofi-Sandbox-VFS-Loading-firefox/error-context.md
+
+  18) [firefox] › test/lofi/virtual-files-real.spec.ts:3:5 › Lofi Sandbox Real Virtual Files ───────
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForEvent: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for event "console"
+    ============================================================
+
+      35 |
+      36 |   // 4. Verify log
+    > 37 |   const msg = await page.waitForEvent('console', m => m.text().includes('VFS Success'));
+         |                          ^
+      38 |   expect(msg).toBeTruthy();
+      39 | });
+      40 |
+        at /app/test/lofi/virtual-files-real.spec.ts:37:26
+
+    Error Context: test-results/virtual-files-real-Lofi-Sandbox-Real-Virtual-Files-firefox/error-context.md
+
+  19) [webkit] › test/lofi/basic.spec.ts:3:5 › Lofi Sandbox Basic Execution ────────────────────────
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    <launched> pid=85540
+    [pid=85540][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    Call log:
+    [2m  - <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - <launched> pid=85540[22m
+    [2m  - [pid=85540][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - [pid=85540] <gracefully close start>[22m
+    [2m  - [pid=85540] <kill>[22m
+    [2m  - [pid=85540] <will force kill>[22m
+    [2m  - [pid=85540] <process did exit: exitCode=1, signal=null>[22m
+    [2m  - [pid=85540] starting temporary directories cleanup[22m
+    [2m  - [pid=85540] finished temporary directories cleanup[22m
+    [2m  - [pid=85540] <gracefully close end>[22m
+
+
+  20) [webkit] › test/lofi/hard-security.spec.ts:13:9 › Lofi Sandbox Hard Security › Block Popups (window.open)
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    <launched> pid=85562
+    [pid=85562][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    Call log:
+    [2m  - <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - <launched> pid=85562[22m
+    [2m  - [pid=85562][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - [pid=85562] <gracefully close start>[22m
+    [2m  - [pid=85562] <kill>[22m
+    [2m  - [pid=85562] <will force kill>[22m
+    [2m  - [pid=85562] <process did exit: exitCode=1, signal=null>[22m
+    [2m  - [pid=85562] starting temporary directories cleanup[22m
+    [2m  - [pid=85562] finished temporary directories cleanup[22m
+    [2m  - [pid=85562] <gracefully close end>[22m
+
+
+  21) [webkit] › test/lofi/hard-security.spec.ts:38:9 › Lofi Sandbox Hard Security › Block about:blank Bypass
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    <launched> pid=85584
+    [pid=85584][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    Call log:
+    [2m  - <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - <launched> pid=85584[22m
+    [2m  - [pid=85584][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - [pid=85584] <gracefully close start>[22m
+    [2m  - [pid=85584] <kill>[22m
+    [2m  - [pid=85584] <will force kill>[22m
+    [2m  - [pid=85584] <process did exit: exitCode=1, signal=null>[22m
+    [2m  - [pid=85584] starting temporary directories cleanup[22m
+    [2m  - [pid=85584] finished temporary directories cleanup[22m
+    [2m  - [pid=85584] <gracefully close end>[22m
+
+
+  22) [webkit] › test/lofi/hard-security.spec.ts:64:9 › Lofi Sandbox Hard Security › Block CSS Exfiltration
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    <launched> pid=85606
+    [pid=85606][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    Call log:
+    [2m  - <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - <launched> pid=85606[22m
+    [2m  - [pid=85606][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - [pid=85606] <gracefully close start>[22m
+    [2m  - [pid=85606] <kill>[22m
+    [2m  - [pid=85606] <will force kill>[22m
+    [2m  - [pid=85606] <process did exit: exitCode=1, signal=null>[22m
+    [2m  - [pid=85606] starting temporary directories cleanup[22m
+    [2m  - [pid=85606] finished temporary directories cleanup[22m
+    [2m  - [pid=85606] <gracefully close end>[22m
+
+
+  23) [webkit] › test/lofi/local-html.spec.ts:3:5 › Lofi Sandbox Local HTML Asset Loading ──────────
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    <launched> pid=85632
+    [pid=85632][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    Call log:
+    [2m  - <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - <launched> pid=85632[22m
+    [2m  - [pid=85632][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - [pid=85632] <gracefully close start>[22m
+    [2m  - [pid=85632] <kill>[22m
+    [2m  - [pid=85632] <will force kill>[22m
+    [2m  - [pid=85632] <process did exit: exitCode=1, signal=null>[22m
+    [2m  - [pid=85632] starting temporary directories cleanup[22m
+    [2m  - [pid=85632] finished temporary directories cleanup[22m
+    [2m  - [pid=85632] <gracefully close end>[22m
+
+
+  24) [webkit] › test/lofi/security.spec.ts:13:9 › Lofi Sandbox Security › Block Nested Iframes (CSP Bypass)
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    <launched> pid=85654
+    [pid=85654][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    Call log:
+    [2m  - <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - <launched> pid=85654[22m
+    [2m  - [pid=85654][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - [pid=85654] <gracefully close start>[22m
+    [2m  - [pid=85654] <kill>[22m
+    [2m  - [pid=85654] <will force kill>[22m
+    [2m  - [pid=85654] <process did exit: exitCode=1, signal=null>[22m
+    [2m  - [pid=85654] starting temporary directories cleanup[22m
+    [2m  - [pid=85654] finished temporary directories cleanup[22m
+    [2m  - [pid=85654] <gracefully close end>[22m
+
+
+  25) [webkit] › test/lofi/security.spec.ts:40:9 › Lofi Sandbox Security › Block Parent Access (Isolation)
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    <launched> pid=85676
+    [pid=85676][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    Call log:
+    [2m  - <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - <launched> pid=85676[22m
+    [2m  - [pid=85676][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - [pid=85676] <gracefully close start>[22m
+    [2m  - [pid=85676] <kill>[22m
+    [2m  - [pid=85676] <will force kill>[22m
+    [2m  - [pid=85676] <process did exit: exitCode=1, signal=null>[22m
+    [2m  - [pid=85676] starting temporary directories cleanup[22m
+    [2m  - [pid=85676] finished temporary directories cleanup[22m
+    [2m  - [pid=85676] <gracefully close end>[22m
+
+
+  26) [webkit] › test/lofi/security.spec.ts:57:9 › Lofi Sandbox Security › No Service Worker Access
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    <launched> pid=85698
+    [pid=85698][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    Call log:
+    [2m  - <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - <launched> pid=85698[22m
+    [2m  - [pid=85698][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - [pid=85698] <gracefully close start>[22m
+    [2m  - [pid=85698] <kill>[22m
+    [2m  - [pid=85698] <will force kill>[22m
+    [2m  - [pid=85698] <process did exit: exitCode=1, signal=null>[22m
+    [2m  - [pid=85698] starting temporary directories cleanup[22m
+    [2m  - [pid=85698] finished temporary directories cleanup[22m
+    [2m  - [pid=85698] <gracefully close end>[22m
+
+
+  27) [webkit] › test/lofi/security.spec.ts:76:9 › Lofi Sandbox Security › Storage Ephemerality ────
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    <launched> pid=85720
+    [pid=85720][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    Call log:
+    [2m  - <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - <launched> pid=85720[22m
+    [2m  - [pid=85720][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - [pid=85720] <gracefully close start>[22m
+    [2m  - [pid=85720] <kill>[22m
+    [2m  - [pid=85720] <will force kill>[22m
+    [2m  - [pid=85720] <process did exit: exitCode=1, signal=null>[22m
+    [2m  - [pid=85720] starting temporary directories cleanup[22m
+    [2m  - [pid=85720] finished temporary directories cleanup[22m
+    [2m  - [pid=85720] <gracefully close end>[22m
+
+
+  28) [webkit] › test/lofi/vfs.spec.ts:3:5 › Lofi Sandbox VFS Loading ──────────────────────────────
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    <launched> pid=85742
+    [pid=85742][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    Call log:
+    [2m  - <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - <launched> pid=85742[22m
+    [2m  - [pid=85742][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - [pid=85742] <gracefully close start>[22m
+    [2m  - [pid=85742] <kill>[22m
+    [2m  - [pid=85742] <will force kill>[22m
+    [2m  - [pid=85742] <process did exit: exitCode=1, signal=null>[22m
+    [2m  - [pid=85742] starting temporary directories cleanup[22m
+    [2m  - [pid=85742] finished temporary directories cleanup[22m
+    [2m  - [pid=85742] <gracefully close end>[22m
+
+
+  29) [webkit] › test/lofi/virtual-files-real.spec.ts:3:5 › Lofi Sandbox Real Virtual Files ────────
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    <launched> pid=85764
+    [pid=85764][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1
+    Call log:
+    [2m  - <launching> /home/jules/.cache/ms-playwright/webkit-2248/pw_run.sh --inspector-pipe --headless --no-startup-window --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - <launched> pid=85764[22m
+    [2m  - [pid=85764][err] Cannot parse arguments: Unknown option --host-resolver-rules=MAP virtual-files.localhost 127.0.0.1[22m
+    [2m  - [pid=85764] <gracefully close start>[22m
+    [2m  - [pid=85764] <kill>[22m
+    [2m  - [pid=85764] <will force kill>[22m
+    [2m  - [pid=85764] <process did exit: exitCode=1, signal=null>[22m
+    [2m  - [pid=85764] starting temporary directories cleanup[22m
+    [2m  - [pid=85764] finished temporary directories cleanup[22m
+    [2m  - [pid=85764] <gracefully close end>[22m
+
+
+  29 failed
+    [chromium] › test/lofi/basic.spec.ts:3:5 › Lofi Sandbox Basic Execution ────────────────────────
+    [chromium] › test/lofi/hard-security.spec.ts:13:9 › Lofi Sandbox Hard Security › Block Popups (window.open)
+    [chromium] › test/lofi/hard-security.spec.ts:38:9 › Lofi Sandbox Hard Security › Block about:blank Bypass
+    [chromium] › test/lofi/security.spec.ts:13:9 › Lofi Sandbox Security › Block Nested Iframes (CSP Bypass)
+    [chromium] › test/lofi/security.spec.ts:40:9 › Lofi Sandbox Security › Block Parent Access (Isolation)
+    [chromium] › test/lofi/security.spec.ts:57:9 › Lofi Sandbox Security › No Service Worker Access
+    [chromium] › test/lofi/security.spec.ts:76:9 › Lofi Sandbox Security › Storage Ephemerality ────
+    [chromium] › test/lofi/vfs.spec.ts:3:5 › Lofi Sandbox VFS Loading ──────────────────────────────
+    [chromium] › test/lofi/virtual-files-real.spec.ts:3:5 › Lofi Sandbox Real Virtual Files ────────
+    [firefox] › test/lofi/hard-security.spec.ts:13:9 › Lofi Sandbox Hard Security › Block Popups (window.open)
+    [firefox] › test/lofi/hard-security.spec.ts:38:9 › Lofi Sandbox Hard Security › Block about:blank Bypass
+    [firefox] › test/lofi/local-html.spec.ts:3:5 › Lofi Sandbox Local HTML Asset Loading ───────────
+    [firefox] › test/lofi/security.spec.ts:13:9 › Lofi Sandbox Security › Block Nested Iframes (CSP Bypass)
+    [firefox] › test/lofi/security.spec.ts:40:9 › Lofi Sandbox Security › Block Parent Access (Isolation)
+    [firefox] › test/lofi/security.spec.ts:57:9 › Lofi Sandbox Security › No Service Worker Access ─
+    [firefox] › test/lofi/security.spec.ts:76:9 › Lofi Sandbox Security › Storage Ephemerality ─────
+    [firefox] › test/lofi/vfs.spec.ts:3:5 › Lofi Sandbox VFS Loading ───────────────────────────────
+    [firefox] › test/lofi/virtual-files-real.spec.ts:3:5 › Lofi Sandbox Real Virtual Files ─────────
+    [webkit] › test/lofi/basic.spec.ts:3:5 › Lofi Sandbox Basic Execution ──────────────────────────
+    [webkit] › test/lofi/hard-security.spec.ts:13:9 › Lofi Sandbox Hard Security › Block Popups (window.open)
+    [webkit] › test/lofi/hard-security.spec.ts:38:9 › Lofi Sandbox Hard Security › Block about:blank Bypass
+    [webkit] › test/lofi/hard-security.spec.ts:64:9 › Lofi Sandbox Hard Security › Block CSS Exfiltration
+    [webkit] › test/lofi/local-html.spec.ts:3:5 › Lofi Sandbox Local HTML Asset Loading ────────────
+    [webkit] › test/lofi/security.spec.ts:13:9 › Lofi Sandbox Security › Block Nested Iframes (CSP Bypass)
+    [webkit] › test/lofi/security.spec.ts:40:9 › Lofi Sandbox Security › Block Parent Access (Isolation)
+    [webkit] › test/lofi/security.spec.ts:57:9 › Lofi Sandbox Security › No Service Worker Access ──
+    [webkit] › test/lofi/security.spec.ts:76:9 › Lofi Sandbox Security › Storage Ephemerality ──────
+    [webkit] › test/lofi/vfs.spec.ts:3:5 › Lofi Sandbox VFS Loading ────────────────────────────────
+    [webkit] › test/lofi/virtual-files-real.spec.ts:3:5 › Lofi Sandbox Real Virtual Files ──────────
+  4 passed (5.5m)
