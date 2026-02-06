@@ -8,7 +8,7 @@ test('Storage Sharing Between Instances - Mitigated', async ({ page }) => {
       s.setConfig({ scriptUnsafe: true });
   });
 
-  // 1. Write (Should fail or be ephemeral)
+  // 1. Write
   await page.evaluate(() => {
     const s = document.querySelector('lofi-sandbox');
     s.execute(`
@@ -21,10 +21,9 @@ test('Storage Sharing Between Instances - Mitigated', async ({ page }) => {
     `);
   });
 
-  // Wait for log
-  const msg1 = await page.waitForEvent('console', m => m.text().includes('Write'));
+  await page.waitForEvent('console', m => m.text().includes('Write'));
 
-  // 2. Reload Sandbox (New srcdoc = New Origin)
+  // 2. Reload
   await page.reload();
   await page.waitForSelector('lofi-sandbox');
   await page.evaluate(() => {
@@ -38,10 +37,14 @@ test('Storage Sharing Between Instances - Mitigated', async ({ page }) => {
     s.execute(`
         const val = localStorage.getItem('SECRET');
         window.parent.postMessage({type:'LOG', args:['Read: ' + val]}, '*');
+        window.parent.postMessage({type:'LOG', args:['TEST_DONE']}, '*');
     `);
   });
 
-  const msg2 = await page.waitForEvent('console', m => m.text().includes('Read:'));
-  // Expect null (Isolated)
-  expect(msg2.text()).toContain('Read: null');
+  const logs: string[] = [];
+  page.on('console', msg => logs.push(msg.text()));
+  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+
+  const readLog = logs.find(l => l.includes('Read:'));
+  expect(readLog).toContain('Read: null');
 });

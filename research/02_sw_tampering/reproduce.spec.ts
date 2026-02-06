@@ -14,6 +14,7 @@ test('Service Worker Tampering - Mitigated', async ({ page }) => {
     } else {
          window.parent.postMessage({ type: 'LOG', args: ['PWN_SUCCESS'] }, '*');
     }
+    setTimeout(() => window.parent.postMessage({ type: 'LOG', args: ['TEST_DONE'] }, '*'), 100);
   `;
 
   await page.evaluate((code) => {
@@ -21,7 +22,10 @@ test('Service Worker Tampering - Mitigated', async ({ page }) => {
     s.execute(code);
   });
 
-  // Expect PWN_FAILURE (Secure)
-  const msg = await page.waitForEvent('console', m => m.text().includes('PWN_FAILURE'));
-  expect(msg).toBeTruthy();
+  const logs: string[] = [];
+  page.on('console', msg => logs.push(msg.text()));
+  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+
+  expect(logs.some(l => l.includes('PWN_SUCCESS'))).toBe(false);
+  expect(logs.some(l => l.includes('PWN_FAILURE') || l.includes('SecurityError') || l.includes('No SW API'))).toBe(true); // Optional positive confirmation
 });

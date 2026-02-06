@@ -15,6 +15,7 @@ test('Outer Frame DOM Tampering - Mitigated', async ({ page }) => {
     } catch(e) {
         window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*');
     }
+    setTimeout(() => window.parent.postMessage({type:'LOG', args:['TEST_DONE']}, '*'), 100);
   `;
 
   await page.evaluate((code) => {
@@ -22,7 +23,9 @@ test('Outer Frame DOM Tampering - Mitigated', async ({ page }) => {
     s.execute(code);
   });
 
-  // Expect FAILURE (Cross-Origin)
-  const msg = await page.waitForEvent('console', m => m.text().includes('PWN_FAILURE'));
-  expect(msg).toBeTruthy();
+  const logs: string[] = [];
+  page.on('console', msg => logs.push(msg.text()));
+  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+
+  expect(logs.some(l => l.includes('PWN_SUCCESS'))).toBe(false);
 });

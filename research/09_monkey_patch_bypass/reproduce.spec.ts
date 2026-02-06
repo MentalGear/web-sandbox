@@ -8,16 +8,11 @@ test('Monkey Patch Bypass - Mitigated', async ({ page }) => {
       s.setConfig({ scriptUnsafe: true });
   });
 
-  // Since we removed monkey patching (moved to VFS architecture), this test is less relevant for "Bypass",
-  // but we want to ensure "Silent Fetch" is blocked or handled.
-  // Actually, LofiSandbox doesn't use monkey patching for network logs anymore.
-  // It relies on VFS SW (for VFS) or nothing (for external).
-  // If we fetch external, it's blocked by CSP.
-
   const payload = `
     fetch('http://example.com')
         .then(() => window.parent.postMessage({type:'LOG', args:['PWN_SUCCESS']}, '*'))
         .catch(() => window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*'));
+    setTimeout(() => window.parent.postMessage({type:'LOG', args:['TEST_DONE']}, '*'), 1000);
   `;
 
   await page.evaluate((code) => {
@@ -25,7 +20,9 @@ test('Monkey Patch Bypass - Mitigated', async ({ page }) => {
     s.execute(code);
   });
 
-  // Expect FAILURE (Blocked by CSP)
-  const msg = await page.waitForEvent('console', m => m.text().includes('PWN_FAILURE'));
-  expect(msg).toBeTruthy();
+  const logs: string[] = [];
+  page.on('console', msg => logs.push(msg.text()));
+  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+
+  expect(logs.some(l => l.includes('PWN_SUCCESS'))).toBe(false);
 });

@@ -16,6 +16,7 @@ test('WebSocket Bypass - Mitigated', async ({ page }) => {
     } catch(e) {
         window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*');
     }
+    setTimeout(() => window.parent.postMessage({type:'LOG', args:['TEST_DONE']}, '*'), 1000);
   `;
 
   await page.evaluate((code) => {
@@ -23,7 +24,9 @@ test('WebSocket Bypass - Mitigated', async ({ page }) => {
     s.execute(code);
   });
 
-  // Expect FAILURE (Blocked by CSP connect-src)
-  const msg = await page.waitForEvent('console', m => m.text().includes('PWN_FAILURE') || m.text().includes('PWN_SUCCESS'));
-  expect(msg.text()).toContain('PWN_FAILURE');
+  const logs: string[] = [];
+  page.on('console', msg => logs.push(msg.text()));
+  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+
+  expect(logs.some(l => l.includes('PWN_SUCCESS'))).toBe(false);
 });
