@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Virtual Files Hub</title>
+</head>
+<body>
+    <script>
+        // Register SW
+        if ('serviceWorker' in navigator) {
+            // Register TS file directly (served by Bun with transpilation)
+            navigator.serviceWorker.register('/sw.ts')
+                .then(reg => {
+                    console.log("[Hub] SW Registered");
+                    // Wait for activation
+                    if (reg.active) return;
+                    navigator.serviceWorker.addEventListener('controllerchange', () => {
+                        console.log("[Hub] SW Activated");
+                    });
+                });
+        }
+
+        // Listen for messages from Host
+        window.addEventListener('message', (event) => {
+            if (event.data?.type === 'PUT_FILES') {
+                const { sessionId, files } = event.data;
+                console.log("[Hub] Received files for", sessionId);
+
+                // Send to SW
+                if (navigator.serviceWorker.controller) {
+                    navigator.serviceWorker.controller.postMessage({
+                        type: 'PUT_FILES',
+                        sessionId,
+                        files
+                    });
+                } else {
+                    console.warn("[Hub] SW not ready");
+                }
+            }
+        });
+    </script>
+</body>
+</html>

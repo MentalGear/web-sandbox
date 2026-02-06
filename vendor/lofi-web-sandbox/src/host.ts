@@ -1,7 +1,7 @@
 export interface SandboxConfig {
     allow?: string[]; // Allowed domains for CSP
     scriptUnsafe?: boolean; // 'unsafe-eval'
-    vfsUrl?: string; // URL to the VFS hub (e.g. http://vfs.localhost:3333)
+    virtualFilesUrl?: string; // URL to the Virtual Files Hub
     mode?: 'iframe' | 'worker'; // Execution mode
 }
 
@@ -11,6 +11,7 @@ export class LofiSandbox extends HTMLElement {
     private _config: SandboxConfig = { mode: 'iframe' };
     private _sessionId: string;
     private _port: MessagePort | null = null;
+    private _hubFrame: HTMLIFrameElement | null = null;
 
     constructor() {
         super();
@@ -24,7 +25,28 @@ export class LofiSandbox extends HTMLElement {
 
     setConfig(config: SandboxConfig) {
         this._config = { ...this._config, ...config };
+
+        // Initialize Hub if URL provided
+        if (this._config.virtualFilesUrl && !this._hubFrame) {
+            this._hubFrame = document.createElement('iframe');
+            this._hubFrame.style.display = 'none';
+            this._hubFrame.src = `${this._config.virtualFilesUrl}/hub.html`;
+            document.body.appendChild(this._hubFrame);
+        }
+
         this.render();
+    }
+
+    registerFiles(files: Record<string, string>) {
+        if (this._hubFrame && this._hubFrame.contentWindow) {
+            this._hubFrame.contentWindow.postMessage({
+                type: 'PUT_FILES',
+                sessionId: this._sessionId,
+                files
+            }, this._config.virtualFilesUrl || '*');
+        } else {
+            console.warn("Virtual Files Hub not ready or configured");
+        }
     }
 
     execute(code: string) {
@@ -39,25 +61,19 @@ export class LofiSandbox extends HTMLElement {
         const channel = new MessageChannel();
         this._port = channel.port1;
         this._port.onmessage = (e) => {
-            // Relay LOG to window for tests/debugging
             if (e.data.type === 'LOG') {
                 window.dispatchEvent(new CustomEvent('sandbox-log', { detail: e.data }));
             }
         };
 
-        // Send port2 to sandbox
-        // For Iframe: target.postMessage(msg, '*', [transfer])
-        // For Worker: target.postMessage(msg, [transfer])
         if (target instanceof Worker) {
             target.postMessage({ type: 'INIT_PORT' }, [channel.port2]);
         } else {
-            // Iframe needs targetOrigin
             (target as Window).postMessage({ type: 'INIT_PORT' }, '*', [channel.port2]);
         }
     }
 
     private render() {
-        // Cleanup old
         if (this._iframe) { this._iframe.remove(); this._iframe = null; }
         if (this._worker) { this._worker.terminate(); this._worker = null; }
         if (this._port) { this._port.close(); this._port = null; }
@@ -84,7 +100,6 @@ export class LofiSandbox extends HTMLElement {
                             }
                         }
                     };
-                    // Mock Console
                     ['log', 'error', 'warn'].forEach(level => {
                         const original = console[level];
                         console[level] = (...args) => {
@@ -106,7 +121,7 @@ export class LofiSandbox extends HTMLElement {
         this._iframe.style.cssText = "width:100%;height:100%;border:none";
         this.shadowRoot!.appendChild(this._iframe);
 
-        const vfsBase = this._config.vfsUrl ? `${this._config.vfsUrl}/${this._sessionId}/` : '';
+        const vfsBase = this._config.virtualFilesUrl ? `${this._config.virtualFilesUrl}/${this._sessionId}/` : '';
         const allow = this._config.allow || [];
         const connectSrc = allow.length > 0 ? allow.join(" ") : "'none'";
         const scriptDirectives = this._config.scriptUnsafe

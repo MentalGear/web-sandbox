@@ -6,8 +6,9 @@ A secure, local-first sandbox implementation using `iframe srcdoc`, Opaque Origi
 
 -   **Zero Server Logic**: No dynamic routing or session management required on the server.
 -   **Strict Isolation**: Uses `about:srcdoc` to ensure an opaque origin (`null`), preventing access to `localStorage`, `cookies`, or `Service Workers` of the host.
--   **Virtual Files**: Supports loading virtual files via a dedicated `vfs` domain (stubbed in this prototype).
+-   **Virtual Files**: Supports loading virtual files via a dedicated `virtual-files` domain.
 -   **Immutable CSP**: Security policies are injected via `<meta>` tags at render time, making them tamper-proof from within the sandbox.
+-   **Modes**: Supports `iframe` (DOM access) and `worker` (Headless/No DOM) execution modes.
 
 ## Usage
 
@@ -23,7 +24,13 @@ A secure, local-first sandbox implementation using `iframe srcdoc`, Opaque Origi
   sandbox.setConfig({
     allow: ['https://api.example.com'],
     scriptUnsafe: true, // Allow unsafe-eval
-    vfsUrl: 'http://vfs.localhost:3000'
+    virtualFilesUrl: 'http://virtual-files.localhost:3000',
+    mode: 'iframe' // or 'worker'
+  });
+
+  // Register Files
+  sandbox.registerFiles({
+      'main.js': 'console.log("Loaded Virtual File")'
   });
 
   // Execute

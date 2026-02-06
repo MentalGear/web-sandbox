@@ -6,6 +6,10 @@ export default defineConfig({
     use: {
         baseURL: "http://localhost:4444",
         headless: true,
+        launchOptions: {
+            // Map virtual-files.localhost to 127.0.0.1
+            args: ['--host-resolver-rules=MAP virtual-files.localhost 127.0.0.1'],
+        },
     },
     webServer: {
         command: "bun vendor/lofi-web-sandbox/index.ts",
