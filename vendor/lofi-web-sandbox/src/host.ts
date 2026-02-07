@@ -38,7 +38,8 @@ export class LofiSandbox extends HTMLElement {
         this.initialize();
     }
 
-    registerFiles(files: Record<string, string>) {
+    // Support string or binary content
+    registerFiles(files: Record<string, string | Uint8Array>) {
         if (this._hubFrame && this._hubFrame.contentWindow) {
             this._hubFrame.contentWindow.postMessage({
                 type: 'PUT_FILES',

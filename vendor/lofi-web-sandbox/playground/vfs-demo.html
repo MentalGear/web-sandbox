@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>VFS Demo</title>
+    <style>lofi-sandbox { display: block; width: 100%; height: 500px; border: 1px solid #ccc; }</style>
+</head>
+<body>
+    <h1>Lofi Sandbox - VFS Demo</h1>
+    <lofi-sandbox id="sandbox"></lofi-sandbox>
+    <div id="logs"></div>
+
+    <script type="module">
+        import { LofiSandbox } from '/src/host.ts';
+        import { SandboxDevTools } from '/src/devtools.ts';
+
+        const sandbox = document.getElementById('sandbox');
+        const devtools = new SandboxDevTools(sandbox);
+        devtools.enable();
+
+        // 1. Fetch Project Files
+        const files = {};
+        const fileNames = ['index.html', 'style.css', 'app.js'];
+
+        Promise.all(fileNames.map(name =>
+            fetch(`./project/${name}`).then(r => r.text()).then(c => files[name] = c)
+        )).then(() => {
+            console.log("Project Loaded:", Object.keys(files));
+
+            // 2. Configure Sandbox
+            // Note: vfsUrl is mocked in this environment to /src/virtual-files
+            // In a real environment, it would be http://virtual-files.localhost:4444
+
+            // For this demo to work without complex DNS setup, we rely on the host being able to serve the hub.
+            // Our server logic serves /src/virtual-files at /src/virtual-files path.
+            // But hub.html expects to be on its own origin for SW.
+            // If we run this demo on localhost:4444, the VFS is also on localhost:4444 (same origin).
+            // This is "insecure" but functional for demo purposes.
+            // To properly demonstrate VFS, we should point to the virtual-files domain?
+            // But then we need that domain to be reachable.
+
+            const vfsUrl = window.location.hostname === 'localhost'
+                ? '/src/virtual-files' // Same origin path (works for demo)
+                : 'http://virtual-files.localhost:4444';
+
+            sandbox.setConfig({
+                allow: [],
+                scriptUnsafe: true,
+                virtualFilesUrl: vfsUrl
+            });
+
+            // 3. Register Files
+            // Wait a bit for iframe to load? setConfig renders immediately.
+            // registerFiles posts to the hub iframe.
+            setTimeout(() => {
+                sandbox.registerFiles(files);
+
+                // 4. Mount Index
+                // We inject a script to replace the document content with index.html
+                // or easier: fetch index.html from VFS and write it.
+                sandbox.execute(`
+                    fetch('index.html')
+                        .then(r => r.text())
+                        .then(html => {
+                            document.open();
+                            document.write(html);
+                            document.close();
+                        });
+                `);
+            }, 500);
+        });
+    </script>
+</body>
+</html>
