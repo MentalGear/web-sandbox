@@ -7,16 +7,17 @@
     <script>
         // Register SW
         if ('serviceWorker' in navigator) {
-            // Register TS file directly (served by Bun with transpilation)
-            navigator.serviceWorker.register('/sw.ts')
+            // Register SW with relative path ./sw.ts (served by index.ts)
+            // If hub is at /src/virtual-files/hub.html, sw is at /src/virtual-files/sw.ts
+            navigator.serviceWorker.register('./sw.ts')
                 .then(reg => {
                     console.log("[Hub] SW Registered");
-                    // Wait for activation
                     if (reg.active) return;
                     navigator.serviceWorker.addEventListener('controllerchange', () => {
                         console.log("[Hub] SW Activated");
                     });
-                });
+                })
+                .catch(err => console.error("[Hub] SW Registration Failed", err));
         }
 
         // Listen for messages from Host

@@ -1,7 +1,8 @@
 import { serve } from "bun";
 import { join } from "path";
 
-const ROOT = join(process.cwd(), 'vendor/lofi-web-sandbox');
+// Use import.meta.dir to handle execution from anywhere
+const ROOT = import.meta.dir;
 
 serve({
   port: 4444,
@@ -23,13 +24,20 @@ serve({
         return new Response("Not Found: " + path, { status: 404 });
     };
 
-    // Virtual Files Domain (Mock/Real)
+    // Virtual Files Domain
     if (host.startsWith('virtual-files.')) {
         const path = url.pathname === '/' ? '/hub.html' : url.pathname;
+        // Map /hub.html -> src/virtual-files/hub.html
+        // Map /sw.ts -> src/virtual-files/sw.ts
+        // Since path includes slash, join works correctly if relative
+        // But url.pathname might be /sw.ts
         const filePath = join(ROOT, 'src/virtual-files', path);
+
         if (filePath.endsWith('.ts')) {
              const build = await Bun.build({ entrypoints: [filePath], target: "browser" });
-             return new Response(build.outputs[0], { headers: { 'Content-Type': 'application/javascript' } });
+             return new Response(build.outputs[0], {
+                 headers: { 'Content-Type': 'application/javascript', 'Service-Worker-Allowed': '/' }
+             });
         }
         return serveFile(filePath);
     }
@@ -43,13 +51,11 @@ serve({
         return serveFile(join(ROOT, 'playground/security.html'), 'text/html');
     }
 
-    // Serve Playground Assets (including subfolders like /project/)
-    // vfs-demo.html fetches './project/app.js' -> /project/app.js? No, relative to / -> /project/app.js
     if (url.pathname.startsWith('/project/')) {
         return serveFile(join(ROOT, 'playground', url.pathname));
     }
 
-    // Serve Source (TS Transpilation)
+    // Serve Source
     if (url.pathname.startsWith('/src/')) {
         const filePath = join(ROOT, url.pathname);
         if (filePath.endsWith('.ts')) {

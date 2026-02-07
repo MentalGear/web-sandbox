@@ -38,14 +38,19 @@ export class LofiSandbox extends HTMLElement {
         this.initialize();
     }
 
-    // Support string or binary content
     registerFiles(files: Record<string, string | Uint8Array>) {
         if (this._hubFrame && this._hubFrame.contentWindow) {
+            // Resolve relative URLs to absolute for postMessage
+            let targetOrigin = this._config.virtualFilesUrl || '*';
+            if (targetOrigin.startsWith('/')) {
+                targetOrigin = new URL(targetOrigin, window.location.origin).origin;
+            }
+
             this._hubFrame.contentWindow.postMessage({
                 type: 'PUT_FILES',
                 sessionId: this._sessionId,
                 files
-            }, this._config.virtualFilesUrl || '*');
+            }, targetOrigin);
         } else {
             console.warn("Virtual Files Hub not ready or configured");
         }
@@ -155,12 +160,13 @@ export class LofiSandbox extends HTMLElement {
             ? "'self' 'unsafe-inline' 'unsafe-eval'"
             : "'self' 'unsafe-inline'";
 
+        // Fix CSP: Allow vfsBase in base-uri
         const csp = [
             "default-src 'none'",
             `script-src ${scriptDirectives} ${vfsBase ? vfsBase : ''}`,
             `connect-src ${connectSrc} ${vfsBase ? vfsBase : ''}`,
             "style-src 'unsafe-inline'",
-            "base-uri 'none'",
+            `base-uri 'none' ${vfsBase ? vfsBase : ''}`, // Allow the specific VFS base
             "frame-src 'none'",
             "object-src 'none'",
             "form-action 'none'"
