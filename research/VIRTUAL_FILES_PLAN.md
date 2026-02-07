@@ -14,17 +14,7 @@ Use a Hybrid Storage model on the **VFS Origin** (`virtual-files.localhost`):
     *   Handles large files (Blob support).
     *   Async access.
 
-**Database**: `SandboxVFS`
-**Store**: `files`
-**Key**: `sessionId + path` (e.g., `uuid-123/src/index.js`)
-**Value**:
-```typescript
-interface VirtualFile {
-    content: string | Blob;
-    mimeType: string;
-    lastModified: number;
-}
-```
+**Configuration**: Users can choose `storage: 'memory' | 'indexeddb'` to balance performance vs persistence.
 
 ## 2. VFS Service Worker (`sw.ts`)
 
@@ -32,8 +22,7 @@ interface VirtualFile {
 
 **Lifecycle**:
 1.  **Install/Activate**: Standard.
-2.  **Startup**: (Optional) Hydrate hot keys from IDB to Memory? Or just read IDB on miss?
-    *   *Optimization*: Keep L1 empty initially. On Fetch, check L1. If miss, check IDB, then populate L1.
+2.  **Startup**: Hydrate L1 from L2 (if IDB enabled).
 
 **Fetch Logic**:
 1.  Parse URL: `http://virtual-files.localhost/sessionId/path...`
@@ -41,14 +30,20 @@ interface VirtualFile {
 3.  **Read**:
     *   Check `memoryCache`. If hit -> Return.
     *   Await `idb.get(key)`. If hit -> Update `memoryCache`, Return.
-    *   Return 404.
+    *   Return 404 / "Access Denied" HTML.
 
-**Write Logic (Message)**:
-1.  Receive `PUT_FILES`.
-2.  Update `memoryCache` (Sync, instant availability).
-3.  Write to `idb.put()` (Async, durability).
+## 3. Relative Path Routing
 
-## 3. Host Communication
+**Problem**: User code running in the sandbox (Opaque Origin) expects relative paths (e.g., `<script src="./utils.js">`) to work.
+**Challenge**: Since the origin is `about:srcdoc` (or `null`), there is no "server" to resolve relative paths against.
+**Solution**: **Base Tag Injection**.
+
+The Host injects `<base href="http://virtual-files.localhost/sessionId/">` into the sandbox HTML.
+*   **Mechanism**: The browser resolves `./utils.js` to `http://virtual-files.localhost/sessionId/utils.js`.
+*   **Interception**: The request is sent to the VFS domain. The VFS Service Worker intercepts it and serves the content.
+*   **Security**: This avoids the need for a dynamic server or a local Service Worker (which requires a secure origin and is vulnerable to tampering).
+
+## 4. Host Communication
 
 **Registration**:
 *   Host loads `http://virtual-files.localhost/hub.html` (invisible iframe).
@@ -58,12 +53,6 @@ interface VirtualFile {
 *   Listens for `PUT_FILES`.
 *   Writes files to IndexedDB directly (sharing IDB connection with SW).
 *   Notifies SW via `postMessage` to invalidate/update its L1 cache.
-
-## 4. Cache Management
-
-*   **Eviction**: Implement a "Least Recently Used" or "Time-to-Live" policy in the Hub.
-    *   Periodically scan IDB for sessions `lastAccessed < (Now - 1 hour)`.
-    *   Delete them to free space.
 
 ## 5. Deployment
 

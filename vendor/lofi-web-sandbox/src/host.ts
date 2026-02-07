@@ -22,7 +22,7 @@ export class LofiSandbox extends HTMLElement {
     }
 
     connectedCallback() {
-        this.render();
+        this.initialize();
     }
 
     setConfig(config: SandboxConfig) {
@@ -35,7 +35,7 @@ export class LofiSandbox extends HTMLElement {
             document.body.appendChild(this._hubFrame);
         }
 
-        this.render();
+        this.initialize();
     }
 
     registerFiles(files: Record<string, string>) {
@@ -72,7 +72,7 @@ export class LofiSandbox extends HTMLElement {
                     this._worker.terminate();
                     this._worker = null;
                     if (this._port) { this._port.close(); this._port = null; }
-                    this.renderWorker(); // Restart
+                    this.spawnWorker(); // Restart
                 }
             }, this._config.executionTimeout);
         }
@@ -82,16 +82,8 @@ export class LofiSandbox extends HTMLElement {
         const channel = new MessageChannel();
         this._port = channel.port1;
         this._port.onmessage = (e) => {
-            // Activity received, clear timeout?
-            // Or only clear on specific 'DONE' message?
-            // For now, any message resets the watchdog? No, that allows keepalive abuse.
-            // Better: User code explicitly signals done?
-            // Or simply: Timeout is "Max duration for this execute() call".
-            // Since execute() is fire-and-forget here, we can't know when it ends.
-            // But we can restart the timer on messages to allow "streaming" logs.
             if (this._config.mode === 'worker' && this._config.executionTimeout) {
-                // Optional: Sliding window timeout on activity
-                // this._startTimeout();
+                // Activity could reset timeout if desired
             }
 
             if (e.data.type === 'LOG') {
@@ -106,20 +98,20 @@ export class LofiSandbox extends HTMLElement {
         }
     }
 
-    private render() {
+    private initialize() {
         if (this._iframe) { this._iframe.remove(); this._iframe = null; }
         if (this._worker) { this._worker.terminate(); this._worker = null; }
         if (this._port) { this._port.close(); this._port = null; }
         if (this._timeoutId) clearTimeout(this._timeoutId);
 
         if (this._config.mode === 'worker') {
-            this.renderWorker();
+            this.spawnWorker();
         } else {
-            this.renderIframe();
+            this.createIframe();
         }
     }
 
-    private renderWorker() {
+    private spawnWorker() {
         const script = `
             self.onmessage = (e) => {
                 if (e.data.type === 'INIT_PORT') {
@@ -149,7 +141,7 @@ export class LofiSandbox extends HTMLElement {
         this.setupChannel(this._worker);
     }
 
-    private renderIframe() {
+    private createIframe() {
         this._iframe = document.createElement("iframe");
         this._iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-modals");
         this._iframe.style.cssText = "width:100%;height:100%;border:none";
