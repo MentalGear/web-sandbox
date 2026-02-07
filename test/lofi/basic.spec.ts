@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('Lofi Sandbox Basic Execution', async ({ page }) => {
-  await page.goto('http://localhost:4444/');
+  await page.goto('http://localhost:4444/security');
 
   // Wait for custom element
   await page.waitForSelector('lofi-sandbox');

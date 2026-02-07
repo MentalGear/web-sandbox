@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Lofi Sandbox Hard Security', () => {
     test.beforeEach(async ({ page }) => {
-        await page.goto('http://localhost:4444/');
+        await page.goto('http://localhost:4444/security');
         await page.waitForSelector('lofi-sandbox');
         await page.evaluate(() => {
             const s = document.querySelector('lofi-sandbox');

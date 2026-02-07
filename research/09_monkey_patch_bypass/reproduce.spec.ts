@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('Monkey Patch Bypass - Mitigated', async ({ page }) => {
-  await page.goto('http://localhost:4444/');
+  await page.goto('http://localhost:4444/security');
   await page.waitForSelector('lofi-sandbox');
   await page.evaluate(() => {
       const s = document.querySelector('lofi-sandbox');

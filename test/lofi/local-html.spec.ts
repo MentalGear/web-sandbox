@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('Lofi Sandbox Local HTML Asset Loading', async ({ page }) => {
-  await page.goto('http://localhost:4444/');
+  await page.goto('http://localhost:4444/security');
   await page.waitForSelector('lofi-sandbox');
 
   // Configure sandbox to allow localhost:4444 (for fetching assets)
