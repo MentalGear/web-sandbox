@@ -2,49 +2,56 @@
 
 A secure, local-first sandbox implementation using `iframe srcdoc`, Opaque Origins, and Immutable CSP.
 
-## Features
+## Architecture
 
--   **Zero Server Logic**: No dynamic routing or session management required on the server.
--   **Strict Isolation**: Uses `about:srcdoc` to ensure an opaque origin (`null`), preventing access to `localStorage`, `cookies`, or `Service Workers` of the host.
--   **Virtual Files**: Supports loading virtual files via a dedicated `virtual-files` domain.
--   **Immutable CSP**: Security policies are injected via `<meta>` tags at render time, making them tamper-proof from within the sandbox.
--   **Modes**: Supports `iframe` (DOM access) and `worker` (Headless/No DOM) execution modes.
+This project implements a web sandbox that requires no server-side logic for security. It relies on standard browser primitives:
+-   **Opaque Origins**: The sandbox runs in `about:srcdoc`, creating a unique `null` origin.
+-   **CSP**: Content Security Policy is injected via `<meta>` tags at runtime.
+-   **Mitigations**: Runtime monkey-patching prevents dangerous APIs (e.g., `navigator.serviceWorker`, nested `iframe`).
+
+## Installation
+
+This project uses [Bun](https://bun.sh).
+
+```bash
+bun install
+```
 
 ## Usage
 
-```html
-<script type="module" src="/src/host.ts"></script>
+### Development Server
 
-<lofi-sandbox></lofi-sandbox>
+**Important**: You must use `bun start` to run the playground. Do NOT use static file servers (like `serve` or `http-server`) because the playground relies on Bun to transpile TypeScript files on the fly.
 
-<script>
-  const sandbox = document.querySelector('lofi-sandbox');
-
-  // Configure
-  sandbox.setConfig({
-    allow: ['https://api.example.com'],
-    scriptUnsafe: true, // Allow unsafe-eval
-    virtualFilesUrl: 'http://virtual-files.localhost:3000',
-    mode: 'iframe' // or 'worker'
-  });
-
-  // Register Files
-  sandbox.registerFiles({
-      'main.js': 'console.log("Loaded Virtual File")'
-  });
-
-  // Execute
-  sandbox.execute('console.log("Hello Sandbox")');
-</script>
+```bash
+bun start
 ```
 
-## Security Guarantees
+-   **Playground**: [http://localhost:4444/](http://localhost:4444/)
+-   **Virtual Files Demo**: [http://localhost:4444/virtual-files](http://localhost:4444/virtual-files)
 
-1.  **Network**: Only domains in `allow` are accessible. Nested iframes are blocked.
-2.  **Storage**: Ephemeral. Cleared on reload.
-3.  **DOM**: No access to `window.parent`.
-4.  **Popups**: Blocked or restricted based on sandbox attributes.
+### Running Tests
 
-## Architecture
+Automated security regression tests are located in `research/`. They use Playwright to verify the sandbox against known attack vectors.
 
-See `research/LOCAL_FIRST_ARCH.md` for details.
+```bash
+bun test
+```
+
+## Security Research
+
+The `research/` directory contains reproduction scripts for various attack vectors:
+-   CSP Bypass (Nested Iframes)
+-   Service Worker Tampering
+-   Protocol Handler Registration
+-   Data URI Navigation
+-   etc.
+
+These tests are unified with the Playground "Presets". You can run them manually in the Playground or automatically via `bun test`.
+
+## Project Structure
+
+-   `src/`: Core sandbox implementation (`host.ts`, `lib/`).
+-   `playground/`: User interface for testing and demonstration.
+-   `research/`: Automated security tests (Playwright).
+-   `server.ts`: Development server.

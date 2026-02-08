@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "description": "Local-first web sandbox",
   "main": "server.ts",
+  "type": "module",
+  "private": true,
   "scripts": {
     "start": "bun run server.ts",
     "test": "bun x playwright test --config=research/playwright.config.ts"
