@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PRESETS } from '../../src/lib/presets';
 
 test('Base Tag Hijacking', async ({ page }) => {
   await page.goto('http://localhost:4444/security');
@@ -14,22 +15,7 @@ test('Base Tag Hijacking', async ({ page }) => {
   // If base-uri is missing, this might resolve 'foo' to 'https://google.com/foo'
   // But CSP connect-src should still block it if it's not allowed.
 
-  const payload = `
-    try {
-        const base = document.createElement('base');
-        base.href = 'https://google.com';
-        document.head.appendChild(base);
-
-        // Fetch relative URL 'foo' -> 'https://google.com/foo'
-        fetch('foo', { mode: 'no-cors' })
-            .then(() => console.log('PWN_SUCCESS'))
-            .catch(e => console.log('PWN_FAILURE: ' + e.message));
-
-    } catch (e) {
-        console.log('PWN_FAILURE: ' + e.message);
-    }
-    setTimeout(() => console.log('TEST_DONE'), 2000);
-  `;
+  const payload = PRESETS['base-tag'].code;
 
   await page.evaluate((code) => {
     window.SandboxControl.execute(code);

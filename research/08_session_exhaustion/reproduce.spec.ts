@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PRESETS } from '../../src/lib/presets';
 
 test('Session ID Exhaustion / DoS', async ({ page }) => {
   // 1. Setup
@@ -8,26 +9,7 @@ test('Session ID Exhaustion / DoS', async ({ page }) => {
   // 2. Exploit: Create massive amount of sessions
   // If the server stores sessions in memory without limits, this will crash the server.
 
-  const payload = `
-    (async () => {
-        const start = Date.now();
-        let count = 0;
-        try {
-            while (Date.now() - start < 5000) { // Run for 5 seconds
-                await fetch('/api/session', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ allow: 'google.com' })
-                });
-                count++;
-            }
-            console.log('PWN_INFO: Created ' + count + ' sessions');
-        } catch (e) {
-            console.log('ERROR: ' + e.message);
-        }
-        console.log('TEST_DONE');
-    })();
-  `;
+  const payload = PRESETS['session-exhaustion'].code;
 
   // Note: We need to enable scripts to run this loop
   await page.evaluate(() => {

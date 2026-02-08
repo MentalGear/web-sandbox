@@ -211,8 +211,8 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
             </div>
         </div>
         <div class="card">
-            <span class="label">Sandbox View (Strict Subdomain):</span>
-            <safe-sandbox id="sandbox" sandbox-origin="http://sandbox.localhost:3333" cacheStrategy="network-only"></safe-sandbox>
+            <span class="label">Sandbox View:</span>
+            <lofi-sandbox id="sandbox"></lofi-sandbox>
         </div>
     </div>
 
@@ -222,7 +222,7 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
     <div id="logs">Waiting for sandbox...</div>
 
     <script src="state.ts"></script>
-    <script type="module" src="/src/lib/SafeSandbox.ts"></script>
+    <script type="module" src="/src/host.ts"></script>
     <script type="module">
         import { PRESETS } from '../src/lib/presets.ts';
 
@@ -245,15 +245,30 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
             appendLog({ source: 'playground', message: msg, level: 'log' });
         };
 
-        sandbox.addEventListener('ready', () => {
-            document.getElementById('sandbox-status').textContent = 'Sandbox: Ready';
-            document.getElementById('sandbox-status').style.color = '#4caf50';
-            appendLocalLog('Sandbox is ready!');
-        });
-
-        sandbox.addEventListener('log', (event) => {
+        // Listen for internal log events dispatch on window by host.ts
+        window.addEventListener('sandbox-log', (event) => {
             const data = event.detail;
-            appendLog(data);
+            // Map Lofi log format to UI log format if needed
+            // Lofi: { type: 'LOG', level: 'info', args: [...] }
+            // UI expects: { level, message, source... }
+
+            // Map 'info' to 'log' for UI compatibility
+            if (data.level === 'info') data.level = 'log';
+
+            const message = data.message || (data.args ? data.args.join(' ') : '');
+
+            if (message === 'Iframe Ready' || message === 'Worker Ready') {
+                 document.getElementById('sandbox-status').textContent = 'Sandbox: Ready';
+                 document.getElementById('sandbox-status').style.color = '#4caf50';
+                 appendLocalLog('Sandbox is ready!');
+                 return;
+            }
+
+            appendLog({
+                source: 'inner',
+                level: data.level,
+                message: message
+            });
         });
 
         window.addEventListener('load', () => {
@@ -347,8 +362,10 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
             const rulesStr = document.getElementById('rulesEditor').value;
             try {
                 const rules = JSON.parse(rulesStr);
-                sandbox.setNetworkRules(rules);
-                window.appendLocalLog('Network rules applied.');
+                // Map legacy 'allow' (string[]) to new config structure if needed
+                // LofiSandbox expects SandboxConfig object
+                sandbox.setConfig(rules);
+                window.appendLocalLog('Config applied.');
 
                 // Keep UI toggle in sync
                 const proxyToggle = document.getElementById('proxyToggle');
@@ -370,32 +387,6 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
             sandbox.execute(code);
         }
 
-        window.toggleProxy = () => {
-            try {
-                const rules = JSON.parse(document.getElementById('rulesEditor').value);
-                // Toggle: if has proxyUrl, remove it; else add default
-                if (rules.proxyUrl) {
-                    delete rules.proxyUrl;
-                } else {
-                    rules.proxyUrl = '/_proxy';
-                }
-                document.getElementById('rulesEditor').value = JSON.stringify(rules, null, 2);
-
-                const proxyToggle = document.getElementById('proxyToggle');
-                const hasProxy = !!rules.proxyUrl;
-                proxyToggle.style.background = hasProxy ? 'var(--primary)' : '#444';
-                proxyToggle.textContent = `Proxy: ${hasProxy ? 'ON' : 'OFF'}`;
-
-                window.appendLocalLog(`Proxy: ${hasProxy ? '/_proxy' : 'OFF'}`);
-
-                playground.triggerCustomMode();
-                playground.saveState();
-                sandbox.setNetworkRules(rules);
-            } catch (e) {
-                window.appendLocalLog('Invalid JSON in rules editor.');
-            }
-        }
-
         window.clearLogs = () => {
              document.getElementById('logs').innerHTML = '';
         }
@@ -404,9 +395,8 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
              window.appendLocalLog('Resetting sandbox...');
              // Clear host-side state
              localStorage.removeItem('safeSandbox_customState');
-             // Request sandbox to unregister its SW (runs on sandbox origin)
-             const sandboxOrigin = sandbox.getAttribute('sandbox-origin') || 'http://sandbox.localhost:3333';
-             sandbox.shadowRoot.querySelector('iframe').contentWindow.postMessage({ type: 'RESET' }, sandboxOrigin);
+             // For LofiSandbox, we just re-initialize
+             sandbox.setConfig({});
         }
 
         // Listen for reset completion from sandbox

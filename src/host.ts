@@ -159,6 +159,17 @@ export class LofiSandbox extends HTMLElement {
             ? "'self' 'unsafe-inline' 'unsafe-eval'"
             : "'self' 'unsafe-inline'";
 
+        // Allow data: URIs for scripts to enable srcdoc-like behavior if needed,
+        // but strictly controlled. However, `srcdoc` iframe inherits CSP from meta tag.
+        // The issue might be that the initial execution relies on inline handlers or something blocked?
+        // Ah, the presets use `javascript:` URLs in iframes?
+        // No, 'csp-bypass' creates an iframe with src="javascript:alert(...)".
+        // `frame-src 'none'` blocks that.
+        // `01` tests that we BLOCK it. So it should fail to run the alert.
+        // But the test script itself runs in the sandbox context.
+        // The test script tries to create the iframe.
+        // The console.log('PWN_FAILURE') or 'TEST_DONE' should still run.
+
         const csp = [
             "default-src 'none'",
             `script-src ${scriptDirectives} ${vfsBase ? vfsBase : ''}`,
@@ -201,6 +212,7 @@ export class LofiSandbox extends HTMLElement {
                 port.onmessage = (ev) => {
                     if (ev.data.type === 'EXECUTE') {
                         try {
+                            // Ensure the code execution itself doesn't crash the port logic
                             const func = new Function(ev.data.code);
                             func();
                         } catch (e) {

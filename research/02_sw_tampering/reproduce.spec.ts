@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PRESETS } from '../../src/lib/presets';
 
 test('Service Worker Tampering - Mitigated', async ({ page }) => {
   await page.goto('http://localhost:4444/security');
@@ -11,14 +12,9 @@ test('Service Worker Tampering - Mitigated', async ({ page }) => {
       });
   });
 
-  const payload = `
-    if (!navigator.serviceWorker) {
-         console.log('PWN_FAILURE');
-    } else {
-         console.log('PWN_SUCCESS');
-    }
-    setTimeout(() => console.log('TEST_DONE'), 100);
-  `;
+  const payload = PRESETS['sw-tamper'].code;
+
+  await page.waitForTimeout(1000);
 
   await page.evaluate((code) => {
     const s = document.querySelector('lofi-sandbox');
@@ -27,7 +23,7 @@ test('Service Worker Tampering - Mitigated', async ({ page }) => {
 
   await page.waitForFunction(() => {
     const logs = window.SandboxControl.getLogs();
-    return logs.some(l => l.message.includes('TEST_DONE'));
+    return logs.some(l => l.message.includes('TEST_DONE') || l.message.includes('PWN_SUCCESS') || l.message.includes('PWN_FAILURE'));
   });
 
   const logs = await page.evaluate(() => window.SandboxControl.getLogs());

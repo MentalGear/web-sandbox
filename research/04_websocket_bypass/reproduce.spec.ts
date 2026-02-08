@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PRESETS } from '../../src/lib/presets';
 
 test('WebSocket Bypass - Mitigated', async ({ page }) => {
   await page.goto('http://localhost:4444/security');
@@ -11,16 +12,7 @@ test('WebSocket Bypass - Mitigated', async ({ page }) => {
       });
   });
 
-  const payload = `
-    try {
-        const ws = new WebSocket('wss://echo.websocket.events');
-        ws.onopen = () => console.log('PWN_SUCCESS');
-        ws.onerror = () => console.log('PWN_FAILURE');
-    } catch(e) {
-        console.log('PWN_FAILURE');
-    }
-    setTimeout(() => console.log('TEST_DONE'), 1000);
-  `;
+  const payload = PRESETS['websocket-bypass'].code;
 
   await page.evaluate((code) => {
     const s = document.querySelector('lofi-sandbox');

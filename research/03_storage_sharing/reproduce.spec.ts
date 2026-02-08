@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PRESETS } from '../../src/lib/presets';
 
 test('Storage Sharing Between Instances - Mitigated', async ({ page }) => {
   await page.goto('http://localhost:4444/security');
@@ -14,6 +15,7 @@ test('Storage Sharing Between Instances - Mitigated', async ({ page }) => {
   // 1. Write
   await page.evaluate(() => {
     const s = document.querySelector('lofi-sandbox');
+    // Using custom code here as the preset combines both steps
     s.execute(`
         try {
             localStorage.setItem('SECRET', '123');

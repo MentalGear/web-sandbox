@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PRESETS } from '../../src/lib/presets';
 
 test('Protocol Handler Registration', async ({ page }) => {
   // 1. Setup
@@ -14,15 +15,7 @@ test('Protocol Handler Registration', async ({ page }) => {
   // 2. Exploit: Attempt to register a protocol handler
   // Sandboxed iframes often block this. If it succeeds, it's a breakout (persistent OS integration).
 
-  const payload = `
-    try {
-        navigator.registerProtocolHandler('web+test', 'https://example.com?q=%s', 'Test Handler');
-        console.log('PWN_SUCCESS: Handler Registered');
-    } catch (e) {
-        console.log('PWN_FAILURE: ' + e.message);
-    }
-    console.log('TEST_DONE');
-  `;
+  const payload = PRESETS['protocol-handler'].code;
 
   await page.evaluate((code) => {
     window.SandboxControl.execute(code);

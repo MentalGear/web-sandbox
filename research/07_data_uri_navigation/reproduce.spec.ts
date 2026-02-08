@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PRESETS } from '../../src/lib/presets';
 
 test('Data URI Navigation', async ({ page }) => {
   // 1. Setup
@@ -14,16 +15,7 @@ test('Data URI Navigation', async ({ page }) => {
   // 2. Exploit: Attempt to navigate the TOP frame to a data URI
   // This bypasses network filters if allowed.
 
-  const payload = `
-    try {
-        const dataUrl = 'data:text/html,<h1>PWNED</h1>';
-        window.top.location.href = dataUrl;
-        // If successful, the page unloads.
-    } catch (e) {
-        console.log('PWN_FAILURE: ' + e.message);
-    }
-    console.log('TEST_DONE');
-  `;
+  const payload = PRESETS['data-uri'].code;
 
   await page.evaluate((code) => {
     window.SandboxControl.execute(code);

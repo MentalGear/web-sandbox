@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PRESETS } from '../../src/lib/presets';
 
 test('Monkey Patch Bypass - Mitigated', async ({ page }) => {
   await page.goto('http://localhost:4444/security');
@@ -11,12 +12,7 @@ test('Monkey Patch Bypass - Mitigated', async ({ page }) => {
       });
   });
 
-  const payload = `
-    fetch('http://example.com')
-        .then(() => console.log('PWN_SUCCESS'))
-        .catch(() => console.log('PWN_FAILURE'));
-    setTimeout(() => console.log('TEST_DONE'), 1000);
-  `;
+  const payload = PRESETS['monkey-patch-bypass'].code;
 
   await page.evaluate((code) => {
     const s = document.querySelector('lofi-sandbox');
