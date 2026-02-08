@@ -1,13 +1,11 @@
 {
-  "name": "iframe-sandbox-research",
+  "name": "lofi-web-sandbox",
   "version": "1.0.0",
-  "description": "Security research for iframe-sandbox",
-  "main": "index.ts",
+  "description": "Local-first web sandbox",
+  "main": "server.ts",
   "scripts": {
+    "start": "bun run server.ts",
     "test": "bun x playwright test --config=research/playwright.config.ts"
-  },
-  "dependencies": {
-    "iframe-sandbox": "github:MentalGear/iframe-sandbox"
   },
   "devDependencies": {
     "playwright": "^1.58.1",
