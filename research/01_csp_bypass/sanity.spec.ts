@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 
 test('Basic Sandbox Interaction & Logging', async ({ page }) => {
+  page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+  page.on('pageerror', err => console.log('PAGE ERROR:', err));
   await page.goto('http://localhost:4444/security');
   await page.waitForFunction(() => window.SandboxControl !== undefined);
 

@@ -43,38 +43,56 @@ serve({
     // /virtual-files -> vfs-demo (VFS Demo)
 
     if (url.pathname === '/') {
-        return serveFile(join(ROOT, 'playground/security.html'), 'text/html');
+        return serveFile(join(ROOT, 'playground/index.html'), 'text/html');
+    }
+
+    // Backward compatibility for existing tests using /security
+    if (url.pathname === '/security') {
+        // We can serve index.html here too if tests are updated to use it,
+        // OR keep serving the minimal security.html if we kept it.
+        // I kept it in previous step but index.html is better.
+        // Let's check if security.html still exists.
+        // Tests rely on window.SandboxControl.
+        // index.html has it too.
+        return serveFile(join(ROOT, 'playground/index.html'), 'text/html');
     }
 
     if (url.pathname === '/virtual-files') {
         return serveFile(join(ROOT, 'playground/vfs-demo.html'), 'text/html');
     }
 
-    // Backward compatibility for existing tests using /security
-    if (url.pathname === '/security') {
-        return serveFile(join(ROOT, 'playground/security.html'), 'text/html');
+    // Serve Playground Assets (state.ts, etc)
+    // Also handle relative imports from index.html (like state.ts)
+    // If request is /state.ts, it maps to playground/state.ts
+    // If request is /playground/state.ts, it maps to playground/state.ts
+
+    let filePath = join(ROOT, url.pathname);
+
+    // Check if it's a playground asset at root level (e.g. /state.ts)
+    // Try playground path if root path doesn't exist
+    const playgroundPath = join(ROOT, 'playground', url.pathname);
+    if (!(await Bun.file(filePath).exists()) && await Bun.file(playgroundPath).exists()) {
+        filePath = playgroundPath;
     }
 
-    if (url.pathname.startsWith('/project/')) {
-        return serveFile(join(ROOT, 'playground', url.pathname));
-    }
-
-    // Serve Source
-    if (url.pathname.startsWith('/src/')) {
-        const filePath = join(ROOT, url.pathname);
-        if (filePath.endsWith('.ts')) {
-            const build = await Bun.build({
-                entrypoints: [filePath],
-                target: "browser",
+    // TypeScript Transpilation
+    if (filePath.endsWith('.ts')) {
+        const build = await Bun.build({
+            entrypoints: [filePath],
+            target: "browser",
+        });
+        if (build.success) {
+            return new Response(build.outputs[0], {
+                headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' }
             });
-            if (build.success) {
-                return new Response(build.outputs[0], {
-                    headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' }
-                });
-            } else {
-                return new Response("Build Failed: " + build.logs.join('\n'), { status: 500 });
-            }
+        } else {
+            console.error("Build Failed:", build.logs);
+            return new Response("Build Failed: " + build.logs.join('\n'), { status: 500 });
         }
+    }
+
+    // Static Files
+    if (await Bun.file(filePath).exists()) {
         return serveFile(filePath);
     }
 
