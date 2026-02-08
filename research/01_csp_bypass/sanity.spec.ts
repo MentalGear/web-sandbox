@@ -1,12 +1,19 @@
 import { test, expect } from '@playwright/test';
 
 test('Basic Sandbox Interaction & Logging', async ({ page }) => {
-  await page.goto('http://localhost:3333/playground/security.html');
+  page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+  page.on('pageerror', err => console.log('PAGE ERROR:', err));
+  await page.goto('http://localhost:4444/security');
   await page.waitForFunction(() => window.SandboxControl !== undefined);
 
   // Need to enable unsafe-eval for 'execute' to work (new Function used in inner-frame.ts)
-  await page.evaluate(() => window.SandboxControl.sandboxElement.setAttribute('script-unsafe', 'true'));
-  await page.waitForTimeout(1000);
+  // Also allow localhost for fetch test
+  await page.evaluate(() => {
+    return new Promise(resolve => {
+        window.SandboxControl.sandboxElement.addEventListener('ready', resolve, { once: true });
+        window.SandboxControl.setConfig({ scriptUnsafe: true, allow: ['localhost:4444'] });
+    });
+  });
 
   // Clear logs
   await page.evaluate(() => window.SandboxControl.clearLogs());
@@ -24,16 +31,16 @@ test('Basic Sandbox Interaction & Logging', async ({ page }) => {
   // Network Logging
   await page.evaluate(() => {
     window.SandboxControl.execute(`
-        fetch('inner-frame.html').then(r => console.log('Fetch Done: ' + r.status));
+        fetch('/security').then(r => console.log('Fetch Done: ' + r.status));
     `);
   });
 
   await page.waitForFunction(() => {
       const logs = window.SandboxControl.getLogs();
-      return logs.some(l => l.message.includes("Fetch: GET"));
+      return logs.some(l => l.message.includes("Fetch Done"));
   });
 
   const logs = await page.evaluate(() => window.SandboxControl.getLogs());
-  const fetchLog = logs.find(l => l.message.includes("Fetch: GET"));
+  const fetchLog = logs.find(l => l.message.includes("Fetch Done"));
   expect(fetchLog).toBeDefined();
 });

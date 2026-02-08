@@ -1,31 +1,33 @@
 import { test, expect } from '@playwright/test';
+import { PRESETS } from '../../src/lib/presets';
 
 test('Outer Frame DOM Tampering - Mitigated', async ({ page }) => {
+  page.on('console', msg => console.log(msg.text()));
   await page.goto('http://localhost:4444/security');
   await page.waitForSelector('lofi-sandbox');
+  console.log("Setting script-unsafe...");
   await page.evaluate(() => {
       const s = document.querySelector('lofi-sandbox');
-      s.setConfig({ scriptUnsafe: true });
+      return new Promise(resolve => {
+          s.addEventListener('ready', resolve, { once: true });
+          s.setConfig({ scriptUnsafe: true });
+      });
   });
+  console.log("Set script-unsafe.");
 
-  const payload = `
-    try {
-        const p = window.parent.document;
-        window.parent.postMessage({type:'LOG', args:['PWN_SUCCESS']}, '*');
-    } catch(e) {
-        window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*');
-    }
-    setTimeout(() => window.parent.postMessage({type:'LOG', args:['TEST_DONE']}, '*'), 100);
-  `;
+  const payload = PRESETS['outer-frame-tampering'].code;
 
   await page.evaluate((code) => {
     const s = document.querySelector('lofi-sandbox');
     s.execute(code);
+  }, payload);
+
+  await page.waitForFunction(() => {
+      const logs = window.SandboxControl.getLogs();
+      return logs.some(l => l.message.includes('TEST_DONE'));
   });
 
-  const logs: string[] = [];
-  page.on('console', msg => logs.push(msg.text()));
-  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+  const logs = await page.evaluate(() => window.SandboxControl.getLogs());
 
-  expect(logs.some(l => l.includes('PWN_SUCCESS'))).toBe(false);
+  expect(logs.some(l => l.message.includes('PWN_SUCCESS'))).toBe(false);
 });

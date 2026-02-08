@@ -1,36 +1,23 @@
 import { test, expect } from '@playwright/test';
+import { PRESETS } from '../../src/lib/presets';
 
 test('Session ID Exhaustion / DoS', async ({ page }) => {
   // 1. Setup
-  await page.goto('http://localhost:3333/playground/security.html');
+  await page.goto('http://localhost:4444/security');
   await page.waitForFunction(() => window.SandboxControl !== undefined);
 
   // 2. Exploit: Create massive amount of sessions
   // If the server stores sessions in memory without limits, this will crash the server.
 
-  const payload = `
-    (async () => {
-        const start = Date.now();
-        let count = 0;
-        try {
-            while (Date.now() - start < 5000) { // Run for 5 seconds
-                await fetch('/api/session', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ allow: 'google.com' })
-                });
-                count++;
-            }
-            window.top.postMessage({ type: 'PWN_INFO', message: 'Created ' + count + ' sessions' }, '*');
-        } catch (e) {
-            window.top.postMessage({ type: 'ERROR', message: e.message }, '*');
-        }
-    })();
-  `;
+  const payload = PRESETS['session-exhaustion'].code;
 
   // Note: We need to enable scripts to run this loop
-  await page.evaluate(() => window.SandboxControl.sandboxElement.setAttribute('script-unsafe', 'true'));
-  await page.waitForTimeout(1000);
+  await page.evaluate(() => {
+    return new Promise(resolve => {
+        window.SandboxControl.sandboxElement.addEventListener('ready', resolve, { once: true });
+        window.SandboxControl.setConfig({ scriptUnsafe: true });
+    });
+  });
 
   await page.evaluate((code) => {
     window.SandboxControl.execute(code);

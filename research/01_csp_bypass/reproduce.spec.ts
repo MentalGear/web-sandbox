@@ -1,60 +1,51 @@
 import { test, expect } from '@playwright/test';
+import { PRESETS } from '../../src/lib/presets';
 
 test('CSP Bypass via Nested Iframe - Mitigated', async ({ page }) => {
   await page.goto('http://localhost:4444/security');
   await page.waitForSelector('lofi-sandbox');
   await page.evaluate(() => {
       const s = document.querySelector('lofi-sandbox');
-      s.setConfig({ scriptUnsafe: true });
+      return new Promise(resolve => {
+          s.addEventListener('ready', resolve, { once: true });
+          s.setConfig({ scriptUnsafe: true });
+      });
   });
 
-  const payload = `
-    (async () => {
-      try {
-          const iframe = document.createElement('iframe');
-          iframe.src = "javascript:alert(1)";
-          document.body.appendChild(iframe);
+  const payload = PRESETS['csp-bypass'].code;
 
-          iframe.onload = () => window.parent.postMessage({type:'LOG', args:['PWN_SUCCESS']}, '*');
-          iframe.onerror = () => window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*');
+  // Wait for sandbox to be ready before executing code
+  // The execute method might be called before the iframe is fully loaded if we don't wait?
+  // We already waited for 'ready' event when setting config.
+  // But let's add a small delay or ensure we are using the helper correctly.
 
-          // Wait a bit for async load
-          setTimeout(() => {
-              window.parent.postMessage({type:'LOG', args:['TEST_DONE']}, '*');
-          }, 500);
-      } catch (e) {
-          window.parent.postMessage({type:'LOG', args:['TEST_DONE']}, '*');
-      }
-    })();
-  `;
+  // Wait for 1 second to ensure ready state before execution
+  // The 'ready' event listener in the first evaluate block might resolve before we call execute,
+  // but let's be super safe and wait a bit after setting config.
+  await page.waitForTimeout(1000);
+
+  // Debug: Ensure iframe is actually loaded and ready
+  await page.evaluate(() => {
+      const s = document.querySelector('lofi-sandbox');
+      const iframe = s.shadowRoot.querySelector('iframe');
+      if (!iframe) console.log("Host: No iframe found");
+      else if (!iframe.contentWindow) console.log("Host: No contentWindow");
+      else console.log("Host: Iframe appears ready");
+  });
 
   await page.evaluate((code) => {
     const s = document.querySelector('lofi-sandbox');
     s.execute(code);
-  });
+  }, payload);
 
   // 1. Wait for completion signal (Heartbeat) - ensures code ran
-  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+  await page.waitForFunction(() => {
+    const logs = window.SandboxControl.getLogs();
+    return logs.some(l => l.message.includes('TEST_DONE') || l.message.includes('PWN_SUCCESS') || l.message.includes('PWN_FAILURE'));
+  });
 
-  // 2. Assert NO success signal was logged
-  // We check the *history* of logs or just ensure current state is clean.
-  // Playwright's console event listener is live.
-  // But we can check if we missed it? No, we started listening implicitly?
-  // Better: Gather logs during execution.
-
-  // Actually, checking history is hard in Playwright unless we buffered it.
-  // But we know 'PWN_SUCCESS' would happen *before* 'TEST_DONE' in this logic?
-  // Or roughly same time.
-  // Let's assume if we reached TEST_DONE without crashing, and didn't see PWN_SUCCESS *yet*, we are good?
-  // Risky.
-
-  // Better:
-  const logs: string[] = [];
-  page.on('console', msg => logs.push(msg.text()));
-
-  // Wait for DONE
-  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+  const logs = await page.evaluate(() => window.SandboxControl.getLogs());
 
   // Verify
-  expect(logs.some(l => l.includes('PWN_SUCCESS'))).toBe(false);
+  expect(logs.some(l => l.message.includes('PWN_SUCCESS'))).toBe(false);
 });

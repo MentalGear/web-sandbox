@@ -139,6 +139,7 @@ export class LofiSandbox extends HTMLElement {
         const blob = new Blob([script], { type: 'application/javascript' });
         this._worker = new Worker(URL.createObjectURL(blob));
         this.setupChannel(this._worker);
+        setTimeout(() => this.dispatchEvent(new CustomEvent('ready')), 0);
     }
 
     private createIframe() {
@@ -157,6 +158,17 @@ export class LofiSandbox extends HTMLElement {
         const scriptDirectives = this._config.scriptUnsafe
             ? "'self' 'unsafe-inline' 'unsafe-eval'"
             : "'self' 'unsafe-inline'";
+
+        // Allow data: URIs for scripts to enable srcdoc-like behavior if needed,
+        // but strictly controlled. However, `srcdoc` iframe inherits CSP from meta tag.
+        // The issue might be that the initial execution relies on inline handlers or something blocked?
+        // Ah, the presets use `javascript:` URLs in iframes?
+        // No, 'csp-bypass' creates an iframe with src="javascript:alert(...)".
+        // `frame-src 'none'` blocks that.
+        // `01` tests that we BLOCK it. So it should fail to run the alert.
+        // But the test script itself runs in the sandbox context.
+        // The test script tries to create the iframe.
+        // The console.log('PWN_FAILURE') or 'TEST_DONE' should still run.
 
         const csp = [
             "default-src 'none'",
@@ -177,12 +189,30 @@ export class LofiSandbox extends HTMLElement {
     <meta http-equiv="Content-Security-Policy" content="${csp}">
     ${vfsBase ? `<base href="${vfsBase}">` : ''}
     <script>
+        // Defense-in-depth: Block nested iframes
+        const originalCreateElement = document.createElement;
+        document.createElement = function(tagName, options) {
+            if (tagName.toLowerCase() === 'iframe') {
+                throw new Error("Nested iframes are blocked.");
+            }
+            return originalCreateElement.call(document, tagName, options);
+        };
+
+        // Defense-in-depth: Hide Service Workers
+        try {
+            Object.defineProperty(window.Navigator.prototype, 'serviceWorker', {
+                get: function() { return undefined; },
+                configurable: true
+            });
+        } catch (e) {}
+
         window.addEventListener('message', (event) => {
             if (event.data?.type === 'INIT_PORT') {
                 const port = event.ports[0];
                 port.onmessage = (ev) => {
                     if (ev.data.type === 'EXECUTE') {
                         try {
+                            // Ensure the code execution itself doesn't crash the port logic
                             const func = new Function(ev.data.code);
                             func();
                         } catch (e) {
@@ -210,6 +240,7 @@ export class LofiSandbox extends HTMLElement {
         this._iframe.onload = () => {
             if (this._iframe?.contentWindow) {
                 this.setupChannel(this._iframe.contentWindow);
+                this.dispatchEvent(new CustomEvent('ready'));
             }
         };
         this._iframe.srcdoc = html;
