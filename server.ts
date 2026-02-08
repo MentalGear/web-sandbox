@@ -40,7 +40,7 @@ serve({
 
     // Host Routes
     // / -> security (Standard Playground)
-    // /virtual-files -> vfs-demo (VFS Demo)
+    // /virtual-files -> virtual-files-demo (VFS Demo)
 
     if (url.pathname === '/') {
         return serveFile(join(ROOT, 'playground/index.html'), 'text/html');
@@ -58,7 +58,7 @@ serve({
     }
 
     if (url.pathname === '/virtual-files') {
-        return serveFile(join(ROOT, 'playground/vfs-demo.html'), 'text/html');
+        return serveFile(join(ROOT, 'playground/virtual-files-demo.html'), 'text/html');
     }
 
     // Serve Playground Assets (state.ts, etc)

@@ -35,11 +35,11 @@ async function build() {
 
     // Copy Playground (as demo)
     await mkdir(join(OUT_DIR, "playground"), { recursive: true });
-    const demoFile = Bun.file("playground/vfs-demo.html");
+    const demoFile = Bun.file("playground/virtual-files-demo.html");
     const securityFile = Bun.file("playground/security.html");
 
     // We need to patch the HTMLs to point to dist files?
-    // vfs-demo.html uses /src/host.ts. In dist it will be /host.js
+    // virtual-files-demo.html uses /src/host.ts. In dist it will be /host.js
     let demoHtml = await demoFile.text();
     demoHtml = demoHtml.replace(/\/src\/host\.ts/g, "/host.js");
     demoHtml = demoHtml.replace(/\/src\/devtools\.ts/g, "/devtools.js");

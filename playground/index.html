@@ -222,13 +222,13 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
     <div id="logs">Waiting for sandbox...</div>
 
     <script src="state.js"></script>
-    <script type="module" src="/src/host.ts"></script>
+    <script type="module" src="/dist/host.js"></script>
     <script type="module">
         console.log("Module 1: System check");
         window.moduleSystemWorking = true;
     </script>
     <script type="module">
-        import { PRESETS } from '/src/lib/presets.ts';
+        import { PRESETS } from '/dist/lib/presets.js';
         console.log("Module 2: Imported PRESETS", PRESETS);
 
         const sandbox = document.getElementById('sandbox');
