@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test('Session ID Exhaustion / DoS', async ({ page }) => {
   // 1. Setup
-  await page.goto('http://localhost:3333/playground/security.html');
+  await page.goto('http://localhost:4444/security');
   await page.waitForFunction(() => window.SandboxControl !== undefined);
 
   // 2. Exploit: Create massive amount of sessions
@@ -21,16 +21,21 @@ test('Session ID Exhaustion / DoS', async ({ page }) => {
                 });
                 count++;
             }
-            window.top.postMessage({ type: 'PWN_INFO', message: 'Created ' + count + ' sessions' }, '*');
+            console.log('PWN_INFO: Created ' + count + ' sessions');
         } catch (e) {
-            window.top.postMessage({ type: 'ERROR', message: e.message }, '*');
+            console.log('ERROR: ' + e.message);
         }
+        console.log('TEST_DONE');
     })();
   `;
 
   // Note: We need to enable scripts to run this loop
-  await page.evaluate(() => window.SandboxControl.sandboxElement.setAttribute('script-unsafe', 'true'));
-  await page.waitForTimeout(1000);
+  await page.evaluate(() => {
+    return new Promise(resolve => {
+        window.SandboxControl.sandboxElement.addEventListener('ready', resolve, { once: true });
+        window.SandboxControl.setConfig({ scriptUnsafe: true });
+    });
+  });
 
   await page.evaluate((code) => {
     window.SandboxControl.execute(code);

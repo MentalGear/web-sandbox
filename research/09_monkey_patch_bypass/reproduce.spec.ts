@@ -5,24 +5,30 @@ test('Monkey Patch Bypass - Mitigated', async ({ page }) => {
   await page.waitForSelector('lofi-sandbox');
   await page.evaluate(() => {
       const s = document.querySelector('lofi-sandbox');
-      s.setConfig({ scriptUnsafe: true });
+      return new Promise(resolve => {
+          s.addEventListener('ready', resolve, { once: true });
+          s.setConfig({ scriptUnsafe: true });
+      });
   });
 
   const payload = `
     fetch('http://example.com')
-        .then(() => window.parent.postMessage({type:'LOG', args:['PWN_SUCCESS']}, '*'))
-        .catch(() => window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*'));
-    setTimeout(() => window.parent.postMessage({type:'LOG', args:['TEST_DONE']}, '*'), 1000);
+        .then(() => console.log('PWN_SUCCESS'))
+        .catch(() => console.log('PWN_FAILURE'));
+    setTimeout(() => console.log('TEST_DONE'), 1000);
   `;
 
   await page.evaluate((code) => {
     const s = document.querySelector('lofi-sandbox');
     s.execute(code);
+  }, payload);
+
+  await page.waitForFunction(() => {
+    const logs = window.SandboxControl.getLogs();
+    return logs.some(l => l.message.includes('TEST_DONE'));
   });
 
-  const logs: string[] = [];
-  page.on('console', msg => logs.push(msg.text()));
-  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+  const logs = await page.evaluate(() => window.SandboxControl.getLogs());
 
-  expect(logs.some(l => l.includes('PWN_SUCCESS'))).toBe(false);
+  expect(logs.some(l => l.message.includes('PWN_SUCCESS'))).toBe(false);
 });

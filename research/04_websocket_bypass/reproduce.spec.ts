@@ -5,28 +5,34 @@ test('WebSocket Bypass - Mitigated', async ({ page }) => {
   await page.waitForSelector('lofi-sandbox');
   await page.evaluate(() => {
       const s = document.querySelector('lofi-sandbox');
-      s.setConfig({ scriptUnsafe: true });
+      return new Promise(resolve => {
+          s.addEventListener('ready', resolve, { once: true });
+          s.setConfig({ scriptUnsafe: true });
+      });
   });
 
   const payload = `
     try {
         const ws = new WebSocket('wss://echo.websocket.events');
-        ws.onopen = () => window.parent.postMessage({type:'LOG', args:['PWN_SUCCESS']}, '*');
-        ws.onerror = () => window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*');
+        ws.onopen = () => console.log('PWN_SUCCESS');
+        ws.onerror = () => console.log('PWN_FAILURE');
     } catch(e) {
-        window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*');
+        console.log('PWN_FAILURE');
     }
-    setTimeout(() => window.parent.postMessage({type:'LOG', args:['TEST_DONE']}, '*'), 1000);
+    setTimeout(() => console.log('TEST_DONE'), 1000);
   `;
 
   await page.evaluate((code) => {
     const s = document.querySelector('lofi-sandbox');
     s.execute(code);
+  }, payload);
+
+  await page.waitForFunction(() => {
+    const logs = window.SandboxControl.getLogs();
+    return logs.some(l => l.message.includes('TEST_DONE'));
   });
 
-  const logs: string[] = [];
-  page.on('console', msg => logs.push(msg.text()));
-  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+  const logs = await page.evaluate(() => window.SandboxControl.getLogs());
 
-  expect(logs.some(l => l.includes('PWN_SUCCESS'))).toBe(false);
+  expect(logs.some(l => l.message.includes('PWN_SUCCESS'))).toBe(false);
 });

@@ -7,7 +7,51 @@
     </style>
 </head>
 <body>
-    <lofi-sandbox></lofi-sandbox>
+    <lofi-sandbox id="sandbox"></lofi-sandbox>
     <script type="module" src="/src/host.ts"></script>
+    <script type="module">
+        import { LofiSandbox } from '/src/host.ts';
+
+        console.log("Lofi Sandbox Playground Loaded");
+        const sandbox = document.getElementById('sandbox');
+        const capturedLogs = [];
+
+        window.addEventListener('sandbox-log', (e) => {
+            const { type, level, args, message } = e.detail;
+            capturedLogs.push({
+                type: 'LOG',
+                timestamp: Date.now(),
+                source: 'inner',
+                level: level || 'log',
+                area: 'user-code',
+                message: message || (args ? args.join(' ') : '')
+            });
+            console.log("Captured Log:", capturedLogs[capturedLogs.length - 1]);
+        });
+
+        window.SandboxControl = {
+            sandboxElement: sandbox,
+            execute: (code) => {
+                sandbox.execute(code);
+            },
+            setConfig: (config) => {
+                // If config has scriptUnsafe, translate to correct property if needed
+                // But tests were calling `setConfig({ scriptUnsafe: true })` before?
+                // Actually they were calling `setAttribute` in my updated tests.
+                // But originally they called `setConfig`.
+                sandbox.setConfig(config);
+                // Dispatch 'ready' event manually if needed, or rely on sandbox logic?
+                // LofiSandbox doesn't seem to emit 'ready'. Let's emit it for compatibility.
+                setTimeout(() => sandbox.dispatchEvent(new CustomEvent('ready')), 100);
+            },
+            getLogs: () => {
+                return capturedLogs;
+            },
+            clearLogs: () => {
+                capturedLogs.length = 0;
+            }
+        };
+        console.log("SandboxControl exposed");
+    </script>
 </body>
 </html>

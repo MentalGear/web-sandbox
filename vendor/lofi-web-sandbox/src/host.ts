@@ -139,6 +139,7 @@ export class LofiSandbox extends HTMLElement {
         const blob = new Blob([script], { type: 'application/javascript' });
         this._worker = new Worker(URL.createObjectURL(blob));
         this.setupChannel(this._worker);
+        setTimeout(() => this.dispatchEvent(new CustomEvent('ready')), 0);
     }
 
     private createIframe() {
@@ -177,6 +178,23 @@ export class LofiSandbox extends HTMLElement {
     <meta http-equiv="Content-Security-Policy" content="${csp}">
     ${vfsBase ? `<base href="${vfsBase}">` : ''}
     <script>
+        // Defense-in-depth: Block nested iframes
+        const originalCreateElement = document.createElement;
+        document.createElement = function(tagName, options) {
+            if (tagName.toLowerCase() === 'iframe') {
+                throw new Error("Nested iframes are blocked.");
+            }
+            return originalCreateElement.call(document, tagName, options);
+        };
+
+        // Defense-in-depth: Hide Service Workers
+        try {
+            Object.defineProperty(window.Navigator.prototype, 'serviceWorker', {
+                get: function() { return undefined; },
+                configurable: true
+            });
+        } catch (e) {}
+
         window.addEventListener('message', (event) => {
             if (event.data?.type === 'INIT_PORT') {
                 const port = event.ports[0];
@@ -210,6 +228,7 @@ export class LofiSandbox extends HTMLElement {
         this._iframe.onload = () => {
             if (this._iframe?.contentWindow) {
                 this.setupChannel(this._iframe.contentWindow);
+                this.dispatchEvent(new CustomEvent('ready'));
             }
         };
         this._iframe.srcdoc = html;

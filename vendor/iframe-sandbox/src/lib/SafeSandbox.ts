@@ -105,7 +105,11 @@ class SafeSandbox extends HTMLElement {
     }
 
     execute(code: string): void {
-        if (!this._iframe.contentWindow || !this._currentSessionOrigin) return
+        console.log(`[SafeSandbox] Executing code: ${code.substring(0, 50)}...`);
+        if (!this._iframe.contentWindow || !this._currentSessionOrigin) {
+            console.error("[SafeSandbox] Execute failed: iframe or origin missing");
+            return
+        }
         this._iframe.contentWindow.postMessage(
             { type: "EXECUTE", code },
             this._currentSessionOrigin,
@@ -139,6 +143,7 @@ class SafeSandbox extends HTMLElement {
     }
 
     private _onMessage(event: MessageEvent): void {
+        console.log(`[SafeSandbox] Msg from ${event.origin} (Expected: ${this._currentSessionOrigin})`, event.data);
         if (!this._currentSessionOrigin) return
         if (event.origin !== this._currentSessionOrigin) return
 

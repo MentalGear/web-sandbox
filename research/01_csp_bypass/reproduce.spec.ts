@@ -5,7 +5,10 @@ test('CSP Bypass via Nested Iframe - Mitigated', async ({ page }) => {
   await page.waitForSelector('lofi-sandbox');
   await page.evaluate(() => {
       const s = document.querySelector('lofi-sandbox');
-      s.setConfig({ scriptUnsafe: true });
+      return new Promise(resolve => {
+          s.addEventListener('ready', resolve, { once: true });
+          s.setConfig({ scriptUnsafe: true });
+      });
   });
 
   const payload = `
@@ -15,15 +18,15 @@ test('CSP Bypass via Nested Iframe - Mitigated', async ({ page }) => {
           iframe.src = "javascript:alert(1)";
           document.body.appendChild(iframe);
 
-          iframe.onload = () => window.parent.postMessage({type:'LOG', args:['PWN_SUCCESS']}, '*');
-          iframe.onerror = () => window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*');
+          iframe.onload = () => console.log('PWN_SUCCESS');
+          iframe.onerror = () => console.log('PWN_FAILURE');
 
           // Wait a bit for async load
           setTimeout(() => {
-              window.parent.postMessage({type:'LOG', args:['TEST_DONE']}, '*');
+              console.log('TEST_DONE');
           }, 500);
       } catch (e) {
-          window.parent.postMessage({type:'LOG', args:['TEST_DONE']}, '*');
+          console.log('TEST_DONE');
       }
     })();
   `;
@@ -31,30 +34,16 @@ test('CSP Bypass via Nested Iframe - Mitigated', async ({ page }) => {
   await page.evaluate((code) => {
     const s = document.querySelector('lofi-sandbox');
     s.execute(code);
-  });
+  }, payload);
 
   // 1. Wait for completion signal (Heartbeat) - ensures code ran
-  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+  await page.waitForFunction(() => {
+    const logs = window.SandboxControl.getLogs();
+    return logs.some(l => l.message.includes('TEST_DONE'));
+  });
 
-  // 2. Assert NO success signal was logged
-  // We check the *history* of logs or just ensure current state is clean.
-  // Playwright's console event listener is live.
-  // But we can check if we missed it? No, we started listening implicitly?
-  // Better: Gather logs during execution.
-
-  // Actually, checking history is hard in Playwright unless we buffered it.
-  // But we know 'PWN_SUCCESS' would happen *before* 'TEST_DONE' in this logic?
-  // Or roughly same time.
-  // Let's assume if we reached TEST_DONE without crashing, and didn't see PWN_SUCCESS *yet*, we are good?
-  // Risky.
-
-  // Better:
-  const logs: string[] = [];
-  page.on('console', msg => logs.push(msg.text()));
-
-  // Wait for DONE
-  await page.waitForEvent('console', m => m.text().includes('TEST_DONE'));
+  const logs = await page.evaluate(() => window.SandboxControl.getLogs());
 
   // Verify
-  expect(logs.some(l => l.includes('PWN_SUCCESS'))).toBe(false);
+  expect(logs.some(l => l.message.includes('PWN_SUCCESS'))).toBe(false);
 });
