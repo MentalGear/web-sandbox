@@ -27,10 +27,6 @@ serve({
     // Virtual Files Domain
     if (host.startsWith('virtual-files.')) {
         const path = url.pathname === '/' ? '/hub.html' : url.pathname;
-        // Map /hub.html -> src/virtual-files/hub.html
-        // Map /sw.ts -> src/virtual-files/sw.ts
-        // Since path includes slash, join works correctly if relative
-        // But url.pathname might be /sw.ts
         const filePath = join(ROOT, 'src/virtual-files', path);
 
         if (filePath.endsWith('.ts')) {
@@ -43,10 +39,18 @@ serve({
     }
 
     // Host Routes
+    // / -> security (Standard Playground)
+    // /virtual-files -> vfs-demo (VFS Demo)
+
     if (url.pathname === '/') {
+        return serveFile(join(ROOT, 'playground/security.html'), 'text/html');
+    }
+
+    if (url.pathname === '/virtual-files') {
         return serveFile(join(ROOT, 'playground/vfs-demo.html'), 'text/html');
     }
 
+    // Backward compatibility for existing tests using /security
     if (url.pathname === '/security') {
         return serveFile(join(ROOT, 'playground/security.html'), 'text/html');
     }
@@ -78,5 +82,5 @@ serve({
   }
 });
 console.log("Lofi Server running on http://localhost:4444");
-console.log("- VFS Demo: http://localhost:4444/");
-console.log("- Security Host: http://localhost:4444/security");
+console.log("- Playground: http://localhost:4444/");
+console.log("- VFS Demo: http://localhost:4444/virtual-files");

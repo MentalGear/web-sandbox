@@ -40,7 +40,6 @@ export class LofiSandbox extends HTMLElement {
 
     registerFiles(files: Record<string, string | Uint8Array>) {
         if (this._hubFrame && this._hubFrame.contentWindow) {
-            // Resolve relative URLs to absolute for postMessage
             let targetOrigin = this._config.virtualFilesUrl || '*';
             if (targetOrigin.startsWith('/')) {
                 targetOrigin = new URL(targetOrigin, window.location.origin).origin;
@@ -73,12 +72,11 @@ export class LofiSandbox extends HTMLElement {
                 console.warn("[Sandbox] Execution Timeout - Terminating Worker");
                 window.dispatchEvent(new CustomEvent('sandbox-log', { detail: { type: 'LOG', level: 'error', args: ['Execution Timeout'] } }));
 
-                // Terminate and Restart
                 if (this._worker) {
                     this._worker.terminate();
                     this._worker = null;
                     if (this._port) { this._port.close(); this._port = null; }
-                    this.spawnWorker(); // Restart
+                    this.spawnWorker();
                 }
             }, this._config.executionTimeout);
         }
@@ -88,10 +86,6 @@ export class LofiSandbox extends HTMLElement {
         const channel = new MessageChannel();
         this._port = channel.port1;
         this._port.onmessage = (e) => {
-            if (this._config.mode === 'worker' && this._config.executionTimeout) {
-                // Activity could reset timeout if desired
-            }
-
             if (e.data.type === 'LOG') {
                 window.dispatchEvent(new CustomEvent('sandbox-log', { detail: e.data }));
             }
@@ -155,18 +149,21 @@ export class LofiSandbox extends HTMLElement {
 
         const vfsBase = this._config.virtualFilesUrl ? `${this._config.virtualFilesUrl}/${this._sessionId}/` : '';
         const allow = this._config.allow || [];
-        const connectSrc = allow.length > 0 ? allow.join(" ") : "'none'";
+
+        // Logic fix: Don't use 'none' if vfsBase is present
+        let connectSrc = allow.length > 0 ? allow.join(" ") : "";
+        if (!connectSrc && !vfsBase) connectSrc = "'none'";
+
         const scriptDirectives = this._config.scriptUnsafe
             ? "'self' 'unsafe-inline' 'unsafe-eval'"
             : "'self' 'unsafe-inline'";
 
-        // Fix CSP: Allow vfsBase in base-uri
         const csp = [
             "default-src 'none'",
             `script-src ${scriptDirectives} ${vfsBase ? vfsBase : ''}`,
             `connect-src ${connectSrc} ${vfsBase ? vfsBase : ''}`,
             "style-src 'unsafe-inline'",
-            `base-uri 'none' ${vfsBase ? vfsBase : ''}`, // Allow the specific VFS base
+            `base-uri 'none' ${vfsBase ? vfsBase : ''}`,
             "frame-src 'none'",
             "object-src 'none'",
             "form-action 'none'"

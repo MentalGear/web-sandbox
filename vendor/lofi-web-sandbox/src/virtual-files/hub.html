@@ -5,28 +5,44 @@
 </head>
 <body>
     <script>
+        let messageQueue = [];
+        let isReady = false;
+
         // Register SW
         if ('serviceWorker' in navigator) {
-            // Register SW with relative path ./sw.ts (served by index.ts)
-            // If hub is at /src/virtual-files/hub.html, sw is at /src/virtual-files/sw.ts
             navigator.serviceWorker.register('./sw.ts')
                 .then(reg => {
                     console.log("[Hub] SW Registered");
-                    if (reg.active) return;
-                    navigator.serviceWorker.addEventListener('controllerchange', () => {
-                        console.log("[Hub] SW Activated");
-                    });
+
+                    const checkController = () => {
+                        if (navigator.serviceWorker.controller) {
+                            isReady = true;
+                            console.log("[Hub] SW Ready (Controller Active)");
+                            flushQueue();
+                        }
+                    };
+
+                    if (reg.active && navigator.serviceWorker.controller) {
+                        checkController();
+                    } else {
+                        navigator.serviceWorker.addEventListener('controllerchange', checkController);
+                    }
                 })
                 .catch(err => console.error("[Hub] SW Registration Failed", err));
         }
 
-        // Listen for messages from Host
-        window.addEventListener('message', (event) => {
+        function flushQueue() {
+            while (messageQueue.length > 0) {
+                const event = messageQueue.shift();
+                processMessage(event);
+            }
+        }
+
+        function processMessage(event) {
             if (event.data?.type === 'PUT_FILES') {
                 const { sessionId, files } = event.data;
                 console.log("[Hub] Received files for", sessionId);
 
-                // Send to SW
                 if (navigator.serviceWorker.controller) {
                     navigator.serviceWorker.controller.postMessage({
                         type: 'PUT_FILES',
@@ -34,8 +50,18 @@
                         files
                     });
                 } else {
-                    console.warn("[Hub] SW not ready");
+                    console.warn("[Hub] Lost message (Race condition)");
                 }
+            }
+        }
+
+        // Listen for messages from Host
+        window.addEventListener('message', (event) => {
+            if (!isReady) {
+                console.log("[Hub] Queuing message...");
+                messageQueue.push(event);
+            } else {
+                processMessage(event);
             }
         });
     </script>
