@@ -11,7 +11,7 @@ export const PRESETS = {
 fetch("https://jsonplaceholder.typicode.com/todos/1")
   .then(r => r.json())
   .then(j => console.log("Fetched:", j));`,
-        rules: { allow: ["jsonplaceholder.typicode.com"], scriptUnsafe: true }
+        rules: { allow: ["https://jsonplaceholder.typicode.com"], scriptUnsafe: true }
     },
     "csp-bypass": {
         id: "csp-bypass",

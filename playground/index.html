@@ -186,22 +186,15 @@
         <div class="card">
             <span class="label">Untrusted Source Code:</span>
             <textarea id="code" oninput="onCodeInput()" style="height: 250px;">
-console.log("Testing fetch...");
 
-// The sandbox firewall reports all network activity automatically to the logs!
-fetch('https://jsonplaceholder.typicode.com/todos/1');
-
-fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file found:", t));
-</textarea>
+            </textarea>
 
             <div class="controls-header" style="justify-content: flex-start;">
                 <span class="label">Network Rules (JSON):</span>
             </div>
             <textarea id="rulesEditor" oninput="onRulesInput()" style="height: 150px; font-family: monospace; background: #1a1a1a;">
-{
-  "allow": ["jsonplaceholder.typicode.com"]
-}
-</textarea>
+
+            </textarea>
 
             <div class="controls">
                 <button onclick="runCode()" style="background: var(--primary);">Run Code</button>
@@ -221,14 +214,15 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
     </div>
     <div id="logs">Waiting for sandbox...</div>
 
-    <script src="state.js"></script>
-    <script type="module" src="../dist/host.js"></script>
+    <script type="module" src="state.ts"></script>
+    <script type="module" src="@src/host.ts"></script>
     <script type="module">
         console.log("Module 1: System check");
         window.moduleSystemWorking = true;
     </script>
+    
     <script type="module">
-        import { PRESETS } from '../dist/lib/presets.js';
+        import { PRESETS } from '@src/lib/presets.ts';
         console.log("Module 2: Imported PRESETS", PRESETS);
 
         const capturedLogs = [];
@@ -398,7 +392,9 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
         window.runCode = () => {
             const code = document.getElementById('code').value;
             // Ensure any pending rules are applied before running
+            window.appendLocalLog('Applying network rules ...');
             window.applyNetworkRules();
+
             window.appendLocalLog('Executing code...');
             sandbox.execute(code);
         }

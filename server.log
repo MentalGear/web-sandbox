@@ -1,4 +1,4 @@
-$ bun run server.ts
+$ bun run dev-server.ts
 Lofi Server running on http://localhost:4444
 - Playground: http://localhost:4444/
 - VFS Demo: http://localhost:4444/virtual-files

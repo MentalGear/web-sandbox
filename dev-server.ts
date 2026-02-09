@@ -52,7 +52,7 @@ serve({
   }
 });
 
-console.log(`Lofi Server running on http://localhost:${PORT}`);
+console.log(`\n Lofi Server running on http://localhost:${PORT}\n`);
 console.log(`- Playground: http://localhost:${PORT}/`);
 console.log(`- Virtual Files Demo: http://localhost:${PORT}/virtual-files`);
 

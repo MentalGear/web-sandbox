@@ -1,6 +1,6 @@
 # Local-First Secure Sandbox Architecture
 
-This document outlines a fully client-side, local-first architecture that removes the need for a dynamic server (no `bun server.ts` routing logic) while maintaining strict security isolation.
+This document outlines a fully client-side, local-first architecture that removes the need for a dynamic server (no `bun dev-server.ts` routing logic) while maintaining strict security isolation.
 
 ## Core Concept: `srcdoc` + Opaque Origin + VFS Domain
 

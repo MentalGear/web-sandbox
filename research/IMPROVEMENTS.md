@@ -8,7 +8,7 @@ Based on the comparison with other libraries (Zoid, Figma, Penpal) and the recen
 **Lesson**: Robust systems (like Cloudflare Workers) apply strict quotas.
 
 **Action Plan**:
-*   **Rate Limiting**: Implement a middleware in `server.ts` to limit `POST /api/session` requests per IP address (e.g., 10/minute).
+*   **Rate Limiting**: Implement a middleware in `dev-server.ts` to limit `POST /api/session` requests per IP address (e.g., 10/minute).
 *   **TTL (Time-To-Live)**: Add a `lastAccessed` timestamp to the `SessionConfig` interface. Run a cleanup interval (garbage collector) every minute to delete sessions older than 5 minutes.
 *   **LRU Cache**: Replace the standard `Map` with an LRU (Least Recently Used) cache implementation to enforce a hard memory limit (e.g., max 1000 active sessions).
 

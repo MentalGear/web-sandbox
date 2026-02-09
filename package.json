@@ -2,16 +2,17 @@
   "name": "lofi-web-sandbox",
   "version": "1.0.0",
   "description": "Local-first web sandbox",
-  "main": "server.ts",
+  "main": "dev-server.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run server.ts",
+    "dev": "vite dev",
+    "build": "vite build",
     "test": "bun x playwright test --config=research/playwright.config.ts",
-    "build-dist": "bun build ./src/host.ts ./src/lib/presets.ts --outdir ./dist --target browser",
-    "playground": "bun build-dist --watch & bun x serve ."
+    "build-dist": "bun build ./src/host.ts ./src/lib/presets.ts --outdir ./dist --target browser --minify --sourcemap"
   },
   "devDependencies": {
+    "vite": "^6.0.0",
     "playwright": "^1.58.1",
     "@playwright/test": "^1.58.1",
     "@types/bun": "^1.3.8"

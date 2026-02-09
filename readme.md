@@ -15,7 +15,7 @@ Lofi Sandbox provides a mechanism to run untrusted JavaScript code safely in the
 **Dev Server / Playground**
 
 ```bash
-bun start
+bun dev
 ```
 *   **Playground:** [http://localhost:4444/](http://localhost:4444/)
 *   **VFS Demo:** [http://localhost:4444/virtual-files](http://localhost:4444/virtual-files)
@@ -40,7 +40,7 @@ Navigate to [http://localhost:4444/](http://localhost:4444/).
 
 *   **`src/host.ts`**: The core implementation of the `<lofi-sandbox>` custom element. It handles iframe creation, CSP generation, and communication.
 *   **`src/lib/presets.ts`**: A shared library of test scenarios used by both the Playground and automated tests.
-*   **`server.ts`**: The Bun web server that serves static files and transpiles TypeScript.
+*   **`dev-server.ts`**: The Bun web server that serves static files and transpiles TypeScript.
 *   **`research/`**: Playwright test suites for security regression testing.
 
 ## Security Mitigations
