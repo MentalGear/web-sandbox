@@ -9,7 +9,7 @@
     "start": "bun run server.ts",
     "test": "bun x playwright test --config=research/playwright.config.ts",
     "build-dist": "bun build ./src/host.ts ./src/lib/presets.ts --outdir ./dist --target browser",
-    "playground": "bun build-dist --watch & bun x serve playground"
+    "playground": "bun build-dist --watch & bun x serve ."
   },
   "devDependencies": {
     "playwright": "^1.58.1",

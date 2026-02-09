@@ -222,15 +222,16 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
     <div id="logs">Waiting for sandbox...</div>
 
     <script src="state.js"></script>
-    <script type="module" src="/dist/host.js"></script>
+    <script type="module" src="../dist/host.js"></script>
     <script type="module">
         console.log("Module 1: System check");
         window.moduleSystemWorking = true;
     </script>
     <script type="module">
-        import { PRESETS } from '/dist/lib/presets.js';
+        import { PRESETS } from '../dist/lib/presets.js';
         console.log("Module 2: Imported PRESETS", PRESETS);
 
+        const capturedLogs = [];
         const sandbox = document.getElementById('sandbox');
         const logsDiv = document.getElementById('logs');
         let firstLog = true;
@@ -439,11 +440,6 @@ fetch("/virtual.txt").then(r => r.text()).then(t => console.log("Virtual file fo
                 document.getElementById('logs').innerHTML = '';
             }
         };
-        // Define capturedLogs if I forgot it
-        const capturedLogs = [];
-        // Wait, where was capturedLogs defined?
-        // Ah, I see I missed adding it back when I refactored the file earlier?
-        // Let's check.
         console.log("SandboxControl exposed");
     </script>
 </body>

@@ -55,30 +55,30 @@ window.playground = {
     /**
      * Filters the log view based on categories.
      */
-    currentFilter: "all",
-    setFilter(category) {
-        this.currentFilter = category
-        const logs = document.getElementById("logs")
-        const entries = logs.getElementsByClassName("log-entry")
+    // currentFilter: "all",
+    // setFilter(category) {
+    //     this.currentFilter = category
+    //     const logs = document.getElementById("logs")
+    //     const entries = logs.getElementsByClassName("log-entry")
 
-        // Update button styles
-        document.querySelectorAll(".filter-btn").forEach((btn) => {
-            btn.style.opacity = btn.id === `filter-${category}` ? "1" : "0.5"
-            btn.style.border =
-                btn.id === `filter-${category}`
-                    ? "1px solid var(--primary)"
-                    : "1px solid transparent"
-        })
+    //     // Update button styles
+    //     document.querySelectorAll(".filter-btn").forEach((btn) => {
+    //         btn.style.opacity = btn.id === `filter-${category}` ? "1" : "0.5"
+    //         btn.style.border =
+    //             btn.id === `filter-${category}`
+    //                 ? "1px solid var(--primary)"
+    //                 : "1px solid transparent"
+    //     })
 
-        for (const entry of entries) {
-            const entryCategory = entry.getAttribute("data-category")
-            if (category === "all" || entryCategory === category) {
-                entry.style.display = "block"
-            } else {
-                entry.style.display = "none"
-            }
-        }
-    },
+    //     for (const entry of entries) {
+    //         const entryCategory = entry.getAttribute("data-category")
+    //         if (category === "all" || entryCategory === category) {
+    //             entry.style.display = "block"
+    //         } else {
+    //             entry.style.display = "none"
+    //         }
+    //     }
+    // },
 
     /**
      * Adds category metadata to log entries for filtering.
