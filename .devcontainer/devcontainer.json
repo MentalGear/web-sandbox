@@ -5,7 +5,7 @@
     // "context": "..",
     "dockerFile": "dockerfile",
     // need to reload bash / shell profile to ensure bun cmd is available after install through dockerfile
-    "postCreateCommand": "source /home/vscode/.bashrc && git lfs checkout && bun install",
+    "postCreateCommand": "source /home/vscode/.bashrc && bun install",
     // for security to not run in container as root
     "remoteUser": "vscode",
     // not needed to specify as ports should be auto-forwarded

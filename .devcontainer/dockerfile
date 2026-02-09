@@ -16,6 +16,9 @@ RUN curl -fsSL https://bun.sh/install | bash
 # add bun to path
 ENV BUN_INSTALL="/home/vscode/.bun"
 ENV PATH="$BUN_INSTALL/bin:$PATH"
+# add better terminal naming (otherwise too long in devcontainer) 
+# We append it to .bashrc so it loads every time you open a terminal.
+RUN echo "export PS1='\[\033[01;32m\]\W\[\033[00m\] \$ '" >> /home/vscode/.bashrc
 
 # server
 # NO need to expose in file, VSCode will auto forward (if exposed, VScode will also block these ports, even if the vscode is only open in devcontainer mode)
@@ -24,11 +27,3 @@ ENV PATH="$BUN_INSTALL/bin:$PATH"
 # EXPOSE 5173
 
 WORKDIR /workspaces/
-
-# add directory where trail bin located to search path
-# DO NOT ADD TO PATH, as trail binary needs to have correct path/traildepot subfolder
-# ENV TRAIL_BIN_LOCATION="/workspaces/chinese-learning-app/backend"
-# ENV PATH="$TRAIL_BIN_LOCATION:$PATH"
-
-# Copy any necessary files or configurations here
-# COPY ./path/to/your/files /path/in/container
