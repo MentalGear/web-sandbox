@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test('Basic Sandbox Interaction & Logging', async ({ page }) => {
   page.on('console', msg => console.log('PAGE LOG:', msg.text()));
   page.on('pageerror', err => console.log('PAGE ERROR:', err));
-  await page.goto('http://localhost:4444/security');
+  await page.goto('http://localhost:4444/');
   await page.waitForFunction(() => window.SandboxControl !== undefined);
 
   // Need to enable unsafe-eval for 'execute' to work (new Function used in inner-frame.ts)
@@ -31,7 +31,7 @@ test('Basic Sandbox Interaction & Logging', async ({ page }) => {
   // Network Logging
   await page.evaluate(() => {
     window.SandboxControl.execute(`
-        fetch('/security').then(r => console.log('Fetch Done: ' + r.status));
+        fetch('/').then(r => console.log('Fetch Done: ' + r.status));
     `);
   });
 

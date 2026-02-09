@@ -36,7 +36,6 @@ async function build() {
     // Copy Playground (as demo)
     await mkdir(join(OUT_DIR, "playground"), { recursive: true });
     const demoFile = Bun.file("playground/virtual-files-demo.html");
-    const securityFile = Bun.file("playground/security.html");
 
     // We need to patch the HTMLs to point to dist files?
     // virtual-files-demo.html uses /src/host.ts. In dist it will be /host.js
@@ -46,7 +45,6 @@ async function build() {
     demoHtml = demoHtml.replace(/\/src\/virtual-files/g, "/virtual-files"); // Use built VFS path
 
     await Bun.write(join(OUT_DIR, "index.html"), demoHtml);
-    await Bun.write(join(OUT_DIR, "playground/security.html"), securityFile); // This one imports src too?
 
     // Also copy project assets
     await mkdir(join(OUT_DIR, "project"), { recursive: true });

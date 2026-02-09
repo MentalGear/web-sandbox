@@ -3,7 +3,7 @@ import { PRESETS } from '../../src/lib/presets';
 
 test('Outer Frame DOM Tampering - Mitigated', async ({ page }) => {
   page.on('console', msg => console.log(msg.text()));
-  await page.goto('http://localhost:4444/security');
+  await page.goto('http://localhost:4444/');
   await page.waitForSelector('lofi-sandbox');
   console.log("Setting script-unsafe...");
   await page.evaluate(() => {

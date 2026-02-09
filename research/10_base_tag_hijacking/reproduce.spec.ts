@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { PRESETS } from '../../src/lib/presets';
 
 test('Base Tag Hijacking', async ({ page }) => {
-  await page.goto('http://localhost:4444/security');
+  await page.goto('http://localhost:4444/');
   await page.waitForFunction(() => window.SandboxControl !== undefined);
   await page.evaluate(() => {
     return new Promise(resolve => {

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('Lofi Sandbox VFS Loading', async ({ page }) => {
-  await page.goto('http://localhost:4444/security');
+  await page.goto('http://localhost:4444/');
   await page.waitForSelector('lofi-sandbox');
 
   // Configure VFS

@@ -3,7 +3,7 @@ import { PRESETS } from '../../src/lib/presets';
 
 test('Protocol Handler Registration', async ({ page }) => {
   // 1. Setup
-  await page.goto('http://localhost:4444/security');
+  await page.goto('http://localhost:4444/');
   await page.waitForFunction(() => window.SandboxControl !== undefined);
   await page.evaluate(() => {
     return new Promise(resolve => {
