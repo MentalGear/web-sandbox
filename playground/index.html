@@ -52,17 +52,13 @@
 
 
     <script type="module" src="./state.ts"></script>
-    <script type="module">
-        console.log("Module 1: System check");
-        window.moduleSystemWorking = true;
-    </script>
     
     <script type="module">
         import { LofiSandbox } from '@src/host.ts';
         customElements.define("lofi-sandbox", LofiSandbox);
         
         import { PRESETS } from '@src/lib/presets.ts';
-        console.log("Module 2: Imported PRESETS", PRESETS);
+        // console.log("Imported PRESETS", PRESETS);
 
         const capturedLogs = [];
         const sandbox = document.getElementById('sandbox');
@@ -87,9 +83,9 @@
         console.log("Presets populated");
 
         window.appendLocalLog = (msg) => {
+            // playground events added to logs
             appendLog({ source: 'playground', message: msg, level: 'log' });
         };
-        console.log("Defined appendLocalLog");
 
         // Listen for internal log events dispatch on window by host.ts
         window.addEventListener('sandbox-log', (event) => {
@@ -116,7 +112,7 @@
             }
 
             const logEntry = {
-                source: 'inner',
+                source: 'iframe-sandbox',
                 level: data.level,
                 message: message
             };
@@ -170,7 +166,7 @@
 
             // Tag for filtering
             if (window.playground && window.playground.tagLog) {
-                const category = area === 'network' ? 'network' : (area === 'security' ? 'security' : (source === 'inner' ? 'user-code' : 'host'));
+                const category = area === 'network' ? 'network' : (area === 'security' ? 'security' : (source === 'iframe-sandbox' ? 'user-code' : 'host'));
                 window.playground.tagLog(div, category);
             }
         }
@@ -289,7 +285,7 @@
                 document.getElementById('logs').innerHTML = '';
             }
         };
-        console.log("SandboxControl exposed");
+        console.log("SandboxControl exposed for automatic e2e testing");
     </script>
 </body>
 <style>
