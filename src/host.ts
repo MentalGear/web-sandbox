@@ -30,6 +30,7 @@ export interface SandboxConfig {
 export class LofiSandbox extends HTMLElement {
     private _iframe: HTMLIFrameElement | null = null;
     private _worker: Worker | null = null;
+    private _workerUrl: string | null = null;
     private _config: SandboxConfig = { mode: 'iframe', capabilities: [] };
     private _sessionId: string;
     private _port: MessagePort | null = null;
@@ -102,8 +103,7 @@ export class LofiSandbox extends HTMLElement {
                 window.dispatchEvent(new CustomEvent('sandbox-log', { detail: { type: 'LOG', level: 'error', args: ['Execution Timeout'] } }));
 
                 if (this._worker) {
-                    this._worker.terminate();
-                    this._worker = null;
+                    this._cleanupWorker();
                     if (this._port) { this._port.close(); this._port = null; }
                     this.spawnWorker();
                 }
@@ -134,10 +134,21 @@ export class LofiSandbox extends HTMLElement {
         }
     }
 
+    private _cleanupWorker() {
+        if (this._worker) {
+            this._worker.terminate();
+            this._worker = null;
+        }
+        if (this._workerUrl) {
+            URL.revokeObjectURL(this._workerUrl);
+            this._workerUrl = null;
+        }
+    }
+
     private initialize() {
         this._queuedMessages = []; // Clear queue for the old environment
         if (this._iframe) { this._iframe.remove(); this._iframe = null; }
-        if (this._worker) { this._worker.terminate(); this._worker = null; }
+        this._cleanupWorker();
         if (this._port) { this._port.close(); this._port = null; }
         if (this._timeoutId) clearTimeout(this._timeoutId);
 
@@ -174,7 +185,13 @@ export class LofiSandbox extends HTMLElement {
             };
         `;
         const blob = new Blob([script], { type: 'application/javascript' });
-        this._worker = new Worker(URL.createObjectURL(blob));
+        this._workerUrl = URL.createObjectURL(blob);
+        this._worker = new Worker(this._workerUrl);
+        this._worker.onerror = (err) => {
+            window.dispatchEvent(new CustomEvent('sandbox-log', { 
+                detail: { type: 'LOG', level: 'error', args: [`Worker Error: ${err.message}`] } 
+            }));
+        };
         this.setupChannel(this._worker);
         setTimeout(() => this.dispatchEvent(new CustomEvent('ready')), 0);
     }
@@ -200,6 +217,7 @@ export class LofiSandbox extends HTMLElement {
         const baseUri = vfsBase || "'none'";
 
         const csp = [
+            "upgrade-insecure-requests",
             "default-src 'none'",
             `script-src ${scriptSrc}`,
             `connect-src ${connectSrc}`,
@@ -208,6 +226,7 @@ export class LofiSandbox extends HTMLElement {
             "img-src 'none'",
             "font-src 'none'",
             "media-src 'none'",
+            "worker-src 'none'",
             "manifest-src 'none'",
             "prefetch-src 'none'",
             "frame-src 'none'",
