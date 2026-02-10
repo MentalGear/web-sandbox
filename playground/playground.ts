@@ -3,15 +3,47 @@ import "./state.ts"
 import { LofiSandbox } from '@src/host.ts';
 customElements.define("lofi-sandbox", LofiSandbox);
 
+import { SandboxDevTools } from '@src/devtools.ts';
 import { PRESETS } from '@src/lib/presets.ts';
 // console.log("Imported PRESETS", PRESETS);
 
 const capturedLogs = [];
 const sandbox = document.getElementById('sandbox');
+const vfSandbox = document.getElementById('virtual-files-sandbox');
 const logsDiv = document.getElementById('logs');
 let firstLog = true;
 
 console.log("Elements found:", sandbox, logsDiv);
+
+// Initialize DevTools
+// We attach devtools to the virtual-files sandbox as it's more relevant there
+const devtools = new SandboxDevTools(vfSandbox as LofiSandbox);
+const toggleBtn = document.getElementById('toggleDevTools');
+if (toggleBtn) {
+    toggleBtn.onclick = () => devtools.toggle();
+}
+
+// Listen for readiness on the sandbox elements directly
+sandbox.addEventListener('ready', () => {
+    document.getElementById('sandbox-status').textContent = 'Sandbox: Ready';
+    document.getElementById('sandbox-status').style.color = '#4caf50';
+    window.appendLocalLog('Direct sandbox is ready!');
+    
+    const runBtn = document.getElementById('runButton') as HTMLButtonElement;
+    if (runBtn) runBtn.disabled = false;
+});
+
+vfSandbox.addEventListener('ready', () => {
+    const vfStatus = document.getElementById('virtual-files-status');
+    if (vfStatus) {
+        vfStatus.textContent = 'Virtual-Files: Active';
+        vfStatus.style.color = '#4caf50';
+    }
+    window.appendLocalLog('Virtual-files sandbox is ready!');
+    
+    const runVfBtn = document.getElementById('runVirtualButton') as HTMLButtonElement;
+    if (runVfBtn) runVfBtn.disabled = false;
+});
 
 // Populate presets dropdown
 const select = document.getElementById('presetSelect');
@@ -45,20 +77,9 @@ window.addEventListener('sandbox-log', (event) => {
 
     const message = data.message || (data.args ? data.args.join(' ') : '');
 
-    if (message === 'Iframe Ready' || message === 'Worker Ready') {
-        document.getElementById('sandbox-status').textContent = 'Sandbox: Ready';
-        document.getElementById('sandbox-status').style.color = '#4caf50';
-        appendLocalLog('Sandbox is ready!');
-
-        const runBtn = document.getElementById('runButton');
-        if (runBtn) {
-            runBtn.disabled = false;
-        }
-        return;
-    }
-
+    const sourceName = event.target === sandbox ? 'sandbox' : 'virtual-files-sandbox';
     const logEntry = {
-        source: 'iframe-sandbox',
+        source: sourceName,
         level: data.level,
         message: message
     };
@@ -165,7 +186,16 @@ window.applyNetworkRules = () => {
         rulesEditor.classList.remove('error-border');
         rulesError.textContent = '';
 
-        sandbox.setConfig(rules);
+        // Apply to both sandboxes
+        (sandbox as LofiSandbox).setConfig(rules);
+        
+        const vfConfig = {
+            ...rules,
+            virtualFilesUrl: window.location.hostname === 'localhost'
+                ? '/src/virtual-files'
+                : 'http://virtual-files.localhost:4444'
+        };
+        (vfSandbox as LofiSandbox).setConfig(vfConfig);
         
         // Visual feedback that we are resetting the environment
         document.getElementById('sandbox-status').textContent = 'Sandbox: Initializing...';
@@ -185,9 +215,39 @@ window.runCode = () => {
     // Sync rules immediately
     window.applyNetworkRules();
 
-    const code = document.getElementById('code').value;
-    window.appendLocalLog('Executing code ...');
-    sandbox.execute(code);
+    const code = (document.getElementById('code') as HTMLTextAreaElement).value;
+    window.appendLocalLog('Executing code in sandbox...');
+    (sandbox as LofiSandbox).execute(code);
+}
+
+window.runVirtualFiles = () => {
+    window.applyNetworkRules();
+
+    const code = (document.getElementById('code') as HTMLTextAreaElement).value;
+    const sandboxEl = vfSandbox as LofiSandbox;
+
+    window.appendLocalLog('Preparing virtual-files and executing...');
+
+    try {
+        // 1. Register the current code as index.html
+        sandboxEl.registerFiles({
+            'index.html': code
+        });
+
+        // 2. Bootstrap the sandbox from the virtual entry point
+        sandboxEl.execute(`
+            fetch('/index.html')
+                .then(r => r.text())
+                .then(html => {
+                    document.open();
+                    document.write(html);
+                    document.close();
+                });
+        `);
+    } catch (e) {
+        window.appendLocalLog('Error during virtual-files execution: ' + e.message);
+        console.error(e);
+    }
 }
 
 window.clearLogs = () => {

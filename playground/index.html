@@ -22,6 +22,7 @@
         </div>
         <div class="status-bar">
             <span id="sandbox-status">Sandbox: Disconnected</span>
+            <span id="virtual-files-status" style="margin-left: 15px; color: #888; font-size: 0.8em;">Virtual-Files: Inactive</span>
         </div>
     </div>
 
@@ -37,14 +38,22 @@
 
             <div class="controls">
                 <button id="runButton" onclick="runCode()" style="background: var(--primary);" disabled>Run Code</button>
+                <button id="runVirtualButton" onclick="runVirtualFiles()" style="background: #2196f3;" disabled>Run (Virtual-Files)</button>
                 <!-- <button id="proxyToggle" onclick="toggleProxy()" style="background: #444;">Proxy: OFF</button> -->
                 <button onclick="clearLogs()" style="background: #666;">Clear Logs</button>
                 <button onclick="resetSandbox()" style="background: #333;">Hard Reset</button>
             </div>
         </div>
         <div class="card">
-            <span class="label">Sandbox View:</span>
-            <lofi-sandbox id="sandbox"></lofi-sandbox>
+            <span class="label">Sandbox</span>
+            <lofi-sandbox id="sandbox" style="height: 200px; margin-bottom: 20px;"></lofi-sandbox>
+            
+            <span class="label">Virtual-Files Sandbox View:</span>
+            <lofi-sandbox id="virtual-files-sandbox" style="height: 200px;"></lofi-sandbox>
+            
+            <div class="controls" style="margin-top: 10px; justify-content: flex-end;">
+                <button id="toggleDevTools" style="background: #444; font-size: 11px; padding: 5px 10px;">Inspect Virtual-Files</button>
+            </div>
         </div>
     </div>
 
