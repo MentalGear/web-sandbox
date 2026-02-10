@@ -220,36 +220,27 @@
             const rulesStr = document.getElementById('rulesEditor').value;
             try {
                 const rules = JSON.parse(rulesStr);
+
+                sandbox.setConfig(rules);
                 
+                // Visual feedback that we are resetting the environment
                 document.getElementById('sandbox-status').textContent = 'Sandbox: Initializing...';
                 document.getElementById('sandbox-status').style.color = '#ffb74d';
-                if (document.getElementById('runButton')) document.getElementById('runButton').disabled = true;
+                window.appendLocalLog('Applying configuration...');
+                return true;
 
-                // Map legacy 'allow' (string[]) to new config structure if needed
-                // LofiSandbox expects SandboxConfig object
-                sandbox.setConfig(rules);
-                window.appendLocalLog('Config applied.');
 
-                // Keep UI toggle in sync
-                const proxyToggle = document.getElementById('proxyToggle');
-                if (proxyToggle) {
-                    const hasProxy = !!rules.proxyUrl;
-                    proxyToggle.style.background = hasProxy ? 'var(--primary)' : '#444';
-                    proxyToggle.textContent = `Proxy: ${hasProxy ? 'ON' : 'OFF'}`;
-                }
             } catch (e) {
-                // Silently wait for valid JSON during typing
+                return false;
             }
         }
 
         window.runCode = () => {
-            if (document.getElementById('sandbox-status').textContent !== 'Sandbox: Ready') {
-                window.appendLocalLog('Error: Sandbox is not ready. Please wait for initialization.');
-                return;
-            }
+            // Sync rules immediately
+            window.applyNetworkRules();
 
             const code = document.getElementById('code').value;
-            window.appendLocalLog('Executing code...');
+            window.appendLocalLog('Executing code ...');
             sandbox.execute(code);
         }
 
@@ -285,8 +276,6 @@
             },
             setConfig: (config) => {
                 sandbox.setConfig(config);
-                // Dispatch 'ready' event manually if needed
-                setTimeout(() => sandbox.dispatchEvent(new CustomEvent('ready')), 100);
             },
             getLogs: () => {
                 return capturedLogs;

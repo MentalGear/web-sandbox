@@ -1,19 +1,41 @@
+export type SandboxCapability = 
+    | 'allow-downloads'
+    | 'allow-forms'
+    | 'allow-modals'
+    | 'allow-orientation-lock'
+    | 'allow-pointer-lock'
+    | 'allow-popups'
+    | 'allow-presentation'
+    | 'allow-scripts';
+
+/**
+ * Capabilities that are explicitly forbidden to ensure the research 
+ * focuses on non-trivial sandbox escapes.
+ */
+export const FORBIDDEN_CAPABILITIES = [
+    'allow-same-origin',
+    'allow-top-navigation',
+    'allow-popups-to-escape-sandbox'
+];
+
 export interface SandboxConfig {
     allow?: string[]; // Allowed domains for CSP
     scriptUnsafe?: boolean; // 'unsafe-eval'
     virtualFilesUrl?: string; // URL to the Virtual Files Hub
     mode?: 'iframe' | 'worker'; // Execution mode
     executionTimeout?: number; // Max execution time in ms (Worker mode only)
+    capabilities?: SandboxCapability[]; // Custom sandbox attributes for iframe mode
 }
 
 export class LofiSandbox extends HTMLElement {
     private _iframe: HTMLIFrameElement | null = null;
     private _worker: Worker | null = null;
-    private _config: SandboxConfig = { mode: 'iframe' };
+    private _config: SandboxConfig = { mode: 'iframe', capabilities: [] };
     private _sessionId: string;
     private _port: MessagePort | null = null;
     private _hubFrame: HTMLIFrameElement | null = null;
     private _timeoutId: any = null;
+    private _queuedMessages: { code: string }[] = [];
 
     constructor() {
         super();
@@ -27,6 +49,13 @@ export class LofiSandbox extends HTMLElement {
 
     setConfig(config: SandboxConfig) {
         this._config = { ...this._config, ...config };
+
+        // Filter out any forbidden capabilities that might have been passed
+        if (this._config.capabilities) {
+            this._config.capabilities = this._config.capabilities.filter(
+                cap => !FORBIDDEN_CAPABILITIES.includes(cap as any)
+            );
+        }
 
         if (this._config.virtualFilesUrl && !this._hubFrame) {
             this._hubFrame = document.createElement('iframe');
@@ -60,7 +89,7 @@ export class LofiSandbox extends HTMLElement {
             this._startTimeout();
             this._port.postMessage({ type: 'EXECUTE', code });
         } else {
-            console.warn("Sandbox not ready (no port)");
+            this._queuedMessages.push({ code });
         }
     }
 
@@ -96,9 +125,17 @@ export class LofiSandbox extends HTMLElement {
         } else {
             (target as Window).postMessage({ type: 'INIT_PORT' }, '*', [channel.port2]);
         }
+
+        // Flush any messages queued during initialization
+        if (this._queuedMessages.length > 0) {
+            const pending = [...this._queuedMessages];
+            this._queuedMessages = [];
+            pending.forEach(msg => this.execute(msg.code));
+        }
     }
 
     private initialize() {
+        this._queuedMessages = []; // Clear queue for the old environment
         if (this._iframe) { this._iframe.remove(); this._iframe = null; }
         if (this._worker) { this._worker.terminate(); this._worker = null; }
         if (this._port) { this._port.close(); this._port = null; }
@@ -144,7 +181,8 @@ export class LofiSandbox extends HTMLElement {
 
     private createIframe() {
         this._iframe = document.createElement("iframe");
-        this._iframe.setAttribute("sandbox", "allow-scripts allow-forms allow-popups allow-modals");
+        const caps = this._config.capabilities || [];
+        this._iframe.setAttribute("sandbox", caps.join(" "));
         this._iframe.style.cssText = "width:100%;height:100%;border:none";
         this.shadowRoot!.appendChild(this._iframe);
 
@@ -246,4 +284,3 @@ export class LofiSandbox extends HTMLElement {
         this._iframe.srcdoc = html;
     }
 }
-
