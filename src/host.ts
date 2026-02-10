@@ -25,6 +25,7 @@ export interface SandboxConfig {
     mode?: 'iframe' | 'worker'; // Execution mode
     executionTimeout?: number; // Max execution time in ms (Worker mode only)
     capabilities?: SandboxCapability[]; // Custom sandbox attributes for iframe mode
+    html?: string; // Initial HTML content for iframe mode
 }
 
 export class LofiSandbox extends HTMLElement {
@@ -35,7 +36,7 @@ export class LofiSandbox extends HTMLElement {
     private _sessionId: string;
     private _port: MessagePort | null = null;
     private _hubFrame: HTMLIFrameElement | null = null;
-    private _timeoutId: any = null;
+    private _timeoutId: ReturnType<typeof setTimeout> | null = null;
     private _queuedMessages: { code: string }[] = [];
 
     constructor() {
@@ -85,6 +86,11 @@ export class LofiSandbox extends HTMLElement {
         }
     }
 
+    load(html: string) {
+        this._config.html = html;
+        this.initialize();
+    }
+
     execute(code: string) {
         if (this._port) {
             this._startTimeout();
@@ -112,6 +118,7 @@ export class LofiSandbox extends HTMLElement {
     }
 
     private setupChannel(target: Window | Worker) {
+        if (this._port) { this._port.close(); this._port = null; }
         const channel = new MessageChannel();
         this._port = channel.port1;
         this._port.onmessage = (e) => {
@@ -206,12 +213,14 @@ export class LofiSandbox extends HTMLElement {
         const vfsBase = this._config.virtualFilesUrl ? `${this._config.virtualFilesUrl}/${this._sessionId}/` : '';
         const allow = this._config.allow || [];
 
-        const scriptSrc = [
-            this._config.scriptUnsafe 
-            ? "'self' 'unsafe-inline' 'unsafe-eval'"
-            : "'self' 'unsafe-inline'",
-            vfsBase
-        ].filter(Boolean).join(" ");
+        const scriptSrcParts = [
+            "'self'",
+            "'unsafe-inline'",
+            vfsBase,
+            "blob:" // Required for framework workers and dynamic imports
+        ];
+        if (this._config.scriptUnsafe) scriptSrcParts.push("'unsafe-eval'");
+        const scriptSrc = scriptSrcParts.filter(Boolean).join(" ");
 
         const connectSrc = [...allow, vfsBase].filter(Boolean).join(" ") || "'none'";
         const baseUri = vfsBase || "'none'";
@@ -226,7 +235,7 @@ export class LofiSandbox extends HTMLElement {
             "img-src 'none'",
             "font-src 'none'",
             "media-src 'none'",
-            "worker-src 'none'",
+            "worker-src blob:", // Allow frameworks to spawn workers from blobs
             "manifest-src 'none'",
             "prefetch-src 'none'",
             "frame-src 'none'",
@@ -234,31 +243,9 @@ export class LofiSandbox extends HTMLElement {
             "form-action 'none'"
         ].join("; ");
 
-        const html = `
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="${csp}">
-    ${vfsBase ? `<base href="${vfsBase}">` : ''}
-    <script>
-        // Defense-in-depth: Block nested iframes
-        const originalCreateElement = document.createElement;
-        document.createElement = function(tagName, options) {
-            if (tagName.toLowerCase() === 'iframe') {
-                throw new Error("Nested iframes are blocked.");
-            }
-            return originalCreateElement.call(document, tagName, options);
-        };
-
-        // Defense-in-depth: Hide Service Workers
-        try {
-            Object.defineProperty(window.Navigator.prototype, 'serviceWorker', {
-                get: function() { return undefined; },
-                configurable: true
-            });
-        } catch (e) {}
-
+        // template html that any content running in the sandbox uses
+        // needed for communication and logs
+        const bootstrapScript = `
         window.addEventListener('message', (event) => {
             if (event.data?.type === 'INIT_PORT') {
                 const port = event.ports[0];
@@ -284,11 +271,27 @@ export class LofiSandbox extends HTMLElement {
                 port.postMessage({ type: 'LOG', level: 'info', args: ['Iframe Ready'] });
             }
         }, { once: true });
-    </script>
-</head>
-<body><div id="root"></div></body>
-</html>
         `;
+
+        const userContent = this._config.html || '<div id="root"></div>';
+        let finalHtml: string;
+
+        // Check if the user provided a full HTML document or just a fragment
+        if (userContent.toLowerCase().includes('<html')) {
+            const headInjection = `
+                <meta http-equiv="Content-Security-Policy" content="${csp}">
+                ${vfsBase ? `<base href="${vfsBase}">` : ''}
+                <script>${bootstrapScript}</script>
+            `;
+            
+            if (userContent.toLowerCase().includes('<head>')) {
+                finalHtml = userContent.replace(/<head>/i, `<head>${headInjection}`);
+            } else {
+                finalHtml = userContent.replace(/<html[^>]*>/i, `$&<head>${headInjection}</head>`);
+            }
+        } else {
+            finalHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}">${vfsBase ? `<base href="${vfsBase}">` : ''}<script>${bootstrapScript}</script></head><body>${userContent}</body></html>`;
+        }
 
         this._iframe.onload = () => {
             if (this._iframe?.contentWindow) {
@@ -296,6 +299,6 @@ export class LofiSandbox extends HTMLElement {
                 this.dispatchEvent(new CustomEvent('ready'));
             }
         };
-        this._iframe.srcdoc = html;
+        this._iframe.srcdoc = finalHtml;
     }
 }
