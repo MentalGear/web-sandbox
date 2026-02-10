@@ -1,4 +1,4 @@
-const CACHE_NAME = 'vfs-v1';
+const CACHE_NAME = 'virtual-files-cache-v1';
 const fileCache = new Map<string, string>();
 
 const ACCESS_DENIED_HTML = `

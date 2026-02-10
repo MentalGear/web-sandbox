@@ -1,7 +1,7 @@
 // Service Worker for VFS Domain
 // Handles serving virtual files to cross-origin sandboxes
 
-const CACHE_NAME = 'vfs-cache-v1';
+const CACHE_NAME = 'virtual-files-cache-v1';
 let virtualFiles: Record<string, string> = {};
 
 self.addEventListener('install', (event) => {

@@ -182,7 +182,7 @@ window.openTab = (evt: any, tabName: string) => {
 };
 
 window.updateVirtualFilesView = (files: Record<string, string | Uint8Array>) => {
-    const container = document.getElementById('vfs-tree');
+    const container = document.getElementById('virtual-files-tree');
     if (!container || !files || Object.keys(files).length === 0) return;
 
     const buildTree = (files: Record<string, any>) => {

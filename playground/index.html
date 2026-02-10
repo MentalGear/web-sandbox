@@ -39,7 +39,7 @@
             display: flex;
             flex-direction: column;
         }
-        .vfs-tree {
+        .virtual-files-tree {
             flex: 1;
             font-family: 'Fira Code', 'Cascadia Code', monospace;
             font-size: 12px;
@@ -49,10 +49,10 @@
             overflow: auto;
             border: 1px solid #222;
         }
-        .vfs-tree ul { list-style: none; padding-left: 18px; margin: 0; }
-        .vfs-tree li { margin: 4px 0; white-space: nowrap; }
-        .vfs-tree .folder { color: #dcb67a; margin-right: 6px; font-weight: bold; }
-        .vfs-tree .file { color: #89ddff; margin-right: 6px; }
+        .virtual-files-tree ul { list-style: none; padding-left: 18px; margin: 0; }
+        .virtual-files-tree li { margin: 4px 0; white-space: nowrap; }
+        .virtual-files-tree .folder { color: #dcb67a; margin-right: 6px; font-weight: bold; }
+        .virtual-files-tree .file { color: #89ddff; margin-right: 6px; }
     </style>
 
     <title>Playground</title>
@@ -97,15 +97,15 @@
         <div class="card">
             <div class="tabs">
                 <button class="tab-link active" onclick="openTab(event, 'sandbox-view')">Sandbox</button>
-                <button class="tab-link" onclick="openTab(event, 'vfs-view')">Virtual-Files</button>
+                <button class="tab-link" onclick="openTab(event, 'virtual-files-view')">Virtual-Files</button>
             </div>
 
             <div id="sandbox-view" class="tab-content active">
                 <lofi-sandbox id="sandbox" style="height: 100%;"></lofi-sandbox>
             </div>
 
-            <div id="vfs-view" class="tab-content">
-                <div id="vfs-tree" class="vfs-tree">
+            <div id="virtual-files-view" class="tab-content">
+                <div id="virtual-files-tree" class="virtual-files-tree">
                     <div style="color: #555; font-style: italic;">No virtual files registered yet.</div>
                 </div>
                 <!-- Hidden but preserved for playground.ts compatibility -->

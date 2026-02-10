@@ -53,8 +53,8 @@ setTimeout(() => console.log('TEST_DONE'), 100);`,
 while(true) {}`,
         rules: { mode: "worker", executionTimeout: 1000 }
     },
-    "vfs-test": {
-        id: "vfs-test",
+    "virtual-files-test": {
+        id: "virtual-files-test",
         label: "Virtual Files System Test",
         code: `// This requires a VFS Hub running at /virtual-files
 console.log("Checking VFS Base URI...");

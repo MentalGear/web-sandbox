@@ -14,10 +14,10 @@ We introduce a dedicated domain (e.g., `vfs.localhost`) solely for serving virtu
 
 1.  **VFS Hub (`vfs.localhost`)**:
     *   An invisible iframe loaded by the Host.
-    *   Registers the `vfs-sw.js` Service Worker.
+    *   Registers the `virtual-files-sw.js` Service Worker.
     *   Accepts file content from the Host via `postMessage` and caches it (IndexedDB/CacheStorage).
 
-2.  **VFS Service Worker (`vfs-sw.js`)**:
+2.  **VFS Service Worker (`virtual-files-sw.js`)**:
     *   Intercepts requests to `vfs.localhost`.
     *   **Access Control**: Checks the `Origin` or `Referer` header of incoming requests.
         *   If Origin is `*.sandbox.localhost` (valid sandbox): Serve the requested virtual file.
