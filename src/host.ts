@@ -247,4 +247,3 @@ export class LofiSandbox extends HTMLElement {
     }
 }
 
-customElements.define("lofi-sandbox", LofiSandbox);
