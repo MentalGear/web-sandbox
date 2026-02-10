@@ -25,16 +25,12 @@
     <div class="grid">
         <div class="card">
             <span class="label">Untrusted Source Code:</span>
-            <textarea id="code" oninput="onCodeInput()" style="height: 250px;">
+            <textarea id="code" oninput="onCodeInput()" style="height: 250px;"> </textarea>
 
-            </textarea>
+            <span class="label">Network Rules (JSON):</span>
+            <textarea id="rulesEditor" onblur="onRulesBlur()" style="height: 150px; font-family: monospace; background: #1a1a1a;"> </textarea>
 
-            <div class="controls-header" style="justify-content: flex-start;">
-                <span class="label">Network Rules (JSON):</span>
-            </div>
-            <textarea id="rulesEditor" oninput="onRulesInput()" style="height: 150px; font-family: monospace; background: #1a1a1a;">
-
-            </textarea>
+            <div id="rulesError" class="error-message"></div>
 
             <div class="controls">
                 <button id="runButton" onclick="runCode()" style="background: var(--primary);" disabled>Run Code</button>
@@ -202,7 +198,7 @@
             playground.saveState();
         };
 
-        window.onRulesInput = () => {
+        window.onRulesBlur = () => {
             playground.triggerCustomMode();
             playground.saveState();
             window.debounceApplyRules();
@@ -217,9 +213,15 @@
         }
 
         window.applyNetworkRules = () => {
-            const rulesStr = document.getElementById('rulesEditor').value;
+            const rulesEditor = document.getElementById('rulesEditor');
+            const rulesError = document.getElementById('rulesError');
+            const rulesStr = rulesEditor.value;
             try {
-                const rules = JSON.parse(rulesStr);
+                // Strip trailing commas to allow more relaxed JSON input
+                const cleanedStr = rulesStr.replace(/,(\s*[\]}])/g, '$1');
+                const rules = JSON.parse(cleanedStr);
+                rulesEditor.classList.remove('error-border');
+                rulesError.textContent = '';
 
                 sandbox.setConfig(rules);
                 
@@ -231,6 +233,8 @@
 
 
             } catch (e) {
+                rulesEditor.classList.add('error-border');
+                rulesError.textContent = 'Invalid JSON: ' + e.message;
                 return false;
             }
         }
@@ -381,14 +385,6 @@
         align-items: center;
     }
 
-    .controls-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-top: 15px;
-        margin-bottom: 5px;
-    }
-
     #presetSelect {
         background: #2a2a2a;
         color: white;
@@ -447,5 +443,17 @@
     .log-entry.cat-network { border-left: 3px solid #4fc3f7; padding-left: 10px; }
     .log-entry.cat-error { border-left: 3px solid #ff5252; padding-left: 10px; }
     .log-entry.cat-log { border-left: 3px solid #81c784; padding-left: 10px; }
+
+    .error-message {
+        color: var(--accent);
+        font-size: 12px;
+        margin-top: -5px;
+        margin-bottom: 10px;
+        min-height: 1.2em;
+    }
+
+    .error-border {
+        border-color: var(--accent) !important;
+    }
 </style>
 </html>
