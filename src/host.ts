@@ -189,31 +189,22 @@ export class LofiSandbox extends HTMLElement {
         const vfsBase = this._config.virtualFilesUrl ? `${this._config.virtualFilesUrl}/${this._sessionId}/` : '';
         const allow = this._config.allow || [];
 
-        // Logic fix: Don't use 'none' if vfsBase is present
-        let connectSrc = allow.length > 0 ? allow.join(" ") : "";
-        if (!connectSrc && !vfsBase) connectSrc = "'none'";
-
-        const scriptDirectives = this._config.scriptUnsafe
+        const scriptSrc = [
+            this._config.scriptUnsafe 
             ? "'self' 'unsafe-inline' 'unsafe-eval'"
-            : "'self' 'unsafe-inline'";
+            : "'self' 'unsafe-inline'",
+            vfsBase
+        ].filter(Boolean).join(" ");
 
-        // Allow data: URIs for scripts to enable srcdoc-like behavior if needed,
-        // but strictly controlled. However, `srcdoc` iframe inherits CSP from meta tag.
-        // The issue might be that the initial execution relies on inline handlers or something blocked?
-        // Ah, the presets use `javascript:` URLs in iframes?
-        // No, 'csp-bypass' creates an iframe with src="javascript:alert(...)".
-        // `frame-src 'none'` blocks that.
-        // `01` tests that we BLOCK it. So it should fail to run the alert.
-        // But the test script itself runs in the sandbox context.
-        // The test script tries to create the iframe.
-        // The console.log('PWN_FAILURE') or 'TEST_DONE' should still run.
+        const connectSrc = [...allow, vfsBase].filter(Boolean).join(" ") || "'none'";
+        const baseUri = vfsBase || "'none'";
 
         const csp = [
             "default-src 'none'",
-            `script-src ${scriptDirectives} ${vfsBase ? vfsBase : ''}`,
-            `connect-src ${connectSrc} ${vfsBase ? vfsBase : ''}`,
+            `script-src ${scriptSrc}`,
+            `connect-src ${connectSrc}`,
             "style-src 'unsafe-inline'",
-            `base-uri 'none' ${vfsBase ? vfsBase : ''}`,
+            `base-uri ${baseUri}`,
             "frame-src 'none'",
             "object-src 'none'",
             "form-action 'none'"
