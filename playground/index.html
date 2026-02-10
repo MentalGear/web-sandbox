@@ -6,6 +6,55 @@
     <link rel="stylesheet" href="./playground.css">
     <script type="module" src="./playground.ts"></script>
 
+    <style>
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #333;
+            margin-bottom: 15px;
+        }
+        .tab-link {
+            background: none;
+            border: none;
+            color: #777;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            outline: none;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease;
+        }
+        .tab-link:hover {
+            color: #bbb;
+        }
+        .tab-link.active {
+            color: var(--primary, #007acc);
+            border-bottom-color: var(--primary, #007acc);
+        }
+        .tab-content {
+            display: none;
+            height: 420px;
+        }
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+        }
+        .vfs-tree {
+            flex: 1;
+            font-family: 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 12px;
+            background: #0d0d0d;
+            padding: 15px;
+            border-radius: 4px;
+            overflow: auto;
+            border: 1px solid #222;
+        }
+        .vfs-tree ul { list-style: none; padding-left: 18px; margin: 0; }
+        .vfs-tree li { margin: 4px 0; white-space: nowrap; }
+        .vfs-tree .folder { color: #dcb67a; margin-right: 6px; font-weight: bold; }
+        .vfs-tree .file { color: #89ddff; margin-right: 6px; }
+    </style>
+
     <title>Playground</title>
 </head>
 <body>
@@ -38,6 +87,7 @@
 
             <div class="controls">
                 <button id="runButton" onclick="runCode()" style="background: var(--primary);" disabled>Run Code</button>
+                <button id="runHtmlButton" onclick="runHtml()" style="background: #4caf50;" disabled>Run as HTML</button>
                 <button id="runVirtualButton" onclick="runVirtualFiles()" style="background: #2196f3;" disabled>Run (Virtual-Files)</button>
                 <!-- <button id="proxyToggle" onclick="toggleProxy()" style="background: #444;">Proxy: OFF</button> -->
                 <button onclick="clearLogs()" style="background: #666;">Clear Logs</button>
@@ -45,12 +95,23 @@
             </div>
         </div>
         <div class="card">
-            <span class="label">Sandbox</span>
-            <lofi-sandbox id="sandbox" style="height: 200px; margin-bottom: 20px;"></lofi-sandbox>
-            
-            <span class="label">Virtual-Files Sandbox View:</span>
-            <lofi-sandbox id="virtual-files-sandbox" style="height: 200px;"></lofi-sandbox>
-            
+            <div class="tabs">
+                <button class="tab-link active" onclick="openTab(event, 'sandbox-view')">Sandbox</button>
+                <button class="tab-link" onclick="openTab(event, 'vfs-view')">Virtual-Files</button>
+            </div>
+
+            <div id="sandbox-view" class="tab-content active">
+                <lofi-sandbox id="sandbox" style="height: 100%;"></lofi-sandbox>
+            </div>
+
+            <div id="vfs-view" class="tab-content">
+                <div id="vfs-tree" class="vfs-tree">
+                    <div style="color: #555; font-style: italic;">No virtual files registered yet.</div>
+                </div>
+                <!-- Hidden but preserved for playground.ts compatibility -->
+                <lofi-sandbox id="virtual-files-sandbox" style="display: none;"></lofi-sandbox>
+            </div>
+
             <div class="controls" style="margin-top: 10px; justify-content: flex-end;">
                 <button id="toggleDevTools" style="background: #444; font-size: 11px; padding: 5px 10px;">Inspect Virtual-Files</button>
             </div>
@@ -63,5 +124,4 @@
     <div id="logs">Waiting for sandbox...</div>
 
 </body>
-
 </html>

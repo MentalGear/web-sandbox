@@ -19,7 +19,7 @@ Allowing `'unsafe-inline'` creates potential side-channels for data exfiltration
 | Directive | Setting | Purpose |
 | :--- | :--- | :--- |
 | `default-src` | `'none'` | Deny-by-default fallback for all unspecified directives. |
-| `img-src` | `'none'` | Prevents CSS-based exfiltration via `background-image: url()`. |
+| `img-src` | `vfsBase` | Allows local/virtual images while blocking external exfiltration. |
 | `font-src` | `'none'` | Prevents exfiltration via custom font loading. |
 | `media-src` | `'none'` | Prevents exfiltration via audio/video sources. |
 | `frame-src` | `'none'` | Prevents nested iframes and clickjacking attempts. |

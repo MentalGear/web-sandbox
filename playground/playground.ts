@@ -31,6 +31,9 @@ sandbox.addEventListener('ready', () => {
     
     const runBtn = document.getElementById('runButton') as HTMLButtonElement;
     if (runBtn) runBtn.disabled = false;
+
+    const runHtmlBtn = document.getElementById('runHtmlButton') as HTMLButtonElement;
+    if (runHtmlBtn) runHtmlBtn.disabled = false;
 });
 
 vfSandbox.addEventListener('ready', () => {
@@ -43,6 +46,11 @@ vfSandbox.addEventListener('ready', () => {
     
     const runVfBtn = document.getElementById('runVirtualButton') as HTMLButtonElement;
     if (runVfBtn) runVfBtn.disabled = false;
+});
+
+// Listen for the native fileschanged event
+vfSandbox.addEventListener('fileschanged', (e: any) => {
+    window.updateVirtualFilesView(e.detail);
 });
 
 // Populate presets dropdown
@@ -161,6 +169,63 @@ window.onCodeInput = () => {
     playground.saveState();
 };
 
+window.openTab = (evt: any, tabName: string) => {
+    const contents = document.getElementsByClassName("tab-content");
+    for (let i = 0; i < contents.length; i++) contents[i].classList.remove("active");
+    
+    const links = document.getElementsByClassName("tab-link");
+    for (let i = 0; i < links.length; i++) links[i].classList.remove("active");
+    
+    const target = document.getElementById(tabName);
+    if (target) target.classList.add("active");
+    if (evt.currentTarget) evt.currentTarget.classList.add("active");
+};
+
+window.updateVirtualFilesView = (files: Record<string, string | Uint8Array>) => {
+    const container = document.getElementById('vfs-tree');
+    if (!container || !files || Object.keys(files).length === 0) return;
+
+    const buildTree = (files: Record<string, any>) => {
+        const root: any = {};
+        Object.keys(files).forEach(path => {
+            const parts = path.split('/').filter(Boolean);
+            let current = root;
+            parts.forEach((part, i) => {
+                if (i === parts.length - 1) current[part] = { __file: true };
+                else { current[part] = current[part] || {}; current = current[part]; }
+            });
+        });
+        return root;
+    };
+
+    const render = (node: any): string => {
+        const keys = Object.keys(node).sort((a, b) => {
+            const aIsFile = !!node[a].__file;
+            const bIsFile = !!node[b].__file;
+            if (aIsFile !== bIsFile) return aIsFile ? 1 : -1;
+            return a.localeCompare(b);
+        });
+        
+        let html = '<ul>';
+        keys.forEach(key => {
+            const isFile = node[key].__file;
+            html += `<li><span class="${isFile ? 'file' : 'folder'}">${isFile ? '📄' : '📁'} ${key}</span>`;
+            if (!isFile) html += render(node[key]);
+            html += '</li>';
+        });
+        return html + '</ul>';
+    };
+
+    container.innerHTML = render(buildTree(files));
+};
+
+window.runHtml = () => {
+    const code = (document.getElementById('code') as HTMLTextAreaElement).value;
+    if (sandbox && (sandbox as LofiSandbox).load) {
+        (sandbox as LofiSandbox).load(code);
+    }
+};
+
 window.onRulesBlur = () => {
     playground.triggerCustomMode();
     playground.saveState();
@@ -224,18 +289,18 @@ window.runVirtualFiles = () => {
     window.applyNetworkRules();
 
     const code = (document.getElementById('code') as HTMLTextAreaElement).value;
-    const sandboxEl = vfSandbox as LofiSandbox;
+    const vfSandboxEl = vfSandbox as LofiSandbox;
 
     window.appendLocalLog('Preparing virtual-files and executing...');
 
     try {
         // 1. Register the current code as index.html
-        sandboxEl.registerFiles({
+        vfSandboxEl.registerFiles({
             'index.html': code
         });
 
         // 2. Bootstrap the sandbox from the virtual entry point
-        sandboxEl.execute(`
+        vfSandboxEl.execute(`
             fetch('/index.html')
                 .then(r => r.text())
                 .then(html => {

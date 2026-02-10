@@ -70,6 +70,7 @@ export class LofiSandbox extends HTMLElement {
     }
 
     registerFiles(files: Record<string, string | Uint8Array>) {
+
         if (this._hubFrame && this._hubFrame.contentWindow) {
             let targetOrigin = this._config.virtualFilesUrl || '*';
             if (targetOrigin.startsWith('/')) {
@@ -81,6 +82,10 @@ export class LofiSandbox extends HTMLElement {
                 sessionId: this._sessionId,
                 files
             }, targetOrigin);
+
+            // Notify listeners that the virtual file system has been updated
+            this.dispatchEvent(new CustomEvent('fileschanged', { detail: files }));
+            
         } else {
             console.warn("Virtual Files Hub not ready or configured");
         }
@@ -224,6 +229,7 @@ export class LofiSandbox extends HTMLElement {
 
         const connectSrc = [...allow, vfsBase].filter(Boolean).join(" ") || "'none'";
         const baseUri = vfsBase || "'none'";
+        const imgSrc = vfsBase || "'none'";
 
         const csp = [
             "upgrade-insecure-requests",
@@ -232,7 +238,7 @@ export class LofiSandbox extends HTMLElement {
             `connect-src ${connectSrc}`,
             `base-uri ${baseUri}`,
             "style-src 'unsafe-inline'",
-            "img-src 'none'",
+            `img-src ${imgSrc}`,
             "font-src 'none'",
             "media-src 'none'",
             "worker-src blob:", // Allow frameworks to spawn workers from blobs
