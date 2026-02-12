@@ -3,6 +3,8 @@
  * Pre-defined scenarios to demonstrate sandbox capabilities and testing.
  */
 
+import type { SandboxCapability } from "@src/host";
+
 export const PRESETS = {
     "basic": {
         id: "basic",
@@ -206,7 +208,7 @@ console.log('TEST_DONE');`,
     console.log('PASS: Origin is opaque. Filter working.');
 }
 console.log('TEST_DONE');`,
-        rules: { capabilities: ["allow-scripts", "allow-same-origin" as any], scriptUnsafe: true }
+        rules: { capabilities: ["allow-scripts", "allow-same-origin" as SandboxCapability], scriptUnsafe: true }
     },
     "allow-top-nav": {
         id: "allow-top-nav",
@@ -218,7 +220,7 @@ console.log('TEST_DONE');`,
     console.log('PASS: Top navigation blocked (' + e.message + ')');
 }
 console.log('TEST_DONE');`,
-        rules: { capabilities: ["allow-scripts", "allow-top-navigation" as any], scriptUnsafe: true }
+        rules: { capabilities: ["allow-scripts", "allow-top-navigation" as SandboxCapability], scriptUnsafe: true }
     },
     "allow-popups-escape": {
         id: "allow-popups-escape",
@@ -235,6 +237,6 @@ console.log('TEST_DONE');`,
     }
     console.log('TEST_DONE');
 })();`,
-        rules: { capabilities: ["allow-scripts", "allow-popups", "allow-popups-to-escape-sandbox" as any], scriptUnsafe: true }
+        rules: { capabilities: ["allow-scripts", "allow-popups", "allow-popups-to-escape-sandbox" as SandboxCapability], scriptUnsafe: true }
     }
 };

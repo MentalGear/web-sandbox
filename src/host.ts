@@ -57,7 +57,7 @@ export class LofiSandbox extends HTMLElement {
         // Filter out any forbidden capabilities that might have been passed
         if (this._config.capabilities) {
             this._config.capabilities = this._config.capabilities.filter(
-                cap => ALLOWED_CAPABILITIES.includes(cap as string)
+                cap => ALLOWED_CAPABILITIES.includes(cap as SandboxCapability)
             );
         }
 
