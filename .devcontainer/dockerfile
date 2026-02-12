@@ -1,0 +1,29 @@
+# Start with the base image
+# FROM alpine:latest
+FROM mcr.microsoft.com/devcontainers/base:alpine-3.20
+
+# Install necessary packages
+RUN apk add --no-cache curl
+
+# Switch to vscode user
+# switching to USER vscode. This is the most important security practice.
+# It prevents the container process from having root access to the underlying container (and potentially the host if escapes occur).
+USER vscode
+
+# install bun
+RUN curl -fsSL https://bun.sh/install | bash
+
+# add bun to path
+ENV BUN_INSTALL="/home/vscode/.bun"
+ENV PATH="$BUN_INSTALL/bin:$PATH"
+# add better terminal naming (otherwise too long in devcontainer) 
+# We append it to .bashrc so it loads every time you open a terminal.
+RUN echo "export PS1='\[\033[01;32m\]\W\[\033[00m\] \$ '" >> /home/vscode/.bashrc
+
+# server
+# NO need to expose in file, VSCode will auto forward (if exposed, VScode will also block these ports, even if the vscode is only open in devcontainer mode)
+# EXPOSE 4000
+# frontend / vite dev server
+# EXPOSE 5173
+
+WORKDIR /workspaces/

@@ -1,0 +1,1 @@
+- prefer guard clauses instead of nested ifs

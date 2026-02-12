@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeSandbox Library Demo</title>
+    <style>
+        :root {
+            --bg: #121212;
+            --text: #e0e0e0;
+            --border: #333333;
+            --code-bg: #1e1e1e;
+            --accent: #ff5252;
+            --primary: #a352ff;
+            --shadow: rgba(0,0,0,0.5);
+        }
+        body {
+            font-family: 'Inter', -apple-system, system-ui, sans-serif;
+            padding: 40px;
+            max-width: 1000px;
+            margin: 0 auto;
+            background: var(--bg);
+            color: var(--text);
+        }
+        h1 {
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            margin-bottom: 20px;
+            /* color: #ff8a80; */
+            color: var(--primary);
+            /* background: linear-gradient(135deg, var(--accent), #ff8a80); */
+            /* -webkit-background-clip: text; */
+            /* background-clip: text; */
+            /* -webkit-text-fill-color: transparent; */
+            margin-top: 0;
+        }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+        .card {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 20px var(--shadow);
+            display: flex;
+            flex-direction: column;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            font-family: 'Fira Code', 'Courier New', monospace;
+            background: rgba(0,0,0,0.2);
+            color: inherit;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            box-sizing: border-box;
+            resize: vertical;
+            margin-bottom: 10px;
+        }
+        safe-sandbox {
+            width: 100%;
+            flex: 1; /* Fill available height in the card */
+            min-height: 400px;
+            border: 2px solid var(--accent);
+            border-radius: 8px;
+            background: var(--code-bg);
+            overflow: hidden;
+        }
+        #logs {
+            background: var(--code-bg);
+            padding: 15px;
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-family: monospace;
+            margin-top: 20px;
+        }
+        .controls { margin: 15px 0; display: flex; gap: 10px; flex-wrap: wrap; }
+        .label { font-weight: 600; margin-bottom: 10px; display: block; opacity: 0.8; }
+        button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+        }
+        button:hover { opacity: 0.9; }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .controls-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+            margin-bottom: 5px;
+        }
+
+        #presetSelect {
+            background: #2a2a2a;
+            color: white;
+            border: 1px solid #444;
+            padding: 2px 5px;
+            border-radius: 4px;
+        }
+
+        .rule-groups {
+            display: flex;
+            gap: 5px;
+            padding: 5px;
+            background: #2a2a2a;
+            border-radius: 4px;
+        }
+
+        .rule-groups button {
+            background: #444;
+            font-size: 0.8em;
+            padding: 4px 8px;
+        }
+        .log-entry {
+            border-bottom: 1px solid var(--border);
+            padding: 5px 0;
+            font-size: 13px;
+        }
+        .status-bar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .global-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255,255,255,0.05);
+            padding: 8px 15px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        .status-bar {
+            display: flex;
+            gap: 20px;
+            font-size: 12px;
+            opacity: 0.7;
+        }
+        /* Log Categories */
+        .log-entry.cat-network { border-left: 3px solid #4fc3f7; padding-left: 10px; }
+        .log-entry.cat-error { border-left: 3px solid #ff5252; padding-left: 10px; }
+        .log-entry.cat-log { border-left: 3px solid #81c784; padding-left: 10px; }
+    </style>
+  <script type="module" crossorigin src="/assets/index-DXc6ZQgw.js"></script>
+</head>
+<body>
+    <h1>SafeSandbox Playground</h1>
+
+    <div class="status-bar-header">
+        <div class="global-controls">
+            <span class="label" style="margin-bottom: 0;">Playground Preset:</span>
+            <select id="presetSelect" onchange="loadPreset()">
+                <option value="none">-- Select preset --</option>
+                <!-- Dynamically populated -->
+                <option value="custom">Custom Preset (auto-saves)</option>
+            </select>
+        </div>
+        <div class="status-bar">
+            <span id="sandbox-status">Sandbox: Disconnected</span>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <span class="label">Untrusted Source Code:</span>
+            <textarea id="code" oninput="onCodeInput()" style="height: 250px;">
+
+            </textarea>
+
+            <div class="controls-header" style="justify-content: flex-start;">
+                <span class="label">Network Rules (JSON):</span>
+            </div>
+            <textarea id="rulesEditor" oninput="onRulesInput()" style="height: 150px; font-family: monospace; background: #1a1a1a;">
+
+            </textarea>
+
+            <div class="controls">
+                <button onclick="runCode()" style="background: var(--primary);">Run Code</button>
+                <!-- <button id="proxyToggle" onclick="toggleProxy()" style="background: #444;">Proxy: OFF</button> -->
+                <button onclick="clearLogs()" style="background: #666;">Clear Logs</button>
+                <button onclick="resetSandbox()" style="background: #333;">Hard Reset</button>
+            </div>
+        </div>
+        <div class="card">
+            <span class="label">Sandbox View:</span>
+            <lofi-sandbox id="sandbox"></lofi-sandbox>
+        </div>
+    </div>
+
+    <div class="log-header">
+        <h3>Host Message Logs</h3>
+    </div>
+    <div id="logs">Waiting for sandbox...</div>
+
+    
+</body>
+</html>

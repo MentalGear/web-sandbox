@@ -1,0 +1,3 @@
+[test]
+# Prevent Bun's native runner from scanning Playwright research files
+exclude = ["research/**/*.spec.ts", "research/**/*.test.ts"]

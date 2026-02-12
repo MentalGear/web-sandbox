@@ -1,0 +1,69 @@
+import { defineConfig } from 'vite';
+import { join } from 'path';
+import fs from 'fs';
+
+export default defineConfig({
+  root: '.',
+  resolve: {
+    alias: {
+      '@src': join(__dirname, 'src'),
+    }
+  },
+  server: {
+    // host: 'localhost',
+    port: 4444,
+    // open: '/playground/index.html',
+    strictPort: true,
+    fs: {
+      allow: ['.'] // Allow serving files from the project root (for /src)
+    }
+  },
+  build: {
+    outDir: 'dist-playground',
+    emptyOutDir: true,
+  },
+  plugins: [{
+    name: 'dev-server',
+    configureServer(server) {
+      server.httpServer?.once('listening', () => {
+        const { port, host } = server.config.server;
+        const protocol = server.config.server.https ? 'https' : 'http';
+        const playgroundUrl = `${protocol}://${host || "localhost"}:${port}/playground/index.html`;
+
+        setTimeout(() => {
+          server.config.logger.info(`\n  \x1b[32m➜\x1b[0m  \x1b[1mPlayground\x1b[0m: \x1b[36m${playgroundUrl}\x1b[0m`);
+        }, 100);
+      });
+
+      server.middlewares.use(async (req, res, next) => {
+        const host = req.headers.host || '';
+        const url = new URL(req.url || '/', `http://${host}`);
+
+        // 1. Handle Virtual Files Domain (subdomain routing)
+        if (host.startsWith('virtual-files.')) {
+          const path = url.pathname === '/' ? '/hub.html' : url.pathname;
+          const filePath = join(__dirname, 'src/virtual-files', path);
+          
+          if (fs.existsSync(filePath)) {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            
+            // If it's a TS file, we should ideally let Vite transform it.
+            // For now, ensure we aren't serving raw TS if the browser expects JS.
+            // if (filePath.endsWith('.ts')) {
+            //   res.setHeader('Content-Type', 'application/javascript');
+            //   // Note: In a production-like research tool, you'd use server.transformRequest(url)
+            // }
+
+            const content = fs.readFileSync(filePath);
+            // if (filePath.endsWith('.html')) res.setHeader('Content-Type', 'text/html');
+            
+            return res.end(content);
+          }
+        }
+        
+        next();
+      });
+    }
+  }],
+
+});

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="./playground.css">
+    <script type="module" src="./playground.ts"></script>
+
+    <style>
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #333;
+            margin-bottom: 15px;
+        }
+        .tab-link {
+            background: none;
+            border: none;
+            color: #777;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            outline: none;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease;
+        }
+        .tab-link:hover {
+            color: #bbb;
+        }
+        .tab-link.active {
+            color: var(--primary, #007acc);
+            border-bottom-color: var(--primary, #007acc);
+        }
+        .tab-content {
+            display: none;
+            height: 420px;
+        }
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+        }
+        .virtual-files-tree {
+            flex: 1;
+            font-family: 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 12px;
+            background: #0d0d0d;
+            padding: 15px;
+            border-radius: 4px;
+            overflow: auto;
+            border: 1px solid #222;
+        }
+        .virtual-files-tree ul { list-style: none; padding-left: 18px; margin: 0; }
+        .virtual-files-tree li { margin: 4px 0; white-space: nowrap; }
+        .virtual-files-tree .folder { color: #dcb67a; margin-right: 6px; font-weight: bold; }
+        .virtual-files-tree .file { color: #89ddff; margin-right: 6px; }
+    </style>
+
+    <title>Playground</title>
+</head>
+<body>
+    <h1>SafeSandbox Playground</h1>
+
+    <div class="status-bar-header">
+        <div class="global-controls">
+            <span class="label" style="margin-bottom: 0;">Playground Preset:</span>
+            <select id="presetSelect" onchange="loadPreset()">
+                <option value="none">-- Select preset --</option>
+                <!-- Dynamically populated -->
+                <option value="custom">Custom Preset (auto-saves)</option>
+            </select>
+        </div>
+        <div class="status-bar">
+            <span id="sandbox-status">Sandbox: Disconnected</span>
+            <span id="virtual-files-status" style="margin-left: 15px; color: #888; font-size: 0.8em;">Virtual-Files: Inactive</span>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <span class="label">Untrusted Source Code:</span>
+            <textarea id="code" oninput="onCodeInput()" style="height: 250px;"> </textarea>
+
+            <span class="label">Network Rules (JSON):</span>
+            <textarea id="rulesEditor" onblur="onRulesBlur()" style="height: 150px; font-family: monospace; background: #1a1a1a;"> </textarea>
+
+            <div id="rulesError" class="error-message"></div>
+
+            <div class="controls">
+                <button id="runButton" onclick="runCode()" style="background: var(--primary);" disabled>Run Code</button>
+                <button id="runHtmlButton" onclick="runHtml()" style="background: #4caf50;" disabled>Run as HTML</button>
+                <button id="runVirtualButton" onclick="runVirtualFiles()" style="background: #2196f3;" disabled>Run (Virtual-Files)</button>
+                <!-- <button id="proxyToggle" onclick="toggleProxy()" style="background: #444;">Proxy: OFF</button> -->
+                <button onclick="clearLogs()" style="background: #666;">Clear Logs</button>
+                <button onclick="resetSandbox()" style="background: #333;">Hard Reset</button>
+            </div>
+        </div>
+        <div class="card">
+            <div class="tabs">
+                <button class="tab-link active" onclick="openTab(event, 'sandbox-view')">Sandbox</button>
+                <button class="tab-link" onclick="openTab(event, 'virtual-files-view')">Virtual-Files</button>
+            </div>
+
+            <div id="sandbox-view" class="tab-content active">
+                <lofi-sandbox id="sandbox" style="height: 100%;"></lofi-sandbox>
+            </div>
+
+            <div id="virtual-files-view" class="tab-content">
+                <div id="virtual-files-tree" class="virtual-files-tree">
+                    <div style="color: #555; font-style: italic;">No virtual files registered yet.</div>
+                </div>
+                <!-- Hidden but preserved for playground.ts compatibility -->
+                <lofi-sandbox id="virtual-files-sandbox" style="display: none;"></lofi-sandbox>
+            </div>
+
+            <div class="controls" style="margin-top: 10px; justify-content: flex-end;">
+                <button id="toggleDevTools" style="background: #444; font-size: 11px; padding: 5px 10px;">Toggle Sandbox Dev Console Logs</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="log-header">
+        <h3>Host Message Logs</h3>
+    </div>
+    <div id="logs">Waiting for sandbox...</div>
+
+</body>
+</html>

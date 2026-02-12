@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test('Load Local HTML Page', async ({ page }) => {
   // 1. Go to the host page
-  await page.goto('http://localhost:3333/playground/security.html');
+  await page.goto('http://localhost:3333/playground/.html');
   await page.waitForFunction(() => window.SandboxControl !== undefined);
 
   // 2. Load a local test asset
