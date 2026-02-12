@@ -1,1 +1,1 @@
-- prefer guard clauses instead of nested ifs
+- prefer guard clauses (early return) instead of nested ifs

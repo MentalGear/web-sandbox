@@ -13,7 +13,7 @@ export type SandboxCapability = typeof ALLOWED_CAPABILITIES[number];
 
 export interface SandboxConfig {
     allow?: string[]; // Allowed domains for CSP
-    // TODO: maybe add a warning/error when scriptUnsafe is active, that it should only be used for testing, never in production (as long as webcontent works in it witout it)
+    // TODO: maybe add a warning/error when scriptUnsafe is active, that it should only be used for testing, never in production (depends on whether webcontent works in it witout it)
     scriptUnsafe?: boolean; // 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox)
     capabilities?: SandboxCapability[]; // Custom sandbox attributes for iframe mode
     html?: string; // Initial HTML content for iframe mode
@@ -168,6 +168,7 @@ export class LofiSandbox extends HTMLElement {
 
         if (this._config.mode === 'worker') {
             // TODO: Assess How secure is this, if the worker is not in the iframe ?
+            // The actual idea was to put the worker in the iframe
             this.spawnWorker();
         } else {
             this.createIframe();
@@ -242,7 +243,7 @@ export class LofiSandbox extends HTMLElement {
             // connection srcs
             "default-src 'none'",
             `script-src ${scriptSrc}`,
-            `connect-src ${connectSrc}`,
+            `connect-src ${connectSrc}`, // dynamic / js induced connections (fetch,  XMLHttpRequest, EventSource, etc). Does not cover 'passive' request like html elements, e.g. <img src=url />
             `base-uri ${baseUri}`,
             `img-src ${imgSrc}`,
             "style-src 'unsafe-inline'",
@@ -286,7 +287,7 @@ export class LofiSandbox extends HTMLElement {
         }, { once: true });
         `;
 
-        // TODO: Ideally, we have a CSP tag generator in its own function and file we can call for this and above, and here just add <!DOCTYPE html> ...
+        // TODO: Ideally, we have a CSP tag/directive generator in its own function and file we can call for this and above, and here just add <!DOCTYPE html> ...
         const securityInjection = `
             <meta http-equiv="Content-Security-Policy" content="${cspConnections}">
             ${virtualFilesBase ? `<base href="${virtualFilesBase}">` : ''}
