@@ -10,7 +10,9 @@ export default defineConfig({
     }
   },
   server: {
+    // host: 'localhost',
     port: 4444,
+    // open: '/playground/index.html',
     strictPort: true,
     fs: {
       allow: ['.'] // Allow serving files from the project root (for /src)
@@ -23,6 +25,16 @@ export default defineConfig({
   plugins: [{
     name: 'dev-server',
     configureServer(server) {
+      server.httpServer?.once('listening', () => {
+        const { port, host } = server.config.server;
+        const protocol = server.config.server.https ? 'https' : 'http';
+        const playgroundUrl = `${protocol}://${host || "localhost"}:${port}/playground/index.html`;
+
+        setTimeout(() => {
+          server.config.logger.info(`\n  \x1b[32m➜\x1b[0m  \x1b[1mPlayground\x1b[0m: \x1b[36m${playgroundUrl}\x1b[0m`);
+        }, 100);
+      });
+
       server.middlewares.use(async (req, res, next) => {
         const host = req.headers.host || '';
         const url = new URL(req.url || '/', `http://${host}`);
