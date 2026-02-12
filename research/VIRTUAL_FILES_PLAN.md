@@ -1,10 +1,10 @@
-# Virtual File System (VFS) Implementation Plan
+# Virtual Files (VF) Implementation Plan
 
-This document details the implementation steps for a fully functional Host-Level VFS.
+This document details the implementation steps for fully functional Host-Level virtual files.
 
 ## 1. Data Model
 
-Use a Hybrid Storage model on the **VFS Origin** (`virtual-files.localhost`):
+Use a Hybrid Storage model on the **VF Origin** (`virtual-files.localhost`):
 
 1.  **L1 Cache (In-Memory Map)**:
     *   Fastest access (sub-millisecond).
@@ -16,7 +16,7 @@ Use a Hybrid Storage model on the **VFS Origin** (`virtual-files.localhost`):
 
 **Configuration**: Users can choose `storage: 'memory' | 'indexeddb'` to balance performance vs persistence.
 
-## 2. VFS Service Worker (`sw.ts`)
+## 2. VF Service Worker (`sw.ts`)
 
 **Strategy**: "Stale-While-Revalidate" / "Cache First with IDB Fallback".
 
@@ -40,7 +40,7 @@ Use a Hybrid Storage model on the **VFS Origin** (`virtual-files.localhost`):
 
 The Host injects `<base href="http://virtual-files.localhost/sessionId/">` into the sandbox HTML.
 *   **Mechanism**: The browser resolves `./utils.js` to `http://virtual-files.localhost/sessionId/utils.js`.
-*   **Interception**: The request is sent to the VFS domain. The VFS Service Worker intercepts it and serves the content.
+*   **Interception**: The request is sent to the VF domain. The VF Service Worker intercepts it and serves the content.
 *   **Security**: This avoids the need for a dynamic server or a local Service Worker (which requires a secure origin and is vulnerable to tampering).
 
 ## 4. Host Communication
@@ -51,10 +51,10 @@ The Host injects `<base href="http://virtual-files.localhost/sessionId/">` into 
 
 **Hub Logic (`hub.html`)**:
 *   Listens for `PUT_FILES`.
-*   Writes files to IndexedDB directly (sharing IDB connection with SW).
+*   Writes files to cache / indexedDB (sharing IDB connection with SW).
 *   Notifies SW via `postMessage` to invalidate/update its L1 cache.
 
 ## 5. Deployment
 
-*   **Production**: `vfs.my-app.com`.
+*   **Production**: `vf.my-app.com`.
 *   **Dev**: `virtual-files.localhost`.
