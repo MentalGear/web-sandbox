@@ -3,16 +3,21 @@ import { join } from 'path';
 import fs from 'fs';
 
 export default defineConfig({
-  root: 'playground',
+  root: '.',
+  resolve: {
+    alias: {
+      '@src': join(__dirname, 'src'),
+    }
+  },
   server: {
     port: 4444,
     strictPort: true,
     fs: {
-      allow: ['..'] // Allow serving files from the project root (for /src)
+      allow: ['.'] // Allow serving files from the project root (for /src)
     }
   },
   build: {
-    outDir: '../dist-playground',
+    outDir: 'dist-playground',
     emptyOutDir: true,
   },
   plugins: [{
@@ -48,9 +53,5 @@ export default defineConfig({
       });
     }
   }],
-  resolve: {
-    alias: {
-      '@src': join(__dirname, 'src'),
-    }
-  }
+
 });

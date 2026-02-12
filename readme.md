@@ -12,20 +12,26 @@ Lofi Sandbox provides a mechanism to run untrusted JavaScript code safely in the
 *   **Unified:** Use the same "Preset" definitions for both manual testing (Playground) and automated regression testing.
 
 ## Getting Started
-**Dev Server / Playground**
 
-```bash
-bun dev
-```
-*   **Playground:** [http://localhost:4444/](http://localhost:4444/)
-*   **VFS Demo:** [http://localhost:4444/virtual-files](http://localhost:4444/virtual-files)
+1.  **Install Dependencies**
+    This project relies on [Bun](https://bun.sh).
+    ```bash
+    bun install
+    ```
 
-**Tests**
+2.  **Start the Development Server**
+    You **must** use `bun start` to serve the project. This starts a custom Bun server that transpiles TypeScript files on-the-fly, which is required for the Playground to function.
+    ```bash
+    bun start
+    ```
+    *   **Playground:** [http://localhost:4444/](http://localhost:4444/)
+    *   **VFS Demo:** [http://localhost:4444/virtual-files](http://localhost:4444/virtual-files)
 
-Automated security research tests verify that known vulnerabilities are mitigated.
-```bash
-bun test
-```
+3.  **Run Tests**
+    Automated security research tests verify that known vulnerabilities are mitigated.
+    ```bash
+    bun test
+    ```
 
 ## Playground Usage
 
@@ -36,11 +42,11 @@ Navigate to [http://localhost:4444/](http://localhost:4444/).
 *   **Rules Editor:** Configure the Content Security Policy (CSP) and execution mode (iframe/worker).
 *   **Logs:** View `console.log` output and security events from within the sandbox.
 
-## Files Overview
+## Architecture
 
 *   **`src/host.ts`**: The core implementation of the `<lofi-sandbox>` custom element. It handles iframe creation, CSP generation, and communication.
 *   **`src/lib/presets.ts`**: A shared library of test scenarios used by both the Playground and automated tests.
-*   **`dev-server.ts`**: The Bun web server that serves static files and transpiles TypeScript.
+*   **`server.ts`**: The Bun web server that serves static files and transpiles TypeScript.
 *   **`research/`**: Playwright test suites for security regression testing.
 
 ## Security Mitigations
@@ -48,3 +54,4 @@ Navigate to [http://localhost:4444/](http://localhost:4444/).
 The sandbox implements several layers of defense:
 1.  **Opaque Origin**: Runs in `about:srcdoc`, creating a unique null origin that isolates storage.
 2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`).
+3.  **Runtime Hardening**: Dangerous APIs like `navigator.serviceWorker` and `document.createElement('iframe')` are monkey-patched or removed at runtime.

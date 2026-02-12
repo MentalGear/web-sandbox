@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test"
 
 export default defineConfig({
-    testDir: "test/lofi",
+    testDir: "test",
     timeout: 30000,
     projects: [
         {
