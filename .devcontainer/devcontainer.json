@@ -23,6 +23,7 @@
     "customizations": {
         "vscode": {
             "extensions": [
+                "esbenp.prettier-vscode",
                 "RooVeterinaryInc.roo-cline",
                 "google.geminicodeassist"
                 // for trailbase config types that are in textproto
