@@ -24,6 +24,14 @@
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false
+    "noPropertyAccessFromIndexSignature": false,
+
+    "baseUrl": ".",
+    "paths": {
+      "@src/*": ["src/*"]
+    },
+    // "allowSyntheticDefaultImports": true,
+  },
+  "include": ["src/**/*", "playground/**/*"]
   }
-}
+
