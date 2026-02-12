@@ -38,6 +38,7 @@ self.addEventListener('fetch', (event) => {
     if (fileCache.has(url.pathname)) {
         // Access Control Logic
         // In Local-First architecture with Opaque Origins, the Origin header might be "null".
+        // "srcdoc" sandboxes have origin "null".
         // We cannot rely solely on Origin validation for security if "null" is sent by other restricted frames.
         // However, the PATH contains the Session ID (UUID).
         // Since the Session ID is a capability token known only to the Host and the specific Sandbox instance,
@@ -58,7 +59,8 @@ self.addEventListener('fetch', (event) => {
         const content = fileCache.get(url.pathname);
         const headers = {
             'Content-Type': 'text/javascript', // TODO: Proper MIME
-            'Access-Control-Allow-Origin': '*'
+            // TODO: Access-Control-Allow-Origin: null - if it works - is properbly better as sandbox iframe's have origin null
+            'Access-Control-Allow-Origin': '*' // Needed for Opaque Origin to fetch
         };
 
         event.respondWith(new Response(content, { headers }));

@@ -8,7 +8,7 @@ test('Lofi Sandbox Worker Timeout', async ({ page }) => {
       const s = document.querySelector('lofi-sandbox');
       s.setConfig({
           mode: 'worker',
-          executionTimeout: 500 // 500ms timeout
+          workerExecutionTimeout: 500 // 500ms timeout
       });
   });
 

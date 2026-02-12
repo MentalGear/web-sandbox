@@ -51,7 +51,7 @@ setTimeout(() => console.log('TEST_DONE'), 100);`,
         label: "Worker Timeout Test",
         code: `console.log("Starting infinite loop...");
 while(true) {}`,
-        rules: { mode: "worker", executionTimeout: 1000 }
+        rules: { mode: "worker", workerExecutionTimeout: 1000 }
     },
     "virtual-files-test": {
         id: "virtual-files-test",
