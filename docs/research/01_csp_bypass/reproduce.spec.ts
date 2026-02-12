@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { PRESETS } from '../../src/lib/presets';
+import { PRESETS } from '@src/lib/presets';
 
 test('CSP Bypass via Nested Iframe - Mitigated', async ({ page }) => {
   await page.goto('http://localhost:4444/');

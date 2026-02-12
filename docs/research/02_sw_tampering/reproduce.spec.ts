@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { PRESETS } from '../../src/lib/presets';
+import { PRESETS } from '@src/lib/presets';
 
-test('WebSocket Bypass - Mitigated', async ({ page }) => {
+test('Service Worker Tampering - Mitigated', async ({ page }) => {
   await page.goto('http://localhost:4444/');
   await page.waitForSelector('lofi-sandbox');
   await page.evaluate(() => {
@@ -12,7 +12,9 @@ test('WebSocket Bypass - Mitigated', async ({ page }) => {
       });
   });
 
-  const payload = PRESETS['websocket-bypass'].code;
+  const payload = PRESETS['sw-tamper'].code;
+
+  await page.waitForTimeout(1000);
 
   await page.evaluate((code) => {
     const s = document.querySelector('lofi-sandbox');
@@ -21,10 +23,11 @@ test('WebSocket Bypass - Mitigated', async ({ page }) => {
 
   await page.waitForFunction(() => {
     const logs = window.SandboxControl.getLogs();
-    return logs.some(l => l.message.includes('TEST_DONE'));
+    return logs.some(l => l.message.includes('TEST_DONE') || l.message.includes('PWN_SUCCESS') || l.message.includes('PWN_FAILURE'));
   });
 
   const logs = await page.evaluate(() => window.SandboxControl.getLogs());
 
   expect(logs.some(l => l.message.includes('PWN_SUCCESS'))).toBe(false);
+  expect(logs.some(l => l.message.includes('PWN_FAILURE') || l.message.includes('SecurityError') || l.message.includes('No SW API'))).toBe(true);
 });

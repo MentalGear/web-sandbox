@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test';
-import { PRESETS } from '../../src/lib/presets';
+import { PRESETS } from '@src/lib/presets';
 
-test('Service Worker Tampering - Mitigated', async ({ page }) => {
+test('Outer Frame DOM Tampering - Mitigated', async ({ page }) => {
+  page.on('console', msg => console.log(msg.text()));
   await page.goto('http://localhost:4444/');
   await page.waitForSelector('lofi-sandbox');
+  console.log("Setting script-unsafe...");
   await page.evaluate(() => {
       const s = document.querySelector('lofi-sandbox');
       return new Promise(resolve => {
@@ -11,10 +13,9 @@ test('Service Worker Tampering - Mitigated', async ({ page }) => {
           s.setConfig({ scriptUnsafe: true });
       });
   });
+  console.log("Set script-unsafe.");
 
-  const payload = PRESETS['sw-tamper'].code;
-
-  await page.waitForTimeout(1000);
+  const payload = PRESETS['outer-frame-tampering'].code;
 
   await page.evaluate((code) => {
     const s = document.querySelector('lofi-sandbox');
@@ -22,12 +23,11 @@ test('Service Worker Tampering - Mitigated', async ({ page }) => {
   }, payload);
 
   await page.waitForFunction(() => {
-    const logs = window.SandboxControl.getLogs();
-    return logs.some(l => l.message.includes('TEST_DONE') || l.message.includes('PWN_SUCCESS') || l.message.includes('PWN_FAILURE'));
+      const logs = window.SandboxControl.getLogs();
+      return logs.some(l => l.message.includes('TEST_DONE'));
   });
 
   const logs = await page.evaluate(() => window.SandboxControl.getLogs());
 
   expect(logs.some(l => l.message.includes('PWN_SUCCESS'))).toBe(false);
-  expect(logs.some(l => l.message.includes('PWN_FAILURE') || l.message.includes('SecurityError') || l.message.includes('No SW API'))).toBe(true);
 });

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { PRESETS } from '../../src/lib/presets';
+import { PRESETS } from '@src/lib/presets';
 
 test('Storage Sharing Between Instances - Mitigated', async ({ page }) => {
   await page.goto('http://localhost:4444/');

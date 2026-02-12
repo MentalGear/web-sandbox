@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { PRESETS } from '../../src/lib/presets';
+import { PRESETS } from '@src/lib/presets';
 
 test('Session ID Exhaustion / DoS', async ({ page }) => {
   // 1. Setup
