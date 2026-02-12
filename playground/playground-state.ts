@@ -83,31 +83,31 @@ class PlaygroundUIManager {
     /**
      * Filters the log view based on categories.
      */
-    public setFilter(category: string): void {
-        this.currentFilter = category;
-        if (!this.logs) return;
+    // public setFilter(category: string): void {
+    //     this.currentFilter = category;
+    //     if (!this.logs) return;
 
-        const entries = this.logs.getElementsByClassName("log-entry");
+    //     const entries = this.logs.getElementsByClassName("log-entry");
 
-        // Update button styles
-        document.querySelectorAll(".filter-btn").forEach((btn) => {
-            const element = btn as HTMLElement;
-            element.style.opacity = btn.id === `filter-${category}` ? "1" : "0.5";
-            element.style.border =
-                btn.id === `filter-${category}`
-                    ? "1px solid var(--primary)"
-                    : "1px solid transparent";
-        });
+    //     // Update button styles
+    //     document.querySelectorAll(".filter-btn").forEach((btn) => {
+    //         const element = btn as HTMLElement;
+    //         element.style.opacity = btn.id === `filter-${category}` ? "1" : "0.5";
+    //         element.style.border =
+    //             btn.id === `filter-${category}`
+    //                 ? "1px solid var(--primary)"
+    //                 : "1px solid transparent";
+    //     });
 
-        for (const entry of Array.from(entries)) {
-            const entryCategory = entry.getAttribute("data-category");
-            if (category === "all" || entryCategory === category) {
-                (entry as HTMLElement).style.display = "block";
-            } else {
-                (entry as HTMLElement).style.display = "none";
-            }
-        }
-    }
+    //     for (const entry of Array.from(entries)) {
+    //         const entryCategory = entry.getAttribute("data-category");
+    //         if (category === "all" || entryCategory === category) {
+    //             (entry as HTMLElement).style.display = "block";
+    //         } else {
+    //             (entry as HTMLElement).style.display = "none";
+    //         }
+    //     }
+    // }
 
     /**
      * Adds category metadata to log entries for filtering.

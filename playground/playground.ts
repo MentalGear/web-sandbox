@@ -1,4 +1,4 @@
-import "./state.ts"
+import "./playground-state.ts"
 
 import { LofiSandbox } from '@src/host.ts';
 customElements.define("lofi-sandbox", LofiSandbox);
