@@ -5,7 +5,8 @@ customElements.define("lofi-sandbox", LofiSandbox);
 
 import { SandboxDevTools } from '@src/devtools.ts';
 import { PRESETS } from '@src/lib/presets.ts';
-// console.log("Imported PRESETS", PRESETS);
+
+// -----------------
 
 const capturedLogs = [];
 const sandbox = document.getElementById('sandbox');

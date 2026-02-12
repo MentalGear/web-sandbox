@@ -5,23 +5,35 @@
 export class SandboxDevTools {
     private _sandbox: HTMLElement;
     private _handler: (e: Event) => void;
+    private _active: boolean = false;
 
     constructor(sandboxElement: HTMLElement) {
         this._sandbox = sandboxElement;
         this._handler = (e: Event) => {
+            if (e.target !== this._sandbox) return;
             const detail = (e as CustomEvent).detail;
             this.log(detail);
         };
     }
 
-    enable() {
-        console.info("%c[DevTools] Enabled for Sandbox", "color: #4caf50; font-weight: bold");
-        window.addEventListener('sandbox-log', this._handler);
+    toggle() {
+        if (this._active) {
+            this.deactivate();
+        } else {
+            this.activate();
+        }
     }
 
-    disable() {
+    activate() {
+        console.info("%c[DevTools] Enabled for Sandbox", "color: #4caf50; font-weight: bold");
+        window.addEventListener('sandbox-log', this._handler);
+        this._active = true;
+    }
+
+    deactivate() {
         console.info("%c[DevTools] Disabled", "color: #999");
         window.removeEventListener('sandbox-log', this._handler);
+        this._active = false;
     }
 
     private log(data: any) {
