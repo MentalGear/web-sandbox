@@ -238,5 +238,78 @@ console.log('TEST_DONE');`,
     console.log('TEST_DONE');
 })();`,
         rules: { capabilities: ["allow-scripts", "allow-popups", "allow-popups-to-escape-sandbox" as SandboxCapability], scriptUnsafe: true }
+    },
+    "local-html-page": {
+        id: "local-html-page",
+        label: "Local HTML Page Test",
+        code: `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }
+        .test-section { margin-bottom: 20px; padding: 15px; background: white; border-radius: 8px; border: 1px solid #ddd; }
+        .success { color: green; font-weight: bold; }
+        img { display: block; margin-top: 10px; max-width: 200px; border: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <h2>Sandbox Feature Suite</h2>
+
+    <div class="test-section">
+        <h3>1. Script Execution</h3>
+        <div id="status">❌ Script failed</div>
+    </div>
+
+    <div class="test-section">
+        <h3>2. External Image</h3>
+        <img src="https://picsum.dev/400/300" alt="External">
+    </div>
+
+    <div class="test-section" id="dynamic-section">
+        <h3>3. Dynamic Internal Image</h3>
+        <button onclick="loadInternal()">Load logo.png</button>
+        <div id="img-target"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>4. Click Counter</h3>
+        <button id="counter-btn">Clicked 0 times</button>
+    </div>
+
+    <script>
+        // Test 1
+        document.getElementById('status').innerHTML = "✅ Script executed successfully.";
+        document.getElementById('status').className = "success";
+
+        // Test 3
+        function loadInternal() {
+            const target = document.getElementById('img-target');
+            const img = document.createElement('img');
+            // Tests relative path resolution
+            img.src = "logo.png";
+            img.alt = "Internal Logo";
+            target.innerHTML = '';
+            target.appendChild(img);
+            console.log("Attempted to load internal image via JS function");
+        }
+
+        // Test 4
+        let count = 0;
+        const counterBtn = document.getElementById('counter-btn');
+        counterBtn.addEventListener('click', () => {
+            count++;
+            counterBtn.textContent = "Clicked " + count + " times";
+        });
+    </script>
+</body>
+</html>`,
+        rules: {
+            allow: ["https://picsum.dev"],
+            // scriptUnsafe: true,
+            capabilities: ["allow-scripts"],
+            // Optional: point to a VFS if you want logo.png to actually resolve
+            virtualFilesUrl: "http://virtual-files.localhost:4444"
+        }
     }
 };
