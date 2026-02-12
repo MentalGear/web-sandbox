@@ -16,7 +16,7 @@ interface IPlayground {
     loadState(): boolean;
     triggerCustomMode(): void;
     readonly currentFilter: string;
-    setFilter(category: string): void;
+    // setFilter(category: string): void;
     tagLog(element: HTMLElement, category: string): void;
 }
 
@@ -131,7 +131,7 @@ window.playground = {
     saveState: manager.saveState.bind(manager),
     loadState: manager.loadState.bind(manager),
     triggerCustomMode: manager.triggerCustomMode.bind(manager),
-    setFilter: manager.setFilter.bind(manager),
+    // setFilter: manager.setFilter.bind(manager),
     tagLog: manager.tagLog.bind(manager),
     get currentFilter(): string {
         return manager.currentFilter;
