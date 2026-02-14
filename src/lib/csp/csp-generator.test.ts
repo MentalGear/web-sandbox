@@ -99,14 +99,6 @@ describe('generateCSP', () => {
     expect(generateCSP(input)).toBe(expected);
   });
 
-  it('should handle require-trusted-types-for as a boolean directive', () => {
-    const input: CSPDirectives = {
-      'require-trusted-types-for': [],
-    };
-    const expected = "default-src 'none'; require-trusted-types-for;";
-    expect(generateCSP(input)).toBe(expected);
-  });
-
   it('should handle directive of boolean and string[] type', () => {
     const input: CSPDirectives = {
       'upgrade-insecure-requests': [],

@@ -48,11 +48,7 @@ export function generateCSP(directives: CSPDirectives): string {
 function formatDirective(directiveName: string, directiveValues: unknown): string | null {
 
     // special case: directives of type boolean
-    if (
-        (directiveName === "upgrade-insecure-requests") ||
-        (directiveName === "require-trusted-types-for") ) {
-        return `${directiveName}`
-    }
+    if (directiveName === "upgrade-insecure-requests") { return `${directiveName}` }
 
     if (!Array.isArray(directiveValues)) throw new Error("value type must be array");
 
