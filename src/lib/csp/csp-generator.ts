@@ -26,15 +26,13 @@ export function generateCSP(directives: CSPDirectives): string {
         }
     }
 
-    // place default-src as first
+    // place default-src first
     const defaultSrcDirectiveIndex = cspDirectivesList.findIndex(p => p.startsWith('default-src'));
-    // TODO: we must always add a default-src: none if none is provided ?
     // cspDirectivesList.unshift(defaultSrcString);
     if (defaultSrcDirectiveIndex > -1) {
         const [defaultSrcDirective] = cspDirectivesList.splice(defaultSrcDirectiveIndex, 1);
         if (defaultSrcDirective) cspDirectivesList.unshift(defaultSrcDirective);
     }
-
 
     const cspPolicyString = cspDirectivesList.join('; ') + ';'; // add closing ;
     // const cspPolicyString = `${cspPolicy.join('; ')};`
@@ -48,6 +46,13 @@ export function generateCSP(directives: CSPDirectives): string {
  * we want json input to be correct, and shouldn't rely on us cleaning it
  */
 function formatDirective(directiveName: string, directiveValues: unknown): string | null {
+
+    // special case: directives of type boolean
+    if (
+        (directiveName === "upgrade-insecure-requests") ||
+        (directiveName === "require-trusted-types-for") ) {
+        return `${directiveName}`
+    }
 
     if (!Array.isArray(directiveValues)) throw new Error("value type must be array");
 

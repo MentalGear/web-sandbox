@@ -90,4 +90,29 @@ describe('generateCSP', () => {
     expect(generateCSP(input)).toBe(`default-src 'none'; script-src example.com; img-src images.com;`);
 
   });
+
+  it('should handle upgrade-insecure-requests as a boolean directive', () => {
+    const input: CSPDirectives = {
+      'upgrade-insecure-requests': [],
+    };
+    const expected = "default-src 'none'; upgrade-insecure-requests;";
+    expect(generateCSP(input)).toBe(expected);
+  });
+
+  it('should handle require-trusted-types-for as a boolean directive', () => {
+    const input: CSPDirectives = {
+      'require-trusted-types-for': [],
+    };
+    const expected = "default-src 'none'; require-trusted-types-for;";
+    expect(generateCSP(input)).toBe(expected);
+  });
+
+  it('should handle directive of boolean and string[] type', () => {
+    const input: CSPDirectives = {
+      'upgrade-insecure-requests': [],
+      'script-src': ["example.com"],
+    };
+    const expected = "default-src 'none'; upgrade-insecure-requests; script-src example.com;";
+    expect(generateCSP(input)).toBe(expected);
+  });
 });
