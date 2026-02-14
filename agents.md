@@ -1,1 +1,8 @@
 - prefer guard clauses instead of nested ifs
+- keep original comments
+- use modern ESNEXT
+- write highly readable and elegant code
+- prefer for loops over  higher-order array methods (.maps, .filter, ...) if they are less readable but otherwise have the same functionality and performance
+- do not chain higher-order array methods directly, but always use temp vars in-between to maintain clear readability
+- always sanitize (function) inputs before applying them. If you apply first and then sanitize/check, an error in the sanitization could keep unwanted input stored as valid.
+- use smaller functions: apply the unix-principle of doing "one thing"

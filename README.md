@@ -1,4 +1,4 @@
-# Lofi Web Sandbox
+# Web Sandbox
 
 A secure, local-first sandbox implementation using `iframe srcdoc`, Opaque Origins, and Immutable CSP.
 
@@ -47,11 +47,10 @@ Navigate to [http://localhost:4444/](http://localhost:4444/).
 *   **`src/host.ts`**: The core implementation of the `<lofi-sandbox>` custom element. It handles iframe creation, CSP generation, and communication.
 *   **`src/lib/presets.ts`**: A shared library of test scenarios used by both the Playground and automated tests.
 *   **`server.ts`**: The Bun web server that serves static files and transpiles TypeScript.
-*   **`research/`**: Playwright test suites for security regression testing.
+*   **`docs/research`**: Playwright test suites for security regression testing.
 
 ## Security Mitigations
 
 The sandbox implements several layers of defense:
 1.  **Opaque Origin**: Runs in `about:srcdoc`, creating a unique null origin that isolates storage.
 2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`).
-3.  **Runtime Hardening**: Dangerous APIs like `navigator.serviceWorker` and `document.createElement('iframe')` are monkey-patched or removed at runtime.
