@@ -1,18 +1,11 @@
-export const ALLOWED_CAPABILITIES = [
-    "allow-downloads",
-    "allow-forms",
-    "allow-modals",
-    "allow-orientation-lock",
-    "allow-pointer-lock",
-    "allow-popups",
-    "allow-presentation",
-    "allow-scripts",
-] as const;
-
-export type SandboxCapability = typeof ALLOWED_CAPABILITIES[number];
+import type { CSPDirectives, SandboxCapability } from "./csp-directives";
+import { ALLOWED_CAPABILITIES } from "./csp-directives";
+import { generateCSP } from "./lib/csp/csp-generator";
+import { deepMerge } from "./lib/utils";
+import { inSandboxScript } from "./lib/in-sandbox-script";
 
 export interface SandboxConfig {
-    allow?: string[]; // Allowed domains for CSP
+    connectionsAllowed: CSPDirectives; // Providing a key here will merge with/override the default for that directive.
     // TODO: maybe add a warning/error when scriptUnsafe is active, that it should only be used for testing, never in production (as long as webcontent works in it witout it)
     scriptUnsafe?: boolean; // 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox)
     capabilities?: SandboxCapability[]; // Custom sandbox attributes for iframe mode
@@ -22,19 +15,38 @@ export interface SandboxConfig {
     workerExecutionTimeout?: number; // Max execution time in ms (Worker mode only)
 }
 
+const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
+    connectionsAllowed: {
+        "upgrade-insecure-requests": true,
+        "default-src": ["'none'"],
+        "script-src": ["'self'", "'unsafe-inline'"],
+        "connect-src": [],
+        "base-uri": [],
+        "img-src": [],
+        "style-src": ["'unsafe-inline'"],
+        "font-src": [],
+        "media-src": [],
+        "manifest-src": [],
+        "prefetch-src": [],
+        "form-action": [],
+        "object-src": [],
+        "frame-src": [],
+        "frame-ancestors": [],
+        "worker-src": ["blob:", "data:"]
+    },
+    scriptUnsafe: false,
+    capabilities: [],
+    html: '',
+    virtualFilesUrl: '',
+    mode: 'iframe',
+    workerExecutionTimeout: 0,
+};
+
 export class LofiSandbox extends HTMLElement {
     private _iframe: HTMLIFrameElement | null = null;
     private _worker: Worker | null = null;
     private _workerUrl: string | null = null;
-    private _config: SandboxConfig = {
-        allow: [],
-        scriptUnsafe: false,
-        capabilities: [],
-        html: '',
-        virtualFilesUrl: '',
-        mode: 'iframe',
-        workerExecutionTimeout: 0, // 0 = unlimited
-    };
+    private _config: SandboxConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
     private _sessionId: string;
     private _port: MessagePort | null = null;
     private _hubFrame: HTMLIFrameElement | null = null;
@@ -52,15 +64,21 @@ export class LofiSandbox extends HTMLElement {
     }
 
     setConfig(config: SandboxConfig) {
-        this._config = { ...this._config, ...config };
+
+        // ---- Parse and Sanitize Input
 
         // Filter out any forbidden capabilities that might have been passed
-        if (this._config.capabilities) {
-            this._config.capabilities = this._config.capabilities.filter(
+        if (config.capabilities) {
+            config.capabilities = config.capabilities.filter(
                 cap => ALLOWED_CAPABILITIES.includes(cap as SandboxCapability)
             );
         }
 
+        // apply new config
+        this._config = deepMerge(DEFAULT_SANDBOX_CONFIG, config);
+
+        // add virtual files hub if not already existing
+        // TODO: make own function
         if (this._config.virtualFilesUrl && !this._hubFrame) {
             this._hubFrame = document.createElement('iframe');
             this._hubFrame.style.display = 'none';
@@ -99,8 +117,13 @@ export class LofiSandbox extends HTMLElement {
     }
 
     execute(code: string) {
+        if (!this._config.scriptUnsafe) {
+            console.warn("[Sandbox] execute() blocked: scriptUnsafe is false. Enable it in config to run arbitrary code.");
+            return;
+        }
+
         if (this._port) {
-            // this._startTimeout();
+            this._startTimeout();
             this._port.postMessage({ type: 'EXECUTE', code });
         } else {
             this._queuedMessages.push({ code });
@@ -162,44 +185,26 @@ export class LofiSandbox extends HTMLElement {
     private initialize() {
         this._queuedMessages = []; // Clear queue for the old environment
         if (this._iframe) { this._iframe.remove(); this._iframe = null; }
-        this._cleanupWorker();
+        if (this._worker) (this._cleanupWorker())
         if (this._port) { this._port.close(); this._port = null; }
         if (this._timeoutId) clearTimeout(this._timeoutId);
 
-        if (this._config.mode === 'worker') {
-            // TODO: Assess How secure is this, if the worker is not in the iframe ?
-            this.spawnWorker();
-        } else {
+        if (this._config.mode === 'iframe') {
+            // iframe mode
             this.createIframe();
+        } else if (this._config.mode === 'worker') {
+            // TODO: this is wrong! we need to place the worker inside the iframe, oterwise the worker has full network access (has host CSP policy)
+            this.spawnWorker();
         }
     }
 
+    private _getSandboxCommsScript(mode: 'iframe' | 'worker') {
+        // communication and logs template that any content running in the sandbox uses
+        return `(${inSandboxScript.toString()})(${this._config.scriptUnsafe}, '${mode}', console);`;
+    }
+
     private spawnWorker() {
-        // TODO: describe: Spawn where ? host or sandbox ? and what ? sw ? webworkeR?
-        const script = `
-            self.onmessage = (e) => {
-                if (e.data.type === 'INIT_PORT') {
-                    const port = e.ports[0];
-                    port.onmessage = (ev) => {
-                        if (ev.data.type === 'EXECUTE') {
-                            try {
-                                const func = new Function(ev.data.code);
-                                func();
-                            } catch (err) {
-                                port.postMessage({ type: 'LOG', level: 'error', args: [err.message] });
-                            }
-                        }
-                    };
-                    ['log', 'error', 'warn'].forEach(level => {
-                        const original = console[level];
-                        console[level] = (...args) => {
-                            port.postMessage({ type: 'LOG', level, args });
-                        };
-                    });
-                    port.postMessage({ type: 'LOG', level: 'info', args: ['Worker Ready'] });
-                }
-            };
-        `;
+        const script = this._getSandboxCommsScript('worker');
         const blob = new Blob([script], { type: 'application/javascript' });
         this._workerUrl = URL.createObjectURL(blob);
         this._worker = new Worker(this._workerUrl);
@@ -221,72 +226,32 @@ export class LofiSandbox extends HTMLElement {
 
         // TODO: can we use a sandbox or iframe identifier that is not accessible to the sandbox itself ? like event.source in the host receiver
         const virtualFilesBase = this._config.virtualFilesUrl ? `${this._config.virtualFilesUrl}/${this._sessionId}/` : '';
-        const allow = this._config.allow || [];
 
-        const scriptSrcParts = [
-            "'self'",
-            "'unsafe-inline'",
-            virtualFilesBase,
-            // "blob:" // might be required for front-end framework workers and dynamic imports
-        ];
-        if (this._config.scriptUnsafe === true) scriptSrcParts.push("'unsafe-eval'");
-        const scriptSrc = scriptSrcParts.filter(Boolean).join(" ");
+        // Clone the config directives to avoid mutating the original config
+        // passing the refs of the original object
+        const directives = structuredClone(
+            this._config.connectionsAllowed
+        );
 
-        const connectSrc = [...allow, virtualFilesBase].filter(Boolean).join(" ") || "'none'";
-        const baseUri = virtualFilesBase || "'none'";
-        const imgSrc = virtualFilesBase || "'none'";
+        directives["upgrade-insecure-requests"] = true
 
-        const cspConnections = [
-            // upgrade http to https, ws to wss
-            "upgrade-insecure-requests",
-            // connection srcs
-            "default-src 'none'",
-            `script-src ${scriptSrc}`,
-            `connect-src ${connectSrc}`,
-            `base-uri ${baseUri}`,
-            `img-src ${imgSrc}`,
-            "style-src 'unsafe-inline'",
-            "font-src 'none'",
-            "media-src 'none'",
-            "manifest-src 'none'",
-            "prefetch-src 'none'",
-            "form-action 'none'",
-            "object-src 'none'", // <embed, <object, ...
-            "frame-src 'none'", // specifies sources where iframes in a page may be loaded from
-            "frame-ancestors 'none'", // specifies parents that may embed a page using <frame>, <iframe>, <object>, or <embed>
-            "worker-src blob:" // Allow frameworks to spawn workers from blobs
-        ].join("; ");
+        if (virtualFilesBase) {
+            directives["script-src"]?.push(virtualFilesBase);
+            directives["connect-src"]?.push(virtualFilesBase);
+            directives["base-uri"]?.push(virtualFilesBase);
+            directives["img-src"]?.push(virtualFilesBase);
+        }
+
+        if (this._config.scriptUnsafe) {
+            directives["script-src"]?.push("'unsafe-eval'");
+        }
+
+        const cspConnections = generateCSP(directives);
 
         // communication and logs template that any content running in the sandbox uses
-        const commsScript = `
-        window.addEventListener('message', (event) => {
-            if (event.data?.type === 'INIT_PORT') {
-                const port = event.ports[0];
-                port.onmessage = (ev) => {
-                    if (ev.data.type === 'EXECUTE') {
-                        try {
-                            // Ensure the code execution itself doesn't crash the port logic
-                            const func = new Function(ev.data.code);
-                            func();
-                        } catch (e) {
-                            port.postMessage({ type: 'LOG', level: 'error', args: [e.message] });
-                        }
-                    }
-                };
+        const commsScript = this._getSandboxCommsScript('iframe');
 
-                ['log', 'error', 'warn'].forEach(level => {
-                    const original = console[level];
-                    console[level] = (...args) => {
-                        port.postMessage({ type: 'LOG', level, args });
-                        original.apply(console, args);
-                    };
-                });
-                port.postMessage({ type: 'LOG', level: 'info', args: ['Iframe Ready'] });
-            }
-        }, { once: true });
-        `;
 
-        // TODO: Ideally, we have a CSP tag generator in its own function and file we can call for this and above, and here just add <!DOCTYPE html> ...
         const securityInjection = `
             <meta http-equiv="Content-Security-Policy" content="${cspConnections}">
             ${virtualFilesBase ? `<base href="${virtualFilesBase}">` : ''}

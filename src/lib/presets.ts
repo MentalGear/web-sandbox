@@ -3,7 +3,7 @@
  * Pre-defined scenarios to demonstrate sandbox capabilities and testing.
  */
 
-import type { SandboxCapability } from "@src/host";
+import type { SandboxCapability } from "@src/csp-directives";
 
 export const PRESETS = {
     "basic": {
@@ -13,7 +13,14 @@ export const PRESETS = {
 fetch("https://jsonplaceholder.typicode.com/todos/1")
   .then(r => r.json())
   .then(j => console.log("Fetched:", j));`,
-        rules: { allow: ["https://jsonplaceholder.typicode.com"], scriptUnsafe: true, capabilities: ["allow-scripts"], },
+        rules: {
+            connectionsAllowed: {
+                "script-src": ["'self'", "'unsafe-inline'"],
+                "connect-src": ["https://jsonplaceholder.typicode.com"]
+            },
+            scriptUnsafe: true,
+            capabilities: ["allow-scripts"],
+        },
     },
     "csp-bypass": {
         id: "csp-bypass",
@@ -277,6 +284,12 @@ console.log('TEST_DONE');`,
         <button id="counter-btn">Clicked 0 times</button>
     </div>
 
+        <div class="test-section">
+            <h3>5. Style Injection</h3>
+            <button id="style-btn">Change Theme</button>
+            <div id="style-status">Status: Original</div>
+        </div>
+
     <script>
         // Test 1
         document.getElementById('status').innerHTML = "✅ Script executed successfully.";
@@ -301,11 +314,30 @@ console.log('TEST_DONE');`,
             count++;
             counterBtn.textContent = "Clicked " + count + " times";
         });
+
+        // Test 5: Dynamic Style Injection
+        const styleBtn = document.getElementById('style-btn');
+        const styleStatus = document.getElementById('style-status');
+        styleBtn.addEventListener('click', () => {
+            try {
+                document.body.style.backgroundColor = '#eef2ff';
+                const style = document.createElement('style');
+                style.textContent = '#style-status { color: #4338ca; font-weight: bold; }';
+                document.head.appendChild(style);
+                styleStatus.textContent = "✅ Styles applied dynamically";
+            } catch (e) {
+                styleStatus.textContent = "❌ Style blocked: " + e.message;
+            }
+        });
     </script>
 </body>
 </html>`,
         rules: {
-            allow: ["https://picsum.dev"],
+            connectionsAllowed: {
+                "script-src": ["'self'", "'unsafe-inline'"],
+                "style-src": ["'unsafe-inline'"],
+                "img-src": ["https://picsum.dev"]
+            },
             // scriptUnsafe: true,
             capabilities: ["allow-scripts"],
             // Optional: point to a VFS if you want logo.png to actually resolve

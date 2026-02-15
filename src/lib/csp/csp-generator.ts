@@ -1,9 +1,9 @@
+import type { CSPDirectives } from "@src/csp-directives";
+
 /**
  * Generates a CSP string from a JSON object of directives.
  * Empty arrays are omitted to allow default-src fallback.
  */
-export type CSPDirectives = Record<string, string[]>;
-
 export function generateCSP(directives: CSPDirectives): string {
 
     if (!directives || typeof directives !== 'object') throw new Error("directives must be provided as a key/value pair (object)");
