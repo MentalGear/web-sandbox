@@ -9,7 +9,11 @@ test.describe('Escape attempts', () => {
         let popups = 0;
         context.on('page', () => popups++);
 
-        await sandbox.run(`console.log('POPUP ' + (window.open('about:blank') ? 'opened' : 'blocked'))`);
+        // Chromium and WebKit return null, Firefox throws
+        await sandbox.run(`
+            try { console.log('POPUP ' + (window.open('about:blank') ? 'opened' : 'blocked')); }
+            catch (e) { console.log('POPUP blocked'); }
+        `);
 
         expect(await sandbox.waitForLog('POPUP')).toBe('POPUP blocked');
         expect(popups).toBe(0);

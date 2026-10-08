@@ -73,8 +73,8 @@ host page
 
 ## Limits
 
-- Verified in Chromium. CI runs the suite in Firefox and WebKit as well; until those runs are green,
-  treat the wrapper's protection in those engines as unconfirmed.
+- Verified in Chromium, Firefox and WebKit: all of 14.1 and 14.2 pass in each engine (first CI run,
+  PR #7). Mobile engines (Android WebView, iOS Safari) are not covered by CI.
 - Popups are new top-level windows, not child frames, so `frame-src` does not cover them. They are
   handled by moving `allow-popups` behind an explicit opt-in — see [research 13](../13_popup_exfiltration/README.md).
 - A navigation to `about:srcdoc` (`location.reload()`) is not fetched and so not blocked. The reloaded
