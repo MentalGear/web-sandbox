@@ -1,15 +1,12 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, HARNESS, ORIGIN } from '../../../test/e2e/fixture';
 
 /**
  * Research 11: CSP delivery via <meta> — limits and failure modes.
- *
- * NOTE: like every other suite in this repo, these specs depend on backlog item T1
- * (the e2e harness). They are written against the corrected URL and the
- * `allow-scripts` capability the sandbox needs in order to run anything at all.
+ * Runs on the shared e2e harness (test/e2e/fixture.ts).
  */
 
-const PLAYGROUND = 'http://localhost:4444/playground/index.html';
-const ASSET = 'http://localhost:4444/playground/test-assets/local-image.svg';
+const PLAYGROUND = HARNESS;
+const ASSET = `${ORIGIN}/playground/test-assets/local-image.svg`;
 
 test.describe('Research 11: meta-CSP delivery', () => {
 
@@ -74,33 +71,28 @@ test.describe('Research 11: meta-CSP delivery', () => {
         expect(escaped.metaPushedToBody).toBe(true);   // policy silently absent
     });
 
-    // 11.3 — the regex-spliced security block can be swallowed by user markup.
-    test('11.3 user content can delete the injected CSP', async ({ page }) => {
-        await page.goto(PLAYGROUND);
+    // 11.3 — the security block used to be regex-spliced into user markup, where a comment could swallow it.
+    // Fixed by prepending the block before any user content (backlog S2, src/lib/frame-documents.ts).
+    test('11.3 user content cannot delete the injected CSP', async ({ sandbox }) => {
+        await sandbox.mount();
 
-        const payload = `<html><body><!-- <head> -->
-            <script>
-              const meta = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
-              parent.postMessage({ cspPresent: !!meta }, '*');
-            </script></body></html>`;
+        const payloads = [
+            `<html><body><!-- <head> --></body></html>`,
+            `<!-- <html><head> --><html><head></head><body></body></html>`,
+            `<html><head><img src=x><!--</head><body></body></html>`,
+            `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>full document</p></body></html>`,
+            `<textarea><head></textarea>`,
+            `<plaintext>`,
+        ];
 
-        const report = await page.evaluate(async (html) => {
-            return await new Promise<any>(resolve => {
-                const handler = (e: MessageEvent) => {
-                    if (!e.data || !('cspPresent' in e.data)) return;
-                    window.removeEventListener('message', handler);
-                    resolve(e.data);
-                };
-                window.addEventListener('message', handler);
-                const s = document.querySelector('lofi-sandbox') as any;
-                s.setConfig({ capabilities: ['allow-scripts'] });
-                s.load(html);
-                setTimeout(() => resolve({ timeout: true }), 5000);
-            });
-        }, payload);
-
-        // Currently FAILS by design: this documents the open vulnerability (backlog S2).
-        // Once the injection is structural rather than textual, this should pass.
-        expect(report.cspPresent, 'security block was swallowed by a user comment').toBe(true);
+        for (const payload of payloads) {
+            await sandbox.clearLogs();
+            await sandbox.load(payload);
+            await sandbox.run(`
+                const meta = document.head.firstElementChild;
+                console.log('CSP_FIRST_IN_HEAD ' + (meta?.getAttribute('http-equiv') === 'Content-Security-Policy'));
+            `);
+            expect(await sandbox.waitForLog('CSP_FIRST_IN_HEAD'), `payload: ${payload}`).toBe('CSP_FIRST_IN_HEAD true');
+        }
     });
 });

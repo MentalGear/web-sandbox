@@ -1,14 +1,29 @@
-export const ALLOWED_CAPABILITIES = [
-    "allow-downloads",
+// Capabilities that keep the guest inside the frame and its network policy.
+// allow-forms is safe because form-action defaults to 'none' and the wrapper frame blocks
+// the guest frame from navigating (which is what a form submission does).
+export const SAFE_CAPABILITIES = [
     "allow-forms",
-    "allow-modals",
     "allow-orientation-lock",
     "allow-pointer-lock",
-    "allow-popups",
-    "allow-presentation",
     "allow-scripts",
 ] as const;
 
+// Capabilities that reach outside the frame, so they need an explicit opt-in via `unsafeCapabilities`:
+// - allow-popups: a popup is a new top-level window, untouched by the frame's CSP -> URL exfiltration
+// - allow-modals: alert/confirm/prompt can imitate host UI and block the host's main thread
+// - allow-downloads: writes files to the user's disk
+// - allow-presentation: the Presentation API opens a URL on a second screen, outside the frame's CSP
+export const UNSAFE_CAPABILITIES = [
+    "allow-downloads",
+    "allow-modals",
+    "allow-popups",
+    "allow-presentation",
+] as const;
+
+export const ALLOWED_CAPABILITIES = [...SAFE_CAPABILITIES, ...UNSAFE_CAPABILITIES] as const;
+
+export type SafeCapability = (typeof SAFE_CAPABILITIES)[number];
+export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];
 export type SandboxCapability = (typeof ALLOWED_CAPABILITIES)[number];
 
 export interface CSPDirectives {

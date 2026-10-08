@@ -1,8 +1,16 @@
 import type { CSPDirectives } from "@src/csp-directives";
 
 /**
+ * Directives that do NOT fall back to default-src.
+ * Omitting one of them leaves it unrestricted, so an empty array has to be emitted as 'none'.
+ * (frame-ancestors also has no fallback, but browsers ignore it in a <meta> policy.)
+ */
+export const NON_FALLBACK_DIRECTIVES = ["base-uri", "form-action"] as const;
+
+/**
  * Generates a CSP string from a JSON object of directives.
- * Empty arrays are omitted to allow default-src fallback.
+ * Empty arrays mean "deny": fetch directives are omitted so they fall back to default-src,
+ * and directives without a fallback (NON_FALLBACK_DIRECTIVES) are emitted as 'none'.
  */
 export function generateCSP(directives: CSPDirectives): string {
 
@@ -65,7 +73,11 @@ function formatDirective(directiveName: string, directiveValues: unknown): strin
         sanitizedValues.push(trimmed);
     }
 
-    if (sanitizedValues.length === 0) return null;
+    if (sanitizedValues.length === 0) {
+        // no default-src fallback for these: omitting them would mean "allow everything"
+        if ((NON_FALLBACK_DIRECTIVES as readonly string[]).includes(directiveName)) return `${directiveName} 'none'`;
+        return null;
+    }
 
     return `${directiveName} ${sanitizedValues.join(' ')}`;
 }

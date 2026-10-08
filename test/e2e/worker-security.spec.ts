@@ -1,44 +1,42 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, ORIGIN } from './fixture';
 
-test.describe('Lofi Sandbox Worker Security', () => {
-    test.beforeEach(async ({ page }) => {
-        await page.goto('http://localhost:4444/');
-        await page.waitForSelector('lofi-sandbox');
-        await page.evaluate(() => {
-            const s = document.querySelector('lofi-sandbox');
-            s.setConfig({ mode: 'worker', scriptUnsafe: true });
-        });
+// Worker mode used to spawn the worker from the host document, so it ran under the host's
+// origin and CSP with full network access (backlog S1). It now runs inside the sandbox frame.
+test.describe('Worker mode isolation', () => {
+    test.beforeEach(async ({ sandbox }) => {
+        expect(await sandbox.mount({ mode: 'worker' })).toBe('ready');
     });
 
-    test('Block External Fetch', async ({ page }) => {
-        await page.evaluate(() => {
-            const s = document.querySelector('lofi-sandbox');
-            s.execute(`
-                fetch('http://example.com')
-                    .then(() => self.postMessage({type:'LOG', args:['Fetch Success']}))
-                    .catch(e => self.postMessage({type:'LOG', args:['Fetch Blocked: ' + e.message]}));
-            `);
-        });
-
-        // Should catch Fetch Blocked
-        const msg = await page.waitForEvent('console', m => m.text().includes('Fetch Blocked'));
-        expect(msg).toBeTruthy();
+    test('runs code in a worker with an opaque origin', async ({ sandbox }) => {
+        await sandbox.run(`console.log('WORKER_CONTEXT ' + (typeof document) + ' ' + self.origin)`);
+        expect(await sandbox.waitForLog('WORKER_CONTEXT')).toBe('WORKER_CONTEXT undefined null');
     });
 
-    test('Block importScripts', async ({ page }) => {
-        await page.evaluate(() => {
-            const s = document.querySelector('lofi-sandbox');
-            s.execute(`
-                try {
-                    importScripts('http://example.com/script.js');
-                    self.postMessage({type:'LOG', args:['Import Success']});
-                } catch (e) {
-                    self.postMessage({type:'LOG', args:['Import Blocked: ' + e.message]});
-                }
-            `);
-        });
+    test('blocks fetch to a host that is not allowlisted', async ({ sandbox, page }) => {
+        const reached: string[] = [];
+        page.on('request', r => { if (r.url().includes('/playground/test-assets/')) reached.push(r.url()); });
 
-        const msg = await page.waitForEvent('console', m => m.text().includes('Import Blocked'));
-        expect(msg).toBeTruthy();
+        // same origin as the host page: the old worker could fetch it freely
+        await sandbox.run(`
+            fetch('${ORIGIN}/playground/test-assets/local-image.svg')
+                .then(() => console.log('FETCH_SUCCESS'))
+                .catch(e => console.log('FETCH_BLOCKED ' + e.message));
+        `);
+
+        expect(await sandbox.waitForLog(/FETCH_(SUCCESS|BLOCKED)/)).toContain('FETCH_BLOCKED');
+        expect(reached).toEqual([]);
+    });
+
+    test('blocks importScripts from an external URL', async ({ sandbox }) => {
+        await sandbox.run(`
+            try {
+                importScripts('${ORIGIN}/playground/test-assets/script.js');
+                console.log('IMPORT_SUCCESS');
+            } catch (e) {
+                console.log('IMPORT_BLOCKED ' + e.name);
+            }
+        `);
+
+        expect(await sandbox.waitForLog(/IMPORT_(SUCCESS|BLOCKED)/)).toContain('IMPORT_BLOCKED');
     });
 });

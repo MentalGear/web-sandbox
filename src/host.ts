@@ -1,14 +1,18 @@
-import type { CSPDirectives, SandboxCapability } from "./csp-directives";
-import { ALLOWED_CAPABILITIES } from "./csp-directives";
+import type { CSPDirectives, SafeCapability, UnsafeCapability } from "./csp-directives";
+import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES } from "./csp-directives";
 import { generateCSP } from "./lib/csp/csp-generator";
 import { deepMerge } from "./lib/utils";
 import { inSandboxScript } from "./lib/in-sandbox-script";
+import { workerBootstrap } from "./lib/worker-bootstrap";
+import { filterCapabilities } from "./lib/capabilities";
+import { buildGuestDocument, buildWrapperDocument, toInlineScriptLiteral } from "./lib/frame-documents";
 
 export interface SandboxConfig {
     connectionsAllowed: CSPDirectives; // Providing a key here will merge with/override the default for that directive.
     // TODO: maybe add a warning/error when scriptUnsafe is active, that it should only be used for testing, never in production (as long as webcontent works in it witout it)
     scriptUnsafe?: boolean; // 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox)
-    capabilities?: SandboxCapability[]; // Custom sandbox attributes for iframe mode
+    capabilities?: SafeCapability[]; // Sandbox attributes that keep the guest inside the frame
+    unsafeCapabilities?: UnsafeCapability[]; // Sandbox attributes that reach outside the frame (popups, modals, downloads, presentation). Opt-in only, logs a warning.
     html?: string; // Initial HTML content for iframe mode
     virtualFilesUrl?: string; // URL to the Virtual Files Hub
     mode?: 'iframe' | 'worker'; // Execution mode
@@ -21,14 +25,14 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
         "default-src": ["'none'"],
         "script-src": ["'self'", "'unsafe-inline'"],
         "connect-src": [],
-        "base-uri": [],
+        "base-uri": [], // no default-src fallback: emitted as 'none'
         "img-src": [],
         "style-src": ["'unsafe-inline'"],
         "font-src": [],
         "media-src": [],
         "manifest-src": [],
         "prefetch-src": [],
-        "form-action": [],
+        "form-action": [], // no default-src fallback: emitted as 'none'
         "object-src": [],
         "frame-src": [],
         "frame-ancestors": [],
@@ -36,6 +40,7 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     },
     scriptUnsafe: false,
     capabilities: [],
+    unsafeCapabilities: [],
     html: '',
     virtualFilesUrl: '',
     mode: 'iframe',
@@ -44,14 +49,15 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
 
 export class LofiSandbox extends HTMLElement {
     private _iframe: HTMLIFrameElement | null = null;
-    private _worker: Worker | null = null;
-    private _workerUrl: string | null = null;
+    private _frameLoaded = false;
+    private _terminated = false;
     private _config: SandboxConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
     private _sessionId: string;
     private _port: MessagePort | null = null;
     private _hubFrame: HTMLIFrameElement | null = null;
     private _timeoutId: ReturnType<typeof setTimeout> | null = null;
     private _queuedMessages: { code: string }[] = [];
+    private _warnedUnsafeCapabilities = new Set<string>();
 
     constructor() {
         super();
@@ -68,14 +74,15 @@ export class LofiSandbox extends HTMLElement {
         // ---- Parse and Sanitize Input
 
         // Filter out any forbidden capabilities that might have been passed
-        if (config.capabilities) {
-            config.capabilities = config.capabilities.filter(
-                cap => ALLOWED_CAPABILITIES.includes(cap as SandboxCapability)
-            );
-        }
+        const sanitizedConfig: SandboxConfig = {
+            ...config,
+            capabilities: filterCapabilities(config.capabilities, SAFE_CAPABILITIES, 'capabilities'),
+            unsafeCapabilities: filterCapabilities(config.unsafeCapabilities, UNSAFE_CAPABILITIES, 'unsafeCapabilities'),
+        };
 
         // apply new config
-        this._config = deepMerge(DEFAULT_SANDBOX_CONFIG, config);
+        this._config = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig);
+        this._warnAboutUnsafeCapabilities();
 
         // add virtual files hub if not already existing
         // TODO: make own function
@@ -105,7 +112,7 @@ export class LofiSandbox extends HTMLElement {
 
             // Notify listeners that the virtual file system has been updated
             this.dispatchEvent(new CustomEvent('fileschanged', { detail: files }));
-            
+
         } else {
             console.warn("Virtual Files Hub not ready or configured");
         }
@@ -122,11 +129,24 @@ export class LofiSandbox extends HTMLElement {
             return;
         }
 
+        if (this._terminated) {
+            console.warn("[Sandbox] execute() ignored: the sandbox was terminated. Call setConfig() or load() to start a new one.");
+            return;
+        }
+
         if (this._port) {
             this._startTimeout();
             this._port.postMessage({ type: 'EXECUTE', code });
         } else {
             this._queuedMessages.push({ code });
+        }
+    }
+
+    private _warnAboutUnsafeCapabilities() {
+        for (const capability of this._config.unsafeCapabilities || []) {
+            if (this._warnedUnsafeCapabilities.has(capability)) continue;
+            this._warnedUnsafeCapabilities.add(capability);
+            console.warn(`[Sandbox] unsafe capability "${capability}" is enabled: it lets guest content act outside the sandbox.`);
         }
     }
 
@@ -138,16 +158,13 @@ export class LofiSandbox extends HTMLElement {
                 console.warn("[Sandbox] Execution Timeout - Terminating Worker");
                 window.dispatchEvent(new CustomEvent('sandbox-log', { detail: { type: 'LOG', level: 'error', args: ['Execution Timeout'] } }));
 
-                if (this._worker) {
-                    this._cleanupWorker();
-                    if (this._port) { this._port.close(); this._port = null; }
-                    this.spawnWorker();
-                }
+                // the worker lives inside the frame: recreating the frame terminates it
+                this.initialize();
             }, this._config.workerExecutionTimeout);
         }
     }
 
-    private setupChannel(target: Window | Worker) {
+    private setupChannel(target: Window) {
         if (this._port) { this._port.close(); this._port = null; }
         const channel = new MessageChannel();
         this._port = channel.port1;
@@ -157,11 +174,9 @@ export class LofiSandbox extends HTMLElement {
             }
         };
 
-        if (target instanceof Worker) {
-            target.postMessage({ type: 'INIT_PORT' }, [channel.port2]);
-        } else {
-            (target as Window).postMessage({ type: 'INIT_PORT' }, '*', [channel.port2]);
-        }
+        // An opaque origin cannot be named as targetOrigin, hence '*'.
+        // What keeps the port from reaching a foreign document is that this runs exactly once per frame (see _onFrameLoad).
+        target.postMessage({ type: 'INIT_PORT' }, '*', [channel.port2]);
 
         // Flush any messages queued during initialization
         if (this._queuedMessages.length > 0) {
@@ -171,31 +186,24 @@ export class LofiSandbox extends HTMLElement {
         }
     }
 
-    private _cleanupWorker() {
-        if (this._worker) {
-            this._worker.terminate();
-            this._worker = null;
-        }
-        if (this._workerUrl) {
-            URL.revokeObjectURL(this._workerUrl);
-            this._workerUrl = null;
-        }
+    private _teardown() {
+        this._queuedMessages = []; // Clear queue for the old environment
+        if (this._iframe) { this._iframe.onload = null; this._iframe.remove(); this._iframe = null; }
+        if (this._port) { this._port.close(); this._port = null; }
+        if (this._timeoutId) { clearTimeout(this._timeoutId); this._timeoutId = null; }
+    }
+
+    private _terminate(reason: string) {
+        console.warn(`[Sandbox] terminated: ${reason}`);
+        this._teardown();
+        this._terminated = true;
+        this.dispatchEvent(new CustomEvent('terminated', { detail: { reason } }));
     }
 
     private initialize() {
-        this._queuedMessages = []; // Clear queue for the old environment
-        if (this._iframe) { this._iframe.remove(); this._iframe = null; }
-        if (this._worker) (this._cleanupWorker())
-        if (this._port) { this._port.close(); this._port = null; }
-        if (this._timeoutId) clearTimeout(this._timeoutId);
-
-        if (this._config.mode === 'iframe') {
-            // iframe mode
-            this.createIframe();
-        } else if (this._config.mode === 'worker') {
-            // TODO: this is wrong! we need to place the worker inside the iframe, oterwise the worker has full network access (has host CSP policy)
-            this.spawnWorker();
-        }
+        this._teardown();
+        this._terminated = false;
+        this.createIframe();
     }
 
     private _getSandboxCommsScript(mode: 'iframe' | 'worker') {
@@ -203,30 +211,25 @@ export class LofiSandbox extends HTMLElement {
         return `(${inSandboxScript.toString()})(${this._config.scriptUnsafe}, '${mode}', console);`;
     }
 
-    private spawnWorker() {
-        const script = this._getSandboxCommsScript('worker');
-        const blob = new Blob([script], { type: 'application/javascript' });
-        this._workerUrl = URL.createObjectURL(blob);
-        this._worker = new Worker(this._workerUrl);
-        this._worker.onerror = (err) => {
-            window.dispatchEvent(new CustomEvent('sandbox-log', { 
-                detail: { type: 'LOG', level: 'error', args: [`Worker Error: ${err.message}`] } 
-            }));
-        };
-        this.setupChannel(this._worker);
-        setTimeout(() => this.dispatchEvent(new CustomEvent('ready')), 0);
+    private _getWorkerBootstrapScript() {
+        // the worker runs the comms script; the frame only spawns it and forwards the port
+        const workerSource = this._getSandboxCommsScript('worker');
+        return `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)});`;
     }
 
-    private createIframe() {
-        this._iframe = document.createElement("iframe");
-        const caps = this._config.capabilities || [];
-        this._iframe.setAttribute("sandbox", caps.join(" "));
-        this._iframe.style.cssText = "width:100%;height:100%;border:none";
-        this.shadowRoot!.appendChild(this._iframe);
+    private _getSandboxFlags(): string {
+        const flags = new Set<string>([
+            ...(this._config.capabilities || []),
+            ...(this._config.unsafeCapabilities || []),
+        ]);
 
-        // TODO: can we use a sandbox or iframe identifier that is not accessible to the sandbox itself ? like event.source in the host receiver
-        const virtualFilesBase = this._config.virtualFilesUrl ? `${this._config.virtualFilesUrl}/${this._sessionId}/` : '';
+        // worker mode needs scripts in the frame to spawn the worker
+        if (this._config.mode === 'worker') flags.add('allow-scripts');
 
+        return [...flags].join(' ');
+    }
+
+    private _getCSP(virtualFilesBase: string): string {
         // Clone the config directives to avoid mutating the original config
         // passing the refs of the original object
         const directives = structuredClone(
@@ -246,41 +249,55 @@ export class LofiSandbox extends HTMLElement {
             directives["script-src"]?.push("'unsafe-eval'");
         }
 
-        const cspConnections = generateCSP(directives);
+        return generateCSP(directives);
+    }
 
-        // communication and logs template that any content running in the sandbox uses
-        const commsScript = this._getSandboxCommsScript('iframe');
+    private createIframe() {
+        const isWorkerMode = this._config.mode === 'worker';
 
-
-        const securityInjection = `
-            <meta http-equiv="Content-Security-Policy" content="${cspConnections}">
-            ${virtualFilesBase ? `<base href="${virtualFilesBase}">` : ''}
-            <script> ${commsScript} </script>
-        `;
+        // TODO: can we use a sandbox or iframe identifier that is not accessible to the sandbox itself ? like event.source in the host receiver
+        const virtualFilesBase = this._config.virtualFilesUrl ? `${this._config.virtualFilesUrl}/${this._sessionId}/` : '';
 
         // TODO: run through DOMPurify ?
-        const unsafeContent = this._config.html || '<div id="root"></div>';
-        let finalHtml: string;
+        const guestDocument = buildGuestDocument({
+            csp: this._getCSP(virtualFilesBase),
+            baseHref: virtualFilesBase,
+            bootstrapScript: isWorkerMode ? this._getWorkerBootstrapScript() : this._getSandboxCommsScript('iframe'),
+            // worker mode is headless: no guest markup
+            content: isWorkerMode ? '' : (this._config.html || '<div id="root"></div>'),
+        });
 
-        // TODO: is this secure enough for user provided content? Could user-content contain some trick to avoid having this inserted?
-        // probably best to only add code to the body for our sandbox ?
-        if (unsafeContent.toLowerCase().includes('<html')) {
-            if (unsafeContent.toLowerCase().includes('<head>')) {
-                finalHtml = unsafeContent.replace(/<head>/i, `<head>${securityInjection}`);
-            } else {
-                finalHtml = unsafeContent.replace(/<html[^>]*>/i, `$&<head>${securityInjection}</head>`);
-            }
-        } else {
-            // if no user html content is provided, use this template to allow .execute calls. could be clearer
-            finalHtml = `<!DOCTYPE html> <html> <head> ${securityInjection} <meta charset="UTF-8"> </head> <body> ${unsafeContent} </body> </html>`;
+        const sandboxFlags = this._getSandboxFlags();
+
+        this._iframe = document.createElement("iframe");
+        this._iframe.setAttribute("sandbox", sandboxFlags);
+        this._iframe.style.cssText = isWorkerMode ? "display:none" : "width:100%;height:100%;border:none";
+        this._frameLoaded = false;
+        this._iframe.onload = () => this._onFrameLoad();
+
+        // srcdoc goes in before the frame is inserted: an iframe inserted without one first
+        // loads about:blank, which would count as the frame's one load (see _onFrameLoad)
+        this._iframe.srcdoc = buildWrapperDocument(guestDocument, sandboxFlags);
+        this.shadowRoot!.appendChild(this._iframe);
+    }
+
+    private _onFrameLoad() {
+        // The wrapper is written once and has no script, so it loads exactly once.
+        // A second load means something navigated or reloaded it: never hand a port
+        // (or queued code) to a document we did not write.
+        if (this._frameLoaded) {
+            this._terminate('the sandbox frame loaded a second time');
+            return;
+        }
+        this._frameLoaded = true;
+
+        const guestWindow = this._iframe?.contentWindow?.frames[0];
+        if (!guestWindow) {
+            this._terminate('the guest frame is missing');
+            return;
         }
 
-        this._iframe.onload = () => {
-            if (this._iframe?.contentWindow) {
-                this.setupChannel(this._iframe.contentWindow);
-                this.dispatchEvent(new CustomEvent('ready'));
-            }
-        };
-        this._iframe.srcdoc = finalHtml;
+        this.setupChannel(guestWindow);
+        this.dispatchEvent(new CustomEvent('ready'));
     }
 }
