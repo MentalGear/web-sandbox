@@ -1,24 +1,29 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixture';
 
-test('Lofi Sandbox Basic Execution', async ({ page }) => {
-  await page.goto('http://localhost:4444/');
+test('executes code and relays console output to the host', async ({ sandbox }) => {
+    expect(await sandbox.mount()).toBe('ready');
 
-  // Wait for custom element
-  await page.waitForSelector('lofi-sandbox');
+    await sandbox.run('console.log("Hello Lofi");');
 
-  // Set config (enable scripts)
-  await page.evaluate(() => {
-      const s = document.querySelector('lofi-sandbox');
-      s.setConfig({ scriptUnsafe: true });
-  });
+    expect(await sandbox.waitForLog('Hello Lofi')).toContain('Hello Lofi');
+});
 
-  // Execute code
-  await page.evaluate(() => {
-      const s = document.querySelector('lofi-sandbox');
-      s.execute('console.log("Hello Lofi");');
-  });
+test('renders loaded guest markup and runs its inline scripts', async ({ sandbox }) => {
+    await sandbox.mount();
 
-  // Listen for console log from sandbox (proxy)
-  const msg = await page.waitForEvent('console', m => m.text().includes('Hello Lofi'));
-  expect(msg).toBeTruthy();
+    expect(await sandbox.load('<p id="x">hi</p><script>document.getElementById("x").dataset.ran = "yes"</script>')).toBe('ready');
+
+    // console is only relayed once the port arrives, so read the result through execute()
+    await sandbox.run('console.log("guest says " + document.getElementById("x").textContent + " " + document.getElementById("x").dataset.ran)');
+    await sandbox.waitForLog('guest says hi yes');
+});
+
+test('queues execute() calls made before the sandbox is ready', async ({ sandbox, page }) => {
+    await page.evaluate(() => {
+        const s = document.querySelector('lofi-sandbox') as any;
+        s.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true });
+        s.execute('console.log("queued ran")');
+    });
+
+    await sandbox.waitForLog('queued ran');
 });

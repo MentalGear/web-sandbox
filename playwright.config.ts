@@ -1,8 +1,12 @@
 import { defineConfig, devices } from "@playwright/test"
 
 export default defineConfig({
-    testDir: "test",
+    // e2e specs and the research reproductions both run against test/e2e/harness.html
+    testDir: ".",
+    testMatch: ["test/e2e/**/*.spec.ts", "docs/research/**/*.spec.ts"],
     timeout: 30000,
+    forbidOnly: !!process.env.CI,
+    reporter: process.env.CI ? [["list"], ["github"]] : "list",
     projects: [
         {
             name: 'chromium',
@@ -27,9 +31,9 @@ export default defineConfig({
         },
     },
     webServer: {
-        command: "bun vendor/lofi-web-sandbox/index.ts",
-        url: "http://localhost:4444",
-        reuseExistingServer: !true,
+        command: "bun x vite",
+        url: "http://localhost:4444/test/e2e/harness.html",
+        reuseExistingServer: !process.env.CI,
         stdout: 'pipe',
         stderr: 'pipe',
     },

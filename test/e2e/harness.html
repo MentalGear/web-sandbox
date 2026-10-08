@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sandbox e2e harness</title>
+    <!--
+        Minimal host page for the e2e and research specs (see test/e2e/fixture.ts).
+        Kept separate from the playground so a playground change cannot break the security suite.
+    -->
+    <script type="module">
+        import { LofiSandbox } from '/src/host.ts';
+
+        customElements.define('lofi-sandbox', LofiSandbox);
+
+        window.sandboxLogs = [];
+        window.addEventListener('sandbox-log', (event) => {
+            const args = event.detail?.args || [];
+            window.sandboxLogs.push(args.map(String).join(' '));
+        });
+        window.harnessReady = true;
+    </script>
+    <style>lofi-sandbox { display: block; width: 400px; height: 300px; }</style>
+</head>
+<body>
+    <lofi-sandbox></lofi-sandbox>
+</body>
+</html>

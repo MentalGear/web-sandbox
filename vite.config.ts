@@ -21,6 +21,9 @@ export default defineConfig({
   build: {
     outDir: 'dist-playground',
     emptyOutDir: true,
+    rollupOptions: {
+      input: 'playground/index.html',
+    },
   },
   plugins: [{
     name: 'dev-server',

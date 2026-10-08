@@ -33,23 +33,7 @@ async function build() {
     const hubFile = Bun.file(join(VFS_DIR, "hub.html"));
     await Bun.write(join(OUT_DIR, "virtual-files/hub.html"), hubFile);
 
-    // Copy Playground (as demo)
-    await mkdir(join(OUT_DIR, "playground"), { recursive: true });
-    const demoFile = Bun.file("playground/virtual-files-demo.html");
-
-    // We need to patch the HTMLs to point to dist files?
-    // virtual-files-demo.html uses /src/host.ts. In dist it will be /host.js
-    let demoHtml = await demoFile.text();
-    demoHtml = demoHtml.replace(/\/src\/host\.ts/g, "/host.js");
-    demoHtml = demoHtml.replace(/\/src\/devtools\.ts/g, "/devtools.js");
-    demoHtml = demoHtml.replace(/\/src\/virtual-files/g, "/virtual-files"); // Use built VFS path
-
-    await Bun.write(join(OUT_DIR, "index.html"), demoHtml);
-
-    // Also copy project assets
-    await mkdir(join(OUT_DIR, "project"), { recursive: true });
-    // Assuming project/ exists
-    // cp -r playground/project/* dist/project/
+    // The playground is built separately with `bun run build` (vite build).
 }
 
 build().catch(console.error);

@@ -1,44 +1,25 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, ORIGIN } from './fixture';
 
-test('Lofi Sandbox Local HTML Asset Loading', async ({ page }) => {
-  await page.goto('http://localhost:4444/');
-  await page.waitForSelector('lofi-sandbox');
+const IMAGE = `${ORIGIN}/playground/test-assets/local-image.svg`;
+const CHECK_IMAGE = `
+    const img = new Image();
+    img.onload = () => console.log('IMAGE loaded');
+    img.onerror = () => console.log('IMAGE blocked');
+    img.src = '${IMAGE}';
+`;
 
-  // Configure sandbox to allow localhost:4444 (for fetching assets)
-  await page.evaluate(() => {
-      const s = document.querySelector('lofi-sandbox');
-      s.setConfig({
-          allow: ['http://localhost:4444'], // Allow fetching from test server
-          scriptUnsafe: true
-      });
-  });
+test('loads an image from an allowlisted origin', async ({ sandbox }) => {
+    await sandbox.mount({ connectionsAllowed: { 'upgrade-insecure-requests': true, 'img-src': [ORIGIN] } as any });
 
-  // Create a dummy asset on the server?
-  // Our server serves /src/.
-  // Let's try to fetch /src/host.ts (it exists)
+    await sandbox.run(CHECK_IMAGE);
 
-  await page.evaluate(() => {
-      const s = document.querySelector('lofi-sandbox');
-      s.execute(`
-        fetch('http://localhost:4444/src/host.ts')
-            .then(r => r.text())
-            .then(t => {
-                // Check content
-                if (t.includes('LofiSandbox')) {
-                    // Send success via port (Host listens to sandbox-log)
-                    // Wait, our 'execute' wrapper in test doesn't easily hook into the port.
-                    // But 'host.ts' relays LOG messages to window event 'sandbox-log'.
-                    // And our bootstrapper sends console logs to port.
-                    console.log('Asset Loaded Success');
-                } else {
-                    console.error('Asset Content Mismatch');
-                }
-            })
-            .catch(e => console.error('Asset Fetch Failed: ' + e.message));
-      `);
-  });
+    expect(await sandbox.waitForLog('IMAGE')).toBe('IMAGE loaded');
+});
 
-  // Verify log
-  const msg = await page.waitForEvent('console', m => m.text().includes('Asset Loaded Success'));
-  expect(msg).toBeTruthy();
+test('blocks the same image when the origin is not allowlisted', async ({ sandbox }) => {
+    await sandbox.mount();
+
+    await sandbox.run(CHECK_IMAGE);
+
+    expect(await sandbox.waitForLog('IMAGE')).toBe('IMAGE blocked');
 });
