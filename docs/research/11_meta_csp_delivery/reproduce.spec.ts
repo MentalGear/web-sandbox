@@ -11,7 +11,8 @@ const ASSET = `${ORIGIN}/playground/test-assets/local-image.svg`;
 test.describe('Research 11: meta-CSP delivery', () => {
 
     // 11.1 — frame-ancestors / report-uri / sandbox are discarded by the browser.
-    test('11.1 the browser ignores three directives delivered via <meta>', async ({ page }) => {
+    test('11.1 the browser ignores three directives delivered via <meta>', async ({ page, browserName }) => {
+        test.skip(browserName !== 'chromium', 'asserts on the console warning text Chromium prints');
         const warnings: string[] = [];
         page.on('console', m => {
             if (/ignored when delivered via a <meta> element/i.test(m.text())) warnings.push(m.text());

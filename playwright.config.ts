@@ -10,7 +10,11 @@ export default defineConfig({
     projects: [
         {
             name: 'chromium',
-            use: { ...devices['Desktop Chrome'] },
+            use: {
+                ...devices['Desktop Chrome'],
+                // chromium-only flag: resolves the virtual files host locally
+                launchOptions: { args: ['--host-resolver-rules=MAP virtual-files.localhost 127.0.0.1'] },
+            },
         },
         {
             name: 'firefox',
@@ -26,9 +30,6 @@ export default defineConfig({
     use: {
         baseURL: "http://localhost:4444",
         headless: true,
-        launchOptions: {
-            args: ['--host-resolver-rules=MAP virtual-files.localhost 127.0.0.1'],
-        },
     },
     webServer: {
         command: "bun x vite",
