@@ -44,17 +44,17 @@ setTimeout(() => console.log('TEST_DONE'), 1500);`,
     "sw-tamper": {
         id: "sw-tamper",
         label: "Security Test: SW Tampering",
-        code: `try {
-    if (!navigator.serviceWorker) {
-         console.log('PWN_FAILURE');
-    } else {
-         console.log('PWN_SUCCESS');
+        // Having the API object is not access: Firefox exposes navigator.serviceWorker in a sandboxed
+        // frame but rejects every call, Chromium throws on reading it. Only a working call counts.
+        code: `(async () => {
+    try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        console.log('PWN_SUCCESS: can see ' + registrations.length + ' service worker registrations');
+    } catch (e) {
+        console.log('PWN_FAILURE: ' + e.name);
     }
-} catch (e) {
-    // Chromium throws on reading navigator.serviceWorker in a sandboxed frame
-    console.log('PWN_FAILURE: ' + e.name);
-}
-setTimeout(() => console.log('TEST_DONE'), 100);`,
+    console.log('TEST_DONE');
+})();`,
         rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "worker-timeout": {

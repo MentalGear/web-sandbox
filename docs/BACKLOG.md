@@ -311,7 +311,7 @@ governs it.
 including ones the child starts, before the request is sent. Research 14.1 covers script, link,
 `window.open(…, '_self')` and meta refresh.
 
-**Open**: confirmed in Chromium; Firefox and WebKit are covered by CI from this change on.
+Confirmed in Chromium, Firefox and WebKit (CI).
 
 ### S11 · A fresh port is handed to whatever document loads next — ✅ **done**
 
