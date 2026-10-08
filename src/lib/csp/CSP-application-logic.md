@@ -10,6 +10,8 @@
     -> do not include directive in csp header
         - this makes the browser use default-src for this (unnamed) directive
         - otherwise if we were to fill in "none", it would overwrite "default-src" which we do not want
+    - exception: directives WITHOUT a default-src fallback (`base-uri`, `form-action`, see `NON_FALLBACK_DIRECTIVES`)
+        -> emit `'none'`: omitting them would leave them unrestricted (research 12)
 
 # Validation/Sanitation
 - filter out duplicates in directive list
@@ -21,7 +23,7 @@
 ## Tasks
 [] write function
 [] write tests
-    - must have: empty [] or none defined directive should never be present in output
+    - must have: empty [] or none defined directive should never be present in output (except non-fallback directives, emitted as 'none')
 [] maybe add a vite csp nounce generator so "script-src": ["'unsafe-inline'"] can be dropped
 [] interesting for testing: google csp evaluator https://github.com/google/csp-evaluator
 

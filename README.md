@@ -20,34 +20,58 @@ Lofi Sandbox provides a mechanism to run untrusted JavaScript code safely in the
     ```
 
 2.  **Start the Development Server**
-    You **must** use `bun start` to serve the project. This starts a custom Bun server that transpiles TypeScript files on-the-fly, which is required for the Playground to function.
+    The Vite dev server transpiles the TypeScript sources on the fly.
     ```bash
-    bun start
+    bun run dev
     ```
-    *   **Playground:** [http://localhost:4444/](http://localhost:4444/)
-    *   **VFS Demo:** [http://localhost:4444/virtual-files](http://localhost:4444/virtual-files)
+    *   **Playground:** [http://localhost:4444/playground/index.html](http://localhost:4444/playground/index.html)
 
 3.  **Run Tests**
-    Automated security research tests verify that known vulnerabilities are mitigated.
+    Unit tests, then the e2e and security research suites (Playwright starts the dev server itself).
     ```bash
-    bun test
+    bun run test        # everything
+    bun run test:unit   # vitest only
+    bun run test:e2e    # playwright only; add --project=chromium for one browser
     ```
+    Use `bun run test`, not `bun test`: the latter is Bun's built-in runner, not the project script.
 
 ## Playground Usage
 
-Navigate to [http://localhost:4444/](http://localhost:4444/).
+Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/playground/index.html).
 
-*   **Presets:** Select a scenario from the dropdown to load pre-configured code and security rules. These presets match the automated test cases in `research/`.
+*   **Presets:** Select a scenario from the dropdown to load pre-configured code and security rules. These presets match the automated test cases in `docs/research/`.
 *   **Code Editor:** Modify the JavaScript code to test different behaviors.
 *   **Rules Editor:** Configure the Content Security Policy (CSP) and execution mode (iframe/worker).
 *   **Logs:** View `console.log` output and security events from within the sandbox.
 
 ## Architecture
 
-*   **`src/host.ts`**: The core implementation of the `<lofi-sandbox>` custom element. It handles iframe creation, CSP generation, and communication.
+*   **`src/host.ts`**: The core implementation of the `<lofi-sandbox>` custom element. It handles frame creation, CSP generation, and communication.
+*   **`src/lib/frame-documents.ts`**: Builds the wrapper and guest documents (see Security Mitigations).
 *   **`src/lib/presets.ts`**: A shared library of test scenarios used by both the Playground and automated tests.
-*   **`server.ts`**: The Bun web server that serves static files and transpiles TypeScript.
-*   **`docs/research`**: Playwright test suites for security regression testing.
+*   **`vite.config.ts`**: The dev server, which also serves the virtual files hub on `virtual-files.*` hosts.
+*   **`test/e2e`**: Playwright e2e specs, plus the shared harness page and fixture every suite runs on.
+*   **`docs/research`**: Security findings, each with a Playwright reproduction that guards its mitigation.
+
+## Capabilities
+
+`capabilities` takes the sandbox flags that keep the guest inside the frame: `allow-scripts`,
+`allow-forms`, `allow-pointer-lock`, `allow-orientation-lock`.
+
+Flags that let the guest act outside the frame — `allow-popups`, `allow-modals`, `allow-downloads`,
+`allow-presentation` — are dropped from `capabilities` with a warning. If you really need one, pass
+it in `unsafeCapabilities`; the sandbox logs a warning for each one enabled. A popup, for example,
+is a new top-level window that no CSP governs, so its URL is an exfiltration channel
+([research 13](docs/research/13_popup_exfiltration/README.md)).
+
+```js
+sandbox.setConfig({
+    capabilities: ['allow-scripts'],
+    unsafeCapabilities: ['allow-popups'], // explicit opt-in, warns
+});
+```
+
+`allow-same-origin` and the `allow-top-navigation*` flags are never accepted.
 
 ## Backlog
 
@@ -59,4 +83,9 @@ existing solution is argued in [`docs/ADR-001-continue-or-adopt.md`](docs/ADR-00
 
 The sandbox implements several layers of defense:
 1.  **Opaque Origin**: Runs in `about:srcdoc`, creating a unique null origin that isolates storage.
-2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`).
+2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`). An empty `base-uri` or `form-action` means `'none'`, since those directives have no `default-src` fallback.
+3.  **CSP First**: The CSP `<meta>` is prepended before any user markup, so it is always the first element of the parsed `<head>`; user content cannot precede or swallow it.
+4.  **Wrapper Frame**: The guest frame is nested in a library-owned frame whose policy is `frame-src 'none'`. That blocks the guest from navigating itself to carry data out in a URL ([research 14](docs/research/14_self_navigation/README.md)).
+5.  **One-Shot Channel**: The private `MessagePort` is handed over exactly once per frame. If the frame ever loads a second document, the sandbox is torn down and fires `terminated`.
+6.  **Worker Inside the Frame**: Worker mode spawns its worker from inside the sandbox frame, so it shares the opaque origin and CSP.
+7.  **Capability Tiers**: Flags that reach outside the frame require the explicit `unsafeCapabilities` opt-in.
