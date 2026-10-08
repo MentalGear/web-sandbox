@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ALLOWED_CAPABILITIES } from '@src/csp-directives';
 
-describe('LofiSandbox Security Configuration', () => {
+describe('WebSandbox Security Configuration', () => {
   it('should have ALLOWED_CAPABILITIES defined', () => {
     expect(ALLOWED_CAPABILITIES).toBeDefined();
     expect(Array.isArray(ALLOWED_CAPABILITIES)).toBe(true);

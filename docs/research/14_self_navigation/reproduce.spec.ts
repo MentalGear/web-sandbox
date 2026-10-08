@@ -57,7 +57,7 @@ test('14.2 the host never hands a port to a second document in the frame', async
     // Something replaces the document in the sandbox frame. The guest itself cannot reach the
     // host-owned frame any more, so simulate it from the host side.
     const outcome = await page.evaluate(() => new Promise<string>(resolve => {
-        const s = document.querySelector('lofi-sandbox') as any;
+        const s = document.querySelector('web-sandbox') as any;
         s.addEventListener('terminated', () => resolve('terminated'), { once: true });
         s.addEventListener('ready', () => resolve('ready-again'), { once: true });
         const frame = s.shadowRoot.querySelector('iframe') as HTMLIFrameElement;
@@ -71,5 +71,5 @@ test('14.2 the host never hands a port to a second document in the frame', async
     await sandbox.run('console.log("after terminate")');
     await page.waitForTimeout(500);
     expect(await sandbox.logs()).not.toContain('after terminate');
-    expect(await page.evaluate(() => (document.querySelector('lofi-sandbox') as any).shadowRoot.querySelector('iframe'))).toBeNull();
+    expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).shadowRoot.querySelector('iframe'))).toBeNull();
 });

@@ -6,7 +6,7 @@ const SRC_DIR = "src";
 const VFS_DIR = "src/virtual-files";
 
 async function build() {
-    console.log("Building Lofi Web Sandbox...");
+    console.log("Building Web Sandbox...");
 
     // Clean
     await rm(OUT_DIR, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 import "./playground-state.ts"
 
-import { LofiSandbox } from '@src/host.ts';
-customElements.define("lofi-sandbox", LofiSandbox);
+import { WebSandbox, defineWebSandbox } from '@src/host.ts';
+defineWebSandbox();
 
 import { SandboxDevTools } from '@src/devtools.ts';
 import { PRESETS } from '@src/lib/presets.ts';
@@ -18,7 +18,7 @@ console.log("Elements found:", sandbox, logsDiv);
 
 // Initialize DevTools
 // We attach devtools to the virtual-files sandbox as it's more relevant there
-const devtools = new SandboxDevTools(vfSandbox as LofiSandbox);
+const devtools = new SandboxDevTools(vfSandbox as WebSandbox);
 const toggleBtn = document.getElementById('toggleDevTools');
 if (toggleBtn) {
     toggleBtn.onclick = () => devtools.toggle();
@@ -77,8 +77,8 @@ window.appendLocalLog = (msg) => {
 // Listen for internal log events dispatch on window by host.ts
 window.addEventListener('sandbox-log', (event) => {
     const data = event.detail;
-    // Map Lofi log format to UI log format if needed
-    // Lofi: { type: 'LOG', level: 'info', args: [...] }
+    // Map sandbox log format to UI log format if needed
+    // Sandbox: { type: 'LOG', level: 'info', args: [...] }
     // UI expects: { level, message, source... }
 
     // Map 'info' to 'log' for UI compatibility
@@ -222,8 +222,8 @@ window.updateVirtualFilesView = (files: Record<string, string | Uint8Array>) => 
 
 window.runHtml = () => {
     const code = (document.getElementById('code') as HTMLTextAreaElement).value;
-    if (sandbox && (sandbox as LofiSandbox).load) {
-        (sandbox as LofiSandbox).load(code);
+    if (sandbox && (sandbox as WebSandbox).load) {
+        (sandbox as WebSandbox).load(code);
     }
 };
 
@@ -253,7 +253,7 @@ window.applyNetworkRules = () => {
         rulesError.textContent = '';
 
         // Apply to both sandboxes
-        (sandbox as LofiSandbox).setConfig(rules);
+        (sandbox as WebSandbox).setConfig(rules);
         
         const vfConfig = {
             ...rules,
@@ -261,7 +261,7 @@ window.applyNetworkRules = () => {
                 ? '/src/virtual-files'
                 : 'http://virtual-files.localhost:4444'
         };
-        (vfSandbox as LofiSandbox).setConfig(vfConfig);
+        (vfSandbox as WebSandbox).setConfig(vfConfig);
         
         // Visual feedback that we are resetting the environment
         document.getElementById('sandbox-status').textContent = 'Sandbox: Initializing...';
@@ -283,14 +283,14 @@ window.runCode = () => {
 
     const code = (document.getElementById('code') as HTMLTextAreaElement).value;
     window.appendLocalLog('Executing code in sandbox...');
-    (sandbox as LofiSandbox).execute(code);
+    (sandbox as WebSandbox).execute(code);
 }
 
 window.runVirtualFiles = () => {
     window.applyNetworkRules();
 
     const code = (document.getElementById('code') as HTMLTextAreaElement).value;
-    const vfSandboxEl = vfSandbox as LofiSandbox;
+    const vfSandboxEl = vfSandbox as WebSandbox;
 
     window.appendLocalLog('Preparing virtual-files and executing...');
 
@@ -326,7 +326,7 @@ window.resetSandbox = async () => {
     if (runBtn) runBtn.disabled = true;
     // Clear host-side state
     localStorage.removeItem('safeSandbox_customState');
-    // For LofiSandbox, we just re-initialize
+    // For WebSandbox, we just re-initialize
     sandbox.setConfig({});
 }
 

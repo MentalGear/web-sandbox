@@ -1,4 +1,4 @@
-# ADR-001: Continue `lofi-web-sandbox`, or adopt an existing solution?
+# ADR-001: Continue `web-sandbox`, or adopt an existing solution?
 
 **Status**: Proposed · **Date**: 2026-08-29
 

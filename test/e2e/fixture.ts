@@ -13,7 +13,7 @@ export const BASELINE_CONFIG: Partial<SandboxConfig> = {
 export type MountResult = 'ready' | 'terminated';
 
 /**
- * Drives the <lofi-sandbox> element on the harness page.
+ * Drives the <web-sandbox> element on the harness page.
  * Specs talk to this instead of the page, so moving the playground or renaming internals
  * breaks one file instead of every spec.
  */
@@ -36,7 +36,7 @@ export class SandboxDriver {
     }
 
     async run(code: string) {
-        await this.page.evaluate((source) => (document.querySelector('lofi-sandbox') as any).execute(source), code);
+        await this.page.evaluate((source) => (document.querySelector('web-sandbox') as any).execute(source), code);
     }
 
     async logs(): Promise<string[]> {
@@ -73,7 +73,7 @@ export const test = base.extend<{ sandbox: SandboxDriver }>({
     sandbox: async ({ page }, use) => {
         await page.addInitScript(() => {
             (window as any).whenSettled = (action: (sandbox: any) => void) => new Promise(resolve => {
-                const sandbox = document.querySelector('lofi-sandbox') as any;
+                const sandbox = document.querySelector('web-sandbox') as any;
                 const settle = (event: Event) => {
                     sandbox.removeEventListener('ready', settle);
                     sandbox.removeEventListener('terminated', settle);

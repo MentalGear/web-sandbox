@@ -59,10 +59,13 @@ export function buildGuestDocument(parts: GuestDocumentParts): string {
  * Builds the wrapper document that embeds the guest document.
  * The wrapper carries the same sandbox flags as the guest: nested sandbox flags only ever add up,
  * so a stricter wrapper would silently restrict the guest as well.
+ * The same goes for `allow` (Permissions Policy): a feature reaches the guest only if every frame
+ * on the way delegates it.
  */
-export function buildWrapperDocument(guestDocument: string, sandboxFlags: string): string {
+export function buildWrapperDocument(guestDocument: string, sandboxFlags: string, allow = ''): string {
     const style = `<style>html,body,iframe{margin:0;width:100%;height:100%;border:0;display:block}</style>`;
-    const guestFrame = `<iframe sandbox="${escapeAttribute(sandboxFlags)}" srcdoc="${escapeAttribute(guestDocument)}"></iframe>`;
+    const allowAttribute = allow ? ` allow="${escapeAttribute(allow)}"` : '';
+    const guestFrame = `<iframe sandbox="${escapeAttribute(sandboxFlags)}"${allowAttribute} srcdoc="${escapeAttribute(guestDocument)}"></iframe>`;
 
     return `<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${WRAPPER_CSP}">${style}</head><body>${guestFrame}</body></html>`;
 }

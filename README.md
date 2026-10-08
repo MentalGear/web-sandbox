@@ -4,7 +4,7 @@ A secure, local-first sandbox implementation using `iframe srcdoc`, Opaque Origi
 
 ## Overview
 
-Lofi Sandbox provides a mechanism to run untrusted JavaScript code safely in the browser without requiring a backend for isolation. It leverages the browser's own security primitives (Opaque Origins, CSP) to create a secure environment.
+Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the browser without requiring a backend for isolation. It leverages the browser's own security primitives (Opaque Origins, CSP) to create a secure environment.
 
 **Key Features:**
 *   **Local-First:** No server round-trips for code execution.
@@ -46,30 +46,49 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 
 ## Architecture
 
-*   **`src/host.ts`**: The core implementation of the `<lofi-sandbox>` custom element. It handles frame creation, CSP generation, and communication.
+*   **`src/host.ts`**: The core implementation of the `<web-sandbox>` custom element. It handles frame creation, CSP generation, and communication.
 *   **`src/lib/frame-documents.ts`**: Builds the wrapper and guest documents (see Security Mitigations).
 *   **`src/lib/presets.ts`**: A shared library of test scenarios used by both the Playground and automated tests.
 *   **`vite.config.ts`**: The dev server, which also serves the virtual files hub on `virtual-files.*` hosts.
 *   **`test/e2e`**: Playwright e2e specs, plus the shared harness page and fixture every suite runs on.
 *   **`docs/research`**: Security findings, each with a Playwright reproduction that guards its mitigation.
 
+## Usage
+
+```js
+import { defineWebSandbox } from './src/host.ts';
+
+defineWebSandbox();                 // registers <web-sandbox>; pass a name to use your own tag
+const sandbox = document.querySelector('web-sandbox');
+sandbox.setConfig({ capabilities: ['allow-scripts'] });
+sandbox.load('<h1>Hello</h1>');
+```
+
+Importing the module registers nothing, so you choose the tag name. The element fires `ready` when
+the sandbox is up and `terminated` if it had to be torn down.
+
 ## Capabilities
 
 `capabilities` takes the sandbox flags that keep the guest inside the frame: `allow-scripts`,
 `allow-forms`, `allow-pointer-lock`, `allow-orientation-lock`.
 
-Flags that let the guest act outside the frame — `allow-popups`, `allow-modals`, `allow-downloads`,
-`allow-presentation` — are dropped from `capabilities` with a warning. If you really need one, pass
-it in `unsafeCapabilities`; the sandbox logs a warning for each one enabled. A popup, for example,
-is a new top-level window that no CSP governs, so its URL is an exfiltration channel
-([research 13](docs/research/13_popup_exfiltration/README.md)).
+Capabilities that let the guest act outside the frame — `allow-popups`, `allow-modals`,
+`allow-downloads`, `allow-presentation` and `fullscreen` — are dropped from `capabilities` with a
+warning. If you really need one, pass it in `unsafeCapabilities`; the sandbox logs a warning for each
+one enabled. A popup, for example, is a new top-level window that no CSP governs, so its URL is an
+exfiltration channel ([research 13](docs/research/13_popup_exfiltration/README.md)).
 
 ```js
 sandbox.setConfig({
     capabilities: ['allow-scripts'],
-    unsafeCapabilities: ['allow-popups'], // explicit opt-in, warns
+    unsafeCapabilities: ['allow-popups', 'fullscreen'], // explicit opt-in, warns
 });
 ```
+
+`fullscreen` is not a sandbox flag but a Permissions Policy feature: it is set as `allow="fullscreen"`
+on both the wrapper and the guest frame, since a feature reaches the guest only if every frame on the
+way delegates it. The risk is UI spoofing — a fullscreen guest can draw a fake browser window — which
+browsers soften by requiring a user gesture and showing an exit hint.
 
 `allow-same-origin` and the `allow-top-navigation*` flags are never accepted.
 

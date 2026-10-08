@@ -25,7 +25,7 @@ This document evaluates the trade-offs between running a full agent environment 
 
 ### 3. Recommendation
 
-For the `lofi-web-sandbox` architecture (Local-First), the **Just-Bash VFS** approach is superior.
+For the `web-sandbox` architecture (Local-First), the **Just-Bash VFS** approach is superior.
 
 *   **Why**: It aligns with the "Opaque Origin" model. We provide the *mechanism* (VFS, Execution) and let the *User Code* define the policy or agent logic.
 *   **Hybrid**: If a DeepAgent is needed, it can be loaded *as user code* into the sandbox, rather than being part of the trusted infrastructure. This ensures that if the Agent is buggy, it only crashes its own sandbox.

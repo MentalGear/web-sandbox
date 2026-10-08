@@ -1,10 +1,10 @@
 # Competitor Analysis: Local-First Sandbox vs Market
 
-This document compares `lofi-web-sandbox` with two established solutions: `JetBrains/websandbox` and `Perspective-Software/cross-origin-html-embed`.
+This document compares `web-sandbox` with two established solutions: `JetBrains/websandbox` and `Perspective-Software/cross-origin-html-embed`.
 
 ## Summary Table
 
-| Feature | `lofi-web-sandbox` | `JetBrains/websandbox` | `cross-origin-html-embed` |
+| Feature | `web-sandbox` | `JetBrains/websandbox` | `cross-origin-html-embed` |
 | :--- | :--- | :--- | :--- |
 | **Architecture** | **Local-First** (srcdoc + Meta CSP) | **Dynamic/Static Host** (iframe src) | **Multi-Origin** (Wildcard Subdomains) |
 | **Isolation** | **Opaque Origin** (`null`) | Sandboxed Origin (Same/Cross) | **Unique Origin** (`uuid.host.com`) |
@@ -31,7 +31,7 @@ This document compares `lofi-web-sandbox` with two established solutions: `JetBr
     *   **Infrastructure Heavy**: Requires setting up wildcard DNS and SSL certificates. Cannot run "Local-First" or on simple static hosts (GitHub Pages) easily without config.
 *   **Verdict**: Best for "Production SaaS" where infrastructure control is available.
 
-### 3. lofi-web-sandbox (Our Solution)
+### 3. web-sandbox (Our Solution)
 *   **Approach**: Uses `iframe srcdoc` to create an **Opaque Origin**. This achieves strict isolation (no storage sharing, no SW access) *without* needing wildcard subdomains. Security is enforced via CSP injected into the `srcdoc` string.
 *   **Correction (2026-08-29)**: this previously described the injected policy as **"Immutable CSP"**. It is not immutable. [Research 11.3](11_meta_csp_delivery/README.md) reproduces user-supplied markup deleting the entire security block from the document, leaving it with no CSP. Isolation held in that test — but via the opaque origin, not the policy. The CSP is the outer wall; the opaque origin is the keep.
 *   **Innovations**:
@@ -42,4 +42,4 @@ This document compares `lofi-web-sandbox` with two established solutions: `JetBr
 
 ## Conclusion
 
-`lofi-web-sandbox` fills a gap between the simple RPC of `websandbox` and the heavy infrastructure of `cross-origin-html-embed`. It provides the security benefits of unique origins (via opacity) with the deployment simplicity of a static site.
+`web-sandbox` fills a gap between the simple RPC of `websandbox` and the heavy infrastructure of `cross-origin-html-embed`. It provides the security benefits of unique origins (via opacity) with the deployment simplicity of a static site.

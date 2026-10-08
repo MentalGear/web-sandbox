@@ -1,5 +1,5 @@
 /**
- * Simple DevTools for LofiSandbox
+ * Simple DevTools for WebSandbox
  * Logs events to the Host Console safely.
  */
 export class SandboxDevTools {

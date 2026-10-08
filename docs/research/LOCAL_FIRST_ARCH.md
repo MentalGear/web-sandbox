@@ -73,7 +73,7 @@ Since Opaque Origins cannot use relative paths to fetch resources from a "server
 
 ## Security Validation
 
-The prototype implementation (`vendor/lofi-web-sandbox`) has been verified against the following attack vectors:
+The prototype implementation (`vendor/web-sandbox`) has been verified against the following attack vectors:
 
 | Vector | Result | Notes |
 | :--- | :--- | :--- |

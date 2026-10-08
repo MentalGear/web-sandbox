@@ -18,9 +18,9 @@ let violation = null;
 page.on('console', m => { if (/Refused to/i.test(m.text())) violation = m.text().slice(0, 110); });
 
 await page.goto('http://localhost:4444/playground/index.html');
-await page.waitForSelector('lofi-sandbox');
+await page.waitForSelector('web-sandbox');
 await page.evaluate((h) => {
-  const s = document.querySelector('lofi-sandbox');
+  const s = document.querySelector('web-sandbox');
   s.setConfig({ capabilities: ['allow-scripts', 'allow-forms'] });  // both are in ALLOWED_CAPABILITIES
   s.load(h);
 }, html);

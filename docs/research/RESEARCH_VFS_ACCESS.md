@@ -5,12 +5,12 @@ This document proposes the API methods for interacting with the Virtual File Sys
 ## Goal
 Enable dynamic loading of project files (e.g. `src/`) and runtime modification/download.
 
-## Host API (LofiSandbox)
+## Host API (WebSandbox)
 
 The Host controls the VFS state via the `registerFiles` method, which communicates with the VFS Hub.
 
 ```typescript
-interface LofiSandbox {
+interface WebSandbox {
     /**
      * Overwrites or adds files to the VFS for the current session.
      * @param files Map of path -> content
