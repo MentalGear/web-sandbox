@@ -5,7 +5,7 @@ import { deepMerge } from "./lib/utils";
 import { inSandboxScript } from "./lib/in-sandbox-script";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { filterCapabilities } from "./lib/capabilities";
-import { buildGuestDocument, buildWrapperDocument, toInlineScriptLiteral } from "./lib/frame-documents";
+import { buildGuestDocument, buildWrapperDocument, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
 
 export interface SandboxConfig {
     connectionsAllowed: CSPDirectives; // Providing a key here will merge with/override the default for that directive.
@@ -235,12 +235,12 @@ export class WebSandbox extends HTMLElement {
     }
 
     // Permissions Policy features for the iframe `allow` attribute (e.g. fullscreen)
-    private _getAllowAttribute(): string {
+    private _getPermissions(): string[] {
         const permissions: string[] = [];
         for (const capability of this._config.unsafeCapabilities || []) {
             if (this._isPermission(capability)) permissions.push(capability);
         }
-        return permissions.join('; ');
+        return permissions;
     }
 
     private _getCSP(virtualFilesBase: string): string {
@@ -282,18 +282,20 @@ export class WebSandbox extends HTMLElement {
         });
 
         const sandboxFlags = this._getSandboxFlags();
-        const allow = this._getAllowAttribute();
+        const permissions = this._getPermissions();
 
         this._iframe = document.createElement("iframe");
         this._iframe.setAttribute("sandbox", sandboxFlags);
-        if (allow) this._iframe.setAttribute("allow", allow);
+        for (const [name, value] of Object.entries(permissionAttributes(permissions))) {
+            this._iframe.setAttribute(name, value);
+        }
         this._iframe.style.cssText = isWorkerMode ? "display:none" : "width:100%;height:100%;border:none";
         this._frameLoaded = false;
         this._iframe.onload = () => this._onFrameLoad();
 
         // srcdoc goes in before the frame is inserted: an iframe inserted without one first
         // loads about:blank, which would count as the frame's one load (see _onFrameLoad)
-        this._iframe.srcdoc = buildWrapperDocument(guestDocument, sandboxFlags, allow);
+        this._iframe.srcdoc = buildWrapperDocument(guestDocument, sandboxFlags, permissions);
         this.shadowRoot!.appendChild(this._iframe);
     }
 

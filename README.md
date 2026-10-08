@@ -85,9 +85,10 @@ sandbox.setConfig({
 });
 ```
 
-`fullscreen` is not a sandbox flag but a Permissions Policy feature: it is set as `allow="fullscreen"`
-on both the wrapper and the guest frame, since a feature reaches the guest only if every frame on the
-way delegates it. The risk is UI spoofing — a fullscreen guest can draw a fake browser window — which
+`fullscreen` is not a sandbox flag but a Permissions Policy feature: it is set as `allow="fullscreen *"`
+(plus the legacy `allowfullscreen`) on both the wrapper and the guest frame, since a feature reaches the
+guest only if every frame on the way delegates it. The `*` is needed because a sandboxed `srcdoc` frame
+has a fresh opaque origin that the default allowlist never matches. The risk is UI spoofing — a fullscreen guest can draw a fake browser window — which
 browsers soften by requiring a user gesture and showing an exit hint.
 
 `allow-same-origin` and the `allow-top-navigation*` flags are never accepted.

@@ -61,7 +61,11 @@ describe('buildWrapperDocument', () => {
         const guest = buildGuestDocument({ csp: CSP, bootstrapScript: '', content: '' });
 
         expect(parse(buildWrapperDocument(guest, 'allow-scripts')).querySelector('iframe')?.hasAttribute('allow')).toBe(false);
-        expect(parse(buildWrapperDocument(guest, 'allow-scripts', 'fullscreen')).querySelector('iframe')?.getAttribute('allow')).toBe('fullscreen');
+
+        const frame = parse(buildWrapperDocument(guest, 'allow-scripts', ['fullscreen'])).querySelector('iframe');
+        // '*', not the default 'src': a sandboxed srcdoc frame's declared origin is a fresh opaque one
+        expect(frame?.getAttribute('allow')).toBe('fullscreen *');
+        expect(frame?.hasAttribute('allowfullscreen')).toBe(true);
     });
 });
 

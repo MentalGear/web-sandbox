@@ -34,7 +34,7 @@ test('the unsafeCapabilities opt-in grants fullscreen through both frames, and w
     // it is a Permissions Policy feature, not a sandbox flag
     const frame = await page.evaluate(() => {
         const iframe = (document.querySelector('web-sandbox') as any).shadowRoot.querySelector('iframe');
-        return { sandbox: iframe.getAttribute('sandbox'), allow: iframe.getAttribute('allow') };
+        return { sandbox: iframe.getAttribute('sandbox'), allow: iframe.getAttribute('allow'), legacy: iframe.hasAttribute('allowfullscreen') };
     });
-    expect(frame).toEqual({ sandbox: 'allow-scripts', allow: 'fullscreen' });
+    expect(frame).toEqual({ sandbox: 'allow-scripts', allow: 'fullscreen *', legacy: true });
 });
