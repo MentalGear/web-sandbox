@@ -1,5 +1,13 @@
 # Sandbox Library Comparison
 
+> **Status (2026-08-29)**: this document predates the current architecture and is kept for
+> history. It describes a refactor "with Unique Origins" and "Server-Side State"; the shipped
+> design uses an **opaque origin** via `srcdoc` and has no server at all. Its closing claim that
+> unique subdomains represent "industry best practices" is also incomplete — see
+> [ADR-001](../ADR-001-continue-or-adopt.md) for the axis-by-axis comparison, and
+> [COMPETITOR_ANALYSIS_2.md](COMPETITOR_ANALYSIS_2.md) for the corrected version. For solutions
+> released since, see the [2026 field scan](../ADR-001-continue-or-adopt.md#field-scan--august-2026).
+
 This document compares `iframe-sandbox` (this library) with other existing solutions in the ecosystem.
 
 ## Competitors

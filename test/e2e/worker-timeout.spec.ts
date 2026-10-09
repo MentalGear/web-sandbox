@@ -1,24 +1,13 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixture';
 
-test('Lofi Sandbox Worker Timeout', async ({ page }) => {
-  await page.goto('http://localhost:4444/');
-  await page.waitForSelector('lofi-sandbox');
+test('terminates a worker that exceeds workerExecutionTimeout, then recovers', async ({ sandbox, page }) => {
+    await sandbox.mount({ mode: 'worker', workerExecutionTimeout: 500 });
 
-  await page.evaluate(() => {
-      const s = document.querySelector('lofi-sandbox');
-      s.setConfig({
-          mode: 'worker',
-          workerExecutionTimeout: 500 // 500ms timeout
-      });
-  });
+    await sandbox.run('while (true) {}');
+    await sandbox.waitForLog('Execution Timeout', 5000);
 
-  // Execute infinite loop
-  await page.evaluate(() => {
-      const s = document.querySelector('lofi-sandbox');
-      s.execute('while(true) {}');
-  });
-
-  // Expect Error Log "Execution Timeout"
-  const msg = await page.waitForEvent('console', m => m.text().includes('Execution Timeout'));
-  expect(msg).toBeTruthy();
+    // the frame (and its worker) was recreated: a fresh sandbox accepts code again
+    await page.waitForTimeout(500);
+    await sandbox.run('console.log("alive after timeout")');
+    expect(await sandbox.waitForLog('alive after timeout')).toBeTruthy();
 });

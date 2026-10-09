@@ -3,7 +3,7 @@
  * Pre-defined scenarios to demonstrate sandbox capabilities and testing.
  */
 
-import type { SandboxCapability } from "@src/csp-directives";
+import type { SafeCapability } from "@src/csp-directives";
 
 export const PRESETS = {
     "basic": {
@@ -25,34 +25,36 @@ fetch("https://jsonplaceholder.typicode.com/todos/1")
     "csp-bypass": {
         id: "csp-bypass",
         label: "Security Test: CSP Bypass",
-        code: `(async () => {
-      try {
-          const iframe = document.createElement('iframe');
-          iframe.src = "javascript:alert(1)";
-          document.body.appendChild(iframe);
+        // A nested frame declares a permissive policy of its own. It must still inherit the sandbox's
+        // policy (policies only ever add up), so its fetch has to fail.
+        code: `addEventListener('message', (e) => console.log(e.data));
 
-          iframe.onload = () => console.log('PWN_SUCCESS');
-          iframe.onerror = () => console.log('PWN_FAILURE');
+const iframe = document.createElement('iframe');
+iframe.srcdoc = \`<meta http-equiv="Content-Security-Policy" content="default-src *; script-src 'unsafe-inline'">
+<script>
+  fetch('https://example.com/', { mode: 'no-cors' })
+    .then(() => parent.postMessage('PWN_SUCCESS', '*'))
+    .catch(() => parent.postMessage('PWN_FAILURE', '*'));
+<\\/script>\`;
+document.body.appendChild(iframe);
 
-          // Wait a bit for async load
-          setTimeout(() => {
-              console.log('TEST_DONE');
-          }, 500);
-      } catch (e) {
-          console.log('TEST_DONE');
-      }
-    })();`,
+setTimeout(() => console.log('TEST_DONE'), 1500);`,
         rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "sw-tamper": {
         id: "sw-tamper",
         label: "Security Test: SW Tampering",
-        code: `if (!navigator.serviceWorker) {
-     console.log('PWN_FAILURE');
-} else {
-     console.log('PWN_SUCCESS');
-}
-setTimeout(() => console.log('TEST_DONE'), 100);`,
+        // Having the API object is not access: Firefox exposes navigator.serviceWorker in a sandboxed
+        // frame but rejects every call, Chromium throws on reading it. Only a working call counts.
+        code: `(async () => {
+    try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        console.log('PWN_SUCCESS: can see ' + registrations.length + ' service worker registrations');
+    } catch (e) {
+        console.log('PWN_FAILURE: ' + e.name);
+    }
+    console.log('TEST_DONE');
+})();`,
         rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "worker-timeout": {
@@ -60,7 +62,7 @@ setTimeout(() => console.log('TEST_DONE'), 100);`,
         label: "Worker Timeout Test",
         code: `console.log("Starting infinite loop...");
 while(true) {}`,
-        rules: { mode: "worker", workerExecutionTimeout: 1000 }
+        rules: { mode: "worker", workerExecutionTimeout: 1000, scriptUnsafe: true }
     },
     "virtual-files-test": {
         id: "virtual-files-test",
@@ -215,7 +217,7 @@ console.log('TEST_DONE');`,
     console.log('PASS: Origin is opaque. Filter working.');
 }
 console.log('TEST_DONE');`,
-        rules: { capabilities: ["allow-scripts", "allow-same-origin" as SandboxCapability], scriptUnsafe: true }
+        rules: { capabilities: ["allow-scripts", "allow-same-origin" as SafeCapability], scriptUnsafe: true }
     },
     "allow-top-nav": {
         id: "allow-top-nav",
@@ -227,7 +229,7 @@ console.log('TEST_DONE');`,
     console.log('PASS: Top navigation blocked (' + e.message + ')');
 }
 console.log('TEST_DONE');`,
-        rules: { capabilities: ["allow-scripts", "allow-top-navigation" as SandboxCapability], scriptUnsafe: true }
+        rules: { capabilities: ["allow-scripts", "allow-top-navigation" as SafeCapability], scriptUnsafe: true }
     },
     "allow-popups-escape": {
         id: "allow-popups-escape",
@@ -244,7 +246,7 @@ console.log('TEST_DONE');`,
     }
     console.log('TEST_DONE');
 })();`,
-        rules: { capabilities: ["allow-scripts", "allow-popups", "allow-popups-to-escape-sandbox" as SandboxCapability], scriptUnsafe: true }
+        rules: { capabilities: ["allow-scripts", "allow-popups-to-escape-sandbox" as SafeCapability], unsafeCapabilities: ["allow-popups"], scriptUnsafe: true }
     },
     "local-html-page": {
         id: "local-html-page",

@@ -9,6 +9,8 @@ export default defineConfig({
     },
     test: {
         environment: 'jsdom', // needed for browser env tests
+        // unit tests only: the playwright specs (test/e2e, docs/research) run via `bun run test:e2e`
+        include: ['src/**/*.test.ts', 'test/unit/**/*.test.ts'],
         exclude: [...configDefaults.exclude, 'packages/template/*'],
     },
 

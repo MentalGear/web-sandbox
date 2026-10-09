@@ -1,85 +1,51 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixture';
 
-test.describe('Lofi Sandbox Hard Security', () => {
-    test.beforeEach(async ({ page }) => {
-        await page.goto('http://localhost:4444/');
-        await page.waitForSelector('lofi-sandbox');
-        await page.evaluate(() => {
-            const s = document.querySelector('lofi-sandbox');
-            s.setConfig({ scriptUnsafe: true });
-        });
+test.describe('Escape attempts', () => {
+    test.beforeEach(async ({ sandbox }) => {
+        await sandbox.mount();
     });
 
-    test('Block Popups (window.open)', async ({ page }) => {
-        await page.evaluate(() => {
-            const s = document.querySelector('lofi-sandbox');
-            s.execute(`
-                try {
-                    const win = window.open('https://google.com');
-                    if (win) {
-                        // Sandbox might allow opening, but shouldn't leak content
-                        window.parent.postMessage({type:'LOG', args:['Popup Opened']}, '*');
-                        win.close();
-                    } else {
-                        window.parent.postMessage({type:'LOG', args:['Popup Blocked']}, '*');
-                    }
-                } catch (e) {
-                    window.parent.postMessage({type:'LOG', args:['Popup Error: ' + e.message]}, '*');
-                }
-            `);
-        });
+    test('cannot open popups by default', async ({ sandbox, context }) => {
+        let popups = 0;
+        context.on('page', () => popups++);
 
-        // We accept either Blocked or Opened (if sandboxed).
-        // The important part is checking if we can break out via it.
-        const msg = await page.waitForEvent('console', m => m.text().includes('Popup'), { timeout: 2000 });
-        expect(msg).toBeTruthy();
+        // Chromium and WebKit return null, Firefox throws
+        await sandbox.run(`
+            try { console.log('POPUP ' + (window.open('about:blank') ? 'opened' : 'blocked')); }
+            catch (e) { console.log('POPUP blocked'); }
+        `);
+
+        expect(await sandbox.waitForLog('POPUP')).toBe('POPUP blocked');
+        expect(popups).toBe(0);
     });
 
-    test('Block about:blank Bypass', async ({ page }) => {
-        await page.evaluate(() => {
-            const s = document.querySelector('lofi-sandbox');
-            s.execute(`
-                try {
-                    const win = window.open('about:blank');
-                    // Try to write script
-                    if (win) {
-                        win.document.write('<script>window.opener.parent.postMessage({type:"LOG", args:["Bypass Success"]}, "*")</script>');
-                    }
-                } catch (e) {
-                    window.parent.postMessage({type:'LOG', args:['Bypass Failed: ' + e.message]}, '*');
-                }
-            `);
-        });
+    test('cannot exfiltrate via CSS background images', async ({ sandbox, context, page }) => {
+        const reached: string[] = [];
+        await context.route('https://example.com/**', route => { reached.push(route.request().url()); return route.abort(); });
 
-        // We expect NO "Bypass Success" message.
-        try {
-            const msg = await page.waitForEvent('console', m => m.text().includes('Bypass Success'), { timeout: 2000 });
-            expect(msg).toBeNull(); // Should fail/timeout
-        } catch (e) {
-            // Timeout matches expectation (Secure)
-            expect(e.message).toContain('Timeout');
-        }
+        await sandbox.run(`
+            const style = document.createElement('style');
+            style.textContent = 'body { background-image: url("https://example.com/track"); }';
+            document.head.appendChild(style);
+        `);
+        await page.waitForTimeout(1000);
+
+        expect(reached).toEqual([]);
     });
 
-    test('Block CSS Exfiltration', async ({ page }) => {
-        await page.evaluate(() => {
-            const s = document.querySelector('lofi-sandbox');
-            s.execute(`
-                const style = document.createElement('style');
-                style.textContent = 'body { background-image: url("http://example.com/track"); }';
-                document.head.appendChild(style);
-            `);
-        });
+    test('cannot exfiltrate via image, beacon or link ping', async ({ sandbox, context, page }) => {
+        const reached: string[] = [];
+        await context.route('https://example.com/**', route => { reached.push(route.request().url()); return route.abort(); });
 
-        // Listen for request
-        // Even if CSP blocks it, browser might initiate and fail.
-        try {
-            const request = await page.waitForRequest(r => r.url().includes('example.com'), { timeout: 2000 });
-            // If request happens, verify it FAILED
-            expect(request.failure()).toBeTruthy();
-            console.log("Request detected but failed:", request.failure()?.errorText);
-        } catch (e) {
-            // No request seen? Even better.
-        }
+        await sandbox.run(`
+            new Image().src = 'https://example.com/img';
+            try { navigator.sendBeacon('https://example.com/beacon', 'x'); } catch (e) {}
+            const a = document.createElement('a');
+            a.href = '#'; a.ping = 'https://example.com/ping';
+            document.body.appendChild(a); a.click();
+        `);
+        await page.waitForTimeout(1000);
+
+        expect(reached).toEqual([]);
     });
 });

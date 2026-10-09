@@ -1,33 +1,11 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../../test/e2e/fixture';
 import { PRESETS } from '@src/lib/presets';
 
-test('Service Worker Tampering - Mitigated', async ({ page }) => {
-  await page.goto('http://localhost:4444/');
-  await page.waitForSelector('lofi-sandbox');
-  await page.evaluate(() => {
-      const s = document.querySelector('lofi-sandbox');
-      return new Promise(resolve => {
-          s.addEventListener('ready', resolve, { once: true });
-          s.setConfig({ scriptUnsafe: true });
-      });
-  });
+test('Service Worker Tampering - Mitigated', async ({ sandbox }) => {
+    await sandbox.mount();
 
-  const payload = PRESETS['sw-tamper'].code;
+    const logs = await sandbox.runUntilDone(PRESETS['sw-tamper'].code);
 
-  await page.waitForTimeout(1000);
-
-  await page.evaluate((code) => {
-    const s = document.querySelector('lofi-sandbox');
-    s.execute(code);
-  }, payload);
-
-  await page.waitForFunction(() => {
-    const logs = window.SandboxControl.getLogs();
-    return logs.some(l => l.message.includes('TEST_DONE') || l.message.includes('PWN_SUCCESS') || l.message.includes('PWN_FAILURE'));
-  });
-
-  const logs = await page.evaluate(() => window.SandboxControl.getLogs());
-
-  expect(logs.some(l => l.message.includes('PWN_SUCCESS'))).toBe(false);
-  expect(logs.some(l => l.message.includes('PWN_FAILURE') || l.message.includes('SecurityError') || l.message.includes('No SW API'))).toBe(true);
+    expect(logs.some(l => l.includes('PWN_SUCCESS'))).toBe(false);
+    expect(logs.some(l => l.includes('PWN_FAILURE'))).toBe(true);
 });

@@ -8,9 +8,9 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "test": "bun test:unit && bun test:e2e",
-    "test:unit": "bun vitest --dir src",
-    "test:e2e": "bun x playwright test --config=research/playwright.config.ts",
+    "test": "bun run test:unit && bun run test:e2e",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
     "build-dist": "bun build ./src/host.ts ./src/lib/presets.ts --outdir ./dist --target browser --minify --sourcemap"
   },
   "devDependencies": {

@@ -1,12 +1,20 @@
 import { defineConfig, devices } from "@playwright/test"
 
 export default defineConfig({
-    testDir: "test",
+    // e2e specs and the research reproductions both run against test/e2e/harness.html
+    testDir: ".",
+    testMatch: ["test/e2e/**/*.spec.ts", "docs/research/**/*.spec.ts"],
     timeout: 30000,
+    forbidOnly: !!process.env.CI,
+    reporter: process.env.CI ? [["list"], ["github"]] : "list",
     projects: [
         {
             name: 'chromium',
-            use: { ...devices['Desktop Chrome'] },
+            use: {
+                ...devices['Desktop Chrome'],
+                // chromium-only flag: resolves the virtual files host locally
+                launchOptions: { args: ['--host-resolver-rules=MAP virtual-files.localhost 127.0.0.1'] },
+            },
         },
         {
             name: 'firefox',
@@ -22,14 +30,11 @@ export default defineConfig({
     use: {
         baseURL: "http://localhost:4444",
         headless: true,
-        launchOptions: {
-            args: ['--host-resolver-rules=MAP virtual-files.localhost 127.0.0.1'],
-        },
     },
     webServer: {
-        command: "bun vendor/lofi-web-sandbox/index.ts",
-        url: "http://localhost:4444",
-        reuseExistingServer: !true,
+        command: "bun x vite",
+        url: "http://localhost:4444/test/e2e/harness.html",
+        reuseExistingServer: !process.env.CI,
         stdout: 'pipe',
         stderr: 'pipe',
     },
