@@ -8,9 +8,9 @@
         Kept separate from the playground so a playground change cannot break the security suite.
     -->
     <script type="module">
-        import { LofiSandbox } from '/src/host.ts';
+        import { defineWebSandbox } from '/src/host.ts';
 
-        customElements.define('lofi-sandbox', LofiSandbox);
+        defineWebSandbox();
 
         window.sandboxLogs = [];
         window.addEventListener('sandbox-log', (event) => {
@@ -19,9 +19,9 @@
         });
         window.harnessReady = true;
     </script>
-    <style>lofi-sandbox { display: block; width: 400px; height: 300px; }</style>
+    <style>web-sandbox { display: block; width: 400px; height: 300px; }</style>
 </head>
 <body>
-    <lofi-sandbox></lofi-sandbox>
+    <web-sandbox></web-sandbox>
 </body>
 </html>

@@ -1,6 +1,6 @@
 # Backlog
 
-The open work on `lofi-web-sandbox`, in one place: broken foundations first, then security,
+The open work on `web-sandbox`, in one place: broken foundations first, then security,
 capabilities, parity with existing solutions, and repo hygiene.
 
 Every "current state" line below was verified against the code on 2026-08-29 — commands run,
@@ -96,7 +96,7 @@ README now says `bun run test`); Playwright starts Vite itself; `vite build` tar
 | Path | Referenced from | Reality |
 | :--- | :--- | :--- |
 | `research/playwright.config.ts` | `package.json` `test:e2e` | no `research/` dir; config is at repo root |
-| `bun vendor/lofi-web-sandbox/index.ts` | `playwright.config.ts:30` `webServer.command` | no `vendor/` dir |
+| `bun vendor/web-sandbox/index.ts` | `playwright.config.ts:30` `webServer.command` | no `vendor/` dir |
 | `http://localhost:4444` | `playwright.config.ts:31` `webServer.url` | 404s; the served page is `/playground/index.html` |
 | `playground/virtual-files-demo.html` | `build.ts:38` | replaced by `playground/index.html` |
 
@@ -207,7 +207,7 @@ testing. **Acceptance**: enabling it emits exactly one warning per instance.
 
 ### S5 · No CSP violation reporting — **P2 · M**
 
-`test/e2e/security.spec.ts:29` records the gap in a comment: *"lofi-sandbox doesn't have CSP
+`test/e2e/security.spec.ts:29` records the gap in a comment: *"web-sandbox doesn't have CSP
 violation reporting hooked up to postMessage yet"*. Tests must therefore assert the *absence* of a
 success log with a 2s timeout — slow and prone to false green.
 
@@ -385,16 +385,16 @@ opt-in global mirror for the playground.
 **Acceptance**: with two sandboxes mounted, each receives only its own logs; DevTools output is
 covered by a test.
 
-### B4 · The library never registers its element — **P1 · S**
+### B4 · The library never registers its element — ✅ **done**
 
-**Verified**: `customElements.define("lofi-sandbox", LofiSandbox)` appears only in
-`playground/playground.ts:4`. A consumer importing the built bundle gets a class and an inert
-`<lofi-sandbox>` tag with no hint that registration is theirs to do — and it is documented nowhere.
+**Was**: `customElements.define(...)` appeared only in the playground, so a consumer importing the
+bundle got an inert tag with no hint that registration was theirs to do.
 
-**Work**: export a `defineSandbox(tagName?)` helper that is idempotent; document it. Do not
-auto-register on import — that would break consumers who want their own tag name.
+**Done**: `defineWebSandbox(tagName = 'web-sandbox')` in `src/host.ts` registers the element,
+is idempotent, and throws if the tag is taken by a different element. Importing still registers
+nothing, so consumers can choose their own tag. The playground and the e2e harness use it.
 
-**Acceptance**: the D1 smoke test mounts a working sandbox using only the public entry point.
+**Open**: the D1 smoke test (mount a sandbox using only the public entry point) waits on D1.
 
 ### B5 · Host-mediated `sandbox.fetch` bridge — **P2 · M**
 
@@ -515,12 +515,14 @@ Document the public surface once B1–B4 stabilise it; thin React/Vue wrappers a
 Plus heavy overlap between `VFS_ARCHITECTURE.md`, `VIRTUAL_FILES_PLAN.md` and
 `RESEARCH_VFS_ACCESS.md`. **Work**: keep one of each pair, leave a stub pointing at it.
 
-### H2 · Naming drift — **P2 · S**
+### H2 · Naming drift — ✅ **done**
 
-Four names for one project across README, docs and code: `lofi-sandbox` (the element, 27×),
-`lofi-web-sandbox` (the package, 7×), `iframe-sandbox` (older docs, 8×) and "Lofi Sandbox" (prose).
-The README opens with "Web Sandbox" and then calls it "Lofi Sandbox" one line later.
-**Work**: pick one, sweep the docs, keep the element name distinct and documented as such.
+**Was**: four names for one project — `lofi-sandbox` (the element), `lofi-web-sandbox` (the package),
+`iframe-sandbox` (older docs) and "Lofi Sandbox" (prose).
+
+**Done**: one name, **web-sandbox**: the repository, the package, the default element
+`<web-sandbox>` and the class `WebSandbox`; "Web Sandbox" in prose. `iframe-sandbox` remains only
+in research write-ups that describe that older architecture.
 
 ### H3 · Type check is not part of the build — **P2 · S**
 
@@ -555,7 +557,7 @@ comparisons; for the 2026 entrants (`quickjs-wasi`, `@tanstack/ai-isolate-quickj
 `lifo`, BrowserPod) see the
 [field scan in ADR-001](ADR-001-continue-or-adopt.md#field-scan--august-2026). Legend: ✅ shipped · 🟡 partial · ❌ missing · ➖ n/a by design.
 
-| Capability | lofi-web-sandbox | websandbox | Penpal | Zoid | cross-origin-embed |
+| Capability | web-sandbox | websandbox | Penpal | Zoid | cross-origin-embed |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | Isolation with no server config | ✅ opaque origin | 🟡 | ➖ | ➖ | ❌ wildcard DNS |
 | Private `MessageChannel` | ✅ | ❌ | 🟡 | ✅ | ❌ |

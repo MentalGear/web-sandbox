@@ -13,17 +13,28 @@ export const SAFE_CAPABILITIES = [
 // - allow-modals: alert/confirm/prompt can imitate host UI and block the host's main thread
 // - allow-downloads: writes files to the user's disk
 // - allow-presentation: the Presentation API opens a URL on a second screen, outside the frame's CSP
-export const UNSAFE_CAPABILITIES = [
+export const UNSAFE_SANDBOX_FLAGS = [
     "allow-downloads",
     "allow-modals",
     "allow-popups",
     "allow-presentation",
 ] as const;
 
-export const ALLOWED_CAPABILITIES = [...SAFE_CAPABILITIES, ...UNSAFE_CAPABILITIES] as const;
+// Not sandbox flags: these are Permissions Policy features, granted through the iframe `allow` attribute.
+// - fullscreen: a fullscreen guest can draw fake browser UI (phishing). Browsers require a user gesture
+//   to enter fullscreen and show an exit hint.
+export const UNSAFE_PERMISSIONS = [
+    "fullscreen",
+] as const;
+
+export const UNSAFE_CAPABILITIES = [...UNSAFE_SANDBOX_FLAGS, ...UNSAFE_PERMISSIONS] as const;
+
+// Everything that may end up in the sandbox attribute
+export const ALLOWED_CAPABILITIES = [...SAFE_CAPABILITIES, ...UNSAFE_SANDBOX_FLAGS] as const;
 
 export type SafeCapability = (typeof SAFE_CAPABILITIES)[number];
 export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];
+export type UnsafePermission = (typeof UNSAFE_PERMISSIONS)[number];
 export type SandboxCapability = (typeof ALLOWED_CAPABILITIES)[number];
 
 export interface CSPDirectives {

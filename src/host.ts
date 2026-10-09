@@ -1,18 +1,18 @@
 import type { CSPDirectives, SafeCapability, UnsafeCapability } from "./csp-directives";
-import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES } from "./csp-directives";
+import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./csp-directives";
 import { generateCSP } from "./lib/csp/csp-generator";
 import { deepMerge } from "./lib/utils";
 import { inSandboxScript } from "./lib/in-sandbox-script";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { filterCapabilities } from "./lib/capabilities";
-import { buildGuestDocument, buildWrapperDocument, toInlineScriptLiteral } from "./lib/frame-documents";
+import { buildGuestDocument, buildWrapperDocument, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
 
 export interface SandboxConfig {
     connectionsAllowed: CSPDirectives; // Providing a key here will merge with/override the default for that directive.
     // TODO: maybe add a warning/error when scriptUnsafe is active, that it should only be used for testing, never in production (as long as webcontent works in it witout it)
     scriptUnsafe?: boolean; // 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox)
     capabilities?: SafeCapability[]; // Sandbox attributes that keep the guest inside the frame
-    unsafeCapabilities?: UnsafeCapability[]; // Sandbox attributes that reach outside the frame (popups, modals, downloads, presentation). Opt-in only, logs a warning.
+    unsafeCapabilities?: UnsafeCapability[]; // Capabilities that reach outside the frame (popups, modals, downloads, presentation, fullscreen). Opt-in only, logs a warning.
     html?: string; // Initial HTML content for iframe mode
     virtualFilesUrl?: string; // URL to the Virtual Files Hub
     mode?: 'iframe' | 'worker'; // Execution mode
@@ -47,7 +47,7 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     workerExecutionTimeout: 0,
 };
 
-export class LofiSandbox extends HTMLElement {
+export class WebSandbox extends HTMLElement {
     private _iframe: HTMLIFrameElement | null = null;
     private _frameLoaded = false;
     private _terminated = false;
@@ -217,16 +217,30 @@ export class LofiSandbox extends HTMLElement {
         return `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)});`;
     }
 
+    private _isPermission(capability: string): boolean {
+        return (UNSAFE_PERMISSIONS as readonly string[]).includes(capability);
+    }
+
     private _getSandboxFlags(): string {
-        const flags = new Set<string>([
-            ...(this._config.capabilities || []),
-            ...(this._config.unsafeCapabilities || []),
-        ]);
+        const flags = new Set<string>(this._config.capabilities || []);
+        for (const capability of this._config.unsafeCapabilities || []) {
+            if (this._isPermission(capability)) continue; // goes into the allow attribute instead
+            flags.add(capability);
+        }
 
         // worker mode needs scripts in the frame to spawn the worker
         if (this._config.mode === 'worker') flags.add('allow-scripts');
 
         return [...flags].join(' ');
+    }
+
+    // Permissions Policy features for the iframe `allow` attribute (e.g. fullscreen)
+    private _getPermissions(): string[] {
+        const permissions: string[] = [];
+        for (const capability of this._config.unsafeCapabilities || []) {
+            if (this._isPermission(capability)) permissions.push(capability);
+        }
+        return permissions;
     }
 
     private _getCSP(virtualFilesBase: string): string {
@@ -268,16 +282,20 @@ export class LofiSandbox extends HTMLElement {
         });
 
         const sandboxFlags = this._getSandboxFlags();
+        const permissions = this._getPermissions();
 
         this._iframe = document.createElement("iframe");
         this._iframe.setAttribute("sandbox", sandboxFlags);
+        for (const [name, value] of Object.entries(permissionAttributes(permissions))) {
+            this._iframe.setAttribute(name, value);
+        }
         this._iframe.style.cssText = isWorkerMode ? "display:none" : "width:100%;height:100%;border:none";
         this._frameLoaded = false;
         this._iframe.onload = () => this._onFrameLoad();
 
         // srcdoc goes in before the frame is inserted: an iframe inserted without one first
         // loads about:blank, which would count as the frame's one load (see _onFrameLoad)
-        this._iframe.srcdoc = buildWrapperDocument(guestDocument, sandboxFlags);
+        this._iframe.srcdoc = buildWrapperDocument(guestDocument, sandboxFlags, permissions);
         this.shadowRoot!.appendChild(this._iframe);
     }
 
@@ -300,4 +318,15 @@ export class LofiSandbox extends HTMLElement {
         this.setupChannel(guestWindow);
         this.dispatchEvent(new CustomEvent('ready'));
     }
+}
+
+/**
+ * Registers the element under `tagName` (default `<web-sandbox>`). Safe to call more than once.
+ * Importing the library does not register anything, so you can pick your own tag name.
+ */
+export function defineWebSandbox(tagName = 'web-sandbox'): typeof WebSandbox {
+    const existing = customElements.get(tagName);
+    if (existing && existing !== WebSandbox) throw new Error(`<${tagName}> is already defined by another element`);
+    if (!existing) customElements.define(tagName, WebSandbox);
+    return WebSandbox;
 }

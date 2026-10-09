@@ -56,6 +56,17 @@ describe('buildWrapperDocument', () => {
         expect(frame?.getAttribute('sandbox')).toBe('allow-scripts allow-forms');
         expect(frame?.getAttribute('srcdoc')).toBe(guest);
     });
+
+    it('delegates Permissions Policy features to the guest frame only when asked', () => {
+        const guest = buildGuestDocument({ csp: CSP, bootstrapScript: '', content: '' });
+
+        expect(parse(buildWrapperDocument(guest, 'allow-scripts')).querySelector('iframe')?.hasAttribute('allow')).toBe(false);
+
+        const frame = parse(buildWrapperDocument(guest, 'allow-scripts', ['fullscreen'])).querySelector('iframe');
+        // '*', not the default 'src': a sandboxed srcdoc frame's declared origin is a fresh opaque one
+        expect(frame?.getAttribute('allow')).toBe('fullscreen *');
+        expect(frame?.hasAttribute('allowfullscreen')).toBe(true);
+    });
 });
 
 describe('helpers', () => {

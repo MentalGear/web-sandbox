@@ -16,12 +16,12 @@ const page = await browser.newPage();
 let netHit = 0;
 page.on('response', r => { if (r.url() === TARGET) netHit++; });
 await page.goto('http://localhost:4444/playground/index.html');
-await page.waitForSelector('lofi-sandbox');
+await page.waitForSelector('web-sandbox');
 const result = await page.evaluate(async (h) => {
   return await new Promise(resolve => {
     const handler = e => { if (e.data && 'csp' in e.data) { window.removeEventListener('message', handler); resolve(e.data); } };
     window.addEventListener('message', handler);
-    const s = document.querySelector('lofi-sandbox');
+    const s = document.querySelector('web-sandbox');
     s.setConfig({ capabilities: ['allow-scripts'] });
     s.load(h);
     setTimeout(() => resolve({timeout: true}), 5000);

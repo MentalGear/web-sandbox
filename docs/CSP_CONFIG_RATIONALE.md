@@ -1,6 +1,6 @@
 # CSP Design Rationale & Security Findings
 
-This document outlines the security architecture of the `LofiSandbox` and explains the trade-offs made regarding the Content Security Policy (CSP), specifically the use of `'unsafe-inline'`.
+This document outlines the security architecture of the `WebSandbox` and explains the trade-offs made regarding the Content Security Policy (CSP), specifically the use of `'unsafe-inline'`.
 
 ## 1. The Role of `'unsafe-inline'`
 

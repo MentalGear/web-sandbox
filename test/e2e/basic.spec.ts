@@ -3,9 +3,9 @@ import { test, expect } from './fixture';
 test('executes code and relays console output to the host', async ({ sandbox }) => {
     expect(await sandbox.mount()).toBe('ready');
 
-    await sandbox.run('console.log("Hello Lofi");');
+    await sandbox.run('console.log("Hello Sandbox");');
 
-    expect(await sandbox.waitForLog('Hello Lofi')).toContain('Hello Lofi');
+    expect(await sandbox.waitForLog('Hello Sandbox')).toContain('Hello Sandbox');
 });
 
 test('renders loaded guest markup and runs its inline scripts', async ({ sandbox }) => {
@@ -20,7 +20,7 @@ test('renders loaded guest markup and runs its inline scripts', async ({ sandbox
 
 test('queues execute() calls made before the sandbox is ready', async ({ sandbox, page }) => {
     await page.evaluate(() => {
-        const s = document.querySelector('lofi-sandbox') as any;
+        const s = document.querySelector('web-sandbox') as any;
         s.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true });
         s.execute('console.log("queued ran")');
     });

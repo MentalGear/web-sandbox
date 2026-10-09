@@ -15,9 +15,9 @@ for (const [label, html] of Object.entries(SHAPES)) {
     const page = await browser.newPage();
     page.on('request', r => { if (r.url() === TARGET) { escaped++; frames.add(r.frame()?.url() ?? '?'); } });
     await page.goto('http://localhost:4444/playground/index.html');
-    await page.waitForSelector('lofi-sandbox');
+    await page.waitForSelector('web-sandbox');
     await page.evaluate((h) => {
-      const s = document.querySelector('lofi-sandbox');
+      const s = document.querySelector('web-sandbox');
       s.setConfig({ capabilities: ['allow-scripts'] });
       s.load(h);
     }, html);

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { filterCapabilities } from './capabilities';
-import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES } from '@src/csp-directives';
+import { ALLOWED_CAPABILITIES, SAFE_CAPABILITIES, UNSAFE_CAPABILITIES } from '@src/csp-directives';
 
 describe('capability tiers', () => {
     it('keeps safe and unsafe capabilities disjoint', () => {
@@ -8,9 +8,13 @@ describe('capability tiers', () => {
         expect(overlap).toEqual([]);
     });
 
-    it.each(['allow-popups', 'allow-modals', 'allow-downloads', 'allow-presentation'])('treats %s as unsafe', (capability) => {
+    it.each(['allow-popups', 'allow-modals', 'allow-downloads', 'allow-presentation', 'fullscreen'])('treats %s as unsafe', (capability) => {
         expect(SAFE_CAPABILITIES as readonly string[]).not.toContain(capability);
         expect(UNSAFE_CAPABILITIES as readonly string[]).toContain(capability);
+    });
+
+    it('keeps permissions (fullscreen) out of the sandbox attribute values', () => {
+        expect(ALLOWED_CAPABILITIES as readonly string[]).not.toContain('fullscreen');
     });
 });
 

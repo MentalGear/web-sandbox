@@ -1,5 +1,5 @@
 {
-  "name": "lofi-web-sandbox",
+  "name": "web-sandbox",
   "version": "1.0.0",
   "description": "Local-first web sandbox",
   "main": "dev-server.ts",

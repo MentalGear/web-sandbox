@@ -6,7 +6,7 @@ test.fixme('serves registered virtual files to the sandbox', async ({ sandbox, p
     await sandbox.mount({ virtualFilesUrl: 'http://virtual-files.localhost:4444' });
 
     await page.evaluate(() => {
-        (document.querySelector('lofi-sandbox') as any).registerFiles({ 'hello.js': 'console.log("VFS Success")' });
+        (document.querySelector('web-sandbox') as any).registerFiles({ 'hello.js': 'console.log("VFS Success")' });
     });
     await sandbox.run(`
         const script = document.createElement('script');
