@@ -39,6 +39,41 @@ export class SandboxDriver {
         await this.page.evaluate((source) => (document.querySelector('web-sandbox') as any).execute(source), code);
     }
 
+    // ---- β broker helpers (backlog B1) -------------------------------------------------------
+
+    /** Host -> guest: invokes a guest-exposed method and returns its resolved value. */
+    async call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
+        return this.page.evaluate(
+            ({ method, args }) => (document.querySelector('web-sandbox') as any).call(method, ...args),
+            { method, args },
+        );
+    }
+
+    /** Like call(), but returns 'RESOLVED' or 'REJECTED:<message>' instead of throwing, for asserting failures. */
+    async callOutcome(method: string, ...args: unknown[]): Promise<string> {
+        return this.page.evaluate(async ({ method, args }) => {
+            try {
+                await (document.querySelector('web-sandbox') as any).call(method, ...args);
+                return 'RESOLVED';
+            } catch (e: any) {
+                return 'REJECTED:' + (e?.message ?? String(e));
+            }
+        }, { method, args });
+    }
+
+    /** Registers a host method from a function-source string (built in the host page, which is not sandboxed). */
+    async exposeHost(name: string, fnSource: string) {
+        await this.page.evaluate(({ name, fnSource }) => {
+            const fn = new Function('return (' + fnSource + ')')();
+            (document.querySelector('web-sandbox') as any).expose(name, fn);
+        }, { name, fnSource });
+    }
+
+    /** Registers a guest method by running bridge.expose(...) inside the sandbox (via execute, needs scriptUnsafe). */
+    async exposeGuest(name: string, fnSource: string) {
+        await this.run(`bridge.expose(${JSON.stringify(name)}, ${fnSource})`);
+    }
+
     async logs(): Promise<string[]> {
         return this.page.evaluate(() => [...(window as any).sandboxLogs]);
     }
