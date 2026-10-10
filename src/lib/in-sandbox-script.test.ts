@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { inSandboxScript } from "./in-sandbox-script";
+import { createBroker } from "./rpc";
 
 describe("inSandboxScript", () => {
     const originalAddEventListener = globalThis.addEventListener;
 
     afterEach(() => {
         globalThis.addEventListener = originalAddEventListener;
+        delete (globalThis as any).bridge;
         vi.restoreAllMocks();
     });
 
@@ -117,5 +119,37 @@ describe("inSandboxScript", () => {
             level: 'error',
             args: ["Boom"]
         });
+    });
+
+    it("skips a queued bridge frame that cannot be posted, still posting later frames and the ready message", () => {
+        const posted: any[] = [];
+        const port = {
+            postMessage: vi.fn((frame: any) => {
+                // stands in for a DataCloneError: just this one frame cannot be posted
+                if (frame?.method === 'unpostable') throw new Error('could not be cloned');
+                posted.push(frame);
+            }),
+            onmessage: null as any,
+        };
+        const sandboxConsole = createMockConsole();
+        const listeners: Record<string, Function> = {};
+        (globalThis as any).addEventListener = (type: string, cb: Function) => {
+            listeners[type] = cb;
+        };
+
+        // timeouts off: the queued calls never get an answer from the mock port
+        inSandboxScript(true, 'iframe', sandboxConsole, (send) => createBroker(send, { timeoutMs: 0 }));
+        const bridge = (globalThis as any).bridge;
+        bridge.call('unpostable'); // queued before the port exists...
+        bridge.call('later');      // ...and so is this one, behind it
+
+        expect(() => listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] })).not.toThrow();
+
+        const calls = posted.filter(frame => frame.type === 'RPC_REQ');
+        expect(calls.map(frame => frame.method)).toEqual(['later']);
+        expect(posted).toContainEqual({ type: 'LOG', level: 'info', args: ['iframe Ready'] });
+        const warnings = posted.filter(frame => frame.type === 'LOG' && frame.level === 'warn');
+        expect(warnings).toHaveLength(1);
+        expect(String(warnings[0].args[0])).toContain('could not be posted');
     });
 });

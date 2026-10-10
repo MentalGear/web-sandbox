@@ -3,6 +3,7 @@ import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./cs
 import { generateCSP } from "./lib/csp/csp-generator";
 import { deepMerge } from "./lib/utils";
 import { inSandboxScript } from "./lib/in-sandbox-script";
+import { createBroker } from "./lib/rpc";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { filterCapabilities } from "./lib/capabilities";
 import { buildGuestDocument, buildWrapperDocument, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
@@ -57,7 +58,14 @@ export class WebSandbox extends HTMLElement {
     private _hubFrame: HTMLIFrameElement | null = null;
     private _timeoutId: ReturnType<typeof setTimeout> | null = null;
     private _queuedMessages: { code: string }[] = [];
+    private _rpcQueue: unknown[] = []; // the host's own RPC requests waiting for a port (cloned at call time)
     private _warnedUnsafeCapabilities = new Set<string>();
+
+    // One broker lives on the element for its whole life, so host-exposed methods persist across
+    // frame recreation (the guest's broker is per-frame and resets with each new frame). Its send only
+    // ever carries the host's own requests: it queues them until a port exists, then setupChannel
+    // flushes them. Answers to the guest never use it — they go back on the port the request arrived on.
+    private _broker = createBroker((frame) => this._postRpc(frame));
 
     constructor() {
         super();
@@ -143,6 +151,38 @@ export class WebSandbox extends HTMLElement {
         }
     }
 
+    /**
+     * Publishes a host method the guest can invoke with `bridge.call(name, ...)`.
+     * Methods live on the element, so they survive frame recreation (load()/setConfig()).
+     */
+    expose(name: string, fn: (...args: any[]) => unknown): void {
+        this._broker.expose(name, fn);
+    }
+
+    /**
+     * Invokes a guest-exposed method and resolves with its result (rejects on error or unknown method).
+     * Works WITHOUT scriptUnsafe: it calls a pre-registered function on the guest, it never evals.
+     */
+    call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
+        if (this._terminated) return Promise.reject(new Error("[Sandbox] call() rejected: the sandbox was terminated. Call setConfig() or load() to start a new one."));
+        return this._broker.call(method, ...args) as Promise<T>;
+    }
+
+    /** Like call(), but with an explicit timeout in ms for this one call (0 disables the timeout). */
+    callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T> {
+        if (this._terminated) return Promise.reject(new Error("[Sandbox] call() rejected: the sandbox was terminated. Call setConfig() or load() to start a new one."));
+        return this._broker.callWithTimeout(timeoutMs, method, ...args) as Promise<T>;
+    }
+
+    // Sends one of the host's own RPC requests over the port, or queues it until setupChannel flushes (mirrors execute()).
+    private _postRpc(frame: unknown) {
+        if (this._port) {
+            this._port.postMessage(frame);
+            return;
+        }
+        this._rpcQueue.push(frame);
+    }
+
     private _warnAboutUnsafeCapabilities() {
         for (const capability of this._config.unsafeCapabilities || []) {
             if (this._warnedUnsafeCapabilities.has(capability)) continue;
@@ -168,11 +208,23 @@ export class WebSandbox extends HTMLElement {
     private setupChannel(target: Window) {
         if (this._port) { this._port.close(); this._port = null; }
         const channel = new MessageChannel();
-        this._port = channel.port1;
-        this._port.onmessage = (e) => {
-            if (e.data.type === 'LOG') {
-                window.dispatchEvent(new CustomEvent('sandbox-log', { detail: e.data }));
+        const port = channel.port1;
+        this._port = port;
+        port.onmessage = (e) => {
+            const data = e.data;
+            if (data?.type === 'LOG') {
+                window.dispatchEvent(new CustomEvent('sandbox-log', { detail: data }));
+                return;
             }
+            // Everything else on this port is RPC (or not ours); the broker validates every frame.
+            // Answers go back on THIS port — the one the request arrived on — never on whatever port is
+            // current. Teardown closes it, and a message posted on a closed port is silently discarded
+            // (HTML spec), so an answer that settles after a re-init goes nowhere: not into the next
+            // frame's port, and not into its queue. That is what keeps frame generations isolated —
+            // a response only ever reaches the generation that asked for it. (An answer that cannot be
+            // cloned may still throw while being posted; sendResult turns that into an error frame,
+            // which is discarded the same way.)
+            this._broker.handleMessage(data, (frame) => port.postMessage(frame));
         };
 
         // An opaque origin cannot be named as targetOrigin, hence '*'.
@@ -185,10 +237,37 @@ export class WebSandbox extends HTMLElement {
             this._queuedMessages = [];
             pending.forEach(msg => this.execute(msg.code));
         }
+
+        // Flush the host's RPC requests queued before the port existed. After the execute() flush, so that
+        // a call() and an expose-via-execute() both issued before ready keep their original wire order.
+        this._flushRpcQueue(port);
+    }
+
+    // Posts the host's own RPC requests queued while there was no port — the queue never holds answers
+    // (those go back on the port their request arrived on). Requests are cloned when the call is made
+    // (see callWithTimeout in rpc.ts), so a post failure is not expected here; the per-frame catch is a
+    // backstop so that one bad frame could never drop the frames behind it or — since _onFrameLoad
+    // dispatches 'ready' only after setupChannel returns — stop 'ready' from firing.
+    private _flushRpcQueue(port: MessagePort) {
+        const frames = this._rpcQueue;
+        this._rpcQueue = [];
+
+        let skipped = 0;
+        for (const frame of frames) {
+            try {
+                port.postMessage(frame);
+            } catch {
+                skipped++;
+            }
+        }
+        if (skipped > 0) console.warn(`[Sandbox] skipped ${skipped} queued RPC frame(s) that could not be posted (not transferable).`);
     }
 
     private _teardown() {
         this._queuedMessages = []; // Clear queue for the old environment
+        this._rpcQueue = [];       // same for the host's RPC requests queued for the old environment
+        // Reject any in-flight calls so their promises never hang once this environment goes away.
+        this._broker.rejectAllPending(new Error("[Sandbox] call() rejected: the sandbox was reset or terminated."));
         if (this._iframe) { this._iframe.onload = null; this._iframe.remove(); this._iframe = null; }
         if (this._port) { this._port.close(); this._port = null; }
         if (this._timeoutId) { clearTimeout(this._timeoutId); this._timeoutId = null; }
@@ -208,8 +287,9 @@ export class WebSandbox extends HTMLElement {
     }
 
     private _getSandboxCommsScript(mode: 'iframe' | 'worker') {
-        // communication and logs template that any content running in the sandbox uses
-        return `(${inSandboxScript.toString()})(${this._config.scriptUnsafe}, '${mode}', console);`;
+        // communication, logs and RPC bridge template that any content running in the sandbox uses.
+        // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
+        return `(${inSandboxScript.toString()})(${this._config.scriptUnsafe}, '${mode}', console, ${createBroker.toString()});`;
     }
 
     private _getWorkerBootstrapScript() {

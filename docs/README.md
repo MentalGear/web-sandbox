@@ -6,6 +6,9 @@
   the build-vs-adopt case, an axis-by-axis comparison of opaque vs unique origins, a
   [field scan of 2026 entrants](ADR-001-continue-or-adopt.md#field-scan--august-2026), and the
   hybrid strategy (adopt the commodity layers, keep the differentiator).
+- [**ADR-002 — How should host and guest call each other?**](ADR-002-host-guest-broker.md) —
+  why the call broker was built in-house rather than adopted, its design choices, and the
+  guarantees they give.
 - [research/ARCHITECTURE_COMPARISON.md](research/ARCHITECTURE_COMPARISON.md) — host-level vs
   iframe-level Service Worker.
 
@@ -16,7 +19,7 @@
 
 ## Security research
 
-- [research/](research/README.md) — twelve documented attack vectors with reproductions, plus the
+- [research/](research/README.md) — fourteen documented attack vectors with reproductions, plus the
   CSP and virtual-files architecture analyses.
 - [CSP_CONFIG_RATIONALE.md](CSP_CONFIG_RATIONALE.md) — why `'unsafe-inline'`, why not nonces.
 - [CSP-Content-Security-Policy-settings.md](CSP-Content-Security-Policy-settings.md) — directive
