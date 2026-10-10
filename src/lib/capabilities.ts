@@ -1,4 +1,4 @@
-import { UNSAFE_CAPABILITIES } from "@src/csp-directives";
+import { UNSAFE_CAPABILITIES } from "../csp-directives";
 
 /**
  * Keeps only the requested capabilities that appear in `allowed`, warning about each one dropped.

@@ -1,4 +1,4 @@
-import type { CSPDirectives } from "@src/csp-directives";
+import type { CSPDirectives } from "../../csp-directives";
 
 /**
  * Directives that do NOT fall back to default-src.
