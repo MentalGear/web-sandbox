@@ -26,12 +26,12 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false,
 
-    "baseUrl": ".",
     "paths": {
-      "@src/*": ["src/*"]
+      "@src/*": ["./src/*"]
     },
     // "allowSyntheticDefaultImports": true,
   },
-  "include": ["src/**/*", "playground/**/*"]
+  "include": ["src/**/*", "playground/**/*", "test/**/*", "docs/research/**/*.spec.ts", "*.ts"],
+  "exclude": ["src/virtual-files/sw.ts"]
   }
 

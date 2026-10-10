@@ -1,3 +1,7 @@
+// Type `self` as a service worker scope (lib "WebWorker" alone types it as a generic worker)
+declare const self: ServiceWorkerGlobalScope;
+export {};
+
 const CACHE_NAME = 'virtual-files-cache-v1';
 const fileCache = new Map<string, string>();
 
