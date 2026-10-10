@@ -149,6 +149,8 @@ have become commodities and keep the parts nobody else is solving.
 | **Virtual files** | **Keep — but watch `lifo`** | Our VFS is opaque-origin-compatible; theirs is not. If they solve it under opacity, reassess. |
 | **Full OS / Linux tier** | **Do not build** | BrowserPod and Lifo are years ahead and it is not this project's problem. |
 
+> The Transport / RPC row above, and consequence 4 below, are superseded by [ADR-002](ADR-002-host-guest-broker.md): the broker was built in-house rather than adopted.
+
 The resulting shape matches `zushi`'s: a VM for logic, an opaque-origin iframe for UI, data-only
 across the boundary. The difference is that this repo would carry the CSP and VFS work that zushi
 leaves undocumented — which is exactly where its remaining originality lies.

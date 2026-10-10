@@ -23,19 +23,20 @@ conditional "continue".
 | Core isolation (`srcdoc` + opaque origin + immutable CSP) | ✅ implemented, `src/host.ts` |
 | CSP generation from typed config | ✅ implemented + 12 unit tests |
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker |
+| Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); virtual files spec is `fixme` (section C) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
-| Type check | 🟡 91 errors, all in `playground/` and `sw.ts`; `src/host.ts` is clean (H3) |
-| CI | ✅ unit + build + e2e on Chromium, Firefox, WebKit (D2) |
-| CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7, S8) |
+| Type check | ✅ `bun run typecheck` is clean and gates CI (H3) |
+| CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
+| CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
 | Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9) |
-| Installable package | ❌ `private: true`, `main` points at a missing file (D1) |
+| Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
-M1 plus S1, S2, S9 and the new S10–S12 are done. Items marked ✅ below keep their original text as a
-record of what was wrong.*
+M1 plus S1, S2, S9 and the new S10–S12 are done. Rows re-checked against the items below on
+2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
 
@@ -215,17 +216,49 @@ success log with a 2s timeout — slow and prone to false green.
 a first-class event. **Acceptance**: a blocked request produces an observable `violation` event on
 the host, and the security specs assert on it directly.
 
-### S6 · No execution budget in iframe mode — **P2 · M**
+### S6 · No execution budget in iframe mode — **P2 · M** — design settled
 
-**Verified**: `workerExecutionTimeout` is enforced only when `mode === 'worker'`
-(`src/host.ts:136`). A busy loop in iframe mode blocks the host's main thread with no recourse,
-and nothing caps allocation in either mode. See [`RESOURCE_QUOTAS.md`](research/RESOURCE_QUOTAS.md).
+**Guarantee**: untrusted code can never keep the host page busy indefinitely; the host can always
+stop the guest within a bounded time.
 
-**Work**: pair with B2's watchdog; recreate the frame on timeout; sample
-`performance.measureUserAgentSpecificMemory()` where available.
+**Verified**: the only budget is `workerExecutionTimeout`. `execute()` arms it through
+`_startTimeout()` (`src/host.ts`), which sets a timer only when `mode === 'worker'`; iframe mode has
+none. It is opt-in (default `0`), and nothing reports completion, so it recreates the frame even
+after code that finished. Background: [`RESOURCE_QUOTAS.md`](research/RESOURCE_QUOTAS.md).
 
-**Acceptance**: an infinite loop and an allocation bomb are both terminated instead of hanging or
-crashing the tab.
+**What each mode provides**:
+
+1. **Worker mode — holds today, by construction.** Guest logic runs on its own thread and never
+   blocks the host's. On expiry the host recreates the frame (`initialize()`), which terminates the
+   worker. Shipped; asserted by `test/e2e/worker-timeout.spec.ts`.
+2. **Iframe mode, frame in its own process** (desktop Chromium isolates opaque-origin sandboxed
+   frames this way). A guest loop blocks only the guest's process and the host stays responsive, so
+   a host-side heartbeat watchdog can remove the frame. Holds once that watchdog exists; it pairs
+   with B2's lifecycle owner.
+3. **Iframe mode, frame on the host's thread** (platforms without that isolation). A guest loop
+   stops all script on that thread, the watchdog included. No in-page mechanism can bound this: it
+   is a platform limit, stated as such. Strict mode, below, avoids it.
+
+**Design — separate execution from rendering**, as an opt-in **strict mode**. Guest logic runs in
+a worker; the DOM frame carries no guest script (its CSP admits none) and only renders updates the
+host applies over the broker (B1). A frame with no guest script cannot loop, and a worker that
+loops can always be stopped, so bounded execution no longer depends on the browser's process model.
+Keeping guest code out of the frame also strengthens the self-navigation guarantee (S10) and the
+guarantees about what guest code can reach from its global scope: `eval` only when explicitly
+enabled (S4), and no WebRTC (S13). The cost is a different programming model (no inline guest
+`<script>`; UI updates are declarative messages), which is why it is opt-in.
+
+**Default iframe mode** keeps guest script and gets the watchdog: bounded wherever the browser
+isolates the frame (case 2), with case 3's limit documented.
+
+**Depends on**: the broker (B1) to carry render updates from worker to frame; B2 for watchdog and lifecycle.
+
+**Open**: this bounds time, not memory; nothing caps allocation in either mode. Sampling
+`performance.measureUserAgentSpecificMemory()` where available remains a follow-up.
+
+**Acceptance**: in strict mode, an unbounded loop in guest logic is stopped within the configured
+budget on Chromium, Firefox and WebKit (CI); in default mode, the watchdog stops it where the frame
+runs in its own process, and the README states the same-thread limit plainly.
 
 ---
 
@@ -338,9 +371,35 @@ ones are dropped from `capabilities` with a warning and accepted only through `u
 which warns once per capability per instance. `allow-forms` stays safe: `form-action` defaults to
 `'none'` (S9) and a form submission is a navigation the wrapper blocks (S10).
 
+### S13 · No WebRTC egress guarantee — **P1 · S** — candidate
+
+**Guarantee**: guest code cannot reach the network through WebRTC.
+
+**Observed**: in one headless-Chromium run, `RTCPeerConnection` was available in the guest, and its
+ICE traffic is not governed by `connect-src`; adding the experimental `webrtc 'block'` directive did
+not change that. Treat this as a candidate until it is confirmed on Firefox and WebKit.
+
+**Work**: remove `RTCPeerConnection` (and `webkitRTCPeerConnection`) from the guest's global scope
+in the bootstrap, before any guest code runs, and offer WebRTC only as an explicit unsafe
+capability. The removal must also hold in frames the guest creates: `frame-src 'none'` stops frames
+that load a URL, but a `srcdoc` frame still loads (research 01 relies on this) and has a global
+scope of its own, where a Chromium check still found the constructor after it had been removed from
+the guest. Covering those frames, or ruling out script in them as strict mode (S6) does, is part of
+this item and may make it larger than S.
+
+**Acceptance**: by default, in iframe mode, `typeof RTCPeerConnection === 'undefined'` in the guest
+and in any frame it creates, on Chromium, Firefox and WebKit (CI).
+
 ## B · API Surface & DX
 
-### B1 · Promise-based RPC in both directions — **P1 · M**
+### B1 · Promise-based RPC in both directions — ✅ **done**
+
+**Done**: built in-house rather than adopted; [ADR-002](ADR-002-host-guest-broker.md) records why.
+One dispatcher, `src/lib/rpc.ts`, runs on both sides: `expose()`, `call()` and `callWithTimeout()`
+on the element, and the same three on a global `bridge` in the guest. Only exposed methods are
+callable, calls time out after 30 s by default, teardown rejects pending calls, and an answer
+reaches only the frame that asked. `call()` needs no `scriptUnsafe`; `execute()` stays the gated escape hatch. The
+acceptance below holds in both modes: `test/e2e/broker.spec.ts`, plus `src/lib/rpc.test.ts`.
 
 *Parity gap*: `websandbox` (`connection.remote.fn()`), Penpal and Zoid all offer this; we do not.
 
@@ -492,7 +551,7 @@ smoke test mounts a sandbox through the public entry point (with B4).
 ### D2 · CI — ✅ **done**
 
 **Done**: `.github/workflows/ci.yml` runs unit tests and both builds, and the e2e suite on Chromium,
-Firefox and WebKit, on push to `main` and on every PR. `tsc --noEmit` still waits on H3.
+Firefox and WebKit, on push to `main` and on every PR. The type check now gates CI too (H3).
 
 **Verified**: `playwright.config.ts` defines chromium, firefox and webkit projects and
 [`BROWSER_COMPATIBILITY.md`](research/BROWSER_COMPATIBILITY.md) makes claims about all three — but
@@ -579,16 +638,17 @@ comparisons; for the 2026 entrants (`quickjs-wasi`, `@tanstack/ai-isolate-quickj
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | Isolation with no server config | ✅ opaque origin | 🟡 | ➖ | ➖ | ❌ wildcard DNS |
 | Private `MessageChannel` | ✅ | ❌ | 🟡 | ✅ | ❌ |
-| Promise-based RPC | ❌ **B1** | ✅ | ✅ | ✅ | ➖ |
-| Typed package / `d.ts` | ❌ **D1** | ✅ | ✅ | ✅ | ✅ |
-| Headless (worker) execution | 🟡 **S1** | ❌ | ❌ | ❌ | ❌ |
+| Promise-based RPC | ✅ **B1** | ✅ | ✅ | ✅ | ➖ |
+| Typed package / `d.ts` | 🟡 **D1** | ✅ | ✅ | ✅ | ✅ |
+| Headless (worker) execution | ✅ **S1** | ❌ | ❌ | ❌ | ❌ |
 | Virtual files | 🟡 **C1–C3** | ❌ | ➖ | ❌ | ❌ |
 | Host-mediated network | ❌ **B5** | ❌ | ➖ | ✅ | ❌ |
 | Auto-sizing | ❌ **B6** | ❌ | 🟡 | ✅ | ✅ |
 | Execution quotas | 🟡 **S6** | ❌ | ➖ | ❌ | ➖ |
 
-The two columns where we lead — isolation without server config, and the private channel — are the
-ones the backlog must not regress.
+We lead on four rows: isolation without server config and headless (worker) execution outright,
+and virtual files and execution quotas as the only solution with even partial support. Those four,
+plus the private channel (matched only by Zoid), are the rows the backlog must not regress.
 
 Larger bets that follow from the same comparison, both **P3**: an **opt-in host-served mode** that
 delivers CSP as an HTTP **header** while keeping the opaque origin via the `sandbox` attribute —
@@ -625,6 +685,7 @@ meets an opaque-origin UI tier. Do not write a JS engine.
 So `IMPROVEMENTS.md` is not re-proposed wholesale:
 
 - **`MessageChannel` communication** (§3) — `setupChannel()` (`src/host.ts:150`), both modes.
+- **Promise-based RPC, both directions** — `src/lib/rpc.ts` over the same channel, both modes (B1).
 - **CSP generation from typed config** — `src/lib/csp/csp-generator.ts`, hardened with a
   `default-src 'none'` fallback and 12 passing unit tests.
 - **Opaque origin via `srcdoc`** — closes findings 03 and 05 by construction.
@@ -638,7 +699,7 @@ So `IMPROVEMENTS.md` is not re-proposed wholesale:
 | :--- | :--- | :--- |
 | **M1 · Turn the lights on** | T1, T2, T3, D2 | Until the suite runs, no security claim is verified and no later change is safe. CI belongs here so the same drift cannot recur. |
 | **M2 · Make the claims true** | S1, S2, S7, S9, D1, B3, B4 | A documented capability that does not hold (S1) or does not install (D1) costs more than a missing one. B3/B4 ride along — DevTools is silent and the element self-registers nowhere. |
-| **M3 · Harden** | S3, S4, T4, H3 | The injection path and the session-id model are the two places where the design's assumptions are unverified; presets and type checking keep them that way. |
+| **M3 · Harden** | S3, S4, S13, T4, H3 | The injection path and the session-id model are the two places where the design's assumptions are unverified; presets and type checking keep them that way. S13 is a candidate egress route that CSP does not cover. |
 | **M4 · Make it adoptable** | B1, B2, C1, C2 | RPC + lifecycle is the parity bar set by websandbox and Penpal; the VFS is the differentiator, so it must actually work. |
 | **M5 · Extend** | B5, B6, C3, C4, S5, S6, D3, H1, H2, H5 | Observability, quotas, docs and hygiene once the base is trustworthy. |
 | **Bets** | hosted-origin mode, QuickJS spike | Independent; run when there is slack. |
