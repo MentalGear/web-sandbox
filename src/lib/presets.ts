@@ -3,7 +3,7 @@
  * Pre-defined scenarios to demonstrate sandbox capabilities and testing.
  */
 
-import type { SafeCapability } from "@src/csp-directives";
+import type { SafeCapability } from "../csp-directives";
 
 export const PRESETS = {
     "basic": {

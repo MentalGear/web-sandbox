@@ -69,12 +69,13 @@ export class WebSandbox extends HTMLElement {
         this.initialize();
     }
 
-    setConfig(config: SandboxConfig) {
+    // Partial: anything left out keeps its default (see DEFAULT_SANDBOX_CONFIG)
+    setConfig(config: Partial<SandboxConfig>) {
 
         // ---- Parse and Sanitize Input
 
         // Filter out any forbidden capabilities that might have been passed
-        const sanitizedConfig: SandboxConfig = {
+        const sanitizedConfig: Partial<SandboxConfig> = {
             ...config,
             capabilities: filterCapabilities(config.capabilities, SAFE_CAPABILITIES, 'capabilities'),
             unsafeCapabilities: filterCapabilities(config.unsafeCapabilities, UNSAFE_CAPABILITIES, 'unsafeCapabilities'),

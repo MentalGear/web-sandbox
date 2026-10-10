@@ -35,6 +35,14 @@ Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the 
     ```
     Use `bun run test`, not `bun test`: the latter is Bun's built-in runner, not the project script.
 
+4.  **Type-check and build the package**
+    ```bash
+    bun run typecheck   # app + service worker
+    bun run build:lib   # dist/: ESM bundle + .d.ts
+    ```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full workflow.
+
 ## Playground Usage
 
 Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/playground/index.html).
@@ -56,7 +64,7 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 ## Usage
 
 ```js
-import { defineWebSandbox } from './src/host.ts';
+import { defineWebSandbox } from 'web-sandbox';   // or './src/index.ts' from a checkout
 
 defineWebSandbox();                 // registers <web-sandbox>; pass a name to use your own tag
 const sandbox = document.querySelector('web-sandbox');

@@ -15,9 +15,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - run: bun run typecheck
       - run: bun run test:unit
       - run: bun build.ts
       - run: bun run build
+      - run: ./scripts/smoke-package.sh
 
   e2e:
     runs-on: ubuntu-latest

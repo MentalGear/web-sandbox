@@ -38,7 +38,7 @@ export type UnsafePermission = (typeof UNSAFE_PERMISSIONS)[number];
 export type SandboxCapability = (typeof ALLOWED_CAPABILITIES)[number];
 
 export interface CSPDirectives {
-    "upgrade-insecure-requests": true;
+    "upgrade-insecure-requests"?: true; // the host always sets it
     "default-src"?: string[];
     "script-src"?: string[];
     "connect-src"?: string[];

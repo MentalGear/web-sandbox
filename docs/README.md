@@ -6,8 +6,8 @@
   the build-vs-adopt case, an axis-by-axis comparison of opaque vs unique origins, a
   [field scan of 2026 entrants](ADR-001-continue-or-adopt.md#field-scan--august-2026), and the
   hybrid strategy (adopt the commodity layers, keep the differentiator).
-- [Sandbox_Architecture_Decision.md](Sandbox_Architecture_Decision.md) — host-level vs
-  iframe-level Service Worker. *(Duplicate of `research/ARCHITECTURE_COMPARISON.md`; backlog H1.)*
+- [research/ARCHITECTURE_COMPARISON.md](research/ARCHITECTURE_COMPARISON.md) — host-level vs
+  iframe-level Service Worker.
 
 ## Planning
 

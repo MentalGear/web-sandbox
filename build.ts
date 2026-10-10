@@ -1,3 +1,4 @@
+/// <reference types="bun" />
 import { mkdir, rm } from "fs/promises";
 import { join } from "path";
 

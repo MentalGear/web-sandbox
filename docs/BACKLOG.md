@@ -467,7 +467,13 @@ Adopt the main-thread pre-registration verification and versioned SW paths from
 
 ## D · Packaging & Distribution
 
-### D1 · Ship an installable package — **P0 · S**
+### D1 · Ship an installable package — 🟡 **ready except the licence**
+
+**Done**: public entry `src/index.ts`; `exports` / `types` / `main` point at `dist/`, built by
+`bun run build:lib` (bun bundle + `tsc` declarations). `scripts/smoke-package.sh` runs `bun pm pack`,
+installs the tarball into a scratch project, type-checks and bundles a consumer (CI). The e2e spec
+`test/e2e/package.spec.ts` mounts a sandbox from `dist/` under a custom tag. **Open**: `private: true`
+stays until H5's licence is chosen.
 
 Every solution we compare against installs with one command. We do not install at all, which caps
 adoption regardless of how good the isolation is.
@@ -506,7 +512,10 @@ Document the public surface once B1–B4 stabilise it; thin React/Vue wrappers a
 
 ## H · Repo & Docs Hygiene
 
-### H1 · Duplicate documents — **P2 · S**
+### H1 · Duplicate documents — ✅ **done**
+
+**Done**: `research/ARCHITECTURE_COMPARISON.md` and `research/VIRTUAL_FILES_SECURITY_ANALYSIS.md` are
+kept; their byte-identical twins are now stubs pointing at them. The VFS overlap below remains.
 
 **Verified byte-identical pairs**:
 - `docs/research/VIRTUAL_FILES_SECURITY_ANALYSIS.md` ≡ `docs/research/Virtual-Files-Security-Architecture.md`
@@ -524,7 +533,12 @@ Plus heavy overlap between `VFS_ARCHITECTURE.md`, `VIRTUAL_FILES_PLAN.md` and
 `<web-sandbox>` and the class `WebSandbox`; "Web Sandbox" in prose. `iframe-sandbox` remains only
 in research write-ups that describe that older architecture.
 
-### H3 · Type check is not part of the build — **P2 · S**
+### H3 · Type check is not part of the build — ✅ **done**
+
+**Done**: `bun run typecheck` is clean and gates CI. The playground's `window` surface is typed,
+`sw.ts` has its own `tsconfig.worker.json`, `test/` and the research specs are included, `baseUrl` is
+gone (TypeScript 7 removed it), and the `CSPDirectives` test import is fixed. Fixing the types also
+surfaced that `setConfig()` demanded a complete config; it now takes `Partial<SandboxConfig>`.
 
 **Verified**: `bun x tsc --noEmit` reports 91 errors — 84 in `playground/playground.ts` (untyped
 `window.*` globals, unasserted `querySelector`), 6 in `sw.ts` (needs `lib: ["WebWorker"]`), and one
@@ -542,7 +556,11 @@ clean and runs in CI.
 current opaque-origin architecture, distinguishing "closed by construction" from "open". A
 `docs/README.md` index was added alongside it.
 
-### H5 · Missing repo basics — **P3 · S**
+### H5 · Missing repo basics — 🟡 **partly done**
+
+**Done**: `CONTRIBUTING.md`; `format` / `format:check` scripts; `.prettierrc` stripped of the Svelte
+and Tailwind plugins it was copied with. `format:check` is not a CI gate yet (101 files predate the
+config). **Open**: the `LICENSE` — the owner's choice, and it still blocks dropping `private` (D1).
 
 No `LICENSE`, no `CONTRIBUTING.md`, and `.prettierrc` exists with no `format` script and no
 formatting check. **Work**: add a license (blocks D1 — publishing without one is a non-starter),

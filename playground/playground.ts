@@ -5,20 +5,66 @@ defineWebSandbox();
 
 import { SandboxDevTools } from '@src/devtools.ts';
 import { PRESETS } from '@src/lib/presets.ts';
+import type { SandboxConfig } from '@src/host.ts';
 
 // -----------------
 
-const capturedLogs = [];
-const sandbox = document.getElementById('sandbox');
-const vfSandbox = document.getElementById('virtual-files-sandbox');
-const logsDiv = document.getElementById('logs');
+interface LogEntry {
+    source?: string;
+    level?: string;
+    message?: string;
+    args?: unknown[];
+    area?: string;
+    depth?: string; // older log schema
+    logType?: string; // older log schema
+}
+
+// Functions the playground's inline HTML handlers (onclick, oninput, ...) and the e2e tests call
+declare global {
+    interface Window {
+        appendLocalLog(msg: string): void;
+        loadPreset(): void;
+        onCodeInput(): void;
+        onRulesBlur(): void;
+        openTab(evt: Event, tabName: string): void;
+        updateVirtualFilesView(files: Record<string, string | Uint8Array>): void;
+        runHtml(): void;
+        runCode(): void;
+        runVirtualFiles(): void;
+        debounceApplyRules(): void;
+        applyNetworkRules(): boolean;
+        clearLogs(): void;
+        resetSandbox(): Promise<void>;
+        SandboxControl: {
+            sandboxElement: WebSandbox;
+            execute(code: string): void;
+            setConfig(config: SandboxConfig): void;
+            getLogs(): LogEntry[];
+            clearLogs(): void;
+        };
+    }
+}
+
+// Every element the playground uses is in index.html: a missing one is a bug, so fail loudly
+function byId<T extends HTMLElement = HTMLElement>(id: string): T {
+    const element = document.getElementById(id);
+    if (!element) throw new Error(`Playground element #${id} is missing`);
+    return element as T;
+}
+
+const DEFAULT_PRESET = 'basic';
+
+const capturedLogs: LogEntry[] = [];
+const sandbox = byId<WebSandbox>('sandbox');
+const vfSandbox = byId<WebSandbox>('virtual-files-sandbox');
+const logsDiv = byId('logs');
 let firstLog = true;
 
 console.log("Elements found:", sandbox, logsDiv);
 
 // Initialize DevTools
 // We attach devtools to the virtual-files sandbox as it's more relevant there
-const devtools = new SandboxDevTools(vfSandbox as WebSandbox);
+const devtools = new SandboxDevTools(vfSandbox);
 const toggleBtn = document.getElementById('toggleDevTools');
 if (toggleBtn) {
     toggleBtn.onclick = () => devtools.toggle();
@@ -26,8 +72,8 @@ if (toggleBtn) {
 
 // Listen for readiness on the sandbox elements directly
 sandbox.addEventListener('ready', () => {
-    document.getElementById('sandbox-status').textContent = 'Sandbox: Ready';
-    document.getElementById('sandbox-status').style.color = '#4caf50';
+    byId('sandbox-status').textContent = 'Sandbox: Ready';
+    byId('sandbox-status').style.color = '#4caf50';
     window.appendLocalLog('Direct sandbox is ready!');
     
     const runBtn = document.getElementById('runButton') as HTMLButtonElement;
@@ -55,8 +101,7 @@ vfSandbox.addEventListener('fileschanged', (e: any) => {
 });
 
 // Populate presets dropdown
-const select = document.getElementById('presetSelect');
-if (!select) console.error("Select not found");
+const select = byId<HTMLSelectElement>('presetSelect');
 const customOption = select.querySelector('option[value="custom"]');
 if (!customOption) console.error("Custom option not found");
 
@@ -69,14 +114,14 @@ Object.values(PRESETS).forEach(preset => {
 });
 console.log("Presets populated");
 
-window.appendLocalLog = (msg) => {
+window.appendLocalLog = (msg: string) => {
     // playground events added to logs
     appendLog({ source: 'playground', message: msg, level: 'log' });
 };
 
 // Listen for internal log events dispatch on window by host.ts
 window.addEventListener('sandbox-log', (event) => {
-    const data = event.detail;
+    const data = (event as CustomEvent<LogEntry>).detail;
     // Map sandbox log format to UI log format if needed
     // Sandbox: { type: 'LOG', level: 'info', args: [...] }
     // UI expects: { level, message, source... }
@@ -97,13 +142,20 @@ window.addEventListener('sandbox-log', (event) => {
 });
 
 window.addEventListener('load', () => {
-    const loaded = playground.loadState();
-    if (!loaded) window.loadPreset(); // Load default if no saved state
-    else window.applyNetworkRules(); // Apply rules from saved state
+    const loaded = window.playground.loadState();
+    if (loaded) {
+        window.applyNetworkRules(); // Apply rules from saved state
+        return;
+    }
+
+    // Load default if no saved state. The select starts on its "none" placeholder,
+    // which loadPreset() ignores, so pick the default preset first.
+    if (select.value === 'none') select.value = DEFAULT_PRESET;
+    window.loadPreset();
 });
 console.log("Added load listener");
 
-function appendLog(data) {
+function appendLog(data: LogEntry) {
     if (firstLog) {
         logsDiv.innerHTML = '';
         firstLog = false;
@@ -148,38 +200,38 @@ function appendLog(data) {
 }
 
 window.loadPreset = () => {
-    const val = document.getElementById('presetSelect').value;
+    const val = select.value;
     if (val === 'none') return;
     if (val === 'custom') {
-        playground.loadState();
+        window.playground.loadState();
         return;
     }
 
-    const preset = PRESETS[val];
+    const preset = PRESETS[val as keyof typeof PRESETS];
     if (!preset) return;
 
-    document.getElementById('rulesEditor').value = JSON.stringify(preset.rules, null, 2);
-    document.getElementById('code').value = preset.code;
+    byId<HTMLTextAreaElement>('rulesEditor').value = JSON.stringify(preset.rules, null, 2);
+    byId<HTMLTextAreaElement>('code').value = preset.code;
 
     window.applyNetworkRules();
-    playground.saveState();
+    window.playground.saveState();
 }
 
 window.onCodeInput = () => {
-    playground.triggerCustomMode();
-    playground.saveState();
+    window.playground.triggerCustomMode();
+    window.playground.saveState();
 };
 
-window.openTab = (evt: any, tabName: string) => {
+window.openTab = (evt: Event, tabName: string) => {
     const contents = document.getElementsByClassName("tab-content");
-    for (let i = 0; i < contents.length; i++) contents[i].classList.remove("active");
+    for (const content of Array.from(contents)) content.classList.remove("active");
     
     const links = document.getElementsByClassName("tab-link");
-    for (let i = 0; i < links.length; i++) links[i].classList.remove("active");
+    for (const link of Array.from(links)) link.classList.remove("active");
     
     const target = document.getElementById(tabName);
     if (target) target.classList.add("active");
-    if (evt.currentTarget) evt.currentTarget.classList.add("active");
+    if (evt.currentTarget instanceof HTMLElement) evt.currentTarget.classList.add("active");
 };
 
 window.updateVirtualFilesView = (files: Record<string, string | Uint8Array>) => {
@@ -221,19 +273,16 @@ window.updateVirtualFilesView = (files: Record<string, string | Uint8Array>) => 
 };
 
 window.runHtml = () => {
-    const code = (document.getElementById('code') as HTMLTextAreaElement).value;
-    if (sandbox && (sandbox as WebSandbox).load) {
-        (sandbox as WebSandbox).load(code);
-    }
+    sandbox.load(byId<HTMLTextAreaElement>('code').value);
 };
 
 window.onRulesBlur = () => {
-    playground.triggerCustomMode();
-    playground.saveState();
+    window.playground.triggerCustomMode();
+    window.playground.saveState();
     window.debounceApplyRules();
 };
 
-let debounceTimer;
+let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 window.debounceApplyRules = () => {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
@@ -242,8 +291,8 @@ window.debounceApplyRules = () => {
 }
 
 window.applyNetworkRules = () => {
-    const rulesEditor = document.getElementById('rulesEditor');
-    const rulesError = document.getElementById('rulesError');
+    const rulesEditor = byId<HTMLTextAreaElement>('rulesEditor');
+    const rulesError = byId('rulesError');
     const rulesStr = rulesEditor.value;
     try {
         // Strip trailing commas to allow more relaxed JSON input
@@ -253,7 +302,7 @@ window.applyNetworkRules = () => {
         rulesError.textContent = '';
 
         // Apply to both sandboxes
-        (sandbox as WebSandbox).setConfig(rules);
+        sandbox.setConfig(rules);
         
         const vfConfig = {
             ...rules,
@@ -261,18 +310,18 @@ window.applyNetworkRules = () => {
                 ? '/src/virtual-files'
                 : 'http://virtual-files.localhost:4444'
         };
-        (vfSandbox as WebSandbox).setConfig(vfConfig);
+        vfSandbox.setConfig(vfConfig);
         
         // Visual feedback that we are resetting the environment
-        document.getElementById('sandbox-status').textContent = 'Sandbox: Initializing...';
-        document.getElementById('sandbox-status').style.color = '#ffb74d';
+        byId('sandbox-status').textContent = 'Sandbox: Initializing...';
+        byId('sandbox-status').style.color = '#ffb74d';
         window.appendLocalLog('Applying configuration...');
         return true;
 
 
     } catch (e) {
         rulesEditor.classList.add('error-border');
-        rulesError.textContent = 'Invalid JSON: ' + e.message;
+        rulesError.textContent = 'Invalid JSON: ' + (e as Error).message;
         return false;
     }
 }
@@ -281,16 +330,16 @@ window.runCode = () => {
     // Sync rules immediately
     window.applyNetworkRules();
 
-    const code = (document.getElementById('code') as HTMLTextAreaElement).value;
+    const code = byId<HTMLTextAreaElement>('code').value;
     window.appendLocalLog('Executing code in sandbox...');
-    (sandbox as WebSandbox).execute(code);
+    sandbox.execute(code);
 }
 
 window.runVirtualFiles = () => {
     window.applyNetworkRules();
 
-    const code = (document.getElementById('code') as HTMLTextAreaElement).value;
-    const vfSandboxEl = vfSandbox as WebSandbox;
+    const code = byId<HTMLTextAreaElement>('code').value;
+    const vfSandboxEl = vfSandbox;
 
     window.appendLocalLog('Preparing virtual-files and executing...');
 
@@ -311,19 +360,18 @@ window.runVirtualFiles = () => {
                 });
         `);
     } catch (e) {
-        window.appendLocalLog('Error during virtual-files execution: ' + e.message);
+        window.appendLocalLog('Error during virtual-files execution: ' + (e as Error).message);
         console.error(e);
     }
 }
 
 window.clearLogs = () => {
-    document.getElementById('logs').innerHTML = '';
+    logsDiv.innerHTML = '';
 }
 
 window.resetSandbox = async () => {
     window.appendLocalLog('Resetting sandbox...');
-    const runBtn = document.getElementById('runButton');
-    if (runBtn) runBtn.disabled = true;
+    byId<HTMLButtonElement>('runButton').disabled = true;
     // Clear host-side state
     localStorage.removeItem('safeSandbox_customState');
     // For WebSandbox, we just re-initialize
@@ -333,20 +381,20 @@ window.resetSandbox = async () => {
 // Listen for reset completion from sandbox
 window.addEventListener('message', (event) => {
     if (event.data?.type === 'RESET_COMPLETE') {
-        window.location.reload(true);
+        window.location.reload();
     }
 });
 
 window.SandboxControl = {
     sandboxElement: sandbox,
-    execute: (code) => {
-        if (document.getElementById('sandbox-status').textContent !== 'Sandbox: Ready') {
+    execute: (code: string) => {
+        if (byId('sandbox-status').textContent !== 'Sandbox: Ready') {
             console.warn("SandboxControl: Execution blocked, sandbox not ready.");
             return;
         }
         sandbox.execute(code);
     },
-    setConfig: (config) => {
+    setConfig: (config: SandboxConfig) => {
         sandbox.setConfig(config);
     },
     getLogs: () => {
@@ -354,7 +402,7 @@ window.SandboxControl = {
     },
     clearLogs: () => {
         capturedLogs.length = 0;
-        document.getElementById('logs').innerHTML = '';
+        logsDiv.innerHTML = '';
     }
 };
 console.log("SandboxControl exposed for automatic e2e testing");

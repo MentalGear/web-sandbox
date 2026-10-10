@@ -1,0 +1,9 @@
+{
+  // The virtual files service worker runs in a worker scope, not a window: separate lib set.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "WebWorker"]
+  },
+  "include": ["src/virtual-files/sw.ts"],
+  "exclude": []
+}

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { generateCSP, type CSPDirectives } from './csp-generator';
+import { generateCSP } from './csp-generator';
+import type { CSPDirectives } from '@src/csp-directives';
 
 describe('generateCSP', () => {
   it('should generate a valid CSP string from multiple directives', () => {
@@ -93,7 +94,7 @@ describe('generateCSP', () => {
 
   it('should handle upgrade-insecure-requests as a boolean directive', () => {
     const input: CSPDirectives = {
-      'upgrade-insecure-requests': [],
+      'upgrade-insecure-requests': true,
     };
     const expected = "default-src 'none'; upgrade-insecure-requests;";
     expect(generateCSP(input)).toBe(expected);
@@ -101,7 +102,7 @@ describe('generateCSP', () => {
 
   it('should handle directive of boolean and string[] type', () => {
     const input: CSPDirectives = {
-      'upgrade-insecure-requests': [],
+      'upgrade-insecure-requests': true,
       'script-src': ["example.com"],
     };
     const expected = "default-src 'none'; upgrade-insecure-requests; script-src example.com;";

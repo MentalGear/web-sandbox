@@ -32,7 +32,8 @@ export default defineConfig({
         headless: true,
     },
     webServer: {
-        command: "bun x vite",
+        // build the package first: test/e2e/package.spec.ts mounts the sandbox from dist/
+        command: "bun run build:lib && bun x vite",
         url: "http://localhost:4444/test/e2e/harness.html",
         reuseExistingServer: !process.env.CI,
         stdout: 'pipe',

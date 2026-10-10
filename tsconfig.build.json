@@ -1,0 +1,13 @@
+{
+  // Emits the published .d.ts files; the JavaScript itself is bundled by `bun build`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/index.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

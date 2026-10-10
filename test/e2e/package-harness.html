@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Package e2e harness</title>
+    <!-- Mounts the sandbox through the built package (dist/), not the sources: backlog D1 -->
+    <script type="module">
+        import { defineWebSandbox } from '/dist/index.js';
+
+        defineWebSandbox('packaged-sandbox');
+        window.sandboxLogs = [];
+        window.addEventListener('sandbox-log', (event) => {
+            window.sandboxLogs.push((event.detail?.args || []).map(String).join(' '));
+        });
+        window.harnessReady = true;
+    </script>
+</head>
+<body>
+    <packaged-sandbox></packaged-sandbox>
+</body>
+</html>
