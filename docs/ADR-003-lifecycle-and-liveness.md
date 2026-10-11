@@ -43,9 +43,12 @@ Three backlog items met in one place, the element's lifecycle:
 
 **What the watchdog can and cannot bound.** It detects a blocked guest event loop. That holds
 where the guest runs on a different thread or process from the host: worker mode on every browser,
-and iframe mode where the browser runs the sandboxed frame in its own process. Headless Chromium
-does (verified: a 3 s guest loop left the host answering in 3 ms); WebKit does not (the host was
-blocked for the whole loop). Where the frame shares the host's thread, a guest loop stops the
+and iframe mode where the browser runs the sandboxed frame in its own process. That is browser
+policy and varies even within one browser: headless Chromium ran the frame out of process in one
+environment (a 3 s guest loop left the host answering in 3 ms) and on the host's thread in CI;
+WebKit ran it on the host's thread (the host was blocked for the whole loop). So nothing is claimed
+per browser; the iframe-mode test measures the process model at runtime and asserts the contract
+that applies. Where the frame shares the host's thread, a guest loop stops the
 watchdog's timers too: a platform limit, which strict mode (S6, still open) is meant to remove. It
 is a liveness check, not a security boundary: a guest that answers pings is only alive, and the
 host keeps explicit control through `terminate()`.
@@ -92,7 +95,8 @@ If `execute()` ever reports completion, the state can be added then.
   `state === 'terminated'` confirms a call's `TERMINATED` code from the element's own state.
 - Pending calls settle on every teardown: reset, terminate, the watchdog and removal.
 - With the watchdog on, a guest stuck in a loop is terminated in worker mode everywhere and in
-  iframe mode on Chromium, while the host page stays responsive.
+  iframe mode wherever the frame runs out of process, while the host page stays responsive; where
+  it shares the host's thread, the host's stall is never charged to the guest.
 
 Costs and limits:
 

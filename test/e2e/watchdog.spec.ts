@@ -8,10 +8,11 @@ import { test, expect } from './fixture';
  *
  * Where it holds: the guest must run on a different thread or process from the host, so that its loop
  * cannot block the host's timers. Worker mode is that on every browser. Iframe mode is that only where
- * the browser runs the sandboxed frame out of process. Measured: Chromium does (a separate CDP iframe
- * target; the host answered within milliseconds during a guest loop); WebKit runs it on the host's
- * thread (the host stalled for the length of the loop). Firefox is not measured yet. Same-thread is a
- * platform limit; strict mode (S6) is the open answer to it.
+ * the browser runs the sandboxed frame out of process, which is browser policy rather than something the
+ * page controls: it varies by browser and even by environment (Chromium ran the frame out of process in
+ * one test environment and on the host's thread in CI). So the iframe-mode test measures it first and
+ * asserts whichever contract applies. Same-thread is a platform limit; strict mode (S6) is the open
+ * answer to it.
  */
 
 const BUDGET = 1000;
@@ -54,14 +55,44 @@ async function expectWatchdogStopsLoop(sandbox: any, page: any) {
     expect(await sandbox.call('sum', 1, 2)).toBe(3);
 }
 
-test('iframe mode: a guest stuck in an endless loop is terminated by the watchdog within the budget, and the host stays responsive', async ({ sandbox, page, browserName }) => {
-    // Runs only where the frame is measured to be out of process (Chromium). WebKit runs it on the host's
-    // thread, so a guest loop blocks the host page and its watchdog with it: a platform limit, not a gap
-    // in the test. Firefox is unmeasured, so it is not claimed either way. On those browsers the watchdog
-    // is still covered by the worker-mode loop test and the no-false-positive and stop tests below.
-    test.skip(browserName !== 'chromium', 'iframe-mode loop bounding is only claimed where the frame is measured out of process (Chromium)');
+// Measures whether the sandboxed frame runs on the host's thread in this run: a bounded guest busy loop
+// either stalls a host round-trip for its length (same thread) or does not (own process). Bounded, so it
+// can never hang the page, and shorter than the watchdog budget, so it never trips the watchdog.
+async function frameSharesHostThread(sandbox: any, page: any): Promise<boolean> {
+    await sandbox.run('{ const t = performance.now(); while (performance.now() - t < 600) {} }');
+    await page.waitForTimeout(100); // the guest is now inside its loop
+    const before = Date.now();
+    await page.evaluate(() => 0);
+    const stalled = Date.now() - before > 300;
+    await page.waitForTimeout(700); // let the probe loop finish either way
+    return stalled;
+}
+
+test('iframe mode: a guest stuck in a loop is stopped by the watchdog where the frame has its own thread, and never charged for host stalls where it shares the host thread', async ({ sandbox, page }, testInfo) => {
     expect(await sandbox.mount({ watchdogTimeout: BUDGET })).toBe('ready');
-    await expectWatchdogStopsLoop(sandbox, page);
+
+    if (!(await frameSharesHostThread(sandbox, page))) {
+        testInfo.annotations.push({ type: 'process-model', description: 'sandboxed frame runs out of process: endless-loop bound asserted' });
+        await expectWatchdogStopsLoop(sandbox, page);
+        return;
+    }
+
+    // Same thread: no in-page mechanism can bound an endless guest loop here (it would hang the page,
+    // watchdog included), so the contract to assert is the other half of the design: the time the host
+    // itself was stalled is never counted against the guest. A guest loop longer than the budget stalls
+    // host and watchdog alike; once it yields, the sandbox is still ready and answering.
+    testInfo.annotations.push({ type: 'process-model', description: 'sandboxed frame shares the host thread: asserted that host stalls are not charged to the guest' });
+    await page.evaluate(() => {
+        const s = document.querySelector('web-sandbox') as any;
+        (window as any).termination = null;
+        s.addEventListener('terminated', (e: CustomEvent) => { (window as any).termination = e.detail.reason; }, { once: true });
+    });
+    await sandbox.run(`{ const t = performance.now(); while (performance.now() - t < ${BUDGET * 2}) {} }`);
+    await page.waitForTimeout(BUDGET * 2 + BUDGET * 1.5); // the loop, then more than a full budget after it
+    expect(await page.evaluate(() => (window as any).termination)).toBeNull();
+    expect(await sandbox.state()).toBe('ready');
+    await sandbox.exposeGuest('sum', '(a, b) => a + b');
+    expect(await sandbox.call('sum', 1, 2)).toBe(3);
 });
 
 test('worker mode: a worker stuck in an endless loop is terminated by the watchdog within the budget, and the host stays responsive', async ({ sandbox, page }) => {

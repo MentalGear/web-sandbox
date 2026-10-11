@@ -228,13 +228,13 @@ silent for the whole budget is terminated (reason `the guest stopped responding 
 between one and 1.25 budgets after its last answer. Mechanism in `src/lib/watchdog.ts`, decision in
 [ADR-003](ADR-003-lifecycle-and-liveness.md). What holds, verified 2026-10-11: case 1 (worker mode)
 on every browser, since the port is handed to the worker and a looping worker stops answering; case 2
-on Chromium, whose headless build runs the opaque-origin sandboxed frame out of process (a 3 s guest
-loop left the host answering in 3 ms). Case 3 is real on WebKit (the host was blocked for the whole
-loop) and stays a platform limit, stated in the README. Firefox was not available to verify; its
-iframe-loop test is skipped like WebKit's, so a Firefox run that isolates the frame would go unclaimed
-rather than claimed wrongly. Tests: `test/e2e/watchdog.spec.ts` (iframe
-loop on Chromium, skipped elsewhere with the reason; worker loop, no false positives across a reset,
-and stop on removal/termination on every browser) and `src/lib/watchdog.test.ts` (timing).
+wherever the browser runs the frame out of process. Which case iframe mode lands in is browser policy
+and varies by environment: headless Chromium ran the frame out of process in one environment and on
+the host's thread in CI; WebKit ran it on the host's thread. Case 3 stays a platform limit, stated in
+the README. Tests: `test/e2e/watchdog.spec.ts` (iframe mode measures the process model at runtime on
+every browser, then asserts the endless-loop bound out of process or that host stalls are not charged
+to the guest on a shared thread; worker loop, no false positives across a reset, and stop on
+removal/termination on every browser) and `src/lib/watchdog.test.ts` (timing).
 **Still open**: strict mode, and the memory and inbound-traffic note under *Open* below.
 
 **Guarantee**: untrusted code can never keep the host page busy indefinitely; the host can always
@@ -250,8 +250,8 @@ after code that finished. Background: [`RESOURCE_QUOTAS.md`](research/RESOURCE_Q
 1. **Worker mode — holds today, by construction.** Guest logic runs on its own thread and never
    blocks the host's. On expiry the host recreates the frame (`initialize()`), which terminates the
    worker. Shipped; asserted by `test/e2e/worker-timeout.spec.ts`.
-2. **Iframe mode, frame in its own process** (desktop Chromium isolates opaque-origin sandboxed
-   frames this way). A guest loop blocks only the guest's process and the host stays responsive, so
+2. **Iframe mode, frame in its own process** (browser policy: Chromium often isolates opaque-origin
+   sandboxed frames this way, but not in every environment). A guest loop blocks only the guest's process and the host stays responsive, so
    a host-side heartbeat watchdog can remove the frame. Holds once that watchdog exists; it pairs
    with B2's lifecycle owner.
 3. **Iframe mode, frame on the host's thread** (platforms without that isolation). A guest loop

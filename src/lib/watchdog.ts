@@ -8,7 +8,7 @@
  *
  * What it can bound: a blocked guest event loop, wherever the guest runs on a different thread or
  * process from the host — worker mode on every browser, and iframe mode where the browser puts the
- * sandboxed frame in its own process (desktop Chromium does). What it cannot: where the frame shares
+ * sandboxed frame in its own process (browser policy: Chromium often does, not in every environment). What it cannot: where the frame shares
  * the host's thread, a guest loop blocks these timers too, so nothing here runs until the guest yields.
  * That is a platform limit; strict mode (S6, still open) addresses it. It is a liveness check, not a
  * security boundary: a guest that answers pings is merely alive, and the host keeps explicit control

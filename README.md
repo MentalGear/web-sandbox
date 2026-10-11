@@ -105,9 +105,10 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 **Watchdog** (opt-in): with `watchdogTimeout: ms`, the host checks that the guest's event loop keeps
 answering and terminates a guest that falls silent for that long (reason: `the guest stopped
 responding (watchdog)`). It works in worker mode on every browser, and in iframe mode where the browser
-runs the sandboxed frame in its own process, as Chromium does. Where the frame shares the host
-page's thread, as it does in Safari, a guest stuck in a loop freezes the host page too, and no
-watchdog can run until it stops. It is off by default because a guest doing long synchronous work on
+runs the sandboxed frame in its own process. That is the browser's choice, not the page's: Chromium
+often does, but not in every environment, and Safari does not. Where the frame shares the host
+page's thread, a guest stuck in a loop freezes the host page too, and no watchdog can run until it
+stops; the watchdog then only guarantees that the host's own stall is never blamed on the guest. It is off by default because a guest doing long synchronous work on
 purpose would be stopped as well. It checks liveness only; `terminate()` is how the host stops a
 guest at will.
 
