@@ -25,6 +25,8 @@ conditional "continue".
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker |
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
+| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3) |
+| Execution budget | 🟡 opt-in liveness watchdog in default mode: bounded in worker mode and out-of-process frames, not where the frame shares the host's thread; strict mode open (S6) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); virtual files spec is `fixme` (section C) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
@@ -218,7 +220,22 @@ success log with a 2s timeout — slow and prone to false green.
 a first-class event. **Acceptance**: a blocked request produces an observable `violation` event on
 the host, and the security specs assert on it directly.
 
-### S6 · No execution budget in iframe mode — **P2 · M** — design settled
+### S6 · No execution budget in iframe mode — 🟡 **default-mode watchdog done; strict mode open**
+
+**Done (default mode)**: an opt-in liveness watchdog, `watchdogTimeout` (ms, off by default). The
+host pings the guest over the port and the guest bootstrap answers outside the broker; a guest
+silent for the whole budget is terminated (reason `the guest stopped responding (watchdog)`),
+between one and 1.25 budgets after its last answer. Mechanism in `src/lib/watchdog.ts`, decision in
+[ADR-003](ADR-003-lifecycle-and-liveness.md). What holds, verified 2026-10-11: case 1 (worker mode)
+on every browser, since the port is handed to the worker and a looping worker stops answering; case 2
+on Chromium, whose headless build runs the opaque-origin sandboxed frame out of process (a 3 s guest
+loop left the host answering in 3 ms). Case 3 is real on WebKit (the host was blocked for the whole
+loop) and stays a platform limit, stated in the README. Firefox was not available to verify; its
+iframe-loop test is skipped like WebKit's, so a Firefox run that isolates the frame would go unclaimed
+rather than claimed wrongly. Tests: `test/e2e/watchdog.spec.ts` (iframe
+loop on Chromium, skipped elsewhere with the reason; worker loop, no false positives across a reset,
+and stop on removal/termination on every browser) and `src/lib/watchdog.test.ts` (timing).
+**Still open**: strict mode, and the memory and inbound-traffic note under *Open* below.
 
 **Guarantee**: untrusted code can never keep the host page busy indefinitely; the host can always
 stop the guest within a bounded time.
@@ -424,7 +441,16 @@ symmetric `host.call()` inside; keep `execute()` as the `scriptUnsafe`-gated esc
 **Acceptance**: `await sandbox.call('sum', 1, 2) === 3`; a sandbox-side throw rejects with the
 original message; identical behaviour in both modes.
 
-### B2 · Lifecycle: `terminate()`, `reset()`, state — **P1 · M**
+### B2 · Lifecycle: `terminate()`, `reset()`, state — ✅ **done**
+
+**Done**: `terminate(reason?)`, `reset()` and a readonly `state` (`idle`, `loading`, `ready`,
+`terminated`) on the element, all transitions in one method that also dispatches `ready` and
+`terminated`, so the events always agree with `state`. `terminated` fires once per termination;
+`reset()` works from any state; removing the element tears it down (pending calls reject with
+`TERMINATED`, state `idle`, no `terminated` event) and re-inserting rebuilds it. There is no
+`running` state, since nothing reports when guest code finishes. The watchdog this item asked for
+is S6's, done there. Decision in [ADR-003](ADR-003-lifecycle-and-liveness.md). Tests:
+`test/e2e/lifecycle.spec.ts`, both modes.
 
 **Verified**: teardown is private (`initialize()`, `_cleanupWorker()`); consumers have no
 supported way to stop a runaway sandbox or to observe its state.
@@ -435,7 +461,14 @@ state-machine sketch in `IMPROVEMENTS.md` §4 without the XState dependency.
 
 **Acceptance**: `reset()` yields a fresh opaque origin; `terminated` fires exactly once.
 
-### B3 · Per-instance events — fixes a live defect — **P1 · S**
+### B3 · Per-instance events — fixes a live defect — ✅ **done**
+
+**Done**: `sandbox-log` is dispatched on the element with `bubbles: true` (log lines and the worker
+execution-timeout line). A listener on the element hears only its sandbox; a listener on `window`
+still hears all of them, with the element as `event.target`, so no global mirror option was needed
+([ADR-003](ADR-003-lifecycle-and-liveness.md)). `SandboxDevTools` listens on its element and prints
+its sandbox's logs. Tests: `test/e2e/events.spec.ts` (two sandboxes, both modes; the timeout line;
+DevTools output via a console spy in the host page).
 
 **Verified**: logs dispatch on `window` (`src/host.ts:139`, `:156`, `:212`) while
 `SandboxDevTools` filters `if (e.target !== this._sandbox) return;` (`src/devtools.ts:13`). The
@@ -771,6 +804,8 @@ So `IMPROVEMENTS.md` is not re-proposed wholesale:
   `default-src 'none'` fallback and 12 passing unit tests.
 - **Opaque origin via `srcdoc`** — closes findings 03 and 05 by construction.
 - **Headless worker mode** — isolated inside the sandbox frame since S1.
+- **Lifecycle state machine** (§4) — `state`, `terminate()` and `reset()` on the element, without
+  the XState dependency (B2).
 
 ---
 

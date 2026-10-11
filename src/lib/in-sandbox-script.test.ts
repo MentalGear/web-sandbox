@@ -152,4 +152,44 @@ describe("inSandboxScript", () => {
         expect(warnings).toHaveLength(1);
         expect(String(warnings[0].args[0])).toContain('could not be posted');
     });
+
+    it("answers the host's watchdog PING with a PONG carrying the same n, outside the broker", () => {
+        const port = createMockPort();
+        const sandboxConsole = createMockConsole();
+        const listeners: Record<string, Function> = {};
+        (globalThis as any).addEventListener = (type: string, cb: Function) => {
+            listeners[type] = cb;
+        };
+
+        inSandboxScript(true, 'iframe', sandboxConsole, createBroker);
+        const bridge = (globalThis as any).bridge;
+        const guestPing = vi.fn(() => 'guest method');
+        bridge.expose('PING', guestPing); // a guest method of the same name is never reached by the watchdog
+        listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] });
+        port.postMessage.mockClear();
+
+        port.onmessage({ data: { type: 'PING', n: 7 } });
+
+        expect(port.postMessage).toHaveBeenCalledTimes(1);
+        expect(port.postMessage).toHaveBeenCalledWith({ type: 'PONG', n: 7 });
+        expect(guestPing).not.toHaveBeenCalled();
+    });
+
+    it("ignores a malformed PING without answering or throwing", () => {
+        const port = createMockPort();
+        const sandboxConsole = createMockConsole();
+        const listeners: Record<string, Function> = {};
+        (globalThis as any).addEventListener = (type: string, cb: Function) => {
+            listeners[type] = cb;
+        };
+
+        inSandboxScript(true, 'worker', sandboxConsole, createBroker);
+        listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] });
+        port.postMessage.mockClear();
+
+        for (const n of [undefined, '1', null, {}]) {
+            expect(() => port.onmessage({ data: { type: 'PING', n } })).not.toThrow();
+        }
+        expect(port.postMessage).not.toHaveBeenCalled();
+    });
 });

@@ -12,7 +12,7 @@ import { test, expect, type CallOutcome } from './fixture';
 const MODES = ['iframe', 'worker'] as const;
 
 // The host's own refusal texts (src/host.ts). A guest can produce the very same text; the code tells them apart.
-const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call setConfig() or load() to start a new one.';
+const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.';
 const RESET_TEXT = '[Sandbox] call() rejected: the sandbox was reset or terminated.';
 
 // Refusal tests assert the exact code (backlog B7), never only that a call rejected or a message substring.
