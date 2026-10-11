@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createBroker } from './rpc';
+import { createBroker, type RpcErrorCode } from './rpc';
 
 // A pair of brokers wired straight into each other: a call on one is served by the other.
 // Timeouts are disabled here so no real timer lingers; timeout behaviour has its own suite.
@@ -12,6 +12,44 @@ function wirePair() {
     return { a, b };
 }
 
+// Like wirePair, but every frame goes through structured clone, exactly as postMessage clones it.
+function wireClonedPair(timeoutMs: number) {
+    let a: any, b: any;
+    a = createBroker((frame) => b.handleMessage(structuredClone(frame)), { timeoutMs });
+    b = createBroker((frame) => a.handleMessage(structuredClone(frame)), { timeoutMs });
+    return { a, b };
+}
+
+// Settles a call that must be refused and returns what its caller can branch on. Refusal tests assert
+// the exact code, never only that the call rejected or that its message contains a word.
+async function refusal(promise: Promise<unknown>) {
+    try {
+        await promise;
+    } catch (error: any) {
+        return { isError: error instanceof Error, code: error?.code, message: error?.message };
+    }
+    throw new Error('expected the call to be refused, but it resolved');
+}
+
+// A broker whose outbound frames are captured, so a test can answer its calls with any frame it likes:
+// the test plays the other side, and the broker under test is the refused side.
+function capturedBroker(timeoutMs = 0) {
+    const frames: any[] = [];
+    const broker = createBroker((frame) => frames.push(frame), { timeoutMs });
+    // Issues one call and returns a function that answers it with `response` (id filled in).
+    function callAnsweredWith(response: Record<string, unknown>) {
+        const promise = broker.call('anything');
+        const id = frames[frames.length - 1].id;
+        broker.handleMessage({ type: 'RPC_RES', id, ...response });
+        return promise;
+    }
+    return { broker, frames, callAnsweredWith };
+}
+
+// The texts the host uses for its own termination refusals (src/host.ts). The other side can send these verbatim.
+const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call setConfig() or load() to start a new one.';
+const RESET_TEXT = '[Sandbox] call() rejected: the sandbox was reset or terminated.';
+
 describe('correlation and round-trip (guarantee: a call resolves with its own handler result)', () => {
     it('resolves a call with the handler return value', async () => {
         const { a, b } = wirePair();
@@ -23,12 +61,6 @@ describe('correlation and round-trip (guarantee: a call resolves with its own ha
         const { a, b } = wirePair();
         b.expose('slow', async (x: number) => x * 2);
         expect(await a.call('slow', 21)).toBe(42);
-    });
-
-    it('rejects the caller when the handler returns a rejected promise', async () => {
-        const { a, b } = wirePair();
-        b.expose('bad', () => Promise.reject(new Error('nope')));
-        await expect(a.call('bad')).rejects.toThrow('nope');
     });
 
     it('correlates several concurrent calls that settle out of order', async () => {
@@ -60,43 +92,200 @@ describe('correlation and round-trip (guarantee: a call resolves with its own ha
     });
 });
 
-describe('error handling (guarantee: failures reject the caller with a faithful message)', () => {
-    it('rejects with a thrown Error message', async () => {
+describe('refusal codes are wire protocol (guarantee: the set of code strings is closed and fixed)', () => {
+    // Changing any of these strings breaks callers that branch on them, and the wire between two
+    // differently built sides. The pins are checked against the exported type at compile time too.
+    const LOCAL_CODES = ['TIMEOUT', 'TERMINATED', 'ARGS_NOT_TRANSFERABLE', 'SEND_FAILED', 'INVALID_CALL'] as const;
+    const REPORTED_CODES = ['UNKNOWN_METHOD', 'HANDLER_ERROR', 'RESULT_NOT_TRANSFERABLE'] as const;
+    type Local = typeof LOCAL_CODES[number];
+    type Reported = typeof REPORTED_CODES[number];
+    // Fails to type-check unless the pins and the exported RpcErrorCode union are exactly the same set...
+    const exact: [Exclude<RpcErrorCode, Local | Reported>, Exclude<Local | Reported, RpcErrorCode>] extends [never, never] ? true : false = true;
+    // ...and unless no code is in both groups: the guarantee rests on the two groups being disjoint.
+    const disjoint: [Extract<Local, Reported>] extends [never] ? true : false = true;
+
+    it('the local codes and the codes the other side reports are disjoint and together form the whole set', () => {
+        expect(exact && disjoint).toBe(true);
+        expect(LOCAL_CODES.filter(code => (REPORTED_CODES as readonly string[]).includes(code))).toEqual([]);
+        expect(new Set([...LOCAL_CODES, ...REPORTED_CODES]).size).toBe(8);
+    });
+
+    it('every refusal path yields exactly the pinned code strings, as the only own enumerable property of a plain Error', async () => {
+        const { a, b } = wireClonedPair(0);
+        b.expose('throws', () => { throw new Error('boom'); });
+        b.expose('giveFn', () => () => 1);
+        const hung = createBroker(() => {}, { timeoutMs: 0 });
+        const failingSend = createBroker(() => { throw new Error('port unavailable'); }, { timeoutMs: 0 });
+
+        const errors: any[] = [];
+        const collect = (p: Promise<unknown>) => p.then(() => { throw new Error('resolved'); }, (e) => { errors.push(e); });
+        await collect(createBroker(() => {}, { timeoutMs: 1 }).call('silent'));          // TIMEOUT
+        const pendingAtTeardown = collect(hung.call('never'));
+        hung.rejectAllPending(RESET_TEXT);
+        await pendingAtTeardown;                                                         // TERMINATED
+        await collect(Promise.reject(hung.terminationError(TERMINATION_TEXT)));          // TERMINATED
+        await collect(a.call('echo', () => 1));                                          // ARGS_NOT_TRANSFERABLE
+        await collect(failingSend.call('ping'));                                         // SEND_FAILED
+        await collect(a.call(123 as any));                                               // INVALID_CALL
+        await collect(a.call('ghost'));                                                  // UNKNOWN_METHOD
+        await collect(a.call('throws'));                                                 // HANDLER_ERROR
+        await collect(a.call('giveFn'));                                                 // RESULT_NOT_TRANSFERABLE
+
+        expect(errors.map(e => e.code)).toEqual([
+            'TIMEOUT', 'TERMINATED', 'TERMINATED', 'ARGS_NOT_TRANSFERABLE', 'SEND_FAILED', 'INVALID_CALL',
+            'UNKNOWN_METHOD', 'HANDLER_ERROR', 'RESULT_NOT_TRANSFERABLE',
+        ]);
+        expect(new Set(errors.map(e => e.code))).toEqual(new Set([...LOCAL_CODES, ...REPORTED_CODES]));
+        for (const error of errors) {
+            // A plain Error, not a subclass: the broker is stringified into the guest and must close over nothing.
+            expect(Object.getPrototypeOf(error)).toBe(Error.prototype);
+            expect(Object.keys(error)).toEqual(['code']); // one field, nothing else to branch on
+        }
+    });
+
+    it('the responder puts exactly the pinned code on the wire for each failure', async () => {
+        const replies: any[] = [];
+        // reply clones like postMessage does, so a non-transferable result really fails to post
+        const responder = createBroker(() => {}, { timeoutMs: 0 });
+        const reply = (frame: unknown) => { replies.push(structuredClone(frame)); };
+        responder.expose('throws', () => { throw new Error('boom'); });
+        responder.expose('rejects', () => Promise.reject(new Error('async boom')));
+        responder.expose('giveFn', () => () => 1);
+
+        responder.handleMessage({ type: 'RPC_REQ', id: 1, method: 'missing', args: [] }, reply);
+        responder.handleMessage({ type: 'RPC_REQ', id: 2, method: 'throws', args: [] }, reply);
+        responder.handleMessage({ type: 'RPC_REQ', id: 3, method: 'rejects', args: [] }, reply);
+        responder.handleMessage({ type: 'RPC_REQ', id: 4, method: 'giveFn', args: [] }, reply);
+        await new Promise(resolve => setTimeout(resolve, 0)); // handlers settle on microtasks
+
+        const codeById = Object.fromEntries(replies.map(frame => [frame.id, frame.code]));
+        expect(codeById).toEqual({ 1: 'UNKNOWN_METHOD', 2: 'HANDLER_ERROR', 3: 'HANDLER_ERROR', 4: 'RESULT_NOT_TRANSFERABLE' });
+    });
+});
+
+describe('failures the other side reports (guarantee: they reject with its code and its text verbatim)', () => {
+    it('a thrown Error rejects with HANDLER_ERROR and the original message', async () => {
         const { a, b } = wirePair();
         b.expose('boom', () => { throw new Error('kaboom'); });
-        await expect(a.call('boom')).rejects.toThrow('kaboom');
+        expect(await refusal(a.call('boom'))).toEqual({ isError: true, code: 'HANDLER_ERROR', message: 'kaboom' });
     });
 
-    it('rejects an unknown method with a clear message', async () => {
-        const { a } = wirePair();
-        await expect(a.call('ghost')).rejects.toThrow('unknown method: ghost');
+    it('a rejected promise rejects with HANDLER_ERROR and the original message', async () => {
+        const { a, b } = wirePair();
+        b.expose('bad', () => Promise.reject(new Error('nope')));
+        expect(await refusal(a.call('bad'))).toEqual({ isError: true, code: 'HANDLER_ERROR', message: 'nope' });
     });
 
-    it('rejects a thrown string and keeps serving later calls', async () => {
+    it('a thrown string rejects with HANDLER_ERROR, and the broker keeps serving', async () => {
         const { a, b } = wirePair();
         b.expose('throwStr', () => { throw 'stringy'; });
         b.expose('good', () => 'ok');
-        await expect(a.call('throwStr')).rejects.toThrow('stringy');
+        expect(await refusal(a.call('throwStr'))).toEqual({ isError: true, code: 'HANDLER_ERROR', message: 'stringy' });
         expect(await a.call('good')).toBe('ok'); // the dispatch loop survived the non-Error throw
     });
 
-    it('rejects a thrown plain object with a sensible message', async () => {
+    it('a thrown plain object rejects with HANDLER_ERROR and a sensible message', async () => {
         const { a, b } = wirePair();
-        b.expose('throwObj', () => { throw { code: 1 }; });
-        await expect(a.call('throwObj')).rejects.toThrow('[object Object]');
+        b.expose('throwObj', () => { throw { code: 'TIMEOUT' }; });
+        expect(await refusal(a.call('throwObj'))).toEqual({ isError: true, code: 'HANDLER_ERROR', message: '[object Object]' });
     });
 
-    it('rejects a thrown undefined', async () => {
+    it('a thrown undefined rejects with HANDLER_ERROR', async () => {
         const { a, b } = wirePair();
         b.expose('throwUndef', () => { throw undefined; });
-        await expect(a.call('throwUndef')).rejects.toThrow('undefined');
+        expect(await refusal(a.call('throwUndef'))).toEqual({ isError: true, code: 'HANDLER_ERROR', message: 'undefined' });
+    });
+
+    it('an unknown method rejects with UNKNOWN_METHOD', async () => {
+        const { a } = wirePair();
+        expect(await refusal(a.call('ghost'))).toEqual({ isError: true, code: 'UNKNOWN_METHOD', message: 'unknown method: ghost' });
+    });
+
+    it('a handler whose result cannot be cloned rejects with RESULT_NOT_TRANSFERABLE', async () => {
+        const { a, b } = wireClonedPair(0);
+        b.expose('giveFn', () => () => 1);
+        const result = await refusal(a.call('giveFn'));
+        expect(result).toMatchObject({ isError: true, code: 'RESULT_NOT_TRANSFERABLE' });
+        expect(result.message).toMatch(/^result is not transferable: /);
+    });
+});
+
+describe('forged refusals (guarantee: nothing the other side sends can produce a local refusal code)', () => {
+    // The test plays the other side and answers with whatever it likes; the broker under test is the refused side.
+    const LOCAL_CODES = ['TIMEOUT', 'TERMINATED', 'ARGS_NOT_TRANSFERABLE', 'SEND_FAILED', 'INVALID_CALL'];
+
+    it.each(LOCAL_CODES)('a response claiming the local code %s rejects with HANDLER_ERROR', async (forged) => {
+        const { callAnsweredWith } = capturedBroker();
+        expect(await refusal(callAnsweredWith({ ok: false, error: 'forged', code: forged })))
+            .toEqual({ isError: true, code: 'HANDLER_ERROR', message: 'forged' });
+    });
+
+    const NOT_A_REPORTED_CODE: Array<[string, unknown]> = [
+        ['an unknown string', 'SOMETHING_ELSE'],
+        ['a near miss', 'UNKNOWN_METHOD '],
+        ['a lowercase reported code', 'unknown_method'],
+        ['a number', 42],
+        ['null', null],
+        ['an object', { toString: () => 'UNKNOWN_METHOD' }],
+        ['an array', ['UNKNOWN_METHOD']],
+    ];
+    it.each(NOT_A_REPORTED_CODE)('a response whose code is %s rejects with HANDLER_ERROR', async (_label, forged) => {
+        const { callAnsweredWith } = capturedBroker();
+        expect(await refusal(callAnsweredWith({ ok: false, error: 'odd', code: forged })))
+            .toEqual({ isError: true, code: 'HANDLER_ERROR', message: 'odd' });
+    });
+
+    it('a response with no code rejects with HANDLER_ERROR', async () => {
+        const { callAnsweredWith } = capturedBroker();
+        expect(await refusal(callAnsweredWith({ ok: false, error: 'plain' })))
+            .toEqual({ isError: true, code: 'HANDLER_ERROR', message: 'plain' });
+    });
+
+    it.each(['UNKNOWN_METHOD', 'HANDLER_ERROR', 'RESULT_NOT_TRANSFERABLE'])('a response with the reportable code %s keeps it', async (reported) => {
+        const { callAnsweredWith } = capturedBroker();
+        expect(await refusal(callAnsweredWith({ ok: false, error: 'reported', code: reported })))
+            .toEqual({ isError: true, code: reported, message: 'reported' });
+    });
+
+    it.each([TERMINATION_TEXT, RESET_TEXT])('a response carrying the exact termination text and code TERMINATED rejects with HANDLER_ERROR (%s)', async (text) => {
+        const { callAnsweredWith } = capturedBroker();
+        expect(await refusal(callAnsweredWith({ ok: false, error: text, code: 'TERMINATED' })))
+            .toEqual({ isError: true, code: 'HANDLER_ERROR', message: text });
+    });
+
+    it('fields other than code are never read for the refusal reason (an extra field or a non-string error)', async () => {
+        const { callAnsweredWith } = capturedBroker();
+        expect(await refusal(callAnsweredWith({ ok: false, error: 'x', reason: 'TERMINATED', code: 'UNKNOWN_METHOD' })))
+            .toEqual({ isError: true, code: 'UNKNOWN_METHOD', message: 'x' });
+        expect(await refusal(callAnsweredWith({ ok: false, error: { message: TERMINATION_TEXT, code: 'TERMINATED' } })))
+            .toEqual({ isError: true, code: 'HANDLER_ERROR', message: 'RPC call failed' });
+    });
+
+    it('a handler that throws an Error carrying a local code and the termination text still rejects with HANDLER_ERROR', async () => {
+        const { a, b } = wireClonedPair(0);
+        b.expose('impersonate', () => {
+            const error: any = new Error(TERMINATION_TEXT);
+            error.code = 'TERMINATED';
+            throw error;
+        });
+        expect(await refusal(a.call('impersonate')))
+            .toEqual({ isError: true, code: 'HANDLER_ERROR', message: TERMINATION_TEXT });
+    });
+
+    it('the responder never forwards a code its handler chose: the wire code is HANDLER_ERROR', async () => {
+        const replies: any[] = [];
+        const responder = createBroker(() => {}, { timeoutMs: 0 });
+        responder.expose('impersonate', () => { const e: any = new Error('x'); e.code = 'TIMEOUT'; throw e; });
+        responder.handleMessage({ type: 'RPC_REQ', id: 1, method: 'impersonate', args: [] }, (f) => replies.push(f));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(replies).toEqual([{ type: 'RPC_RES', id: 1, ok: false, error: 'x', code: 'HANDLER_ERROR' }]);
     });
 });
 
 describe('defensive guarantees (guarantee: only the allowlist is callable, nothing inherited)', () => {
     const RESERVED = ['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty', '__defineGetter__'];
 
-    it('rejects reserved/inherited names, invokes nothing, and never mutates Object.prototype', () => {
+    it('answers reserved/inherited names with UNKNOWN_METHOD, invokes nothing, and never mutates Object.prototype', () => {
         const sent: any[] = [];
         const responder = createBroker((f) => sent.push(f), { timeoutMs: 0 });
         const real = vi.fn(() => 'real');
@@ -106,9 +295,7 @@ describe('defensive guarantees (guarantee: only the allowlist is callable, nothi
             sent.length = 0;
             // An unknown name is answered synchronously (no handler runs), so `sent` is ready at once.
             responder.handleMessage({ type: 'RPC_REQ', id: 1, method: name, args: [] });
-            expect(sent, name).toHaveLength(1);
-            expect(sent[0], name).toMatchObject({ type: 'RPC_RES', id: 1, ok: false });
-            expect(sent[0].error, name).toContain('unknown method');
+            expect(sent, name).toEqual([{ type: 'RPC_RES', id: 1, ok: false, error: `unknown method: ${name}`, code: 'UNKNOWN_METHOD' }]);
         }
 
         expect(real).not.toHaveBeenCalled();
@@ -117,12 +304,14 @@ describe('defensive guarantees (guarantee: only the allowlist is callable, nothi
         expect((Object.prototype as any).__registryTouched).toBeUndefined();
     });
 
-    it('still serves a real method after reserved-name probes (allowlist intact)', async () => {
+    it('a caller probing reserved names is refused with UNKNOWN_METHOD, and the real method still serves', async () => {
         const { a, b } = wirePair();
-        b.expose('real', () => 'real');
+        const real = vi.fn(() => 'real');
+        b.expose('real', real);
         for (const name of RESERVED) {
-            await expect(a.call(name)).rejects.toThrow('unknown method');
+            expect(await refusal(a.call(name)), name).toEqual({ isError: true, code: 'UNKNOWN_METHOD', message: `unknown method: ${name}` });
         }
+        expect(real).not.toHaveBeenCalled();
         expect(await a.call('real')).toBe('real');
     });
 
@@ -146,16 +335,19 @@ describe('defensive guarantees (guarantee: only the allowlist is callable, nothi
         expect(sent).toEqual([]);
     });
 
-    it('rejects a non-string method name on the call path', async () => {
-        const b = createBroker(() => {}, { timeoutMs: 0 });
-        await expect(b.call(123 as any)).rejects.toThrow('must be a string');
+    it('a non-string method name is refused with INVALID_CALL, sending nothing', async () => {
+        const send = vi.fn();
+        const b = createBroker(send, { timeoutMs: 0 });
+        expect(await refusal(b.call(123 as any)))
+            .toEqual({ isError: true, code: 'INVALID_CALL', message: 'RPC method name must be a string' });
+        expect(send).not.toHaveBeenCalled();
     });
 
     it('only calls explicitly exposed methods', async () => {
         const { a, b } = wirePair();
         b.expose('allowed', () => 'yes');
         expect(await a.call('allowed')).toBe('yes');
-        await expect(a.call('toString')).rejects.toThrow('unknown method');
+        expect(await refusal(a.call('toString'))).toMatchObject({ code: 'UNKNOWN_METHOD' });
     });
 });
 
@@ -189,24 +381,31 @@ describe('response correlation edge cases (guarantee: stale/duplicate responses 
     });
 });
 
-describe('timeouts (guarantee: a call that is never answered rejects rather than hanging)', () => {
+describe('timeouts (guarantee: a call that is never answered rejects with TIMEOUT rather than hanging)', () => {
     beforeEach(() => vi.useFakeTimers());
     afterEach(() => vi.useRealTimers());
 
-    it('rejects a never-answered call after the default timeout', async () => {
+    it('rejects a never-answered call with TIMEOUT after the default timeout', async () => {
         const b = createBroker(() => {}); // send goes nowhere, so no response ever arrives
-        const p = b.call('silent');
-        const rejected = expect(p).rejects.toThrow(/timeout/i);
-        await vi.advanceTimersByTimeAsync(30_000);
-        await rejected;
+        const outcome = refusal(b.call('silent'));
+        await vi.advanceTimersByTimeAsync(29_999);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(await outcome).toEqual({ isError: true, code: 'TIMEOUT', message: 'RPC timeout after 30000ms: silent' });
     });
 
     it('honors a per-call timeout override', async () => {
         const b = createBroker(() => {});
-        const p = b.callWithTimeout(50, 'silent');
-        const rejected = expect(p).rejects.toThrow(/timeout after 50ms/);
+        const outcome = refusal(b.callWithTimeout(50, 'silent'));
         await vi.advanceTimersByTimeAsync(50);
-        await rejected;
+        expect(await outcome).toEqual({ isError: true, code: 'TIMEOUT', message: 'RPC timeout after 50ms: silent' });
+    });
+
+    it('a late answer after the timeout is ignored: the call stays refused with TIMEOUT', async () => {
+        const { broker, frames } = capturedBroker(50);
+        const outcome = refusal(broker.call('slow'));
+        await vi.advanceTimersByTimeAsync(50);
+        broker.handleMessage({ type: 'RPC_RES', id: frames[0].id, ok: true, value: 'late' });
+        expect(await outcome).toMatchObject({ code: 'TIMEOUT' });
     });
 
     it('does not time out a call answered before its deadline', async () => {
@@ -219,14 +418,48 @@ describe('timeouts (guarantee: a call that is never answered rejects rather than
     });
 });
 
-describe('lifecycle (guarantee: teardown settles pending calls; re-expose replaces)', () => {
-    it('rejectAllPending rejects every in-flight call with the given reason', async () => {
+describe('lifecycle (guarantee: teardown settles pending calls with TERMINATED; re-expose replaces)', () => {
+    it('rejectAllPending rejects every in-flight call with TERMINATED and the given text', async () => {
         const b = createBroker(() => {}, { timeoutMs: 0 });
         const p1 = b.call('a');
         const p2 = b.call('b');
-        b.rejectAllPending(new Error('torn down'));
-        await expect(p1).rejects.toThrow('torn down');
-        await expect(p2).rejects.toThrow('torn down');
+        b.rejectAllPending(RESET_TEXT);
+        const expected = { isError: true, code: 'TERMINATED', message: RESET_TEXT };
+        expect(await refusal(p1)).toEqual(expected);
+        expect(await refusal(p2)).toEqual(expected);
+    });
+
+    it('rejectAllPending gives each call its own Error, so one caller cannot alter what another sees', async () => {
+        const b = createBroker(() => {}, { timeoutMs: 0 });
+        const errors: any[] = [];
+        const p1 = b.call('a').catch((e) => { errors.push(e); e.code = 'TAMPERED'; });
+        const p2 = b.call('b').catch((e) => { errors.push(e); });
+        b.rejectAllPending(RESET_TEXT);
+        await Promise.all([p1, p2]);
+        expect(errors[0]).not.toBe(errors[1]);
+        expect(errors[1].code).toBe('TERMINATED');
+    });
+
+    it('rejectAllPending disarms the timers of the calls it settles, and a later answer for them is ignored', async () => {
+        vi.useFakeTimers();
+        try {
+            const { broker, frames } = capturedBroker(10_000);
+            const outcome = refusal(broker.call('a'));
+            broker.rejectAllPending(RESET_TEXT);
+            expect(vi.getTimerCount()).toBe(0);
+            broker.handleMessage({ type: 'RPC_RES', id: frames[0].id, ok: true, value: 'late' });
+            expect(await outcome).toMatchObject({ code: 'TERMINATED' });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('terminationError mints a TERMINATED refusal with the given text', () => {
+        const b = createBroker(() => {}, { timeoutMs: 0 });
+        const error = b.terminationError(TERMINATION_TEXT);
+        expect(error).toBeInstanceOf(Error);
+        expect({ code: error.code, message: error.message })
+            .toEqual({ code: 'TERMINATED', message: TERMINATION_TEXT });
     });
 
     it('re-exposing a name replaces the previous handler (last registration wins)', async () => {
@@ -239,7 +472,7 @@ describe('lifecycle (guarantee: teardown settles pending calls; re-expose replac
     it('ignores a non-function handler passed to expose', async () => {
         const { a, b } = wirePair();
         (b.expose as any)('bad', 123);
-        await expect(a.call('bad')).rejects.toThrow('unknown method');
+        expect(await refusal(a.call('bad'))).toMatchObject({ code: 'UNKNOWN_METHOD' });
     });
 });
 
@@ -247,50 +480,45 @@ describe('non-transferable values (guarantee: a call with a non-transferable val
     beforeEach(() => vi.useFakeTimers());
     afterEach(() => vi.useRealTimers());
 
-    // Like wirePair, but every frame goes through structured clone, exactly as postMessage clones it.
-    function wireClonedPair(timeoutMs: number) {
-        let a: any, b: any;
-        a = createBroker((frame) => b.handleMessage(structuredClone(frame)), { timeoutMs });
-        b = createBroker((frame) => a.handleMessage(structuredClone(frame)), { timeoutMs });
-        return { a, b };
-    }
-
     const NON_TRANSFERABLE: Array<[string, () => unknown]> = [
         ['a function', () => () => 1],
         ['a symbol', () => Symbol('s')],
     ];
-    it.each(NON_TRANSFERABLE)('a handler returning %s rejects the caller promptly with a not-transferable message', async (_label, make) => {
+    it.each(NON_TRANSFERABLE)('a handler returning %s rejects the caller promptly with RESULT_NOT_TRANSFERABLE', async (_label, make) => {
         const { a, b } = wireClonedPair(10_000);
         b.expose('give', () => make());
 
         const settled = vi.fn();
-        a.callWithTimeout(10_000, 'give').then(settled, (e: Error) => settled(e.message));
+        a.callWithTimeout(10_000, 'give').then(settled, (e: any) => settled({ code: e.code }));
         // Lets the answer ride its microtasks; a stalled call would only settle once the clock reached 10s.
         await vi.advanceTimersByTimeAsync(1);
 
         expect(settled).toHaveBeenCalledTimes(1);
-        const message = settled.mock.calls[0]?.[0];
-        expect(message).toContain('not transferable');
-        expect(message).not.toContain('timeout');
+        expect(settled.mock.calls[0]?.[0]).toEqual({ code: 'RESULT_NOT_TRANSFERABLE' });
     });
 
-    it('a call with a non-transferable argument rejects at once, sending nothing and arming no timer', async () => {
+    it('a call with a non-transferable argument is refused with ARGS_NOT_TRANSFERABLE at once, sending nothing and arming no timer', async () => {
         const sent: unknown[] = [];
         const b = createBroker((frame) => sent.push(structuredClone(frame)), { timeoutMs: 10_000 });
-        await expect(b.call('echo', () => 1)).rejects.toThrow('arguments are not transferable');
+        const result = await refusal(b.call('echo', () => 1));
+        expect(result).toMatchObject({ isError: true, code: 'ARGS_NOT_TRANSFERABLE' });
+        expect(result.message).toMatch(/^RPC arguments are not transferable: /);
         expect(sent).toEqual([]);
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    it('a normal call after a non-transferable argument still works (no leaked pending state)', async () => {
+    it('a non-transferable argument runs no handler, and a normal call after it still works (no leaked pending state)', async () => {
         const { a, b } = wireClonedPair(10_000);
-        b.expose('echo', (x: unknown) => x);
-        await expect(a.call('echo', Symbol('s'))).rejects.toThrow('arguments are not transferable');
+        const echo = vi.fn((x: unknown) => x);
+        b.expose('echo', echo);
+        expect(await refusal(a.call('echo', Symbol('s')))).toMatchObject({ code: 'ARGS_NOT_TRANSFERABLE' });
+        expect(echo).not.toHaveBeenCalled();
         expect(await a.call('echo', 7)).toBe(7);
+        expect(echo).toHaveBeenCalledTimes(1);
         expect(vi.getTimerCount()).toBe(0); // the good call's timer was cleared when it settled
     });
 
-    it('a send that throws rejects the call and leaves no pending entry or timer behind', async () => {
+    it('a send that throws is refused with SEND_FAILED and leaves no pending entry or timer behind', async () => {
         let failNextSend = true;
         let other: any;
         const one = createBroker((frame) => {
@@ -301,9 +529,12 @@ describe('non-transferable values (guarantee: a call with a non-transferable val
             other.handleMessage(frame);
         }, { timeoutMs: 10_000 });
         other = createBroker((frame) => one.handleMessage(frame), { timeoutMs: 0 });
-        other.expose('ping', () => 'pong');
+        const ping = vi.fn(() => 'pong');
+        other.expose('ping', ping);
 
-        await expect(one.call('ping')).rejects.toThrow('port unavailable');
+        expect(await refusal(one.call('ping')))
+            .toEqual({ isError: true, code: 'SEND_FAILED', message: 'RPC call could not be sent: port unavailable' });
+        expect(ping).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0); // the failed call left no timer armed
         expect(await one.call('ping')).toBe('pong'); // and the broker carries on
     });
@@ -329,11 +560,11 @@ describe('reply routing (guarantee: a response goes back only on the channel its
         expect(send).not.toHaveBeenCalled();
         expect(replies).toHaveLength(4);
         const byId = new Map(replies.map(frame => [frame.id, frame]));
-        expect(byId.get(1)).toEqual({ type: 'RPC_RES', id: 1, ok: true, value: 'value' });          // success
-        expect(byId.get(2)).toEqual({ type: 'RPC_RES', id: 2, ok: false, error: 'boom' });          // handler error
-        expect(byId.get(3)).toEqual({ type: 'RPC_RES', id: 3, ok: false, error: 'unknown method: missing' });
-        expect(byId.get(4)).toMatchObject({ type: 'RPC_RES', id: 4, ok: false });                   // not transferable
-        expect(byId.get(4).error).toContain('result is not transferable');
+        expect(byId.get(1)).toEqual({ type: 'RPC_RES', id: 1, ok: true, value: 'value' });                                  // success
+        expect(byId.get(2)).toEqual({ type: 'RPC_RES', id: 2, ok: false, error: 'boom', code: 'HANDLER_ERROR' });           // handler error
+        expect(byId.get(3)).toEqual({ type: 'RPC_RES', id: 3, ok: false, error: 'unknown method: missing', code: 'UNKNOWN_METHOD' });
+        expect(byId.get(4)).toMatchObject({ type: 'RPC_RES', id: 4, ok: false, code: 'RESULT_NOT_TRANSFERABLE' });        // not transferable
+        expect(byId.get(4).error).toMatch(/^result is not transferable: /);
     });
 
     it('falls back to send when no reply is given (the guest has a single port per frame)', async () => {

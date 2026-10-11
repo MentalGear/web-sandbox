@@ -1,6 +1,6 @@
 # ADR-002: How should host and guest call each other?
 
-**Status**: Accepted · **Date**: 2026-10-10
+**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code))
 
 ## Why this ADR exists
 
@@ -108,3 +108,42 @@ Costs and limits:
   function, so a library could be loaded instead of inlined; or
 - requirements grow (transferable objects, streaming, callbacks across the boundary) until the
   broker is no longer small enough to audit.
+
+## Amendment (2026-10-11): refusals carry a code
+
+**When**: backlog B7, after the broker shipped. **Why**: every rejection was a plain `Error` with
+only a message, and a guest handler's message reached the host verbatim. A guest could throw the
+exact text of the host's termination refusal, so host code that matched messages to decide "stop"
+or "retry" was acting on a reason the guest chose.
+
+**Decision**: every rejection is an `Error` with a single string `code` from a closed set of eight,
+in two disjoint groups. `TIMEOUT`, `TERMINATED`, `ARGS_NOT_TRANSFERABLE`, `SEND_FAILED` and
+`INVALID_CALL` are minted only by the side whose call is refused, from its own state.
+`UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are the only codes a response from the
+other side can produce. The response frame gains an optional `code`; both sides run the same
+dispatcher, so the two ends cannot disagree about it.
+
+- **A property, not an `Error` subclass.** The dispatcher is stringified into the guest and closes
+  over nothing, so a class defined next to it would not exist there. And `instanceof` does not work
+  across realms: the host page, the frame and the worker each have their own `Error`. A string
+  property on a plain `Error` reads the same in all of them.
+- **The other side's code is clamped on receipt.** The local codes drive what a caller does next
+  (stop, retry, rebuild), so the other side must not be able to produce them. Only `UNKNOWN_METHOD`
+  and `RESULT_NOT_TRANSFERABLE` pass through, as the receiver's own constants; any other value,
+  including a local code, or none, becomes `HANDLER_ERROR`. The message stays the other side's text
+  verbatim, as B1 requires; it was never trustworthy, and now nothing needs to trust it.
+- **One field with disjoint groups, not a category code plus a detail code.** The guarantee only needs
+  the two groups to be disjoint and the clamp to enforce that on receipt; a category on top adds a
+  second field to branch on, and every name for it was jargon either way.
+- **No separate retry field.** Whether to retry follows from the code: only `TIMEOUT` is worth
+  retrying, and `TERMINATED` only after the next `ready`. A second field would be one more thing that
+  could disagree with the code.
+- **How refusals are tested.** Each refusal test asserts the exact code, runs as the refused side
+  (from inside the guest for guest-to-host calls), and checks that no handler ran. One test pins the
+  code strings, since they are wire protocol.
+
+*Credit*: typed refusal reasons, and the rule for testing them, come from Dialog DB
+([repository](https://github.com/dialog-db/dialog-db);
+[`dialog-capability/src/access.rs`](https://github.com/dialog-db/dialog-db/blob/facd672/rust/dialog-capability/src/access.rs),
+[`.claude/rules/authority-tests.md`](https://github.com/dialog-db/dialog-db/blob/facd672/.claude/rules/authority-tests.md)).
+Its separate retry/stop signal was not adopted, for the reason above.

@@ -126,12 +126,20 @@ const total = await sandbox.call('sum', 1, 2);              // 3, once the sandb
     `__proto__` included, rejects with `unknown method`. Exposing a name again replaces its handler.
 *   **Values are copied, not shared.** Arguments and results are copied the way `structuredClone`
     copies, so they must be cloneable data; a function or a DOM node fails that one call at once.
+*   **Treat a handler's arguments as untrusted input.** They are plain data, but the other side
+    chose them: validate before use, and copy objects with spread (`{ ...arg }`) rather than
+    `Object.assign`, which turns an own `__proto__` key into a prototype change.
 *   **Every call times out** after 30 seconds by default. `callWithTimeout(ms, method, ...args)`
     sets a different limit for one call; `0` turns it off.
 *   **Host methods belong to the element**, so they survive `load()` and `setConfig()`. Guest
     methods belong to one frame: a new frame starts with none until its own code exposes them.
 *   **A reset settles every pending call.** When `load()` or `setConfig()` recreates the frame, or
     the sandbox is terminated, pending calls reject; calls made after termination reject at once.
+*   **Every rejection has a `code`; branch on it, not on the message.** `TIMEOUT`, `TERMINATED`,
+    `ARGS_NOT_TRANSFERABLE`, `SEND_FAILED` and `INVALID_CALL` are set only by the side that made the
+    call, so the other side can never produce them. `UNKNOWN_METHOD`, `HANDLER_ERROR` and
+    `RESULT_NOT_TRANSFERABLE` come from the other side, and their message is its text. Only `TIMEOUT`
+    is worth retrying, and `TERMINATED` only after the next `ready` event (types: `RpcErrorCode`, `RpcError`).
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never
     evaluates code. A worker-mode guest has no markup, though, so it can only expose methods
     through `execute()`, which does need `scriptUnsafe`.

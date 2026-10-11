@@ -18,7 +18,25 @@
  *
  * Wire protocol (new discriminated types, alongside the untouched INIT_PORT/EXECUTE/LOG):
  *   Request:  { type: 'RPC_REQ', id, method, args }
- *   Response: { type: 'RPC_RES', id, ok, value?, error? }
+ *   Response: { type: 'RPC_RES', id, ok, value?, error?, code? }
+ *   `code` rides only on a failure and names what failed on the responding side (UNKNOWN_METHOD,
+ *   HANDLER_ERROR or RESULT_NOT_TRANSFERABLE). Both sides run this same function, so the two ends of
+ *   the wire cannot disagree on its meaning.
+ *
+ * Refusals (backlog B7). Every rejection this broker produces is a plain Error with a string `code`
+ * from one closed set (RpcErrorCode), split into two disjoint groups by who can cause them:
+ *   - LOCAL codes (TIMEOUT, TERMINATED, ARGS_NOT_TRANSFERABLE, SEND_FAILED, INVALID_CALL) are minted
+ *     only by the side whose call is refused, from its own state: its timer, its teardown, its clone
+ *     check, its transport, its argument check;
+ *   - codes REPORTED BY THE OTHER SIDE (UNKNOWN_METHOD, HANDLER_ERROR, RESULT_NOT_TRANSFERABLE) are
+ *     the only ones a response can produce: the wire `code` is clamped into this group on receipt.
+ * Because the groups are disjoint and the clamp never leaves the second one, nothing the other side
+ * sends can make a rejection look like one of the local side's own: a response that claims
+ * `code: 'TERMINATED'`, or carries the exact termination text, rejects with code HANDLER_ERROR. For the
+ * reported codes the message stays the other side's text verbatim (a handler's throw rejects with its
+ * original message) — the code, not the text, is the part a caller can branch on.
+ * `code` is a plain own property rather than an Error subclass: a subclass would be a module-scope
+ * class this function cannot close over (see above), and a property reads the same in every realm.
  *
  * Symmetric model: on each side `expose` publishes YOUR methods and `call` invokes the OTHER
  * side's methods. Each side keeps its own monotonic id counter, its own `pending` map (calls it
@@ -34,6 +52,29 @@ export type RpcMethod = (...args: any[]) => unknown;
 // and unit-testable.
 export type RpcSend = (frame: unknown) => void;
 
+/**
+ * Why a call was refused. The set is closed and the strings are wire protocol (pinned by a test).
+ * Set only by the side whose call is refused:
+ *   TIMEOUT                 the per-call timer fired before an answer arrived (the only code worth retrying)
+ *   TERMINATED              the transport went away: the sandbox was reset or terminated (retry only
+ *                           after the next 'ready')
+ *   ARGS_NOT_TRANSFERABLE   the arguments cannot be structured-cloned; nothing was sent
+ *   SEND_FAILED             the transport threw while sending; nothing was left pending
+ *   INVALID_CALL            the method name is not a string; nothing was sent
+ * Reported by the other side (the message is its text; any other reported value reads as HANDLER_ERROR):
+ *   UNKNOWN_METHOD          no method of that name is exposed there
+ *   HANDLER_ERROR           the handler threw or rejected
+ *   RESULT_NOT_TRANSFERABLE the handler's return value cannot be structured-cloned
+ */
+export type RpcErrorCode =
+    | 'TIMEOUT' | 'TERMINATED' | 'ARGS_NOT_TRANSFERABLE' | 'SEND_FAILED' | 'INVALID_CALL'
+    | 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE';
+
+/** The shape of every rejection from call()/callWithTimeout(): a plain Error with an own `code`. */
+export interface RpcError extends Error {
+    code: RpcErrorCode;
+}
+
 export interface BrokerOptions {
     // Default per-call timeout in ms; 0 disables timeouts entirely. Override per call via callWithTimeout.
     timeoutMs?: number;
@@ -42,7 +83,10 @@ export interface BrokerOptions {
 export interface Broker {
     /** Publishes one of YOUR methods under `name` for the other side to call. Last registration wins. */
     expose(name: string, fn: RpcMethod): void;
-    /** Invokes a method the OTHER side exposed; resolves/rejects with its result. Uses the default timeout. */
+    /**
+     * Invokes a method the OTHER side exposed and resolves with its result. Uses the default timeout.
+     * Every rejection is an RpcError: branch on its `code`, never on its message.
+     */
     call(method: string, ...args: unknown[]): Promise<unknown>;
     /** Like call(), but with an explicit timeout in ms for this one call (0 disables it). */
     callWithTimeout(timeoutMs: number, method: string, ...args: unknown[]): Promise<unknown>;
@@ -51,16 +95,37 @@ export interface Broker {
      * Answers to an inbound request go to `reply` — the channel it arrived on — or to `send` without one.
      */
     handleMessage(data: unknown, reply?: RpcSend): void;
-    /** Rejects every in-flight call (used by the host on teardown so no promise hangs). */
-    rejectAllPending(reason: Error): void;
+    /**
+     * Rejects every in-flight call with code TERMINATED and `message` (used by the host on teardown so
+     * no promise hangs). Each call gets its own Error.
+     */
+    rejectAllPending(message: string): void;
+    /**
+     * An Error with code TERMINATED, for a call the owner refuses because its transport is gone (the
+     * host's call() after terminate). Lets the owner refuse with the same code string the broker uses.
+     */
+    terminationError(message: string): RpcError;
 }
 
 export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker {
     // Declared INSIDE the function so it survives stringification into the guest. A call whose
     // handler never answers would otherwise hang forever; 30s is generous for a local same-process
-    // port yet still bounds a wedged peer.
+    // port yet still bounds an unresponsive other side.
     const DEFAULT_TIMEOUT_MS = 30000;
     const defaultTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+    // The one source of truth for the code strings (see RpcErrorCode for meanings). Inside the function
+    // for the same reason as everything else; the type makes it exhaustive and exact.
+    const CODE: { readonly [K in RpcErrorCode]: K } = {
+        TIMEOUT: 'TIMEOUT',
+        TERMINATED: 'TERMINATED',
+        ARGS_NOT_TRANSFERABLE: 'ARGS_NOT_TRANSFERABLE',
+        SEND_FAILED: 'SEND_FAILED',
+        INVALID_CALL: 'INVALID_CALL',
+        UNKNOWN_METHOD: 'UNKNOWN_METHOD',
+        HANDLER_ERROR: 'HANDLER_ERROR',
+        RESULT_NOT_TRANSFERABLE: 'RESULT_NOT_TRANSFERABLE',
+    };
 
     // Methods WE expose. Using a Map (not a plain object) is the core of the hardening — see handleRequest.
     const registry = new Map<string, RpcMethod>();
@@ -85,6 +150,32 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         }
     }
 
+    // Mints a refusal with a LOCAL code. Called only from this side's own state (its timer, teardown,
+    // clone check, send, argument check) — never with anything taken from an inbound frame. That is what
+    // makes a local code trustworthy: the other side has no path into this function. Its parameter type
+    // admits only the local codes.
+    function localRefusal(code: Exclude<RpcErrorCode, 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE'>, message: string): RpcError {
+        const error = new Error(message) as RpcError;
+        error.code = code;
+        return error;
+    }
+
+    // Turns a failure the other side reported into a rejection. The inbound frame is untrusted, so its
+    // `code` is clamped into the codes the other side may report: exactly UNKNOWN_METHOD or
+    // RESULT_NOT_TRANSFERABLE pass through, and anything else (a local code, an unknown string, a
+    // non-string, nothing) becomes HANDLER_ERROR. So a response can never yield a local code. The
+    // message is the other side's text verbatim, or a fixed fallback when it sent none. Each field is
+    // read once, and `code` is always one of our own constants rather than the inbound value.
+    function refusalFromResponse(data: any): RpcError {
+        const reportedError = data.error;
+        const reportedCode = data.code;
+        const error = new Error(typeof reportedError === 'string' ? reportedError : 'RPC call failed') as RpcError;
+        error.code = reportedCode === CODE.UNKNOWN_METHOD ? CODE.UNKNOWN_METHOD
+            : reportedCode === CODE.RESULT_NOT_TRANSFERABLE ? CODE.RESULT_NOT_TRANSFERABLE
+            : CODE.HANDLER_ERROR;
+        return error;
+    }
+
     // Removes a pending call and disarms its timer, returning it once (or null if already settled).
     // Routing every settle path through here makes a second settle for the same id a no-op, which is
     // what keeps a stale or duplicate response from resolving a later call that reused nothing.
@@ -104,7 +195,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         try {
             respond({ type: 'RPC_RES', id, ok: true, value });
         } catch (error) {
-            respond({ type: 'RPC_RES', id, ok: false, error: `result is not transferable: ${errorMessage(error)}` });
+            respond({ type: 'RPC_RES', id, ok: false, error: `result is not transferable: ${errorMessage(error)}`, code: CODE.RESULT_NOT_TRANSFERABLE });
         }
     }
 
@@ -127,17 +218,19 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // nothing and invoke nothing.
         const method = registry.get(data.method);
         if (!method) {
-            respond({ type: 'RPC_RES', id, ok: false, error: `unknown method: ${data.method}` });
+            respond({ type: 'RPC_RES', id, ok: false, error: `unknown method: ${data.method}`, code: CODE.UNKNOWN_METHOD });
             return;
         }
 
         // We CALL a pre-registered function reference with the cloned args — we never eval / new Function
         // the method name or the args, and the args arrived as inert structured-clone data, so nothing
-        // the peer sends is ever interpreted as code. Funnelling through Promise.resolve().then(...) makes
+        // the other side sends is ever interpreted as code. Funnelling through Promise.resolve().then(...) makes
         // a sync return, a sync throw, an async resolve and an async reject all settle the same way.
+        // A throw is always reported as HANDLER_ERROR: a `code` the handler put on its error is not
+        // forwarded (and the caller would clamp it anyway — see refusalFromResponse).
         Promise.resolve().then(() => method(...data.args)).then(
             value => sendResult(respond, id, value),
-            error => respond({ type: 'RPC_RES', id, ok: false, error: errorMessage(error) }),
+            error => respond({ type: 'RPC_RES', id, ok: false, error: errorMessage(error), code: CODE.HANDLER_ERROR }),
         );
     }
 
@@ -153,7 +246,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             entry.resolve(data.value);
             return;
         }
-        entry.reject(new Error(typeof data.error === 'string' ? data.error : 'RPC call failed'));
+        entry.reject(refusalFromResponse(data));
     }
 
     function expose(name: string, fn: RpcMethod): void {
@@ -166,7 +259,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
 
     function callWithTimeout(timeoutMs: number, method: string, ...args: unknown[]): Promise<unknown> {
         // Sanitize before applying: a non-string method can never match a registered name.
-        if (typeof method !== 'string') return Promise.reject(new Error('RPC method name must be a string'));
+        if (typeof method !== 'string') return Promise.reject(localRefusal(CODE.INVALID_CALL, 'RPC method name must be a string'));
 
         // Check transferability up front, before recording anything or sending. A value structured clone
         // cannot carry would otherwise throw from postMessage — or, for a call queued before the port
@@ -177,7 +270,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         try {
             sendableArgs = structuredClone(args);
         } catch (error) {
-            return Promise.reject(new Error(`RPC arguments are not transferable: ${errorMessage(error)}`));
+            return Promise.reject(localRefusal(CODE.ARGS_NOT_TRANSFERABLE, `RPC arguments are not transferable: ${errorMessage(error)}`));
         }
 
         const id = ++nextId;
@@ -186,7 +279,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             if (timeoutMs > 0) {
                 timer = setTimeout(() => {
                     const entry = takePending(id);
-                    if (entry) entry.reject(new Error(`RPC timeout after ${timeoutMs}ms: ${method}`));
+                    if (entry) entry.reject(localRefusal(CODE.TIMEOUT, `RPC timeout after ${timeoutMs}ms: ${method}`));
                 }, timeoutMs);
             }
             // Record the pending promise BEFORE sending, so a response can never arrive first.
@@ -196,7 +289,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             } catch (error) {
                 // A failed send must leave nothing behind: drop the pending entry and disarm its timer.
                 takePending(id);
-                reject(new Error(`RPC call could not be sent: ${errorMessage(error)}`));
+                reject(localRefusal(CODE.SEND_FAILED, `RPC call could not be sent: ${errorMessage(error)}`));
             }
         });
     }
@@ -219,15 +312,20 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // LOG / EXECUTE / INIT_PORT / anything else: not ours.
     }
 
-    function rejectAllPending(reason: Error): void {
+    function terminationError(message: string): RpcError {
+        return localRefusal(CODE.TERMINATED, message);
+    }
+
+    function rejectAllPending(message: string): void {
         // Settle every outstanding call so no promise hangs when the transport goes away (teardown,
         // re-init, terminate). Snapshot the ids first, since takePending mutates the map as we go.
+        // Each call gets its own Error, so one caller cannot mutate the reason another one sees.
         const ids = [...pending.keys()];
         for (const id of ids) {
             const entry = takePending(id);
-            if (entry) entry.reject(reason);
+            if (entry) entry.reject(terminationError(message));
         }
     }
 
-    return { expose, call, callWithTimeout, handleMessage, rejectAllPending };
+    return { expose, call, callWithTimeout, handleMessage, rejectAllPending, terminationError };
 }
