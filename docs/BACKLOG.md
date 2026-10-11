@@ -196,6 +196,8 @@ handler, or rotate per load and keep the mapping host-side. Document which model
 
 **Acceptance**: a spec showing another sandbox instance cannot read the first instance's files
 even when handed its session id.
+If the Service Worker is replaced by blob-URL files, this guarantee moves to C1's containment
+acceptance rather than disappearing with it.
 
 ### S4 · `scriptUnsafe` has no guard rail — **P1 · S**
 
@@ -254,7 +256,10 @@ isolates the frame (case 2), with case 3's limit documented.
 **Depends on**: the broker (B1) to carry render updates from worker to frame; B2 for watchdog and lifecycle.
 
 **Open**: this bounds time, not memory; nothing caps allocation in either mode. Sampling
-`performance.measureUserAgentSpecificMemory()` where available remains a follow-up.
+`performance.measureUserAgentSpecificMemory()` where available remains a follow-up. Likewise the
+host does not cap inbound traffic: a guest that floods it with calls or log lines costs host time.
+That belongs to the same watchdog, not to a per-channel cap, since an RPC limit alone would leave
+`console.log` in a loop unbounded.
 
 **Acceptance**: in strict mode, an unbounded loop in guest logic is stopped within the configured
 budget on Chromium, Firefox and WebKit (CI); in default mode, the watchdog stops it where the frame
@@ -468,8 +473,32 @@ it, so the host has no traffic log.
 `connect-src 'none'` in bridged mode, polyfill `globalThis.fetch` onto it. Document the trade-off:
 libraries reaching for a raw socket break, deliberately.
 
+**Bridge discipline** — the bridge must grant no more than a direct guest request would. A
+host-side `fetch` runs with the host page's authority, so by default it would send the host's
+cookies, follow redirects past any allowlist, buffer without limit and outlive the call. Instead:
+
+- `credentials: 'omit'` and `referrerPolicy: 'no-referrer'`; requests to the host page's own origin
+  are refused unless allowlisted.
+- `redirect: 'error'`.
+- An exact-origin allowlist (v1 does not re-implement CSP source expressions).
+- A body cap, read incrementally (`Content-Length` is checked first but never trusted).
+- An `AbortController` tied to the call's timeout and to teardown.
+- Loopback, private and link-local hosts (and `localhost` / `*.localhost`) refused unless
+  allowlisted. A page cannot see DNS answers, so a public name that resolves to a private address
+  is a documented limit, not a guarantee.
+- Whole responses only in v1. If streaming is ever needed, it uses one dedicated port per request,
+  so closing that port is the cancel — never chunk frames on the broker port.
+
 **Acceptance**: every sandbox-initiated request appears in a host-side log; a direct `WebSocket`
-is refused by CSP in bridged mode.
+is refused by CSP in bridged mode; a cookie set on the harness origin never reaches the echo
+server; a redirect from an allowlisted origin to another origin is refused and the second origin
+records no request; an oversized body rejects after reading at most the cap plus one chunk;
+`reset()` during a slow response aborts the upstream request; every refusal carries a B7 code.
+
+*Credit*: the no-redirect, timeout and size-cap discipline follows Dialog DB's `did:web` fetcher
+([`dialog-did-web/src/fetch.rs`](https://github.com/dialog-db/dialog-db/blob/facd672/rust/dialog-did-web/src/fetch.rs));
+the one-port-per-request stream shape follows Lunet
+([`docs/lunet/data.js.flow`](https://github.com/Gozala/lunet/blob/master/docs/lunet/data.js.flow)).
 
 ### B6 · Content auto-sizing — **P2 · S**
 
@@ -477,6 +506,36 @@ is refused by CSP in bridged mode.
 **Verified**: the iframe is pinned to `width:100%;height:100%` (`src/host.ts:224`).
 **Work**: a `ResizeObserver` inside the sandbox reporting `scrollHeight` over the port, opt-in via
 `autoResize`. **Acceptance**: host element height tracks content within one frame.
+
+### B7 · Refusals carry a reason only the local side can set — **P2 · S**
+
+**Guarantee**: nothing the other side sends can produce a rejection that looks like one of the
+library's own (timeout, termination, non-transferable value, failed send).
+
+**Verified**: every rejection is a plain `Error` carrying a string. A guest handler's error text
+becomes the host's `Error.message` verbatim (`src/lib/rpc.ts:156`), and the library's own refusals
+carry no marker (`src/host.ts:167`, `:173`, `:270`; `src/lib/rpc.ts:130`, `:189`). So a guest can
+throw the exact text of a termination refusal, and host code that matches strings to decide
+"stop" or "retry" acts on a reason the guest chose. Tests assert substrings (`rpc.test.ts:72`,
+`broker.spec.ts:110`) or only that a call did not resolve (`broker.spec.ts:149`).
+
+**Work**: a string `code` property on every rejection, from a closed set. `TIMEOUT`, `TERMINATED`,
+`NOT_TRANSFERABLE` and `SEND_FAILED` are set only by the local side. Every failure reported by the
+other side gets `PEER_ERROR`, plus a `peerCode` clamped to `UNKNOWN_METHOD`, `HANDLER_ERROR` or
+`RESULT_NOT_TRANSFERABLE` (anything else becomes `HANDLER_ERROR`). `RPC_RES` gains an optional
+`code`. A plain property, not an `Error` subclass, so it survives the broker being stringified into
+the guest and works across realms. Retry-or-stop follows from the code: only `TIMEOUT` is worth
+retrying, and `TERMINATED` only after the next `ready`.
+
+**Acceptance**: a guest response carrying `code: 'TERMINATED'`, or the termination text, rejects
+the host's call with `code === 'PEER_ERROR'`. Every refusal test asserts the exact `code` rather
+than message text, runs as the refused side (from inside the guest for guest-to-host refusals), and
+asserts that no handler ran. One test pins the code strings, since they are wire protocol.
+
+*Credit*: typed refusal reasons, and the rule for testing refusals, come from Dialog DB
+([`dialog-capability/src/access.rs`](https://github.com/dialog-db/dialog-db/blob/facd672/rust/dialog-capability/src/access.rs),
+[`.claude/rules/authority-tests.md`](https://github.com/dialog-db/dialog-db/blob/facd672/.claude/rules/authority-tests.md)).
+Their separate retry/stop field is not adopted: here it follows from the code.
 
 ---
 
@@ -493,6 +552,15 @@ code can *load* files through the `<base>` tag but cannot list, read or write th
 mediated by the host so policy stays on the trusted side.
 
 **Acceptance**: sandboxed code writes a file, reads it back, and the host sees `fileschanged`.
+Containment: the host resolves every path against this instance's grant; `list()` returns only
+granted entries, with guest-relative names (no session id, host path or other instance's names); a
+read or write through `../`, an encoded traversal, an absolute path or another instance's path
+rejects with the same code as a missing file, and the store is unchanged. This inherits S3's
+cross-instance guarantee once the Service Worker is gone.
+
+*Credit*: the guest sees only what it was granted, never names or origins — Lunet's data model
+([Readme](https://github.com/Gozala/lunet#readme)). Its encryption at rest is not adopted: with the
+key stored beside the data on the same origin, it protects nothing.
 
 ### C2 · MIME types and binary files — **P1 · S**
 
@@ -676,6 +744,10 @@ meets an opaque-origin UI tier. Do not write a JS engine.
 | Building a full OS / Linux tier | Same | BrowserPod and `lifo` are years ahead, and it is not this project's problem. |
 | Writing our own JS engine / VM tier | Same | `quickjs-wasi` and `@tanstack/ai-isolate-quickjs` are MIT and maintained. Adopt, don't build. |
 | Nonce-based CSP instead of `'unsafe-inline'` | General best practice | No benefit under an opaque origin with immutable `srcdoc` CSP — [`CSP_CONFIG_RATIONALE.md`](CSP_CONFIG_RATIONALE.md) §3. |
+| App identity from a hash of the source | [Lunet](https://gozala.io/lunet) | The embedder already knows what it loaded; two tenants with identical code would share storage, and any edit loses the data. If storage needs scoping, the embedder passes a namespace. |
+| Declarative argument rules per method (UCAN policy) | [Dialog DB](https://github.com/dialog-db/dialog-db) | In UCAN a third party writes the policy; here the embedder writes both policy and handler, so checking arguments in code is strictly more expressive. |
+| Method-first names so read-only is a prefix | Dialog DB | There are no grants to narrow; an exposed name is the whole grant. |
+| UCAN delegation between host and guest | Dialog DB | One host, one guest, no third party: holding the one-shot port already is the authority. Would add keys, signatures and a clock to a self-contained broker. |
 | Server-side session quotas (rate limit, TTL, LRU) | [Finding 08](research/08_session_exhaustion/README.md), `IMPROVEMENTS.md` §1 | The local-first architecture has no server. Becomes P1 the moment a hosted mode ships; recorded so the requirement is not lost with the server that was removed. |
 
 ---
@@ -700,6 +772,6 @@ So `IMPROVEMENTS.md` is not re-proposed wholesale:
 | **M1 · Turn the lights on** | T1, T2, T3, D2 | Until the suite runs, no security claim is verified and no later change is safe. CI belongs here so the same drift cannot recur. |
 | **M2 · Make the claims true** | S1, S2, S7, S9, D1, B3, B4 | A documented capability that does not hold (S1) or does not install (D1) costs more than a missing one. B3/B4 ride along — DevTools is silent and the element self-registers nowhere. |
 | **M3 · Harden** | S3, S4, S13, T4, H3 | The injection path and the session-id model are the two places where the design's assumptions are unverified; presets and type checking keep them that way. S13 is a candidate egress route that CSP does not cover. |
-| **M4 · Make it adoptable** | B1, B2, C1, C2 | RPC + lifecycle is the parity bar set by websandbox and Penpal; the VFS is the differentiator, so it must actually work. |
+| **M4 · Make it adoptable** | B1, B7, B2, C1, C2 | RPC + lifecycle is the parity bar set by websandbox and Penpal; B7 makes RPC failures safe to branch on; the VFS is the differentiator, so it must actually work. |
 | **M5 · Extend** | B5, B6, C3, C4, S5, S6, D3, H1, H2, H5 | Observability, quotas, docs and hygiene once the base is trustworthy. |
 | **Bets** | hosted-origin mode, QuickJS spike | Independent; run when there is slack. |
