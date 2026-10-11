@@ -135,6 +135,12 @@ const total = await sandbox.call('sum', 1, 2);              // 3, once the sandb
     methods belong to one frame: a new frame starts with none until its own code exposes them.
 *   **A reset settles every pending call.** When `load()` or `setConfig()` recreates the frame, or
     the sandbox is terminated, pending calls reject; calls made after termination reject at once.
+*   **Every rejection has a `code`; branch on it, not on the message.** `TIMEOUT`, `TERMINATED`,
+    `NOT_TRANSFERABLE`, `SEND_FAILED` and `INVALID_CALL` are set only by the side that made the call.
+    `PEER_ERROR` means the other side's handler or method list failed: its `peerCode` is
+    `HANDLER_ERROR`, `UNKNOWN_METHOD` or `RESULT_NOT_TRANSFERABLE`, and its message is the other
+    side's text, so it can say anything. Only `TIMEOUT` is worth retrying, and `TERMINATED` only after
+    the next `ready` event. TypeScript users get the types `RpcError`, `RpcErrorCode` and `RpcPeerCode`.
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never
     evaluates code. A worker-mode guest has no markup, though, so it can only expose methods
     through `execute()`, which does need `scriptUnsafe`.

@@ -4,6 +4,7 @@
  */
 export { WebSandbox, defineWebSandbox } from "./host";
 export type { SandboxConfig } from "./host";
+export type { RpcError, RpcErrorCode, RpcPeerCode } from "./lib/rpc";
 
 export {
     SAFE_CAPABILITIES,

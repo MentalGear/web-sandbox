@@ -13,6 +13,14 @@ export const BASELINE_CONFIG: Partial<SandboxConfig> = {
 export type MountResult = 'ready' | 'terminated';
 
 /**
+ * How a broker call settled. A refusal carries the error's `code` and `peerCode` (backlog B7), so specs
+ * assert the exact code rather than message text. `peerCode` is absent unless code is 'PEER_ERROR'.
+ */
+export type CallOutcome =
+    | { status: 'resolved'; value: unknown }
+    | { status: 'rejected'; isError: boolean; message: unknown; code: unknown; peerCode?: unknown };
+
+/**
  * Drives the <web-sandbox> element on the harness page.
  * Specs talk to this instead of the page, so moving the playground or renaming internals
  * breaks one file instead of every spec.
@@ -49,17 +57,42 @@ export class SandboxDriver {
         );
     }
 
-    /** Like call(), but returns 'RESOLVED' or 'REJECTED:<message>' instead of throwing, for asserting failures. */
-    async callOutcome(method: string, ...args: unknown[]): Promise<string> {
-        return this.page.evaluate(async ({ method, args }) => {
-            try {
-                await (document.querySelector('web-sandbox') as any).call(method, ...args);
-                return 'RESOLVED';
-            } catch (e: any) {
-                return 'REJECTED:' + (e?.message ?? String(e));
-            }
-        }, { method, args });
+    /** Like call(), but settles to a CallOutcome instead of throwing, for asserting refusals by their code. */
+    async callOutcome(method: unknown, ...args: unknown[]): Promise<CallOutcome> {
+        return this.hostOutcome(null, method, args);
     }
+
+    /** Like callWithTimeout(), but settles to a CallOutcome instead of throwing. */
+    async callWithTimeoutOutcome(timeoutMs: number, method: unknown, ...args: unknown[]): Promise<CallOutcome> {
+        return this.hostOutcome(timeoutMs, method, args);
+    }
+
+    private async hostOutcome(timeoutMs: number | null, method: unknown, args: unknown[]): Promise<CallOutcome> {
+        return this.page.evaluate(async ({ timeoutMs, method, args }) => {
+            const el = document.querySelector('web-sandbox') as any;
+            try {
+                const value = await (timeoutMs === null ? el.call(method, ...args) : el.callWithTimeout(timeoutMs, method, ...args));
+                return { status: 'resolved' as const, value };
+            } catch (e: any) {
+                return { status: 'rejected' as const, isError: e instanceof Error, message: e?.message, code: e?.code, peerCode: e?.peerCode };
+            }
+        }, { timeoutMs, method, args });
+    }
+
+    /**
+     * Guest side: evaluates `expression` (a bridge call) INSIDE the sandbox and reports how it settled, as
+     * seen by the guest — so a guest-to-host refusal is asserted from the refused side. Needs scriptUnsafe.
+     */
+    async guestOutcome(expression: string, timeout = 8000): Promise<CallOutcome> {
+        const tag = `GUEST_OUTCOME_${++this.outcomeCount} `;
+        await this.run(`Promise.resolve().then(() => ${expression}).then(
+            value => console.log(${JSON.stringify(tag)} + JSON.stringify({ status: 'resolved', value })),
+            e => console.log(${JSON.stringify(tag)} + JSON.stringify({ status: 'rejected', isError: e instanceof Error, message: e && e.message, code: e && e.code, peerCode: e && e.peerCode })))`);
+        const line = await this.waitForLog(tag, timeout);
+        return JSON.parse(line.slice(tag.length));
+    }
+
+    private outcomeCount = 0;
 
     /** Registers a host method from a function-source string (built in the host page, which is not sandboxed). */
     async exposeHost(name: string, fnSource: string) {

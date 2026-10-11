@@ -23,7 +23,7 @@ conditional "continue".
 | Core isolation (`srcdoc` + opaque origin + immutable CSP) | ✅ implemented, `src/host.ts` |
 | CSP generation from typed config | ✅ implemented + 12 unit tests |
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker |
-| Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1) |
+| Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); virtual files spec is `fixme` (section C) |
@@ -507,7 +507,16 @@ the one-port-per-request stream shape follows Lunet
 **Work**: a `ResizeObserver` inside the sandbox reporting `scrollHeight` over the port, opt-in via
 `autoResize`. **Acceptance**: host element height tracks content within one frame.
 
-### B7 · Refusals carry a reason only the local side can set — **P2 · S**
+### B7 · Refusals carry a reason only the local side can set — ✅ **done**
+
+**Done**: every rejection from the broker and from the element's `call()`/`callWithTimeout()` is an
+`Error` with a `code` from the closed set below, minted in `src/lib/rpc.ts`; the element's own
+termination refusals take theirs from the broker too. A guest throwing the host's termination text
+with `code: 'TERMINATED'` rejects the host's call with `PEER_ERROR` / `HANDLER_ERROR`. The decision
+is recorded in [ADR-002](ADR-002-host-guest-broker.md#amendment-2026-10-11-refusals-carry-a-code).
+The acceptance below holds in both modes: `test/e2e/broker.spec.ts` (refusals asserted by exact
+code, guest-to-host ones from inside the guest), plus `src/lib/rpc.test.ts` (every code path,
+forged response codes, and the pinned code strings).
 
 **Guarantee**: nothing the other side sends can produce a rejection that looks like one of the
 library's own (timeout, termination, non-transferable value, failed send).

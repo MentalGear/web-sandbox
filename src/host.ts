@@ -48,6 +48,12 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     workerExecutionTimeout: 0,
 };
 
+// Texts of the host's own refusals, for people reading them. Code branches on the error's `code`
+// ('TERMINATED', set by the broker), never on these texts: a guest handler can throw the very same text,
+// and that call rejects with code 'PEER_ERROR' instead.
+const TERMINATED_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was terminated. Call setConfig() or load() to start a new one.";
+const RESET_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was reset or terminated.";
+
 export class WebSandbox extends HTMLElement {
     private _iframe: HTMLIFrameElement | null = null;
     private _frameLoaded = false;
@@ -160,17 +166,18 @@ export class WebSandbox extends HTMLElement {
     }
 
     /**
-     * Invokes a guest-exposed method and resolves with its result (rejects on error or unknown method).
+     * Invokes a guest-exposed method and resolves with its result. Every rejection is an Error with a
+     * `code` (RpcErrorCode, see rpc.ts): PEER_ERROR when the guest's handler or registry failed.
      * Works WITHOUT scriptUnsafe: it calls a pre-registered function on the guest, it never evals.
      */
     call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
-        if (this._terminated) return Promise.reject(new Error("[Sandbox] call() rejected: the sandbox was terminated. Call setConfig() or load() to start a new one."));
+        if (this._terminated) return Promise.reject(this._broker.terminationError(TERMINATED_CALL_MESSAGE));
         return this._broker.call(method, ...args) as Promise<T>;
     }
 
     /** Like call(), but with an explicit timeout in ms for this one call (0 disables the timeout). */
     callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T> {
-        if (this._terminated) return Promise.reject(new Error("[Sandbox] call() rejected: the sandbox was terminated. Call setConfig() or load() to start a new one."));
+        if (this._terminated) return Promise.reject(this._broker.terminationError(TERMINATED_CALL_MESSAGE));
         return this._broker.callWithTimeout(timeoutMs, method, ...args) as Promise<T>;
     }
 
@@ -267,7 +274,8 @@ export class WebSandbox extends HTMLElement {
         this._queuedMessages = []; // Clear queue for the old environment
         this._rpcQueue = [];       // same for the host's RPC requests queued for the old environment
         // Reject any in-flight calls so their promises never hang once this environment goes away.
-        this._broker.rejectAllPending(new Error("[Sandbox] call() rejected: the sandbox was reset or terminated."));
+        // They reject with code TERMINATED, minted by the broker (see rpc.ts).
+        this._broker.rejectAllPending(RESET_CALL_MESSAGE);
         if (this._iframe) { this._iframe.onload = null; this._iframe.remove(); this._iframe = null; }
         if (this._port) { this._port.close(); this._port = null; }
         if (this._timeoutId) { clearTimeout(this._timeoutId); this._timeoutId = null; }
