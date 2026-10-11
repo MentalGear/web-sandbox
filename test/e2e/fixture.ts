@@ -13,12 +13,13 @@ export const BASELINE_CONFIG: Partial<SandboxConfig> = {
 export type MountResult = 'ready' | 'terminated';
 
 /**
- * How a broker call settled. A refusal carries the error's `code` and `peerCode` (backlog B7), so specs
- * assert the exact code rather than message text. `peerCode` is absent unless code is 'PEER_ERROR'.
+ * How a broker call settled. A refusal carries the error's `code` (backlog B7), so specs assert the
+ * exact code rather than message text; `keys` lists the error's own enumerable properties, which
+ * should be just ['code'].
  */
 export type CallOutcome =
     | { status: 'resolved'; value: unknown }
-    | { status: 'rejected'; isError: boolean; message: unknown; code: unknown; peerCode?: unknown };
+    | { status: 'rejected'; isError: boolean; message: unknown; code: unknown; keys: unknown };
 
 /**
  * Drives the <web-sandbox> element on the harness page.
@@ -74,7 +75,7 @@ export class SandboxDriver {
                 const value = await (timeoutMs === null ? el.call(method, ...args) : el.callWithTimeout(timeoutMs, method, ...args));
                 return { status: 'resolved' as const, value };
             } catch (e: any) {
-                return { status: 'rejected' as const, isError: e instanceof Error, message: e?.message, code: e?.code, peerCode: e?.peerCode };
+                return { status: 'rejected' as const, isError: e instanceof Error, message: e?.message, code: e?.code, keys: e && typeof e === 'object' ? Object.keys(e) : null };
             }
         }, { timeoutMs, method, args });
     }
@@ -87,7 +88,7 @@ export class SandboxDriver {
         const tag = `GUEST_OUTCOME_${++this.outcomeCount} `;
         await this.run(`Promise.resolve().then(() => ${expression}).then(
             value => console.log(${JSON.stringify(tag)} + JSON.stringify({ status: 'resolved', value })),
-            e => console.log(${JSON.stringify(tag)} + JSON.stringify({ status: 'rejected', isError: e instanceof Error, message: e && e.message, code: e && e.code, peerCode: e && e.peerCode })))`);
+            e => console.log(${JSON.stringify(tag)} + JSON.stringify({ status: 'rejected', isError: e instanceof Error, message: e && e.message, code: e && e.code, keys: e && typeof e === 'object' ? Object.keys(e) : null })))`);
         const line = await this.waitForLog(tag, timeout);
         return JSON.parse(line.slice(tag.length));
     }

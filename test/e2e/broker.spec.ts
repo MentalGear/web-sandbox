@@ -16,14 +16,15 @@ const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated.
 const RESET_TEXT = '[Sandbox] call() rejected: the sandbox was reset or terminated.';
 
 // Refusal tests assert the exact code (backlog B7), never only that a call rejected or a message substring.
-// A call refused by the other side's handler or registry: the message is that side's text, verbatim.
-function peerError(peerCode: string, message: string | RegExp): CallOutcome {
-    return { status: 'rejected', isError: true, code: 'PEER_ERROR', peerCode, message: typeof message === 'string' ? message : expect.stringMatching(message) };
+// Either way the error is a plain Error whose only own enumerable property is `code`.
+function refused(code: string, message: string | RegExp): CallOutcome {
+    return { status: 'rejected', isError: true, code, keys: ['code'], message: typeof message === 'string' ? message : expect.stringMatching(message) };
 }
-// A call refused by the calling side itself, from its own state: no peerCode.
-function localRefusal(code: string, message: string | RegExp): CallOutcome {
-    return { status: 'rejected', isError: true, code, peerCode: undefined, message: typeof message === 'string' ? message : expect.stringMatching(message) };
-}
+// A call refused with a code the other side reported (UNKNOWN_METHOD, HANDLER_ERROR, RESULT_NOT_TRANSFERABLE):
+// the message is that side's text, verbatim.
+const reported = refused;
+// A call refused by the calling side itself, from its own state.
+const localRefusal = refused;
 
 // Trips the one-shot frame invariant (research 14.2) and resolves once the sandbox has terminated.
 const TERMINATE_BY_SECOND_LOAD = () => new Promise<string>(resolve => {
@@ -92,7 +93,7 @@ for (const mode of MODES) {
             await sandbox.exposeGuest('asyncOk', '(x) => Promise.resolve(x * 2)');
             await sandbox.exposeGuest('asyncFail', '() => Promise.reject(new Error("async boom"))');
             expect(await sandbox.call('asyncOk', 21)).toBe(42);
-            expect(await sandbox.callOutcome('asyncFail')).toEqual(peerError('HANDLER_ERROR', 'async boom'));
+            expect(await sandbox.callOutcome('asyncFail')).toEqual(reported('HANDLER_ERROR', 'async boom'));
         });
 
         test('concurrent calls resolving out of order each receive their own result', async ({ sandbox, page }) => {
@@ -120,28 +121,28 @@ for (const mode of MODES) {
         });
     });
 
-    test.describe(`broker errors (${mode}): failures reject the caller with PEER_ERROR and a faithful message`, () => {
-        test('a thrown Error rejects the caller with PEER_ERROR / HANDLER_ERROR and the same message', async ({ sandbox }) => {
+    test.describe(`broker errors (${mode}): failures reject the caller with the other side's code and a faithful message`, () => {
+        test('a thrown Error rejects the caller with HANDLER_ERROR and the same message', async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             await sandbox.exposeGuest('explode', '() => { throw new Error("boom") }');
-            expect(await sandbox.callOutcome('explode')).toEqual(peerError('HANDLER_ERROR', 'boom'));
+            expect(await sandbox.callOutcome('explode')).toEqual(reported('HANDLER_ERROR', 'boom'));
         });
 
-        test('a host call to an unknown guest method is refused with PEER_ERROR / UNKNOWN_METHOD', async ({ sandbox }) => {
+        test('a host call to an unknown guest method is refused with UNKNOWN_METHOD', async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
-            expect(await sandbox.callOutcome('notRegistered')).toEqual(peerError('UNKNOWN_METHOD', 'unknown method: notRegistered'));
+            expect(await sandbox.callOutcome('notRegistered')).toEqual(reported('UNKNOWN_METHOD', 'unknown method: notRegistered'));
         });
 
-        test('a guest call to an unknown host method is refused with PEER_ERROR / UNKNOWN_METHOD, as seen by the guest', async ({ sandbox }) => {
+        test('a guest call to an unknown host method is refused with UNKNOWN_METHOD, as seen by the guest', async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
-            expect(await sandbox.guestOutcome(`bridge.call('notOnHost')`)).toEqual(peerError('UNKNOWN_METHOD', 'unknown method: notOnHost'));
+            expect(await sandbox.guestOutcome(`bridge.call('notOnHost')`)).toEqual(reported('UNKNOWN_METHOD', 'unknown method: notOnHost'));
         });
 
-        test('a handler throwing a non-Error still rejects with PEER_ERROR / HANDLER_ERROR and the broker keeps serving', async ({ sandbox }) => {
+        test('a handler throwing a non-Error still rejects with HANDLER_ERROR and the broker keeps serving', async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             await sandbox.exposeGuest('throwStr', '() => { throw "just a string" }');
             await sandbox.exposeGuest('stillWorks', '() => "ok"');
-            expect(await sandbox.callOutcome('throwStr')).toEqual(peerError('HANDLER_ERROR', 'just a string'));
+            expect(await sandbox.callOutcome('throwStr')).toEqual(reported('HANDLER_ERROR', 'just a string'));
             expect(await sandbox.call('stillWorks')).toBe('ok'); // dispatch loop survived the non-Error throw
         });
 
@@ -152,16 +153,16 @@ for (const mode of MODES) {
     });
 
     test.describe(`broker refusal codes (${mode}): a refusal's code is set only by the side that refuses`, () => {
-        test('a guest handler cannot make the host see a termination: the same text arrives as PEER_ERROR / HANDLER_ERROR', async ({ sandbox, page }) => {
+        test('a guest handler cannot make the host see a termination: the same text arrives as HANDLER_ERROR', async ({ sandbox, page }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             const text = JSON.stringify(TERMINATION_TEXT);
             // Each handler reproduces the host's termination refusal as closely as guest code can: same text,
-            // and a code (and peerCode) of its choosing on the thrown value.
-            await sandbox.exposeGuest('impersonateThrow', `() => { const e = new Error(${text}); e.code = 'TERMINATED'; e.peerCode = 'UNKNOWN_METHOD'; throw e; }`);
+            // and a code of its choosing on the thrown value.
+            await sandbox.exposeGuest('impersonateThrow', `() => { const e = new Error(${text}); e.code = 'TERMINATED'; throw e; }`);
             await sandbox.exposeGuest('impersonateReject', `() => { const e = new Error(${text}); e.code = 'TERMINATED'; return Promise.reject(e); }`);
             await sandbox.exposeGuest('impersonatePlain', `() => { throw { message: ${text}, code: 'TERMINATED' }; }`);
             for (const method of ['impersonateThrow', 'impersonateReject', 'impersonatePlain']) {
-                expect(await sandbox.callOutcome(method), method).toEqual(peerError('HANDLER_ERROR', TERMINATION_TEXT));
+                expect(await sandbox.callOutcome(method), method).toEqual(reported('HANDLER_ERROR', TERMINATION_TEXT));
             }
             // The real thing, for contrast: the same text, but the code only the host can set.
             expect(await page.evaluate(TERMINATE_BY_SECOND_LOAD)).toBe('terminated');
@@ -188,7 +189,7 @@ for (const mode of MODES) {
             expect(await sandbox.mount({ mode })).toBe('ready');
             await sandbox.exposeGuest('real', '() => "real"'); // a real method so the registry is non-empty
             for (const name of RESERVED) {
-                expect(await sandbox.callOutcome(name), name).toEqual(peerError('UNKNOWN_METHOD', `unknown method: ${name}`));
+                expect(await sandbox.callOutcome(name), name).toEqual(reported('UNKNOWN_METHOD', `unknown method: ${name}`));
             }
             // The guest's Object.prototype was never written through a reserved name (neutral sentinel).
             await sandbox.run(`console.log('GUEST_PROTO_CLEAN ' + (({}).__registryTouched === undefined) + ' ' + (Object.prototype.__registryTouched === undefined))`);
@@ -203,10 +204,10 @@ for (const mode of MODES) {
             // Asserted from inside the guest, the refused side: every probe is refused with the host's UNKNOWN_METHOD.
             const outcome = await sandbox.guestOutcome(`Promise.all(${JSON.stringify(RESERVED)}.map(n => bridge.call(n).then(
                 () => 'RESOLVED',
-                e => ({ code: e.code, peerCode: e.peerCode, message: e.message }))))`);
+                e => ({ code: e.code, keys: Object.keys(e), message: e.message }))))`);
             expect(outcome).toEqual({
                 status: 'resolved',
-                value: RESERVED.map(name => ({ code: 'PEER_ERROR', peerCode: 'UNKNOWN_METHOD', message: `unknown method: ${name}` })),
+                value: RESERVED.map(name => ({ code: 'UNKNOWN_METHOD', keys: ['code'], message: `unknown method: ${name}` })),
             });
             // No host handler ran for any probe.
             expect(await page.evaluate(() => (window as any).__realHostRuns ?? 0)).toBe(0);
@@ -240,7 +241,7 @@ for (const mode of MODES) {
                 const el = document.querySelector('web-sandbox') as any;
                 const p = el.call('hang').then(
                     () => ({ status: 'resolved' }),
-                    (e: any) => ({ status: 'rejected', isError: e instanceof Error, message: e.message, code: e.code, peerCode: e.peerCode }));
+                    (e: any) => ({ status: 'rejected', isError: e instanceof Error, message: e.message, code: e.code, keys: Object.keys(e) }));
                 el.load('<p>reinit</p>'); // re-init tears the environment down: the in-flight call must reject
                 return p;
             });
@@ -254,7 +255,7 @@ for (const mode of MODES) {
                 const s = document.querySelector('web-sandbox') as any;
                 const p = s.call('hang').then(
                     () => ({ status: 'resolved' }),
-                    (e: any) => ({ status: 'rejected', isError: e instanceof Error, message: e.message, code: e.code, peerCode: e.peerCode }));
+                    (e: any) => ({ status: 'rejected', isError: e instanceof Error, message: e.message, code: e.code, keys: Object.keys(e) }));
                 s.addEventListener('terminated', async () => resolve(await p), { once: true });
                 // A second load trips the one-shot invariant (research 14.2) and terminates the sandbox.
                 (s.shadowRoot.querySelector('iframe') as HTMLIFrameElement).srcdoc = '<p>second document</p>';
@@ -283,7 +284,7 @@ for (const mode of MODES) {
             await sandbox.run(`bridge.call('hostId', 'b').then(v => console.log('H2 ' + v))`);
             expect(await sandbox.waitForLog('H2 host:b')).toContain('host:b');
             // Guest method is gone until re-exposed in the new frame.
-            expect(await sandbox.callOutcome('guestId', 'a')).toEqual(peerError('UNKNOWN_METHOD', 'unknown method: guestId'));
+            expect(await sandbox.callOutcome('guestId', 'a')).toEqual(reported('UNKNOWN_METHOD', 'unknown method: guestId'));
             await sandbox.exposeGuest('guestId', '(x) => "guest2:" + x');
             expect(await sandbox.call('guestId', 'a')).toBe('guest2:a');
         });
@@ -293,36 +294,36 @@ for (const mode of MODES) {
         // Each call below gets a long explicit timeout, so a stalled call would surface as a TIMEOUT
         // refusal; asserting the code proves it failed promptly, for the stated reason, instead.
 
-        test('a guest handler returning a non-transferable value refuses the host call with PEER_ERROR / RESULT_NOT_TRANSFERABLE', async ({ sandbox }) => {
+        test('a guest handler returning a non-transferable value refuses the host call with RESULT_NOT_TRANSFERABLE', async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             await sandbox.exposeGuest('giveFn', '() => () => 1');
-            expect(await sandbox.callWithTimeoutOutcome(5000, 'giveFn')).toEqual(peerError('RESULT_NOT_TRANSFERABLE', /^result is not transferable: /));
+            expect(await sandbox.callWithTimeoutOutcome(5000, 'giveFn')).toEqual(reported('RESULT_NOT_TRANSFERABLE', /^result is not transferable: /));
         });
 
-        test('a host handler returning a non-transferable value refuses the guest call with PEER_ERROR / RESULT_NOT_TRANSFERABLE, as seen by the guest', async ({ sandbox }) => {
+        test('a host handler returning a non-transferable value refuses the guest call with RESULT_NOT_TRANSFERABLE, as seen by the guest', async ({ sandbox }) => {
             await sandbox.exposeHost('giveFn', '() => () => 1');
             expect(await sandbox.mount({ mode })).toBe('ready');
-            expect(await sandbox.guestOutcome(`bridge.callWithTimeout(5000, 'giveFn')`)).toEqual(peerError('RESULT_NOT_TRANSFERABLE', /^result is not transferable: /));
+            expect(await sandbox.guestOutcome(`bridge.callWithTimeout(5000, 'giveFn')`)).toEqual(reported('RESULT_NOT_TRANSFERABLE', /^result is not transferable: /));
         });
 
-        test('a host call with a non-transferable argument is refused with NOT_TRANSFERABLE, runs no guest handler, and the next call still works', async ({ sandbox }) => {
+        test('a host call with a non-transferable argument is refused with ARGS_NOT_TRANSFERABLE, runs no guest handler, and the next call still works', async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             await sandbox.exposeGuest('echo', '(x) => { globalThis.__echoRuns = (globalThis.__echoRuns || 0) + 1; return x; }');
             await sandbox.exposeGuest('echoRuns', '() => globalThis.__echoRuns || 0');
             // The function is built in the page: a Playwright argument cannot carry one.
             const bad = await sandbox.page.evaluate(() => (document.querySelector('web-sandbox') as any)
                 .callWithTimeout(5000, 'echo', () => 1)
-                .then(() => ({ status: 'resolved' }), (e: any) => ({ status: 'rejected', isError: e instanceof Error, message: e.message, code: e.code, peerCode: e.peerCode })));
-            expect(bad).toEqual(localRefusal('NOT_TRANSFERABLE', /^RPC arguments are not transferable: /));
+                .then(() => ({ status: 'resolved' }), (e: any) => ({ status: 'rejected', isError: e instanceof Error, message: e.message, code: e.code, keys: Object.keys(e) })));
+            expect(bad).toEqual(localRefusal('ARGS_NOT_TRANSFERABLE', /^RPC arguments are not transferable: /));
             expect(await sandbox.call('echoRuns')).toBe(0); // the guest handler never ran
             expect(await sandbox.call('echo', 5)).toBe(5);
             expect(await sandbox.call('echoRuns')).toBe(1);
         });
 
-        test('a guest call with a non-transferable argument is refused with NOT_TRANSFERABLE, runs no host handler, and the next call still works', async ({ sandbox, page }) => {
+        test('a guest call with a non-transferable argument is refused with ARGS_NOT_TRANSFERABLE, runs no host handler, and the next call still works', async ({ sandbox, page }) => {
             await sandbox.exposeHost('echo', '(x) => { window.__hostEchoRuns = (window.__hostEchoRuns || 0) + 1; return x; }');
             expect(await sandbox.mount({ mode })).toBe('ready');
-            expect(await sandbox.guestOutcome(`bridge.callWithTimeout(5000, 'echo', () => 1)`)).toEqual(localRefusal('NOT_TRANSFERABLE', /^RPC arguments are not transferable: /));
+            expect(await sandbox.guestOutcome(`bridge.callWithTimeout(5000, 'echo', () => 1)`)).toEqual(localRefusal('ARGS_NOT_TRANSFERABLE', /^RPC arguments are not transferable: /));
             expect(await page.evaluate(() => (window as any).__hostEchoRuns ?? 0)).toBe(0); // the host handler never ran
             expect(await sandbox.guestOutcome(`bridge.call('echo', 5)`)).toEqual({ status: 'resolved', value: 5 });
             expect(await page.evaluate(() => (window as any).__hostEchoRuns ?? 0)).toBe(1);
@@ -345,7 +346,7 @@ for (const mode of MODES) {
                 return { ready: await ready, bad: await bad, good: await good, addRuns: await s.call('addRuns') };
             }, mode);
             // The refused call ran no handler: 'add' ran once, for the valid call.
-            expect(outcome).toEqual({ ready: 'ready', bad: 'REJECTED:NOT_TRANSFERABLE', good: 'VALUE:5', addRuns: 1 });
+            expect(outcome).toEqual({ ready: 'ready', bad: 'REJECTED:ARGS_NOT_TRANSFERABLE', good: 'VALUE:5', addRuns: 1 });
         });
 
         test('an unpostable answer produced after a re-init is dropped with the old port: the next frame still becomes ready', async ({ sandbox, page }) => {
@@ -414,7 +415,7 @@ for (const mode of MODES) {
 
 test.describe('broker transferability (iframe): calls made by guest markup before the port exists', () => {
     // iframe only: a worker guest has no markup, so none of its code can run before the port arrives.
-    test('a non-transferable call from guest markup is refused with NOT_TRANSFERABLE and a valid call queued after it still resolves', async ({ sandbox, page }) => {
+    test('a non-transferable call from guest markup is refused with ARGS_NOT_TRANSFERABLE and a valid call queued after it still resolves', async ({ sandbox, page }) => {
         await sandbox.exposeHost('echo', '(x) => { window.__hostEchoRuns = (window.__hostEchoRuns || 0) + 1; return x; }');
         // Both calls run at parse time, before INIT_PORT. The outcome is logged from the valid call's
         // .then, which only runs once the port (and with it the console relay) is up.
@@ -427,7 +428,7 @@ test.describe('broker transferability (iframe): calls made by guest markup befor
             </script>`,
         })).toBe('ready');
         const line = await sandbox.waitForLog('GUEST_QUEUED', 8000);
-        expect(line).toBe('GUEST_QUEUED value=7 | NOT_TRANSFERABLE');
+        expect(line).toBe('GUEST_QUEUED value=7 | ARGS_NOT_TRANSFERABLE');
         expect(await page.evaluate(() => (window as any).__hostEchoRuns)).toBe(1); // only the valid call ran the handler
     });
 });

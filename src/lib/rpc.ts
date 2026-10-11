@@ -19,20 +19,22 @@
  * Wire protocol (new discriminated types, alongside the untouched INIT_PORT/EXECUTE/LOG):
  *   Request:  { type: 'RPC_REQ', id, method, args }
  *   Response: { type: 'RPC_RES', id, ok, value?, error?, code? }
- *   `code` rides only on a failure and names what failed on the responding side (an RpcPeerCode).
- *   Both sides run this same function, so the two ends of the wire cannot disagree on its meaning.
+ *   `code` rides only on a failure and names what failed on the responding side (UNKNOWN_METHOD,
+ *   HANDLER_ERROR or RESULT_NOT_TRANSFERABLE). Both sides run this same function, so the two ends of
+ *   the wire cannot disagree on its meaning.
  *
  * Refusals (backlog B7). Every rejection this broker produces is a plain Error with a string `code`
- * from a closed set (RpcErrorCode). The codes split by who can cause them:
- *   - LOCAL codes (TIMEOUT, TERMINATED, NOT_TRANSFERABLE, SEND_FAILED, INVALID_CALL) are minted only
- *     by the side whose call is refused, from its own state: its timer, its teardown, its clone check,
- *     its transport, its argument check;
- *   - PEER_ERROR is the only code a response from the other side can produce. Its `peerCode` says
- *     what the other side reported, clamped to RpcPeerCode.
- * So nothing the other side sends can make a rejection look like one of the local side's own: a
- * response that claims `code: 'TERMINATED'`, or carries the exact termination text, still rejects
- * with code PEER_ERROR. The message stays the other side's text verbatim (a handler's throw rejects
- * with its original message) — the code, not the text, is the part a caller can branch on.
+ * from one closed set (RpcErrorCode), split into two disjoint groups by who can cause them:
+ *   - LOCAL codes (TIMEOUT, TERMINATED, ARGS_NOT_TRANSFERABLE, SEND_FAILED, INVALID_CALL) are minted
+ *     only by the side whose call is refused, from its own state: its timer, its teardown, its clone
+ *     check, its transport, its argument check;
+ *   - codes REPORTED BY THE OTHER SIDE (UNKNOWN_METHOD, HANDLER_ERROR, RESULT_NOT_TRANSFERABLE) are
+ *     the only ones a response can produce: the wire `code` is clamped into this group on receipt.
+ * Because the groups are disjoint and the clamp never leaves the second one, nothing the other side
+ * sends can make a rejection look like one of the local side's own: a response that claims
+ * `code: 'TERMINATED'`, or carries the exact termination text, rejects with code HANDLER_ERROR. For the
+ * reported codes the message stays the other side's text verbatim (a handler's throw rejects with its
+ * original message) — the code, not the text, is the part a caller can branch on.
  * `code` is a plain own property rather than an Error subclass: a subclass would be a module-scope
  * class this function cannot close over (see above), and a property reads the same in every realm.
  *
@@ -52,30 +54,25 @@ export type RpcSend = (frame: unknown) => void;
 
 /**
  * Why a call was refused. The set is closed and the strings are wire protocol (pinned by a test).
- *   TIMEOUT          the per-call timer fired before an answer arrived (the only code worth retrying)
- *   TERMINATED       the transport went away: the sandbox was reset or terminated (retry only after
- *                    the next 'ready')
- *   NOT_TRANSFERABLE the arguments cannot be structured-cloned; nothing was sent
- *   SEND_FAILED      the transport threw while sending; nothing was left pending
- *   INVALID_CALL     the method name is not a string; nothing was sent
- *   PEER_ERROR       the other side answered with a failure; see `peerCode`
- */
-export type RpcErrorCode = 'TIMEOUT' | 'TERMINATED' | 'NOT_TRANSFERABLE' | 'SEND_FAILED' | 'INVALID_CALL' | 'PEER_ERROR';
-
-/**
- * What the other side reported, on a PEER_ERROR. Clamped on receipt: any other value, or none, reads
- * as HANDLER_ERROR.
+ * Set only by the side whose call is refused:
+ *   TIMEOUT                 the per-call timer fired before an answer arrived (the only code worth retrying)
+ *   TERMINATED              the transport went away: the sandbox was reset or terminated (retry only
+ *                           after the next 'ready')
+ *   ARGS_NOT_TRANSFERABLE   the arguments cannot be structured-cloned; nothing was sent
+ *   SEND_FAILED             the transport threw while sending; nothing was left pending
+ *   INVALID_CALL            the method name is not a string; nothing was sent
+ * Reported by the other side (the message is its text; any other reported value reads as HANDLER_ERROR):
  *   UNKNOWN_METHOD          no method of that name is exposed there
- *   HANDLER_ERROR           the handler threw or rejected (the message is its text)
+ *   HANDLER_ERROR           the handler threw or rejected
  *   RESULT_NOT_TRANSFERABLE the handler's return value cannot be structured-cloned
  */
-export type RpcPeerCode = 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE';
+export type RpcErrorCode =
+    | 'TIMEOUT' | 'TERMINATED' | 'ARGS_NOT_TRANSFERABLE' | 'SEND_FAILED' | 'INVALID_CALL'
+    | 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE';
 
-/** The shape of every rejection from call()/callWithTimeout(): a plain Error with these own properties. */
+/** The shape of every rejection from call()/callWithTimeout(): a plain Error with an own `code`. */
 export interface RpcError extends Error {
     code: RpcErrorCode;
-    /** Present only when code is 'PEER_ERROR'. */
-    peerCode?: RpcPeerCode;
 }
 
 export interface BrokerOptions {
@@ -113,19 +110,18 @@ export interface Broker {
 export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker {
     // Declared INSIDE the function so it survives stringification into the guest. A call whose
     // handler never answers would otherwise hang forever; 30s is generous for a local same-process
-    // port yet still bounds a wedged peer.
+    // port yet still bounds an unresponsive other side.
     const DEFAULT_TIMEOUT_MS = 30000;
     const defaultTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-    // The one source of truth for the code strings (see RpcErrorCode / RpcPeerCode for meanings). Inside
-    // the function for the same reason as everything else; the type makes it exhaustive and exact.
-    const CODE: { readonly [K in RpcErrorCode | RpcPeerCode]: K } = {
+    // The one source of truth for the code strings (see RpcErrorCode for meanings). Inside the function
+    // for the same reason as everything else; the type makes it exhaustive and exact.
+    const CODE: { readonly [K in RpcErrorCode]: K } = {
         TIMEOUT: 'TIMEOUT',
         TERMINATED: 'TERMINATED',
-        NOT_TRANSFERABLE: 'NOT_TRANSFERABLE',
+        ARGS_NOT_TRANSFERABLE: 'ARGS_NOT_TRANSFERABLE',
         SEND_FAILED: 'SEND_FAILED',
         INVALID_CALL: 'INVALID_CALL',
-        PEER_ERROR: 'PEER_ERROR',
         UNKNOWN_METHOD: 'UNKNOWN_METHOD',
         HANDLER_ERROR: 'HANDLER_ERROR',
         RESULT_NOT_TRANSFERABLE: 'RESULT_NOT_TRANSFERABLE',
@@ -156,25 +152,25 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
 
     // Mints a refusal with a LOCAL code. Called only from this side's own state (its timer, teardown,
     // clone check, send, argument check) — never with anything taken from an inbound frame. That is what
-    // makes a local code trustworthy: the other side has no path into this function.
-    function localRefusal(code: Exclude<RpcErrorCode, 'PEER_ERROR'>, message: string): RpcError {
+    // makes a local code trustworthy: the other side has no path into this function. Its parameter type
+    // admits only the local codes.
+    function localRefusal(code: Exclude<RpcErrorCode, 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE'>, message: string): RpcError {
         const error = new Error(message) as RpcError;
         error.code = code;
         return error;
     }
 
     // Turns a failure the other side reported into a rejection. The inbound frame is untrusted, so its
-    // `code` is never copied into `code`: the rejection is always PEER_ERROR, and the reported reason is
-    // clamped into `peerCode` — one of the three names the responder sends, or HANDLER_ERROR for
-    // anything else (a local code, an unknown string, a non-string, nothing). The message is the other
-    // side's text verbatim, or a fixed fallback when it sent none. Each field is read once, and peerCode is
-    // always one of our own constants rather than the inbound value.
-    function peerRefusal(data: any): RpcError {
+    // `code` is clamped into the codes the other side may report: exactly UNKNOWN_METHOD or
+    // RESULT_NOT_TRANSFERABLE pass through, and anything else (a local code, an unknown string, a
+    // non-string, nothing) becomes HANDLER_ERROR. So a response can never yield a local code. The
+    // message is the other side's text verbatim, or a fixed fallback when it sent none. Each field is
+    // read once, and `code` is always one of our own constants rather than the inbound value.
+    function refusalFromResponse(data: any): RpcError {
         const reportedError = data.error;
         const reportedCode = data.code;
         const error = new Error(typeof reportedError === 'string' ? reportedError : 'RPC call failed') as RpcError;
-        error.code = CODE.PEER_ERROR;
-        error.peerCode = reportedCode === CODE.UNKNOWN_METHOD ? CODE.UNKNOWN_METHOD
+        error.code = reportedCode === CODE.UNKNOWN_METHOD ? CODE.UNKNOWN_METHOD
             : reportedCode === CODE.RESULT_NOT_TRANSFERABLE ? CODE.RESULT_NOT_TRANSFERABLE
             : CODE.HANDLER_ERROR;
         return error;
@@ -228,10 +224,10 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
 
         // We CALL a pre-registered function reference with the cloned args — we never eval / new Function
         // the method name or the args, and the args arrived as inert structured-clone data, so nothing
-        // the peer sends is ever interpreted as code. Funnelling through Promise.resolve().then(...) makes
+        // the other side sends is ever interpreted as code. Funnelling through Promise.resolve().then(...) makes
         // a sync return, a sync throw, an async resolve and an async reject all settle the same way.
         // A throw is always reported as HANDLER_ERROR: a `code` the handler put on its error is not
-        // forwarded (and the caller would clamp it anyway — see peerRefusal).
+        // forwarded (and the caller would clamp it anyway — see refusalFromResponse).
         Promise.resolve().then(() => method(...data.args)).then(
             value => sendResult(respond, id, value),
             error => respond({ type: 'RPC_RES', id, ok: false, error: errorMessage(error), code: CODE.HANDLER_ERROR }),
@@ -250,7 +246,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             entry.resolve(data.value);
             return;
         }
-        entry.reject(peerRefusal(data));
+        entry.reject(refusalFromResponse(data));
     }
 
     function expose(name: string, fn: RpcMethod): void {
@@ -274,7 +270,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         try {
             sendableArgs = structuredClone(args);
         } catch (error) {
-            return Promise.reject(localRefusal(CODE.NOT_TRANSFERABLE, `RPC arguments are not transferable: ${errorMessage(error)}`));
+            return Promise.reject(localRefusal(CODE.ARGS_NOT_TRANSFERABLE, `RPC arguments are not transferable: ${errorMessage(error)}`));
         }
 
         const id = ++nextId;

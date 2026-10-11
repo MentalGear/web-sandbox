@@ -50,7 +50,7 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
 
 // Texts of the host's own refusals, for people reading them. Code branches on the error's `code`
 // ('TERMINATED', set by the broker), never on these texts: a guest handler can throw the very same text,
-// and that call rejects with code 'PEER_ERROR' instead.
+// and that call rejects with code 'HANDLER_ERROR' instead.
 const TERMINATED_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was terminated. Call setConfig() or load() to start a new one.";
 const RESET_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was reset or terminated.";
 
@@ -167,7 +167,8 @@ export class WebSandbox extends HTMLElement {
 
     /**
      * Invokes a guest-exposed method and resolves with its result. Every rejection is an Error with a
-     * `code` (RpcErrorCode, see rpc.ts): PEER_ERROR when the guest's handler or registry failed.
+     * `code` (RpcErrorCode, see rpc.ts); UNKNOWN_METHOD, HANDLER_ERROR and RESULT_NOT_TRANSFERABLE
+     * are reported by the guest, and their message is the guest's text.
      * Works WITHOUT scriptUnsafe: it calls a pre-registered function on the guest, it never evals.
      */
     call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {

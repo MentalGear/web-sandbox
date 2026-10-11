@@ -512,7 +512,7 @@ the one-port-per-request stream shape follows Lunet
 **Done**: every rejection from the broker and from the element's `call()`/`callWithTimeout()` is an
 `Error` with a `code` from the closed set below, minted in `src/lib/rpc.ts`; the element's own
 termination refusals take theirs from the broker too. A guest throwing the host's termination text
-with `code: 'TERMINATED'` rejects the host's call with `PEER_ERROR` / `HANDLER_ERROR`. The decision
+with `code: 'TERMINATED'` rejects the host's call with `HANDLER_ERROR`. The decision
 is recorded in [ADR-002](ADR-002-host-guest-broker.md#amendment-2026-10-11-refusals-carry-a-code).
 The acceptance below holds in both modes: `test/e2e/broker.spec.ts` (refusals asserted by exact
 code, guest-to-host ones from inside the guest), plus `src/lib/rpc.test.ts` (every code path,
@@ -528,16 +528,16 @@ throw the exact text of a termination refusal, and host code that matches string
 "stop" or "retry" acts on a reason the guest chose. Tests assert substrings (`rpc.test.ts:72`,
 `broker.spec.ts:110`) or only that a call did not resolve (`broker.spec.ts:149`).
 
-**Work**: a string `code` property on every rejection, from a closed set. `TIMEOUT`, `TERMINATED`,
-`NOT_TRANSFERABLE` and `SEND_FAILED` are set only by the local side. Every failure reported by the
-other side gets `PEER_ERROR`, plus a `peerCode` clamped to `UNKNOWN_METHOD`, `HANDLER_ERROR` or
-`RESULT_NOT_TRANSFERABLE` (anything else becomes `HANDLER_ERROR`). `RPC_RES` gains an optional
-`code`. A plain property, not an `Error` subclass, so it survives the broker being stringified into
+**Work**: one string `code` property on every rejection, from a closed set in two disjoint groups.
+`TIMEOUT`, `TERMINATED`, `ARGS_NOT_TRANSFERABLE`, `SEND_FAILED` and `INVALID_CALL` are set only by
+the local side. A failure reported by the other side gets `UNKNOWN_METHOD`, `HANDLER_ERROR` or
+`RESULT_NOT_TRANSFERABLE`: the wire code is clamped on receipt, and anything else becomes
+`HANDLER_ERROR`. `RPC_RES` gains an optional `code`. A plain property, not an `Error` subclass, so it survives the broker being stringified into
 the guest and works across realms. Retry-or-stop follows from the code: only `TIMEOUT` is worth
 retrying, and `TERMINATED` only after the next `ready`.
 
 **Acceptance**: a guest response carrying `code: 'TERMINATED'`, or the termination text, rejects
-the host's call with `code === 'PEER_ERROR'`. Every refusal test asserts the exact `code` rather
+the host's call with `code === 'HANDLER_ERROR'`. Every refusal test asserts the exact `code` rather
 than message text, runs as the refused side (from inside the guest for guest-to-host refusals), and
 asserts that no handler ran. One test pins the code strings, since they are wire protocol.
 
