@@ -175,7 +175,7 @@ describe('the strict worker prelude (unit; the e2e specs cover it in real worker
         Object.assign(w, { Worker: function () {}, SharedWorker: function () {}, WebAssembly: {}, URL: fakeUrl });
         const attached: unknown[] = [];
         const run = new Function('globalThis', `return (${inStrictWorker.toString()})`)(w);
-        run({ attach: (port: unknown) => attached.push(port) }, { scriptUnsafe: false, maxRender: 10, maxTarget: 5, entryDoneName: '__testEntryDone' });
+        run({ attach: (port: unknown) => attached.push(port) }, { scriptUnsafe: false, maxRender: 10, maxTarget: 5, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
         expect(['Worker', 'SharedWorker', 'WebAssembly'].filter(name => name in w)).toEqual([]);
         expect('createObjectURL' in fakeUrl).toBe(false);
 
@@ -186,6 +186,12 @@ describe('the strict worker prelude (unit; the e2e specs cover it in real worker
         expect(() => view.render('<p>', 'toolong')).toThrow(TypeError);
         expect(() => view.render('<p>', '')).toThrow(TypeError);
         expect(() => view.render('<p>')).not.toThrow(); // buffered until the port exists
+        expect(() => view.on('scroll', null, () => {})).toThrow(TypeError);
+        expect(() => view.on('click', 7, () => {})).toThrow(TypeError);
+        expect(() => view.on('click', 'toolong', () => {})).toThrow(TypeError);
+        expect(() => view.on('click', null, 'code')).toThrow(TypeError);
+        const off = view.on('keydown', 'a', () => {});
+        expect([typeof off, off(), off()]).toEqual(['function', undefined, undefined]);
 
         // a message event guest code dispatches itself is untrusted: never taken for the ports, and left to the guest
         let guestSaw = 0;

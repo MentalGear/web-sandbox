@@ -18,7 +18,7 @@ import { toViolationDetail, VIOLATION_EVENT_LIMIT } from "./lib/violation";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
-import { buildViewDocument, ENTRY_DONE_NAME, inStrictWorker, viewBootstrapHash, viewBootstrapText, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
+import { buildViewDocument, ENTRY_DONE_NAME, inStrictWorker, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
 import { strictPolicyOverrides, strictViewDirectives } from "./lib/csp/strict-policy";
 
 export interface SandboxConfig {
@@ -873,7 +873,7 @@ export class WebSandbox extends HTMLElement {
     private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string): string {
         const features: { fetchBridge?: { timeoutMs: number }; externalPort: true } = { externalPort: true };
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
-        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, entryDoneName: ENTRY_DONE_NAME };
+        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, entryDoneName: ENTRY_DONE_NAME, eventTypes: VIEW_EVENT_TYPES };
         const prelude = '(function () {'
             + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)});`

@@ -31,6 +31,12 @@ export const VIEW_RENDER_MAX_LENGTH = 262144;
 /** The longest element id a render may target. */
 export const VIEW_TARGET_MAX_LENGTH = 1024;
 
+/** The events sandboxView.on() can subscribe to (ADR-005). */
+export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'] as const;
+
+/** Limits of one event's detail: every string, the ids of the target and its ancestors, the form fields. */
+export const VIEW_EVENT_LIMITS = { maxString: 65536, maxIds: 32, maxFields: 1000 } as const;
+
 /** The name of the worker's one-time "the entry ran to its end" marker, called by the line after the entry. */
 export const ENTRY_DONE_NAME = '__sandboxEntryRan';
 
@@ -166,6 +172,7 @@ export interface ViewOptions {
     maxRender: number;
     maxTarget: number;
     violationLimit: number;
+    events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number };
 }
 
 /**
@@ -227,6 +234,51 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     addEventListener('auxclick', cancelLink, true);
     addEventListener('submit', (event: Event) => event.preventDefault(), true);
 
+    // Events for the worker's sandboxView.on() handlers: only the types it subscribed to (VIEW_LISTEN), only
+    // trusted ones (no guest code runs here, but the rule is stated, not assumed), capture-delegated on the
+    // window. The detail describes the target and its ancestors' ids, the key, the form's fields — never a
+    // URL: no href, src or action is read. Every string is clamped. Link and submit defaults are cancelled
+    // above whether or not anyone listens.
+    let subscribed: string[] = [];
+    const clamp = (value: unknown) => String(value).slice(0, options.events.maxString);
+    const forward = (event: any) => {
+        if (!event.isTrusted || !renderPort || subscribed.indexOf(event.type) < 0) return;
+        let target = event.target;
+        if (!target || target.nodeType !== 1) target = document.body;
+        if (!target) return;
+        const ids: string[] = [];
+        for (let n = target; n && n.nodeType === 1 && ids.length < options.events.maxIds; n = n.parentNode) {
+            if (n.id) ids.push(clamp(n.id));
+        }
+        const detail: any = {
+            type: event.type,
+            ids,
+            target: {
+                tag: String(target.localName),
+                id: clamp(target.id || ''),
+                name: clamp(target.getAttribute('name') || ''),
+                value: typeof target.value === 'string' ? clamp(target.value) : '',
+                checked: target.checked === true,
+            },
+        };
+        if (event.type === 'keydown') detail.key = clamp(event.key || '');
+        if (event.type === 'submit' && target.localName === 'form') {
+            const fields: [string, string][] = [];
+            let data: FormData;
+            try {
+                data = new FormData(target, event.submitter || undefined);
+            } catch {
+                data = new FormData(target);
+            }
+            data.forEach((value, name) => {
+                if (typeof value === 'string' && fields.length < options.events.maxFields) fields.push([clamp(name), clamp(value)]);
+            });
+            detail.form = fields;
+        }
+        renderPort.postMessage({ type: 'VIEW_EVENT', detail });
+    };
+    for (let i = 0; i < options.events.types.length; i++) addEventListener(options.events.types[i]!, forward, true);
+
     let fileUrls = new Map<string, string>();
     let minted = new Set<string>();
     const fileUrl = (path: string) => fileUrls.get(path) || null;
@@ -269,7 +321,12 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     const onRender = (event: MessageEvent) => {
         const data = event.data;
-        if (!data || typeof data !== 'object' || data.type !== 'VIEW_RENDER') return;
+        if (!data || typeof data !== 'object') return;
+        if (data.type === 'VIEW_LISTEN') {
+            subscribed = Array.isArray(data.types) ? data.types.filter((type: unknown) => options.events.types.indexOf(type as string) >= 0) : [];
+            return;
+        }
+        if (data.type !== 'VIEW_RENDER') return;
         const into = data.into;
         const valid = typeof data.html === 'string' && data.html.length <= options.maxRender
             && (into === null || (typeof into === 'string' && into.length > 0 && into.length <= options.maxTarget));
@@ -372,9 +429,10 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * goes through primitives captured here, called with a captured Reflect.apply, so patching
  * MessagePort.prototype, MessageEvent.prototype or Function.prototype cannot reach the port. Guest code
  * gets only `sandboxView.render`, which keeps the latest html per target and posts one render at a time,
- * the next only after the view's VIEW_ACK.
+ * the next only after the view's VIEW_ACK, and `sandboxView.on`, which registers handlers for the events
+ * the view forwards (the port itself is never handed to a handler).
  */
-export function inStrictWorker(comms: { attach(port: MessagePort): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; entryDoneName: string }) {
+export function inStrictWorker(comms: { attach(port: MessagePort): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; entryDoneName: string; eventTypes: readonly string[] }) {
     const g = globalThis as any;
     const apply = Reflect.apply;
     const addListener = EventTarget.prototype.addEventListener;
@@ -385,6 +443,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
     const post = MessagePort.prototype.postMessage;
     const startPort = MessagePort.prototype.start;
     const sandboxConsole = console;
+    const reportError = typeof g.reportError === 'function' ? g.reportError : null;
 
     const remove = (owner: any, name: string) => {
         if (owner && name in owner) Reflect.deleteProperty(owner, name);
@@ -430,15 +489,86 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
         htmls[htmls.length] = html;
         sendNext();
     };
+    // ---- events: sandboxView.on(type, id | null, handler) → off ----
+    // The view forwards only the types some handler listens to (VIEW_LISTEN, sent whenever that set changes).
+    // A handler with an id runs for events on that element or inside it (the detail's ids); with null, for all.
+    const isEventType = (type: unknown) => {
+        for (let i = 0; i < options.eventTypes.length; i++) if (options.eventTypes[i] === type) return true;
+        return false;
+    };
+    type Handler = { type: string; id: string | null; handler: (detail: unknown) => void; active: boolean };
+    const handlers: Handler[] = [];
+    let listened = '';
+    const syncListen = () => {
+        if (!renderPort) return;
+        const types: string[] = [];
+        let key = '';
+        for (let t = 0; t < options.eventTypes.length; t++) {
+            for (let h = 0; h < handlers.length; h++) {
+                if (handlers[h]!.type === options.eventTypes[t]) {
+                    types[types.length] = options.eventTypes[t]!;
+                    key += options.eventTypes[t] + ',';
+                    break;
+                }
+            }
+        }
+        if (key === listened) return;
+        listened = key;
+        apply(post, renderPort, [{ type: 'VIEW_LISTEN', types }]);
+    };
+    const on = (type: unknown, id: unknown, handler: unknown) => {
+        if (!isEventType(type)) throw new TypeError('sandboxView.on: type must be one of ' + options.eventTypes.join(', '));
+        const target = id === undefined || id === null ? null : id;
+        if (target !== null && (typeof target !== 'string' || target.length === 0 || target.length > options.maxTarget)) {
+            throw new TypeError('sandboxView.on: id must be an element id or null');
+        }
+        if (typeof handler !== 'function') throw new TypeError('sandboxView.on: handler must be a function');
+        const entry: Handler = { type: type as string, id: target as string | null, handler: handler as (detail: unknown) => void, active: true };
+        handlers[handlers.length] = entry;
+        syncListen();
+        return () => {
+            if (!entry.active) return;
+            entry.active = false;
+            let kept = 0;
+            for (let i = 0; i < handlers.length; i++) if (handlers[i] !== entry) handlers[kept++] = handlers[i]!;
+            handlers.length = kept;
+            syncListen();
+        };
+    };
+    const dispatch = (detail: any) => {
+        if (!detail || typeof detail !== 'object' || !isEventType(detail.type)) return;
+        const ids = detail.ids;
+        const current: Handler[] = [];
+        for (let i = 0; i < handlers.length; i++) current[i] = handlers[i]!;
+        for (let i = 0; i < current.length; i++) {
+            const entry = current[i]!;
+            if (!entry.active || entry.type !== detail.type) continue;
+            if (entry.id !== null) {
+                let found = false;
+                for (let k = 0; ids && k < ids.length; k++) if (ids[k] === entry.id) found = true;
+                if (!found) continue;
+            }
+            try {
+                entry.handler(detail);
+            } catch (error) {
+                // reported like any uncaught error (logged by the listener below), without stopping the others
+                if (reportError) apply(reportError, g, [error]);
+                else sandboxConsole.error('Uncaught ' + String(error));
+            }
+        }
+    };
+
     const onRenderMessage = (event: MessageEvent) => {
         const data = apply(dataOf, event, []);
         if (!data || typeof data !== 'object') return;
         if (data.type === 'VIEW_ACK') {
             inFlight = false;
             sendNext();
+            return;
         }
+        if (data.type === 'VIEW_EVENT') dispatch(data.detail);
     };
-    g.sandboxView = Object.freeze({ render });
+    g.sandboxView = Object.freeze({ render, on });
 
     // ---- the one INIT_WORKER ----
     let initialised = false;
@@ -455,6 +585,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
         apply(addListener, renderPort, ['message', onRenderMessage]);
         apply(startPort, renderPort, []);
         comms.attach(ports[0]);
+        syncListen();
         sendNext();
     }, true]);
 
@@ -479,6 +610,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     maxRender: VIEW_RENDER_MAX_LENGTH,
     maxTarget: VIEW_TARGET_MAX_LENGTH,
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
+    events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
 };
 
 let cachedText: string | null = null;
