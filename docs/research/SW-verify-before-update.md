@@ -2,6 +2,10 @@
 
 # Exploring Service Worker Integrity and Update Control
 
+> **Superseded by [ADR-004](../ADR-004-files-as-blob-urls.md)** (2026-10-13). Files now reach the
+> guest as `blob:` URLs created in its own realm; the Service-Worker hub described here never served
+> a file to the opaque-origin guest and was removed. Kept as a record of the earlier design.
+
 This document summarizes a design exploration around verifying service worker (SW) integrity and controlling updates using custom paths and client‑side checks.
 
 ## 1. Constraints of Service Worker Self‑Verification

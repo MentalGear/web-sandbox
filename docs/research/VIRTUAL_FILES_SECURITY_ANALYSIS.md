@@ -1,5 +1,9 @@
 # Virtual Files Security Architecture Analysis
 
+> **Superseded by [ADR-004](../ADR-004-files-as-blob-urls.md)** (2026-10-13). Files now reach the
+> guest as `blob:` URLs created in its own realm; the Service-Worker hub described here never served
+> a file to the opaque-origin guest and was removed. Kept as a record of the earlier design.
+
 ## Summary
 
 This document analyzes two architectural models for serving virtual files to a sandboxed `<iframe>`. The conclusion is that a **Host-Scoped Service Worker (SW)** model is fundamentally more secure than an Iframe-Scoped SW model.

@@ -29,15 +29,14 @@ describe('buildGuestDocument', () => {
         expect(first?.getAttribute('content')).toBe(CSP);
     });
 
-    it('places the base tag and bootstrap script right after the CSP', () => {
-        const doc = parse(buildGuestDocument({ csp: CSP, baseHref: 'https://vfs.example/id/', bootstrapScript: 'void 0', content: '<head><base href="https://evil.example/"></head>' }));
+    it('places the bootstrap script right after the CSP, ahead of any guest <base>', () => {
+        const doc = parse(buildGuestDocument({ csp: CSP, bootstrapScript: 'void 0', content: '<head><base href="https://evil.example/"></head>' }));
 
-        const [meta, base, script] = [...doc.head.children];
+        const [meta, script, guestBase] = [...doc.head.children];
         expect(meta?.tagName).toBe('META');
-        expect(base?.getAttribute('href')).toBe('https://vfs.example/id/');
         expect(script?.textContent).toBe('void 0');
-        // the first <base> wins, and it is ours
-        expect(doc.querySelector('base')).toBe(base);
+        // the guest's own <base> lands after the policy, which keeps base-uri 'none' in force over it
+        expect(guestBase?.tagName).toBe('BASE');
     });
 
     it('escapes attribute values so a policy cannot break out of the meta tag', () => {

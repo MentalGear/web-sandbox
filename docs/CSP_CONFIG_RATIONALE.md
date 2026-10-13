@@ -20,9 +20,10 @@ Allowing `'unsafe-inline'` creates potential side-channels for data exfiltration
 | :--- | :--- | :--- |
 | `default-src` | `'none'` | Deny-by-default fallback for all unspecified directives. |
 | `script-src` | `'unsafe-inline'`, never `'self'` | `'self'` has no agreed meaning for the guest's opaque origin (WebKit admits any https origin), so it is dropped from every directive, with a warning (backlog S14). |
-| `img-src` | `vfsBase` | Allows local/virtual images while blocking external exfiltration. |
+| `img-src` | `'none'` | Blocks image-based exfiltration. |
 | `font-src` | `'none'` | Prevents exfiltration via custom font loading. |
 | `media-src` | `'none'` | Prevents exfiltration via audio/video sources. |
+| `blob:` | only with registered files | Added to `script-src`, `style-src`, `img-src`, `font-src`, `media-src` and `connect-src` only for the types of the files registered ([ADR-004](ADR-004-files-as-blob-urls.md)). A `blob:` URL resolves only in the realm that minted it, so it reaches no network and no other sandbox. |
 | `frame-src` | `'none'` | Prevents nested iframes and clickjacking attempts. |
 | `object-src` | `'none'` | Disables legacy plugins like Flash. |
 | `worker-src` | `blob:` | Allows framework workers while preventing external script execution. |

@@ -4,7 +4,7 @@ import { WebSandbox, defineWebSandbox } from '@src/host.ts';
 defineWebSandbox();
 
 import { SandboxDevTools } from '@src/devtools.ts';
-import { PRESETS } from '@src/lib/presets.ts';
+import { PRESETS, type Preset } from '@src/lib/presets.ts';
 import type { SandboxConfig } from '@src/host.ts';
 
 // -----------------
@@ -27,7 +27,7 @@ declare global {
         onCodeInput(): void;
         onRulesBlur(): void;
         openTab(evt: Event, tabName: string): void;
-        updateVirtualFilesView(files: Record<string, string | Uint8Array>): void;
+        updateVirtualFilesView(): void;
         runHtml(): void;
         runCode(): void;
         runVirtualFiles(): void;
@@ -95,9 +95,9 @@ vfSandbox.addEventListener('ready', () => {
     if (runVfBtn) runVfBtn.disabled = false;
 });
 
-// Listen for the native fileschanged event
-vfSandbox.addEventListener('fileschanged', (e: any) => {
-    window.updateVirtualFilesView(e.detail);
+// fileschanged carries only the changed paths; the tree is rebuilt from the element's own list
+vfSandbox.addEventListener('fileschanged', () => {
+    window.updateVirtualFilesView();
 });
 
 // Populate presets dropdown
@@ -207,11 +207,18 @@ window.loadPreset = () => {
         return;
     }
 
-    const preset = PRESETS[val as keyof typeof PRESETS];
+    const preset: Preset | undefined = PRESETS[val as keyof typeof PRESETS];
     if (!preset) return;
 
     byId<HTMLTextAreaElement>('rulesEditor').value = JSON.stringify(preset.rules, null, 2);
     byId<HTMLTextAreaElement>('code').value = preset.code;
+
+    // Files are part of the environment: replace the previous preset's files on both sandboxes before
+    // applyNetworkRules() rebuilds them, so "Run Code", "Run as HTML" and "Run (Virtual-Files)" all see them.
+    for (const element of [sandbox, vfSandbox]) {
+        element.unregisterFiles();
+        element.registerFiles(preset.files ?? {});
+    }
 
     window.applyNetworkRules();
     window.playground.saveState();
@@ -234,13 +241,18 @@ window.openTab = (evt: Event, tabName: string) => {
     if (evt.currentTarget instanceof HTMLElement) evt.currentTarget.classList.add("active");
 };
 
-window.updateVirtualFilesView = (files: Record<string, string | Uint8Array>) => {
+window.updateVirtualFilesView = () => {
     const container = document.getElementById('virtual-files-tree');
-    if (!container || !files || Object.keys(files).length === 0) return;
+    if (!container) return;
+    const paths = vfSandbox.listFiles().map(file => file.path);
+    if (paths.length === 0) {
+        container.innerHTML = '<div style="color: #555; font-style: italic;">No virtual files registered yet.</div>';
+        return;
+    }
 
-    const buildTree = (files: Record<string, any>) => {
+    const buildTree = (paths: string[]) => {
         const root: any = {};
-        Object.keys(files).forEach(path => {
+        paths.forEach(path => {
             const parts = path.split('/').filter(Boolean);
             let current = root;
             parts.forEach((part, i) => {
@@ -269,7 +281,7 @@ window.updateVirtualFilesView = (files: Record<string, string | Uint8Array>) => 
         return html + '</ul>';
     };
 
-    container.innerHTML = render(buildTree(files));
+    container.innerHTML = render(buildTree(paths));
 };
 
 window.runHtml = () => {
@@ -304,13 +316,7 @@ window.applyNetworkRules = () => {
         // Apply to both sandboxes
         sandbox.setConfig(rules);
         
-        const vfConfig = {
-            ...rules,
-            virtualFilesUrl: window.location.hostname === 'localhost'
-                ? '/src/virtual-files'
-                : 'http://virtual-files.localhost:4444'
-        };
-        vfSandbox.setConfig(vfConfig);
+        vfSandbox.setConfig(rules);
         
         // Visual feedback that we are resetting the environment
         byId('sandbox-status').textContent = 'Sandbox: Initializing...';
@@ -341,24 +347,14 @@ window.runVirtualFiles = () => {
     const code = byId<HTMLTextAreaElement>('code').value;
     const vfSandboxEl = vfSandbox;
 
-    window.appendLocalLog('Preparing virtual-files and executing...');
+    window.appendLocalLog('Registering the code as index.html and loading it...');
 
     try {
-        // 1. Register the current code as index.html
-        vfSandboxEl.registerFiles({
-            'index.html': code
-        });
-
-        // 2. Bootstrap the sandbox from the virtual entry point
-        vfSandboxEl.execute(`
-            fetch('/index.html')
-                .then(r => r.text())
-                .then(html => {
-                    document.open();
-                    document.write(html);
-                    document.close();
-                });
-        `);
+        // The code becomes a file next to the preset's files (readable as sandboxFiles.text('index.html'))
+        // and is loaded as the guest's markup. Markup that references other files by path resolves in
+        // a later step (backlog C1); until then guest code uses sandboxFiles.url().
+        vfSandboxEl.registerFiles({ 'index.html': code });
+        vfSandboxEl.load(code);
     } catch (e) {
         window.appendLocalLog('Error during virtual-files execution: ' + (e as Error).message);
         console.error(e);

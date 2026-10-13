@@ -12,8 +12,11 @@
 - [**ADR-003 — How does the host observe and control a sandbox's lifecycle?**](ADR-003-lifecycle-and-liveness.md) —
   per-instance events, the lifecycle states, `terminate()` / `reset()`, and the opt-in liveness
   watchdog with what it can and cannot bound.
+- [**ADR-004 — Files are guest-realm blob URLs**](ADR-004-files-as-blob-urls.md) — why the
+  virtual-files Service Worker was removed, how registered files reach the guest, and the
+  alternatives rejected.
 - [research/ARCHITECTURE_COMPARISON.md](research/ARCHITECTURE_COMPARISON.md) — host-level vs
-  iframe-level Service Worker.
+  iframe-level Service Worker (superseded by ADR-004).
 
 ## Planning
 

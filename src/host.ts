@@ -2,6 +2,9 @@ import type { CSPDirectives, SafeCapability, UnsafeCapability } from "./csp-dire
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./csp-directives";
 import { generateCSP } from "./lib/csp/csp-generator";
 import { dropSelfSources } from "./lib/csp/drop-self";
+import { addFileSources } from "./lib/csp/file-sources";
+import { FileStore, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
+import { inSandboxFiles } from "./lib/in-sandbox-files";
 import { deepMerge } from "./lib/utils";
 import { inSandboxScript } from "./lib/in-sandbox-script";
 import { createBroker } from "./lib/rpc";
@@ -17,7 +20,6 @@ export interface SandboxConfig {
     capabilities?: SafeCapability[]; // Sandbox attributes that keep the guest inside the frame
     unsafeCapabilities?: UnsafeCapability[]; // Capabilities that reach outside the frame (popups, modals, downloads, presentation, fullscreen). Opt-in only, logs a warning.
     html?: string; // Initial HTML content for iframe mode
-    virtualFilesUrl?: string; // URL to the Virtual Files Hub
     mode?: 'iframe' | 'worker'; // Execution mode
     workerExecutionTimeout?: number; // Max execution time in ms (Worker mode only)
     // Liveness watchdog budget in ms (0 = off, the default): terminates a guest that stops answering for this long.
@@ -60,7 +62,6 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     capabilities: [],
     unsafeCapabilities: [],
     html: '',
-    virtualFilesUrl: '',
     mode: 'iframe',
     workerExecutionTimeout: 0,
     watchdogTimeout: 0,
@@ -81,14 +82,18 @@ export class WebSandbox extends HTMLElement {
     private _state: SandboxState = 'idle'; // changed only by _enterState()
     private _watchdog: Watchdog | null = null;
     private _config: SandboxConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
-    private _sessionId: string;
     private _port: MessagePort | null = null;
-    private _hubFrame: HTMLIFrameElement | null = null;
     private _timeoutId: ReturnType<typeof setTimeout> | null = null;
     private _queuedMessages: { code: string }[] = [];
     private _rpcQueue: unknown[] = []; // the host's own RPC requests waiting for a port (cloned at call time)
     private _warnedUnsafeCapabilities = new Set<string>();
     private _warnedSelfDirectives = new Set<string>(); // directives already warned about for 'self' (drop-self.ts)
+    private _warnedFileDirectives = new Set<string>(); // directives already warned about for an explicit 'none' (file-sources.ts)
+    private _warnedVirtualFilesUrl = false;
+
+    // Files are part of the environment: they live on the element, survive reset(), load(), setConfig()
+    // and terminate(), and every environment build takes a snapshot (createIframe). See src/lib/files.ts.
+    private _files = new FileStore();
 
     // One broker lives on the element for its whole life, so host-exposed methods persist across
     // frame recreation (the guest's broker is per-frame and resets with each new frame). Its send only
@@ -99,7 +104,6 @@ export class WebSandbox extends HTMLElement {
     constructor() {
         super();
         this.attachShadow({ mode: "open" });
-        this._sessionId = crypto.randomUUID();
     }
 
     /** Where the sandbox is in its lifecycle; see SandboxState. Agrees with 'ready' / 'terminated' when they fire. */
@@ -149,43 +153,55 @@ export class WebSandbox extends HTMLElement {
             capabilities: filterCapabilities(config.capabilities, SAFE_CAPABILITIES, 'capabilities'),
             unsafeCapabilities: filterCapabilities(config.unsafeCapabilities, UNSAFE_CAPABILITIES, 'unsafeCapabilities'),
         };
+        this._dropVirtualFilesUrl(sanitizedConfig);
 
         // apply new config
         this._config = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig);
         this._warnAboutUnsafeCapabilities();
 
-        // add virtual files hub if not already existing
-        // TODO: make own function
-        if (this._config.virtualFilesUrl && !this._hubFrame) {
-            this._hubFrame = document.createElement('iframe');
-            this._hubFrame.style.display = 'none';
-            this._hubFrame.src = `${this._config.virtualFilesUrl}/hub.html`;
-            document.body.appendChild(this._hubFrame);
-        }
-
         this.initialize();
     }
 
-    registerFiles(files: Record<string, string | Uint8Array>) {
+    /**
+     * Adds or replaces files in this element's store (a string is stored as UTF-8, a Uint8Array is
+     * copied; `{ content, type }` overrides the type from the extension). The guest sees them from the
+     * next environment build on — reset(), load() or setConfig() — never in the frame already running.
+     * The whole batch is validated first: a refusal throws an Error with `code` INVALID_PATH,
+     * INVALID_FILE or FILES_QUOTA_EXCEEDED and changes nothing. Fires 'fileschanged' with `{ paths }`
+     * when something changed.
+     */
+    registerFiles(files: Record<string, FileEntry>): void {
+        this._dispatchFilesChanged(this._files.register(files));
+    }
 
-        if (this._hubFrame && this._hubFrame.contentWindow) {
-            let targetOrigin = this._config.virtualFilesUrl || '*';
-            if (targetOrigin.startsWith('/')) {
-                targetOrigin = new URL(targetOrigin, window.location.origin).origin;
-            }
+    /**
+     * Removes the given paths from the store, or every file when called without paths. Unregistered
+     * paths are ignored; an invalid one throws INVALID_PATH and removes nothing. Like registerFiles(),
+     * this takes effect at the next environment build.
+     */
+    unregisterFiles(paths?: string[]): void {
+        this._dispatchFilesChanged(this._files.unregister(paths));
+    }
 
-            this._hubFrame.contentWindow.postMessage({
-                type: 'PUT_FILES',
-                sessionId: this._sessionId,
-                files
-            }, targetOrigin);
+    /** The registered files, sorted by path. */
+    listFiles(): FileInfo[] {
+        return this._files.list();
+    }
 
-            // Notify listeners that the virtual file system has been updated
-            this.dispatchEvent(new CustomEvent('fileschanged', { detail: files }));
+    // Synchronous, once per call that changed something.
+    private _dispatchFilesChanged(paths: string[]) {
+        if (paths.length === 0) return;
+        this.dispatchEvent(new CustomEvent('fileschanged', { detail: { paths } }));
+    }
 
-        } else {
-            console.warn("Virtual Files Hub not ready or configured");
-        }
+    // virtualFilesUrl configured the removed Service-Worker hub (ADR-004). Dropped from the config, with
+    // one warning per instance, so an old config keeps working without it.
+    private _dropVirtualFilesUrl(config: Partial<SandboxConfig>) {
+        if (!Object.hasOwn(config, 'virtualFilesUrl')) return;
+        delete (config as Record<string, unknown>).virtualFilesUrl;
+        if (this._warnedVirtualFilesUrl) return;
+        this._warnedVirtualFilesUrl = true;
+        console.warn('[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).');
     }
 
     load(html: string) {
@@ -392,15 +408,20 @@ export class WebSandbox extends HTMLElement {
         this.createIframe();
     }
 
-    private _getSandboxCommsScript(mode: 'iframe' | 'worker') {
+    private _getSandboxCommsScript(mode: 'iframe' | 'worker', files: FileSnapshotEntry[]) {
         // communication, logs and RPC bridge template that any content running in the sandbox uses.
         // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
-        return `(${inSandboxScript.toString()})(${this._config.scriptUnsafe}, '${mode}', console, ${createBroker.toString()});`;
+        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe}, '${mode}', console, ${createBroker.toString()});`;
+        // The snapshot is one inline literal, so the blobs exist before the parser reaches guest markup.
+        // Installed even with no files (an empty literal): sandboxFiles always exists, and a lookup in
+        // an empty store is NOT_FOUND like any other miss, never a ReferenceError.
+        return `${comms}(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)});`;
     }
 
-    private _getWorkerBootstrapScript() {
-        // the worker runs the comms script; the frame only spawns it and forwards the port
-        const workerSource = this._getSandboxCommsScript('worker');
+    private _getWorkerBootstrapScript(files: FileSnapshotEntry[]) {
+        // the worker runs the comms script and builds its own blobs and sandboxFiles from the same
+        // literal; the frame only spawns it and forwards the port
+        const workerSource = this._getSandboxCommsScript('worker', files);
         return `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)});`;
     }
 
@@ -430,21 +451,19 @@ export class WebSandbox extends HTMLElement {
         return permissions;
     }
 
-    private _getCSP(virtualFilesBase: string): string {
+    private _getCSP(files: FileSnapshotEntry[]): string {
         // Clone the config directives to avoid mutating the original config
         // passing the refs of the original object
-        const directives = structuredClone(
+        const cloned = structuredClone(
             this._config.connectionsAllowed
         );
 
-        directives["upgrade-insecure-requests"] = true
+        cloned["upgrade-insecure-requests"] = true
 
-        if (virtualFilesBase) {
-            directives["script-src"]?.push(virtualFilesBase);
-            directives["connect-src"]?.push(virtualFilesBase);
-            directives["base-uri"]?.push(virtualFilesBase);
-            directives["img-src"]?.push(virtualFilesBase);
-        }
+        // blob: only for the file types in this build's snapshot, each in its own directive (file-sources.ts).
+        // No files, no change. Before 'unsafe-eval' and the 'self' drop, so S14 stays the last step.
+        const fileTypes = files.map(entry => entry[1]);
+        const directives = addFileSources(cloned, fileTypes, this._warnedFileDirectives);
 
         if (this._config.scriptUnsafe) {
             directives["script-src"]?.push("'unsafe-eval'");
@@ -460,14 +479,14 @@ export class WebSandbox extends HTMLElement {
     private createIframe() {
         const isWorkerMode = this._config.mode === 'worker';
 
-        // TODO: can we use a sandbox or iframe identifier that is not accessible to the sandbox itself ? like event.source in the host receiver
-        const virtualFilesBase = this._config.virtualFilesUrl ? `${this._config.virtualFilesUrl}/${this._sessionId}/` : '';
+        // One snapshot per environment build: the policy and the guest's files come from the same one,
+        // and later registerFiles() calls reach the guest only through the next build.
+        const files = this._files.snapshot();
 
         // TODO: run through DOMPurify ?
         const guestDocument = buildGuestDocument({
-            csp: this._getCSP(virtualFilesBase),
-            baseHref: virtualFilesBase,
-            bootstrapScript: isWorkerMode ? this._getWorkerBootstrapScript() : this._getSandboxCommsScript('iframe'),
+            csp: this._getCSP(files),
+            bootstrapScript: isWorkerMode ? this._getWorkerBootstrapScript(files) : this._getSandboxCommsScript('iframe', files),
             // worker mode is headless: no guest markup
             content: isWorkerMode ? '' : (this._config.html || '<div id="root"></div>'),
         });

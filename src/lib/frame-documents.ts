@@ -32,7 +32,6 @@ export function toInlineScriptLiteral(value: unknown): string {
 export interface GuestDocumentParts {
     csp: string;
     bootstrapScript: string; // trusted script that runs before any guest content
-    baseHref?: string;
     content?: string; // untrusted markup
 }
 
@@ -44,11 +43,8 @@ export interface GuestDocumentParts {
  * or swallow it (research 11.3).
  */
 export function buildGuestDocument(parts: GuestDocumentParts): string {
-    const base = parts.baseHref ? `<base href="${escapeAttribute(parts.baseHref)}">` : '';
-
     const securityBlock = [
         `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(parts.csp)}">`,
-        base,
         `<script>${parts.bootstrapScript}</script>`,
     ].join('');
 

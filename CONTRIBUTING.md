@@ -5,7 +5,7 @@ This project uses [Bun](https://bun.sh) for everything: installing, running scri
 ```bash
 bun install
 bun run dev          # playground at http://localhost:4444/playground/index.html
-bun run typecheck    # tsc for the app and the service worker
+bun run typecheck    # tsc over src, tests, playground and research specs
 bun run test         # unit (vitest) then e2e (playwright; builds the package first)
 bun run build:lib    # dist/: bundled ESM + type declarations
 ./scripts/smoke-package.sh   # bun pm pack, install into a scratch project, type-check and bundle

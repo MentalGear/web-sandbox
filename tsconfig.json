@@ -31,7 +31,6 @@
     },
     // "allowSyntheticDefaultImports": true,
   },
-  "include": ["src/**/*", "playground/**/*", "test/**/*", "docs/research/**/*.spec.ts", "*.ts"],
-  "exclude": ["src/virtual-files/sw.ts"]
+  "include": ["src/**/*", "playground/**/*", "test/**/*", "docs/research/**/*.spec.ts", "*.ts"]
   }
 
