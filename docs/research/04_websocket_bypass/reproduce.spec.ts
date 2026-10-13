@@ -1,15 +1,16 @@
 import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder, wss } from '../../../test/e2e/recorder';
-import { PRESETS } from '@src/lib/presets';
+import { fromPreset } from '../../../test/e2e/presets';
 
 // Evidence (backlog T5): the socket's own outcome, the violation reported on the host (S5) and a listener
 // outside the browser that answers WebSocket handshakes. The positive control opens the same socket to an
 // allowlisted origin.
 const recorder = useRecorder();
-const payload = (target: string) => PRESETS['websocket-bypass'].code.replace('wss://echo.websocket.events', `${wss(target)}/ws`);
+const preset = fromPreset('websocket-bypass');
+const payload = (target: string) => preset.aimedAt(`${wss(target)}/ws`);
 
 test('WebSocket Bypass - Mitigated', async ({ sandbox }) => {
-    await sandbox.mount();
+    await sandbox.mount(preset.rules);
 
     const logs = await sandbox.runUntilDone(payload(recorder.blocked));
 
@@ -20,7 +21,7 @@ test('WebSocket Bypass - Mitigated', async ({ sandbox }) => {
 });
 
 test('positive control: a WebSocket to an allowlisted origin opens and the listener sees the handshake', async ({ sandbox }) => {
-    await sandbox.mount({ connectionsAllowed: { 'connect-src': [wss(recorder.allowed)] } });
+    await sandbox.mount({ ...preset.rules, connectionsAllowed: { 'connect-src': [wss(recorder.allowed)] } });
 
     const logs = await sandbox.runUntilDone(payload(recorder.allowed));
 

@@ -1,9 +1,11 @@
 import { test, expect } from './fixture';
 import { useRecorder } from './recorder';
+import { fromPreset } from './presets';
 
 // The nested-frame test targets a listener outside the browser (recorder.ts), backed by the reported
 // violation; its positive control is the last test. The other tests here are not egress: each asserts the
-// refused outcome itself (an exception, a null origin), never the absence of a success.
+// refused outcome itself (an exception, a null origin), never the absence of a success. Their payloads are
+// the presets' (backlog T4), run here under the default config.
 const recorder = useRecorder();
 
 test.describe('Isolation', () => {
@@ -28,46 +30,31 @@ test.describe('Isolation', () => {
     });
 
     test('cannot reach the parent or host document', async ({ sandbox }) => {
-        await sandbox.run(`
-            for (const [name, get] of [['parent', () => window.parent.document], ['top', () => window.top.document]]) {
-                try { get(); console.log('ACCESS_SUCCESS ' + name); }
-                catch (e) { console.log('ACCESS_BLOCKED ' + name + ' ' + e.name); }
-            }
-        `);
+        const logs = await sandbox.runUntilDone(fromPreset('outer-frame-tampering').code);
 
-        expect(await sandbox.waitForLog('ACCESS_BLOCKED parent')).toContain('SecurityError');
-        expect(await sandbox.waitForLog('ACCESS_BLOCKED top')).toContain('SecurityError');
-        expect((await sandbox.logs()).filter(l => l.startsWith('ACCESS_SUCCESS'))).toEqual([]);
+        expect(logs).toContain('PWN_FAILURE parent SecurityError');
+        expect(logs).toContain('PWN_FAILURE top SecurityError');
+        expect(logs.filter(l => l.startsWith('PWN_SUCCESS'))).toEqual([]);
     });
 
     test('has no service worker access', async ({ sandbox }) => {
-        // Chromium throws on merely reading navigator.serviceWorker in a sandboxed frame
-        await sandbox.run(`
-            try {
-                if (!navigator.serviceWorker) console.log('SW_UNAVAILABLE no api');
-                else navigator.serviceWorker.getRegistrations()
-                    .then(r => console.log('SW_AVAILABLE ' + r.length))
-                    .catch(e => console.log('SW_UNAVAILABLE ' + e.name));
-            } catch (e) {
-                console.log('SW_UNAVAILABLE ' + e.name);
-            }
-        `);
+        // Chromium throws on merely reading navigator.serviceWorker in a sandboxed frame; Firefox rejects the call
+        const logs = await sandbox.runUntilDone(fromPreset('sw-tamper').code);
 
-        expect(await sandbox.waitForLog(/SW_(UN)?AVAILABLE/)).toContain('SW_UNAVAILABLE');
+        expect(logs.find(l => l.startsWith('PWN_'))).toMatch(/^PWN_FAILURE: /);
     });
 
     test('has no persistent storage (opaque origin)', async ({ sandbox }) => {
-        await sandbox.run(`
-            try { localStorage.setItem('foo', 'bar'); console.log('STORAGE_WRITE ok'); }
-            catch (e) { console.log('STORAGE_WRITE failed ' + e.name); }
-        `);
+        const logs = await sandbox.runUntilDone(fromPreset('storage-sharing').code);
 
-        expect(await sandbox.waitForLog('STORAGE_WRITE')).toBe('STORAGE_WRITE failed SecurityError');
+        expect(logs).toContain('Read Failed: SecurityError');
+        expect(logs).toContain('Write Failed: SecurityError');
     });
 
     test('runs with an opaque origin', async ({ sandbox }) => {
-        await sandbox.run(`console.log('ORIGIN ' + window.origin)`);
-        expect(await sandbox.waitForLog('ORIGIN')).toBe('ORIGIN null');
+        // the allow-same-origin preset's check, here under the default config (its own rules: capability-presets.spec.ts)
+        const logs = await sandbox.runUntilDone(fromPreset('allow-same-origin').code);
+        expect(logs).toContain('PASS: Origin is opaque. Filter working.');
     });
 });
 

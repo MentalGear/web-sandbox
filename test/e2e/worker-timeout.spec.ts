@@ -1,9 +1,12 @@
 import { test, expect } from './fixture';
+import { fromPreset } from './presets';
+
+const preset = fromPreset('worker-timeout');
 
 test('terminates a worker that exceeds workerExecutionTimeout, then recovers', async ({ sandbox, page }) => {
-    await sandbox.mount({ mode: 'worker', workerExecutionTimeout: 500 });
+    await sandbox.mount(preset.rules);
 
-    await sandbox.run('while (true) {}');
+    await sandbox.run(preset.code);
     await sandbox.waitForLog('Execution Timeout', 5000);
 
     // the frame (and its worker) was recreated: a fresh sandbox accepts code again

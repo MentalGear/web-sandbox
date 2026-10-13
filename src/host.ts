@@ -10,11 +10,13 @@ import { inlineScriptsAllowed, rewriteGuestMarkup, type MarkupParts } from "./li
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { deepMerge } from "./lib/utils";
 import { inSandboxScript } from "./lib/in-sandbox-script";
-import { createBroker } from "./lib/rpc";
+import { createBroker, RESERVED_METHOD_PREFIX } from "./lib/rpc";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { toViolationDetail, VIOLATION_EVENT_LIMIT } from "./lib/violation";
+import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
+import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
 
 export interface SandboxConfig {
@@ -30,6 +32,14 @@ export interface SandboxConfig {
     // Liveness watchdog budget in ms (0 = off, the default): terminates a guest that stops answering for this long.
     // Off by default because legitimate synchronous work longer than the budget would be stopped too. See src/lib/watchdog.ts for what it can and cannot bound.
     watchdogTimeout?: number;
+    // Content auto-sizing (iframe mode, off by default): the element's height follows the guest's content
+    // height, validated, clamped and rate-limited on the host (src/lib/auto-resize.ts). Only a literal true
+    // enables it. No effect in worker mode, which has no document (one warning per instance).
+    autoResize?: boolean;
+    // The host-mediated fetch bridge (off by default): the guest gets sandboxFetch(url, init), and the host makes
+    // the request under a fixed discipline (exact-origin allowlist, no credentials, no redirects, capped body
+    // and time) and reports each one as a 'fetch' event. The guest policy is unchanged. See src/lib/fetch-bridge.ts.
+    fetchBridge?: FetchBridgeConfig;
 }
 
 /**
@@ -65,6 +75,7 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     mode: 'iframe',
     workerExecutionTimeout: 0,
     watchdogTimeout: 0,
+    autoResize: false,
 };
 
 // Texts of the host's own refusals, for people reading them. Code branches on the error's `code`
@@ -92,6 +103,11 @@ export class WebSandbox extends HTMLElement {
     private _frameLoaded = false;
     private _state: SandboxState = 'idle'; // changed only by _enterState()
     private _watchdog: Watchdog | null = null;
+    private _resizer: AutoResizer | null = null; // this environment's auto-sizing (B6), or null when off
+    private _autoHeight: string | null = null;   // the inline height auto-sizing last wrote on the element
+    private _fetchPolicy: FetchPolicy | null = null; // the validated fetchBridge config, or null when off (B5)
+    private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
+    private _warnedFetchBridge = new Set<string>();  // fetchBridge config warnings, once each per instance
     private _violationCount = 0; // 'violation' events dispatched for the current environment (capped, violation.ts)
     private _config: SandboxConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
     private _port: MessagePort | null = null;
@@ -105,6 +121,7 @@ export class WebSandbox extends HTMLElement {
     private _warnedFileDirectives = new Set<string>(); // directives already warned about for an explicit 'none' (file-sources.ts)
     private _warnedVirtualFilesUrl = false;
     private _warnedBootstrapRefused = false; // the guest policy refuses the inline bootstrap (S13), once per instance
+    private _warnedAutoResizeWorker = false; // autoResize asked for in worker mode, once per instance
     private _warnedGuestMarkup = new Set<string>(); // module-graph warnings about guest markup, once per text (_warnOnce)
 
     // Files are part of the environment: they live on the element, survive reset(), load(), setConfig()
@@ -120,6 +137,9 @@ export class WebSandbox extends HTMLElement {
     constructor() {
         super();
         this.attachShadow({ mode: "open" });
+        // The fetch bridge is a library method under a reserved name (B5): expose() can never replace it.
+        // Registered once; it refuses while the current environment has no bridge.
+        this._broker.exposeReserved(FETCH_METHOD, (request: unknown) => this._handleFetch(request));
     }
 
     /** Where the sandbox is in its lifecycle; see SandboxState. Agrees with 'ready' / 'terminated' when they fire. */
@@ -171,12 +191,19 @@ export class WebSandbox extends HTMLElement {
         };
         // Only a literal true enables eval: the value is also interpolated into the guest bootstrap.
         if (Object.hasOwn(config, 'scriptUnsafe')) sanitizedConfig.scriptUnsafe = config.scriptUnsafe === true;
+        // Likewise for autoResize, which is interpolated into the bootstrap too.
+        if (Object.hasOwn(config, 'autoResize')) sanitizedConfig.autoResize = config.autoResize === true;
+        // The fetch bridge config is validated into a policy here and kept out of the merged config: a
+        // config without it turns the bridge off.
+        this._fetchPolicy = toFetchPolicy(config.fetchBridge, (message) => this._warnFetchBridge(message));
+        delete sanitizedConfig.fetchBridge;
         this._dropVirtualFilesUrl(sanitizedConfig);
 
         // apply new config
         this._config = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig);
         this._warnAboutUnsafeCapabilities();
         this._warnAboutScriptUnsafe();
+        this._warnAboutAutoResizeInWorker();
 
         this.initialize();
     }
@@ -252,6 +279,10 @@ export class WebSandbox extends HTMLElement {
      * Methods live on the element, so they survive frame recreation (load()/setConfig()).
      */
     expose(name: string, fn: (...args: any[]) => unknown): void {
+        if (typeof name === 'string' && name.startsWith(RESERVED_METHOD_PREFIX)) {
+            console.warn(`[Sandbox] expose(): names starting with "${RESERVED_METHOD_PREFIX}" are reserved for the library; "${name}" was not exposed.`);
+            return;
+        }
         this._broker.expose(name, fn);
     }
 
@@ -329,6 +360,11 @@ export class WebSandbox extends HTMLElement {
             }
             if (data?.type === 'VIOLATION') {
                 this._dispatchViolation(data);
+                return;
+            }
+            if (data?.type === 'RESIZE') {
+                // null unless this environment asked for auto-sizing: then a RESIZE frame (forged or not) does nothing
+                this._resizer?.report(data);
                 return;
             }
             // Everything else on this port is RPC (or not ours); the broker validates every frame.
@@ -415,6 +451,64 @@ export class WebSandbox extends HTMLElement {
         });
     }
 
+    // Auto-sizing applies to iframe mode only: a worker has no document to measure.
+    private _autoResizeEnabled(): boolean {
+        return this._config.autoResize === true && this._config.mode !== 'worker';
+    }
+
+    private _warnAboutAutoResizeInWorker() {
+        if (this._config.autoResize !== true || this._config.mode !== 'worker' || this._warnedAutoResizeWorker) return;
+        this._warnedAutoResizeWorker = true;
+        console.warn('[Sandbox] autoResize has no effect in worker mode: a worker has no document to measure.');
+    }
+
+    // One resizer per environment (backlog B6, src/lib/auto-resize.ts), started with the port it listens on
+    // and stopped by _teardown. It is the only path from a RESIZE frame to the element's height.
+    private _startAutoResize() {
+        if (!this._autoResizeEnabled()) return;
+        this._resizer = startAutoResize((height) => {
+            const value = `${height}px`;
+            this.style.height = value;
+            this._autoHeight = value;
+        });
+    }
+
+    // Gives the height back to the embedder's CSS when auto-sizing is off for the environment being built,
+    // removing the inline height only if it is still the one auto-sizing wrote.
+    private _releaseAutoHeight() {
+        if (this._autoHeight === null) return;
+        if (this.style.height === this._autoHeight) this.style.height = '';
+        this._autoHeight = null;
+    }
+
+    // One fetch bridge per environment (B5), built with the environment and aborted by _teardown.
+    private _startFetchBridge() {
+        if (!this._fetchPolicy) return;
+        this._fetchBridge = createFetchBridge({
+            policy: this._fetchPolicy,
+            hostOrigin: globalThis.location?.origin ?? '',
+            onRecord: (record) => this._dispatchFetch(record),
+        });
+    }
+
+    // The reserved sandbox:fetch method. Every refusal is minted in fetch-bridge.ts with a library code.
+    private _handleFetch(request: unknown): Promise<unknown> {
+        if (!this._fetchBridge) return Promise.reject(fetchRefusal('FETCH_NOT_ALLOWED', 'the fetch bridge is off (fetchBridge is not configured)'));
+        return this._fetchBridge.handle(request);
+    }
+
+    // Every request through the bridge, once, when it settled: dispatched on the element and bubbling, like
+    // 'violation'. The record is built by the host from validated fields (fetch-bridge.ts).
+    private _dispatchFetch(record: FetchRecord) {
+        this.dispatchEvent(new CustomEvent('fetch', { detail: record, bubbles: true }));
+    }
+
+    private _warnFetchBridge(message: string) {
+        if (this._warnedFetchBridge.has(message)) return;
+        this._warnedFetchBridge.add(message);
+        console.warn(message);
+    }
+
     // The one place `state` changes. The 'ready' and 'terminated' events are dispatched here, after the
     // state is set, so a listener always reads the state its event announces.
     private _enterState(next: SandboxState, reason?: string) {
@@ -434,6 +528,8 @@ export class WebSandbox extends HTMLElement {
         if (this._port) { this._port.close(); this._port = null; }
         if (this._timeoutId) { clearTimeout(this._timeoutId); this._timeoutId = null; }
         if (this._watchdog) { this._watchdog.stop(); this._watchdog = null; }
+        if (this._resizer) { this._resizer.stop(); this._resizer = null; } // the height it wrote stays until the next report
+        if (this._fetchBridge) { this._fetchBridge.abortAll(); this._fetchBridge = null; } // upstream requests end with the environment
     }
 
     // Every termination comes through here: terminate(), the frame-integrity checks in _onFrameLoad and
@@ -460,7 +556,12 @@ export class WebSandbox extends HTMLElement {
     private _getSandboxCommsScript(mode: 'iframe' | 'worker', files: FileSnapshotEntry[], plan: GuestMarkupPlan = NO_MARKUP_PLAN) {
         // communication, logs and RPC bridge template that any content running in the sandbox uses.
         // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
-        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe}, '${mode}', console, ${createBroker.toString()});`;
+        // Opt-in features as one literal, only when one is on (a sandbox without them keeps its bootstrap text).
+        const features: { autoResize?: true; fetchBridge?: { timeoutMs: number } } = {};
+        if (mode === 'iframe' && this._autoResizeEnabled()) features.autoResize = true;
+        if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
+        const featuresArgument = Object.keys(features).length > 0 ? `, ${toInlineScriptLiteral(features)}` : '';
+        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe}, '${mode}', console, ${createBroker.toString()}${featuresArgument});`;
         // The snapshot is one inline literal, so the blobs exist before the parser reaches guest markup.
         // Installed even with no files (an empty literal): sandboxFiles always exists, and a lookup in
         // an empty store is NOT_FOUND like any other miss, never a ReferenceError.
@@ -576,6 +677,8 @@ export class WebSandbox extends HTMLElement {
 
     private createIframe() {
         const isWorkerMode = this._config.mode === 'worker';
+        if (!this._autoResizeEnabled()) this._releaseAutoHeight();
+        this._startFetchBridge();
 
         // One snapshot per environment build: the policy and the guest's files come from the same one,
         // and later registerFiles() calls reach the guest only through the next build.
@@ -640,6 +743,8 @@ export class WebSandbox extends HTMLElement {
         // Armed before 'ready' is dispatched: a 'ready' listener that resets or terminates the sandbox then
         // stops this watchdog with the rest, instead of leaving one running for a port that is gone.
         if (this._port) this._startWatchdog(this._port);
+        // Reports buffered before the port existed arrive after this, so the resizer is in place for them.
+        this._startAutoResize();
         this._enterState('ready');
     }
 }

@@ -27,6 +27,14 @@ export default defineConfig({
   plugins: [{
     name: 'dev-server',
     configureServer(server) {
+      // Test endpoint (fetch bridge specs, backlog B5): answers with the request's method and headers, so a
+      // spec can see what reached the harness origin, outside the browser. Same origin as the harness, so a
+      // credentialed request here carries the harness's cookies in every engine.
+      server.middlewares.use('/__echo', (req, res) => {
+        res.setHeader('content-type', 'application/json');
+        res.setHeader('cache-control', 'no-store');
+        res.end(JSON.stringify({ method: req.method, headers: req.headers }));
+      });
       server.httpServer?.once('listening', () => {
         const { port, host } = server.config.server;
         const protocol = server.config.server.https ? 'https' : 'http';

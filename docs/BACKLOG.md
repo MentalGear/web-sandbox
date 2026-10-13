@@ -24,11 +24,13 @@ conditional "continue".
 | CSP generation from typed config | ✅ implemented; `[]` means `'none'` for every directive, never broader than leaving it out (S16), unit-tested per directive |
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker |
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7) |
+| Host-mediated network | ✅ opt-in `fetchBridge`: `sandboxFetch()` under the bridge discipline, every request logged as a `fetch` event, refusals coded (B5, [ADR-006](ADR-006-fetch-bridge.md)) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
 | Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3); `violation` for refused loads, capped per environment (S5) |
+| Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
 | Execution budget | 🟡 opt-in liveness watchdog in default mode: bounded in worker mode and out-of-process frames, not where the frame shares the host's thread; strict mode open (S6) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
-| E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C) |
+| E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C); the specs run the playground's presets, and a security preset without a spec fails the unit suite (T4) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
 | Type check | ✅ `bun run typecheck` is clean and gates CI (H3) |
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
@@ -113,7 +115,32 @@ README now says `bun run test`); Playwright starts Vite itself; `vite build` tar
 
 **Acceptance**: `bun test` runs unit **and** e2e from a clean checkout; `bun run build` completes.
 
-### T4 · Presets are not wired into the tests — **P1 · M**
+### T4 · Presets are not wired into the tests — ✅ **done**
+
+**Guarantee**: an attack is written down once, in `src/lib/presets.ts`, and the playground and the
+regression specs run that same definition; a security preset without a spec, or a research reproduction
+without a preset, fails the unit suite.
+
+**Done**: a preset now carries a `category` (`security` or `demo`), how its code runs (`run`: `script`
+through `execute()`, or `markup` through `load()`), the research folder it reproduces (`research`), the URL
+that stands for the attacker (`target`) and further payloads for the same attack (`variants`). Specs reach
+presets only through `fromPreset('<id>')` (`test/e2e/presets.ts`): the preset's rules as a fresh copy, its
+payloads, and `aimedAt(listener)`, which replaces the target and throws when the payload does not contain
+it, so an edited preset cannot leave a spec aiming at the placeholder instead of the listener (T5). The
+coverage test, `test/unit/presets.test.ts`, scans every spec file for `fromPreset()` literals and fails
+when a security preset has no spec, a `docs/research/*/reproduce.spec.ts` runs no preset, a preset's
+`research` folder does not run it, a spec reads `PRESETS` directly, or a target is missing from a payload
+(both failure directions checked by mutation). Changes: all fourteen reproductions source payload and rules
+from a preset; four presets added for the findings that had none (`csp-swallow` 11, `form-action-exfil`
+12, `popup-exfiltration` 13, `self-navigation` 14, with variants for 11.3 and 14.1); `security.spec.ts`
+runs the `outer-frame-tampering`, `sw-tamper`, `storage-sharing` and `allow-same-origin` payloads it used
+to duplicate, `worker-timeout.spec.ts` the `worker-timeout` preset; the four capability-filter presets
+(`alert-test`, `allow-same-origin`, `allow-top-nav`, `allow-popups-escape`), which no spec ran, have one
+now (`test/e2e/capability-presets.spec.ts`, each with a positive control where one exists). Two presets
+were wrong and are fixed: `alert-test` logged `PWN_SUCCESS` whenever `alert()` returned, which a blocked
+dialog does at once (now the host watches for a dialog); `storage-sharing` wrote before it read, so it
+could only ever read its own write (now it reads first). T5's evidence rules are unchanged: every egress
+assertion keeps its listener and positive control.
 
 The README's stated USP is *"Use the same Preset definitions for both manual testing (Playground)
 and automated regression testing"*.
@@ -835,7 +862,34 @@ nothing, so consumers can choose their own tag. The playground and the e2e harne
 
 **Open**: the D1 smoke test (mount a sandbox using only the public entry point) waits on D1.
 
-### B5 · Host-mediated `sandbox.fetch` bridge — **P2 · M**
+### B5 · Host-mediated `sandbox.fetch` bridge — ✅ **done**
+
+**Guarantee**: with `fetchBridge` configured, the guest's `sandboxFetch()` never reaches an origin that is
+not listed exactly, never sends the host page's credentials or URL, never follows a redirect, never holds
+more than the cap plus one chunk of a response or outlives its timeout or its environment, and every
+request — refused, failed, aborted or answered — is reported once as a `fetch` event. Off (the default),
+the guest has no `sandboxFetch` and the reserved method refuses. The guest policy is unchanged.
+
+**Done**, decided in [ADR-006](ADR-006-fetch-bridge.md): a library method under the reserved broker name
+`sandbox:fetch` (ADR-002 amendment: `sandbox:` names live in their own registry, which `expose()` cannot
+write; library codes travel only from a reserved method to the guest's broker). The policy and the request
+discipline live in `src/lib/fetch-bridge.ts`, one bridge per environment, aborted by `_teardown`. Refusal
+codes: `FETCH_NOT_ALLOWED`, `FETCH_BUSY`, `FETCH_REDIRECT`, `FETCH_TOO_LARGE`, `FETCH_TIMEOUT`,
+`FETCH_FAILED`. Decisions taken here: a separate global, never a `fetch` polyfill; `redirect: 'manual'`
+refused as `FETCH_REDIRECT` (no-follow like `'error'`, but distinguishable); headers from an allowlist (the
+CORS-safelisted four plus listed names; `Cookie` never, `Authorization` only when listed), and a disallowed
+header refuses rather than being dropped; methods `GET`/`HEAD`/`POST` by default; at most `maxConcurrent`
+requests in flight, so memory is bounded by `maxConcurrent × maxBytes`; the request comes from the host
+page, so targets see its origin (not its URL) and CORS applies for it. Tests: `src/lib/fetch-bridge.test.ts`,
+`src/lib/rpc.test.ts`, `src/lib/in-sandbox-script.test.ts`, `test/unit/host.test.ts`, and
+`test/e2e/fetch-bridge.spec.ts` on all three engines, against the recorder's ALLOWED and BLOCKED listeners
+(T5; extended with echo, redirect, streamed and never-ending responses) and an echo on the harness origin
+(`/__echo`, `vite.config.ts`), each refusal with a positive control. Mutation-checked: dropping
+`credentials: 'omit'`, `redirect: 'manual'`, `referrerPolicy`, the abort on teardown, the body cap, the
+allowlist, the header allowlist or the concurrency cap each fails a spec.
+
+**Residuals**: DNS rebinding (a listed name resolving to a private address); the host origin in `Origin`;
+receipt cost of a flood of refused requests (S6's open note); no streaming or guest `AbortSignal` in v1.
 
 *Parity gap*: Zoid's strict bridge. *Motivated by* [finding 04](research/04_websocket_bypass/README.md)
 (WebSockets bypass any SW-level logging) and [finding 09](research/09_monkey_patch_bypass/README.md)
@@ -875,7 +929,36 @@ records no request; an oversized body rejects after reading at most the cap plus
 the one-port-per-request stream shape follows Lunet
 ([`docs/lunet/data.js.flow`](https://github.com/Gozala/lunet/blob/master/docs/lunet/data.js.flow)).
 
-### B6 · Content auto-sizing — **P2 · S**
+### B6 · Content auto-sizing — ✅ **done**
+
+**Guarantee**: with `autoResize: true` (iframe mode) the element's height follows the guest's content, and
+nothing the guest posts can make the host write a height that is not a finite number in
+[0, 100 000] px, write more than once per animation frame, or write more than 30 times a second; with it
+off, nothing the guest posts changes the element.
+
+**Done**: the guest bootstrap (`src/lib/in-sandbox-script.ts`) observes the root element (and the body,
+once it exists) with a `ResizeObserver` and posts a changed height as a first-class `RESIZE` frame, outside
+the broker like `VIOLATION` and `PING`. The measure is the root's box, which shrinks as well as grows (the
+root's `scrollHeight` never reads less than the viewport), or the scroll height when content overflows the
+viewport. The host's one path from a frame to a height is `startAutoResize` (`src/lib/auto-resize.ts`),
+created per environment only when the config asks for it: `toResizeHeight` drops anything but a finite
+number >= 0, rounds up and clamps to `AUTO_RESIZE_MAX_HEIGHT` (100 000); reports only record the newest
+height, written at the next animation frame and no sooner than 1/30 s after the previous write
+(`AUTO_RESIZE_MAX_UPDATES_PER_SECOND`), so the last report always lands. The height stays across rebuilds
+until the new guest reports; a config without `autoResize` removes it. The feature literal reaches the
+bootstrap only when on, so other sandboxes' documents are byte for byte unchanged. Worker mode: no effect,
+one warning. Tests: `src/lib/auto-resize.test.ts` (validation, per-frame coalescing, the cap over ten
+seconds of reports every frame, stop), `src/lib/in-sandbox-script.test.ts` (what is observed, what is
+sent, off and worker mode), `test/unit/host.test.ts` (the literal), and `test/e2e/auto-resize.spec.ts` on
+all three engines: growth and shrink within 6 host frames of the change (measured 2–4, including the
+call's return trip), off by default with a forged report, malformed reports forged on the real port
+dropped and huge ones clamped, a flood of 10 000+ forged reports bounded by both caps with the last one
+written, a guest oscillating every frame leaves the host's frames and timers running, reset and turning
+off, worker mode. Both rate tests fail with the cap removed.
+
+**Residuals**: receiving the messages still costs host time (S6's open note); a guest whose root is
+pinned to the viewport never shrinks the frame; content outside the root's box that does not overflow
+the viewport is not measured; the element needs a non-inline `display`.
 
 *Parity gap*: the headline feature of `cross-origin-html-embed`; Zoid ships it too.
 **Verified**: the iframe is pinned to `width:100%;height:100%` (`src/host.ts:224`).
@@ -1173,8 +1256,8 @@ comparisons; for the 2026 entrants (`quickjs-wasi`, `@tanstack/ai-isolate-quickj
 | Typed package / `d.ts` | 🟡 **D1** | ✅ | ✅ | ✅ | ✅ |
 | Headless (worker) execution | ✅ **S1** | ❌ | ❌ | ❌ | ❌ |
 | Virtual files | ✅ **C1** | ❌ | ➖ | ❌ | ❌ |
-| Host-mediated network | ❌ **B5** | ❌ | ➖ | ✅ | ❌ |
-| Auto-sizing | ❌ **B6** | ❌ | 🟡 | ✅ | ✅ |
+| Host-mediated network | ✅ **B5** | ❌ | ➖ | ✅ | ❌ |
+| Auto-sizing | ✅ **B6** | ❌ | 🟡 | ✅ | ✅ |
 | Execution quotas | 🟡 **S6** | ❌ | ➖ | ❌ | ➖ |
 
 We lead on four rows: isolation without server config, headless (worker) execution and virtual

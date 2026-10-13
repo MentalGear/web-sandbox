@@ -222,6 +222,8 @@ window.loadPreset = () => {
 
     window.applyNetworkRules();
     window.playground.saveState();
+    // the same preset drives a regression spec (backlog T4); it says how its code is meant to run
+    window.appendLocalLog(`Preset "${preset.label}": run it with ${preset.run === 'markup' ? '"Run as HTML"' : '"Run Code"'}.`);
 }
 
 window.onCodeInput = () => {

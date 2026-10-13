@@ -1,11 +1,13 @@
 import { test, expect, HARNESS } from '../../../test/e2e/fixture';
-import { PRESETS } from '@src/lib/presets';
+import { fromPreset } from '../../../test/e2e/presets';
+
+const preset = fromPreset('data-uri');
 
 test('Data URI Navigation - Mitigated', async ({ sandbox, page }) => {
-    await sandbox.mount();
+    await sandbox.mount(preset.rules);
 
     // tries to navigate the top window to a data: URI
-    const logs = await sandbox.runUntilDone(PRESETS['data-uri'].code);
+    const logs = await sandbox.runUntilDone(preset.code);
     await page.waitForTimeout(500);
 
     expect(page.url()).toBe(HARNESS);

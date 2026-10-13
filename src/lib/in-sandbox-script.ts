@@ -16,6 +16,9 @@ export function inSandboxScript(
     mode: 'iframe' | 'worker',
     sandboxConsole: Console,
     createBrokerFn?: typeof createBroker,
+    // Opt-in features; the host passes this literal only when one is on, so the bootstrap text of a sandbox
+    // without them is unchanged.
+    features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number } },
 ) {
     // The port does not exist until INIT_PORT, but guest content scripts parse BEFORE that and may
     // call bridge.expose()/bridge.call() straight away. So the bridge is created now with a send that
@@ -66,8 +69,73 @@ export function inSandboxScript(
         });
     }, true);
 
-    const bridge = createBrokerFn ? createBrokerFn(send) : null;
+    // Content auto-sizing (backlog B6, src/lib/auto-resize.ts), opt-in and iframe mode only: a worker has no
+    // document. A ResizeObserver on the root element reports the content height as a RESIZE frame, outside
+    // the broker like VIOLATION. Its callbacks run at most once per rendering update, after layout, so the
+    // guest measures once per frame and sends only a changed height. The measure is the root element's
+    // box, which follows content in normal flow both ways (it shrinks too, unlike the root's scrollHeight,
+    // which never reads less than the viewport); when content overflows the viewport, scrollHeight, so
+    // overflow the root's box does not contain still grows the frame. The body is observed as well once it
+    // exists, for guests whose root is pinned to the viewport (html { height: 100% }). The host validates,
+    // clamps and rate-limits every report: guest code can reach the port and post its own.
+    if (features?.autoResize === true && mode === 'iframe' && typeof ResizeObserver === 'function') {
+        let lastHeight = -1;
+        const measure = () => {
+            const root = document.documentElement;
+            if (!root) return;
+            const box = Math.ceil(root.getBoundingClientRect().height);
+            const height = root.scrollHeight > root.clientHeight ? Math.max(box, root.scrollHeight) : box;
+            if (height === lastHeight) return;
+            lastHeight = height;
+            send({ type: 'RESIZE', height });
+        };
+        const resizeObserver = new ResizeObserver(measure);
+        resizeObserver.observe(document.documentElement);
+        document.addEventListener('DOMContentLoaded', () => {
+            if (document.body) resizeObserver.observe(document.body);
+        });
+    }
+
+    // The guest's broker accepts a library code (FETCH_*) in the refusal of a call to a reserved method, so
+    // sandboxFetch() rejects with the host's code; the host's broker never accepts one (see rpc.ts).
+    const bridge = createBrokerFn ? createBrokerFn(send, { acceptLibraryCodes: true }) : null;
     if (bridge) (globalThis as any).bridge = bridge;
+
+    // The host-mediated fetch bridge (backlog B5, src/lib/fetch-bridge.ts, ADR-006), opt-in, both modes. A
+    // separate global, never a replacement for fetch: guest code that wants it as fetch assigns it itself.
+    // It sends only url, method, headers and body (string, ArrayBuffer or typed array) to the reserved
+    // sandbox:fetch method; the host decides everything else and refuses with a FETCH_* code. The broker's
+    // own timeout is a backstop a little past the host's, so the host's FETCH_TIMEOUT normally arrives first.
+    // Whole responses only: the answer becomes a Response here, with its body in memory.
+    if (bridge && features?.fetchBridge) {
+        const callWithTimeout = bridge.callWithTimeout;
+        const callTimeoutMs = features.fetchBridge.timeoutMs + 5000;
+        const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
+        const toBody = (body: any) => {
+            if (body === undefined || body === null) return undefined;
+            if (typeof body === 'string') return body;
+            if (body instanceof ArrayBuffer) return body.slice(0);
+            if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength).slice();
+            throw new TypeError('sandboxFetch: the body must be a string, an ArrayBuffer or a typed array');
+        };
+        (globalThis as any).sandboxFetch = (input: unknown, init?: any) => {
+            let request;
+            try {
+                const options = init || {};
+                const headers: [string, string][] = [];
+                new Headers(options.headers).forEach((value, name) => headers.push([name, value]));
+                request = { url: String(input), method: options.method === undefined ? 'GET' : String(options.method), headers, body: toBody(options.body) };
+            } catch (error) {
+                return Promise.reject(error);
+            }
+            return callWithTimeout(callTimeoutMs, 'sandbox:fetch', request).then((result: any) => {
+                const status = result.status;
+                const response = new Response(NULL_BODY_STATUSES.includes(status) ? null : result.body, { status, statusText: result.statusText, headers: result.headers });
+                Object.defineProperty(response, 'url', { value: result.url });
+                return response;
+            });
+        };
+    }
 
     globalThis.addEventListener('message', (event: any) => {
         if (event.data?.type !== 'INIT_PORT') return;

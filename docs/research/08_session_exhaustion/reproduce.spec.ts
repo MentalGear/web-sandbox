@@ -1,20 +1,21 @@
 import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
-import { PRESETS } from '@src/lib/presets';
+import { fromPreset } from '../../../test/e2e/presets';
 
 // The server-side session store this finding targeted no longer exists (srcdoc architecture).
 // What remains to verify: the sandbox cannot reach a server at all.
 // Evidence (backlog T5): the guest's own outcome, the violation for the absolute form, and a listener
 // outside the browser. The positive control runs the absolute form against an allowlisted origin.
 const recorder = useRecorder();
-const absolute = (origin: string) => PRESETS['session-exhaustion'].code.replace("'/api/session'", `'${origin}/api/session'`);
+const preset = fromPreset('session-exhaustion');
+const absolute = (origin: string) => preset.aimedAt(`${origin}/api/session`);
 
 test('Session ID Exhaustion / DoS - Not Reachable', async ({ sandbox }) => {
-    await sandbox.mount();
+    await sandbox.mount(preset.rules);
 
     // As written, the URL is relative: it cannot even be resolved against the guest's about:blank base
     // (S15), so the first fetch throws before any request exists, and there is nothing to report.
-    const relative = await sandbox.runUntilDone(PRESETS['session-exhaustion'].code);
+    const relative = await sandbox.runUntilDone(preset.code);
     expect(relative.find(l => l.startsWith('ERROR'))).toBeDefined();
     expect(relative.some(l => l.startsWith('PWN_INFO'))).toBe(false);
 
@@ -27,7 +28,7 @@ test('Session ID Exhaustion / DoS - Not Reachable', async ({ sandbox }) => {
 });
 
 test('positive control: the absolute form reaches an allowlisted origin, and the listener sees it', async ({ sandbox }) => {
-    await sandbox.mount({ connectionsAllowed: { 'connect-src': [recorder.allowed] } });
+    await sandbox.mount({ ...preset.rules, connectionsAllowed: { 'connect-src': [recorder.allowed] } });
     // the preset posts in a loop for 5 s; the first request arriving is enough
     await sandbox.run(absolute(recorder.allowed));
     await recorder.waitFor('allowed', '/api/session');

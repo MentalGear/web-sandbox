@@ -19,6 +19,11 @@ Every mitigation has a reproduction under `docs/research/NN_*/reproduce.spec.ts`
 the vulnerable code** and passes with the fix. Add one with any security change, and check that it
 fails before your fix (revert the fix locally and run it).
 
+The attack itself is a preset in `src/lib/presets.ts` (`category: 'security'`, `research: 'NN_*'`, and a
+`target` URL if it reaches for the network), so the playground can replay it; the reproduction runs it
+with `fromPreset('<id>')` from `test/e2e/presets.ts`, aiming the target at a recorder listener with
+`aimedAt()`. `test/unit/presets.test.ts` fails if a security preset has no spec or a reproduction no preset.
+
 All specs run on the shared harness in `test/e2e/fixture.ts`; drive the sandbox through
 `SandboxDriver`, not through the playground.
 

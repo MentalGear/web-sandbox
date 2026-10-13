@@ -38,6 +38,16 @@
  * `code` is a plain own property rather than an Error subclass: a subclass would be a module-scope
  * class this function cannot close over (see above), and a property reads the same in every realm.
  *
+ * Reserved methods (backlog B5, ADR-006). Names starting with `sandbox:` belong to the library: they live in
+ * a registry of their own, filled only by `exposeReserved`, and `expose` never registers such a name. So an
+ * embedder's or a guest's method can never replace a library method, and a library method never answers to
+ * a name someone else exposed: the two namespaces are disjoint by construction. A reserved method's
+ * refusal may carry one of the LIBRARY codes (RpcLibraryCode, today the fetch bridge's FETCH_* codes), and
+ * only a reserved method's: a code on any other handler's error is not forwarded (HANDLER_ERROR, as above).
+ * The calling side accepts a library code only for a call to a reserved name, and only when created with
+ * `acceptLibraryCodes` — the guest's broker. The host's broker is not, so nothing the guest sends can ever
+ * give a host call a library code: on the host every response is clamped exactly as described above.
+ *
  * Symmetric model: on each side `expose` publishes YOUR methods and `call` invokes the OTHER
  * side's methods. Each side keeps its own monotonic id counter, its own `pending` map (calls it
  * initiated) and its own registry (methods it exposed). ids only need to be unique within the
@@ -70,6 +80,17 @@ export type RpcErrorCode =
     | 'TIMEOUT' | 'TERMINATED' | 'ARGS_NOT_TRANSFERABLE' | 'SEND_FAILED' | 'INVALID_CALL'
     | 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE';
 
+/**
+ * Codes a library-reserved method (a `sandbox:` name) reports, from one closed set, disjoint from
+ * RpcErrorCode. Today they are the fetch bridge's (backlog B5, src/lib/fetch-bridge.ts); the strings are
+ * wire protocol (pinned by a test). Only the guest's calls to reserved methods can be refused with them.
+ */
+export type RpcLibraryCode =
+    | 'FETCH_NOT_ALLOWED' | 'FETCH_BUSY' | 'FETCH_REDIRECT' | 'FETCH_TOO_LARGE' | 'FETCH_TIMEOUT' | 'FETCH_FAILED';
+
+/** Every library-reserved method name starts with this prefix; expose() never registers one. */
+export const RESERVED_METHOD_PREFIX = 'sandbox:';
+
 /** The shape of every rejection from call()/callWithTimeout(): a plain Error with an own `code`. */
 export interface RpcError extends Error {
     code: RpcErrorCode;
@@ -78,11 +99,23 @@ export interface RpcError extends Error {
 export interface BrokerOptions {
     // Default per-call timeout in ms; 0 disables timeouts entirely. Override per call via callWithTimeout.
     timeoutMs?: number;
+    // Accept a library code (RpcLibraryCode) in a refusal of a call to a reserved method. Only the guest's
+    // broker sets it; the host's never does, so a host call can never be refused with a library code.
+    acceptLibraryCodes?: boolean;
 }
 
 export interface Broker {
-    /** Publishes one of YOUR methods under `name` for the other side to call. Last registration wins. */
+    /**
+     * Publishes one of YOUR methods under `name` for the other side to call. Last registration wins. A
+     * reserved name (one starting with RESERVED_METHOD_PREFIX) is ignored: those belong to the library.
+     */
     expose(name: string, fn: RpcMethod): void;
+    /**
+     * Publishes a LIBRARY method under a reserved name (it must start with RESERVED_METHOD_PREFIX; any other
+     * name is ignored). Its refusals may carry a library code (RpcLibraryCode), set on the thrown error's
+     * own `code`; any other code is reported as HANDLER_ERROR.
+     */
+    exposeReserved(name: string, fn: RpcMethod): void;
     /**
      * Invokes a method the OTHER side exposed and resolves with its result. Uses the default timeout.
      * Every rejection is an RpcError: branch on its `code`, never on its message.
@@ -113,6 +146,9 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // port yet still bounds an unresponsive other side.
     const DEFAULT_TIMEOUT_MS = 30000;
     const defaultTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const acceptLibraryCodes = options.acceptLibraryCodes === true;
+    // Mirrors the exported RESERVED_METHOD_PREFIX (a test keeps them equal): declared here to survive stringification.
+    const RESERVED_PREFIX = 'sandbox:';
 
     // The one source of truth for the code strings (see RpcErrorCode for meanings). Inside the function
     // for the same reason as everything else; the type makes it exhaustive and exact.
@@ -127,14 +163,22 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         RESULT_NOT_TRANSFERABLE: 'RESULT_NOT_TRANSFERABLE',
     };
 
+    // The library codes (RpcLibraryCode), closed: what a reserved method may report.
+    const LIBRARY_CODES: readonly RpcLibraryCode[] = ['FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED'];
+    const isLibraryCode = (code: unknown): code is RpcLibraryCode => typeof code === 'string' && (LIBRARY_CODES as readonly string[]).includes(code);
+    const isReservedName = (name: string) => name.startsWith(RESERVED_PREFIX);
+
     // Methods WE expose. Using a Map (not a plain object) is the core of the hardening — see handleRequest.
+    // Reserved names live in their own map, written only by exposeReserved: see the header.
     const registry = new Map<string, RpcMethod>();
+    const reservedRegistry = new Map<string, RpcMethod>();
 
     // Calls WE initiated, keyed by the id we chose.
     type Pending = {
         resolve: (value: unknown) => void;
         reject: (error: Error) => void;
         timer: ReturnType<typeof setTimeout> | null;
+        reserved: boolean; // a call to a reserved name: the only kind a library code may refuse
     };
     const pending = new Map<number, Pending>();
     let nextId = 0;
@@ -166,14 +210,25 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // non-string, nothing) becomes HANDLER_ERROR. So a response can never yield a local code. The
     // message is the other side's text verbatim, or a fixed fallback when it sent none. Each field is
     // read once, and `code` is always one of our own constants rather than the inbound value.
-    function refusalFromResponse(data: any): RpcError {
+    // A library code passes only for a call to a reserved name on a broker created with acceptLibraryCodes
+    // (the guest's); it is then the matching string from our own LIBRARY_CODES, never the inbound value.
+    function refusalFromResponse(data: any, reserved: boolean): RpcError {
         const reportedError = data.error;
         const reportedCode = data.code;
         const error = new Error(typeof reportedError === 'string' ? reportedError : 'RPC call failed') as RpcError;
+        const libraryCode = reserved && acceptLibraryCodes ? LIBRARY_CODES.find(code => code === reportedCode) : undefined;
         error.code = reportedCode === CODE.UNKNOWN_METHOD ? CODE.UNKNOWN_METHOD
             : reportedCode === CODE.RESULT_NOT_TRANSFERABLE ? CODE.RESULT_NOT_TRANSFERABLE
+            : libraryCode !== undefined ? libraryCode as unknown as RpcErrorCode
             : CODE.HANDLER_ERROR;
         return error;
+    }
+
+    // The code an error thrown by a handler is reported with: a library code only from a reserved method.
+    function handlerErrorCode(error: unknown, reserved: boolean): string {
+        if (!reserved || !error || typeof error !== 'object') return CODE.HANDLER_ERROR;
+        const code = (error as any).code;
+        return isLibraryCode(code) ? code : CODE.HANDLER_ERROR;
     }
 
     // Removes a pending call and disarms its timer, returning it once (or null if already settled).
@@ -216,7 +271,8 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // keys here; on a plain object they would instead resolve to inherited functions and let the
         // caller reach or mutate the prototype chain. So unknown and inherited names alike resolve to
         // nothing and invoke nothing.
-        const method = registry.get(data.method);
+        const reserved = isReservedName(data.method);
+        const method = reserved ? reservedRegistry.get(data.method) : registry.get(data.method);
         if (!method) {
             respond({ type: 'RPC_RES', id, ok: false, error: `unknown method: ${data.method}`, code: CODE.UNKNOWN_METHOD });
             return;
@@ -226,11 +282,12 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // the method name or the args, and the args arrived as inert structured-clone data, so nothing
         // the other side sends is ever interpreted as code. Funnelling through Promise.resolve().then(...) makes
         // a sync return, a sync throw, an async resolve and an async reject all settle the same way.
-        // A throw is always reported as HANDLER_ERROR: a `code` the handler put on its error is not
-        // forwarded (and the caller would clamp it anyway — see refusalFromResponse).
+        // A throw is reported as HANDLER_ERROR: a `code` the handler put on its error is not forwarded (and
+        // the caller would clamp it anyway — see refusalFromResponse). The one exception is a library code
+        // from a reserved method (handlerErrorCode).
         Promise.resolve().then(() => method(...data.args)).then(
             value => sendResult(respond, id, value),
-            error => respond({ type: 'RPC_RES', id, ok: false, error: errorMessage(error), code: CODE.HANDLER_ERROR }),
+            error => respond({ type: 'RPC_RES', id, ok: false, error: errorMessage(error), code: handlerErrorCode(error, reserved) }),
         );
     }
 
@@ -246,15 +303,22 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             entry.resolve(data.value);
             return;
         }
-        entry.reject(refusalFromResponse(data));
+        entry.reject(refusalFromResponse(data, entry.reserved));
     }
 
     function expose(name: string, fn: RpcMethod): void {
         // Sanitize before storing (a bad name or non-callable would only fail later, confusingly).
         if (typeof name !== 'string' || typeof fn !== 'function') return;
+        // Reserved names belong to the library (exposeReserved): never registered here.
+        if (isReservedName(name)) return;
         // Re-exposing a name REPLACES the previous handler (last registration wins): the least
         // surprising choice, it mirrors Map.set and lets a handler be hot-swapped.
         registry.set(name, fn);
+    }
+
+    function exposeReserved(name: string, fn: RpcMethod): void {
+        if (typeof name !== 'string' || typeof fn !== 'function' || !isReservedName(name)) return;
+        reservedRegistry.set(name, fn);
     }
 
     function callWithTimeout(timeoutMs: number, method: string, ...args: unknown[]): Promise<unknown> {
@@ -283,7 +347,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
                 }, timeoutMs);
             }
             // Record the pending promise BEFORE sending, so a response can never arrive first.
-            pending.set(id, { resolve, reject, timer });
+            pending.set(id, { resolve, reject, timer, reserved: isReservedName(method) });
             try {
                 send({ type: 'RPC_REQ', id, method, args: sendableArgs });
             } catch (error) {
@@ -327,5 +391,5 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         }
     }
 
-    return { expose, call, callWithTimeout, handleMessage, rejectAllPending, terminationError };
+    return { expose, exposeReserved, call, callWithTimeout, handleMessage, rejectAllPending, terminationError };
 }
