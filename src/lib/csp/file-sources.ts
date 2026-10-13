@@ -1,4 +1,5 @@
 import type { CSPDirectives } from "../../csp-directives";
+import { isJavaScriptType } from "../files";
 
 /**
  * Which directives admit the guest's own files (ADR-004). A registered file reaches the guest as a
@@ -20,9 +21,6 @@ const BLOB = 'blob:';
 const NONE = "'none'";
 const SELF = "'self'";
 
-// The JavaScript MIME types a file can be given; only text/javascript comes from the extension table.
-const JAVASCRIPT_TYPES = new Set(['text/javascript', 'application/javascript', 'text/ecmascript', 'application/ecmascript']);
-
 type FileDirective = 'script-src' | 'style-src' | 'img-src' | 'font-src' | 'media-src' | 'connect-src';
 
 /** The directives that need `blob:` for files of these types. Empty when there are no files. */
@@ -30,7 +28,7 @@ export function directivesForTypes(types: Iterable<string>): Set<FileDirective> 
     const needed = new Set<FileDirective>();
     for (const type of types) {
         needed.add('connect-src');
-        if (JAVASCRIPT_TYPES.has(type)) needed.add('script-src');
+        if (isJavaScriptType(type)) needed.add('script-src');
         if (type === 'text/css') needed.add('style-src');
         if (type.startsWith('image/')) needed.add('img-src');
         if (type.startsWith('font/')) needed.add('font-src');

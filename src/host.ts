@@ -3,9 +3,10 @@ import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./cs
 import { generateCSP } from "./lib/csp/csp-generator";
 import { dropSelfSources } from "./lib/csp/drop-self";
 import { addFileSources } from "./lib/csp/file-sources";
-import { FileStore, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
-import { inSandboxFiles, inSandboxMarkup } from "./lib/in-sandbox-files";
-import { inlineScriptsAllowed, rewriteMarkupReferences } from "./lib/markup-references";
+import { FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
+import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
+import { inlineScriptsAllowed, rewriteGuestMarkup } from "./lib/markup-references";
+import { mergeGuestImportMaps } from "./lib/import-map";
 import { deepMerge } from "./lib/utils";
 import { inSandboxScript } from "./lib/in-sandbox-script";
 import { createBroker } from "./lib/rpc";
@@ -69,6 +70,17 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
 const TERMINATED_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.";
 const RESET_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was reset or terminated.";
 
+// What the bootstrap writes and registers for one build's guest markup (iframe mode).
+interface GuestMarkupPlan {
+    // the markup cut into parts for the bootstrap to write (markup-references.ts), or null to embed it as written
+    parts: string[] | null;
+    // the one import map (module graph, PR3): every registered JavaScript file, plus the guest's own
+    // inline maps merged (import-map.ts), or null when no JavaScript file is registered
+    importMap: { paths: string[]; guest: string | null } | null;
+}
+
+const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
+
 const DEFAULT_TERMINATE_REASON = 'terminated by the host';
 const WATCHDOG_REASON = 'the guest stopped responding (watchdog)';
 
@@ -86,6 +98,7 @@ export class WebSandbox extends HTMLElement {
     private _warnedSelfDirectives = new Set<string>(); // directives already warned about for 'self' (drop-self.ts)
     private _warnedFileDirectives = new Set<string>(); // directives already warned about for an explicit 'none' (file-sources.ts)
     private _warnedVirtualFilesUrl = false;
+    private _warnedGuestMarkup = new Set<string>(); // module-graph warnings about guest markup, once per text (_warnOnce)
 
     // Files are part of the environment: they live on the element, survive reset(), load(), setConfig()
     // and terminate(), and every environment build takes a snapshot (createIframe). See src/lib/files.ts.
@@ -404,18 +417,23 @@ export class WebSandbox extends HTMLElement {
         this.createIframe();
     }
 
-    private _getSandboxCommsScript(mode: 'iframe' | 'worker', files: FileSnapshotEntry[], markupParts: string[] | null = null) {
+    private _getSandboxCommsScript(mode: 'iframe' | 'worker', files: FileSnapshotEntry[], plan: GuestMarkupPlan = NO_MARKUP_PLAN) {
         // communication, logs and RPC bridge template that any content running in the sandbox uses.
         // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
         const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe}, '${mode}', console, ${createBroker.toString()});`;
         // The snapshot is one inline literal, so the blobs exist before the parser reaches guest markup.
         // Installed even with no files (an empty literal): sandboxFiles always exists, and a lookup in
         // an empty store is NOT_FOUND like any other miss, never a ReferenceError.
-        const filesCall = `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)})`;
-        if (!markupParts) return `${comms}${filesCall};`;
+        let filesCall = `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)})`;
+        // With JavaScript files: the one import map, registered with the URLs filesCall just created,
+        // before any guest markup (module graph, PR3). It hands the files object on to the next step.
+        if (plan.importMap) {
+            filesCall = `(${inSandboxImportMap.toString()})(${filesCall}, ${toInlineScriptLiteral(plan.importMap.paths)}, ${toInlineScriptLiteral(plan.importMap.guest)})`;
+        }
+        if (!plan.parts) return `${comms}${filesCall};`;
         // Guest markup that names files: written by the bootstrap's last statement, with the blob: URLs
         // filesCall just created (markup-references.ts). The parts are one more inline literal.
-        return `${comms}(${inSandboxMarkup.toString()})(${filesCall}, ${toInlineScriptLiteral(markupParts)});`;
+        return `${comms}(${inSandboxMarkup.toString()})(${filesCall}, ${toInlineScriptLiteral(plan.parts)});`;
     }
 
     private _getWorkerBootstrapScript(files: FileSnapshotEntry[]) {
@@ -476,15 +494,31 @@ export class WebSandbox extends HTMLElement {
         return dropSelfSources(directives, this._warnedSelfDirectives);
     }
 
-    // Guest markup that names registered files, cut into parts for the bootstrap to write
-    // (markup-references.ts), or null to embed the markup as written. Only when the bootstrap can run
-    // — scripts allowed by the sandbox flags and inline scripts by the policy — since otherwise
-    // nothing would write the markup; references then stay as written and fail closed.
-    private _getMarkupParts(html: string, files: FileSnapshotEntry[], sandboxFlags: string, directives: CSPDirectives): string[] | null {
-        if (files.length === 0) return null;
-        if (!sandboxFlags.split(' ').includes('allow-scripts')) return null;
-        if (!inlineScriptsAllowed(directives)) return null;
-        return rewriteMarkupReferences(html, new Set(files.map(entry => entry[0])));
+    // What the bootstrap does with this build's guest markup (GuestMarkupPlan): references to registered
+    // files cut into parts for it to write (markup-references.ts) and, with JavaScript files, the one
+    // import map (module graph). Only when the bootstrap can run — scripts allowed by the sandbox flags
+    // and inline scripts by the policy — since otherwise nothing would write the markup or register the
+    // map; references then stay as written and fail closed, and so do relative imports between modules.
+    private _getMarkupPlan(html: string, files: FileSnapshotEntry[], sandboxFlags: string, directives: CSPDirectives): GuestMarkupPlan {
+        if (files.length === 0) return NO_MARKUP_PLAN;
+        if (!sandboxFlags.split(' ').includes('allow-scripts')) return NO_MARKUP_PLAN;
+        if (!inlineScriptsAllowed(directives)) return NO_MARKUP_PLAN;
+
+        const javascript = files.filter(entry => isJavaScriptType(entry[1])).map(entry => entry[0]);
+        const markup = rewriteGuestMarkup(html, new Set(files.map(entry => entry[0])), {
+            modules: javascript.length > 0,
+            onModuleFailure: (index) => this._warnOnce(`[Sandbox] inline module script #${index + 1} in the guest markup could not be lexed, so its relative imports were not rewritten and will fail.`),
+        });
+        if (javascript.length === 0) return { parts: markup.parts, importMap: null };
+        const guest = mergeGuestImportMaps(markup.importMaps, (message) => this._warnOnce(message));
+        return { parts: markup.parts, importMap: { paths: javascript, guest } };
+    }
+
+    // Warnings about the guest's markup come back with every build of the same markup: one each per element.
+    private _warnOnce(message: string) {
+        if (this._warnedGuestMarkup.has(message)) return;
+        this._warnedGuestMarkup.add(message);
+        console.warn(message);
     }
 
     private createIframe() {
@@ -505,13 +539,13 @@ export class WebSandbox extends HTMLElement {
             guestDocument = buildGuestDocument({ csp: generateCSP(directives), bootstrapScript: this._getWorkerBootstrapScript(files), content: '' });
         } else {
             const html = this._config.html || '<div id="root"></div>';
-            // A fresh slot nonce per build (inside rewriteMarkupReferences); null keeps the markup verbatim.
-            const markupParts = this._getMarkupParts(html, files, sandboxFlags, directives);
+            // A fresh slot nonce per build (inside rewriteGuestMarkup); null parts keep the markup verbatim.
+            const plan = this._getMarkupPlan(html, files, sandboxFlags, directives);
             guestDocument = buildGuestDocument({
                 csp: generateCSP(directives),
-                bootstrapScript: this._getSandboxCommsScript('iframe', files, markupParts),
-                content: markupParts ? '' : html,
-                bootstrapWritesContent: markupParts !== null,
+                bootstrapScript: this._getSandboxCommsScript('iframe', files, plan),
+                content: plan.parts ? '' : html,
+                bootstrapWritesContent: plan.parts !== null,
             });
         }
 

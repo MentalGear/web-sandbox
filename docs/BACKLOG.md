@@ -34,14 +34,14 @@ conditional "continue".
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
 | Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); an empty directive is `'none'`, and the defaults leave unset fetch directives to `default-src` (S16); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
-| Files | 🟡 guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`); module graph and CSS `url()` open (C1), writes open (C5) |
+| Files | 🟡 guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`); modules import each other by relative path through one import map (es-module-lexer, bundled); CSS `url()` open (C1), writes open (C5) |
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`), and WebKit shows a frame the guest creates the host URL as its referrer (S17) |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
 the virtual-files Service Worker was replaced by guest-realm blob URLs ([ADR-004](ADR-004-files-as-blob-urls.md)):
-S3, C2 and C3 done, C1 partly, C4 rejected, C5 added; C1's markup references followed the same day.
+S3, C2 and C3 done, C1 partly, C4 rejected, C5 added; C1's markup references and module graph followed the same day.
 S15 and S16 were done on 2026-10-13, and S17 added. Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -791,7 +791,7 @@ Their separate retry/stop field is not adopted: here it follows from the code.
 Decided in [ADR-004](ADR-004-files-as-blob-urls.md): files are registered on the element and reach
 the guest as `blob:` URLs created in its own realm. The Service-Worker hub is gone (Rejected, below).
 
-### C1 · In-sandbox VFS API — 🟡 **read, list, url and markup references done; modules and CSS open**
+### C1 · In-sandbox VFS API — 🟡 **read, list, url, markup references and modules done; CSS open**
 
 **Done** (2026-10-13): the guest global `sandboxFiles` with `list()`, `url(path)`, `read(path)` and
 `text(path)`, in iframe and worker mode, built by the bootstrap from a snapshot the host embeds as one
@@ -814,13 +814,24 @@ contents, a guest-side parser. Decisions and fidelity notes: [ADR-004, amendment
 Tests: `src/lib/markup-references.test.ts`, `test/unit/files.test.ts`, `test/e2e/files.spec.ts`
 section 8 on all three engines.
 
-**Open**, in this order:
-- **Module graph** (PR3; `<script type="module" src>` of a single module already works) — relative
-  specifiers in static imports, re-exports and literal `import()` rewritten host-side at registration
-  to virtual URLs, plus exactly one import map to the `blob:` URLs, inserted before any module
-  (Firefox honours only the first map). Needs a JavaScript lexer
-  (es-module-lexer's asm.js build): **the dependency decision is pending**. Computed `import()`,
-  `new URL(…, import.meta.url)` and module workers stay unsupported and fail closed.
+**Done** (2026-10-13), module graph: relative specifiers (`./`, `../`, `/`) in static imports,
+`export … from`, `export * from`, side-effect imports and literal `import()` of registered JavaScript
+files are rewritten at registration, host-side, to `https://vfs.invalid/<path>` URLs
+(`src/lib/module-specifiers.ts`), with es-module-lexer's asm.js build (`es-module-lexer/js`: sync, no
+WebAssembly), pinned at 1.7.0 as a dev dependency and bundled into `dist` (owner-approved; MIT notice in
+`THIRD_PARTY_NOTICES.md`). Inline `<script type="module">` in guest markup is rewritten the same way.
+The bootstrap registers exactly one import map from those URLs to the guest's `blob:` URLs before any
+markup, so a module reached by `blob:` URL and by virtual URL is evaluated once; a guest inline import
+map is merged into it on the host and taken out of the markup (`src/lib/import-map.ts`), so it behaves
+the same in every engine. `read()`/`text()` return the bytes as registered (the rewrite travels as byte
+edits); the quota counts what the rewrite adds. Computed `import()`, `new URL(…, import.meta.url)`,
+module workers and module graphs in worker mode stay unsupported and fail closed; a file the lexer
+cannot parse is delivered unchanged with a warning. Decisions: [ADR-004, module graph amendment](ADR-004-files-as-blob-urls.md#amendment-module-graph-2026-10-13).
+Tests: `src/lib/module-specifiers.test.ts`, `src/lib/import-map.test.ts`, `src/lib/files.test.ts`,
+`src/lib/in-sandbox-files.test.ts`, `src/lib/markup-references.test.ts`, `test/unit/files.test.ts`,
+`test/e2e/files.spec.ts` section 9 on all three engines.
+
+**Open**:
 - **CSS** (PR4) — `url()` and `@import` inside registered stylesheets and `<style>`, and `srcset`.
 
 **Verified** (2026-08-29, kept as a record): one-way only. The host pushed with `registerFiles()`;

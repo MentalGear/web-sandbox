@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { buildGuestDocument, buildWrapperDocument, escapeAttribute, toInlineScriptLiteral } from '@src/lib/frame-documents';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
-import { inSandboxFiles, inSandboxMarkup } from '@src/lib/in-sandbox-files';
+import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from '@src/lib/in-sandbox-files';
 import { rewriteMarkupReferences } from '@src/lib/markup-references';
 import { createBroker } from '@src/lib/rpc';
 import { workerBootstrap } from '@src/lib/worker-bootstrap';
@@ -238,6 +238,8 @@ describe('markup references (PR2): guest markup that names a registered file is 
     const NONCE = '0123456789abcdef0123456789abcdef';
     const FILES = { 'logo.svg': '<svg/>', 'app.js': 'void 0', 'img/x.svg': '<svg/>' };
     const snapshotLiteral = (el: any) => toInlineScriptLiteral(el._files.snapshot());
+    // FILES has one JavaScript file, so the bootstrap also registers the import map (module graph, PR3)
+    const filesStep = (el: any) => `(${inSandboxImportMap.toString()})((${inSandboxFiles.toString()})(${snapshotLiteral(el)}), ["app.js"], null)`;
     const comms = (mode = 'iframe') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()});`;
     const bootstrapScriptOf = (el: HTMLElement) => parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
 
@@ -248,7 +250,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
         ['a reference inside <template>', '<template><img src="logo.svg"></template>'],
     ])('no match (%s): the guest document is byte for byte the one built without the rewrite', async (_, html) => {
         const el = await mount({ ...SCRIPTS, html }, FILES);
-        const guest = buildGuestDocument({ csp: policyOf(el), bootstrapScript: comms() + `(${inSandboxFiles.toString()})(${snapshotLiteral(el)});`, content: html });
+        const guest = buildGuestDocument({ csp: policyOf(el), bootstrapScript: comms() + `${filesStep(el)};`, content: html });
         expect(wrapperOf(el)).toBe(buildWrapperDocument(guest, 'allow-scripts'));
         expect(guestDocumentOf(el)).not.toContain(inSandboxMarkup.toString());
     });
@@ -258,7 +260,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
         const el = await mount({ ...SCRIPTS, html }, FILES);
         const parts = rewriteMarkupReferences(html, new Set(Object.keys(FILES)), NONCE)!;
         expect(parts.filter((_, i) => i % 2 === 1)).toEqual(['logo.svg', 'app.js', 'img/x.svg']);
-        const bootstrap = comms() + `(${inSandboxMarkup.toString()})((${inSandboxFiles.toString()})(${snapshotLiteral(el)}), ${toInlineScriptLiteral(parts)});`;
+        const bootstrap = comms() + `(${inSandboxMarkup.toString()})(${filesStep(el)}, ${toInlineScriptLiteral(parts)});`;
         expect(guestDocumentOf(el)).toBe(`<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policyOf(el))}"><script>${bootstrap}</script>`);
         expect(wrapperOf(el)).toBe(buildWrapperDocument(guestDocumentOf(el), 'allow-scripts'));
     });
@@ -337,5 +339,130 @@ describe('markup references (PR2): guest markup that names a registered file is 
         expect(writtenMeta?.getAttribute('content')).toBe(policyOf(el));
         expect(writtenScript?.textContent).toBe(script!.textContent);
         expect(written.querySelectorAll('meta[http-equiv="Content-Security-Policy"]')[0]).toBe(writtenMeta);
+    });
+});
+
+describe('module graph (PR3): one import map, registered by the bootstrap, only with JavaScript files', () => {
+    const SCRIPTS = { capabilities: ['allow-scripts'] };
+    const comms = (mode = 'iframe') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()});`;
+    const filesCall = (el: any) => `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(el._files.snapshot())})`;
+    const mapCall = (el: any, paths: string[], guest: string | null) => `(${inSandboxImportMap.toString()})(${filesCall(el)}, ${toInlineScriptLiteral(paths)}, ${toInlineScriptLiteral(guest)})`;
+    const bootstrapScriptOf = (el: HTMLElement) => parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
+    // the arguments of the bootstrap's last call: [files step, parts]
+    const writtenParts = (el: HTMLElement): string[] => {
+        const script = bootstrapScriptOf(el);
+        return JSON.parse(script.slice(script.lastIndexOf(', [') + 2, -2));
+    };
+    const GUEST_MAP = '<script type="importmap">{"imports":{"lodash":"https://cdn.example/lodash.js","https://vfs.invalid/app.js":"https://attacker.test/x.js"}}</script>';
+
+    it('no JavaScript file: no import map, and a guest import map stays in the markup as written (as before)', async () => {
+        const html = `${GUEST_MAP}<p>x</p>`;
+        const el = await mount({ ...SCRIPTS, html }, { 'style.css': 'p {}', 'data.json': '{}' });
+        const guest = buildGuestDocument({ csp: policyOf(el), bootstrapScript: comms() + `${filesCall(el)};`, content: html });
+        expect(guestDocumentOf(el)).toBe(guest);
+        expect(guestDocumentOf(el)).not.toContain('inSandboxImportMap');
+    });
+
+    it('no file at all: a guest import map stays in the markup as written', async () => {
+        const html = `${GUEST_MAP}<script type="module">import './app.js';</script>`;
+        const el = await mount({ ...SCRIPTS, html });
+        expect(guestDocumentOf(el).endsWith(`</script></head>${html}`)).toBe(true);
+        expect(guestDocumentOf(el)).not.toContain('inSandboxImportMap');
+    });
+
+    it('with JavaScript files: the import map step names every JavaScript file (by type, sorted) and nothing else; markup with nothing to change stays embedded as written', async () => {
+        const html = '<p>no modules here</p>';
+        const el = await mount({ ...SCRIPTS, html }, {
+            'b.js': "import './a.mjs';", 'a.mjs': 'export {}', 'x.txt': { content: 'import "./a.mjs"', type: 'application/javascript' }, 'style.css': '', 'n.js': { content: '', type: 'text/plain' },
+        });
+        const guest = buildGuestDocument({ csp: policyOf(el), bootstrapScript: comms() + `${mapCall(el, ['a.mjs', 'b.js', 'x.txt'], null)};`, content: html });
+        expect(guestDocumentOf(el)).toBe(guest);
+    });
+
+    it("a guest inline import map is taken out of the markup and merged by the host: ours win on the virtual origin, with one warning per element", async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const html = `${GUEST_MAP}<script type="module">import { a } from './app.js';</script>`;
+        const el = await mount({ ...SCRIPTS, html }, { 'app.js': 'export const a = 1;' });
+        el.reset();
+        const guestMap = JSON.stringify({ imports: { lodash: 'https://cdn.example/lodash.js' } });
+        expect(bootstrapScriptOf(el)).toContain(`${mapCall(el, ['app.js'], guestMap)}, `);
+        const written = writtenParts(el);
+        expect(written).toHaveLength(1); // no slot: only the inline module changed
+        const doc = parse(written[0]!);
+        expect(doc.querySelectorAll('script[type=importmap]')).toHaveLength(0);
+        expect(doc.querySelector('script[type=module]')!.textContent).toBe(`import { a } from "https://vfs.invalid/app.js";`);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('import map entries'))).toHaveLength(1);
+    });
+
+    it('an invalid guest import map is left out (taken out of the markup, not merged), with one warning per element across rebuilds', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount({ ...SCRIPTS, html: '<script type="importmap">{ nope</script><p>x</p>' }, { 'app.js': '' });
+        el.reset();
+        el.reset();
+        expect(bootstrapScriptOf(el)).toContain(`${mapCall(el, ['app.js'], null)}, `);
+        expect(writtenParts(el).join('')).not.toContain('importmap');
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('not a valid import map'))).toHaveLength(1);
+    });
+
+    it('an inline module the lexer cannot parse is left as written, with one warning per element across rebuilds', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const html = `<script type="module">import {</script>`;
+        const el = await mount({ ...SCRIPTS, html }, { 'app.js': '' });
+        el.reset();
+        expect(guestDocumentOf(el).endsWith(`</script></head>${html}`)).toBe(true);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('inline module script #1'))).toHaveLength(1);
+    });
+
+    it.each([
+        ['scripts are not allowed (no allow-scripts)', { capabilities: [] }],
+        ['the policy refuses inline scripts (an import map is an inline script)', { ...SCRIPTS, connectionsAllowed: { 'script-src': ['blob:'] } }],
+        ["a nonce disables 'unsafe-inline'", { ...SCRIPTS, connectionsAllowed: { 'script-src': ["'unsafe-inline'", "'nonce-abc'"] } }],
+    ])('no import map and no change to the markup when the bootstrap cannot run: %s (modules then fail closed)', async (_, config) => {
+        const html = `${GUEST_MAP}<script type="module">import './app.js';</script>`;
+        const el = await mount({ ...config, html }, { 'app.js': '' });
+        expect(guestDocumentOf(el)).not.toContain('inSandboxImportMap');
+        expect(guestDocumentOf(el).endsWith(`</script></head>${html}`)).toBe(true);
+    });
+
+    it('worker mode: no import map (import maps do not apply to workers); the snapshot still carries the rewrite', async () => {
+        const el = await mount({ mode: 'worker', html: '<script type="module">import "./a.js"</script>' }, { 'm.js': "import './a.js';" });
+        const frameScript = parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
+        const workerSource: string = JSON.parse(frameScript.slice(`(${workerBootstrap.toString()})(`.length, -2));
+        expect(workerSource).not.toContain('importmap');
+        expect(workerSource).toContain(`${filesCall(el)};`);
+        expect(el._files.snapshot()[0]).toHaveLength(4);
+    });
+
+    // S2 with the module graph: guest import maps, inline modules and file paths are data; none of
+    // them may end the bootstrap script early or come before the policy.
+    const HOSTILE_MODULE_MARKUP = [
+        '<script type="importmap">{"imports":{"</script><script>alert(1)</script>":"<!--"}}</script>',
+        '<script type="importmap">{"imports":{"x":"</script><plaintext>"}}</script><script type="module">import "./app.js"</script>',
+        '<script type="module">import "./app.js"; "</scr" + "ipt><script>alert(1)</script>"</script>',
+        '<script type="module">import "./<!--app.js"; import "./app.js"</script>',
+        '<script type="importmap"></script></head><script type="importmap">{"imports":{}}</script><plaintext>',
+        '<!-- <script type="importmap"> --><script type="module">import "/app.js"</script>',
+        '<script type="importmap">{"imports":{"a":"b"}}</script><img src="logo.svg"><script>/*',
+    ];
+    it.each(HOSTILE_MODULE_MARKUP)('keeps the CSP meta first and the bootstrap intact for %j', async (html) => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount({ ...SCRIPTS, html }, { 'app.js': "import './<script>.js'; export {}", 'logo.svg': '<svg/>' });
+        const guest = guestDocumentOf(el);
+        const doc = parse(guest);
+        const [meta, script, ...rest] = [...doc.head.children];
+        expect(meta?.getAttribute('http-equiv')).toBe('Content-Security-Policy');
+        expect(meta?.getAttribute('content')).toBe(policyOf(el));
+        expect(script?.textContent).toContain(inSandboxImportMap.toString());
+        expect(script!.textContent).not.toContain('</script');
+        expect(script!.textContent).not.toContain('<!--');
+        if (script!.textContent!.includes(inSandboxMarkup.toString())) {
+            // written by the bootstrap: all guest markup is inside its literal
+            expect(rest).toEqual([]);
+            expect(doc.body.childNodes).toHaveLength(0);
+            expect(guest.endsWith('</script>')).toBe(true);
+        } else {
+            // nothing to change (the lexer failed, or a specifier holds '<'): embedded as written, after the security block
+            expect(guest.endsWith(`</script></head>${html}`)).toBe(true);
+        }
     });
 });

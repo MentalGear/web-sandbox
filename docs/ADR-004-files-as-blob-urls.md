@@ -169,9 +169,10 @@ next environment runs.
 
 Costs and limits:
 
-- **Guest markup names files only through the attributes listed in the amendment below**
-  (2026-10-13): `srcset`, CSS `url()`, imports between modules and `<template>` contents do not
-  resolve yet; guest code uses `sandboxFiles.url()` for those.
+- **Guest markup names files only through the attributes listed in the amendments below**
+  (2026-10-13): `srcset`, CSS `url()` and `<template>` contents do not resolve yet; guest code uses
+  `sandboxFiles.url()` for those. Relative imports between modules resolve since the module graph
+  amendment, with the limits listed there.
 - **Every guest carries the files bootstrap**, about 1.3 KB of source, files or not. That is the
   price of an API that exists regardless of host state.
 - **Changes need a rebuild.** A file registered while the guest runs reaches it at the next
@@ -187,8 +188,9 @@ Planned in this order, each on top of this decision:
    `script[src]`, stylesheet and icon links, media sources and `poster` that resolve to registered
    files, and the bootstrap writes the document with the guest's own `blob:` URLs in their place,
    keeping parser order and the CSP-first rule (S2).
-2. **Module graph**: relative specifiers rewritten host-side and one import map from virtual URLs to
-   `blob:` URLs. Needs a JavaScript lexer, a dependency decision still to be made.
+2. **Module graph** — *done 2026-10-13, see the amendment below*: relative specifiers rewritten
+   host-side with es-module-lexer (approved as a bundled dev dependency) and one import map from
+   virtual URLs to `blob:` URLs.
 3. **CSS**: `url()` and `@import` inside registered stylesheets, and `srcset`.
 
 ### Revisit if
@@ -301,7 +303,7 @@ Markup with no matched reference is never re-serialised.
 ### Not supported (fail closed), each left as written
 
 `srcset` and CSS `url()` in `<style>` or `style=""` (next step 3); relative imports inside a module
-(next step 2: `<script type="module" src="main.js">` works for a single module); `<template>`
+(next step 2, done in the module graph amendment below); `<template>`
 contents; `<iframe>`, `<embed>`, `<object>`, `<a href>`, `<form action>`, `<input type="image">` and
 SVG elements; `rel` values outside the list. `load()` takes markup, as before: a registered
 `index.html` is a file like any other, not the guest's markup (the playground's "Run (Virtual-Files)"
@@ -335,3 +337,151 @@ hostile corpus with matched references, before and after the write) and
 sync, inline, `defer`, module and `async` scripts, a stylesheet applied before the next script and by
 `DOMContentLoaded`, images by relative, `./` and `/` paths, the policy still first; fragment placement
 equal to the verbatim path; fail closed with no request), on Chromium, Firefox and WebKit.
+
+## Amendment: module graph (2026-10-13)
+
+**Status**: Accepted · **Date**: 2026-10-13 · implements next step 2
+
+Registered modules import each other the way they would on a server: `import { a } from './lib/a.js'`,
+`export * from '../shared/b.js'`, `import('/lazy.js')`, from a file named by
+`<script type="module" src="main.js">` or from an inline module in the guest markup.
+
+### Why it needs a rewrite
+
+A relative specifier never resolves inside a `blob:` module. Its base URL is the blob URL, whose path
+is opaque, so `./x.js`, `../x.js` and `/x.js` throw a `TypeError` in every engine, and they do so
+**before** any import map is consulted: an import map maps the resolved URL (or a bare specifier),
+and here there is no resolved URL (probe, section 3). Since S15 the guest's base is `about:blank`, and
+Firefox and WebKit then match a literal `./x.js` key; Chromium does not. Only a specifier rewritten to
+a full URL resolves in all three engines.
+
+### Decision
+
+1. **Rewrite at registration, on the host, JavaScript only.** When `registerFiles()` stores a file
+   whose type is JavaScript (`text/javascript`, `application/javascript`, `text/ecmascript`,
+   `application/ecmascript`, from the extension or an override), es-module-lexer finds its import
+   specifiers. Each relative one (`./`, `../`, `/`) in a static `import`, `export … from`,
+   `export * from`, a side-effect `import '…'`, a source or defer phase import, and in `import()` whose
+   argument is a string literal (or a template literal without substitutions) is replaced, quotes
+   included, by `JSON.stringify(new URL(specifier, 'https://vfs.invalid/' + path).href)`
+   ([`src/lib/module-specifiers.ts`](../src/lib/module-specifiers.ts)). Resolution is the URL
+   parser's: `..` above the root stays at the root. A specifier that would resolve outside
+   `https://vfs.invalid/` (`//host/x.js`, `/\host/x.js`) is left as written, as are bare specifiers
+   and full URLs: the import map and the policy decide those.
+2. **`read()` is faithful; the module graph uses the rewrite.** The store keeps the bytes as
+   registered and the rewrite as byte-range edits. The snapshot entry of a rewritten file gains a
+   fourth element, `[start, end, text, …]` over the registered bytes, and the guest builds the module
+   blob from slices of the registered blob and those texts, so the literal carries the file once.
+   `url(path)` names the module form (what markup references and the import map use); `read()` and
+   `text()` return the bytes as registered; `listFiles()` reports the registered size.
+3. **The quota counts what the literal carries.** A rewritten file costs its registered bytes plus,
+   per rewritten specifier, the replacement's length plus 24 (two offsets and the separators). So the
+   snapshot literal never grows past what the 8 MiB cap was measured at, even for a file that is
+   nothing but imports (a `import'./a';` costs 12 bytes registered and 59 rewritten). The check stays
+   atomic: the registered bytes are checked first, so an oversized batch is refused before any lexing,
+   then the batch is lexed and checked again, all before the store changes.
+4. **Exactly one import map, registered by the bootstrap.** After the blobs exist and before the
+   markup is written, a new bootstrap step (`inSandboxImportMap` in
+   [`src/lib/in-sandbox-files.ts`](../src/lib/in-sandbox-files.ts)) builds
+   `{ imports: { 'https://vfs.invalid/<path>': <blob URL> } }` for every registered JavaScript file,
+   inserts it as a `<script type="importmap">` through the DOM, and removes the element again: an inline
+   import map is registered when it is inserted, so the guest's document is left as it was. Its text
+   never passes through the HTML parser, and every `<` in the JSON is escaped as `<` anyway. The
+   value is the very URL `url(path)` returns and markup references use, and the module map is keyed
+   by URL, so a module reached both from markup (by `blob:` URL) and through the map (by virtual URL)
+   is one module, evaluated once.
+5. **Inline module scripts in the markup are rewritten too**, against the virtual document URL
+   `https://vfs.invalid/index.html`, as markup references are resolved. An inline module whose
+   specifier to replace contains `<` or `>` is left as written: those characters decide where the HTML
+   tokenizer ends a script (`<!--`, `-->`, `<script`), so replacing them could move the script's end
+   when the markup is parsed again.
+6. **The guest's own import maps are merged into ours**
+   ([`src/lib/import-map.ts`](../src/lib/import-map.ts)). Firefox honours only the first import map
+   of a document, Chromium and WebKit merge later ones, so a guest map left in the markup after ours
+   would apply in two engines and not in the third. Its inline `<script type="importmap">` elements
+   are taken out of the markup by the host's parse; each must be valid JSON in the import-map shape
+   (else it is left out, with a warning); several merge in document order, the earlier entry winning;
+   and every guest key that could match a URL in `https://vfs.invalid/` (inside it, or a prefix such
+   as `https://`) is dropped with a warning, in `imports` and in every scope: that origin names
+   registered files, and only the host maps it. The merged map travels as one more JSON string in
+   the bootstrap literal. With no JavaScript file registered, nothing changes: a guest import map
+   stays in the markup as written, as before.
+7. **Same gate as markup references.** The map is an inline script, and the bootstrap is what
+   registers it: with no `allow-scripts`, or a policy whose `script-src` (or `default-src`) does not
+   admit inline scripts or carries a nonce, hash or `'strict-dynamic'`, there is no map, no markup
+   change, and relative imports fail closed as before. `script-src` already gains `blob:` for
+   JavaScript files (main decision, point 5).
+8. **Failures pass the file through.** A JavaScript file that is not UTF-8 or that the lexer cannot
+   parse is stored unchanged, with one warning per registration of that file; its relative imports
+   then fail closed. An inline module the lexer cannot parse is left as written, with one warning per
+   element.
+
+### Why es-module-lexer, and why its `/js` build
+
+- **There is no native module lexer.** Browsers expose no API that lists a module's imports without
+  loading it, and `import.meta.resolve()` resolves against the module's own `blob:` URL, so it throws
+  for the same reason the import does (probe, section 3).
+- **An import map cannot rescue a relative specifier in a `blob:` module**: resolution against the
+  `blob:` base fails before the map is consulted (above). The rewrite has to change the source.
+- **Bun's scanner (`Bun.Transpiler.scanImports`) exists only in the Bun runtime.** The rewrite runs in
+  the embedder's browser, at `registerFiles()`.
+- **A regular expression cannot tell an import from import-like text** in strings, comments, regular
+  expression literals and template literals; a JavaScript tokenizer, with the division/regex
+  ambiguity and nested templates, is what es-module-lexer is. It is the lexer Vite and Vitest use.
+- **The `/js` build** (`es-module-lexer/js`, the asm.js build) is plain JavaScript: `parse()` is
+  synchronous, there is no `init()` and no WebAssembly, so `registerFiles()` stays synchronous and the
+  host page never needs `'wasm-unsafe-eval'` in its own policy. The default build compiles WebAssembly
+  and must be awaited first.
+- **Bundled, pinned, with its notice.** It is a dev dependency pinned at 1.7.0 and compiled into
+  `dist/index.js` by the library build, so consumers install nothing (the packed `package.json` has no
+  `dependencies`). Its MIT licence ships as [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md),
+  which is in the package's `files`, and a `/*! … */` notice comment that the bundle keeps.
+
+### Not supported (fail closed)
+
+- **Computed `import(expr)`**: not rewritten; a relative value throws a `TypeError` against the
+  `blob:` base, with no request.
+- **`new URL('./x', import.meta.url)`** (the pattern bundlers use for assets and workers):
+  `import.meta.url` is `blob:null/<uuid>`, and resolving against it throws. Use `sandboxFiles.url()`.
+- **A relative import of an unregistered file, or with a query or fragment**: rewritten to a virtual
+  URL that is not in the map, so the browser asks for `https://vfs.invalid/…`, which the policy refuses
+  with a violation. Nothing leaves (`.invalid` never resolves either).
+- **Module workers**: Chromium cannot start one from a guest `blob:` URL (main decision), and the
+  document's import map does not apply in workers in any engine, so rewritten imports fail there.
+- **Worker mode is classic only.** The worker gets the same snapshot, so `url()` names the module
+  form and `read()` the registered bytes, but there is no import map: `importScripts()` and
+  `import()` of a module without relative imports work, and a rewritten graph fails closed.
+- **A guest map entry for the virtual origin**, and a bare specifier mapped to a virtual URL (import
+  maps do not chain: the virtual URL would be fetched, and refused). A guest map can map bare
+  specifiers to allowlisted URLs.
+- **CSS** `url()` and `@import` inside registered stylesheets: next step 3.
+
+### Costs
+
+- **Bundle size**: the lexer is about 20 KB of minified JavaScript. The minified host build grows
+  from 23.5 KB to 49.7 KB (8.6 KB to 17.1 KB gzipped); the published, unminified `dist/index.js` from
+  42.6 KB to 114.7 KB (11.9 KB to 23.9 KB gzipped).
+- **Registration time**: lexing 5–8 MiB of JavaScript took 0.1–0.2 s in Bun (`registerFiles()` for
+  the same bytes as `text/plain` takes under 10 ms).
+- **Host memory**: the lexer keeps its working buffer, sized for the largest source it has lexed
+  (2 bytes per character plus 512 KiB, rounded up to a power of two: 32 MiB after an 8 MiB file), for
+  the life of the page.
+
+### Tests
+
+[`src/lib/module-specifiers.test.ts`](../src/lib/module-specifiers.test.ts) (every import form,
+import-like text in strings, comments, regular expressions and templates left alone, computed
+`import()` and `import.meta` untouched, `..` clamped, scheme-relative specifiers left, the byte order
+mark), [`src/lib/files.test.ts`](../src/lib/files.test.ts) (byte offsets with multi-byte text, the
+fourth snapshot element only when something was rewritten, lexer and UTF-8 failures delivered unchanged
+with one warning, the quota with rewrite costs and its atomicity),
+[`src/lib/import-map.test.ts`](../src/lib/import-map.test.ts) (validation, merge order, ours win),
+[`src/lib/in-sandbox-files.test.ts`](../src/lib/in-sandbox-files.test.ts) (the module blob from
+slices, `read()` faithful, the map's JSON and its escaping),
+[`src/lib/markup-references.test.ts`](../src/lib/markup-references.test.ts) (inline modules, import
+maps taken out) and [`test/unit/files.test.ts`](../test/unit/files.test.ts) (no map without JavaScript
+files, the gate, worker mode, the S2 hostile corpus with import maps and inline modules), and
+[`test/e2e/files.spec.ts`](../test/e2e/files.spec.ts) section 9 on Chromium, Firefox and WebKit: a
+graph across directories entered from markup and from an inline module, a shared module evaluated
+once, a literal `import()`, `export * from`, the unsupported forms failing closed with no request, the
+guest's map merged identically in every engine, no egress from a module graph (T5), and worker mode.

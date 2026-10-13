@@ -19,6 +19,11 @@ import type { FileSnapshotEntry } from './files';
  *   read(path)  Promise<Uint8Array>, a fresh copy per call; rejects NOT_FOUND
  *   text(path)  Promise<string>, decoded as UTF-8; rejects NOT_FOUND
  *
+ * A JavaScript file whose relative specifiers the host rewrote (module-specifiers.ts) carries the
+ * rewrite as a fourth element: byte ranges of the registered content and their replacements. Its URL
+ * names the module form, assembled from slices of the registered blob and the replacement texts, so
+ * the literal carries the file once; read() and text() return the bytes as registered.
+ *
  * A lookup is an exact Map lookup of the given string: nothing is resolved, decoded or normalised,
  * so `../x`, `%2e%2e/x`, `/x` or another instance's path is simply absent. Every failed lookup is the
  * same plain Error with an own `code: 'NOT_FOUND'` (the B7 shape), minted here, and its message
@@ -38,7 +43,19 @@ export function inSandboxFiles(entries: FileSnapshotEntry[]) {
     for (const entry of entries) {
         const bytes = decode(entry[2]);
         const blob = new Blob([bytes], { type: entry[1] });
-        files.set(entry[0], { blob, url: URL.createObjectURL(blob) });
+        const edits = entry[3];
+        let loaded = blob;
+        if (edits) {
+            const parts: BlobPart[] = [];
+            let at = 0;
+            for (let i = 0; i < edits.length; i += 3) {
+                parts.push(blob.slice(at, edits[i] as number), edits[i + 2] as string);
+                at = edits[i + 1] as number;
+            }
+            parts.push(blob.slice(at));
+            loaded = new Blob(parts, { type: entry[1] });
+        }
+        files.set(entry[0], { blob, url: URL.createObjectURL(loaded) });
     }
 
     const notFound = () => {
@@ -100,4 +117,39 @@ export function inSandboxMarkup(files: { url(path: string): string }, parts: str
         markup += i % 2 === 0 ? part : files.url(part).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     }
     document.write(markup);
+}
+
+/**
+ * Stringified into the guest document after inSandboxFiles, when at least one JavaScript file is
+ * registered (module graph, ADR-004 PR3). Same rules: self-contained, no async/await.
+ *
+ * Registers the document's one import map, before the parser reaches any guest markup and before any
+ * module script or import(): Firefox honours only the first import map of a document, and none once a
+ * module script was prepared (docs/research/blob-delivery-probe.md, section 3). Every registered
+ * JavaScript file's virtual URL, https://vfs.invalid/<path>, maps to this realm's blob: URL for it:
+ * the URL url(path) returns and markup references use, so a module named both ways is one entry in the
+ * module map and is evaluated once. The host rewrote every relative specifier to such a virtual URL.
+ *
+ * `guestMap` is the guest's own inline import maps, merged by the host and serialised as JSON (or
+ * null): those elements were removed from the markup so that this stays the only map in every engine.
+ * Our entries are written after the guest's, so ours win; the host already dropped every guest entry
+ * whose key could match a https://vfs.invalid/ URL (import-map.ts).
+ *
+ * The element is inserted through the DOM, so its text never passes through the HTML parser; the JSON
+ * still has every "<" escaped. An inline import map is registered when the element is inserted, so
+ * the element is removed again at once and the guest's document is not changed by it. Returns `files`,
+ * for the next step of the bootstrap.
+ */
+export function inSandboxImportMap<T extends { url(path: string): string }>(files: T, paths: string[], guestMap: string | null): T {
+    const map = guestMap ? JSON.parse(guestMap) : {};
+    if (!map.imports) map.imports = {};
+    for (let i = 0; i < paths.length; i++) {
+        map.imports['https://vfs.invalid/' + paths[i]] = files.url(paths[i] as string);
+    }
+    const script = document.createElement('script');
+    script.type = 'importmap';
+    script.textContent = JSON.stringify(map).replace(/</g, '\\u003c');
+    (document.head || document.documentElement).appendChild(script);
+    script.remove();
+    return files;
 }

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { createSlotNonce, inlineScriptsAllowed, resolveReference, rewriteMarkupReferences, VIRTUAL_DOCUMENT_URL } from './markup-references';
+import { describe, it, expect, vi } from 'vitest';
+import { createSlotNonce, inlineScriptsAllowed, resolveReference, rewriteGuestMarkup, rewriteMarkupReferences, VIRTUAL_DOCUMENT_URL } from './markup-references';
 
 const NONCE = '0123456789abcdef0123456789abcdef';
 const PATHS = new Set(['logo.svg', 'img/x.svg', 'app.js', 'style.css', 'clip.mp4', 'subs.vtt', 'poster.png', 'mod/main.js', 'icon.ico', 'font.woff2', 'index.html']);
@@ -106,7 +106,7 @@ describe('rewriteMarkupReferences: which attributes become slots', () => {
         ['an anchor, a form, a frame, an embed, an object, an input', '<a href="logo.svg">x</a><form action="app.js"></form><iframe src="index.html"></iframe><embed src="logo.svg"><object data="logo.svg"></object><input type="image" src="logo.svg">'],
         ['srcset (PR4)', '<img srcset="logo.svg 1x"><picture><source srcset="logo.svg"></picture>'],
         ['CSS url() (PR4)', '<style>body { background: url(logo.svg) }</style><div style="background: url(logo.svg)"></div>'],
-        ['an import inside an inline module (PR3)', '<script type="module">import "./app.js";</script>'],
+        ['an import inside an inline module (references only: the module graph rewrites it, below)', '<script type="module">import "./app.js";</script>'],
         ['inside <template>', '<template><img src="logo.svg"><script src="app.js"></script></template>'],
         ['SVG elements', '<svg><script src="app.js"></script><image href="logo.svg"></image><video src="clip.mp4"></video></svg>'],
         ['an attribute of another element', '<div src="logo.svg"></div><span poster="poster.png"></span><img poster="poster.png"><audio poster="poster.png"></audio>'],
@@ -233,5 +233,92 @@ describe('inlineScriptsAllowed: whether the inline bootstrap can run under the f
         [{ 'script-src': ["'unsafe-inline'", "'strict-dynamic'"] }, false],
     ])('%j → %s', (directives, allowed) => {
         expect(inlineScriptsAllowed(directives as any)).toBe(allowed);
+    });
+});
+
+describe('rewriteGuestMarkup with the module graph on (PR3): inline modules and the guest\'s import maps', () => {
+    const MODULES = { modules: true };
+    const v = (path: string) => `"https://vfs.invalid/${path}"`;
+
+    it('rewrites the relative specifiers of an inline module script, resolved against the virtual index.html; draws no nonce when nothing else matched', () => {
+        const html = `<p>x</p><script type="module">import { a } from './mod/main.js'; import('../app.js'); import x from 'lodash';</script>`;
+        const { parts, importMaps } = rewriteGuestMarkup(html, PATHS, MODULES);
+        expect(importMaps).toEqual([]);
+        expect(parts).toHaveLength(1);
+        const script = parse(parts![0]!).querySelector('script')!;
+        expect(script.textContent).toBe(`import { a } from ${v('mod/main.js')}; import(${v('app.js')}); import x from 'lodash';`);
+        expect(parts![0]).not.toContain('vfs-slot');
+    });
+
+    it.each([
+        [' Module ', true],
+        ['MODULE', true],
+        ['module', true],
+        ['', false],
+        ['text/javascript', false],
+        ['text/plain', false],
+    ])('a script of type %j is rewritten: %s', (type, rewritten) => {
+        const html = `<script type="${type}">import './app.js';</script>`;
+        const { parts } = rewriteGuestMarkup(html, PATHS, MODULES);
+        if (!rewritten) {
+            expect(parts).toBeNull();
+            return;
+        }
+        expect(parse(parts![0]!).querySelector('script')!.textContent).toBe(`import ${v('app.js')};`);
+    });
+
+    it('leaves alone: a module script with src (a markup reference, with a slot), module text inside <template>, SVG scripts, and every change when modules are off', () => {
+        const html = `<script type="module" src="mod/main.js">import './x.js';</script><template><script type="module">import './y.js';</script></template><svg><script type="module">import './z.js';</script></svg>`;
+        const on = rewriteGuestMarkup(html, PATHS, MODULES, NONCE);
+        expect(on.parts!.filter((_, i) => i % 2 === 1)).toEqual(['mod/main.js']);
+        const joined = join(on.parts!);
+        expect(joined).toContain(`import './x.js';`);
+        expect(joined).toContain(`import './y.js';`);
+        expect(joined).toContain(`import './z.js';`);
+
+        const map = `<script type="importmap">{"imports":{}}</script><script type="module">import './app.js';</script>`;
+        expect(rewriteGuestMarkup(map, PATHS, { modules: false })).toEqual({ parts: null, importMaps: [] });
+        expect(rewriteMarkupReferences(map, PATHS)).toBeNull();
+    });
+
+    it('takes every inline import map out of the markup, in document order, and leaves one with src (no engine loads it) as written', () => {
+        const html = `<head><script type="importmap">{"imports":{"a":"https://a.example/a.js"}}</script></head><body><p>x</p><script type=" ImportMap ">not json</script><script type="importmap" src="https://x.example/map.json"></script></body>`;
+        const { parts, importMaps } = rewriteGuestMarkup(html, PATHS, MODULES);
+        expect(importMaps).toEqual(['{"imports":{"a":"https://a.example/a.js"}}', 'not json']);
+        const doc = parse(parts![0]!);
+        expect([...doc.querySelectorAll('script')].map(s => s.getAttribute('src'))).toEqual(['https://x.example/map.json']);
+        expect(doc.body.querySelector('p')!.textContent).toBe('x');
+    });
+
+    it('an import map and a reference together: one parse, slots and the map both handled', () => {
+        const html = `<script type="importmap">{}</script><img src="logo.svg">`;
+        const { parts, importMaps } = rewriteGuestMarkup(html, PATHS, MODULES, NONCE);
+        expect(importMaps).toEqual(['{}']);
+        expect(parts!.filter((_, i) => i % 2 === 1)).toEqual(['logo.svg']);
+        expect(join(parts!)).not.toContain('importmap');
+    });
+
+    it('nothing to change: null parts, so the markup is embedded as written', () => {
+        for (const html of ['<p>x</p>', `<script type="module">import 'lodash'; console.log(1);</script>`, `<script>import('./app.js')</script>`]) {
+            expect(rewriteGuestMarkup(html, PATHS, MODULES)).toEqual({ parts: null, importMaps: [] });
+        }
+    });
+
+    it('reports an inline module the lexer cannot parse by its index among inline modules, and leaves it as written', () => {
+        const onModuleFailure = vi.fn();
+        const html = `<script type="module">import './app.js';</script><script type="module">import {</script>`;
+        const { parts } = rewriteGuestMarkup(html, PATHS, { modules: true, onModuleFailure });
+        expect(onModuleFailure.mock.calls).toEqual([[1]]);
+        const scripts = [...parse(parts![0]!).querySelectorAll('script')].map(s => s.textContent);
+        expect(scripts).toEqual([`import ${v('app.js')};`, 'import {']);
+    });
+
+    it("re-serialised markup keeps the script's extent: no rewritten text can close it or open a comment", () => {
+        const html = `<script type="module">import './a.js'; const s = "</scr" + "ipt>"; /* <!-- */ import('./b.js');</script><p id="after">after</p>`;
+        const { parts } = rewriteGuestMarkup(html, PATHS, MODULES);
+        const doc = parse(parts![0]!);
+        expect(doc.querySelectorAll('script')).toHaveLength(1);
+        expect(doc.querySelector('script')!.textContent).toBe(`import ${v('a.js')}; const s = "</scr" + "ipt>"; /* <!-- */ import(${v('b.js')});`);
+        expect(doc.getElementById('after')!.textContent).toBe('after');
     });
 });

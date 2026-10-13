@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { inSandboxFiles, inSandboxMarkup } from './in-sandbox-files';
+import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from './in-sandbox-files';
 import type { SandboxFiles } from './files';
 
 // The guest receives the function as source text: run that text, not the module import, so a
@@ -53,6 +53,25 @@ describe('inSandboxFiles (the guest bootstrap, run from its source text)', () =>
         expect([text!.type, binary!.type]).toEqual(['text/plain', 'application/octet-stream']);
         expect(await bytesOf(text!)).toEqual(Array.from(new TextEncoder().encode('héllo')));
         expect(await bytesOf(binary!)).toEqual(Array.from({ length: 256 }, (_, i) => i));
+    });
+
+    it('a rewritten module: url() names the module form built from slices and replacement texts; read() and text() keep the bytes as registered', async () => {
+        const source = "é import './a.js'; import('./b.js');";
+        const bytes = new TextEncoder().encode(source);
+        const at = (text: string) => new TextEncoder().encode(source.slice(0, source.indexOf(text))).length;
+        const edits = [at("'./a.js'"), at("'./a.js'") + 8, '"https://vfs.invalid/a.js"', at("'./b.js'"), at("'./b.js'") + 8, '"https://vfs.invalid/b.js"'];
+        install([['m.js', 'text/javascript', btoa(String.fromCharCode(...bytes)), edits]]);
+
+        const blobs = (URL.createObjectURL as any).mock.calls.map((call: [Blob]) => call[0]) as Blob[];
+        expect(blobs).toHaveLength(1); // one URL per file: the module form's
+        expect(blobs[0]!.type).toBe('text/javascript');
+        expect(new TextDecoder().decode(new Uint8Array(await bytesOf(blobs[0]!)))).toBe('é import "https://vfs.invalid/a.js"; import("https://vfs.invalid/b.js");');
+        expect(files().url('m.js')).toBe(`blob:null/fake-${minted}`);
+        // jsdom's Blob has no arrayBuffer(): give it one (through FileReader) for this read() only
+        const original = Blob.prototype.arrayBuffer;
+        Blob.prototype.arrayBuffer = function (this: Blob) { return bytesOf(this).then(b => new Uint8Array(b).buffer); };
+        const registered = new TextDecoder().decode(await files().read('m.js').finally(() => { Blob.prototype.arrayBuffer = original; }));
+        expect(registered).toBe(source);
     });
 
     it('every failed lookup is the same NOT_FOUND Error, thrown by url() and rejected by read() and text() (successful reads: files.spec.ts)', async () => {
@@ -124,5 +143,60 @@ describe('inSandboxMarkup (the bootstrap\'s last statement, run from its source 
     it('writes markup without slots unchanged', () => {
         run('{ url() { throw new Error("not called") } }', ['<p>only markup</p>']);
         expect(written).toEqual(['<p>only markup</p>']);
+    });
+});
+
+describe('inSandboxImportMap (the one import map, run from its source text)', () => {
+    let inserted: { type: string; text: string }[];
+    const originalAppend = Element.prototype.appendChild;
+    beforeEach(() => {
+        inserted = [];
+        // record each script as it is inserted; jsdom does not implement import maps
+        Element.prototype.appendChild = function <T extends Node>(this: Element, node: T): T {
+            const result = originalAppend.call(this, node) as T;
+            if (node instanceof HTMLScriptElement) inserted.push({ type: node.type, text: node.textContent ?? '' });
+            return result;
+        };
+    });
+    afterEach(() => {
+        Element.prototype.appendChild = originalAppend;
+        delete (globalThis as any).__files;
+    });
+
+    const run = (paths: unknown, guest: unknown) => new Function(`return (${inSandboxImportMap.toString()})(globalThis.__files, ${JSON.stringify(paths)}, ${JSON.stringify(guest)});`)();
+
+    it('maps every JavaScript file\'s virtual URL to the URL of the given files object, registers it as one importmap script, removes the element, and returns the files object', () => {
+        (globalThis as any).__files = { url: (path: string) => `blob:null/${path.length}` };
+        const returned = run(['app/main.js', 'b.js'], null);
+        expect(returned).toBe((globalThis as any).__files);
+        expect(inserted).toHaveLength(1);
+        expect(inserted[0]!.type).toBe('importmap');
+        expect(JSON.parse(inserted[0]!.text)).toEqual({ imports: { 'https://vfs.invalid/app/main.js': 'blob:null/11', 'https://vfs.invalid/b.js': 'blob:null/4' } });
+        expect(document.querySelectorAll('script[type=importmap]')).toHaveLength(0);
+    });
+
+    it("merges the guest's map: its entries stay, ours are written last and win on the same key", () => {
+        (globalThis as any).__files = { url: () => 'blob:null/ours' };
+        const guest = JSON.stringify({ imports: { lodash: 'https://cdn.example/l.js', 'https://vfs.invalid/a.js': 'https://attacker.test/x.js' }, scopes: { 'https://cdn.example/': { d: 'https://cdn.example/d.js' } } });
+        run(['a.js'], guest);
+        expect(JSON.parse(inserted[0]!.text)).toEqual({
+            imports: { lodash: 'https://cdn.example/l.js', 'https://vfs.invalid/a.js': 'blob:null/ours' },
+            scopes: { 'https://cdn.example/': { d: 'https://cdn.example/d.js' } },
+        });
+    });
+
+    it('escapes every "<" in the JSON, whatever the guest map or a URL contains; the JSON still parses to the same map', () => {
+        (globalThis as any).__files = { url: () => 'blob:null/</script><!--' };
+        const guest = JSON.stringify({ imports: { '</script><script>alert(1)</script>': '<!--<script>' } });
+        run(['a.js'], guest);
+        const text = inserted[0]!.text;
+        expect(text).not.toContain('<');
+        expect(JSON.parse(text)).toEqual({ imports: { '</script><script>alert(1)</script>': '<!--<script>', 'https://vfs.invalid/a.js': 'blob:null/</script><!--' } });
+    });
+
+    it('a guest "__proto__" key stays an ordinary entry', () => {
+        (globalThis as any).__files = { url: () => 'blob:null/x' };
+        run(['a.js'], '{"imports":{"__proto__":"https://cdn.example/p.js"}}');
+        expect(Object.keys(JSON.parse(inserted[0]!.text).imports)).toEqual(['__proto__', 'https://vfs.invalid/a.js']);
     });
 });
