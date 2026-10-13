@@ -1,5 +1,7 @@
 import type { CSPDirectives } from "../csp-directives";
 import { rewriteInlineModule } from "./module-specifiers";
+import { cssUrlReferences, replaceRanges } from "./css-references";
+import { srcsetCandidates } from "./srcset";
 
 /**
  * Markup references to registered files (ADR-004, PR2). Host-only: nothing here is stringified into
@@ -32,6 +34,12 @@ import { rewriteInlineModule } from "./module-specifiers";
  * markup, for the host to merge into the one import map the bootstrap registers (import-map.ts).
  * Either counts as a change, so the markup is then written by the bootstrap even with no slot.
  *
+ * With CSS references (PR4) the same parse also cuts slots into `srcset` of `img` and `source` (each
+ * candidate URL that names a file; srcset.ts), and into the CSS of `<style>` elements and `style=""`
+ * attributes (each url() or @import that names a file; css-references.ts). A CSS slot replaces a URL
+ * reference with a CSS string, `"<sentinel>"`, and its part tells the bootstrap to escape the blob: URL
+ * for a CSS string (and then for the attribute, in a `style` attribute) rather than for an attribute.
+ *
  * Safety of parsing untrusted markup here: DOMParser.parseFromString() creates an inert document. It
  * has no browsing context, its scripting flag is off, scripts in it never run, and nothing in it is
  * fetched (no images, styles or frames), so the host page runs nothing of the guest's. What the host
@@ -45,9 +53,9 @@ const VIRTUAL_ROOT = 'https://vfs.invalid/';
 
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 
-// The attributes that name a file, and nothing else: srcset (PR4), CSS url() (PR4), <iframe src>,
-// <embed>, <object>, <a href> and anything inside <template> stay as written. Imports inside inline
-// modules are the module graph's (rewriteGuestMarkup, below).
+// The attributes that name a file by one URL. srcset and CSS (PR4) are handled below, by their own
+// parsers; <iframe src>, <embed>, <object>, <a href>, imagesrcset and anything inside <template> stay as
+// written. Imports inside inline modules are the module graph's (rewriteGuestMarkup, below).
 const REFERENCES: readonly (readonly [element: string, attribute: string])[] = [
     ['script', 'src'],
     ['link', 'href'],
@@ -59,6 +67,7 @@ const REFERENCES: readonly (readonly [element: string, attribute: string])[] = [
     ['track', 'src'],
 ];
 const REFERENCE_SELECTOR = REFERENCES.map(([element, attribute]) => `${element}[${attribute}]`).join(', ');
+const SRCSET_SELECTOR = 'img[srcset], source[srcset]';
 
 // A <link> loads a file only for these relations (any one of its rel tokens).
 const LINK_RELATIONS = new Set(['stylesheet', 'icon', 'preload', 'modulepreload']);
@@ -66,7 +75,29 @@ const LINK_RELATIONS = new Set(['stylesheet', 'icon', 'preload', 'modulepreload'
 const ASCII_WHITESPACE = /[\t\n\f\r ]+/;
 
 /**
- * The registered path that `value` names when resolved against VIRTUAL_DOCUMENT_URL, or null.
+ * The path in the files' URL space that `value` names when resolved against `baseUrl`, or null when it
+ * cannot name a file: empty or blank, unparsable, outside VIRTUAL_ROOT (another origin, or credentials
+ * or a port in the URL), or with a query or a fragment (even an empty one). Whether a file is registered
+ * at that path is the caller's question. Used for markup (against VIRTUAL_DOCUMENT_URL) and for CSS
+ * (against the stylesheet's own virtual URL, files.ts).
+ */
+export function virtualPathOf(value: string, baseUrl: string): string | null {
+    if (/^[\u0000-\u0020]*$/.test(value)) return null; // what the URL parser strips: nothing left is the base itself
+    let href: string;
+    try {
+        href = new URL(value, baseUrl).href;
+    } catch {
+        return null;
+    }
+    if (!href.startsWith(VIRTUAL_ROOT)) return null;
+    const path = href.slice(VIRTUAL_ROOT.length);
+    if (path.includes('?') || path.includes('#')) return null;
+    return path;
+}
+
+/**
+ * The registered path that `value` names when resolved against `baseUrl` (by default
+ * VIRTUAL_DOCUMENT_URL), or null.
  *
  * Resolution is the URL parser's, as a browser would do it: `logo.svg`, `./logo.svg`, `/logo.svg`,
  * `img/../logo.svg` (also spelled `img/%2e%2e/logo.svg`, a dot segment by the URL standard) and
@@ -80,18 +111,9 @@ const ASCII_WHITESPACE = /[\t\n\f\r ]+/;
  * An empty or whitespace-only value is never a reference (it would resolve to index.html itself): a
  * browser does not load `src=""` either.
  */
-export function resolveReference(value: string, paths: ReadonlySet<string>): string | null {
-    if (/^[\u0000-\u0020]*$/.test(value)) return null; // what the URL parser strips: nothing left is the document itself
-    let href: string;
-    try {
-        href = new URL(value, VIRTUAL_DOCUMENT_URL).href;
-    } catch {
-        return null;
-    }
-    if (!href.startsWith(VIRTUAL_ROOT)) return null; // another origin, or credentials or a port in the URL
-    const path = href.slice(VIRTUAL_ROOT.length);
-    if (path.includes('?') || path.includes('#')) return null; // a query or fragment, even an empty one
-    return paths.has(path) ? path : null;
+export function resolveReference(value: string, paths: ReadonlySet<string>, baseUrl: string = VIRTUAL_DOCUMENT_URL): string | null {
+    const path = virtualPathOf(value, baseUrl);
+    return path !== null && paths.has(path) ? path : null;
 }
 
 /** A fresh 128-bit nonce, as 32 hex characters. One per environment build. */
@@ -101,6 +123,16 @@ export function createSlotNonce(): string {
 }
 
 const slotName = (nonce: string, index: number) => `vfs-slot-${nonce}-${index}`;
+
+/**
+ * Where a slot's blob: URL lands, which decides how the bootstrap escapes it (inSandboxMarkup):
+ *   a path alone             a double-quoted attribute value (src, href, poster, srcset)
+ *   [path, 'css']            a double-quoted CSS string in the raw text of a <style> element
+ *   [path, 'css-attribute']  a double-quoted CSS string inside a double-quoted style attribute
+ */
+export type CssSlot = [path: string, context: 'css' | 'css-attribute'];
+/** [markup, slot, markup, slot, ..., markup]: even indexes are markup, odd indexes are slots. */
+export type MarkupParts = (string | CssSlot)[];
 
 /**
  * Rewrites the references in `markup` that name a file in `paths`. Returns the parts
@@ -114,7 +146,7 @@ const slotName = (nonce: string, index: number) => `vfs-slot-${nonce}-${index}`;
  * tags and attributes, implied and closing tags, character references; the doctype is dropped (the
  * guest document has its own, and a later one is ignored by the parser anyway).
  */
-export function rewriteMarkupReferences(markup: string, paths: ReadonlySet<string>, givenNonce?: string): string[] | null {
+export function rewriteMarkupReferences(markup: string, paths: ReadonlySet<string>, givenNonce?: string): MarkupParts | null {
     return rewriteGuestMarkup(markup, paths, { modules: false }, givenNonce).parts;
 }
 
@@ -128,7 +160,7 @@ export interface GuestMarkupOptions {
 }
 
 export interface GuestMarkup {
-    parts: string[] | null; // as rewriteMarkupReferences returns them; null: use the markup as written
+    parts: MarkupParts | null; // as rewriteMarkupReferences returns them; null: use the markup as written
     importMaps: string[]; // the texts of the inline import maps taken out, in document order
 }
 
@@ -154,7 +186,7 @@ export function rewriteGuestMarkup(markup: string, paths: ReadonlySet<string>, o
     // Inert: no script runs and nothing is fetched (see the comment at the top of this file).
     const doc = new DOMParser().parseFromString(markup, 'text/html');
 
-    const slots: string[] = [];
+    const slots: (string | CssSlot)[] = [];
     for (const element of doc.querySelectorAll(REFERENCE_SELECTOR)) {
         if (element.namespaceURI !== HTML_NAMESPACE) continue;
         const tag = element.localName;
@@ -169,6 +201,43 @@ export function rewriteGuestMarkup(markup: string, paths: ReadonlySet<string>, o
             element.setAttribute(attribute, slotName(nonce, slots.length));
             slots.push(path);
         }
+    }
+
+    // A slot for each reference in `refs` that names a registered file; `text` becomes the slot's
+    // markup. Returns the rewritten source, or null when nothing named a file.
+    const cutSlots = (source: string, refs: readonly { start: number; end: number; url: string }[], slot: (path: string) => string | CssSlot, text: (name: string) => string): string | null => {
+        const edits: { start: number; end: number; text: string }[] = [];
+        for (const ref of refs) {
+            const path = resolveReference(ref.url, paths);
+            if (path === null) continue;
+            nonce ??= createSlotNonce();
+            edits.push({ start: ref.start, end: ref.end, text: text(slotName(nonce, slots.length)) });
+            slots.push(slot(path));
+        }
+        return edits.length === 0 ? null : replaceRanges(source, edits);
+    };
+
+    // srcset (PR4): each candidate URL that names a file; the others stay as written
+    for (const element of doc.querySelectorAll(SRCSET_SELECTOR)) {
+        if (element.namespaceURI !== HTML_NAMESPACE) continue;
+        const value = element.getAttribute('srcset')!;
+        const rewritten = cutSlots(value, srcsetCandidates(value), path => path, name => name);
+        if (rewritten !== null) element.setAttribute('srcset', rewritten);
+    }
+
+    // CSS (PR4): url() and @import in <style> text and in style attributes. A reference becomes a CSS
+    // string holding the sentinel; the bootstrap puts the URL into that string, escaped for it.
+    for (const style of doc.querySelectorAll('style')) {
+        if (style.namespaceURI !== HTML_NAMESPACE) continue;
+        const text = style.textContent ?? '';
+        const rewritten = cutSlots(text, cssUrlReferences(text), path => [path, 'css'], name => `"${name}"`);
+        if (rewritten !== null) style.textContent = rewritten;
+    }
+    for (const element of doc.querySelectorAll('[style]')) {
+        if (element.namespaceURI !== HTML_NAMESPACE) continue;
+        const value = element.getAttribute('style')!;
+        const rewritten = cutSlots(value, cssUrlReferences(value), path => [path, 'css-attribute'], name => `"${name}"`);
+        if (rewritten !== null) element.setAttribute('style', rewritten);
     }
 
     let modulesChanged = false;
@@ -197,7 +266,7 @@ export function rewriteGuestMarkup(markup: string, paths: ReadonlySet<string>, o
     // Split on this build's sentinels. The nonce is random per build and appears nowhere else, so guest
     // markup cannot contain a sentinel; even if it could, a slot index only ever names one of the
     // guest's own files, whose URL it could already get from sandboxFiles.url().
-    const parts: string[] = [];
+    const parts: MarkupParts = [];
     const pattern = new RegExp(`vfs-slot-${nonce}-(\\d+)`, 'g');
     let last = 0;
     for (const match of serialised.matchAll(pattern)) {

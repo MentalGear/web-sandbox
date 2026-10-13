@@ -34,14 +34,14 @@ conditional "continue".
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
 | Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); an empty directive is `'none'`, and the defaults leave unset fetch directives to `default-src` (S16); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
-| Files | 🟡 guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`); modules import each other by relative path through one import map (es-module-lexer, bundled); CSS `url()` open (C1), writes open (C5) |
+| Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); writes open (C5) |
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`), and WebKit shows a frame the guest creates the host URL as its referrer (S17) |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
 the virtual-files Service Worker was replaced by guest-realm blob URLs ([ADR-004](ADR-004-files-as-blob-urls.md)):
-S3, C2 and C3 done, C1 partly, C4 rejected, C5 added; C1's markup references and module graph followed the same day.
+S3, C2 and C3 done, C1 partly, C4 rejected, C5 added; C1's markup references, module graph and CSS references followed the same day, completing C1.
 S15 and S16 were done on 2026-10-13, and S17 added. Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -933,7 +933,7 @@ Their separate retry/stop field is not adopted: here it follows from the code.
 Decided in [ADR-004](ADR-004-files-as-blob-urls.md): files are registered on the element and reach
 the guest as `blob:` URLs created in its own realm. The Service-Worker hub is gone (Rejected, below).
 
-### C1 · In-sandbox VFS API — 🟡 **read, list, url, markup references and modules done; CSS open**
+### C1 · In-sandbox VFS API — ✅ **done**
 
 **Done** (2026-10-13): the guest global `sandboxFiles` with `list()`, `url(path)`, `read(path)` and
 `text(path)`, in iframe and worker mode, built by the bootstrap from a snapshot the host embeds as one
@@ -973,8 +973,28 @@ Tests: `src/lib/module-specifiers.test.ts`, `src/lib/import-map.test.ts`, `src/l
 `src/lib/in-sandbox-files.test.ts`, `src/lib/markup-references.test.ts`, `test/unit/files.test.ts`,
 `test/e2e/files.spec.ts` section 9 on all three engines.
 
-**Open**:
-- **CSS** (PR4) — `url()` and `@import` inside registered stylesheets and `<style>`, and `srcset`.
+**Done** (2026-10-13), CSS references and `srcset`: `url()` and `@import` in registered `text/css`
+files (resolved against the file's own path) and in inline `<style>` and `style=""` (against
+`https://vfs.invalid/index.html`), plus `@font-face` `src` and `image-set()`, found by a host-side
+tokenizer that follows the CSS Syntax tokenizer (`src/lib/css-references.ts`, no dependency); `srcset`
+of `img` and `source` split as the HTML standard does (`src/lib/srcset.ts`). A stylesheet's references
+are stored as byte ranges at registration and become slots per build for the files registered then; the
+guest fills each with a CSS string holding its own `blob:` URL, one pass in the snapshot's dependency
+order (files without slots first, then each stylesheet after the files it names). Every reference on a
+cycle (strongly connected component, self-imports included) is left as written with one warning, so
+the guest never loops and the rest of each sheet applies. `read()`/`text()` keep the registered bytes;
+the quota counts path + 72 bytes per reference that could name a file. Queries, fragments,
+unregistered paths and run-time URLs stay as written and fail closed with no request. No policy change.
+Decisions and per-engine measurements: [ADR-004, CSS amendment](ADR-004-files-as-blob-urls.md#amendment-css-references-and-srcset-2026-10-13).
+Tests: `src/lib/css-references.test.ts`, `src/lib/srcset.test.ts`, `src/lib/files.test.ts`,
+`src/lib/in-sandbox-files.test.ts`, `src/lib/markup-references.test.ts`, `test/unit/files.test.ts`,
+`test/e2e/files.spec.ts` section 10 on all three engines.
+
+**Done** — all four δ steps of [ADR-004](ADR-004-files-as-blob-urls.md) are in: the store, snapshot
+and policy with `sandboxFiles` in both modes (replacing the Service Worker); markup references written
+by the bootstrap; the module graph through one import map; and CSS references with `srcset`. What stays
+out is listed in the ADR's "Not supported" sections (`<template>` contents, URLs built at run time,
+module workers); writes are C5.
 
 **Verified** (2026-08-29, kept as a record): one-way only. The host pushed with `registerFiles()`;
 sandboxed code could *load* files through the `<base>` tag but could not list, read or write them.
@@ -1152,13 +1172,13 @@ comparisons; for the 2026 entrants (`quickjs-wasi`, `@tanstack/ai-isolate-quickj
 | Promise-based RPC | ✅ **B1** | ✅ | ✅ | ✅ | ➖ |
 | Typed package / `d.ts` | 🟡 **D1** | ✅ | ✅ | ✅ | ✅ |
 | Headless (worker) execution | ✅ **S1** | ❌ | ❌ | ❌ | ❌ |
-| Virtual files | 🟡 **C1** | ❌ | ➖ | ❌ | ❌ |
+| Virtual files | ✅ **C1** | ❌ | ➖ | ❌ | ❌ |
 | Host-mediated network | ❌ **B5** | ❌ | ➖ | ✅ | ❌ |
 | Auto-sizing | ❌ **B6** | ❌ | 🟡 | ✅ | ✅ |
 | Execution quotas | 🟡 **S6** | ❌ | ➖ | ❌ | ➖ |
 
-We lead on four rows: isolation without server config and headless (worker) execution outright,
-and virtual files and execution quotas as the only solution with even partial support. Those four,
+We lead on four rows: isolation without server config, headless (worker) execution and virtual
+files outright, and execution quotas as the only solution with even partial support. Those four,
 plus the private channel (matched only by Zoid), are the rows the backlog must not regress.
 
 Larger bets that follow from the same comparison, both **P3**: an **opt-in host-served mode** that
@@ -1209,7 +1229,8 @@ So `IMPROVEMENTS.md` is not re-proposed wholesale:
 - **Headless worker mode** — isolated inside the sandbox frame since S1.
 - **Lifecycle state machine** (§4) — `state`, `terminate()` and `reset()` on the element, without
   the XState dependency (B2).
-- **Virtual files** — guest-realm blob URLs through `sandboxFiles`, both modes (C1–C3, ADR-004).
+- **Virtual files** — guest-realm blob URLs through `sandboxFiles`, both modes, named from markup,
+  modules, stylesheets and `srcset` (C1–C3, ADR-004).
 
 ---
 

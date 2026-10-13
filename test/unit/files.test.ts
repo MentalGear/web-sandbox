@@ -246,7 +246,8 @@ describe('markup references (PR2): guest markup that names a registered file is 
     it.each([
         ['markup without references', '<p>no files named</p><img src="https://cdn.example/x.png">'],
         ['references to unregistered files', '<img src="missing.svg"><script src="other.js"></script><link rel="stylesheet" href="x.css">'],
-        ['references spelled differently', '<img src="LOGO.SVG"><img src="logo.svg?v=1"><img src="logo.svg#f"><img src="%6Cogo.svg"><img srcset="logo.svg">'],
+        ['references spelled differently', '<img src="LOGO.SVG"><img src="logo.svg?v=1"><img src="logo.svg#f"><img src="%6Cogo.svg"><img srcset="logo.svg?v=1 1x, LOGO.SVG 2x">'],
+        ['CSS that names no file', '<style>@import "missing.css"; p { background: url(logo.svg#f) } /* url(logo.svg) */ q::after { content: "logo.svg" }</style><p style="background: url(\'logo.svg?x\')">p</p>'],
         ['a reference inside <template>', '<template><img src="logo.svg"></template>'],
     ])('no match (%s): the guest document is byte for byte the one built without the rewrite', async (_, html) => {
         const el = await mount({ ...SCRIPTS, html }, FILES);
@@ -464,5 +465,80 @@ describe('module graph (PR3): one import map, registered by the bootstrap, only 
             // nothing to change (the lexer failed, or a specifier holds '<'): embedded as written, after the security block
             expect(guest.endsWith(`</script></head>${html}`)).toBe(true);
         }
+    });
+});
+
+describe('CSS references and srcset (PR4)', () => {
+    const SCRIPTS = { capabilities: ['allow-scripts'] };
+    const FILES = { 'logo.svg': '<svg/>', 'style.css': '@import "base.css"; a { b: url(logo.svg) }', 'base.css': 'p { color: red }' };
+    const bootstrapScriptOf = (el: HTMLElement) => parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
+
+    it('the snapshot literal carries each stylesheet after the files it names, with its slots; the policy is what the file types alone give', async () => {
+        const el = await mount({ ...SCRIPTS, html: '<p>x</p>' }, FILES);
+        const snapshot = el._files.snapshot();
+        expect(snapshot.map((entry: unknown[]) => entry[0])).toEqual(['base.css', 'logo.svg', 'style.css']);
+        expect(snapshot[2][3].filter((_: unknown, i: number) => i % 3 === 2)).toEqual([['base.css'], ['logo.svg']]);
+        expect(bootstrapScriptOf(el)).toContain(`(${inSandboxFiles.toString()})(${toInlineScriptLiteral(snapshot)})`);
+        // the same types without any reference between them: the same policy
+        const plain = await mount({ ...SCRIPTS, html: '<p>x</p>' }, { 'logo.svg': '<svg/>', 'style.css': 'a {}', 'base.css': 'p {}' });
+        expect(policyOf(el)).toBe(policyOf(plain));
+        expect(directive(policyOf(el), 'style-src')).toBe("style-src 'unsafe-inline' blob:");
+        expect(directive(policyOf(el), 'img-src')).toBe('img-src blob:');
+    });
+
+    it('a reference cycle among stylesheets warns once per element, across rebuilds', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount(SCRIPTS, { 'a.css': '@import "b.css";', 'b.css': '@import "a.css";' });
+        el.reset();
+        el.load('<p>y</p>');
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('reference each other in a cycle'))).toHaveLength(1);
+    });
+
+    it('inline <style>, style="" and srcset that name files are written by the bootstrap with CSS and attribute slots', async () => {
+        const html = '<style>p { background: url(logo.svg) }</style><p style="background: url(logo.svg)">x</p><img srcset="logo.svg 1x">';
+        const el = await mount({ ...SCRIPTS, html }, FILES);
+        const parts = rewriteMarkupReferences(html, new Set(Object.keys(FILES)), 'f'.repeat(32))!;
+        expect(parts.filter((_, i) => i % 2 === 1)).toEqual([['logo.svg', 'css'], ['logo.svg', 'css-attribute'], 'logo.svg']);
+        expect(bootstrapScriptOf(el).endsWith(`(${inSandboxMarkup.toString()})((${inSandboxFiles.toString()})(${toInlineScriptLiteral(el._files.snapshot())}), ${toInlineScriptLiteral(parts)});`)).toBe(true);
+    });
+
+    // S2 with CSS slots: the markup, the CSS around a slot and the stylesheet bytes are data; none of them
+    // may end the bootstrap script early or come before the policy.
+    const HOSTILE_CSS_MARKUP = [
+        '<style>p { background: url(logo.svg) }</style><script>/*',
+        '<style>p { background: url(logo.svg) }</style><plaintext>',
+        '<style>p { background: url(logo.svg) } /* </style><script>alert(1)</script> */</style>',
+        '<style>@import "style.css";</style><!--',
+        '<p style="background: url(logo.svg)" title="</script><script>alert(1)</script>">x</p>',
+        '<p style="background: url(&quot;logo.svg&quot;)" title="<!--">x</p>',
+        '<img srcset="logo.svg 1x, </script><script>alert(1)</script> 2x">',
+        '<img srcset="logo.svg 1x" alt="vfs-slot-0123456789abcdef0123456789abcdef-0">',
+        '<style>a { b: url("vfs-slot-0123456789abcdef0123456789abcdef-0") } c { d: url(logo.svg) }</style>',
+        '<svg><style>a{fill:url(logo.svg)}</style></svg><style>a{b:url(logo.svg)}</style>',
+        '<noscript><style>a{b:url(logo.svg)}</style></noscript><img srcset="logo.svg">',
+        '<textarea><style>a{b:url(logo.svg)}</style></textarea><p style="b:url(logo.svg)">',
+    ];
+    it.each(HOSTILE_CSS_MARKUP)('keeps the CSP meta first and the bootstrap intact for %j, before and after the write', async (html) => {
+        const el = await mount({ ...SCRIPTS, html }, { ...FILES, 'evil.css': '</script><script>alert(1)</script><!-- a { b: url(logo.svg) }' });
+        const guest = guestDocumentOf(el);
+        const doc = parse(guest);
+        const [meta, script, ...rest] = [...doc.head.children];
+        expect(meta?.getAttribute('http-equiv')).toBe('Content-Security-Policy');
+        expect(meta?.getAttribute('content')).toBe(policyOf(el));
+        expect(script?.textContent).toContain(inSandboxMarkup.toString());
+        expect(rest).toEqual([]);
+        expect(doc.body.childNodes).toHaveLength(0);
+        expect(script!.textContent).not.toContain('</script');
+        expect(script!.textContent).not.toContain('<!--');
+
+        // what the guest parser sees after the write, with each slot filled as the bootstrap fills it
+        const parts = rewriteMarkupReferences(html, new Set(Object.keys(FILES).concat('evil.css')), 'f'.repeat(32))!;
+        expect(script!.textContent!.endsWith(`, ${toInlineScriptLiteral(parts)});`)).toBe(true);
+        const filled = parts.map((part, i) => (i % 2 === 0 ? part : `blob:null/${i}`)).join('');
+        const written = parse(guest + filled);
+        const [writtenMeta, writtenScript] = [...written.head.children];
+        expect(writtenMeta?.getAttribute('content')).toBe(policyOf(el));
+        expect(writtenScript?.textContent).toBe(script!.textContent);
+        expect(written.querySelectorAll('meta[http-equiv="Content-Security-Policy"]')[0]).toBe(writtenMeta);
     });
 });

@@ -169,10 +169,10 @@ next environment runs.
 
 Costs and limits:
 
-- **Guest markup names files only through the attributes listed in the amendments below**
-  (2026-10-13): `srcset`, CSS `url()` and `<template>` contents do not resolve yet; guest code uses
-  `sandboxFiles.url()` for those. Relative imports between modules resolve since the module graph
-  amendment, with the limits listed there.
+- **Guest markup and stylesheets name files only through the references listed in the amendments
+  below** (2026-10-13): markup attributes, relative imports between modules, CSS `url()` and
+  `@import`, and `srcset`, each with the limits listed there. `<template>` contents and URLs built at
+  run time do not resolve; guest code uses `sandboxFiles.url()` for those.
 - **Every guest carries the files bootstrap**, about 1.3 KB of source, files or not. That is the
   price of an API that exists regardless of host state.
 - **Changes need a rebuild.** A file registered while the guest runs reaches it at the next
@@ -191,7 +191,9 @@ Planned in this order, each on top of this decision:
 2. **Module graph** — *done 2026-10-13, see the amendment below*: relative specifiers rewritten
    host-side with es-module-lexer (approved as a bundled dev dependency) and one import map from
    virtual URLs to `blob:` URLs.
-3. **CSS**: `url()` and `@import` inside registered stylesheets, and `srcset`.
+3. **CSS** — *done 2026-10-13, see the amendment below*: `url()` and `@import` in registered
+   stylesheets, inline `<style>` and `style=""`, and `srcset`, with a host-side CSS tokenizer and slots
+   the guest fills in dependency order; a reference cycle fails closed.
 
 ### Revisit if
 
@@ -302,8 +304,8 @@ Markup with no matched reference is never re-serialised.
 
 ### Not supported (fail closed), each left as written
 
-`srcset` and CSS `url()` in `<style>` or `style=""` (next step 3); relative imports inside a module
-(next step 2, done in the module graph amendment below); `<template>`
+`srcset` and CSS `url()` in `<style>` or `style=""` (next step 3, done in the CSS amendment below);
+relative imports inside a module (next step 2, done in the module graph amendment below); `<template>`
 contents; `<iframe>`, `<embed>`, `<object>`, `<a href>`, `<form action>`, `<input type="image">` and
 SVG elements; `rel` values outside the list. `load()` takes markup, as before: a registered
 `index.html` is a file like any other, not the guest's markup (the playground's "Run (Virtual-Files)"
@@ -454,7 +456,8 @@ a full URL resolves in all three engines.
 - **A guest map entry for the virtual origin**, and a bare specifier mapped to a virtual URL (import
   maps do not chain: the virtual URL would be fetched, and refused). A guest map can map bare
   specifiers to allowlisted URLs.
-- **CSS** `url()` and `@import` inside registered stylesheets: next step 3.
+- **CSS** `url()` and `@import` inside registered stylesheets: next step 3, done in the CSS amendment
+  below.
 
 ### Costs
 
@@ -485,3 +488,155 @@ files, the gate, worker mode, the S2 hostile corpus with import maps and inline 
 graph across directories entered from markup and from an inline module, a shared module evaluated
 once, a literal `import()`, `export * from`, the unsupported forms failing closed with no request, the
 guest's map merged identically in every engine, no egress from a module graph (T5), and worker mode.
+
+## Amendment: CSS references and srcset (2026-10-13)
+
+**Status**: Accepted · **Date**: 2026-10-13 · implements next step 3
+
+Registered stylesheets and the guest's inline styles name files the way they would on a server:
+`background: url(../img/bg.svg)`, `@import "base.css"`, `src: url(fonts/f.woff2) format("woff2")`,
+`image-set("a.png" 1x)`; and `<img srcset="logo.svg 1x">` picks a registered candidate.
+
+### Why it needs a rewrite
+
+A relative URL inside a `blob:` stylesheet resolves against the blob URL, whose path is opaque, so
+`url(img.png)` and `@import "b.css"` name nothing (the probe's open risk, now measured: no request, no
+violation). An inline `<style>` or `style=""` resolves against the guest's `about:blank` base (S15), with
+the same result. And the targets are `blob:` URLs that exist only in the guest realm, minted while the
+bootstrap runs, so the host cannot write them into the CSS: the host can only mark where they go, and
+the guest fills them in. There is no CSS counterpart of the import map that could do it by name.
+
+### Decision
+
+1. **A CSS tokenizer on the host** ([`src/lib/css-references.ts`](../src/lib/css-references.ts)). It
+   follows the tokenizer of CSS Syntax Level 3 — comments, strings with escapes and line continuations,
+   ident sequences with escapes (`\75 rl(` is `url(`), numbers and dimensions (`10url(` is not),
+   hash and at-keyword tokens, CDO/CDC, url tokens and bad-url remnants — in one linear pass that never
+   throws. A reference is a url token, the string argument of `url(`, the first token of an `@import`
+   prelude, or a string directly inside `image-set()` / `-webkit-image-set()`. Nothing in another
+   at-rule's prelude counts (`@namespace url(…)` is a name, `@supports (…url(…)…)` a test), and no
+   other string does (`content`, `format()`, `local()`, `type()`, selectors). Only complete tokens
+   count: an unclosed string or url, a bad string and a bad url are left alone. The replacement is
+   always a CSS string `"<blob: URL>"`: a url token's whole inside (`url( a.png )` → `url("…")`), or the
+   string token, quotes included. A unit test re-tokenizes every rewrite, and 2000 random inputs, and
+   finds the same references, each now that string.
+2. **Stylesheets: references at registration, slots per build.** When `registerFiles()` stores a
+   `text/css` file (by extension or override), it keeps every reference that, resolved against the
+   file's own virtual URL `https://vfs.invalid/<path>` (the URL parser's rules, as in markup), names a
+   valid path with no query or fragment, as a byte range and that path. Whether a file is registered
+   there is decided per build, in `snapshot()`, since the store can change in between: each such
+   reference becomes a slot, `[start, end, [path]]`, in the same fourth snapshot element as the module
+   rewrite. The guest replaces the range with a CSS string holding that file's `blob:` URL, every
+   character that could end the string escaped (`inSandboxFiles`). As for modules, `read()` and `text()`
+   return the bytes as registered, `url()` the rewritten sheet, and `listFiles()` the registered size.
+3. **Dependency order on the host, one pass in the guest.** A stylesheet's `blob:` can only be made
+   once the URLs it names exist. The snapshot is in delivery order: files without slots first, in path
+   order (so with no references between files it is the path order it was before), then each
+   stylesheet after every file it names (a depth-first walk). The guest makes the blobs in literal
+   order in one pass and looks each slot up among the files made so far; a slot naming a file not made
+   yet keeps its registered bytes. It follows no reference, so it cannot loop, whatever the literal
+   holds. `list()` now sorts, since the literal is no longer in path order.
+4. **A reference cycle fails closed.** `a.css` imports `b.css` which imports `a.css`, or a stylesheet
+   names itself: no order puts every file after the files it names. Every reference that lies on a
+   cycle — every reference between two files of one strongly connected component (Tarjan), a
+   self-reference included — is left as registered, and fails closed in the guest like any unresolvable
+   relative URL; the cycle's other references, and references into it from outside, still resolve. One
+   warning per distinct cycle per element. Breaking only one edge was rejected: which edge would depend
+   on which file the guest links first, and the host does not know that; dropping every edge on a cycle
+   gives the same result whatever the entry point.
+5. **The quota counts what the slots add**, as for modules. Each reference that could name a file
+   costs its path length plus 24 (two offsets and separators in the literal) plus 48 (the quoted
+   `"blob:null/<UUID>"` that replaces it in the guest's sheet), counted at registration whether or not
+   its target is registered, so a file's cost never depends on what else is in the store. The check
+   stays atomic and two-step: registered bytes first, then tokenized and checked again, before any
+   change. A sheet of nothing but `a{b:url(a)}` counts 84 bytes per 11-byte rule, so it is refused
+   well before the literal or the guest's sheet could pass what the cap was measured at.
+6. **Inline `<style>`, `style=""` and `srcset` are markup references** (the PR2 parse,
+   [`src/lib/markup-references.ts`](../src/lib/markup-references.ts)), resolved against
+   `https://vfs.invalid/index.html`, HTML-namespace elements only. The text of a `<style>` and the value
+   of a `style` attribute go through the same tokenizer; a reference that names a registered file
+   becomes a CSS string holding the sentinel, and its part says where it lands, `[path, 'css']` or
+   `[path, 'css-attribute']`, so the bootstrap escapes the URL for a CSS string (and then for the
+   attribute). `srcset` of `img` and `source` is split as the HTML standard does it
+   ([`src/lib/srcset.ts`](../src/lib/srcset.ts): URLs are runs of non-whitespace, so a comma inside
+   one belongs to it, trailing commas end it, descriptors run to a comma outside parentheses); each
+   candidate URL that names a file gets an attribute slot, every other candidate and descriptor stays
+   as written. Same gate as the other markup references, and no match still means the markup is
+   embedded verbatim.
+7. **No change to the policy.** A stylesheet already brings `blob:` into `style-src`; the images and
+   fonts it names bring `blob:` into `img-src` and `font-src` by their own types, as for any file. A
+   reference to a file whose type does not load there (a `.txt` used as an image) is refused by the
+   policy, as before. Unit tests pin that a stylesheet with references gives the same policy as one
+   without.
+
+### Measured (`files.spec.ts` section 10)
+
+Engines differ in how they report a reference left as written, never in the outcome: nothing loads
+and nothing is requested.
+
+| Left as written | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- |
+| `<link>` whose sheet has an unresolvable `@import` | `error` event | `load` event | `error` event |
+| … its own rules | applied | applied | applied |
+| … the `@import` rule's `styleSheet` | present, `cssRules` throws `SecurityError` | present, empty | `null` |
+| `<img srcset>` whose only candidate cannot resolve | `error` event | no event | `error` event |
+
+### Not supported (fail closed), each left as written
+
+- A query or fragment (`url(bg.svg?v=2)`), another case or percent-encoding, an unregistered path:
+  in a `blob:` sheet or an inline style they cannot resolve, so no request and no violation. A
+  fragment-only `url(#f)` is left too (for `fill`, `filter` or `mask` it names an element of the
+  document, not a file).
+- URLs that only exist at run time: `url(var(--x))` (a bad url), `src()`, `attr()`, styles set from
+  script (`element.style`, `CSSStyleSheet.replace()`, `insertRule()`). Use `sandboxFiles.url()`.
+- Anything in an at-rule prelude other than `@import`'s; `imagesrcset` on `<link rel=preload>`;
+  `<style>` and `style=""` on SVG elements; `<template>` contents.
+- A stylesheet that is not UTF-8 is delivered unchanged, with one warning per registration.
+- Worker mode gets the same snapshot, so a rewritten sheet holds worker-realm URLs: harmless, and of
+  no use there.
+
+### Alternatives considered
+
+- **Regular expressions**: cannot tell `url(` in a comment or a string from a reference, decode
+  escapes, or find where a url token ends; the tokenizer is what a browser runs.
+- **A dependency** (`@csstools/css-tokenizer`, `css-tree`, PostCSS): the subset needed — references
+  and the ranges to replace — is about 250 lines pinned by tests, and the context rules (what counts in
+  which prelude, image-set) would still be ours. `@csstools/css-tokenizer` is the small, spec-conformant
+  candidate if conformance ever matters more than size; not added.
+- **Rewriting to virtual URLs plus a lookup, as for modules**: CSS has no import map; something would
+  have to turn the virtual URL into a `blob:` URL, and only the guest's own bootstrap can.
+- **Inlining imported sheets into one**: changes cascade layers, `@import` conditions and the
+  CSSOM's shape, and grows with every import; slots keep each file a file.
+- **Guest-side tokenizing**: would put the tokenizer into every guest bootstrap; the host tokenizes
+  once, in a realm no guest code reaches.
+
+### Costs
+
+- **Bundle size**: the minified host build grows from 53.8 KB to 62.7 KB (18.6 KB to 21.5 KB
+  gzipped); the published, unminified `dist/index.js` from 119.6 KB to 138.8 KB (25.0 KB to 28.8 KB
+  gzipped).
+- **Registration time**: tokenizing 8 MiB of CSS took about 0.13 s in Bun (`text/plain`: about 10 ms).
+- **Per build**: the reference graph and its cycles are computed in `snapshot()`, linear in the
+  references (about 20 ms for 65,000).
+
+### Tests
+
+[`src/lib/css-references.test.ts`](../src/lib/css-references.test.ts) (url tokens, escapes, bad urls,
+unclosed tokens, comments, strings, dimensions and other look-alikes, `@import` forms, other at-rule
+preludes, `@font-face` `src` lists, `image-set()`, malformed nesting, the re-tokenizing property on a
+corpus and on random input, linear time), [`src/lib/srcset.test.ts`](../src/lib/srcset.test.ts)
+(descriptors, commas inside URLs, trailing commas, empty candidates, offsets),
+[`src/lib/files.test.ts`](../src/lib/files.test.ts) (slots resolved against the sheet's path, byte
+offsets with multi-byte text and a byte order mark, what names no file, per-snapshot targets,
+delivery order, cycles of one, two and three files with one warning each, a 999-file chain, the
+quota), [`src/lib/in-sandbox-files.test.ts`](../src/lib/in-sandbox-files.test.ts) (slots filled from
+earlier files only, CSS-string escaping, `list()` sorted),
+[`src/lib/markup-references.test.ts`](../src/lib/markup-references.test.ts) (srcset, `<style>`,
+`style=""`, what is left alone, the `<style>` extent),
+[`test/unit/files.test.ts`](../test/unit/files.test.ts) (the literal's order and slots, the policy
+unchanged, the cycle warning across rebuilds, the S2 hostile corpus with CSS and srcset slots) and
+[`test/e2e/files.spec.ts`](../test/e2e/files.spec.ts) section 10 on Chromium, Firefox and WebKit: a
+linked stylesheet's image and font, a two-level `@import` chain, an `@import` cycle and a
+self-import failing closed while every other rule applies, inline `<style>` and `style=""`, `srcset`
+on `img` and `picture`, misses failing closed with no request (T5: violations with positive
+controls, load outcomes, the recorder silent), and no egress from a rewritten stylesheet.

@@ -8,6 +8,8 @@
  */
 
 import { moduleSpecifierEdits, VIRTUAL_ROOT } from './module-specifiers';
+import { cssUrlReferences } from './css-references';
+import { virtualPathOf } from './markup-references';
 
 // The cap (backlog C3). Module constants rather than config: each value was measured to load in all
 // three engines (test/e2e/files.spec.ts), so raise one only after that test passes at the new value.
@@ -32,7 +34,8 @@ export interface FileInfo {
  *                         { content, type } with a valid type
  *   FILES_QUOTA_EXCEEDED  the store after the batch would exceed MAX_FILES or MAX_TOTAL_BYTES (a
  *                         JavaScript file counts its registered bytes plus what its rewrite adds,
- *                         rewriteCost())
+ *                         rewriteCost(); a stylesheet its registered bytes plus what its references
+ *                         add, referenceCost())
  * In the guest, every failed lookup is NOT_FOUND (in-sandbox-files.ts).
  */
 export type FileErrorCode = 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEEDED';
@@ -132,6 +135,11 @@ export function isJavaScriptType(type: string): boolean {
     return JAVASCRIPT_TYPES.has(type);
 }
 
+/** Whether a file of this type is a stylesheet: it loads through style-src, and its url() and @import references are rewritten. */
+export function isStylesheetType(type: string): boolean {
+    return type === 'text/css';
+}
+
 /** The type a file gets from its extension (case-insensitive), or FALLBACK_TYPE. Never empty. */
 export function mimeTypeFor(path: string): string {
     const name = path.slice(path.lastIndexOf('/') + 1);
@@ -153,24 +161,40 @@ export function isValidMimeType(type: unknown): type is string {
 interface StoredFile {
     type: string;
     size: number; // registered bytes: what listFiles() reports and read() returns
-    cost: number; // what counts against MAX_TOTAL_BYTES: size plus rewriteCost(edits)
+    cost: number; // what counts against MAX_TOTAL_BYTES: size plus rewriteCost(edits) plus referenceCost(references)
     base64: string; // the bytes as registered, encoded once at registration: the snapshot needs nothing else
     edits: ByteEdits | null; // the module rewrite, for JavaScript files whose specifiers were rewritten
+    references: CssReferenceRange[] | null; // a stylesheet's references that could name a file
 }
 
 /**
- * A JavaScript file's module rewrite as the guest receives it: flat triples
- * [start, end, text, start, end, text, ...], where [start, end) is a range of the registered BYTES
- * (sorted, non-overlapping) and `text` replaces it. The guest builds the module from slices of the
- * registered bytes and these texts (inSandboxFiles), so the literal carries the file once.
+ * A slot in a stylesheet: the guest replaces the edit's range with a CSS string holding this file's
+ * blob: URL (inSandboxFiles).
  */
-export type ByteEdits = (number | string)[];
+export type FileSlot = [path: string];
 
 /**
- * One file as the guest bootstrap receives it: [path, type, base64], plus the module rewrite for a
- * JavaScript file whose relative specifiers were rewritten (module-specifiers.ts).
+ * A rewrite as the guest receives it: flat triples [start, end, replacement, ...], where
+ * [start, end) is a range of the registered BYTES (sorted, non-overlapping). The replacement is a text
+ * (a JavaScript file's module rewrite) or a slot (a stylesheet's reference to a registered file). The
+ * guest builds the delivered form from slices of the registered bytes and the replacements
+ * (inSandboxFiles), so the literal carries the file once.
+ */
+export type ByteEdits = (number | string | FileSlot)[];
+
+/**
+ * One file as the guest bootstrap receives it: [path, type, base64], plus the rewrite for a JavaScript
+ * file whose relative specifiers were rewritten (module-specifiers.ts) or a stylesheet whose references
+ * name registered files (css-references.ts).
  */
 export type FileSnapshotEntry = [path: string, type: string, base64: string] | [path: string, type: string, base64: string, edits: ByteEdits];
+
+/**
+ * A stylesheet's reference that could name a file, found at registration: [start, end) in the
+ * registered bytes, and the path it resolves to against the stylesheet's own virtual URL. Whether a
+ * file is registered at that path is decided per build, in snapshot(): the store can change in between.
+ */
+export type CssReferenceRange = [start: number, end: number, path: string];
 
 // What one rewritten specifier adds to the snapshot literal besides its text: two offsets of up to
 // 8 digits, three commas and two quotes, rounded up.
@@ -188,6 +212,25 @@ export function rewriteCost(edits: ByteEdits | null): number {
     return cost;
 }
 
+// What a slot puts into the guest's stylesheet in place of its range: a CSS string holding a blob: URL
+// of this realm, `"blob:null/<36-character UUID>"`, 48 characters (the guest's origin is opaque, so it
+// serialises as "null"; nothing in the URL needs a CSS escape).
+export const SLOT_URL_BYTES = 48;
+
+/**
+ * What a stylesheet's references add, in bytes, counted against MAX_TOTAL_BYTES: per reference that
+ * could name a file, what the literal carries for its slot (the path, two offsets and separators:
+ * path length plus EDIT_OVERHEAD) and what the guest's stylesheet holds in its place (SLOT_URL_BYTES).
+ * Counted at registration for every such reference, registered target or not, so the cost of a file
+ * never depends on what else is registered and the check stays atomic. Paths are ASCII.
+ */
+export function referenceCost(references: readonly CssReferenceRange[] | null): number {
+    if (!references) return 0;
+    let cost = 0;
+    for (const [, , path] of references) cost += path.length + EDIT_OVERHEAD + SLOT_URL_BYTES;
+    return cost;
+}
+
 /**
  * The files of one element. Every mutation validates the whole batch against the store it would
  * produce before changing anything, so a refused call leaves the store exactly as it was.
@@ -195,6 +238,7 @@ export function rewriteCost(edits: ByteEdits | null): number {
 export class FileStore {
     private _files = new Map<string, StoredFile>();
     private _totalBytes = 0; // the sum of every file's cost
+    private _warnedCycles = new Set<string>(); // reference cycles already warned about (snapshot)
 
     // Lexer failures are reported here, once per registration of the file (console.warn by default).
     constructor(private readonly _warn: (message: string) => void = message => console.warn(message)) {}
@@ -216,13 +260,20 @@ export class FileStore {
         for (const [path, file] of incoming) totalBytes += file.bytes.length - (this._files.get(path)?.cost ?? 0);
         if (totalBytes > MAX_TOTAL_BYTES) throw quotaError();
 
-        // Then with what each module rewrite adds (rewriteCost). Lexed now, still before any change.
+        // Then with what each module rewrite (rewriteCost) and each stylesheet's references
+        // (referenceCost) add. Lexed and tokenized now, still before any change.
         const rewrites = new Map<string, ModuleRewrite>();
+        const stylesheets = new Map<string, StylesheetReferences>();
         for (const [path, file] of incoming) {
-            if (!isJavaScriptType(file.type)) continue;
-            const rewrite = rewriteModule(path, file.bytes);
-            rewrites.set(path, rewrite);
-            totalBytes += rewriteCost(rewrite.edits);
+            if (isJavaScriptType(file.type)) {
+                const rewrite = rewriteModule(path, file.bytes);
+                rewrites.set(path, rewrite);
+                totalBytes += rewriteCost(rewrite.edits);
+            } else if (isStylesheetType(file.type)) {
+                const found = stylesheetReferences(path, file.bytes);
+                stylesheets.set(path, found);
+                totalBytes += referenceCost(found.references);
+            }
         }
         if (totalBytes > MAX_TOTAL_BYTES) throw quotaError();
 
@@ -231,13 +282,17 @@ export class FileStore {
         for (const [path, { type, bytes }] of incoming) {
             const rewrite = rewrites.get(path);
             const edits = rewrite?.edits ?? null;
-            const file: StoredFile = { type, size: bytes.length, cost: bytes.length + rewriteCost(edits), base64: toBase64(bytes), edits };
+            const stylesheet = stylesheets.get(path);
+            const references = stylesheet?.references ?? null;
+            const cost = bytes.length + rewriteCost(edits) + referenceCost(references);
+            const file: StoredFile = { type, size: bytes.length, cost, base64: toBase64(bytes), edits, references };
             const existing = this._files.get(path);
             if (existing && existing.type === file.type && existing.base64 === file.base64) continue;
             this._files.set(path, file);
             changed.push(path);
             // once per file registration, and only for a file that changed: delivered as registered
             if (rewrite?.failure) this._warn(`[Sandbox] ${describePath(path)} is registered as JavaScript but could not be lexed as a module (${rewrite.failure}), so its relative imports were not rewritten and will fail in the guest. The file is delivered unchanged.`);
+            if (stylesheet?.failure) this._warn(`[Sandbox] ${describePath(path)} is registered as CSS but is ${stylesheet.failure}, so its url() and @import references were not rewritten and will fail in the guest. The file is delivered unchanged.`);
         }
         this._totalBytes = totalBytes;
         return changed.sort();
@@ -269,14 +324,126 @@ export class FileStore {
         return infos.sort((a, b) => (a.path < b.path ? -1 : 1));
     }
 
-    /** What one environment build hands the guest, sorted by path. Empty when no file is registered. */
+    /**
+     * What one environment build hands the guest, in delivery order: every file without slots first,
+     * sorted by path, then the stylesheets whose references name registered files, each after every
+     * file it references (so the guest, which makes the blobs in this order, always has the URL a slot
+     * needs). Empty when no file is registered.
+     *
+     * A stylesheet's reference becomes a slot only if a file is registered at its path and the
+     * reference does not lie on a cycle. A cycle — `a.css` imports `b.css`, which imports `a.css`, or a
+     * stylesheet that names itself — has no order in which every file comes after the files it names,
+     * so every reference on a cycle (every reference between two files of one strongly connected
+     * component) is left as registered and fails closed in the guest, as an unresolvable relative URL.
+     * Their other references, and references into the cycle from outside, still resolve. One warning
+     * per distinct cycle per store.
+     */
     snapshot(): FileSnapshotEntry[] {
-        const entries: FileSnapshotEntry[] = [];
+        const targets = new Map<string, string[]>(); // a stylesheet's registered targets, sorted, unique
         for (const [path, file] of this._files) {
-            entries.push(file.edits ? [path, file.type, file.base64, [...file.edits]] : [path, file.type, file.base64]);
+            if (!file.references) continue;
+            const named = new Set<string>();
+            for (const [, , target] of file.references) if (this._files.has(target)) named.add(target);
+            if (named.size > 0) targets.set(path, [...named].sort());
         }
-        return entries.sort((a, b) => (a[0] < b[0] ? -1 : 1));
+        const component = stronglyConnectedComponents(targets);
+        const onCycle = (from: string, to: string) => component.get(from) === component.get(to);
+        this._warnCycles(targets, component);
+
+        const entryOf = (path: string, file: StoredFile): FileSnapshotEntry => {
+            if (file.edits) return [path, file.type, file.base64, [...file.edits]];
+            const edits: ByteEdits = [];
+            for (const [start, end, target] of file.references ?? []) {
+                if (this._files.has(target) && !onCycle(path, target)) edits.push(start, end, [target]);
+            }
+            return edits.length > 0 ? [path, file.type, file.base64, edits] : [path, file.type, file.base64];
+        };
+
+        const plain: FileSnapshotEntry[] = [];
+        const slotted = new Map<string, FileSnapshotEntry>();
+        for (const [path, file] of this._files) {
+            const entry = entryOf(path, file);
+            if (entry[3]?.some(edit => Array.isArray(edit))) slotted.set(path, entry);
+            else plain.push(entry);
+        }
+        const byPath = (a: FileSnapshotEntry, b: FileSnapshotEntry) => (a[0] < b[0] ? -1 : 1);
+        const entries = plain.sort(byPath);
+
+        // Depth first, in path order: a stylesheet is emitted after every slotted stylesheet it names.
+        // The edges left are acyclic; marking before descending would end the walk on a cycle anyway.
+        const visited = new Set<string>();
+        const visit = (path: string) => {
+            if (visited.has(path)) return;
+            visited.add(path);
+            for (const target of targets.get(path) ?? []) if (slotted.has(target) && !onCycle(path, target)) visit(target);
+            entries.push(slotted.get(path)!);
+        };
+        for (const path of [...slotted.keys()].sort()) visit(path);
+        return entries;
     }
+
+    // One warning per distinct cycle (a strongly connected component with more than one file, or a
+    // stylesheet that names itself), naming its files, the first time a build meets it.
+    private _warnCycles(targets: Map<string, string[]>, component: Map<string, number>) {
+        const members = new Map<number, string[]>();
+        for (const path of targets.keys()) {
+            const id = component.get(path)!;
+            if (!members.has(id)) members.set(id, []);
+            members.get(id)!.push(path);
+        }
+        for (const paths of members.values()) {
+            const cyclic = paths.length > 1 || targets.get(paths[0]!)!.includes(paths[0]!);
+            if (!cyclic) continue;
+            const names = paths.sort().map(describePath);
+            const message = `[Sandbox] the stylesheets ${names.slice(0, 5).join(', ')}${names.length > 5 ? ', …' : ''} reference each other in a cycle, so the references between them are left as written and will not load in the guest. Their other references still resolve.`;
+            if (this._warnedCycles.has(message)) continue;
+            this._warnedCycles.add(message);
+            this._warn(message);
+        }
+    }
+}
+
+/**
+ * Tarjan's algorithm over `edges` (a node's targets; targets without an entry have no edges): the id
+ * of each node's strongly connected component. Two nodes share an id exactly when each reaches the
+ * other, so an edge lies on a cycle exactly when both its ends share an id (a self-edge included).
+ */
+function stronglyConnectedComponents(edges: ReadonlyMap<string, readonly string[]>): Map<string, number> {
+    const index = new Map<string, number>();
+    const lowLink = new Map<string, number>();
+    const onStack = new Set<string>();
+    const stack: string[] = [];
+    const component = new Map<string, number>();
+    let next = 0;
+    let components = 0;
+
+    // Recursive: depth is bounded by the number of files (MAX_FILES).
+    const connect = (node: string) => {
+        index.set(node, next);
+        lowLink.set(node, next);
+        next++;
+        stack.push(node);
+        onStack.add(node);
+        for (const target of edges.get(node) ?? []) {
+            if (!index.has(target)) {
+                connect(target);
+                lowLink.set(node, Math.min(lowLink.get(node)!, lowLink.get(target)!));
+            } else if (onStack.has(target)) {
+                lowLink.set(node, Math.min(lowLink.get(node)!, index.get(target)!));
+            }
+        }
+        if (lowLink.get(node) === index.get(node)) {
+            let member: string;
+            do {
+                member = stack.pop()!;
+                onStack.delete(member);
+                component.set(member, components);
+            } while (member !== node);
+            components++;
+        }
+    };
+    for (const node of [...edges.keys()].sort()) if (!index.has(node)) connect(node);
+    return component;
 }
 
 interface ModuleRewrite {
@@ -285,6 +452,45 @@ interface ModuleRewrite {
 }
 
 const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+interface StylesheetReferences {
+    references: CssReferenceRange[] | null; // null: none, or the file is not UTF-8
+    failure?: string; // why the file is delivered unchanged
+}
+
+/**
+ * The references of a stylesheet registered at `path` that could name a file: each url() or @import
+ * (css-references.ts) that resolves, against the stylesheet's own virtual URL, to a valid path with
+ * no query or fragment, as a range of its registered bytes. A stylesheet that is not UTF-8 is delivered
+ * unchanged, with `failure` set; its relative references then fail closed in the guest.
+ */
+function stylesheetReferences(path: string, bytes: Uint8Array): StylesheetReferences {
+    let source: string;
+    try {
+        source = UTF8.decode(bytes);
+    } catch {
+        return { references: null, failure: 'not UTF-8' };
+    }
+    const references: CssReferenceRange[] = [];
+    const toBytes = utf8Offsets(source);
+    for (const reference of cssUrlReferences(source)) {
+        const target = virtualPathOf(reference.url, VIRTUAL_ROOT + path);
+        if (target === null || !isValidPath(target)) continue;
+        references.push([toBytes(reference.start), toBytes(reference.end), target]);
+    }
+    return { references: references.length > 0 ? references : null };
+}
+
+// UTF-16 offsets of `source` to UTF-8 byte offsets, for offsets asked in increasing order: one pass in all.
+function utf8Offsets(source: string): (offset: number) => number {
+    let char = 0;
+    let byte = 0;
+    return (offset: number) => {
+        byte += utf8Length(source, char, offset);
+        char = offset;
+        return byte;
+    };
+}
 
 /**
  * The module rewrite of a JavaScript file registered at `path`: its relative specifiers resolved
@@ -309,15 +515,8 @@ function rewriteModule(path: string, bytes: Uint8Array): ModuleRewrite {
 
     // UTF-16 offsets to UTF-8 byte offsets, in one pass over the source (edits are sorted)
     const byteEdits: ByteEdits = [];
-    let char = 0;
-    let byte = 0;
-    for (const edit of edits) {
-        byte += utf8Length(source, char, edit.start);
-        const start = byte;
-        byte += utf8Length(source, edit.start, edit.end);
-        char = edit.end;
-        byteEdits.push(start, byte, edit.text);
-    }
+    const toBytes = utf8Offsets(source);
+    for (const edit of edits) byteEdits.push(toBytes(edit.start), toBytes(edit.end), edit.text);
     return { edits: byteEdits };
 }
 
