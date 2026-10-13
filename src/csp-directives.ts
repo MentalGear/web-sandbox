@@ -52,6 +52,10 @@ export interface CSPDirectives {
     "form-action"?: string[];
     "object-src"?: string[]; // <embed, <object, ...
     "frame-src"?: string[]; // specifies sources where iframes in this page can be loaded from
-    "frame-ancestors"?: string[]; // specifies parent sources that are allowed to embed this page using <frame>, <iframe>, <object>, or <embed>
+    /**
+     * @deprecated Has no effect: the guest policy is a <meta> policy, where browsers ignore frame-ancestors, so the
+     * element drops it with a warning (backlog S7). Who may embed the sandbox is up to the page that hosts it.
+     */
+    "frame-ancestors"?: string[];
     "worker-src"?: string[]; // 'blob' or 'data' might be needed for frontend-frameworks to spawn workers
 }

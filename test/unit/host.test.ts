@@ -174,3 +174,34 @@ describe('the scriptUnsafe guard rail (backlog S4)', () => {
     warn.mockRestore();
   });
 });
+
+describe('directives a <meta> policy discards are dropped from the guest policy (backlog S7)', () => {
+  const guestPolicy = (el: HTMLElement): string => {
+    const wrapper = new DOMParser().parseFromString(el.shadowRoot!.querySelector('iframe')!.srcdoc, 'text/html');
+    const guest = new DOMParser().parseFromString(wrapper.querySelector('iframe')!.getAttribute('srcdoc')!, 'text/html');
+    return guest.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
+  };
+
+  it('in iframe and worker mode, none of the four is emitted, with one warning per directive per instance across resets', async () => {
+    const { defineWebSandbox } = await import('@src/host');
+    defineWebSandbox();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const mode of ['iframe', 'worker']) {
+      warn.mockClear();
+      const el = document.createElement('web-sandbox') as any;
+      document.body.appendChild(el);
+      const connectionsAllowed = { 'frame-ancestors': ["'none'"], 'report-uri': ['https://r.example/'], 'report-to': ['group'], 'sandbox': ['allow-scripts'], 'frame-src': [] };
+      el.setConfig({ mode, connectionsAllowed });
+      el.reset();
+      el.setConfig({ mode, connectionsAllowed });
+      const policy = guestPolicy(el);
+      for (const directive of ['frame-ancestors', 'report-uri', 'report-to', 'sandbox']) {
+        expect(policy).not.toMatch(new RegExp(`(^|; )${directive} `));
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes(`connectionsAllowed.${directive}"`))).toHaveLength(1);
+      }
+      expect(policy).toContain("frame-src 'none';"); // S16 still holds for every other directive
+      el.remove();
+    }
+    warn.mockRestore();
+  });
+});

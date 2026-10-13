@@ -2,6 +2,7 @@ import type { CSPDirectives, SafeCapability, UnsafeCapability } from "./csp-dire
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./csp-directives";
 import { generateCSP } from "./lib/csp/csp-generator";
 import { dropSelfSources } from "./lib/csp/drop-self";
+import { dropMetaIgnoredDirectives } from "./lib/csp/drop-meta-ignored";
 import { addFileSources } from "./lib/csp/file-sources";
 import { FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
@@ -98,6 +99,7 @@ export class WebSandbox extends HTMLElement {
     private _warnedUnsafeCapabilities = new Set<string>();
     private _warnedScriptUnsafe = false; // the scriptUnsafe guard rail warns once per instance (S4)
     private _warnedSelfDirectives = new Set<string>(); // directives already warned about for 'self' (drop-self.ts)
+    private _warnedMetaIgnored = new Set<string>(); // directives a <meta> policy discards, already warned about (drop-meta-ignored.ts)
     private _warnedFileDirectives = new Set<string>(); // directives already warned about for an explicit 'none' (file-sources.ts)
     private _warnedVirtualFilesUrl = false;
     private _warnedGuestMarkup = new Set<string>(); // module-graph warnings about guest markup, once per text (_warnOnce)
@@ -485,10 +487,12 @@ export class WebSandbox extends HTMLElement {
 
     private _getCSPDirectives(files: FileSnapshotEntry[]): CSPDirectives {
         // Clone the config directives to avoid mutating the original config
-        // passing the refs of the original object
-        const cloned = structuredClone(
+        // passing the refs of the original object. Directives a <meta> policy discards (frame-ancestors,
+        // report-uri, report-to, sandbox) are dropped first, with a warning: the guest policy is always a
+        // <meta> policy, so emitting them would only look like control (drop-meta-ignored.ts, S7).
+        const cloned = dropMetaIgnoredDirectives(structuredClone(
             this._config.connectionsAllowed
-        );
+        ), this._warnedMetaIgnored);
 
         cloned["upgrade-insecure-requests"] = true
 

@@ -333,9 +333,27 @@ runs in its own process, and the README states the same-thread limit plainly.
 
 ---
 
-### S7 · Silently ignored CSP directives — **P1 · S**
+### S7 · Silently ignored CSP directives — ✅ **done**
 
 *From [Research 11.1](research/11_meta_csp_delivery/README.md).*
+
+**Guarantee**: the guest policy contains no directive the browser discards, and a consumer who configures
+one is told, once per directive per instance.
+
+**Done**: `dropMetaIgnoredDirectives()` (`src/lib/csp/drop-meta-ignored.ts`) removes `frame-ancestors`,
+`report-uri`, `report-to` and `sandbox` (any case, any value) at the start of `_getCSPDirectives`
+(`src/host.ts`), the one builder of the guest policy, so worker mode is covered too. Each is left out,
+not emitted as `'none'`: the browser would discard `'none'` just the same. Every other directive keeps
+S16's rule (empty means `'none'`). The warning names where the concern is handled instead: embedding
+by the host page, reporting by the in-guest violation event (S5), flags by `capabilities`.
+`CSPDirectives['frame-ancestors']` is marked `@deprecated`; `generateCSP()` itself is unchanged, since
+it does not know how its output is delivered. Tests:
+- unit: `src/lib/csp/drop-meta-ignored.test.ts` (each directive with a source list, an empty list and a
+  single value; case variants; one warning per directive per instance; other directives untouched) and
+  `test/unit/host.test.ts` (iframe and worker mode across `reset()`);
+- e2e: section S7 of `test/e2e/guard-rails.spec.ts` (absent from the guest's own policy, one warning
+  each across reset and a mode switch, and in Chromium no "ignored when delivered via a `<meta>`
+  element" message, the channel research 11.1 shows is live).
 
 **Verified**: a `<meta>`-delivered policy discards `frame-ancestors`, `report-uri`/`report-to` and
 `sandbox` — Chromium logs *"is ignored when delivered via a `<meta>` element"* for each.
