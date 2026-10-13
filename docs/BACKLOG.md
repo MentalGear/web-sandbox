@@ -537,24 +537,65 @@ ones are dropped from `capabilities` with a warning and accepted only through `u
 which warns once per capability per instance. `allow-forms` stays safe: `form-action` defaults to
 `'none'` (S9) and a form submission is a navigation the wrapper blocks (S10).
 
-### S13 · No WebRTC egress guarantee — **P1 · S** — candidate
+### S13 · No WebRTC egress guarantee — 🟡 **guest realm and workers done; frames the guest creates: residual**
 
 **Guarantee**: guest code cannot reach the network through WebRTC.
 
-**Observed**: in one headless-Chromium run, `RTCPeerConnection` was available in the guest, and its
-ICE traffic is not governed by `connect-src`; adding the experimental `webrtc 'block'` directive did
-not change that. Treat this as a candidate until it is confirmed on Firefox and WebKit.
+**What holds now**: the guest's own realm has no peer-connection constructor from its first script on, in
+iframe mode, and a worker never has one, on Chromium, Firefox and WebKit. **What does not**: a frame the
+guest creates is a realm of its own and keeps `RTCPeerConnection`; in Chromium and WebKit its ICE
+traffic leaves. So the guarantee does not hold in default iframe mode until guest script is kept out of
+the DOM frame (strict mode, S6).
 
-**Work**: remove `RTCPeerConnection` (and `webkitRTCPeerConnection`) from the guest's global scope
-in the bootstrap, before any guest code runs, and offer WebRTC only as an explicit unsafe
-capability. The removal must also hold in frames the guest creates: `frame-src 'none'` stops frames
-that load a URL, but a `srcdoc` frame still loads (research 01 relies on this) and has a global
-scope of its own, where a Chromium check still found the constructor after it had been removed from
-the guest. Covering those frames, or ruling out script in them as strict mode (S6) does, is part of
-this item and may make it larger than S.
+**Measured** (2026-10-13, Playwright 1.58.1 builds: Chromium 141, Firefox 146, WebKit 26.0 on Linux;
+default config plus `scriptUnsafe` to run the probe; a peer connection with a data channel, an offer, and
+STUN and TURN servers on a loopback UDP listener; a throwaway probe, whose findings
+`test/e2e/webrtc.spec.ts` now asserts):
 
-**Acceptance**: by default, in iframe mode, `typeof RTCPeerConnection === 'undefined'` in the guest
-and in any frame it creates, on Chromium, Firefox and WebKit (CI).
+| | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- |
+| guest realm, before | `RTCPeerConnection`, `webkitRTCPeerConnection`; constructs, host candidates, UDP leaves | `RTCPeerConnection`; constructs, gathering completes | `RTCPeerConnection`; constructs, UDP leaves |
+| srcdoc frame the guest creates | same | same | same |
+| about:blank frame the guest creates | cross-origin to the guest (`SecurityError`) | same | same |
+| worker | no `RTCPeerConnection` (only `RTCDataChannel`, encoded frames) | same | same (`RTCDataChannel` only) |
+| UDP to loopback STUN/TURN, host page (control) | yes | none (Firefox sends nothing to a loopback ICE server) | yes |
+| `webrtc 'block'` in the guest policy | no effect | no effect | no effect |
+| `allow="local-network-access 'none'"` | no effect | n/a | n/a |
+| constructible network-capable RTC interfaces | `RTCPeerConnection`, `webkitRTCPeerConnection` | `RTCPeerConnection` | `RTCPeerConnection` |
+
+So no policy or sandbox flag makes any engine refuse peer connections, and the frame-src `'none'` the
+guest inherits from the wrapper does not cover `srcdoc` frames. The constructor is the only lever.
+The TURN username never left (the listener did not answer the binding), but the destination of a STUN
+request, or a DNS lookup of a `stun:` host name, is enough to carry data out.
+
+**Done**: the guest bootstrap (`src/lib/in-sandbox-script.ts`) deletes `RTCPeerConnection`,
+`webkitRTCPeerConnection` and `mozRTCPeerConnection` from the global object before any guest code runs,
+in both modes. It cannot be undone from the guest realm: those are the only constructible network-capable
+WebRTC interfaces in each engine, and the guest has no same-origin realm to take one from, because every
+frame it creates gets a fresh opaque origin (no `allow-same-origin`) and workers have none. The host warns
+once per instance when the policy refuses the inline bootstrap while scripts are allowed, since then
+guest scripts from allowlisted origins would run without it. No unsafe capability is offered for WebRTC:
+nothing needs it yet, and with any reachable TURN server it is an egress route. Tests:
+- unit: `src/lib/in-sandbox-script.test.ts` (the constructors are removed, nothing else), `test/unit/host.test.ts`
+  (the bootstrap-refused warning);
+- e2e: `test/e2e/webrtc.spec.ts`, all three engines: the shipping config's first guest script sees none;
+  an about:blank or srcdoc frame the guest creates, and `window[n]`, are cross-origin to it; the worker has
+  none; and the residual, asserted as measured: the created frame has `RTCPeerConnection`, gathers host
+  candidates, and in Chromium and WebKit reaches the loopback listener (Firefox: no traffic, as for its
+  control).
+
+**Residual, and why no by-construction fix exists in default mode**: a created frame runs its own script
+under the guest's inherited policy (`script-src 'unsafe-inline'` is what the guest itself needs), so the
+bootstrap never runs there. Measured alternatives: overriding `HTMLIFrameElement.prototype` access is
+moot (created frames are already cross-origin; what matters is their own script), and refusing frame
+creation would need every insertion path (`innerHTML`, `insertAdjacentHTML`, `document.write`,
+`setHTMLUnsafe`, the parser on the guest's own markup, closed declarative shadow roots that no observer
+sees) and `javascript:` URLs: no single chokepoint. Strict mode (S6) is the structural answer: with no
+guest script in the DOM frame, no frame can be created that runs one.
+
+**Acceptance (original)**: by default, in iframe mode, `typeof RTCPeerConnection === 'undefined'` in the guest
+and in any frame it creates, on Chromium, Firefox and WebKit (CI). Met for the guest; not for frames it
+creates.
 
 ### S14 · **script-src 'self'** admits other origins in the guest — ✅ **done**
 

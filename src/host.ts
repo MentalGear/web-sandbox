@@ -104,6 +104,7 @@ export class WebSandbox extends HTMLElement {
     private _warnedMetaIgnored = new Set<string>(); // directives a <meta> policy discards, already warned about (drop-meta-ignored.ts)
     private _warnedFileDirectives = new Set<string>(); // directives already warned about for an explicit 'none' (file-sources.ts)
     private _warnedVirtualFilesUrl = false;
+    private _warnedBootstrapRefused = false; // the guest policy refuses the inline bootstrap (S13), once per instance
     private _warnedGuestMarkup = new Set<string>(); // module-graph warnings about guest markup, once per text (_warnOnce)
 
     // Files are part of the environment: they live on the element, survive reset(), load(), setConfig()
@@ -555,6 +556,17 @@ export class WebSandbox extends HTMLElement {
         return { parts: markup.parts, importMap: { paths: javascript, guest } };
     }
 
+    // The guarantees that live in the guest bootstrap — WebRTC removed from the guest realm (S13), violation
+    // reports (S5), the bridge and sandboxFiles — hold only where it runs. It is an inline script, so a policy
+    // that refuses inline scripts while the sandbox flags allow scripts lets guest scripts from allowlisted
+    // origins run without it. Said once per instance, since only the embedder's config can cause it.
+    private _warnIfBootstrapRefused(sandboxFlags: string, directives: CSPDirectives) {
+        if (this._warnedBootstrapRefused) return;
+        if (!sandboxFlags.split(' ').includes('allow-scripts') || inlineScriptsAllowed(directives)) return;
+        this._warnedBootstrapRefused = true;
+        console.warn("[Sandbox] the guest policy refuses inline scripts, so the sandbox bootstrap cannot run: guest scripts would run with no bridge, no sandboxFiles, no violation reports, and with WebRTC available. Keep 'unsafe-inline' in script-src (without nonces or hashes).");
+    }
+
     // Warnings about the guest's markup come back with every build of the same markup: one each per element.
     private _warnOnce(message: string) {
         if (this._warnedGuestMarkup.has(message)) return;
@@ -572,6 +584,7 @@ export class WebSandbox extends HTMLElement {
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
         const directives = this._getCSPDirectives(files);
+        this._warnIfBootstrapRefused(sandboxFlags, directives);
 
         // TODO: run through DOMPurify ?
         let guestDocument: string;

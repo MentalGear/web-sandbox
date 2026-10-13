@@ -249,4 +249,28 @@ describe("inSandboxScript", () => {
             expect(violationFrames(port)).toHaveLength(100);
         });
     });
+
+    describe("no WebRTC in the guest realm (backlog S13)", () => {
+        const NAMES = ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection'];
+        afterEach(() => { for (const name of NAMES) delete (globalThis as any)[name]; });
+
+        it("removes every peer-connection constructor from the global object while the bootstrap runs, and nothing else", () => {
+            class FakePeerConnection {}
+            for (const name of NAMES) Object.defineProperty(globalThis, name, { value: FakePeerConnection, writable: true, configurable: true });
+            (globalThis as any).RTCSessionDescription = class {};
+            (globalThis as any).addEventListener = () => {};
+
+            inSandboxScript(false, 'iframe', createMockConsole(), createBroker);
+
+            for (const name of NAMES) expect(name in globalThis, name).toBe(false);
+            expect(typeof (globalThis as any).RTCSessionDescription).toBe('function');
+            delete (globalThis as any).RTCSessionDescription;
+        });
+
+        it("runs where none exists (workers have no RTCPeerConnection)", () => {
+            (globalThis as any).addEventListener = () => {};
+            expect(() => inSandboxScript(false, 'worker', createMockConsole(), createBroker)).not.toThrow();
+            for (const name of NAMES) expect(name in globalThis).toBe(false);
+        });
+    });
 });

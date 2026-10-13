@@ -234,3 +234,25 @@ describe("the element's 'violation' event (backlog S5)", () => {
     warn.mockRestore();
   });
 });
+
+describe('the guest bootstrap must be able to run (backlog S13, S5)', () => {
+  it('warns once per instance when scripts are allowed but the policy refuses the inline bootstrap, and never otherwise', async () => {
+    const { defineWebSandbox } = await import('@src/host');
+    defineWebSandbox();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const refused = () => warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('cannot run'));
+    const el = document.createElement('web-sandbox') as any;
+    document.body.appendChild(el);
+
+    el.setConfig({ capabilities: ['allow-scripts'] });
+    el.setConfig({ capabilities: [] , connectionsAllowed: { 'script-src': ['https://cdn.example'] } }); // no scripts at all: nothing to warn about
+    expect(refused()).toEqual([]);
+
+    for (const mode of ['iframe', 'worker']) el.setConfig({ mode, capabilities: ['allow-scripts'], connectionsAllowed: { 'script-src': ['https://cdn.example'] } });
+    el.reset();
+    expect(refused()).toHaveLength(1);
+    expect(refused()[0]).toContain('WebRTC');
+    el.remove();
+    warn.mockRestore();
+  });
+});
