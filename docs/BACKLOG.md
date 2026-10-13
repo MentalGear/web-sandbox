@@ -127,10 +127,45 @@ specs hard-code their payloads. The unification is documented but not built.
 **Acceptance**: each `reproduce.spec.ts` sources its payload and rules from a preset id; adding a
 preset without a spec fails a coverage assertion.
 
-### T5 · Egress specs rely on request routing that can miss guest requests — **P1 · S**
+### T5 · Egress specs rely on request routing that can miss guest requests — ✅ **done**
 
 **Guarantee**: every "nothing left the sandbox" assertion rests on evidence that cannot silently
 miss a request.
+
+**Done**: no egress spec rests on route or request silence any more. Playwright routing is gone from
+every egress assertion; its place is taken by `test/e2e/recorder.ts`, two HTTPS listeners on loopback
+outside the browser (ALLOWED, which positive controls put in the policy, and BLOCKED, which every attempt
+targets) that also answer WebSocket handshakes. Each attempt is asserted by the guest's own outcome
+and, where the engine raises one, the violation reported on the host (S5); the listener must stay silent.
+Every file has a positive control per channel: the same loads to ALLOWED succeed, reach the listener and
+raise no violation, or, where no configuration can permit the load, the same load from a frame on the host
+page reaches BLOCKED. Specs changed:
+- `test/e2e/security.spec.ts` (nested frame), `hard-security.spec.ts` (CSS, image, beacon, ping, popup),
+  `worker-security.spec.ts` (fetch, `importScripts`), `empty-directive.spec.ts`;
+- `test/e2e/blob-delivery.spec.ts` sections 5 and 5a (blob: script, module, stylesheet and worker
+  attempts, now with fetch, import, image, WebSocket and per-engine violations, plus a positive control in
+  both modes); the blob: stylesheet test asserted route silence alone before;
+- `test/e2e/files.spec.ts` sections 4 and 9 (listener instead of route, and a positive control); section
+  8 drops its request recording, which had no positive control;
+- research 01 (the nested frame relays its own violation; preset updated), 04 (WebSocket listener), 05
+  and 06 (assert the refusal, not the absence of success), 08, 09, 10 (base-uri violation), 12.2, 13, 14.1.
+
+**Not strengthened further**, and why:
+- 14.1 self-navigation: the refusal is reported to the wrapper, which runs no script, so there is no
+  violation and no outcome event to await. The evidence is the listener after a fixed 2 s wait and the
+  page's frame URLs; each vector's positive control (the same markup in a sandboxed frame without the
+  wrapper) reaches the listener well within that wait.
+- 12.2 form-action in Chromium: the guest document is replaced by the refused submission's error page
+  before a report is forwarded (measured), so the listener after a 2 s wait is the evidence there.
+  Firefox and WebKit report `form-action`. A permitted form cannot be a control (the wrapper refuses
+  every navigation), so the control submits the same form from a host-page frame.
+- worker mode: WebKit raises no violations in workers and Firefox none for `importScripts` (S5); there the
+  load outcome and the listener are the evidence.
+- link ping in Firefox: pings are off by default, so there is nothing to refuse; the control shows that
+  Firefox sends none to an allowed origin either.
+- a frame the guest creates reports violations to itself (research 01 relays them from the payload).
+- research 07 (top navigation to `data:`) is asserted by the host page's URL, a browser fact, not a request.
+- S8's pre-policy window is not covered by any of these: it is an accepted risk of `<meta>` delivery.
 
 **Verified** (2026-10-13, during the [blob delivery probe](research/blob-delivery-probe.md)): in
 Chromium, Playwright's `context.route` saw the guest frame's subresource requests only

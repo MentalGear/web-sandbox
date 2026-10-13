@@ -6,5 +6,7 @@ test('Outer Frame DOM Tampering - Mitigated', async ({ sandbox }) => {
 
     const logs = await sandbox.runUntilDone(PRESETS['outer-frame-tampering'].code);
 
+    // the refusal itself (the access threw), not only the absence of a success
+    expect(logs.some(l => l.includes('PWN_FAILURE'))).toBe(true);
     expect(logs.some(l => l.includes('PWN_SUCCESS'))).toBe(false);
 });

