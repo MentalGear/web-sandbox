@@ -122,3 +122,55 @@ describe('the guest policy and frames built by the element (S15, S16)', () => {
     }
   });
 });
+
+describe('the scriptUnsafe guard rail (backlog S4)', () => {
+  const mount = async () => {
+    const { defineWebSandbox } = await import('@src/host');
+    defineWebSandbox();
+    const el = document.createElement('web-sandbox') as any;
+    document.body.appendChild(el);
+    return el;
+  };
+  const scriptUnsafeWarnings = (warn: { mock: { calls: unknown[][] } }) =>
+    warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('scriptUnsafe is enabled'));
+
+  it('warns exactly once per instance across setConfig(), reset() and load(), naming eval in the guest', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const first = await mount();
+    first.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true });
+    first.reset();
+    first.load('<p>again</p>');
+    first.setConfig({ scriptUnsafe: false });
+    first.setConfig({ scriptUnsafe: true, mode: 'worker' });
+    first.reset();
+    const warnings = scriptUnsafeWarnings(warn);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("'unsafe-eval'");
+    expect(warnings[0]).toContain('eval');
+    expect(warnings[0]).toContain('testing');
+
+    // a second instance has its own guard rail
+    const second = await mount();
+    second.setConfig({ scriptUnsafe: true });
+    expect(scriptUnsafeWarnings(warn)).toHaveLength(2);
+    first.remove();
+    second.remove();
+    warn.mockRestore();
+  });
+
+  it('never warns while scriptUnsafe is off, and only a literal true enables it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const el = await mount();
+    el.setConfig({ capabilities: ['allow-scripts'] });
+    el.setConfig({ scriptUnsafe: false });
+    el.setConfig({ scriptUnsafe: 'true' as any });
+    el.setConfig({ scriptUnsafe: 1 as any });
+    el.reset();
+    expect(scriptUnsafeWarnings(warn)).toEqual([]);
+    const wrapper = new DOMParser().parseFromString(el.shadowRoot!.querySelector('iframe')!.srcdoc, 'text/html');
+    const guest = new DOMParser().parseFromString(wrapper.querySelector('iframe')!.getAttribute('srcdoc')!, 'text/html');
+    expect(guest.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')).not.toContain('unsafe-eval');
+    el.remove();
+    warn.mockRestore();
+  });
+});

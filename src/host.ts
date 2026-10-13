@@ -17,8 +17,9 @@ import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permis
 
 export interface SandboxConfig {
     connectionsAllowed: CSPDirectives; // Providing a key here will merge with/override the default for that directive.
-    // TODO: maybe add a warning/error when scriptUnsafe is active, that it should only be used for testing, never in production (as long as webcontent works in it witout it)
-    scriptUnsafe?: boolean; // 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox)
+    // 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox). For testing: enabling it
+    // logs one warning per instance (backlog S4), since it lets guest code compile strings as code.
+    scriptUnsafe?: boolean;
     capabilities?: SafeCapability[]; // Sandbox attributes that keep the guest inside the frame
     unsafeCapabilities?: UnsafeCapability[]; // Capabilities that reach outside the frame (popups, modals, downloads, presentation, fullscreen). Opt-in only, logs a warning.
     html?: string; // Initial HTML content for iframe mode
@@ -95,6 +96,7 @@ export class WebSandbox extends HTMLElement {
     private _queuedMessages: { code: string }[] = [];
     private _rpcQueue: unknown[] = []; // the host's own RPC requests waiting for a port (cloned at call time)
     private _warnedUnsafeCapabilities = new Set<string>();
+    private _warnedScriptUnsafe = false; // the scriptUnsafe guard rail warns once per instance (S4)
     private _warnedSelfDirectives = new Set<string>(); // directives already warned about for 'self' (drop-self.ts)
     private _warnedFileDirectives = new Set<string>(); // directives already warned about for an explicit 'none' (file-sources.ts)
     private _warnedVirtualFilesUrl = false;
@@ -162,11 +164,14 @@ export class WebSandbox extends HTMLElement {
             capabilities: filterCapabilities(config.capabilities, SAFE_CAPABILITIES, 'capabilities'),
             unsafeCapabilities: filterCapabilities(config.unsafeCapabilities, UNSAFE_CAPABILITIES, 'unsafeCapabilities'),
         };
+        // Only a literal true enables eval: the value is also interpolated into the guest bootstrap.
+        if (Object.hasOwn(config, 'scriptUnsafe')) sanitizedConfig.scriptUnsafe = config.scriptUnsafe === true;
         this._dropVirtualFilesUrl(sanitizedConfig);
 
         // apply new config
         this._config = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig);
         this._warnAboutUnsafeCapabilities();
+        this._warnAboutScriptUnsafe();
 
         this.initialize();
     }
@@ -277,6 +282,15 @@ export class WebSandbox extends HTMLElement {
             this._warnedUnsafeCapabilities.add(capability);
             console.warn(`[Sandbox] unsafe capability "${capability}" is enabled: it lets guest content act outside the sandbox.`);
         }
+    }
+
+    // The guard rail for scriptUnsafe (backlog S4). It is on in most presets and every e2e spec, so it is the
+    // path of least resistance for a copy-paste consumer; one warning per instance says what it costs
+    // without repeating on every reset(), load() or setConfig().
+    private _warnAboutScriptUnsafe() {
+        if (this._config.scriptUnsafe !== true || this._warnedScriptUnsafe) return;
+        this._warnedScriptUnsafe = true;
+        console.warn("[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content.");
     }
 
     private _startTimeout() {

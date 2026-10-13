@@ -237,7 +237,20 @@ even when handed its session id.
 If the Service Worker is replaced by blob-URL files, this guarantee moves to C1's containment
 acceptance rather than disappearing with it.
 
-### S4 · `scriptUnsafe` has no guard rail — **P1 · S**
+### S4 · `scriptUnsafe` has no guard rail — ✅ **done**
+
+**Guarantee**: an instance that enables `scriptUnsafe` says so on the console exactly once, naming the
+risk: guest code can run strings as code.
+
+**Done**: `setConfig()` warns once per instance when `scriptUnsafe` is on (`_warnAboutScriptUnsafe` in
+`src/host.ts`), however often `reset()`, `load()` or `setConfig()` rebuild the environment; only a
+literal `true` enables it, since the value is also interpolated into the guest bootstrap. The README
+states that it exists for testing. Tests:
+- unit: `test/unit/host.test.ts` (one warning across `setConfig()`, `reset()`, `load()`, a mode switch
+  and an off/on toggle; one more for a second instance; none, and no `'unsafe-eval'`, for any value
+  other than `true`);
+- e2e: section S4 of `test/e2e/guard-rails.spec.ts` (one warning across reset and setConfig in both
+  modes, the guest's `eval` runs with it on and is refused with an `EvalError` without it).
 
 **Verified**: `scriptUnsafe: true` appends `'unsafe-eval'` to `script-src` (`src/host.ts:246`)
 with no warning at any level; the TODO at `src/host.ts:9` asks for one. It is enabled in most

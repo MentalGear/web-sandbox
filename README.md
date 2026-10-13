@@ -147,6 +147,11 @@ browsers soften by requiring a user gesture and showing an exit hint.
 
 `allow-same-origin` and the `allow-top-navigation*` flags are never accepted.
 
+**`scriptUnsafe` is for testing.** It adds `'unsafe-eval'` to the guest policy, so guest code can run
+strings as code (`eval`, `new Function`), and it enables `execute()`. The e2e suite and most playground
+presets turn it on; content you do not trust should run without it. Enabling it logs one warning per
+element.
+
 ## Calling between host and guest
 
 The host and the guest can call each other's functions and await the result. Each side publishes
