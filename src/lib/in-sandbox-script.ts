@@ -16,6 +16,9 @@ export function inSandboxScript(
     mode: 'iframe' | 'worker',
     sandboxConsole: Console,
     createBrokerFn?: typeof createBroker,
+    // Opt-in features; the host passes this literal only when one is on, so the bootstrap text of a sandbox
+    // without them is unchanged.
+    features?: { autoResize?: boolean },
 ) {
     // The port does not exist until INIT_PORT, but guest content scripts parse BEFORE that and may
     // call bridge.expose()/bridge.call() straight away. So the bridge is created now with a send that
@@ -65,6 +68,33 @@ export function inSandboxScript(
             columnNumber: event.columnNumber,
         });
     }, true);
+
+    // Content auto-sizing (backlog B6, src/lib/auto-resize.ts), opt-in and iframe mode only: a worker has no
+    // document. A ResizeObserver on the root element reports the content height as a RESIZE frame, outside
+    // the broker like VIOLATION. Its callbacks run at most once per rendering update, after layout, so the
+    // guest measures once per frame and sends only a changed height. The measure is the root element's
+    // box, which follows content in normal flow both ways (it shrinks too, unlike the root's scrollHeight,
+    // which never reads less than the viewport); when content overflows the viewport, scrollHeight, so
+    // overflow the root's box does not contain still grows the frame. The body is observed as well once it
+    // exists, for guests whose root is pinned to the viewport (html { height: 100% }). The host validates,
+    // clamps and rate-limits every report: guest code can reach the port and post its own.
+    if (features?.autoResize === true && mode === 'iframe' && typeof ResizeObserver === 'function') {
+        let lastHeight = -1;
+        const measure = () => {
+            const root = document.documentElement;
+            if (!root) return;
+            const box = Math.ceil(root.getBoundingClientRect().height);
+            const height = root.scrollHeight > root.clientHeight ? Math.max(box, root.scrollHeight) : box;
+            if (height === lastHeight) return;
+            lastHeight = height;
+            send({ type: 'RESIZE', height });
+        };
+        const resizeObserver = new ResizeObserver(measure);
+        resizeObserver.observe(document.documentElement);
+        document.addEventListener('DOMContentLoaded', () => {
+            if (document.body) resizeObserver.observe(document.body);
+        });
+    }
 
     const bridge = createBrokerFn ? createBrokerFn(send) : null;
     if (bridge) (globalThis as any).bridge = bridge;

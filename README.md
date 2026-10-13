@@ -60,6 +60,7 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 *   **`src/lib/files.ts`**, **`src/lib/in-sandbox-files.ts`**: Registered files: the host's store, and the guest's `sandboxFiles`.
 *   **`src/lib/markup-references.ts`**: Resolves guest markup references (`<script src="app.js">`) to registered files before the guest is built.
 *   **`src/lib/module-specifiers.ts`**, **`src/lib/import-map.ts`**: The module graph: relative imports in registered modules rewritten to virtual URLs (with the bundled es-module-lexer), and the guest's own import maps merged into the one the bootstrap registers.
+*   **`src/lib/auto-resize.ts`**: Auto-sizing on the host: validates, clamps and rate-limits the guest's height reports.
 *   **`src/lib/presets.ts`**: A shared library of test scenarios used by both the Playground and automated tests.
 *   **`vite.config.ts`**: The dev server for the playground and the e2e harness.
 *   **`test/e2e`**: Playwright e2e specs, plus the shared harness page and fixture every suite runs on.
@@ -128,6 +129,31 @@ sandbox.setConfig({ capabilities: ['allow-scripts'], watchdogTimeout: 2000 });
 ```
 
 Why it is built this way: [ADR-003](docs/ADR-003-lifecycle-and-liveness.md).
+
+## Auto-sizing
+
+With `autoResize: true` (iframe mode, off by default) the element's height follows the guest's content,
+growing and shrinking with it, a frame or two after the content changes.
+
+```js
+sandbox.setConfig({ capabilities: ['allow-scripts'], autoResize: true });
+```
+
+*   **How**: the guest bootstrap watches the guest's root element with a `ResizeObserver` and reports its
+    height over the private port; the host sets the element's `style.height` in pixels. Give the element a
+    non-inline `display` (custom elements are inline by default, and an inline box ignores `height`).
+*   **What is measured**: the root element's box, which follows content in normal flow, plus the scroll
+    height when content overflows the frame. A guest that pins its root to the viewport
+    (`html { height: 100% }`) still grows the frame but never shrinks it.
+*   **Reports are untrusted.** Guest code can reach the port and post any height, as often as it likes. The
+    host accepts only a finite number `>= 0`, rounds it up to whole pixels, clamps it to 100 000 px
+    (`AUTO_RESIZE_MAX_HEIGHT`), and writes at most once per animation frame and at most 30 times a second
+    (`AUTO_RESIZE_MAX_UPDATES_PER_SECOND`), always ending at the newest report. So a guest whose height
+    oscillates, or that floods the port, costs the host page a bounded number of relayouts; it still
+    costs the time to receive its messages. Off, nothing a guest posts changes the element.
+*   **Lifecycle**: the height stays across `reset()`, `load()` and `setConfig()` until the new guest
+    reports; a config without `autoResize` gives the height back to your CSS. Like the bridge, it needs the
+    bootstrap to run (`allow-scripts`, inline `script-src`). In worker mode it does nothing, with one warning.
 
 ## Capabilities
 

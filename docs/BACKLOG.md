@@ -26,6 +26,7 @@ conditional "continue".
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
 | Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3); `violation` for refused loads, capped per environment (S5) |
+| Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
 | Execution budget | 🟡 opt-in liveness watchdog in default mode: bounded in worker mode and out-of-process frames, not where the frame shares the host's thread; strict mode open (S6) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C) |
@@ -875,7 +876,36 @@ records no request; an oversized body rejects after reading at most the cap plus
 the one-port-per-request stream shape follows Lunet
 ([`docs/lunet/data.js.flow`](https://github.com/Gozala/lunet/blob/master/docs/lunet/data.js.flow)).
 
-### B6 · Content auto-sizing — **P2 · S**
+### B6 · Content auto-sizing — ✅ **done**
+
+**Guarantee**: with `autoResize: true` (iframe mode) the element's height follows the guest's content, and
+nothing the guest posts can make the host write a height that is not a finite number in
+[0, 100 000] px, write more than once per animation frame, or write more than 30 times a second; with it
+off, nothing the guest posts changes the element.
+
+**Done**: the guest bootstrap (`src/lib/in-sandbox-script.ts`) observes the root element (and the body,
+once it exists) with a `ResizeObserver` and posts a changed height as a first-class `RESIZE` frame, outside
+the broker like `VIOLATION` and `PING`. The measure is the root's box, which shrinks as well as grows (the
+root's `scrollHeight` never reads less than the viewport), or the scroll height when content overflows the
+viewport. The host's one path from a frame to a height is `startAutoResize` (`src/lib/auto-resize.ts`),
+created per environment only when the config asks for it: `toResizeHeight` drops anything but a finite
+number >= 0, rounds up and clamps to `AUTO_RESIZE_MAX_HEIGHT` (100 000); reports only record the newest
+height, written at the next animation frame and no sooner than 1/30 s after the previous write
+(`AUTO_RESIZE_MAX_UPDATES_PER_SECOND`), so the last report always lands. The height stays across rebuilds
+until the new guest reports; a config without `autoResize` removes it. The feature literal reaches the
+bootstrap only when on, so other sandboxes' documents are byte for byte unchanged. Worker mode: no effect,
+one warning. Tests: `src/lib/auto-resize.test.ts` (validation, per-frame coalescing, the cap over ten
+seconds of reports every frame, stop), `src/lib/in-sandbox-script.test.ts` (what is observed, what is
+sent, off and worker mode), `test/unit/host.test.ts` (the literal), and `test/e2e/auto-resize.spec.ts` on
+all three engines: growth and shrink within 6 host frames of the change (measured 2–4, including the
+call's return trip), off by default with a forged report, malformed reports forged on the real port
+dropped and huge ones clamped, a flood of 10 000+ forged reports bounded by both caps with the last one
+written, a guest oscillating every frame leaves the host's frames and timers running, reset and turning
+off, worker mode. Both rate tests fail with the cap removed.
+
+**Residuals**: receiving the messages still costs host time (S6's open note); a guest whose root is
+pinned to the viewport never shrinks the frame; content outside the root's box that does not overflow
+the viewport is not measured; the element needs a non-inline `display`.
 
 *Parity gap*: the headline feature of `cross-origin-html-embed`; Zoid ships it too.
 **Verified**: the iframe is pinned to `width:100%;height:100%` (`src/host.ts:224`).
@@ -1174,7 +1204,7 @@ comparisons; for the 2026 entrants (`quickjs-wasi`, `@tanstack/ai-isolate-quickj
 | Headless (worker) execution | ✅ **S1** | ❌ | ❌ | ❌ | ❌ |
 | Virtual files | ✅ **C1** | ❌ | ➖ | ❌ | ❌ |
 | Host-mediated network | ❌ **B5** | ❌ | ➖ | ✅ | ❌ |
-| Auto-sizing | ❌ **B6** | ❌ | 🟡 | ✅ | ✅ |
+| Auto-sizing | ✅ **B6** | ❌ | 🟡 | ✅ | ✅ |
 | Execution quotas | 🟡 **S6** | ❌ | ➖ | ❌ | ➖ |
 
 We lead on four rows: isolation without server config, headless (worker) execution and virtual
