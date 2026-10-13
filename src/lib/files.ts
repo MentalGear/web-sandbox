@@ -7,6 +7,8 @@
  * every environment build takes a snapshot of it, and nothing reaches a guest that is already running.
  */
 
+import { moduleSpecifierEdits, VIRTUAL_ROOT } from './module-specifiers';
+
 // The cap (backlog C3). Module constants rather than config: each value was measured to load in all
 // three engines (test/e2e/files.spec.ts), so raise one only after that test passes at the new value.
 export const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
@@ -28,7 +30,9 @@ export interface FileInfo {
  *   INVALID_PATH          a path fails isValidPath(), or unregisterFiles() was not given an array of paths
  *   INVALID_FILE          the batch is not an object, or an entry is not a string, a Uint8Array or
  *                         { content, type } with a valid type
- *   FILES_QUOTA_EXCEEDED  the store after the batch would exceed MAX_FILES or MAX_TOTAL_BYTES
+ *   FILES_QUOTA_EXCEEDED  the store after the batch would exceed MAX_FILES or MAX_TOTAL_BYTES (a
+ *                         JavaScript file counts its registered bytes plus what its rewrite adds,
+ *                         rewriteCost())
  * In the guest, every failed lookup is NOT_FOUND (in-sandbox-files.ts).
  */
 export type FileErrorCode = 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEEDED';
@@ -120,6 +124,14 @@ const MIME_TYPES: Readonly<Record<string, string>> = {
     ogv: 'video/ogg',
 };
 
+// The JavaScript MIME types a file can be given; only text/javascript comes from the extension table.
+const JAVASCRIPT_TYPES = new Set(['text/javascript', 'application/javascript', 'text/ecmascript', 'application/ecmascript']);
+
+/** Whether a file of this type is JavaScript: it loads through script-src, and its module specifiers are rewritten. */
+export function isJavaScriptType(type: string): boolean {
+    return JAVASCRIPT_TYPES.has(type);
+}
+
 /** The type a file gets from its extension (case-insensitive), or FALLBACK_TYPE. Never empty. */
 export function mimeTypeFor(path: string): string {
     const name = path.slice(path.lastIndexOf('/') + 1);
@@ -140,12 +152,41 @@ export function isValidMimeType(type: unknown): type is string {
 
 interface StoredFile {
     type: string;
-    size: number;
-    base64: string; // the bytes, encoded once at registration: the snapshot needs nothing else
+    size: number; // registered bytes: what listFiles() reports and read() returns
+    cost: number; // what counts against MAX_TOTAL_BYTES: size plus rewriteCost(edits)
+    base64: string; // the bytes as registered, encoded once at registration: the snapshot needs nothing else
+    edits: ByteEdits | null; // the module rewrite, for JavaScript files whose specifiers were rewritten
 }
 
-/** One file as the guest bootstrap receives it: [path, type, base64]. */
-export type FileSnapshotEntry = [path: string, type: string, base64: string];
+/**
+ * A JavaScript file's module rewrite as the guest receives it: flat triples
+ * [start, end, text, start, end, text, ...], where [start, end) is a range of the registered BYTES
+ * (sorted, non-overlapping) and `text` replaces it. The guest builds the module from slices of the
+ * registered bytes and these texts (inSandboxFiles), so the literal carries the file once.
+ */
+export type ByteEdits = (number | string)[];
+
+/**
+ * One file as the guest bootstrap receives it: [path, type, base64], plus the module rewrite for a
+ * JavaScript file whose relative specifiers were rewritten (module-specifiers.ts).
+ */
+export type FileSnapshotEntry = [path: string, type: string, base64: string] | [path: string, type: string, base64: string, edits: ByteEdits];
+
+// What one rewritten specifier adds to the snapshot literal besides its text: two offsets of up to
+// 8 digits, three commas and two quotes, rounded up.
+const EDIT_OVERHEAD = 24;
+
+/**
+ * What a module rewrite adds to the snapshot literal, in bytes, counted against MAX_TOTAL_BYTES so the
+ * literal never grows past what the cap was measured at: each edit's text plus EDIT_OVERHEAD. The
+ * texts are JSON strings of URLs, so ASCII: their length is their size.
+ */
+export function rewriteCost(edits: ByteEdits | null): number {
+    if (!edits) return 0;
+    let cost = 0;
+    for (let i = 2; i < edits.length; i += 3) cost += (edits[i] as string).length + EDIT_OVERHEAD;
+    return cost;
+}
 
 /**
  * The files of one element. Every mutation validates the whole batch against the store it would
@@ -153,7 +194,10 @@ export type FileSnapshotEntry = [path: string, type: string, base64: string];
  */
 export class FileStore {
     private _files = new Map<string, StoredFile>();
-    private _totalBytes = 0;
+    private _totalBytes = 0; // the sum of every file's cost
+
+    // Lexer failures are reported here, once per registration of the file (console.warn by default).
+    constructor(private readonly _warn: (message: string) => void = message => console.warn(message)) {}
 
     /**
      * Adds or replaces the given files. Returns the paths whose content or type changed (sorted);
@@ -163,24 +207,37 @@ export class FileStore {
         const incoming = parseBatch(files);
 
         let fileCount = this._files.size;
-        let totalBytes = this._totalBytes;
-        for (const [path, file] of incoming) {
-            const existing = this._files.get(path);
-            if (existing) totalBytes -= existing.size;
-            else fileCount++;
-            totalBytes += file.bytes.length;
-        }
+        for (const path of incoming.keys()) if (!this._files.has(path)) fileCount++;
         if (fileCount > MAX_FILES) throw fileError('FILES_QUOTA_EXCEEDED', `registerFiles() refused: at most ${MAX_FILES} files.`);
-        if (totalBytes > MAX_TOTAL_BYTES) throw fileError('FILES_QUOTA_EXCEEDED', `registerFiles() refused: at most ${MAX_TOTAL_BYTES} bytes in total.`);
+        const quotaError = () => fileError('FILES_QUOTA_EXCEEDED', `registerFiles() refused: at most ${MAX_TOTAL_BYTES} bytes in total.`);
 
-        // validated: apply. Encoded only now, so an oversized batch is refused before any encoding work.
+        // The registered bytes alone first, so an oversized batch is refused before any lexing or encoding work.
+        let totalBytes = this._totalBytes;
+        for (const [path, file] of incoming) totalBytes += file.bytes.length - (this._files.get(path)?.cost ?? 0);
+        if (totalBytes > MAX_TOTAL_BYTES) throw quotaError();
+
+        // Then with what each module rewrite adds (rewriteCost). Lexed now, still before any change.
+        const rewrites = new Map<string, ModuleRewrite>();
+        for (const [path, file] of incoming) {
+            if (!isJavaScriptType(file.type)) continue;
+            const rewrite = rewriteModule(path, file.bytes);
+            rewrites.set(path, rewrite);
+            totalBytes += rewriteCost(rewrite.edits);
+        }
+        if (totalBytes > MAX_TOTAL_BYTES) throw quotaError();
+
+        // validated: apply. Encoded only now.
         const changed: string[] = [];
         for (const [path, { type, bytes }] of incoming) {
-            const file: StoredFile = { type, size: bytes.length, base64: toBase64(bytes) };
+            const rewrite = rewrites.get(path);
+            const edits = rewrite?.edits ?? null;
+            const file: StoredFile = { type, size: bytes.length, cost: bytes.length + rewriteCost(edits), base64: toBase64(bytes), edits };
             const existing = this._files.get(path);
             if (existing && existing.type === file.type && existing.base64 === file.base64) continue;
             this._files.set(path, file);
             changed.push(path);
+            // once per file registration, and only for a file that changed: delivered as registered
+            if (rewrite?.failure) this._warn(`[Sandbox] ${describePath(path)} is registered as JavaScript but could not be lexed as a module (${rewrite.failure}), so its relative imports were not rewritten and will fail in the guest. The file is delivered unchanged.`);
         }
         this._totalBytes = totalBytes;
         return changed.sort();
@@ -199,7 +256,7 @@ export class FileStore {
             const existing = this._files.get(path);
             if (!existing) continue;
             this._files.delete(path);
-            this._totalBytes -= existing.size;
+            this._totalBytes -= existing.cost;
             removed.push(path);
         }
         return removed.sort();
@@ -215,9 +272,66 @@ export class FileStore {
     /** What one environment build hands the guest, sorted by path. Empty when no file is registered. */
     snapshot(): FileSnapshotEntry[] {
         const entries: FileSnapshotEntry[] = [];
-        for (const [path, file] of this._files) entries.push([path, file.type, file.base64]);
+        for (const [path, file] of this._files) {
+            entries.push(file.edits ? [path, file.type, file.base64, [...file.edits]] : [path, file.type, file.base64]);
+        }
         return entries.sort((a, b) => (a[0] < b[0] ? -1 : 1));
     }
+}
+
+interface ModuleRewrite {
+    edits: ByteEdits | null; // null: nothing to rewrite, or the lexer failed
+    failure?: string; // why the file is delivered unchanged
+}
+
+const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+/**
+ * The module rewrite of a JavaScript file registered at `path`: its relative specifiers resolved
+ * against its own virtual URL (module-specifiers.ts), as edits of its registered bytes. A file that is
+ * not UTF-8 (a module always is) or that the lexer cannot parse is delivered unchanged, with `failure`
+ * set; its relative imports then fail closed in the guest, exactly as without the rewrite.
+ */
+function rewriteModule(path: string, bytes: Uint8Array): ModuleRewrite {
+    let source: string;
+    try {
+        source = UTF8.decode(bytes);
+    } catch {
+        return { edits: null, failure: 'not UTF-8' };
+    }
+    let edits;
+    try {
+        edits = moduleSpecifierEdits(source, VIRTUAL_ROOT + path);
+    } catch (e) {
+        return { edits: null, failure: e instanceof Error ? e.message.slice(0, 80) : 'lexer error' };
+    }
+    if (edits.length === 0) return { edits: null };
+
+    // UTF-16 offsets to UTF-8 byte offsets, in one pass over the source (edits are sorted)
+    const byteEdits: ByteEdits = [];
+    let char = 0;
+    let byte = 0;
+    for (const edit of edits) {
+        byte += utf8Length(source, char, edit.start);
+        const start = byte;
+        byte += utf8Length(source, edit.start, edit.end);
+        char = edit.end;
+        byteEdits.push(start, byte, edit.text);
+    }
+    return { edits: byteEdits };
+}
+
+// The UTF-8 length of source[from, to). The source came from a fatal UTF-8 decode, so every surrogate is paired.
+function utf8Length(source: string, from: number, to: number): number {
+    let length = 0;
+    for (let i = from; i < to; i++) {
+        const unit = source.charCodeAt(i);
+        if (unit < 0x80) length += 1;
+        else if (unit < 0x800) length += 2;
+        else if (unit >= 0xd800 && unit <= 0xdbff) { length += 4; i++; }
+        else length += 3;
+    }
+    return length;
 }
 
 interface ParsedFile {

@@ -1,4 +1,5 @@
 import type { CSPDirectives } from "../csp-directives";
+import { rewriteInlineModule } from "./module-specifiers";
 
 /**
  * Markup references to registered files (ADR-004, PR2). Host-only: nothing here is stringified into
@@ -25,6 +26,12 @@ import type { CSPDirectives } from "../csp-directives";
  * If nothing matched, there are no parts and the guest document is built exactly as before (the
  * original markup verbatim). So the rewrite only ever happens to markup that names a registered file.
  *
+ * With the module graph (PR3, when JavaScript files are registered) the same parse also rewrites the
+ * relative specifiers of inline `<script type="module">` against VIRTUAL_DOCUMENT_URL, as for a
+ * registered module, and takes the guest's inline `<script type="importmap">` elements out of the
+ * markup, for the host to merge into the one import map the bootstrap registers (import-map.ts).
+ * Either counts as a change, so the markup is then written by the bootstrap even with no slot.
+ *
  * Safety of parsing untrusted markup here: DOMParser.parseFromString() creates an inert document. It
  * has no browsing context, its scripting flag is off, scripts in it never run, and nothing in it is
  * fetched (no images, styles or frames), so the host page runs nothing of the guest's. What the host
@@ -38,8 +45,9 @@ const VIRTUAL_ROOT = 'https://vfs.invalid/';
 
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 
-// The attributes that name a file, and nothing else: srcset (PR4), CSS url() (PR4), module imports
-// (PR3), <iframe src>, <embed>, <object>, <a href> and anything inside <template> stay as written.
+// The attributes that name a file, and nothing else: srcset (PR4), CSS url() (PR4), <iframe src>,
+// <embed>, <object>, <a href> and anything inside <template> stay as written. Imports inside inline
+// modules are the module graph's (rewriteGuestMarkup, below).
 const REFERENCES: readonly (readonly [element: string, attribute: string])[] = [
     ['script', 'src'],
     ['link', 'href'],
@@ -107,8 +115,40 @@ const slotName = (nonce: string, index: number) => `vfs-slot-${nonce}-${index}`;
  * guest document has its own, and a later one is ignored by the parser anyway).
  */
 export function rewriteMarkupReferences(markup: string, paths: ReadonlySet<string>, givenNonce?: string): string[] | null {
+    return rewriteGuestMarkup(markup, paths, { modules: false }, givenNonce).parts;
+}
+
+export interface GuestMarkupOptions {
+    // The module graph is on (JavaScript files are registered and the bootstrap can register an import
+    // map): rewrite inline module scripts and take out the guest's inline import maps.
+    modules: boolean;
+    // Called when an inline module cannot be lexed (it is then left as written); `index` counts the
+    // inline module scripts in document order, from 0.
+    onModuleFailure?: (index: number) => void;
+}
+
+export interface GuestMarkup {
+    parts: string[] | null; // as rewriteMarkupReferences returns them; null: use the markup as written
+    importMaps: string[]; // the texts of the inline import maps taken out, in document order
+}
+
+// Inline scripts only: a module script with src is a markup reference, and an import map with src is
+// not supported by any engine (it fires an error), so it is left as written.
+const INLINE_SCRIPT_SELECTOR = 'script:not([src])';
+
+// A script's type as the HTML standard reads it: the attribute, ASCII whitespace stripped, ASCII case-insensitive.
+const scriptType = (script: Element) => (script.getAttribute('type') ?? '').replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '').toLowerCase();
+
+/**
+ * rewriteMarkupReferences, plus the module graph's changes when `options.modules` is set: inline
+ * module scripts (no src) get their relative specifiers rewritten against VIRTUAL_DOCUMENT_URL, and
+ * inline import maps (no src) are removed and returned. `parts` is non-null when anything changed;
+ * a build that only rewrote modules or took out a map returns a single part and draws no nonce.
+ */
+export function rewriteGuestMarkup(markup: string, paths: ReadonlySet<string>, options: GuestMarkupOptions, givenNonce?: string): GuestMarkup {
     if (givenNonce !== undefined && !/^[0-9a-f]{32}$/.test(givenNonce)) throw new Error('[Sandbox] the slot nonce must be 32 lowercase hex characters');
-    if (paths.size === 0 || markup === '') return null;
+    const unchanged: GuestMarkup = { parts: null, importMaps: [] };
+    if (paths.size === 0 || markup === '') return unchanged;
     let nonce = givenNonce; // drawn at the first match: a build that rewrites nothing draws none
 
     // Inert: no script runs and nothing is fetched (see the comment at the top of this file).
@@ -130,9 +170,29 @@ export function rewriteMarkupReferences(markup: string, paths: ReadonlySet<strin
             slots.push(path);
         }
     }
-    if (slots.length === 0 || nonce === undefined) return null;
+
+    let modulesChanged = false;
+    const importMaps: string[] = [];
+    if (options.modules) {
+        let moduleIndex = 0;
+        for (const script of doc.querySelectorAll(INLINE_SCRIPT_SELECTOR)) {
+            if (script.namespaceURI !== HTML_NAMESPACE || scriptType(script) !== 'module') continue;
+            const index = moduleIndex++;
+            const rewritten = rewriteInlineModule(script.textContent ?? '', VIRTUAL_DOCUMENT_URL, () => options.onModuleFailure?.(index));
+            if (rewritten === null) continue;
+            script.textContent = rewritten;
+            modulesChanged = true;
+        }
+        for (const script of doc.querySelectorAll(INLINE_SCRIPT_SELECTOR)) {
+            if (script.namespaceURI !== HTML_NAMESPACE || scriptType(script) !== 'importmap') continue;
+            importMaps.push(script.textContent ?? '');
+            script.remove();
+        }
+    }
+    if (slots.length === 0 && !modulesChanged && importMaps.length === 0) return unchanged;
 
     const serialised = serialiseDocument(doc);
+    if (slots.length === 0 || nonce === undefined) return { parts: [serialised], importMaps };
 
     // Split on this build's sentinels. The nonce is random per build and appears nowhere else, so guest
     // markup cannot contain a sentinel; even if it could, a slot index only ever names one of the
@@ -147,7 +207,7 @@ export function rewriteMarkupReferences(markup: string, paths: ReadonlySet<strin
         last = match.index + match[0].length;
     }
     parts.push(serialised.slice(last));
-    return parts;
+    return { parts, importMaps };
 }
 
 function hasLoadingRelation(link: Element): boolean {

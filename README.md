@@ -59,6 +59,7 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 *   **`src/lib/rpc.ts`**: The broker behind `expose()` and `call()`; the host and the guest run the same code.
 *   **`src/lib/files.ts`**, **`src/lib/in-sandbox-files.ts`**: Registered files: the host's store, and the guest's `sandboxFiles`.
 *   **`src/lib/markup-references.ts`**: Resolves guest markup references (`<script src="app.js">`) to registered files before the guest is built.
+*   **`src/lib/module-specifiers.ts`**, **`src/lib/import-map.ts`**: The module graph: relative imports in registered modules rewritten to virtual URLs (with the bundled es-module-lexer), and the guest's own import maps merged into the one the bootstrap registers.
 *   **`src/lib/presets.ts`**: A shared library of test scenarios used by both the Playground and automated tests.
 *   **`vite.config.ts`**: The dev server for the playground and the e2e harness.
 *   **`test/e2e`**: Playwright e2e specs, plus the shared harness page and fixture every suite runs on.
@@ -197,13 +198,14 @@ The host registers files on the element; the guest reads them through the global
 
 ```js
 sandbox.registerFiles({
-    'app.js': 'console.log("hello from app.js")',
+    'app.js': 'import { greet } from "./lib/greet.js"; greet();',  // modules import by relative path
+    'lib/greet.js': 'export const greet = () => console.log("hello");',
     'data.json': '{ "answer": 42 }',
     'logo.png': pngBytes,                                    // a Uint8Array
     'notes': { content: 'plain text', type: 'text/plain' },  // explicit type
 });
 sandbox.load(`
-    <script src="app.js"></script>                           <!-- markup names files by path -->
+    <script type="module" src="app.js"></script>             <!-- markup names files by path -->
     <img src="logo.png">
     <script>
         sandboxFiles.text('data.json').then(JSON.parse);     // code reads them through sandboxFiles
@@ -230,15 +232,29 @@ sandbox.load(`
     `application/octet-stream`). The policy gains `blob:` only for the registered types' directives, and
     a directive you set to `'none'` (or `[]`) stays `'none'`, with a warning.
 *   **Markup references just work** (iframe mode, when the bootstrap runs: `allow-scripts` and the
-    default inline `script-src`): `<script src>` (classic or a
-    single module), stylesheet, icon and preload `<link href>`, and `src` of `img`, `source`, `video`,
+    default inline `script-src`): `<script src>` (classic or
+    module), stylesheet, icon and preload `<link href>`, and `src` of `img`, `source`, `video`,
     `audio`, `track` plus `video[poster]`, when the URL resolves to a registered path — `app.js`,
     `./app.js`, `/app.js`, `img/logo.svg`. Scripts keep their order (`defer`, `async`, modules and
     `document.currentScript` behave as if served). Anything else — an unregistered path, another case,
     a query or fragment (`logo.svg?v=2`) — stays as written and fails closed: it loads nothing and
     sends no request. The matched attribute reads as the `blob:` URL.
-*   **Not yet**: `srcset`, `url()` in CSS, relative imports between modules, and references inside
-    `<template>`. Use `sandboxFiles.url()` for those.
+*   **Modules import each other by relative path** (same conditions): `import { a } from './lib/a.js'`,
+    `'../x.js'`, `'/x.js'`, `export * from …`, and `import('./lazy.js')` with a string literal, from a
+    registered module or an inline `<script type="module">`. The host rewrites those specifiers to
+    `https://vfs.invalid/<path>` when you register the file, and the guest gets one import map from
+    those URLs to its `blob:` URLs, so a module is evaluated once however it is reached. `read()` and
+    `text()` return the file as you registered it; `url()` serves the rewritten module. A guest
+    `<script type="importmap">` is merged into that one map (entries for `https://vfs.invalid/` are
+    ignored), so it works the same in every engine.
+*   **Modules: what does not work** (fails closed): `import()` of a computed string,
+    `new URL('./x', import.meta.url)` (`import.meta.url` is a `blob:` URL; use `sandboxFiles.url()`),
+    module workers, and module graphs in worker mode (no import map there). A relative import of an
+    unregistered file is refused by the policy. A file the lexer cannot parse is delivered unchanged,
+    with a warning. A rewritten JavaScript file counts its registered bytes plus what the rewrite adds
+    against the 8 MiB cap.
+*   **Not yet**: `srcset`, `url()` in CSS, and references inside `<template>`. Use `sandboxFiles.url()`
+    for those.
 
 Why it is built this way: [ADR-004](docs/ADR-004-files-as-blob-urls.md).
 
