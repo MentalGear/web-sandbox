@@ -49,14 +49,14 @@ import { srcsetCandidates } from "./srcset";
 
 /** The URL guest markup is resolved against: a document at the root of the files. */
 export const VIRTUAL_DOCUMENT_URL = 'https://vfs.invalid/index.html';
-const VIRTUAL_ROOT = 'https://vfs.invalid/';
+export const VIRTUAL_ROOT = 'https://vfs.invalid/';
 
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 
 // The attributes that name a file by one URL. srcset and CSS (PR4) are handled below, by their own
 // parsers; <iframe src>, <embed>, <object>, <a href>, imagesrcset and anything inside <template> stay as
 // written. Imports inside inline modules are the module graph's (rewriteGuestMarkup, below).
-const REFERENCES: readonly (readonly [element: string, attribute: string])[] = [
+export const REFERENCES: readonly (readonly [element: string, attribute: string])[] = [
     ['script', 'src'],
     ['link', 'href'],
     ['img', 'src'],

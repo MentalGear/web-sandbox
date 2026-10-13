@@ -1,6 +1,7 @@
 import dgram from 'node:dgram';
 import type { AddressInfo } from 'node:net';
 import { test, expect } from './fixture';
+import { inFrames, waitInView } from './strict-view';
 
 /**
  * Backlog S13: WebRTC. ICE gathering sends UDP to STUN/TURN servers that no CSP directive governs
@@ -14,6 +15,10 @@ import { test, expect } from './fixture';
  *      in Chromium and WebKit its ICE gathering reaches a loopback UDP listener. Firefox sends nothing to a
  *      loopback STUN/TURN server even from the host page (the listener's control), so there only
  *      candidate gathering is observable.
+ * Strict mode (ADR-005) closes the residual by construction:
+ *   4. guest code runs in a worker, which has no peer-connection constructor, and the view runs no guest
+ *      script; a frame in rendered markup is removed before it is inserted (A1), so the same ICE probe
+ *      never runs and no UDP reaches the listener, while the host-page control does (Chromium, WebKit).
  */
 
 const PEER_CONNECTION_NAMES = `Object.getOwnPropertyNames(globalThis).filter(n => /^(webkit|moz)?RTCPeerConnection$/.test(n))`;
@@ -92,6 +97,42 @@ test('residual: a frame the guest creates keeps RTCPeerConnection, and in Chromi
             expect(hostPackets).toBeGreaterThan(0);
             expect(packets).toBeGreaterThan(0);
         }
+    } finally {
+        udp.close();
+    }
+});
+
+// ---- 4. strict mode -----------------------------------------------------------------------------------
+
+test('strict mode: no peer connection in the worker; a rendered frame carrying the ICE probe is absent, nothing runs, no UDP leaves (control: the host page)', async ({ sandbox, page, browserName }) => {
+    test.setTimeout(45000);
+    const udp = dgram.createSocket('udp4');
+    let packets = 0;
+    udp.on('message', () => packets++);
+    await new Promise<void>(resolve => udp.bind(0, '127.0.0.1', resolve));
+    const port = (udp.address() as AddressInfo).port;
+    try {
+        expect(await sandbox.mount({ mode: 'strict' })).toBe('ready');
+        expect(await sandbox.inGuest(`return { pc: typeof RTCPeerConnection, names: ${PEER_CONNECTION_NAMES} }`)).toEqual({ pc: 'undefined', names: [] });
+
+        const probe = `<script>(${iceProbe(port)})(r => (globalThis.__ran = globalThis.__ran || []).push('ice ' + r.candidates.length))</script>`;
+        const html = `<iframe srcdoc="${probe.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"></iframe><iframe sandbox="allow-scripts" srcdoc="${probe.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"></iframe>${probe}<p id="done">done</p>`;
+        await sandbox.run(`sandboxView.render(${JSON.stringify(html)})`);
+        await waitInView(page, browserName, `!!document.getElementById('done')`);
+        await page.waitForTimeout(4000); // the probe would report after 3 s
+
+        const frames = await inFrames<string[]>(page, browserName, '(globalThis.__ran || [])');
+        expect(frames.map(f => f.path)).toEqual(['main', 'main/wrapper', 'main/wrapper/view']); // no frame was created
+        expect(frames.flatMap(f => (f.value === 'no-context' ? [] : f.value))).toEqual([]);
+        const strictPackets = packets;
+
+        // control: the host page itself, outside any sandbox
+        packets = 0;
+        const host = await page.evaluate(`new Promise(res => (${iceProbe(port)})(res))`) as { pc: string; candidates: string[] };
+        expect(host.pc).toBe('function');
+        expect(strictPackets).toBe(0);
+        if (browserName === 'firefox') expect(packets).toBe(0); // no loopback STUN from Firefox at all
+        else expect(packets).toBeGreaterThan(0);
     } finally {
         udp.close();
     }

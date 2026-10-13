@@ -49,6 +49,22 @@ describe("inSandboxScript", () => {
         expect(port.onmessage).toBeDefined();
     });
 
+    it("externalPort (strict mode): adds no message listener of its own and takes the logic port through attach(), once", () => {
+        const sandboxConsole = createMockConsole();
+        const listeners: Record<string, Function> = {};
+        (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
+        const comms = inSandboxScript(false, 'strict', sandboxConsole, createBroker, { externalPort: true });
+        expect(listeners['message']).toBeUndefined();
+        const port = createMockPort();
+        const other = createMockPort();
+        comms.attach(port as any);
+        comms.attach(other as any);
+        expect(port.postMessage).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['strict Ready'] });
+        expect(other.postMessage).not.toHaveBeenCalled();
+        port.onmessage({ data: { type: 'PING', n: 1 } });
+        expect(port.postMessage).toHaveBeenCalledWith({ type: 'PONG', n: 1 });
+    });
+
     it("should block execution when scriptUnsafe is false", () => {
         const port = createMockPort();
         const sandboxConsole = createMockConsole();

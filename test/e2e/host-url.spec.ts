@@ -25,7 +25,15 @@ import { test, expect, HARNESS, ORIGIN } from './fixture';
  *
  * Referer is recorded by a local HTTPS server (upgrade-insecure-requests is always on, and WebKit
  * upgrades even a loopback http: URL), with a certificate made per run. Every request a test expects is
- * awaited at the server, so a request the evidence missed fails the test instead of passing it.
+ * awaited at the server, so a request the evidence missed fails the test instead of passing it. The same
+ * server answers as https://127.0.0.1:<port> (cross-site to the harness) and as https://localhost:<port>
+ * (same host name as the harness, so same-site but for the scheme).
+ *
+ * Strict mode (ADR-005, research 15 P8), section 4: guest code runs only in the worker, whose location is
+ * its own blob: URL, and every request it or its rendered markup makes carries no Referer and no host
+ * origin, in all three engines, also to a same-site target and also when the markup asks for unsafe-url:
+ * the renderer removes <meta> and forces referrerpolicy="no-referrer" (A1). The control is the host page
+ * itself asking for unsafe-url, which shows what each engine would send (WebKit: the full URL same-site).
  */
 
 const SECRET = 'S15-SECRET-7f3a';
@@ -38,28 +46,38 @@ const revealsHostUrl = (value: unknown) => /S15-SECRET|harness|test\/e2e/.test(J
 
 // ---- the recording server --------------------------------------------------------------------
 
-type Hit = { id: string; referer: string | null };
-let server: https.Server;
+type Hit = { id: string; referer: string | null; origin: string | null };
+const servers: https.Server[] = [];
 let certDir: string;
 let REC = '';
+let REC_SAME_SITE = '';
 const hits: Hit[] = [];
 
 test.beforeAll(async () => {
     certDir = mkdtempSync(path.join(tmpdir(), 's15-cert-'));
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=127.0.0.1',
-        '-addext', 'subjectAltName=IP:127.0.0.1', '-keyout', path.join(certDir, 'key.pem'), '-out', path.join(certDir, 'cert.pem')], { stdio: 'ignore' });
-    server = https.createServer({ key: readFileSync(path.join(certDir, 'key.pem')), cert: readFileSync(path.join(certDir, 'cert.pem')) }, (req, res) => {
+        '-addext', 'subjectAltName=IP:127.0.0.1,IP:::1,DNS:localhost', '-keyout', path.join(certDir, 'key.pem'), '-out', path.join(certDir, 'cert.pem')], { stdio: 'ignore' });
+    const tls = { key: readFileSync(path.join(certDir, 'key.pem')), cert: readFileSync(path.join(certDir, 'cert.pem')) };
+    const handler = (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => {
         const id = new URL(req.url ?? '/', 'https://x').searchParams.get('id') ?? '';
-        hits.push({ id, referer: req.headers.referer ?? null });
+        hits.push({ id, referer: req.headers.referer ?? null, origin: (req.headers.origin as string | undefined) ?? null });
         res.writeHead(200, { 'content-type': 'image/svg+xml', 'access-control-allow-origin': '*' });
         res.end('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>');
-    });
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    REC = `https://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    };
+    // the same port on 127.0.0.1 and ::1, so "localhost" reaches it whichever address the browser tries
+    const v4 = https.createServer(tls, handler);
+    await new Promise<void>(resolve => v4.listen(0, '127.0.0.1', resolve));
+    servers.push(v4);
+    const port = (v4.address() as AddressInfo).port;
+    const v6 = https.createServer(tls, handler);
+    await new Promise<void>(resolve => { v6.once('error', () => resolve()); v6.listen(port, '::1', resolve); });
+    if (v6.listening) servers.push(v6);
+    REC = `https://127.0.0.1:${port}`;
+    REC_SAME_SITE = `https://localhost:${port}`;
 });
 
 test.afterAll(async () => {
-    await new Promise(resolve => server?.close(resolve));
+    await Promise.all(servers.map(server => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); })));
     if (certDir) rmSync(certDir, { recursive: true, force: true });
 });
 
@@ -218,6 +236,20 @@ for (const guestMeta of [false, true]) {
     });
 }
 
+test('iframe mode, residual S18: a guest asking for unsafe-url sends a same-site target the host ORIGIN in Firefox and the FULL host URL in WebKit (measured; strict mode closes it, section 4)', async ({ sandbox, browserName }) => {
+    const prefix = `t${++run}samesite`;
+    expect(await sandbox.mount({ connectionsAllowed: { 'img-src': [REC_SAME_SITE] } })).toBe('ready');
+    const outcome = await sandbox.inGuest(`
+        const image = (kind, policy) => new Promise(res => { const i = new Image(); if (policy) i.referrerPolicy = policy; i.onload = () => res('loaded'); i.onerror = () => res('error'); i.src = '${REC_SAME_SITE}/r?id=${prefix}-' + kind; });
+        return { image: await image('image'), imageUnsafe: await image('imageUnsafe', 'unsafe-url') };
+    `);
+    expect(outcome).toEqual({ image: 'loaded', imageUnsafe: 'loaded' });
+    const seen = await referers([`${prefix}-image`, `${prefix}-imageUnsafe`]);
+    // by default nothing (the inherited no-referrer); asked for, the engine decides (research 15, P8)
+    expect(seen[`${prefix}-image`]).toBeNull();
+    expect(seen[`${prefix}-imageUnsafe`]).toBe({ chromium: null, firefox: HOST_ORIGIN_REFERER, webkit: HOST_URL_WITHOUT_FRAGMENT }[browserName]);
+});
+
 // ---- 3. worker mode ---------------------------------------------------------------------------------
 
 test('worker mode: the worker sees only its own blob: URL, and its requests carry no Referer even with unsafe-url', async ({ sandbox }) => {
@@ -239,4 +271,56 @@ test('worker mode: the worker sees only its own blob: URL, and its requests carr
     expect(r.href).toMatch(/^blob:null\/[0-9a-f-]+$/);
     expect(revealsHostUrl(r)).toBe(false);
     expect(await referers([`${prefix}-fetch`, `${prefix}-fetchUnsafe`])).toEqual({ [`${prefix}-fetch`]: null, [`${prefix}-fetchUnsafe`]: null });
+});
+
+// ---- 4. strict mode ----------------------------------------------------------------------------------------
+
+test('strict mode: the worker sees only its own blob: URL; no request from the worker or from rendered markup carries a Referer or the host origin, cross-site or same-site, even when the markup asks for unsafe-url (control: the host page)', async ({ sandbox, browserName }) => {
+    const prefix = `t${++run}strict`;
+    const targets = { cross: REC, same: REC_SAME_SITE };
+    expect(await sandbox.mount({ mode: 'strict', connectionsAllowed: { 'img-src': [REC, REC_SAME_SITE], 'connect-src': [REC, REC_SAME_SITE] } })).toBe('ready');
+
+    const worker = await sandbox.inGuest(`
+        const r = { href: self.location.href, origin: self.origin, stack: String(new Error('probe').stack), names: ['document', 'parent', 'top', 'opener', 'frames'].filter(n => n in globalThis) };
+        for (const [site, origin] of Object.entries(${JSON.stringify(targets)})) {
+            r['fetch-' + site] = await fetch(origin + '/r?id=${prefix}-fetch-' + site, { referrerPolicy: 'unsafe-url' }).then(() => 'loaded', () => 'error');
+        }
+        return r;
+    `);
+    expect(worker).toMatchObject({ origin: 'null', names: [], 'fetch-cross': 'loaded', 'fetch-same': 'loaded' });
+    expect(worker.href).toMatch(/^blob:null\/[0-9a-f-]+$/);
+    expect(revealsHostUrl(worker)).toBe(false);
+
+    // rendered markup asking for a referrer every way it can: attribute, <meta> before the image, a nested
+    // frame with its own <meta>, CSS, and a link with ping (the renderer removes or neutralises each)
+    const kinds = ['default', 'attr', 'meta', 'css', 'frame'];
+    const markup = (site: string, origin: string) => [
+        `<img src="${origin}/r?id=${prefix}-default-${site}">`,
+        `<img referrerpolicy="unsafe-url" src="${origin}/r?id=${prefix}-attr-${site}">`,
+        `<meta name="referrer" content="unsafe-url"><img src="${origin}/r?id=${prefix}-meta-${site}">`,
+        `<div style="width:1px;height:1px;background-image:url('${origin}/r?id=${prefix}-css-${site}')"></div>`,
+        `<iframe srcdoc="&lt;meta name=referrer content=unsafe-url&gt;&lt;img referrerpolicy=unsafe-url src='${origin}/r?id=${prefix}-frame-${site}'&gt;"></iframe>`,
+        `<a ping="${origin}/r?id=${prefix}-ping-${site}" href="${origin}/r?id=${prefix}-link-${site}">x</a>`,
+    ].join('');
+    await sandbox.run(`sandboxView.render(${JSON.stringify(Object.entries(targets).map(([site, origin]) => markup(site, origin)).join(''))})`);
+    const expected = Object.keys(targets).flatMap(site => [...kinds.filter(k => k !== 'frame').map(k => `${prefix}-${k}-${site}`), `${prefix}-fetch-${site}`]);
+    const seen = await referers(expected);
+    await sandbox.page.waitForTimeout(500);
+    // the frame and the ping never exist (A1), so they never request anything
+    expect(hits.filter(h => /-(frame|ping|link)-/.test(h.id) && h.id.startsWith(prefix))).toEqual([]);
+    expect(Object.values(seen)).toEqual(expected.map(() => null));
+    // no Origin header naming the host either: none on the images; 'null' (the opaque origin) on the worker's fetch
+    for (const id of expected) {
+        const origins = hits.filter(h => h.id === id).map(h => h.origin);
+        expect(origins.every(o => o === null || o === 'null'), `${id}: ${origins}`).toBe(true);
+    }
+
+    // control: the host page asking for unsafe-url — what each engine sends at most (research 15, P8)
+    const control: Record<string, string> = {};
+    for (const [site, origin] of Object.entries(targets)) {
+        const id = `${prefix}-host-control-${site}`;
+        await sandbox.page.evaluate(([src]) => new Promise(res => { const i = new Image(); i.referrerPolicy = 'unsafe-url'; i.onload = i.onerror = res; i.src = src!; }), [`${origin}/r?id=${id}`]);
+        control[site] = (await referers([id]))[id]!;
+    }
+    expect(control).toEqual({ cross: browserName === 'chromium' ? HOST_URL_WITHOUT_FRAGMENT : HOST_ORIGIN_REFERER, same: HOST_URL_WITHOUT_FRAGMENT });
 });

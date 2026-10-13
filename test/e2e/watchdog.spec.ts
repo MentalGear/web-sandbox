@@ -11,8 +11,11 @@ import { test, expect } from './fixture';
  * the browser runs the sandboxed frame out of process, which is browser policy rather than something the
  * page controls: it varies by browser and even by environment (Chromium ran the frame out of process in
  * one test environment and on the host's thread in CI). So the iframe-mode test measures it first and
- * asserts whichever contract applies. Same-thread is a platform limit; strict mode (S6) is the open
- * answer to it.
+ * asserts whichever contract applies. Same-thread is a platform limit; strict mode (S6, ADR-005) is the
+ * answer to it: guest code runs only in a worker there, so the bound holds on every engine — asserted
+ * below for a loop at the entry's top level and through execute(). Where the view shares the host's
+ * thread (Firefox, WebKit), rendering is host-thread work; with one render in flight (A4) a looping worker
+ * that rendered first is still stopped within the budget plus the measured stall of that one render.
  */
 
 const BUDGET = 1000;
@@ -157,4 +160,78 @@ test('the watchdog stops when the element is removed or terminated: it never ter
         state: 'ready',
         reasons: ['stopped by the test'],
     });
+});
+
+// ---- strict mode (ADR-005) ---------------------------------------------------------------------------------
+
+// The host thread's largest stall while `during` runs: the biggest gap of a 10 ms interval timer, in the page.
+const START_LAG = () => {
+    const w = window as any;
+    w.lag = { max: 0, last: performance.now() };
+    clearInterval(w.lagTimer);
+    w.lagTimer = setInterval(() => { const now = performance.now(); w.lag.max = Math.max(w.lag.max, now - w.lag.last - 10); w.lag.last = now; }, 10);
+};
+const LAG = () => Math.round((window as any).lag.max);
+
+test('strict mode: an endless loop at the entry\'s top level is terminated within the budget on every engine; the host stays responsive; a fixed entry recovers on reset()', async ({ sandbox, page }) => {
+    await sandbox.registerFiles({ 'main.js': 'while (true) {}' });
+    await page.evaluate(() => {
+        const s = document.querySelector('web-sandbox') as any;
+        (window as any).termination = null;
+        s.addEventListener('ready', () => { (window as any).readyAt = performance.now(); }, { once: true });
+        s.addEventListener('terminated', (e: CustomEvent) => { (window as any).termination = { reason: e.detail.reason, elapsed: performance.now() - (window as any).readyAt }; }, { once: true });
+    });
+    await page.evaluate(START_LAG);
+    expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', watchdogTimeout: BUDGET })).toBe('ready');
+    await page.waitForTimeout(300);
+    const before = Date.now();
+    expect(await page.evaluate(() => (window as any).termination)).toBeNull();
+    expect(Date.now() - before).toBeLessThan(500); // the host is not blocked by the guest's loop
+
+    await page.waitForFunction(() => (window as any).termination !== null, null, { timeout: DEADLINE + 2000 });
+    const termination = await page.evaluate(() => (window as any).termination);
+    expect(termination.reason).toBe(WATCHDOG_REASON);
+    expect(termination.elapsed).toBeLessThan(DEADLINE);
+    expect(await page.evaluate(LAG)).toBeLessThan(500);
+
+    await sandbox.registerFiles({ 'main.js': 'bridge.expose("sum", (a, b) => a + b);' });
+    expect(await sandbox.reset()).toBe('ready');
+    expect(await sandbox.call('sum', 1, 2)).toBe(3);
+});
+
+test('strict mode: an endless loop through execute() is terminated within the budget on every engine, and reset() recovers', async ({ sandbox, page }) => {
+    expect(await sandbox.mount({ mode: 'strict', watchdogTimeout: BUDGET })).toBe('ready');
+    await expectWatchdogStopsLoop(sandbox, page);
+});
+
+test('strict mode: a worker that renders 256 Ki characters and then loops is terminated within the budget plus the measured stall of that one render; host round trips stay within one render\'s apply time', async ({ sandbox, page, browserName }) => {
+    expect(await sandbox.mount({ mode: 'strict', watchdogTimeout: BUDGET })).toBe('ready');
+    await page.evaluate(START_LAG);
+    await page.evaluate(() => {
+        const s = document.querySelector('web-sandbox') as any;
+        (window as any).termination = null;
+        const startedAt = performance.now();
+        s.addEventListener('terminated', (e: CustomEvent) => {
+            (window as any).termination = { reason: e.detail.reason, elapsed: performance.now() - startedAt };
+        }, { once: true });
+        s.execute(`sandboxView.render('<p>' + 'x'.repeat(${262144 - 8}) + '</p>'); while (true) {}`);
+    });
+    const roundTrips: number[] = [];
+    while (await page.evaluate(() => (window as any).termination === null)) {
+        const t = Date.now();
+        await page.evaluate(() => 0);
+        roundTrips.push(Date.now() - t);
+        await page.waitForTimeout(50);
+    }
+    const termination = await page.evaluate(() => (window as any).termination);
+    const stall = await page.evaluate(LAG);
+    console.log(`MEASURED ${browserName} strict render-then-loop ${JSON.stringify({ stall, roundTripMax: Math.max(...roundTrips), elapsed: Math.round(termination.elapsed) })}`);
+    expect(termination.reason).toBe(WATCHDOG_REASON);
+    // the bound: 1.25 budgets after the last answer, plus slack, plus the host-thread stall the one render caused
+    expect(termination.elapsed).toBeLessThan(DEADLINE + stall);
+    // one render in flight bounds the host's stall to one apply: measured ≤ 10 ms (Chromium, out of process),
+    // 30–60 ms (Firefox), 0.36–0.47 s (WebKit) for this render; the bounds leave room for a loaded machine
+    const bound = { chromium: 250, firefox: 600, webkit: 1500 }[browserName]!;
+    expect(stall).toBeLessThan(bound);
+    expect(Math.max(...roundTrips)).toBeLessThan(bound + 500);
 });

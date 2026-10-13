@@ -24,6 +24,14 @@ export interface SandboxViolation {
     sourceFile?: string;
     lineNumber?: number;
     columnNumber?: number;
+    /**
+     * Strict mode only (ADR-005, A6): which document's report this is, set by the host from the port it arrived
+     * on, never read from the frame. 'view': the view document, which runs no guest code, so its reports are
+     * the library's own and complete up to the cap. 'logic': the worker, whose reports guest code can forge
+     * or suppress like any default-mode report, and which depend on the engine (WebKit raises none in workers;
+     * Firefox raises the worker's importScripts refusals in the view, so those arrive as 'view').
+     */
+    source?: 'view' | 'logic';
 }
 
 /**
@@ -47,7 +55,7 @@ const positiveInteger = (value: unknown): number | undefined =>
  * without a well-formed directive name or a string blockedURI is not a report. Only the fields named in
  * SandboxViolation are read; anything else on the frame is ignored.
  */
-export function toViolationDetail(frame: unknown): SandboxViolation | null {
+export function toViolationDetail(frame: unknown, source?: 'view' | 'logic'): SandboxViolation | null {
     if (!frame || typeof frame !== 'object') return null;
     const data = frame as Record<string, unknown>;
 
@@ -63,6 +71,7 @@ export function toViolationDetail(frame: unknown): SandboxViolation | null {
     if (lineNumber !== undefined) detail.lineNumber = lineNumber;
     const columnNumber = positiveInteger(data.columnNumber);
     if (columnNumber !== undefined) detail.columnNumber = columnNumber;
+    if (source === 'view' || source === 'logic') detail.source = source;
 
     return Object.freeze(detail);
 }

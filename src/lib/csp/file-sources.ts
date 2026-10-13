@@ -23,8 +23,12 @@ const SELF = "'self'";
 
 type FileDirective = 'script-src' | 'style-src' | 'img-src' | 'font-src' | 'media-src' | 'connect-src';
 
-/** The directives that need `blob:` for files of these types. Empty when there are no files. */
-export function directivesForTypes(types: Iterable<string>): Set<FileDirective> {
+/**
+ * The directives that need `blob:` for files of these types. Empty when there are no files. Directives in
+ * `exclude` never get it: strict mode passes `script-src`, since its view admits no script but its own
+ * bootstrap and its worker is classic, with no module graph and no importScripts (ADR-005).
+ */
+export function directivesForTypes(types: Iterable<string>, exclude: readonly string[] = []): Set<FileDirective> {
     const needed = new Set<FileDirective>();
     for (const type of types) {
         needed.add('connect-src');
@@ -34,6 +38,7 @@ export function directivesForTypes(types: Iterable<string>): Set<FileDirective> 
         if (type.startsWith('font/')) needed.add('font-src');
         if (type.startsWith('audio/') || type.startsWith('video/') || type === 'text/vtt') needed.add('media-src');
     }
+    for (const name of exclude) needed.delete(name as FileDirective);
     return needed;
 }
 
@@ -64,14 +69,15 @@ const isKeyword = (token: string, keyword: string) => token.toLowerCase() === ke
  *   says so. Treating `[]` as a fallback here would let registering a file widen a denied directive to
  *   default-src's sources.
  *
- * With no types, the directives come back unchanged (as a shallow copy).
+ * With no types, the directives come back unchanged (as a shallow copy). `options.exclude` names
+ * directives that never get `blob:` (directivesForTypes).
  */
-export function addFileSources(directives: CSPDirectives, types: Iterable<string>, warned: Set<string>): CSPDirectives {
+export function addFileSources(directives: CSPDirectives, types: Iterable<string>, warned: Set<string>, options: { exclude?: readonly string[] } = {}): CSPDirectives {
     const output: Record<string, unknown> = { ...directives };
     const defaultSrc = Array.isArray(directives['default-src']) ? tokensOf(directives['default-src']) : [];
     const inherited = defaultSrc.filter(token => !isKeyword(token, NONE) && !isKeyword(token, SELF));
 
-    for (const name of directivesForTypes(types)) {
+    for (const name of directivesForTypes(types, options.exclude)) {
         const values = directives[name];
         if (values !== undefined && !Array.isArray(values)) continue; // a bad value generateCSP rejects
 

@@ -13,13 +13,14 @@ import type { createBroker } from './rpc';
  */
 export function inSandboxScript(
     scriptUnsafe: boolean,
-    mode: 'iframe' | 'worker',
+    mode: 'iframe' | 'worker' | 'strict',
     sandboxConsole: Console,
     createBrokerFn?: typeof createBroker,
     // Opt-in features; the host passes this literal only when one is on, so the bootstrap text of a sandbox
-    // without them is unchanged.
-    features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number } },
-) {
+    // without them is unchanged. `externalPort` (strict mode): no INIT_PORT listener of its own; the strict
+    // worker prelude takes the ports from the one trusted INIT message and hands the logic port to attach().
+    features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean },
+): { attach(port: MessagePort): void } {
     // The port does not exist until INIT_PORT, but guest content scripts parse BEFORE that and may
     // call bridge.expose()/bridge.call() straight away. So the bridge is created now with a send that
     // buffers frames until the port arrives — mirroring how the host queues calls made before ready.
@@ -137,9 +138,9 @@ export function inSandboxScript(
         };
     }
 
-    globalThis.addEventListener('message', (event: any) => {
-        if (event.data?.type !== 'INIT_PORT') return;
-        port = event.ports[0];
+    const attach = (handedPort: MessagePort) => {
+        if (port) return;
+        port = handedPort;
 
         port.onmessage = (ev: any) => {
             const data = ev.data;
@@ -193,5 +194,13 @@ export function inSandboxScript(
         if (skipped > 0) sandboxConsole.warn(`[bridge] skipped ${skipped} queued bridge frame(s) that could not be posted (not transferable).`);
 
         port.postMessage({ type: 'LOG', level: 'info', args: [`${mode} Ready`] });
-    }, { once: true });
+    };
+
+    if (!features?.externalPort) {
+        globalThis.addEventListener('message', (event: any) => {
+            if (event.data?.type !== 'INIT_PORT') return;
+            attach(event.ports[0]);
+        }, { once: true });
+    }
+    return { attach };
 }

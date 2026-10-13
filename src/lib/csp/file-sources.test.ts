@@ -117,6 +117,13 @@ describe('addFileSources', () => {
         expect(messages.some(m => m.includes('connectionsAllowed.style-src') && m.includes('will not load'))).toBe(true);
     });
 
+    it('exclude (strict mode): an excluded directive never gets blob:, even with files of its type and no config for it', () => {
+        expect([...directivesForTypes(['text/javascript', 'image/png'], ['script-src'])].sort()).toEqual(['connect-src', 'img-src']);
+        const out = addFileSources({ 'default-src': ['https://d.example'] }, ['text/javascript', 'image/png'], new Set(), { exclude: ['script-src'] });
+        expect(out['script-src']).toBeUndefined();
+        expect(out['img-src']).toEqual(['https://d.example', 'blob:']);
+    });
+
     it('leaves a malformed directive for generateCSP to reject', () => {
         const directives = { ...BASE, 'img-src': 'blob:' } as unknown as CSPDirectives;
         expect(addFileSources(directives, ['image/png'], new Set())['img-src']).toBe('blob:');

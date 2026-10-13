@@ -18,6 +18,8 @@ import { toViolationDetail, VIOLATION_EVENT_LIMIT } from "./lib/violation";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
+import { buildViewDocument, ENTRY_DONE_NAME, inStrictWorker, viewBootstrapHash, viewBootstrapText, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
+import { strictPolicyOverrides, strictViewDirectives } from "./lib/csp/strict-policy";
 
 export interface SandboxConfig {
     connectionsAllowed: CSPDirectives; // Providing a key here will merge with/override the default for that directive.
@@ -26,9 +28,13 @@ export interface SandboxConfig {
     scriptUnsafe?: boolean;
     capabilities?: SafeCapability[]; // Sandbox attributes that keep the guest inside the frame
     unsafeCapabilities?: UnsafeCapability[]; // Capabilities that reach outside the frame (popups, modals, downloads, presentation, fullscreen). Opt-in only, logs a warning.
-    html?: string; // Initial HTML content for iframe mode
-    mode?: 'iframe' | 'worker'; // Execution mode
-    workerExecutionTimeout?: number; // Max execution time in ms (Worker mode only)
+    html?: string; // Initial HTML content: the guest document in iframe mode, the initial view in strict mode
+    // Execution mode. 'strict' (ADR-005): guest code runs only in a worker spawned by a view document that runs
+    // no guest script; the worker draws into the view with sandboxView.render().
+    mode?: 'iframe' | 'worker' | 'strict';
+    // Strict mode: the path of a registered JavaScript file the worker runs first, as a classic script.
+    entry?: string;
+    workerExecutionTimeout?: number; // Max execution time in ms (worker and strict mode)
     // Liveness watchdog budget in ms (0 = off, the default): terminates a guest that stops answering for this long.
     // Off by default because legitimate synchronous work longer than the budget would be stopped too. See src/lib/watchdog.ts for what it can and cannot bound.
     watchdogTimeout?: number;
@@ -97,6 +103,24 @@ const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
 
 const DEFAULT_TERMINATE_REASON = 'terminated by the host';
 const WATCHDOG_REASON = 'the guest stopped responding (watchdog)';
+const ENTRY_FAILED_REASON = 'the guest entry failed to start';
+const VIEW_LOST_REASON = 'the sandbox view stopped responding';
+
+/**
+ * Strict mode's view liveness check (A5): always on, independent of watchdogTimeout. The view runs no guest
+ * script, so it answers within this budget unless it is gone (Chromium replaces a view whose navigation the
+ * wrapper refuses with an error page, research 15 P4) or rendering guest markup keeps its thread busy for
+ * that long. Host stalls are never counted (watchdog.ts).
+ */
+export const VIEW_LIVENESS_TIMEOUT_MS = 5000;
+
+// What the host posts to a strict view with its two ports (INIT_VIEW).
+interface StrictInit {
+    workerSource: string;
+    viewFiles: FileSnapshotEntry[];
+    html: string;
+    autoResize: boolean;
+}
 
 export class WebSandbox extends HTMLElement {
     private _iframe: HTMLIFrameElement | null = null;
@@ -108,9 +132,12 @@ export class WebSandbox extends HTMLElement {
     private _fetchPolicy: FetchPolicy | null = null; // the validated fetchBridge config, or null when off (B5)
     private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
     private _warnedFetchBridge = new Set<string>();  // fetchBridge config warnings, once each per instance
-    private _violationCount = 0; // 'violation' events dispatched for the current environment (capped, violation.ts)
+    private _violationCounts = new Map<string, number>(); // 'violation' events dispatched per source for the current environment (capped, violation.ts)
     private _config: SandboxConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
-    private _port: MessagePort | null = null;
+    private _port: MessagePort | null = null;     // the guest's port: the iframe's bootstrap, or the worker (logic port)
+    private _viewPort: MessagePort | null = null; // strict mode: the view's port (violations, resize, entry errors, liveness)
+    private _viewWatchdog: Watchdog | null = null; // strict mode: the view liveness check (A5)
+    private _strictInit: StrictInit | null = null; // strict mode: what the next frame load hands the view
     private _timeoutId: ReturnType<typeof setTimeout> | null = null;
     private _queuedMessages: { code: string }[] = [];
     private _rpcQueue: unknown[] = []; // the host's own RPC requests waiting for a port (cloned at call time)
@@ -123,6 +150,7 @@ export class WebSandbox extends HTMLElement {
     private _warnedBootstrapRefused = false; // the guest policy refuses the inline bootstrap (S13), once per instance
     private _warnedAutoResizeWorker = false; // autoResize asked for in worker mode, once per instance
     private _warnedGuestMarkup = new Set<string>(); // module-graph warnings about guest markup, once per text (_warnOnce)
+    private _warnedStrict = new Set<string>(); // strict-mode config warnings, once each per instance
 
     // Files are part of the environment: they live on the element, survive reset(), load(), setConfig()
     // and terminate(), and every environment build takes a snapshot (createIframe). See src/lib/files.ts.
@@ -193,6 +221,8 @@ export class WebSandbox extends HTMLElement {
         if (Object.hasOwn(config, 'scriptUnsafe')) sanitizedConfig.scriptUnsafe = config.scriptUnsafe === true;
         // Likewise for autoResize, which is interpolated into the bootstrap too.
         if (Object.hasOwn(config, 'autoResize')) sanitizedConfig.autoResize = config.autoResize === true;
+        // The entry is a registered path or nothing; it is looked up in each build's snapshot.
+        if (Object.hasOwn(config, 'entry') && typeof config.entry !== 'string') delete sanitizedConfig.entry;
         // The fetch bridge config is validated into a policy here and kept out of the merged config: a
         // config without it turns the bridge off.
         this._fetchPolicy = toFetchPolicy(config.fetchBridge, (message) => this._warnFetchBridge(message));
@@ -204,6 +234,7 @@ export class WebSandbox extends HTMLElement {
         this._warnAboutUnsafeCapabilities();
         this._warnAboutScriptUnsafe();
         this._warnAboutAutoResizeInWorker();
+        this._warnAboutStrictConfig();
 
         this.initialize();
     }
@@ -313,6 +344,7 @@ export class WebSandbox extends HTMLElement {
     }
 
     private _warnAboutUnsafeCapabilities() {
+        if (this._config.mode === 'strict') return; // dropped there instead, with one warning (_warnAboutStrictConfig)
         for (const capability of this._config.unsafeCapabilities || []) {
             if (this._warnedUnsafeCapabilities.has(capability)) continue;
             this._warnedUnsafeCapabilities.add(capability);
@@ -332,7 +364,7 @@ export class WebSandbox extends HTMLElement {
     private _startTimeout() {
         if (this._timeoutId) clearTimeout(this._timeoutId);
 
-        if (this._config.mode === 'worker' && this._config.workerExecutionTimeout && this._config.workerExecutionTimeout > 0) {
+        if ((this._config.mode === 'worker' || this._config.mode === 'strict') && this._config.workerExecutionTimeout && this._config.workerExecutionTimeout > 0) {
             this._timeoutId = setTimeout(() => {
                 console.warn("[Sandbox] Execution Timeout - Terminating Worker");
                 this._dispatchLog({ type: 'LOG', level: 'error', args: ['Execution Timeout'] });
@@ -348,40 +380,93 @@ export class WebSandbox extends HTMLElement {
         const channel = new MessageChannel();
         const port = channel.port1;
         this._port = port;
-        port.onmessage = (e) => {
-            const data = e.data;
-            if (data?.type === 'PONG') {
-                this._watchdog?.handlePong(data.n); // validated there; only this generation's watchdog is live
-                return;
-            }
-            if (data?.type === 'LOG') {
-                this._dispatchLog(data);
-                return;
-            }
-            if (data?.type === 'VIOLATION') {
-                this._dispatchViolation(data);
-                return;
-            }
-            if (data?.type === 'RESIZE') {
-                // null unless this environment asked for auto-sizing: then a RESIZE frame (forged or not) does nothing
-                this._resizer?.report(data);
-                return;
-            }
-            // Everything else on this port is RPC (or not ours); the broker validates every frame.
-            // Answers go back on THIS port — the one the request arrived on — never on whatever port is
-            // current. Teardown closes it, and a message posted on a closed port is silently discarded
-            // (HTML spec), so an answer that settles after a re-init goes nowhere: not into the next
-            // frame's port, and not into its queue. That is what keeps frame generations isolated —
-            // a response only ever reaches the generation that asked for it. (An answer that cannot be
-            // cloned may still throw while being posted; sendResult turns that into an error frame,
-            // which is discarded the same way.)
-            this._broker.handleMessage(data, (frame) => port.postMessage(frame));
-        };
+        port.onmessage = (e) => this._onGuestMessage(port, e.data, null);
 
         // An opaque origin cannot be named as targetOrigin, hence '*'.
         // What keeps the port from reaching a foreign document is that this runs exactly once per frame (see _onFrameLoad).
         target.postMessage({ type: 'INIT_PORT' }, '*', [channel.port2]);
+        this._flushQueues(port);
+    }
 
+    // One frame from the guest's port: the iframe bootstrap's, or (worker and strict mode) the worker's.
+    // `source` labels its violation reports in strict mode ('logic'); null elsewhere.
+    private _onGuestMessage(port: MessagePort, data: any, source: 'logic' | null) {
+        if (data?.type === 'PONG') {
+            this._watchdog?.handlePong(data.n); // validated there; only this generation's watchdog is live
+            return;
+        }
+        if (data?.type === 'LOG') {
+            this._dispatchLog(data);
+            return;
+        }
+        if (data?.type === 'VIOLATION') {
+            this._dispatchViolation(data, source);
+            return;
+        }
+        if (data?.type === 'RESIZE') {
+            // null unless this environment asked for auto-sizing: then a RESIZE frame (forged or not) does
+            // nothing. In strict mode only the view port's reports count, never the worker's.
+            if (source === null) this._resizer?.report(data);
+            return;
+        }
+        // Everything else on this port is RPC (or not ours); the broker validates every frame.
+        // Answers go back on THIS port — the one the request arrived on — never on whatever port is
+        // current. Teardown closes it, and a message posted on a closed port is silently discarded
+        // (HTML spec), so an answer that settles after a re-init goes nowhere: not into the next
+        // frame's port, and not into its queue. That is what keeps frame generations isolated —
+        // a response only ever reaches the generation that asked for it. (An answer that cannot be
+        // cloned may still throw while being posted; sendResult turns that into an error frame,
+        // which is discarded the same way.)
+        this._broker.handleMessage(data, (frame) => port.postMessage(frame));
+    }
+
+    /**
+     * Strict mode (ADR-005): two channels to the view, once per frame like setupChannel. The logic port goes
+     * on to the worker, which the view spawns; the view port stays with the view, which runs no guest code,
+     * so what arrives on it is the library's own: the view's violations, its height, an entry failure, and
+     * its liveness answers. The render port between view and worker is the view's to create.
+     */
+    private _setupStrictChannels(target: Window) {
+        if (this._port) { this._port.close(); this._port = null; }
+        if (this._viewPort) { this._viewPort.close(); this._viewPort = null; }
+        const logic = new MessageChannel();
+        const view = new MessageChannel();
+        const port = logic.port1;
+        const viewPort = view.port1;
+        this._port = port;
+        this._viewPort = viewPort;
+        port.onmessage = (e) => this._onGuestMessage(port, e.data, 'logic');
+        viewPort.onmessage = (e) => this._onViewMessage(e.data);
+
+        const init = this._strictInit;
+        this._strictInit = null;
+        target.postMessage({ type: 'INIT_VIEW', ...init }, '*', [logic.port2, view.port2]);
+        this._flushQueues(port);
+    }
+
+    private _onViewMessage(data: any) {
+        if (data?.type === 'VIEW_PONG') {
+            this._viewWatchdog?.handlePong(data.n);
+            return;
+        }
+        if (data?.type === 'VIOLATION') {
+            this._dispatchViolation(data, 'view');
+            return;
+        }
+        if (data?.type === 'RESIZE') {
+            this._resizer?.report(data);
+            return;
+        }
+        if (data?.type === 'GUEST_ERROR') {
+            // the worker's own error text (guest-influenced): logged, clamped, never the reason
+            const message = typeof data.message === 'string' ? data.message.slice(0, 2048) : '';
+            this._dispatchLog({ type: 'LOG', level: 'error', args: [`[Sandbox] ${ENTRY_FAILED_REASON}: ${message}`] });
+            this._terminate(ENTRY_FAILED_REASON);
+        }
+    }
+
+    // Flushes what was queued before the guest's port existed onto it.
+    private _flushQueues(port: MessagePort) {
         // Flush any messages queued during initialization
         if (this._queuedMessages.length > 0) {
             const pending = [...this._queuedMessages];
@@ -427,13 +512,17 @@ export class WebSandbox extends HTMLElement {
     // sandbox-log. The detail is guest-supplied, so it is validated and clamped (violation.ts) and the
     // number of events per environment is capped: past VIOLATION_EVENT_LIMIT reports are dropped, with one
     // warning, so a guest cannot make the host run embedder listeners without bound.
-    private _dispatchViolation(frame: unknown) {
-        if (this._violationCount > VIOLATION_EVENT_LIMIT) return;
-        const detail = toViolationDetail(frame);
+    // In strict mode each port has its own count, labelled by where the report arrived (A6): the view's
+    // reports are the library's own, so a worker flooding the logic port can never use up the view's.
+    private _dispatchViolation(frame: unknown, source: 'view' | 'logic' | null = null) {
+        const key = source ?? '';
+        const count = this._violationCounts.get(key) ?? 0;
+        if (count > VIOLATION_EVENT_LIMIT) return;
+        const detail = toViolationDetail(frame, source ?? undefined);
         if (!detail) return;
-        this._violationCount++;
-        if (this._violationCount > VIOLATION_EVENT_LIMIT) {
-            console.warn(`[Sandbox] the guest reported more than ${VIOLATION_EVENT_LIMIT} CSP violations; further ones are not dispatched until the next reset(), load() or setConfig().`);
+        this._violationCounts.set(key, count + 1);
+        if (count + 1 > VIOLATION_EVENT_LIMIT) {
+            console.warn(`[Sandbox] the guest reported more than ${VIOLATION_EVENT_LIMIT} CSP violations${source ? ` on its ${source} port` : ''}; further ones are not dispatched until the next reset(), load() or setConfig().`);
             return;
         }
         this.dispatchEvent(new CustomEvent('violation', { detail, bubbles: true }));
@@ -451,7 +540,7 @@ export class WebSandbox extends HTMLElement {
         });
     }
 
-    // Auto-sizing applies to iframe mode only: a worker has no document to measure.
+    // Auto-sizing applies to iframe and strict mode: a worker has no document to measure, a strict view does.
     private _autoResizeEnabled(): boolean {
         return this._config.autoResize === true && this._config.mode !== 'worker';
     }
@@ -520,14 +609,17 @@ export class WebSandbox extends HTMLElement {
     private _teardown() {
         this._queuedMessages = []; // Clear queue for the old environment
         this._rpcQueue = [];       // same for the host's RPC requests queued for the old environment
-        this._violationCount = 0;  // the violation cap is per environment
+        this._violationCounts.clear(); // the violation cap is per environment
+        this._strictInit = null;
         // Reject any in-flight calls so their promises never hang once this environment goes away.
         // They reject with code TERMINATED, minted by the broker (see rpc.ts).
         this._broker.rejectAllPending(RESET_CALL_MESSAGE);
         if (this._iframe) { this._iframe.onload = null; this._iframe.remove(); this._iframe = null; }
         if (this._port) { this._port.close(); this._port = null; }
+        if (this._viewPort) { this._viewPort.close(); this._viewPort = null; }
         if (this._timeoutId) { clearTimeout(this._timeoutId); this._timeoutId = null; }
         if (this._watchdog) { this._watchdog.stop(); this._watchdog = null; }
+        if (this._viewWatchdog) { this._viewWatchdog.stop(); this._viewWatchdog = null; }
         if (this._resizer) { this._resizer.stop(); this._resizer = null; } // the height it wrote stays until the next report
         if (this._fetchBridge) { this._fetchBridge.abortAll(); this._fetchBridge = null; } // upstream requests end with the environment
     }
@@ -589,6 +681,9 @@ export class WebSandbox extends HTMLElement {
     }
 
     private _getSandboxFlags(): string {
+        // Strict mode (ADR-005): the view needs scripts for its bootstrap and forms so that `submit` reaches it
+        // (to be cancelled; research 15 P4), plus the safe capabilities configured. No unsafe capability.
+        if (this._config.mode === 'strict') return [...new Set<string>(['allow-scripts', 'allow-forms', ...(this._config.capabilities || [])])].join(' ');
         const flags = new Set<string>(this._config.capabilities || []);
         for (const capability of this._config.unsafeCapabilities || []) {
             if (this._isPermission(capability)) continue; // goes into the allow attribute instead
@@ -604,6 +699,7 @@ export class WebSandbox extends HTMLElement {
     // Permissions Policy features for the iframe `allow` attribute (e.g. fullscreen)
     private _getPermissions(): string[] {
         const permissions: string[] = [];
+        if (this._config.mode === 'strict') return permissions;
         for (const capability of this._config.unsafeCapabilities || []) {
             if (this._isPermission(capability)) permissions.push(capability);
         }
@@ -623,8 +719,14 @@ export class WebSandbox extends HTMLElement {
 
         // blob: only for the file types in this build's snapshot, each in its own directive (file-sources.ts).
         // No files, no change. Before 'unsafe-eval' and the 'self' drop, so S14 stays the last step.
+        // Strict mode: never in script-src (its worker is classic and its view runs no guest script).
+        const strict = this._config.mode === 'strict';
         const fileTypes = files.map(entry => entry[1]);
-        const directives = addFileSources(cloned, fileTypes, this._warnedFileDirectives);
+        const directives = addFileSources(cloned, fileTypes, this._warnedFileDirectives, strict ? { exclude: ['script-src'] } : {});
+
+        // Strict mode: the 'self' drop as everywhere, then the view policy, built last from an allowlist
+        // (strict-policy.ts): the hash of the one bootstrap, and 'unsafe-eval' only with scriptUnsafe.
+        if (strict) return strictViewDirectives(dropSelfSources(directives, this._warnedSelfDirectives), viewBootstrapHash(), this._config.scriptUnsafe === true);
 
         if (this._config.scriptUnsafe) {
             directives["script-src"]?.push("'unsafe-eval'");
@@ -683,6 +785,10 @@ export class WebSandbox extends HTMLElement {
         // One snapshot per environment build: the policy and the guest's files come from the same one,
         // and later registerFiles() calls reach the guest only through the next build.
         const files = this._files.snapshot();
+        if (this._config.mode === 'strict') {
+            this._createStrictFrame(files);
+            return;
+        }
 
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
@@ -723,6 +829,84 @@ export class WebSandbox extends HTMLElement {
         this.shadowRoot!.appendChild(this._iframe);
     }
 
+    /**
+     * Strict mode (ADR-005). The view document is the policy and the hashed bootstrap, nothing of the guest's;
+     * the worker's source (comms, files, the strict prelude, then the entry) and the initial markup travel in
+     * INIT_VIEW once the wrapper has loaded. The view mints its own blob: URLs for the registered files it may
+     * show, so no JavaScript file is ever given to it.
+     */
+    private _createStrictFrame(files: FileSnapshotEntry[]) {
+        let entrySource = '';
+        const entry = this._config.entry;
+        if (typeof entry === 'string' && entry !== '') {
+            const file = files.find(candidate => candidate[0] === entry);
+            if (!file || !isJavaScriptType(file[1])) {
+                this._terminate(`the guest entry "${entry.slice(0, 256)}" is not a registered JavaScript file`);
+                return;
+            }
+            entrySource = new TextDecoder().decode(Uint8Array.from(atob(file[2]), c => c.charCodeAt(0)));
+        }
+
+        const sandboxFlags = this._getSandboxFlags();
+        const directives = this._getCSPDirectives(files);
+        this._strictInit = {
+            workerSource: this._getStrictWorkerSource(files, entrySource),
+            viewFiles: files.filter(candidate => !isJavaScriptType(candidate[1])),
+            html: this._config.html || '<div id="root"></div>',
+            autoResize: this._autoResizeEnabled(),
+        };
+        const view = buildViewDocument(generateCSP(directives), viewBootstrapText());
+
+        this._iframe = document.createElement("iframe");
+        this._iframe.setAttribute("sandbox", sandboxFlags);
+        this._iframe.setAttribute("referrerpolicy", FRAME_REFERRER_POLICY);
+        this._iframe.style.cssText = "width:100%;height:100%;border:none";
+        this._frameLoaded = false;
+        this._iframe.onload = () => this._onFrameLoad();
+        this._iframe.srcdoc = buildWrapperDocument(view, sandboxFlags, []);
+        this.shadowRoot!.appendChild(this._iframe);
+    }
+
+    // The worker's source in strict mode: the comms script (bridge, logs, violations, execute, the fetch
+    // bridge), sandboxFiles with every registered file, the strict prelude (hardening, sandboxView, the
+    // ports), then the guest's entry as written, then the line that marks the entry as having run to its end.
+    private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string): string {
+        const features: { fetchBridge?: { timeoutMs: number }; externalPort: true } = { externalPort: true };
+        if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
+        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, entryDoneName: ENTRY_DONE_NAME };
+        const prelude = '(function () {'
+            + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)});`
+            + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)});`
+            + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)});`
+            + '})();';
+        return `${prelude}\n${entrySource}\n;${ENTRY_DONE_NAME}();\n`;
+    }
+
+    // Strict-mode configuration the element will not honour, said once per instance each.
+    private _warnAboutStrictConfig() {
+        const warn = (message: string) => {
+            if (this._warnedStrict.has(message)) return;
+            this._warnedStrict.add(message);
+            console.warn(message);
+        };
+        if (this._config.mode !== 'strict') {
+            if (this._config.entry) warn('[Sandbox] "entry" is used only in strict mode and was ignored.');
+            return;
+        }
+        const unsafe = this._config.unsafeCapabilities || [];
+        if (unsafe.length > 0) warn(`[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: ${unsafe.join(', ')}.`);
+        for (const message of strictPolicyOverrides(this._config.connectionsAllowed, DEFAULT_SANDBOX_CONFIG.connectionsAllowed)) warn(message);
+    }
+
+    // The view liveness check (A5): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.
+    private _startViewWatchdog(viewPort: MessagePort) {
+        this._viewWatchdog = startWatchdog({
+            timeoutMs: VIEW_LIVENESS_TIMEOUT_MS,
+            ping: (n) => viewPort.postMessage({ type: 'VIEW_PING', n }),
+            onExpire: () => this._terminate(VIEW_LOST_REASON),
+        });
+    }
+
     private _onFrameLoad() {
         // The wrapper is written once and has no script, so it loads exactly once.
         // A second load means something navigated or reloaded it: never hand a port
@@ -739,10 +923,12 @@ export class WebSandbox extends HTMLElement {
             return;
         }
 
-        this.setupChannel(guestWindow);
+        if (this._config.mode === 'strict') this._setupStrictChannels(guestWindow);
+        else this.setupChannel(guestWindow);
         // Armed before 'ready' is dispatched: a 'ready' listener that resets or terminates the sandbox then
         // stops this watchdog with the rest, instead of leaving one running for a port that is gone.
         if (this._port) this._startWatchdog(this._port);
+        if (this._viewPort) this._startViewWatchdog(this._viewPort);
         // Reports buffered before the port existed arrive after this, so the resizer is in place for them.
         this._startAutoResize();
         this._enterState('ready');
