@@ -321,7 +321,12 @@ test.describe('3. module resolution between blob: modules', () => {
         expect(r).toEqual({ dynamic: 'ok:uwu', inlineModule: 'uwu', blobModuleScript: 'uwu', evaluations: '1' });
     });
 
-    test('relative specifiers inside a blob: module never resolve: its base URL is the blob: URL, whose path is opaque', async ({ sandbox }) => {
+    // A relative specifier never resolves against the importing blob: URL (its path is opaque), so the
+    // specifier stays as written. Since S15 the guest document's base URL is about:blank, against which
+    // './utils.js' and '/app/utils.js' cannot be resolved either, so those import-map keys stay as written
+    // too. Firefox and WebKit then match specifier to key literally (as the import maps spec reads) and
+    // the import succeeds through the guest's own map; Chromium still refuses it. Measured 2026-10-13.
+    test('relative specifiers inside a blob: module never resolve against its blob: URL; they match the guest\'s own literal map keys in Firefox and WebKit only', async ({ sandbox, browserName }) => {
         const r = await runScenario(sandbox, `
             const U = mk("export const out = 'u';");
             // one map for everything: Firefox ignores a second one
@@ -339,10 +344,11 @@ test.describe('3. module resolution between blob: modules', () => {
             __r.importMetaUrl = meta.out.startsWith('blob:null/') ? 'blob:null/<uuid>' : meta.out;
             __r.importMetaResolve = meta.resolved;
         `);
+        const viaLiteralKey = browserName === 'chromium' ? 'error:TypeError' : 'ok:u';
         expect(r).toEqual({
-            relative: 'error:TypeError',
-            rootRelative: 'error:TypeError',
-            relativeUnderMappedKey: 'error:TypeError',
+            relative: viaLiteralKey,
+            rootRelative: viaLiteralKey,
+            relativeUnderMappedKey: viaLiteralKey,
             importMetaUrl: 'blob:null/<uuid>',
             importMetaResolve: 'throws:TypeError',
         });

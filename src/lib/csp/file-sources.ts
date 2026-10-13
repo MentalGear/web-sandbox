@@ -57,11 +57,14 @@ const isKeyword = (token: string, keyword: string) => token.toLowerCase() === ke
  * directive per instance (`warned`) when the embedder's explicit 'none' keeps files of a type out.
  *
  * - A directive with sources gets `blob:` appended.
- * - An empty or omitted directive falls back to default-src, so adding only `blob:` would narrow it to
- *   `blob:`. The default-src sources are copied in first (minus 'none' and 'self'), so a broad
- *   embedder default-src still applies to that directive.
- * - A directive the embedder set to exactly 'none' is kept: the embedder said no, and the files of
- *   that type will not load. The warning says so.
+ * - An omitted directive falls back to default-src, so adding only `blob:` would narrow it to `blob:`.
+ *   The default-src sources are copied in first (minus 'none' and 'self'), so a broad embedder
+ *   default-src still applies to that directive. An empty or 'none' default-src copies in nothing:
+ *   the directive becomes `blob:` alone.
+ * - A directive the embedder set to 'none', or to an empty array (which generateCSP emits as 'none',
+ *   backlog S16), is kept: the embedder said no, and the files of that type will not load. The warning
+ *   says so. Treating `[]` as a fallback here would let registering a file widen a denied directive to
+ *   default-src's sources.
  *
  * With no types, the directives come back unchanged (as a shallow copy).
  */
@@ -74,15 +77,15 @@ export function addFileSources(directives: CSPDirectives, types: Iterable<string
         const values = directives[name];
         if (values !== undefined && !Array.isArray(values)) continue; // a bad value generateCSP rejects
 
-        const tokens = values ? tokensOf(values) : [];
-        if (tokens.length === 0) {
+        if (values === undefined) {
             output[name] = [...inherited, BLOB];
             continue;
         }
-        if (tokens.every(token => isKeyword(token, NONE))) {
+        // every() of no tokens is true: [] and [''] are 'none' here exactly as in generateCSP
+        if (tokensOf(values).every(token => isKeyword(token, NONE))) {
             if (!warned.has(name)) {
                 warned.add(name);
-                console.warn(`[Sandbox] "connectionsAllowed.${name}" is 'none', so registered files that load through it will not load in the guest.`);
+                console.warn(`[Sandbox] "connectionsAllowed.${name}" is 'none' (an empty array means 'none'), so registered files that load through it will not load in the guest.`);
             }
             continue;
         }

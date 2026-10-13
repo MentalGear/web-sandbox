@@ -32,8 +32,9 @@ export type CallOutcome =
 export class SandboxDriver {
     constructor(readonly page: Page) {}
 
-    async open() {
-        await this.page.goto(HARNESS);
+    /** Opens the harness; `suffix` (a query and/or fragment) lets a spec give the host page a distinctive URL. */
+    async open(suffix = '') {
+        await this.page.goto(HARNESS + suffix);
         await this.page.waitForFunction(() => (window as any).harnessReady === true);
     }
 
@@ -97,6 +98,21 @@ export class SandboxDriver {
     async run(code: string) {
         await this.page.evaluate((source) => (document.querySelector('web-sandbox') as any).execute(source), code);
     }
+
+    /**
+     * Runs `body` (an async function body) inside the guest via execute() and returns what it returns,
+     * through JSON. A throw comes back as `{ thrown }`. Needs scriptUnsafe (the baseline config has it).
+     */
+    async inGuest<T = any>(body: string, timeout = 15000): Promise<T> {
+        const tag = `GUEST_RESULT_${++this.guestRunCount} `;
+        await this.run(`(async () => { ${body} })().then(
+            v => console.log(${JSON.stringify(tag)} + JSON.stringify(v)),
+            e => console.log(${JSON.stringify(tag)} + JSON.stringify({ thrown: String(e && e.stack || e) })))`);
+        const line = await this.waitForLog(tag, timeout);
+        return JSON.parse(line.slice(tag.length));
+    }
+
+    private guestRunCount = 0;
 
     // ---- β broker helpers (backlog B1) -------------------------------------------------------
 

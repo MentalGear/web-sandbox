@@ -11,7 +11,7 @@ import { createBroker } from "./lib/rpc";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
-import { buildGuestDocument, buildWrapperDocument, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
+import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
 
 export interface SandboxConfig {
     connectionsAllowed: CSPDirectives; // Providing a key here will merge with/override the default for that directive.
@@ -40,22 +40,17 @@ export interface SandboxConfig {
 export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 
 const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
+    // An empty array means 'none' for every directive (generateCSP, backlog S16), so the defaults list
+    // only what they set: a fetch directive left out here falls back to default-src, which is 'none' by
+    // default and is the embedder's own value once they set it. Listing connect-src, img-src … as []
+    // would pin each to 'none' and silently cut it off from an embedder's default-src.
     connectionsAllowed: {
         "upgrade-insecure-requests": true,
         "default-src": ["'none'"],
         "script-src": ["'unsafe-inline'"], // never 'self': see src/lib/csp/drop-self.ts
-        "connect-src": [],
-        "base-uri": [], // no default-src fallback: emitted as 'none'
-        "img-src": [],
+        "base-uri": [], // no default-src fallback: 'none' (the guest also inherits an inert base, frame-documents.ts)
         "style-src": ["'unsafe-inline'"],
-        "font-src": [],
-        "media-src": [],
-        "manifest-src": [],
-        "prefetch-src": [],
-        "form-action": [], // no default-src fallback: emitted as 'none'
-        "object-src": [],
-        "frame-src": [],
-        "frame-ancestors": [],
+        "form-action": [], // no default-src fallback: 'none'
         "worker-src": ["blob:", "data:"]
     },
     scriptUnsafe: false,
@@ -496,6 +491,8 @@ export class WebSandbox extends HTMLElement {
 
         this._iframe = document.createElement("iframe");
         this._iframe.setAttribute("sandbox", sandboxFlags);
+        // the wrapper's own document.referrer is never the host page (S15; the guest's is set in the wrapper)
+        this._iframe.setAttribute("referrerpolicy", FRAME_REFERRER_POLICY);
         for (const [name, value] of Object.entries(permissionAttributes(permissions))) {
             this._iframe.setAttribute(name, value);
         }

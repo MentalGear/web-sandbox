@@ -21,7 +21,7 @@ conditional "continue".
 | Area | State |
 | :--- | :--- |
 | Core isolation (`srcdoc` + opaque origin + immutable CSP) | ✅ implemented, `src/host.ts` |
-| CSP generation from typed config | ✅ implemented + 12 unit tests |
+| CSP generation from typed config | ✅ implemented; `[]` means `'none'` for every directive, never broader than leaving it out (S16), unit-tested per directive |
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker |
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
@@ -33,15 +33,16 @@ conditional "continue".
 | Type check | ✅ `bun run typecheck` is clean and gates CI (H3) |
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
-| Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
+| Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); an empty directive is `'none'`, and the defaults leave unset fetch directives to `default-src` (S16); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
 | Files | 🟡 guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); markup references, module graph and CSS `url()` open (C1), writes open (C5) |
+| Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`), and WebKit shows a frame the guest creates the host URL as its referrer (S17) |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
 the virtual-files Service Worker was replaced by guest-realm blob URLs ([ADR-004](ADR-004-files-as-blob-urls.md)):
-S3, C2 and C3 done, C1 partly, C4 rejected, C5 added. Rows re-checked against the items below on
-2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
+S3, C2 and C3 done, C1 partly, C4 rejected, C5 added. S15 and S16 were done on 2026-10-13, and S17
+added. Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
 
@@ -334,6 +335,9 @@ the in-sandbox `securitypolicyviolation` event (S5) as the only reporting route.
 **Acceptance**: setting `frame-ancestors` raises a warning (or throws) rather than emitting a
 directive the browser discards.
 
+*Update (2026-10-13, S16)*: the shipped default no longer lists `frame-ancestors`, and an explicit `[]`
+is now emitted as `frame-ancestors 'none'`, which a `<meta>` policy discards like any other value.
+
 ### S8 · Pre-policy egress window — **P3 · accepted risk**
 
 *From [Research 11.4](research/11_meta_csp_delivery/README.md).*
@@ -355,6 +359,8 @@ Tracked as a known limitation; see [ADR-001](ADR-001-continue-or-adopt.md).
 `<meta>` delivery (S7). Research 12 passes.
 **Tightened** (2026-10-13, [ADR-004](ADR-004-files-as-blob-urls.md)): `base-uri` no longer gains a
 virtual-files base, so with the default config it is always `'none'`; the guest document has no `<base>`.
+**Generalised** (2026-10-13, S16): every empty directive is emitted as `'none'`, so the
+`NON_FALLBACK_DIRECTIVES` special case is gone.
 
 *From [Research 12](research/12_non_fallback_directives/README.md).*
 
@@ -479,7 +485,7 @@ warning and changes nothing, identically on Chromium, Firefox and WebKit.
 - e2e: section 5a of `test/e2e/blob-delivery.spec.ts` (iframe, plus worker-mode `importScripts` and
   `import()`).
 
-### S15 · The guest can read the host page's URL — **P1 · S**
+### S15 · The guest can read the host page's URL — ✅ **done** (platform limits below; WebKit residual in S17)
 
 **Guarantee**: nothing in the guest's own document or location reveals the host page's URL or origin.
 
@@ -510,7 +516,42 @@ remains if it does not.
 `location.ancestorOrigins` reveal nothing of the host page URL; `base-uri` stays `'none'` in the guest
 policy.
 
-### S16 · An empty directive array can widen the policy — **P1 · S**
+**Done**: the wrapper document (`buildWrapperDocument`, `src/lib/frame-documents.ts`) carries
+`<base href="about:blank">` and `<meta name="referrer" content="no-referrer">` in its `<head>`, and both
+iframes carry `referrerpolicy="no-referrer"`. The guest inherits the base and the referrer policy; its
+own `<base>` is still refused by `base-uri 'none'`. `about:blank` was chosen over an
+`https://….invalid` base because nothing resolves against it: a relative URL in guest markup sends no
+request at all, where an `.invalid` base turned it into a request that only the policy stopped.
+Absolute URLs (files, workers, allowlisted origins) are unaffected, and the S10/S11 frame checks and
+the file tests pass unchanged. Tests:
+- e2e: `test/e2e/host-url.spec.ts`, on a host page URL with a distinctive query and fragment; Referer
+  is recorded by a local HTTPS server that every expected request must reach;
+- unit: `src/lib/frame-documents.test.ts` and `test/unit/host.test.ts` (iframe and worker mode).
+
+Measured 2026-10-13 (same builds as above), before → after; "host URL" includes path and query:
+
+| Exposed to the guest | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- |
+| `document.baseURI`, `import.meta.url`, relative `href`s | full host URL → `about:blank` | full host URL → `about:blank` | full host URL → `about:blank` |
+| relative URL in markup (`<img src="x.png">`) | resolved against the host URL, refused by CSP → never resolved, no request | same | same |
+| `document.referrer`, violation event `referrer` | empty | empty | host origin, or host URL if the host page's policy is `unsafe-url` → empty |
+| `Referer` on guest image requests, by default | none | host origin → none | host origin → none |
+| `Referer` when the guest asks for `unsafe-url` | none | host origin (limit) | host origin (limit) |
+| `Referer` on `fetch()`, any policy | none | none | none |
+| `location.ancestorOrigins` | `["null", host origin]` (limit) | not implemented | `["null", host origin]` (limit) |
+| a frame the guest creates: `document.referrer` | empty | empty | host URL without fragment (S17) |
+| worker: `location`, `Referer` | own `blob:null/…`, none | same | same |
+
+**Platform limits**, asserted per engine by the tests:
+- `location.ancestorOrigins` lists the host origin in Chromium and WebKit. A page cannot change it, and
+  `referrerpolicy="no-referrer"` does not mask it in either engine.
+- Firefox and WebKit send the host origin as `Referer` on image requests whenever the policy in force
+  allows one. By default it does not; the guest can ask for one per request or with its own
+  `<meta name="referrer">`, and no document can prevent that. Path and query never appear.
+- WebKit gives a frame the guest creates the host page URL, minus fragment, as `document.referrer`
+  (S17). That is the full path and query, so the guarantee does not hold in WebKit until S17 is done.
+
+### S16 · An empty directive array can widen the policy — ✅ **done**
 
 **Guarantee**: no configuration can make the emitted policy broader than the same configuration with
 that directive left out.
@@ -528,6 +569,45 @@ out.
 
 **Acceptance**: for every directive, the policy from a config with that directive set to `[]` is no
 broader than from the same config without it; `default-src: []` emits `default-src 'none'`.
+
+**Done**: `generateCSP()` (`src/lib/csp/csp-generator.ts`) emits `'none'` for any directive whose
+array is empty after blank strings are dropped; nothing is omitted any more. `upgrade-insecure-requests`
+is emitted whenever its key is present, and a non-array value still throws. Interactions:
+- the shipping default no longer lists empty fetch directives (`connect-src: []` …), which would now pin
+  each to `'none'` and cut it off from an embedder's `default-src`; its emitted policy is unchanged;
+- `dropSelfSources()` leaves a directive it emptied as `[]` and the generator makes it `'none'`;
+- `addFileSources()` treats `[]` like `'none'` (kept, with a warning), so registering a file never
+  widens a denied directive to `default-src`'s sources; an empty `default-src` gives files `blob:` only.
+
+Tests:
+- unit: `src/lib/csp/csp-generator.test.ts` — every directive of `CSPDirectives` (a type check fails if
+  one is missing), `{ 'default-src': [] }` with a `script-src`, and a property check over every
+  directive and eight sample configs: the policy with the directive set to `[]` is never broader than
+  with it left out. "Broader" means some directive's enforced sources, after the CSP Level 3 fallback
+  chain (an absent `base-uri`, `form-action` or `frame-ancestors` being unrestricted), are not a subset;
+  also `file-sources.test.ts`, `drop-self.test.ts`, `test/unit/host.test.ts`, `test/unit/files.test.ts`;
+- e2e: `test/e2e/empty-directive.spec.ts` — with `connectionsAllowed: { 'default-src': [] }` an image
+  and a fetch to a non-allowlisted origin are refused, each with its violation, in all three engines.
+
+### S17 · WebKit shows a frame the guest creates the host page URL — **P1 · M** — open
+
+*Found while doing S15.*
+
+**Verified** (2026-10-13, WebKit 26.0 on Linux): guest code that creates
+`<iframe referrerpolicy="unsafe-url" srcdoc="…">` reads, in that frame, `document.referrer` = the host
+page URL without its fragment: path and query included. This holds with S15's base and no-referrer
+measures in place, and whatever the host page's own referrer policy. WebKit takes the referrer of a
+frame navigation from the first non-`srcdoc` document up the frame tree (`FrameLoader::outgoingReferrer`),
+which is the host page, with no check for the opaque origins in between. Chromium and Firefox report
+an empty referrer. `test/e2e/host-url.spec.ts` asserts the measured value, so a change shows up.
+
+**Work**: make the walk stop before the host page, which means a wrapper that is not a `srcdoc`
+document. A `data:` URL wrapper has an opaque origin and a URL that strips to no referrer, but it needs
+`data:` in an embedder's `frame-src` and hits URL length limits (the bootstrap carries up to 8 MiB of
+files); a host-made `blob:` URL inherits the host page's policy container. Measure both against S10,
+S11 and the file tests before choosing; report upstream to WebKit in any case.
+
+**Acceptance**: in WebKit, no frame the guest can create reads the host page's path or query.
 
 ## B · API Surface & DX
 

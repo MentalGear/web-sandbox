@@ -18,9 +18,8 @@ const isSelf = (token: string) => token.toLowerCase() === SELF; // CSP keywords 
  * warned about). Values are split on whitespace, since generateCSP joins them with spaces and a
  * value "'self' https://a" would otherwise carry 'self' through.
  *
- * A directive that held only 'self' becomes 'none'. Left empty, it would be omitted and fall back to
- * default-src (or, for base-uri / form-action, be emitted as 'none' by the generator) — a fallback
- * can be broader than what the caller asked for, an explicit 'none' never is.
+ * A directive that held only 'self' is left empty, which generateCSP emits as 'none' (backlog S16):
+ * never a fallback to default-src, which can be broader than what the caller asked for.
  */
 export function dropSelfSources(directives: CSPDirectives, warned: Set<string>): CSPDirectives {
     const output: Record<string, unknown> = { ...directives };
@@ -40,7 +39,7 @@ export function dropSelfSources(directives: CSPDirectives, warned: Set<string>):
         }
         if (!dropped) continue;
 
-        output[name] = kept.length > 0 ? kept : ["'none'"];
+        output[name] = kept;
         if (!warned.has(name)) {
             warned.add(name);
             console.warn(`[Sandbox] "'self'" is not allowed in "connectionsAllowed.${name}" and was dropped. The guest has an opaque origin, for which browsers disagree on what 'self' matches (WebKit admits any https origin); list the origins you need explicitly.`);

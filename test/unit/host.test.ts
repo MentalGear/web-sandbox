@@ -63,3 +63,62 @@ describe('the guest policy never contains \'self\' (backlog S14)', () => {
     warn.mockRestore();
   });
 });
+
+describe('the guest policy and frames built by the element (S15, S16)', () => {
+  const frames = (el: HTMLElement) => {
+    const outer = el.shadowRoot!.querySelector('iframe')!;
+    const wrapper = new DOMParser().parseFromString(outer.srcdoc, 'text/html');
+    const inner = wrapper.querySelector('iframe')!;
+    const guest = new DOMParser().parseFromString(inner.getAttribute('srcdoc')!, 'text/html');
+    const policy = guest.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
+    return { outer, wrapper, inner, policy };
+  };
+
+  const mount = async (config?: Record<string, unknown>) => {
+    const { defineWebSandbox } = await import('@src/host');
+    defineWebSandbox();
+    const el = document.createElement('web-sandbox') as any;
+    document.body.appendChild(el);
+    if (config) el.setConfig(config);
+    return el;
+  };
+
+  it('the default guest policy is exactly what it was before S16: empty fetch directives are left to default-src', async () => {
+    const el = await mount();
+    expect(frames(el).policy).toBe("default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob: data:;");
+    el.remove();
+  });
+
+  it("connectionsAllowed { 'default-src': [] } keeps default-src 'none' in the guest policy, in iframe and worker mode", async () => {
+    for (const mode of ['iframe', 'worker']) {
+      const el = await mount({ mode, connectionsAllowed: { 'default-src': [] } });
+      expect(frames(el).policy).toMatch(/^default-src 'none';/);
+      el.remove();
+    }
+  });
+
+  it("an embedder's default-src reaches every fetch directive it does not set (the defaults do not pin them to 'none')", async () => {
+    const el = await mount({ connectionsAllowed: { 'default-src': ['https://cdn.example'] } });
+    const { policy } = frames(el);
+    expect(policy).toMatch(/^default-src https:\/\/cdn\.example;/);
+    for (const directive of ['connect-src', 'img-src', 'font-src', 'media-src', 'object-src', 'frame-src', 'manifest-src']) {
+      expect(policy).not.toContain(directive);
+    }
+    el.remove();
+  });
+
+  it('in iframe and worker mode, both frames are no-referrer, the guest inherits an inert base, and base-uri stays none', async () => {
+    for (const mode of ['iframe', 'worker']) {
+      // even a config that asks for a base: the guest policy never allows one
+      const el = await mount({ mode, connectionsAllowed: { 'base-uri': [] } });
+      el.reset();
+      const { outer, wrapper, inner, policy } = frames(el);
+      expect(outer.getAttribute('referrerpolicy')).toBe('no-referrer');
+      expect(inner.getAttribute('referrerpolicy')).toBe('no-referrer');
+      expect(wrapper.querySelector('base')?.getAttribute('href')).toBe('about:blank');
+      expect(wrapper.querySelector('meta[name="referrer"]')?.getAttribute('content')).toBe('no-referrer');
+      expect(policy).toContain("base-uri 'none';");
+      el.remove();
+    }
+  });
+});
