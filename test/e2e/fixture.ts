@@ -1,5 +1,6 @@
 import { test as base, expect, type Page } from '@playwright/test';
 import type { SandboxConfig } from '@src/host';
+import type { SandboxViolation } from '@src/lib/violation';
 
 export const ORIGIN = 'http://localhost:4444';
 export const HARNESS = `${ORIGIN}/test/e2e/harness.html`;
@@ -11,6 +12,9 @@ export const BASELINE_CONFIG: Partial<SandboxConfig> = {
 };
 
 export type MountResult = 'ready' | 'terminated';
+
+/** One 'violation' event as the harness records it: the element's detail plus which sandbox sent it. */
+export type ViolationRecord = SandboxViolation & { sandbox: string };
 
 /** A file for SandboxDriver.registerFiles(): text, or bytes as base64 with an optional type override. */
 export type FileSpec = string | { base64: string; type?: string };
@@ -180,6 +184,33 @@ export class SandboxDriver {
 
     async clearLogs() {
         await this.page.evaluate(() => { (window as any).sandboxLogs.length = 0; });
+    }
+
+    // ---- CSP violation reports (backlog S5) ---------------------------------------------------
+
+    /**
+     * The 'violation' events every sandbox on the page dispatched so far, in order. `sandbox` is the
+     * element's id ('main' for the harness's own). Guest-supplied: evidence that the guest attempted a
+     * refused load, never proof that nothing else happened.
+     */
+    async violations(): Promise<ViolationRecord[]> {
+        return this.page.evaluate(() => [...(window as any).sandboxViolations]);
+    }
+
+    async clearViolations() {
+        await this.page.evaluate(() => { (window as any).sandboxViolations.length = 0; });
+    }
+
+    /**
+     * Resolves with the first reported violation of `directive` whose blockedURI starts with `blocked`
+     * (browsers may reduce a URL to its origin, e.g. for frame-src); throws on timeout.
+     */
+    async waitForViolation(directive: string, blocked: string, timeout = 5000): Promise<ViolationRecord> {
+        const handle = await this.page.waitForFunction(({ directive, blocked }) => {
+            const all: ViolationRecord[] = (window as any).sandboxViolations;
+            return all.find(v => v.directive === directive && v.blockedURI.startsWith(blocked));
+        }, { directive, blocked }, { timeout });
+        return handle.jsonValue() as Promise<ViolationRecord>;
     }
 
     /** Runs `code` and returns every log line once it logs TEST_DONE (the presets' completion signal). */

@@ -25,7 +25,7 @@ conditional "continue".
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker |
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
-| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3) |
+| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3); `violation` for refused loads, capped per environment (S5) |
 | Execution budget | 🟡 opt-in liveness watchdog in default mode: bounded in worker mode and out-of-process frames, not where the frame shares the host's thread; strict mode open (S6) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C) |
@@ -259,7 +259,41 @@ presets and in every e2e spec, so it is the path of least resistance for a copy-
 **Work**: a one-time console warning when enabled, and a prominent README note that it exists for
 testing. **Acceptance**: enabling it emits exactly one warning per instance.
 
-### S5 · No CSP violation reporting — **P2 · M**
+### S5 · No CSP violation reporting — ✅ **done**
+
+**Guarantee**: every CSP violation the engine raises in the guest's own document (iframe mode) or worker
+(worker mode) is offered to the host as a `violation` event on the element, by a listener installed
+before any guest code runs. A report is evidence that the guest attempted a refused load; it is never a
+host fact, and its absence proves nothing.
+
+**Done**: the guest bootstrap (`src/lib/in-sandbox-script.ts`) registers a capture listener for
+`securitypolicyviolation` on the global object as its first act, so it is the first listener on every
+violation's path, and forwards trusted events as a first-class `VIOLATION` frame on the port (outside the
+broker, so no exposed method name can collide); reports raised while the markup is still parsed wait for
+the port. The host (`_dispatchViolation`, `src/host.ts`) validates and clamps the frame
+(`toViolationDetail`, `src/lib/violation.ts`: a lowercase directive name, strings cut at 2048 characters,
+positions only as positive integers, nothing else read) and dispatches `violation`, bubbling like
+`sandbox-log`. Both sides cap it at 100 per environment (`VIOLATION_EVENT_LIMIT`); the host's cap is the
+bound, with one warning, since guest code can reach the port. Tests:
+- unit: `src/lib/violation.test.ts` (validation and clamping), `src/lib/in-sandbox-script.test.ts`
+  (registered first, as a capture listener; buffered before the port; synthetic events ignored; guest-side
+  cap), `test/unit/host.test.ts` (detail, bubbling, host cap with one warning, reset per environment);
+- e2e: `test/e2e/violations.spec.ts` (image and fetch reported with the element as target; a second
+  sandbox apart; a violation during markup parsing; guest listeners that stop propagation on window and
+  document cannot hide one; synthetic events not forwarded; a frame forged on the port clamped; the flood
+  cap; worker mode per engine). `security.spec.ts`, `hard-security.spec.ts` and `worker-security.spec.ts`
+  now assert the violation instead of waiting for silence.
+
+**Residuals**, stated in the README:
+- guest code can suppress its own reports (it can patch `MessagePort.prototype.postMessage` and so reach
+  the port), and can forge reports in their place: the detail is validated, never believed;
+- a frame the guest creates raises its violations in its own document, which has no listener of ours;
+  a navigation the wrapper's `frame-src 'none'` refuses is reported to the wrapper, which runs no script;
+- worker mode, measured 2026-10-13 (Chromium 141, Firefox 146, WebKit 26.0 on Linux): Chromium raises
+  violations in workers for `fetch` and `importScripts`, Firefox for `fetch` and `WebSocket` but not
+  `importScripts`, WebKit none. There the load outcome is the only evidence;
+- the cap bounds dispatch, not receipt: a guest that floods the port still costs host time per message
+  (S6's open note).
 
 `test/e2e/security.spec.ts:29` records the gap in a comment: *"web-sandbox doesn't have CSP
 violation reporting hooked up to postMessage yet"*. Tests must therefore assert the *absence* of a
@@ -325,7 +359,8 @@ isolates the frame (case 2), with case 3's limit documented.
 `performance.measureUserAgentSpecificMemory()` where available remains a follow-up. Likewise the
 host does not cap inbound traffic: a guest that floods it with calls or log lines costs host time.
 That belongs to the same watchdog, not to a per-channel cap, since an RPC limit alone would leave
-`console.log` in a loop unbounded.
+`console.log` in a loop unbounded. (The `violation` event is capped at 100 per environment (S5), which bounds the embedder
+listeners a guest can trigger through it, not the cost of receiving its messages.)
 
 **Acceptance**: in strict mode, an unbounded loop in guest logic is stopped within the configured
 budget on Chromium, Firefox and WebKit (CI); in default mode, the watchdog stops it where the frame
@@ -345,7 +380,7 @@ one is told, once per directive per instance.
 (`src/host.ts`), the one builder of the guest policy, so worker mode is covered too. Each is left out,
 not emitted as `'none'`: the browser would discard `'none'` just the same. Every other directive keeps
 S16's rule (empty means `'none'`). The warning names where the concern is handled instead: embedding
-by the host page, reporting by the in-guest violation event (S5), flags by `capabilities`.
+by the host page, reporting by the element's `violation` event (S5), flags by `capabilities`.
 `CSPDirectives['frame-ancestors']` is marked `@deprecated`; `generateCSP()` itself is unchanged, since
 it does not know how its output is delivered. Tests:
 - unit: `src/lib/csp/drop-meta-ignored.test.ts` (each directive with a source list, an empty list and a

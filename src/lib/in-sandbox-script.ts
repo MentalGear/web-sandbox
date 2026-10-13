@@ -29,6 +29,30 @@ export function inSandboxScript(
         }
         outbox.push(frame);
     };
+    // CSP violation reports (backlog S5, src/lib/violation.ts). Installed here, in the bootstrap, so it is
+    // in place before any guest code runs: a capture listener on the global object is the first listener on
+    // the event's path, so guest code cannot stop it from seeing a violation by registering first. Guest
+    // code can still suppress its own reports later (it can reach the port), which is why a report is
+    // evidence of an attempt and silence proves nothing. Forwarded as a first-class VIOLATION frame, not
+    // through the broker, so it can never collide with an exposed method name. Reports raised before
+    // INIT_PORT wait in the outbox like bridge frames. Synthetic events (isTrusted false) are not reports.
+    // At most VIOLATION_LIMIT per environment (the host caps at the same number, VIOLATION_EVENT_LIMIT,
+    // and is the authoritative bound); declared here because this function is stringified.
+    const VIOLATION_LIMIT = 100;
+    let violationsSent = 0;
+    globalThis.addEventListener('securitypolicyviolation', (event: any) => {
+        if (!event.isTrusted || violationsSent >= VIOLATION_LIMIT) return;
+        violationsSent++;
+        send({
+            type: 'VIOLATION',
+            directive: event.effectiveDirective || event.violatedDirective,
+            blockedURI: event.blockedURI,
+            sourceFile: event.sourceFile,
+            lineNumber: event.lineNumber,
+            columnNumber: event.columnNumber,
+        });
+    }, true);
+
     const bridge = createBrokerFn ? createBrokerFn(send) : null;
     if (bridge) (globalThis as any).bridge = bridge;
 

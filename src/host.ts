@@ -14,6 +14,7 @@ import { createBroker } from "./lib/rpc";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
+import { toViolationDetail, VIOLATION_EVENT_LIMIT } from "./lib/violation";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
 
 export interface SandboxConfig {
@@ -91,6 +92,7 @@ export class WebSandbox extends HTMLElement {
     private _frameLoaded = false;
     private _state: SandboxState = 'idle'; // changed only by _enterState()
     private _watchdog: Watchdog | null = null;
+    private _violationCount = 0; // 'violation' events dispatched for the current environment (capped, violation.ts)
     private _config: SandboxConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
     private _port: MessagePort | null = null;
     private _timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -324,6 +326,10 @@ export class WebSandbox extends HTMLElement {
                 this._dispatchLog(data);
                 return;
             }
+            if (data?.type === 'VIOLATION') {
+                this._dispatchViolation(data);
+                return;
+            }
             // Everything else on this port is RPC (or not ours); the broker validates every frame.
             // Answers go back on THIS port — the one the request arrived on — never on whatever port is
             // current. Teardown closes it, and a message posted on a closed port is silently discarded
@@ -380,6 +386,22 @@ export class WebSandbox extends HTMLElement {
         this.dispatchEvent(new CustomEvent('sandbox-log', { detail, bubbles: true }));
     }
 
+    // A CSP violation reported by the guest (backlog S5): dispatched on the element and bubbling, like
+    // sandbox-log. The detail is guest-supplied, so it is validated and clamped (violation.ts) and the
+    // number of events per environment is capped: past VIOLATION_EVENT_LIMIT reports are dropped, with one
+    // warning, so a guest cannot make the host run embedder listeners without bound.
+    private _dispatchViolation(frame: unknown) {
+        if (this._violationCount > VIOLATION_EVENT_LIMIT) return;
+        const detail = toViolationDetail(frame);
+        if (!detail) return;
+        this._violationCount++;
+        if (this._violationCount > VIOLATION_EVENT_LIMIT) {
+            console.warn(`[Sandbox] the guest reported more than ${VIOLATION_EVENT_LIMIT} CSP violations; further ones are not dispatched until the next reset(), load() or setConfig().`);
+            return;
+        }
+        this.dispatchEvent(new CustomEvent('violation', { detail, bubbles: true }));
+    }
+
     // Arms the liveness watchdog for the port just handed over, if the config asks for one (see
     // src/lib/watchdog.ts). Pings go on THIS port: teardown closes it and stops the watchdog together.
     private _startWatchdog(port: MessagePort) {
@@ -403,6 +425,7 @@ export class WebSandbox extends HTMLElement {
     private _teardown() {
         this._queuedMessages = []; // Clear queue for the old environment
         this._rpcQueue = [];       // same for the host's RPC requests queued for the old environment
+        this._violationCount = 0;  // the violation cap is per environment
         // Reject any in-flight calls so their promises never hang once this environment goes away.
         // They reject with code TERMINATED, minted by the broker (see rpc.ts).
         this._broker.rejectAllPending(RESET_CALL_MESSAGE);

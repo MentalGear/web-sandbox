@@ -192,4 +192,61 @@ describe("inSandboxScript", () => {
         }
         expect(port.postMessage).not.toHaveBeenCalled();
     });
+
+    describe("CSP violation forwarding (backlog S5)", () => {
+        // Records every listener with its options, so a test can check how it was registered.
+        const install = () => {
+            const registered: { type: string; cb: Function; options: unknown }[] = [];
+            (globalThis as any).addEventListener = (type: string, cb: Function, options?: unknown) => {
+                registered.push({ type, cb, options });
+            };
+            inSandboxScript(false, 'iframe', createMockConsole(), createBroker);
+            const listener = (type: string) => registered.find(r => r.type === type)!;
+            return { registered, listener };
+        };
+        const violation = (overrides: Record<string, unknown> = {}) => ({
+            isTrusted: true, effectiveDirective: 'img-src', violatedDirective: 'img-src', blockedURI: 'https://attacker.test/x',
+            sourceFile: 'about:srcdoc', lineNumber: 3, columnNumber: 7, ...overrides,
+        });
+        const violationFrames = (port: { postMessage: { mock: { calls: unknown[][] } } }) =>
+            port.postMessage.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'VIOLATION');
+
+        it("is a capture listener on the global object, registered while the bootstrap runs (before any guest code)", () => {
+            const { registered } = install();
+            const entry = registered.find(r => r.type === 'securitypolicyviolation');
+            expect(entry).toBeDefined();
+            expect(entry!.options).toBe(true);
+            // the first listener the bootstrap registers: nothing of ours runs before it
+            expect(registered[0]!.type).toBe('securitypolicyviolation');
+        });
+
+        it("forwards a report raised before INIT_PORT once the port arrives, and later ones at once, as VIOLATION frames", () => {
+            const { listener } = install();
+            listener('securitypolicyviolation').cb(violation());
+            const port = createMockPort();
+            listener('message').cb({ data: { type: 'INIT_PORT' }, ports: [port] });
+            listener('securitypolicyviolation').cb(violation({ effectiveDirective: '', violatedDirective: 'connect-src', blockedURI: 'wss://a.test/' }));
+
+            expect(violationFrames(port)).toEqual([
+                { type: 'VIOLATION', directive: 'img-src', blockedURI: 'https://attacker.test/x', sourceFile: 'about:srcdoc', lineNumber: 3, columnNumber: 7 },
+                { type: 'VIOLATION', directive: 'connect-src', blockedURI: 'wss://a.test/', sourceFile: 'about:srcdoc', lineNumber: 3, columnNumber: 7 },
+            ]);
+        });
+
+        it("ignores synthetic events (dispatched by script, isTrusted false)", () => {
+            const { listener } = install();
+            const port = createMockPort();
+            listener('message').cb({ data: { type: 'INIT_PORT' }, ports: [port] });
+            listener('securitypolicyviolation').cb(violation({ isTrusted: false }));
+            expect(violationFrames(port)).toEqual([]);
+        });
+
+        it("forwards at most 100 reports per environment", () => {
+            const { listener } = install();
+            const port = createMockPort();
+            listener('message').cb({ data: { type: 'INIT_PORT' }, ports: [port] });
+            for (let i = 0; i < 250; i++) listener('securitypolicyviolation').cb(violation({ lineNumber: i + 1 }));
+            expect(violationFrames(port)).toHaveLength(100);
+        });
+    });
 });

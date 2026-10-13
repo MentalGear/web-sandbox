@@ -5,6 +5,8 @@
 export { WebSandbox, defineWebSandbox } from "./host";
 export type { SandboxConfig, SandboxState } from "./host";
 export type { RpcError, RpcErrorCode } from "./lib/rpc";
+export type { SandboxViolation } from "./lib/violation";
+export { VIOLATION_EVENT_LIMIT } from "./lib/violation";
 export type { FileContent, FileEntry, FileInfo, FileError, FileErrorCode, SandboxFiles } from "./lib/files";
 
 export {

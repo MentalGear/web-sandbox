@@ -5,16 +5,16 @@ test.describe('Isolation', () => {
         await sandbox.mount();
     });
 
-    test('blocks nested iframes (frame-src)', async ({ sandbox }) => {
+    test('blocks nested iframes (frame-src): the refusal is reported as a violation', async ({ sandbox }) => {
         await sandbox.run(`
             const i = document.createElement('iframe');
             i.onload = () => console.log('FRAME_LOADED ' + (() => { try { return i.contentWindow.location.href } catch (e) { return 'cross-origin' } })());
             i.src = 'https://example.com/';
             document.body.appendChild(i);
-            setTimeout(() => console.log('TEST_DONE'), 1000);
         `);
-        await sandbox.waitForLog('TEST_DONE');
 
+        // the browser may reduce the reported URL to its origin
+        expect(await sandbox.waitForViolation('frame-src', 'https://example.com')).toBeTruthy();
         // a blocked frame may still fire load for its error page; it must never be example.com
         const logs = await sandbox.logs();
         expect(logs.filter(l => l.startsWith('FRAME_LOADED') && l.includes('example.com'))).toEqual([]);

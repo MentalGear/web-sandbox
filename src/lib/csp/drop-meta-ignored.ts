@@ -8,15 +8,15 @@ import type { CSPDirectives } from "../../csp-directives";
  *
  * Where each concern is handled instead:
  *   frame-ancestors        who embeds the sandbox is decided by the page that hosts the element
- *   report-uri, report-to  violations are reported in the guest, by securitypolicyviolation (backlog S5)
+ *   report-uri, report-to  the guest bootstrap forwards securitypolicyviolation as the element's 'violation' event (S5)
  *   sandbox                the sandbox flags come from `capabilities` / `unsafeCapabilities`
  */
 export const META_IGNORED_DIRECTIVES = ['frame-ancestors', 'report-uri', 'report-to', 'sandbox'] as const;
 
 const INSTEAD: Record<(typeof META_IGNORED_DIRECTIVES)[number], string> = {
     'frame-ancestors': 'Who may embed the sandbox is up to the page that hosts the element.',
-    'report-uri': "Violations are reported in the guest instead (see backlog S5).",
-    'report-to': "Violations are reported in the guest instead (see backlog S5).",
+    'report-uri': "Listen for the element's 'violation' event instead.",
+    'report-to': "Listen for the element's 'violation' event instead.",
     'sandbox': 'Use "capabilities" for the sandbox flags.',
 };
 

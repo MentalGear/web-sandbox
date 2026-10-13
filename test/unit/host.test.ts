@@ -205,3 +205,32 @@ describe('directives a <meta> policy discards are dropped from the guest policy 
     warn.mockRestore();
   });
 });
+
+describe("the element's 'violation' event (backlog S5)", () => {
+  it('dispatches a validated detail that bubbles, caps events per environment with one warning, and the cap resets with the environment', async () => {
+    const { defineWebSandbox } = await import('@src/host');
+    defineWebSandbox();
+    const el = document.createElement('web-sandbox') as any;
+    document.body.appendChild(el);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const heard: unknown[] = [];
+    const onWindow = (e: Event) => { if (e.target === el) heard.push((e as CustomEvent).detail); };
+    window.addEventListener('violation', onWindow);
+
+    el._dispatchViolation({ type: 'VIOLATION', directive: 'img-src', blockedURI: 'https://a.test/x', lineNumber: 2, forged: true });
+    el._dispatchViolation({ type: 'VIOLATION', directive: 'not a directive', blockedURI: 'x' });
+    expect(heard).toEqual([{ directive: 'img-src', blockedURI: 'https://a.test/x', lineNumber: 2 }]);
+
+    for (let i = 0; i < 300; i++) el._dispatchViolation({ directive: 'connect-src', blockedURI: 'x' });
+    expect(heard).toHaveLength(100);
+    expect(warn.mock.calls.filter(c => String(c[0]).includes('CSP violations'))).toHaveLength(1);
+
+    el.reset();
+    el._dispatchViolation({ directive: 'connect-src', blockedURI: 'after-reset' });
+    expect(heard).toHaveLength(101);
+
+    window.removeEventListener('violation', onWindow);
+    el.remove();
+    warn.mockRestore();
+  });
+});

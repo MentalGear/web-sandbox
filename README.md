@@ -88,6 +88,7 @@ being built), `ready` (the guest can be reached) or `terminated`. There is no "r
 sandbox.addEventListener('ready', () => { /* state is 'ready' */ });
 sandbox.addEventListener('terminated', (e) => console.warn(e.detail.reason));
 sandbox.addEventListener('sandbox-log', (e) => console.log(e.detail.level, ...e.detail.args));
+sandbox.addEventListener('violation', (e) => console.warn(e.detail.directive, e.detail.blockedURI));
 
 sandbox.terminate('user pressed stop');  // tears it down; 'terminated' fires once
 sandbox.reset();                         // a fresh frame and opaque origin, from any state
@@ -102,6 +103,13 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     leaves it `idle`. Inserting it again builds a fresh one.
 *   **Events** are dispatched on the element. `sandbox-log` (guest `console` output and errors) bubbles,
     so a listener on `window` hears every sandbox on the page and `event.target` says which one.
+*   **`violation`** reports a load the guest policy refused: `{ directive, blockedURI }`, plus
+    `sourceFile`, `lineNumber` and `columnNumber` when the browser gives them. It bubbles like
+    `sandbox-log`. The guest's bootstrap listens before any guest code runs, but every field comes from
+    the guest and guest code can suppress its own reports, so an event is evidence that the guest tried
+    something; no event proves nothing. A frame the guest creates reports to itself, not here, and in
+    worker mode it depends on the engine (WebKit raises none in workers; Firefox none for
+    `importScripts`). At most 100 per environment (`VIOLATION_EVENT_LIMIT`); type `SandboxViolation`.
 *   **`state === 'terminated'` is a second, authoritative signal** next to a call's `TERMINATED`
     code: the element sets both from its own state, so the guest can produce neither.
 

@@ -17,6 +17,11 @@
             const args = event.detail?.args || [];
             window.sandboxLogs.push(args.map(String).join(' '));
         });
+        // CSP violations the guest reports (backlog S5): the evidence channel egress specs assert on
+        window.sandboxViolations = [];
+        window.addEventListener('violation', (event) => {
+            window.sandboxViolations.push({ sandbox: event.target.id || 'main', ...event.detail });
+        });
         window.harnessReady = true;
     </script>
     <style>web-sandbox { display: block; width: 400px; height: 300px; }</style>
