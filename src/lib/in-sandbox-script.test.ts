@@ -306,6 +306,60 @@ describe("inSandboxScript", () => {
         });
     });
 
+    describe("sandboxFetch, the fetch bridge's guest side (backlog B5)", () => {
+        afterEach(() => { delete (globalThis as any).sandboxFetch; });
+
+        const start = (features?: any) => {
+            const listeners: Record<string, Function> = {};
+            (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
+            inSandboxScript(false, 'iframe', createMockConsole(), createBroker, features);
+            const port = createMockPort();
+            listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] });
+            const requests = () => port.postMessage.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RPC_REQ');
+            const answer = (frame: Record<string, unknown>) => port.onmessage({ data: { type: 'RPC_RES', id: requests().at(-1).id, ...frame } });
+            return { requests, answer };
+        };
+
+        it("exists only when the host turned the bridge on, as a separate global: fetch is untouched", () => {
+            const originalFetch = globalThis.fetch;
+            start();
+            expect((globalThis as any).sandboxFetch).toBeUndefined();
+            start({ fetchBridge: { timeoutMs: 1000 } });
+            expect(typeof (globalThis as any).sandboxFetch).toBe('function');
+            expect(globalThis.fetch).toBe(originalFetch);
+        });
+
+        it("sends only url, method, headers and body to the reserved method, and turns the answer into a Response", async () => {
+            const { requests, answer } = start({ fetchBridge: { timeoutMs: 1000 } });
+            const pending = (globalThis as any).sandboxFetch(new URL('https://api.example/x'), {
+                method: 'post', headers: { 'X-A': 'b' }, body: new Uint16Array([1]), credentials: 'include', redirect: 'follow', signal: new AbortController().signal,
+            });
+            const [request] = requests();
+            expect(request.method).toBe('sandbox:fetch');
+            expect(Object.keys(request.args[0]).sort()).toEqual(['body', 'headers', 'method', 'url']);
+            expect(request.args[0]).toMatchObject({ url: 'https://api.example/x', method: 'post', headers: [['x-a', 'b']] });
+            // the view's bytes, as a Uint8Array (realm-neutral check: the frame is structured-cloned)
+            expect(Object.prototype.toString.call(request.args[0].body)).toBe('[object Uint8Array]');
+            expect([...request.args[0].body]).toEqual([1, 0]);
+
+            answer({ ok: true, value: { url: 'https://api.example/x', status: 201, statusText: 'Created', headers: [['x-r', '1']], body: new TextEncoder().encode('done') } });
+            const response = await pending;
+            expect(response).toBeInstanceOf(Response);
+            expect([response.status, response.statusText, response.url, response.headers.get('x-r'), await response.text()]).toEqual([201, 'Created', 'https://api.example/x', '1', 'done']);
+        });
+
+        it("rejects with the host's library code, and refuses an unsupported body itself", async () => {
+            const { requests, answer } = start({ fetchBridge: { timeoutMs: 1000 } });
+            const pending = (globalThis as any).sandboxFetch('https://api.example/');
+            answer({ ok: false, error: 'refused', code: 'FETCH_NOT_ALLOWED' });
+            await expect(pending).rejects.toMatchObject({ code: 'FETCH_NOT_ALLOWED' });
+
+            const before = requests().length;
+            await expect((globalThis as any).sandboxFetch('https://api.example/', { method: 'POST', body: { a: 1 } })).rejects.toBeInstanceOf(TypeError);
+            expect(requests()).toHaveLength(before);
+        });
+    });
+
     describe("no WebRTC in the guest realm (backlog S13)", () => {
         const NAMES = ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection'];
         afterEach(() => { for (const name of NAMES) delete (globalThis as any)[name]; });

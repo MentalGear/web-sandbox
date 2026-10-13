@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createBroker, type RpcErrorCode } from './rpc';
+import { createBroker, RESERVED_METHOD_PREFIX, type RpcErrorCode, type RpcLibraryCode } from './rpc';
 
 // A pair of brokers wired straight into each other: a call on one is served by the other.
 // Timeouts are disabled here so no real timer lingers; timeout behaviour has its own suite.
@@ -574,5 +574,95 @@ describe('reply routing (guarantee: a response goes back only on the channel its
         broker.handleMessage({ type: 'RPC_REQ', id: 1, method: 'ok', args: [] });
         await new Promise(resolve => setTimeout(resolve, 0));
         expect(sent).toEqual([{ type: 'RPC_RES', id: 1, ok: true, value: 'value' }]);
+    });
+});
+
+describe('reserved methods and library codes (backlog B5; guarantee: the library namespace and its codes are disjoint from everything else)', () => {
+    const LIBRARY_CODES = ['FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED'] as const;
+    type Library = typeof LIBRARY_CODES[number];
+    const exact: [Exclude<RpcLibraryCode, Library>, Exclude<Library, RpcLibraryCode>] extends [never, never] ? true : false = true;
+    const disjoint: [Extract<RpcLibraryCode, RpcErrorCode>] extends [never] ? true : false = true;
+
+    // `host` serves reserved methods; `guest` calls them, accepting library codes as the guest's broker does.
+    function hostGuestPair() {
+        let host: any, guest: any;
+        host = createBroker((frame) => guest.handleMessage(structuredClone(frame)), { timeoutMs: 0 });
+        guest = createBroker((frame) => host.handleMessage(structuredClone(frame)), { timeoutMs: 0, acceptLibraryCodes: true });
+        return { host, guest };
+    }
+    const coded = (code: string) => Object.assign(new Error(`refused: ${code}`), { code });
+
+    it('pins the prefix and the library code strings, disjoint from RpcErrorCode', () => {
+        expect(exact && disjoint).toBe(true);
+        expect(RESERVED_METHOD_PREFIX).toBe('sandbox:');
+    });
+
+    it('expose() never registers a reserved name, and exposeReserved() registers nothing else', async () => {
+        const { host, guest } = hostGuestPair();
+        const embedder = vi.fn(() => 'embedder');
+        const library = vi.fn(() => 'library');
+        host.expose('sandbox:fetch', embedder);
+        host.exposeReserved('plain', library);
+        host.exposeReserved('Sandbox:fetch', library);
+
+        expect(await refusal(guest.call('sandbox:fetch'))).toMatchObject({ code: 'UNKNOWN_METHOD' });
+        expect(await refusal(guest.call('plain'))).toMatchObject({ code: 'UNKNOWN_METHOD' });
+        expect(await refusal(guest.call('Sandbox:fetch'))).toMatchObject({ code: 'UNKNOWN_METHOD' });
+
+        host.exposeReserved('sandbox:fetch', library);
+        host.expose('sandbox:fetch', embedder); // too late and still refused: cannot replace the library's
+        expect(await guest.call('sandbox:fetch')).toBe('library');
+        expect(embedder).not.toHaveBeenCalled();
+    });
+
+    it('a reserved method refuses with its library code, and the guest receives exactly that code', async () => {
+        const { host, guest } = hostGuestPair();
+        let next = '';
+        host.exposeReserved('sandbox:fetch', () => { throw coded(next); });
+        const codes: unknown[] = [];
+        for (const code of LIBRARY_CODES) {
+            next = code;
+            codes.push((await refusal(guest.call('sandbox:fetch'))).code);
+        }
+        expect(codes).toEqual([...LIBRARY_CODES]);
+        // any other code from a reserved method, local codes included, is a HANDLER_ERROR
+        for (const code of ['TERMINATED', 'TIMEOUT', 'FETCH_OTHER', 'fetch_failed']) {
+            next = code;
+            expect((await refusal(guest.call('sandbox:fetch'))).code, code).toBe('HANDLER_ERROR');
+        }
+    });
+
+    it('a library code on an ordinary handler is not forwarded', async () => {
+        const { host, guest } = hostGuestPair();
+        host.expose('ordinary', () => { throw coded('FETCH_TIMEOUT'); });
+        expect(await refusal(guest.call('ordinary'))).toMatchObject({ code: 'HANDLER_ERROR' });
+    });
+
+    it('the host never accepts a library code: a guest answering with one is clamped to HANDLER_ERROR', async () => {
+        const { host, guest } = hostGuestPair();
+        guest.exposeReserved('sandbox:fetch', () => { throw coded('FETCH_TIMEOUT'); });
+        guest.expose('ordinary', () => { throw coded('FETCH_TIMEOUT'); });
+        expect(await refusal(host.call('sandbox:fetch'))).toMatchObject({ code: 'HANDLER_ERROR' });
+        expect(await refusal(host.call('ordinary'))).toMatchObject({ code: 'HANDLER_ERROR' });
+
+        // and a forged response frame naming a library code, for a reserved call and an ordinary one
+        const { broker, frames } = capturedBroker();
+        for (const method of ['sandbox:fetch', 'ordinary']) {
+            const promise = broker.call(method);
+            broker.handleMessage({ type: 'RPC_RES', id: frames[frames.length - 1].id, ok: false, error: 'x', code: 'FETCH_NOT_ALLOWED' });
+            expect((await refusal(promise)).code, method).toBe('HANDLER_ERROR');
+        }
+    });
+
+    it('the guest accepts a library code only for a call to a reserved name', async () => {
+        const frames: any[] = [];
+        const guest = createBroker((frame) => frames.push(frame), { timeoutMs: 0, acceptLibraryCodes: true });
+        const answer = (method: string) => {
+            const promise = guest.call(method);
+            guest.handleMessage({ type: 'RPC_RES', id: frames[frames.length - 1].id, ok: false, error: 'x', code: 'FETCH_BUSY' });
+            return refusal(promise);
+        };
+        expect((await answer('sandbox:fetch')).code).toBe('FETCH_BUSY');
+        expect((await answer('ordinary')).code).toBe('HANDLER_ERROR');
     });
 });

@@ -22,6 +22,11 @@
         window.addEventListener('violation', (event) => {
             window.sandboxViolations.push({ sandbox: event.target.id || 'main', ...event.detail });
         });
+        // Every request through the fetch bridge (backlog B5), as the host reports it
+        window.sandboxFetches = [];
+        window.addEventListener('fetch', (event) => {
+            window.sandboxFetches.push({ sandbox: event.target.id || 'main', ...event.detail });
+        });
         window.harnessReady = true;
     </script>
     <style>web-sandbox { display: block; width: 400px; height: 300px; }</style>

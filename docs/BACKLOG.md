@@ -24,6 +24,7 @@ conditional "continue".
 | CSP generation from typed config | ✅ implemented; `[]` means `'none'` for every directive, never broader than leaving it out (S16), unit-tested per directive |
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker |
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7) |
+| Host-mediated network | ✅ opt-in `fetchBridge`: `sandboxFetch()` under the bridge discipline, every request logged as a `fetch` event, refusals coded (B5, [ADR-006](ADR-006-fetch-bridge.md)) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
 | Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3); `violation` for refused loads, capped per environment (S5) |
 | Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
@@ -836,7 +837,34 @@ nothing, so consumers can choose their own tag. The playground and the e2e harne
 
 **Open**: the D1 smoke test (mount a sandbox using only the public entry point) waits on D1.
 
-### B5 · Host-mediated `sandbox.fetch` bridge — **P2 · M**
+### B5 · Host-mediated `sandbox.fetch` bridge — ✅ **done**
+
+**Guarantee**: with `fetchBridge` configured, the guest's `sandboxFetch()` never reaches an origin that is
+not listed exactly, never sends the host page's credentials or URL, never follows a redirect, never holds
+more than the cap plus one chunk of a response or outlives its timeout or its environment, and every
+request — refused, failed, aborted or answered — is reported once as a `fetch` event. Off (the default),
+the guest has no `sandboxFetch` and the reserved method refuses. The guest policy is unchanged.
+
+**Done**, decided in [ADR-006](ADR-006-fetch-bridge.md): a library method under the reserved broker name
+`sandbox:fetch` (ADR-002 amendment: `sandbox:` names live in their own registry, which `expose()` cannot
+write; library codes travel only from a reserved method to the guest's broker). The policy and the request
+discipline live in `src/lib/fetch-bridge.ts`, one bridge per environment, aborted by `_teardown`. Refusal
+codes: `FETCH_NOT_ALLOWED`, `FETCH_BUSY`, `FETCH_REDIRECT`, `FETCH_TOO_LARGE`, `FETCH_TIMEOUT`,
+`FETCH_FAILED`. Decisions taken here: a separate global, never a `fetch` polyfill; `redirect: 'manual'`
+refused as `FETCH_REDIRECT` (no-follow like `'error'`, but distinguishable); headers from an allowlist (the
+CORS-safelisted four plus listed names; `Cookie` never, `Authorization` only when listed), and a disallowed
+header refuses rather than being dropped; methods `GET`/`HEAD`/`POST` by default; at most `maxConcurrent`
+requests in flight, so memory is bounded by `maxConcurrent × maxBytes`; the request comes from the host
+page, so targets see its origin (not its URL) and CORS applies for it. Tests: `src/lib/fetch-bridge.test.ts`,
+`src/lib/rpc.test.ts`, `src/lib/in-sandbox-script.test.ts`, `test/unit/host.test.ts`, and
+`test/e2e/fetch-bridge.spec.ts` on all three engines, against the recorder's ALLOWED and BLOCKED listeners
+(T5; extended with echo, redirect, streamed and never-ending responses) and an echo on the harness origin
+(`/__echo`, `vite.config.ts`), each refusal with a positive control. Mutation-checked: dropping
+`credentials: 'omit'`, `redirect: 'manual'`, `referrerPolicy`, the abort on teardown, the body cap, the
+allowlist, the header allowlist or the concurrency cap each fails a spec.
+
+**Residuals**: DNS rebinding (a listed name resolving to a private address); the host origin in `Origin`;
+receipt cost of a flood of refused requests (S6's open note); no streaming or guest `AbortSignal` in v1.
 
 *Parity gap*: Zoid's strict bridge. *Motivated by* [finding 04](research/04_websocket_bypass/README.md)
 (WebSockets bypass any SW-level logging) and [finding 09](research/09_monkey_patch_bypass/README.md)
@@ -1203,7 +1231,7 @@ comparisons; for the 2026 entrants (`quickjs-wasi`, `@tanstack/ai-isolate-quickj
 | Typed package / `d.ts` | 🟡 **D1** | ✅ | ✅ | ✅ | ✅ |
 | Headless (worker) execution | ✅ **S1** | ❌ | ❌ | ❌ | ❌ |
 | Virtual files | ✅ **C1** | ❌ | ➖ | ❌ | ❌ |
-| Host-mediated network | ❌ **B5** | ❌ | ➖ | ✅ | ❌ |
+| Host-mediated network | ✅ **B5** | ❌ | ➖ | ✅ | ❌ |
 | Auto-sizing | ✅ **B6** | ❌ | 🟡 | ✅ | ✅ |
 | Execution quotas | 🟡 **S6** | ❌ | ➖ | ❌ | ➖ |
 

@@ -1,6 +1,7 @@
 import { test as base, expect, type Page } from '@playwright/test';
 import type { SandboxConfig } from '@src/host';
 import type { SandboxViolation } from '@src/lib/violation';
+import type { FetchRecord } from '@src/lib/fetch-bridge';
 
 export const ORIGIN = 'http://localhost:4444';
 export const HARNESS = `${ORIGIN}/test/e2e/harness.html`;
@@ -15,6 +16,9 @@ export type MountResult = 'ready' | 'terminated';
 
 /** One 'violation' event as the harness records it: the element's detail plus which sandbox sent it. */
 export type ViolationRecord = SandboxViolation & { sandbox: string };
+
+/** One 'fetch' event (backlog B5) as the harness records it: the element's detail plus which sandbox sent it. */
+export type FetchEventRecord = FetchRecord & { sandbox: string };
 
 /** A file for SandboxDriver.registerFiles(): text, or bytes as base64 with an optional type override. */
 export type FileSpec = string | { base64: string; type?: string };
@@ -211,6 +215,22 @@ export class SandboxDriver {
             return all.find(v => v.directive === directive && v.blockedURI.startsWith(blocked));
         }, { directive, blocked }, { timeout });
         return handle.jsonValue() as Promise<ViolationRecord>;
+    }
+
+    // ---- the fetch bridge's 'fetch' events (backlog B5) ------------------------------------------
+
+    /** Every 'fetch' event the sandboxes on the page dispatched so far, in order. */
+    async fetches(): Promise<FetchEventRecord[]> {
+        return this.page.evaluate(() => [...(window as any).sandboxFetches]);
+    }
+
+    /** Resolves with the first 'fetch' event whose url starts with `url`; throws on timeout. */
+    async waitForFetch(url: string, timeout = 5000): Promise<FetchEventRecord> {
+        const handle = await this.page.waitForFunction((url) => {
+            const all: FetchEventRecord[] = (window as any).sandboxFetches;
+            return all.find(record => record.url.startsWith(url));
+        }, url, { timeout });
+        return handle.jsonValue() as Promise<FetchEventRecord>;
     }
 
     /** Runs `code` and returns every log line once it logs TEST_DONE (the presets' completion signal). */

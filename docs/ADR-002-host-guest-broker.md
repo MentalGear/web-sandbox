@@ -1,6 +1,6 @@
 # ADR-002: How should host and guest call each other?
 
-**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code))
+**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes))
 
 ## Why this ADR exists
 
@@ -147,3 +147,15 @@ dispatcher, so the two ends cannot disagree about it.
 [`dialog-capability/src/access.rs`](https://github.com/dialog-db/dialog-db/blob/facd672/rust/dialog-capability/src/access.rs),
 [`.claude/rules/authority-tests.md`](https://github.com/dialog-db/dialog-db/blob/facd672/.claude/rules/authority-tests.md)).
 Its separate retry/stop signal was not adopted, for the reason above.
+
+## Amendment (2026-10-13): reserved methods and library codes
+
+**When**: backlog B5, the fetch bridge ([ADR-006](ADR-006-fetch-bridge.md)), the first method the library
+itself exposes over the broker. **Decision**: names starting with `sandbox:` are reserved. They live in a
+registry of their own, written only by `exposeReserved()`; `expose()` never registers one, so no embedder
+or guest method can replace a library method. A reserved method may refuse with a *library code* from a
+third closed group (`FETCH_*`, type `RpcLibraryCode`), disjoint from both B7 groups; any other handler's
+code is still `HANDLER_ERROR`. The calling side accepts a library code only for a call to a reserved name
+and only when created with `acceptLibraryCodes`, which only the guest's broker is. So on the host every
+response is clamped exactly as the B7 amendment says, and nothing the guest sends can produce a library
+code there. Proof: `src/lib/rpc.test.ts` ("reserved methods and library codes").

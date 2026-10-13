@@ -286,3 +286,34 @@ describe('content auto-sizing reaches the guest bootstrap only when asked for (b
     warn.mockRestore();
   });
 });
+
+describe('the fetch bridge reaches the guest only when configured (backlog B5)', () => {
+  const guestDocument = (el: HTMLElement): string => {
+    const wrapper = el.shadowRoot!.querySelector('iframe')!.srcdoc;
+    return new DOMParser().parseFromString(wrapper, 'text/html').querySelector('iframe')!.getAttribute('srcdoc')!;
+  };
+
+  it('passes { fetchBridge: { timeoutMs } } in both modes, nothing without it, and keeps the reserved name for itself', async () => {
+    const { defineWebSandbox } = await import('@src/host');
+    defineWebSandbox();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const el = document.createElement('web-sandbox') as any;
+    document.body.appendChild(el);
+
+    el.setConfig({ capabilities: ['allow-scripts'] });
+    expect(guestDocument(el)).not.toMatch(/fetchBridge\\*":/);
+    el.setConfig({ capabilities: ['allow-scripts'], fetchBridge: { allow: ['https://api.example'], timeoutMs: 2500 } });
+    expect(guestDocument(el)).toContain('{"fetchBridge":{"timeoutMs":2500}}');
+    el.setConfig({ mode: 'worker', fetchBridge: { allow: [] } });
+    expect(guestDocument(el)).toMatch(/fetchBridge\\*":\{\\*"timeoutMs\\*":10000\}/);
+    el.setConfig({ capabilities: ['allow-scripts'], fetchBridge: 'on' });
+    expect(guestDocument(el)).not.toMatch(/fetchBridge\\*":/);
+
+    el.expose('sandbox:fetch', () => 'forged');
+    el.expose('sandbox:other', () => 'forged');
+    expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('reserved for the library'))).toHaveLength(2);
+
+    el.remove();
+    warn.mockRestore();
+  });
+});

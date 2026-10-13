@@ -61,6 +61,7 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 *   **`src/lib/markup-references.ts`**: Resolves guest markup references (`<script src="app.js">`) to registered files before the guest is built.
 *   **`src/lib/module-specifiers.ts`**, **`src/lib/import-map.ts`**: The module graph: relative imports in registered modules rewritten to virtual URLs (with the bundled es-module-lexer), and the guest's own import maps merged into the one the bootstrap registers.
 *   **`src/lib/auto-resize.ts`**: Auto-sizing on the host: validates, clamps and rate-limits the guest's height reports.
+*   **`src/lib/fetch-bridge.ts`**: The fetch bridge on the host: the allowlist, the request discipline, and the `fetch` log.
 *   **`src/lib/presets.ts`**: A shared library of test scenarios used by both the Playground and automated tests.
 *   **`vite.config.ts`**: The dev server for the playground and the e2e harness.
 *   **`test/e2e`**: Playwright e2e specs, plus the shared harness page and fixture every suite runs on.
@@ -231,6 +232,54 @@ const total = await sandbox.call('sum', 1, 2);              // 3, once the sandb
 
 Why it is built this way: [ADR-002](docs/ADR-002-host-guest-broker.md).
 
+## Fetch bridge
+
+By default the guest reaches no network at all (`connect-src 'none'`). With `fetchBridge`, the guest gets
+`sandboxFetch(url, init)`, and the **host** makes each request under a fixed discipline and logs it. The
+guest policy does not change: direct `fetch` and `WebSocket` stay refused unless you also allow them.
+
+```js
+sandbox.setConfig({
+    capabilities: ['allow-scripts'],
+    fetchBridge: { allow: ['https://api.example'], maxBytes: 1024 * 1024, timeoutMs: 10000 },
+});
+sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.url, e.detail.outcome, e.detail.status ?? e.detail.code));
+
+// in the guest
+const response = await sandboxFetch('https://api.example/items', { headers: { accept: 'application/json' } });
+const items = await response.json();
+```
+
+*   **Exact origins only.** `allow` lists origins (`https://api.example`, `http://localhost:8080`); an entry
+    with a path, query or wildcard is dropped with a warning. Anything else is refused before a request is
+    made, including the host page's own origin and loopback, private and link-local hosts (`localhost`,
+    `127.0.0.1`, `10.x`, `192.168.x`, `[::1]`, …) unless you list them. A listed public name that resolves to
+    a private address (DNS rebinding) cannot be detected from a page.
+*   **No host authority.** Requests never carry cookies or other credentials (`credentials: 'omit'`) nor a
+    `Referer`, and never follow redirects. Only `method`, `headers` and `body` are read from `init`.
+    Methods: `GET`, `HEAD`, `POST`, plus `PUT`, `PATCH`, `DELETE` if listed in `methods`. Headers:
+    `accept`, `accept-language`, `content-language`, `content-type`, plus names listed in `headers`
+    (`Authorization` only that way; `Cookie` never). A header the guest may not set refuses the request.
+*   **Bounded.** The response body is capped at `maxBytes` (1 MiB by default, at most 32 MiB): a larger
+    `Content-Length` is refused unread, and an undeclared body is abandoned as soon as it passes the cap.
+    Each request has `timeoutMs` (10 s by default, body included) and at most `maxConcurrent` (4) run at
+    once. `reset()`, `load()`, `setConfig()`, `terminate()` and removal abort every request in flight.
+    Whole responses only: no streaming, no `AbortSignal`; bodies are strings, `ArrayBuffer`s or typed arrays.
+*   **Refusals have a code**, on the rejection's `code` (type `FetchErrorCode`): `FETCH_NOT_ALLOWED`
+    (URL, origin, method, header or body), `FETCH_BUSY`, `FETCH_REDIRECT`, `FETCH_TOO_LARGE`,
+    `FETCH_TIMEOUT`, `FETCH_FAILED` (network error, CORS, or teardown). `FETCH_BUSY`, `FETCH_TIMEOUT` and
+    `FETCH_FAILED` may succeed if retried. HTTP error statuses resolve, as with `fetch`.
+*   **Every request is logged** as a `fetch` event on the element (it bubbles): `{ method, url, outcome,
+    status?, code?, bytes, durationMs }`, `outcome` being `ok`, `refused` (no request made), `failed` or
+    `aborted`. Fields that come from the guest are validated or clamped first (type `FetchRecord`).
+*   **CORS applies for the host page's origin**, since the host makes the request: the target sees your
+    page's origin in `Origin` (never its URL) and must allow it, or `*`.
+*   `sandboxFetch` is a separate global; `fetch` itself is untouched (assign `globalThis.fetch = sandboxFetch`
+    in the guest if you want that). It works in iframe and worker mode. The name `sandbox:fetch`, like every
+    method name starting with `sandbox:`, is reserved: `expose()` refuses it on both sides.
+
+Why it is built this way: [ADR-006](docs/ADR-006-fetch-bridge.md).
+
 ## Files
 
 The host registers files on the element; the guest reads them through the global `sandboxFiles`.
@@ -336,3 +385,4 @@ The sandbox implements several layers of defense:
 9.  **Realm-Bound Files**: Registered files reach the guest as `blob:` URLs created in its own realm, which no other sandbox and not the host page can load. Lookups are exact, and `blob:` is allowed only for the registered types.
 10. **No WebRTC in the Guest**: The bootstrap removes `RTCPeerConnection` from the guest's global scope before guest code runs (workers never have it), since no CSP directive governs ICE traffic. A frame the guest creates is a realm of its own and keeps it, and in Chromium and WebKit its ICE traffic leaves the sandbox ([backlog S13](docs/BACKLOG.md)).
 11. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer; WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)).
+12. **Mediated Network, Opt-In**: With `fetchBridge`, the host makes the guest's requests itself, to exact listed origins only, without credentials, referrer or redirects, with capped bodies, time and concurrency, and logs each one. The guest policy stays as strict as configured ([ADR-006](docs/ADR-006-fetch-bridge.md)).

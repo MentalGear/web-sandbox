@@ -15,6 +15,9 @@
 - [**ADR-004 — Files are guest-realm blob URLs**](ADR-004-files-as-blob-urls.md) — why the
   virtual-files Service Worker was removed, how registered files reach the guest, and the
   alternatives rejected.
+- [**ADR-006 — A host-mediated fetch bridge**](ADR-006-fetch-bridge.md) — `sandboxFetch()`: why a
+  reserved broker method, the bridge discipline (no credentials, no redirects, exact origins, caps), the
+  `fetch` log and what the bridge cannot hide.
 - [research/ARCHITECTURE_COMPARISON.md](research/ARCHITECTURE_COMPARISON.md) — host-level vs
   iframe-level Service Worker (superseded by ADR-004).
 
