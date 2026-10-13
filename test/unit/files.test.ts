@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { buildGuestDocument, buildWrapperDocument } from '@src/lib/frame-documents';
+import { buildGuestDocument, buildWrapperDocument, escapeAttribute, toInlineScriptLiteral } from '@src/lib/frame-documents';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
-import { inSandboxFiles } from '@src/lib/in-sandbox-files';
+import { inSandboxFiles, inSandboxMarkup } from '@src/lib/in-sandbox-files';
+import { rewriteMarkupReferences } from '@src/lib/markup-references';
 import { createBroker } from '@src/lib/rpc';
 import { workerBootstrap } from '@src/lib/worker-bootstrap';
 
@@ -229,5 +230,112 @@ describe('virtualFilesUrl is gone', () => {
         expect(wrapperOf(el)).toBe(wrapperOf(plain));
         expect(document.querySelectorAll('iframe')).toHaveLength(0); // no hub frame in the host page
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('virtualFilesUrl'))).toHaveLength(1);
+    });
+});
+
+describe('markup references (PR2): guest markup that names a registered file is written by the bootstrap', () => {
+    const SCRIPTS = { capabilities: ['allow-scripts'] };
+    const NONCE = '0123456789abcdef0123456789abcdef';
+    const FILES = { 'logo.svg': '<svg/>', 'app.js': 'void 0', 'img/x.svg': '<svg/>' };
+    const snapshotLiteral = (el: any) => toInlineScriptLiteral(el._files.snapshot());
+    const comms = (mode = 'iframe') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()});`;
+    const bootstrapScriptOf = (el: HTMLElement) => parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
+
+    it.each([
+        ['markup without references', '<p>no files named</p><img src="https://cdn.example/x.png">'],
+        ['references to unregistered files', '<img src="missing.svg"><script src="other.js"></script><link rel="stylesheet" href="x.css">'],
+        ['references spelled differently', '<img src="LOGO.SVG"><img src="logo.svg?v=1"><img src="logo.svg#f"><img src="%6Cogo.svg"><img srcset="logo.svg">'],
+        ['a reference inside <template>', '<template><img src="logo.svg"></template>'],
+    ])('no match (%s): the guest document is byte for byte the one built without the rewrite', async (_, html) => {
+        const el = await mount({ ...SCRIPTS, html }, FILES);
+        const guest = buildGuestDocument({ csp: policyOf(el), bootstrapScript: comms() + `(${inSandboxFiles.toString()})(${snapshotLiteral(el)});`, content: html });
+        expect(wrapperOf(el)).toBe(buildWrapperDocument(guest, 'allow-scripts'));
+        expect(guestDocumentOf(el)).not.toContain(inSandboxMarkup.toString());
+    });
+
+    it('a match: the document ends with the bootstrap, whose last statement writes the parts with the URLs inSandboxFiles returns', async () => {
+        const html = '<h1>t</h1><img src="logo.svg"><script src="./app.js"></script><img src="/img/x.svg"><img src="missing.svg">';
+        const el = await mount({ ...SCRIPTS, html }, FILES);
+        const parts = rewriteMarkupReferences(html, new Set(Object.keys(FILES)), NONCE)!;
+        expect(parts.filter((_, i) => i % 2 === 1)).toEqual(['logo.svg', 'app.js', 'img/x.svg']);
+        const bootstrap = comms() + `(${inSandboxMarkup.toString()})((${inSandboxFiles.toString()})(${snapshotLiteral(el)}), ${toInlineScriptLiteral(parts)});`;
+        expect(guestDocumentOf(el)).toBe(`<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policyOf(el))}"><script>${bootstrap}</script>`);
+        expect(wrapperOf(el)).toBe(buildWrapperDocument(guestDocumentOf(el), 'allow-scripts'));
+    });
+
+    it('load() rewrites the new markup; the default markup and worker mode never rewrite', async () => {
+        const el = await mount(SCRIPTS, FILES);
+        expect(guestDocumentOf(el)).toContain('<div id="root"></div>');
+        el.load('<img src="logo.svg">');
+        expect(bootstrapScriptOf(el)).toContain(inSandboxMarkup.toString());
+        const worker = await mount({ mode: 'worker', html: '<img src="logo.svg">' }, FILES);
+        expect(guestDocumentOf(worker)).not.toContain('inSandboxMarkup');
+        expect(guestDocumentOf(worker)).not.toContain('document.write');
+    });
+
+    it.each([
+        ['scripts are not allowed (no allow-scripts)', { capabilities: [] }],
+        ['the policy refuses inline scripts', { ...SCRIPTS, connectionsAllowed: { 'script-src': ['blob:'] } }],
+        ["a nonce disables 'unsafe-inline'", { ...SCRIPTS, connectionsAllowed: { 'script-src': ["'unsafe-inline'", "'nonce-abc'"] } }],
+    ])('the markup stays as written when the bootstrap cannot run: %s', async (_, config) => {
+        const html = '<img src="logo.svg">';
+        const el = await mount({ ...config, html }, FILES);
+        expect(guestDocumentOf(el)).not.toContain(inSandboxMarkup.toString());
+        expect(guestDocumentOf(el).endsWith(`</script></head>${html}`)).toBe(true);
+    });
+
+    it('draws a fresh 128-bit nonce for every build that rewrites, and none for a build that does not', async () => {
+        const el = await mount({ ...SCRIPTS, html: '<p>none</p>' }, FILES);
+        const spy = vi.spyOn(crypto, 'getRandomValues');
+        el.reset();
+        expect(spy).not.toHaveBeenCalled();
+        el.load('<img src="logo.svg">');
+        el.reset();
+        const nonces = spy.mock.results.map(result => Array.from(result.value as Uint8Array).join(','));
+        expect(spy.mock.calls.map(call => (call[0] as Uint8Array).length)).toEqual([16, 16]);
+        expect(new Set(nonces).size).toBe(2);
+    });
+
+    // S2 with matched references: the policy must stay the first thing the guest parser sees, and nothing
+    // in the markup may end the bootstrap script early or come before it.
+    const HOSTILE_WITH_REFERENCE = [
+        '<img src="logo.svg"><script>/*',
+        '<img src="logo.svg"><plaintext>',
+        '<img src="logo.svg"><!--',
+        '<img src="logo.svg" title="</script><script>sandboxFiles = null</script>">',
+        '<img src="logo.svg"></script><script>alert(1)</script>',
+        '<img src="logo.svg"><textarea><head></textarea>',
+        '<img src="logo.svg"></head></html><head>',
+        '<html><head><img src=logo.svg><!--</head><body></body></html>',
+        '<!-- <html><head> --><html><head><script src="app.js"></script></head><body></body></html>',
+        '<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="default-src *"><link rel="stylesheet" href="logo.svg"></head></html>',
+        '<head><base href="https://evil.example/"></head><img src="logo.svg">',
+        '<img src="logo.svg" alt="   vfs-slot-0123456789abcdef0123456789abcdef-0">',
+        '<svg><style><img src="logo.svg"></style></svg><img src="logo.svg">',
+        '<noscript><img src="logo.svg"></noscript><img src="logo.svg">',
+    ];
+    it.each(HOSTILE_WITH_REFERENCE)('keeps the CSP meta first and the bootstrap intact for %j, before and after the write', async (html) => {
+        const el = await mount({ ...SCRIPTS, html }, FILES);
+        const guest = guestDocumentOf(el);
+        const doc = parse(guest);
+        const [meta, script, ...rest] = [...doc.head.children];
+        expect(meta?.getAttribute('http-equiv')).toBe('Content-Security-Policy');
+        expect(meta?.getAttribute('content')).toBe(policyOf(el));
+        expect(script?.textContent).toContain(inSandboxMarkup.toString());
+        expect(rest).toEqual([]);
+        expect(doc.body.childNodes).toHaveLength(0); // all guest markup is inside the bootstrap's literal
+        // the markup travels inside a JS string literal that cannot contain "<": it cannot close the script
+        expect(script!.textContent).not.toContain('</script');
+        expect(script!.textContent).not.toContain('<!--');
+
+        // what the guest parser sees after the write: the written markup follows the bootstrap script
+        // (any nonce but the host's gives the host's parts; the corpus forges NONCE, which the host never draws)
+        const parts = rewriteMarkupReferences(html, new Set(Object.keys(FILES)), 'f'.repeat(32))!;
+        expect(script!.textContent!.endsWith(`, ${toInlineScriptLiteral(parts)});`)).toBe(true);
+        const written = parse(guest + parts.map((part, i) => (i % 2 === 0 ? part : `blob:null/${i}`)).join(''));
+        const [writtenMeta, writtenScript] = [...written.head.children];
+        expect(writtenMeta?.getAttribute('content')).toBe(policyOf(el));
+        expect(writtenScript?.textContent).toBe(script!.textContent);
+        expect(written.querySelectorAll('meta[http-equiv="Content-Security-Policy"]')[0]).toBe(writtenMeta);
     });
 });

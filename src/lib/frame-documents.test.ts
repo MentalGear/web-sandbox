@@ -39,6 +39,19 @@ describe('buildGuestDocument', () => {
         expect(guestBase?.tagName).toBe('BASE');
     });
 
+    it('when the bootstrap writes the markup, the document ends with the bootstrap script: nothing follows it, not even </head>', () => {
+        const guest = buildGuestDocument({ csp: CSP, bootstrapScript: 'void 0', bootstrapWritesContent: true });
+        expect(guest).toBe(`<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${CSP}"><script>void 0</script>`);
+        const [meta, script] = [...parse(guest).head.children];
+        expect(meta?.getAttribute('content')).toBe(CSP);
+        expect(script?.textContent).toBe('void 0');
+        // markup is either written or embedded, never both
+        expect(() => buildGuestDocument({ csp: CSP, bootstrapScript: '', content: '<p>x</p>', bootstrapWritesContent: true })).toThrow();
+        // without the flag, nothing changed
+        expect(buildGuestDocument({ csp: CSP, bootstrapScript: 'void 0', content: '<p>x</p>', bootstrapWritesContent: false }))
+            .toBe(buildGuestDocument({ csp: CSP, bootstrapScript: 'void 0', content: '<p>x</p>' }));
+    });
+
     it('escapes attribute values so a policy cannot break out of the meta tag', () => {
         const doc = parse(buildGuestDocument({ csp: `a" onload="x`, bootstrapScript: '', content: '' }));
         expect(doc.head.firstElementChild?.getAttribute('content')).toBe('a" onload="x');

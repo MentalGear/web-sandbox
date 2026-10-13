@@ -169,8 +169,9 @@ next environment runs.
 
 Costs and limits:
 
-- **Guest markup cannot yet name a file.** `<script src="app.js">` in guest markup does not resolve
-  to a registered file; guest code uses `sandboxFiles.url()`. Planned next (below).
+- **Guest markup names files only through the attributes listed in the amendment below**
+  (2026-10-13): `srcset`, CSS `url()`, imports between modules and `<template>` contents do not
+  resolve yet; guest code uses `sandboxFiles.url()` for those.
 - **Every guest carries the files bootstrap**, about 1.3 KB of source, files or not. That is the
   price of an API that exists regardless of host state.
 - **Changes need a rebuild.** A file registered while the guest runs reaches it at the next
@@ -182,9 +183,10 @@ Costs and limits:
 
 Planned in this order, each on top of this decision:
 
-1. **Markup references**: the host rewrites `script[src]`, stylesheet and icon links, media sources
-   and `poster` that resolve to registered files, and the bootstrap writes the document with the
-   guest's own `blob:` URLs in their place, keeping parser order and the CSP-first rule (S2).
+1. **Markup references** — *done 2026-10-13, see the amendment below*: the host rewrites
+   `script[src]`, stylesheet and icon links, media sources and `poster` that resolve to registered
+   files, and the bootstrap writes the document with the guest's own `blob:` URLs in their place,
+   keeping parser order and the CSP-first rule (S2).
 2. **Module graph**: relative specifiers rewritten host-side and one import map from virtual URLs to
    `blob:` URLs. Needs a JavaScript lexer, a dependency decision still to be made.
 3. **CSS**: `url()` and `@import` inside registered stylesheets, and `srcset`.
@@ -193,3 +195,143 @@ Planned in this order, each on top of this decision:
 
 - browsers let a sandboxed opaque-origin document be controlled by a Service Worker; or
 - Firefox ships multiple import maps, which would let files reach a running guest without a rebuild.
+
+## Amendment: markup references (2026-10-13)
+
+**Status**: Accepted · **Date**: 2026-10-13 · implements next step 1
+
+Guest markup can name a registered file the way a page names a file next to it on a server:
+`<script src="app.js">`, `<link rel="stylesheet" href="./style.css">`, `<img src="/img/logo.svg">`.
+
+### Decision
+
+1. **The host resolves, the guest parses.** Before the frame exists, the host parses the guest markup
+   with `DOMParser` (in the host window) and resolves these attributes against the virtual document
+   URL `https://vfs.invalid/index.html`: `script[src]`; `link[href]` when a `rel` token is
+   `stylesheet`, `icon`, `preload` or `modulepreload`; `src` of `img`, `source`, `video`, `audio` and
+   `track`; `video[poster]`. Only elements in the HTML namespace count. An attribute whose resolved
+   URL is `https://vfs.invalid/` plus a registered path, exactly, becomes a sentinel
+   `vfs-slot-<nonce>-<index>`, with a 128-bit nonce drawn per build. The document is serialised and cut
+   at the sentinels into parts, `[markup, path, markup, …, markup]`
+   ([`src/lib/markup-references.ts`](../src/lib/markup-references.ts)).
+2. **The bootstrap writes the markup.** The parts are one more inline literal. After the blobs exist,
+   the bootstrap's last statement joins the parts with the guest's own `blob:` URLs (escaped for the
+   double-quoted attribute they land in) and calls `document.write()` once
+   (`inSandboxMarkup` in [`src/lib/in-sandbox-files.ts`](../src/lib/in-sandbox-files.ts)). It uses the
+   object `inSandboxFiles` returned, not the `sandboxFiles` global. The guest document then ends with
+   the bootstrap script: nothing of ours follows it, so what it writes is the rest of the document.
+3. **No match, no change.** If no attribute names a registered file, the guest document is built
+   exactly as before: the original markup, verbatim, after the security block. A test pins the
+   document byte for byte. The rewrite also stays off when the bootstrap could not run — no
+   `allow-scripts`, or a policy whose `script-src` (or `default-src`) does not admit inline scripts,
+   or carries a nonce, hash or `'strict-dynamic'` — since then nothing would write the markup.
+4. **Worker mode has no markup**, so nothing is rewritten there.
+
+### Why this works
+
+- **Parser order is the parser's.** `document.write()` from a parser-inserted script puts the markup
+  into the parser's input right after that script. The guest's own parser parses it, so its scripts
+  are parser-inserted: sync scripts block in order, `defer` and module scripts run after parsing in
+  document order, `async` runs when loaded, `document.currentScript` is set, and a stylesheet blocks
+  the next script. `files.spec.ts` section 8 asserts each of these in all three engines.
+- **The policy stays first (S2).** The CSP `<meta>` is the first element of `<head>`, the bootstrap
+  follows it, and the written markup comes after both. The guest markup travels inside a JSON string
+  literal with `<` escaped, so it cannot end the bootstrap script, open a comment, or come before the
+  policy.
+- **Nothing the guest writes reaches the bootstrap.** The markup is data in a literal; no guest code
+  has run when the write happens; and the URLs come from the bootstrap's own lookup. The nonce exists
+  only on the host, for one build, and never reaches the guest. A forged sentinel would need it, and
+  even then a slot index names only a path in this build's snapshot: the guest's own file, whose URL
+  it can already get from `sandboxFiles.url()`.
+- **Parsing untrusted markup on the host is inert.** A `DOMParser` document has no browsing context
+  and scripting is disabled in it: no script runs, no event handler fires, and nothing is fetched. A
+  unit test asserts that inline scripts and `onerror` handlers in the parsed markup never run.
+
+### Resolution rules
+
+- Resolution is the URL parser's, as a browser would do it against a page served at the root of the
+  files: `logo.svg`, `./logo.svg`, `/logo.svg`, `img/../logo.svg`, `%2e%2e/logo.svg` (a dot segment by
+  the URL standard), `img\logo.svg` and `https://vfs.invalid/logo.svg` all name `logo.svg`. Nothing
+  resolves above the root.
+- The resolved path must equal a registered path exactly. Since registered paths are the ones the URL
+  parser keeps unchanged, another case or any other percent-encoding names nothing.
+- **A query or a fragment, even an empty one, names nothing** (`logo.svg?v=2`, `logo.svg#x`): fail
+  closed rather than strip. A `blob:` URL cannot carry a query (it would name no blob), so stripping it
+  would silently change what the markup asked for.
+- An empty or blank value never names a file, though it would resolve to `index.html`: a browser does
+  not load `src=""` as the document either.
+- **Everything not matched stays as written and fails closed.** The guest's base URL is the
+  wrapper's `about:blank` (S15), so a relative URL cannot be resolved there: the load fails with no
+  request and no violation. An absolute URL that names no registered file is refused by the policy as
+  before. `files.spec.ts` asserts both, with a refused absolute URL as the positive control for the
+  violation channel and a matched reference as the positive control for the outcome channel (T5).
+
+### Where the markup lands
+
+Embedded markup is parsed after our `</head>`; written markup is parsed while the parser is still in
+our `<head>`. The difference does not show, because the host serialises a whole document: the
+written markup starts with `<html>` (its attributes merge onto ours, as before), then its own
+`<head>` (ignored, as before) with the head content, then `</head>` and `<body>`, so the parser leaves
+the head before any body content, exactly where embedded markup would have put it. `files.spec.ts`
+loads the same fragment once with a matched reference and once without, and the parsed `<head>`
+(after the security block) and `<body>` are identical in all three engines.
+
+Full documents work: `<!DOCTYPE html><html lang="en"><head>…</head><body class="…">…` keeps its `lang`,
+title, head elements and body attributes.
+
+### Re-serialisation fidelity
+
+When at least one reference matched, the markup the guest parses is the host's serialisation of the
+parsed tree, not the original text. The guest's parser would build the same tree from either, so the
+differences are in form: quoting and case of tags and attributes, implied and closing tags made
+explicit (`<tbody>`, `</p>`), character references normalised, the doctype dropped (ours comes first,
+and a later one is ignored anyway). Known differences in content:
+
+- matched attributes hold the `blob:` URL, so `getAttribute('src')` and `document.currentScript.src`
+  read `blob:null/…`, not `app.js`;
+- `<noscript>` content is parsed as elements (scripting is off in a `DOMParser` document) and
+  serialised back; the guest still reads it as raw text, as before;
+- markup that does not survive an HTML round trip unchanged (some misnested or foster-parented
+  constructs, the cases mutation-XSS research collects) can parse to a slightly different tree. That
+  changes only the guest's own document: the markup stays inside a string literal until the write,
+  and the guest gains nothing it could not write itself.
+
+Markup with no matched reference is never re-serialised.
+
+### Not supported (fail closed), each left as written
+
+`srcset` and CSS `url()` in `<style>` or `style=""` (next step 3); relative imports inside a module
+(next step 2: `<script type="module" src="main.js">` works for a single module); `<template>`
+contents; `<iframe>`, `<embed>`, `<object>`, `<a href>`, `<form action>`, `<input type="image">` and
+SVG elements; `rel` values outside the list. `load()` takes markup, as before: a registered
+`index.html` is a file like any other, not the guest's markup (the playground's "Run (Virtual-Files)"
+registers the code as `index.html` and also passes it to `load()`).
+
+### Alternatives considered
+
+- **A guest `<base href="https://vfs.invalid/">`**: import maps do not apply to a module script's
+  `src`, so modules would still need rewriting; it needs `base-uri` loosened, undoing S9; and a base
+  turns every unmatched relative URL into a real request that only the policy stops, where today it
+  is no request at all.
+- **A `MutationObserver` that swaps URLs as elements appear**: the parser may start a fetch, or run a
+  script, before the observer's callback runs; it races by design.
+- **Inlining file contents into the markup**: rejected in the main decision (inline scripts and
+  styles behave differently, and a module has no URL).
+- **A guest-side `DOMParser`**: the markup would still have to arrive as data in a literal, so it
+  gains nothing over the host parse, and it would put a parser step into every guest bootstrap. The
+  host parses once, in a realm no guest code ever reaches.
+- **A second, separate script after `</head>` that writes the markup**: it would parse in the same
+  insertion mode as embedded markup, but it would have to find the URLs through a global the first
+  script left behind. One script, ending in the write, keeps the lookup private.
+
+### Tests
+
+[`src/lib/markup-references.test.ts`](../src/lib/markup-references.test.ts) (resolution corpus, each
+element and attribute, what is left alone, sentinels and nonces, re-serialisation, the inline-script
+check), [`test/unit/files.test.ts`](../test/unit/files.test.ts) (the no-match document byte for byte,
+the matched document exactly, the conditions that keep markup verbatim, a nonce per build, the S2
+hostile corpus with matched references, before and after the write) and
+[`test/e2e/files.spec.ts`](../test/e2e/files.spec.ts) section 8 (parser order and `currentScript` for
+sync, inline, `defer`, module and `async` scripts, a stylesheet applied before the next script and by
+`DOMContentLoaded`, images by relative, `./` and `/` paths, the policy still first; fragment placement
+equal to the verbatim path; fail closed with no request), on Chromium, Firefox and WebKit.

@@ -12,6 +12,8 @@ import { MAX_TOTAL_BYTES, mimeTypeFor } from '@src/lib/files';
  *   5. lifecycle: files belong to the element, the guest sees the snapshot of its build
  *   6. worker mode builds its own blobs and sandboxFiles
  *   7. size: the cap loads in every engine, one byte more is refused on the host
+ *   8. markup references: guest markup that names a registered file loads it with parser order intact,
+ *      and every other reference fails closed (iframe mode only: worker mode has no markup)
  */
 
 // The NOT_FOUND refusal exactly as guest code sees it: a plain Error with an own code, and a message
@@ -425,4 +427,173 @@ test.describe('7. size: the cap is what every engine loads', () => {
             test.info().annotations.push({ type: 'size', description: `${mode}: register ${host.registerMs} ms, ready ${readyMs} ms, wrapper srcdoc ${srcdocLength} chars` });
         });
     }
+});
+
+test.describe('8. markup references: guest markup that names a registered file loads it (iframe mode; worker mode has no markup)', () => {
+    const MARKUP_FILES: Record<string, FileSpec> = {
+        'a.js': "__order.push('a:' + document.currentScript.id);",
+        'b.js': "__order.push('b:' + document.currentScript.id);",
+        'defer.js': "__order.push('defer:' + document.currentScript.id + ':' + document.readyState);",
+        'async.js': "__async = 'async:' + document.currentScript.id;",
+        'mod/main.js': "__order.push('module:' + (import.meta.url.startsWith('blob:null/') ? 'blob' : import.meta.url) + ':' + document.currentScript);",
+        'style.css': '#probe { width: 123px; }',
+        'logo.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="7" height="9"></svg>',
+        'img/x.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="5" height="3"></svg>',
+    };
+
+    // A full document, as the playground's "Run (Virtual-Files)" loads one. Every reference names a file:
+    // by bare relative path, with "./", from the root with "/", and in a subdirectory.
+    const DOCUMENT = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>markup references</title>
+    <script>
+        window.__order = []; window.__async = null; window.__violations = [];
+        addEventListener('securitypolicyviolation', e => __violations.push(e.effectiveDirective + ' ' + e.blockedURI));
+    </script>
+    <link rel="stylesheet" href="style.css">
+    <script id="sa" src="a.js"></script>
+    <script>__order.push('inline');</script>
+    <script id="sb" src="./b.js"></script>
+    <script id="sd" defer src="defer.js"></script>
+    <script type="module" src="/mod/main.js"></script>
+    <script id="sy" async src="async.js"></script>
+</head>
+<body class="page">
+    <div id="probe"></div>
+    <script>
+        __order.push('probe:' + getComputedStyle(document.getElementById('probe')).width);
+        document.addEventListener('DOMContentLoaded', () => __order.push('DOMContentLoaded:' + getComputedStyle(document.getElementById('probe')).width));
+    </script>
+    <img id="i1" src="logo.svg"><img id="i2" src="./img/x.svg"><img id="i3" src="/img/x.svg">
+</body>
+</html>`;
+
+    const READ_DOCUMENT = `
+        if (document.readyState !== 'complete') await new Promise(res => addEventListener('load', res, { once: true }));
+        await new Promise(res => setTimeout(res, 100)); // violation events are queued as tasks
+        const img = (id) => { const i = document.getElementById(id); return { size: i.complete ? i.naturalWidth + 'x' + i.naturalHeight : 'pending', src: i.getAttribute('src') }; };
+        const head = [...document.head.children];
+        return {
+            order: __order,
+            async: __async,
+            violations: __violations,
+            images: { i1: img('i1'), i2: img('i2'), i3: img('i3') },
+            urls: { logo: sandboxFiles.url('logo.svg'), x: sandboxFiles.url('img/x.svg'), a: sandboxFiles.url('a.js') },
+            scriptSrc: document.getElementById('sa').getAttribute('src'),
+            lang: document.documentElement.lang,
+            bodyClass: document.body.className,
+            title: document.title,
+            first: head[0] && head[0].outerHTML.startsWith('<meta http-equiv="Content-Security-Policy"'),
+            second: head[1] && head[1].tagName === 'SCRIPT' && !head[1].hasAttribute('src') && head[1].textContent.includes('document.write'),
+            stray: document.querySelectorAll('[src*="vfs-slot"], [href*="vfs-slot"]').length + (document.documentElement.outerHTML.includes('vfs-slot-') ? 1 : 0),
+        };
+    `;
+
+    test('a full document: sync, inline, defer, module and async scripts keep parser order and currentScript; the stylesheet applies before the next script and by DOMContentLoaded; images by relative, ./ and / paths; the CSP meta stays first', async ({ sandbox }) => {
+        expect(await sandbox.registerFiles(MARKUP_FILES)).toBe('ok');
+        expect(await sandbox.mount({ html: DOCUMENT })).toBe('ready');
+        const r = await inGuest(sandbox, READ_DOCUMENT);
+        expect(r).toEqual({
+            order: ['a:sa', 'inline', 'b:sb', 'probe:123px', 'defer:sd:interactive', 'module:blob:null', 'DOMContentLoaded:123px'],
+            async: 'async:sy',
+            violations: [],
+            images: {
+                i1: { size: '7x9', src: r.urls.logo },
+                i2: { size: '5x3', src: r.urls.x },
+                i3: { size: '5x3', src: r.urls.x },
+            },
+            urls: r.urls,
+            scriptSrc: r.urls.a,
+            lang: 'en',
+            bodyClass: 'page',
+            title: 'markup references',
+            first: true,
+            second: true,
+            stray: 0,
+        });
+        expect(Object.values(r.urls).every(url => /^blob:null\//.test(url as string))).toBe(true);
+    });
+
+    test('load() of a fragment rewrites too, and the fragment lands where the same fragment lands without file references', async ({ sandbox }) => {
+        expect(await sandbox.registerFiles(MARKUP_FILES)).toBe('ok');
+        expect(await sandbox.mount()).toBe('ready');
+        // One fragment, loaded twice: with a reference to a registered file (rewritten and written by the
+        // bootstrap) and with one to an unregistered file (embedded verbatim, today's path). Apart from the
+        // src value and the bootstrap script, the parsed documents must be the same.
+        const fragment = (src: string) => `<title>t</title><meta name="x" content="y"><style>p { color: red }</style>
+<!-- a comment --><link rel="icon" href="${src}"><p class="lead">text &amp; more</p><img id="i" alt="a" src="${src}"><template><img src="${src}"></template>
+<table><tr><td>cell</td></tr></table><script>window.__ran = (window.__ran || 0) + 1;</script>`;
+        const shape = `
+            if (document.readyState !== 'complete') await new Promise(res => addEventListener('load', res, { once: true }));
+            const img = document.getElementById('i');
+            const src = img.getAttribute('src');
+            const strip = (html) => html.split(src).join('SRC').split('logo.svg').join('SRC').split('unregistered.svg').join('SRC');
+            const head = [...document.head.children].slice(2).map(e => e.outerHTML); // after the CSP meta and the bootstrap
+            return { head: strip(head.join('')), body: strip(document.body.outerHTML), template: document.querySelector('template').innerHTML, ran: __ran, loaded: img.complete && img.naturalWidth > 0, srcIsBlob: src.startsWith('blob:null/') };
+        `;
+        expect(await sandbox.load(fragment('logo.svg'))).toBe('ready');
+        const rewritten = await inGuest(sandbox, shape);
+        expect(await sandbox.load(fragment('unregistered.svg'))).toBe('ready');
+        const verbatim = await inGuest(sandbox, shape);
+
+        expect(rewritten).toMatchObject({ ran: 1, loaded: true, srcIsBlob: true });
+        expect(verbatim).toMatchObject({ ran: 1, loaded: false, srcIsBlob: false });
+        expect(rewritten.head).toBe(verbatim.head);
+        expect(rewritten.body).toBe(verbatim.body);
+        // a reference inside <template> is not rewritten (out of scope)
+        expect(rewritten.template).toBe('<img src="logo.svg">');
+    });
+
+    test('an unregistered or differently spelled reference fails closed: the attribute stays as written, the load fails, and no request is made at all', async ({ sandbox, context }) => {
+        // Secondary evidence only: in Chromium the route can miss guest requests (backlog T5).
+        const requested: string[] = [];
+        context.on('request', request => { if (/missing|LOGO|%6Cogo|\?v=1|attacker/.test(request.url())) requested.push(request.url()); });
+        expect(await sandbox.registerFiles({ 'logo.svg': MARKUP_FILES['logo.svg']!, 'app.js': 'window.__app = true;' })).toBe('ok');
+        // relative references the host does not match: they stay relative, and cannot resolve in the guest
+        const MISSES = ['missing.svg', 'logo.svg?v=1', 'logo.svg#f', 'LOGO.SVG', '%6Cogo.svg', 'img/logo.svg', '../missing.svg'];
+        // every element records its own load or error event
+        const on = `onload="__events[this.id] = 'load'" onerror="__events[this.id] = 'error'"`;
+        const html = `<script>
+                window.__v = []; window.__events = {};
+                addEventListener('securitypolicyviolation', e => __v.push(e.effectiveDirective + ' ' + e.blockedURI));
+            </script>
+            <img id="ok" src="logo.svg" ${on}>
+            ${MISSES.map((src, i) => `<img id="m${i}" src="${src}" ${on}>`).join('')}
+            <img id="control" src="https://attacker.test/x.svg" ${on}>
+            <img id="port" src="https://vfs.invalid:8443/logo.svg" ${on}>
+            <script id="app" src="app.js" ${on}></script>
+            <script id="ms" src="missing.js" ${on}></script>
+            <link id="ml" rel="stylesheet" href="missing.css" ${on}>`;
+        expect(await sandbox.mount({ html })).toBe('ready');
+        const r = await inGuest(sandbox, `
+            if (document.readyState !== 'complete') await new Promise(res => addEventListener('load', res, { once: true }));
+            await new Promise(res => setTimeout(res, 300)); // violation events are queued as tasks
+            return {
+                app: window.__app === true,
+                attributes: ${JSON.stringify(MISSES)}.every((src, i) => document.getElementById('m' + i).getAttribute('src') === src)
+                    && document.getElementById('ms').getAttribute('src') === 'missing.js' && document.getElementById('ml').getAttribute('href') === 'missing.css',
+                events: __events,
+                sheet: document.getElementById('ml').sheet,
+                violations: [...new Set(__v)].sort(),
+            };
+        `);
+        const misses = Object.fromEntries(MISSES.map((_, i) => [`m${i}`, 'error']));
+        // positive controls: a reference to a registered file loads (the outcome channel), and a request
+        // the policy refuses is reported (the violation channel)
+        expect(r).toEqual({
+            app: true,
+            attributes: true,
+            // a <link> whose URL does not resolve fetches nothing and fires no event, in every engine
+            events: { ok: 'load', ...misses, control: 'error', port: 'error', app: 'load', ms: 'error' },
+            sheet: null,
+            // Every relative miss failed WITHOUT a violation. The policy admits only blob: for images and
+            // scripts, so a request for any other URL would have been refused with a violation, as the
+            // control's and the absolute vfs.invalid URL's are (an absolute URL that names no registered
+            // file is left as written, and the policy refuses it); failing without one means the URL never
+            // resolved, so nothing was requested (the guest's base is about:blank).
+            violations: ['img-src https://attacker.test/x.svg', 'img-src https://vfs.invalid:8443/logo.svg'],
+        });
+        expect(requested.filter(url => !url.includes('attacker'))).toEqual([]);
+    });
 });

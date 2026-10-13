@@ -29,6 +29,8 @@ export const WRAPPER_CSP = "frame-src 'none'";
  * where an .invalid base would turn them into real requests that only the policy stops. Absolute URLs
  * (blob: files, workers, allowlisted origins) are unaffected. Measured 2026-10-13 in Chromium, Firefox
  * and WebKit: baseURI and import.meta.url read about:blank, `<img src="x.png">` sends nothing.
+ * Relative references to REGISTERED files are resolved by the host before the guest exists
+ * (markup-references.ts); every other relative URL still fails closed here.
  */
 export const WRAPPER_BASE = 'about:blank';
 
@@ -64,6 +66,11 @@ export interface GuestDocumentParts {
     csp: string;
     bootstrapScript: string; // trusted script that runs before any guest content
     content?: string; // untrusted markup
+    // The bootstrap writes the guest markup itself, with document.write() as its last statement (markup
+    // references, markup-references.ts). Then the document ends with the bootstrap script, so what it
+    // writes is the rest of the document: not even our </head> follows (a guest <plaintext> would turn
+    // it into text). `content` must be empty then.
+    bootstrapWritesContent?: boolean;
 }
 
 /**
@@ -79,6 +86,10 @@ export function buildGuestDocument(parts: GuestDocumentParts): string {
         `<script>${parts.bootstrapScript}</script>`,
     ].join('');
 
+    if (parts.bootstrapWritesContent) {
+        if (parts.content) throw new Error('[Sandbox] guest markup is either written by the bootstrap or embedded, not both');
+        return `<!DOCTYPE html><html><head>${securityBlock}`;
+    }
     return `<!DOCTYPE html><html><head>${securityBlock}</head>${parts.content ?? ''}`;
 }
 

@@ -351,8 +351,8 @@ window.runVirtualFiles = () => {
 
     try {
         // The code becomes a file next to the preset's files (readable as sandboxFiles.text('index.html'))
-        // and is loaded as the guest's markup. Markup that references other files by path resolves in
-        // a later step (backlog C1); until then guest code uses sandboxFiles.url().
+        // and is loaded as the guest's markup, where references to registered files by path
+        // (<script src>, <link href>, <img src>, …) load them (README "Files").
         vfSandboxEl.registerFiles({ 'index.html': code });
         vfSandboxEl.load(code);
     } catch (e) {

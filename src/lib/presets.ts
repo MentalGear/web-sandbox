@@ -306,8 +306,10 @@ console.log('TEST_DONE');`,
     </div>
 
     <div class="test-section" id="dynamic-section">
-        <h3>3. Dynamic Internal Image</h3>
-        <button onclick="loadInternal()">Load logo.svg</button>
+        <h3>3. Internal Image (a registered file)</h3>
+        <!-- names the registered file by path: the host resolves it to the guest's own blob: URL -->
+        <img src="logo.svg" alt="Internal Logo">
+        <button onclick="loadInternal()">Load it again from script</button>
         <div id="img-target"></div>
     </div>
 
@@ -331,7 +333,7 @@ console.log('TEST_DONE');`,
         function loadInternal() {
             const target = document.getElementById('img-target');
             const img = document.createElement('img');
-            // A registered file (this preset's "files"), through its guest-realm blob: URL
+            // From script, a registered file is reached through sandboxFiles (its guest-realm blob: URL)
             img.src = sandboxFiles.url("logo.svg");
             img.alt = "Internal Logo";
             target.innerHTML = '';
