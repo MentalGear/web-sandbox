@@ -487,8 +487,13 @@ test.describe('8. markup references: guest markup that names a registered file l
 <body class="page">
     <div id="probe"></div>
     <script>
-        __order.push('probe:' + getComputedStyle(document.getElementById('probe')).width);
-        document.addEventListener('DOMContentLoaded', () => __order.push('DOMContentLoaded:' + getComputedStyle(document.getElementById('probe')).width));
+        // The ordering guarantee is about the CSSOM: a script-blocking stylesheet has loaded (its rules are
+        // there) before the next parser-inserted script runs. Computed layout values are not evidence of
+        // that: Firefox can report '' for them while it has not yet styled the frame (seen under load),
+        // so the applied width is read once the document has loaded (READ_DOCUMENT).
+        const rules = () => [...document.styleSheets].map(sheet => sheet.cssRules.length).join(',');
+        __order.push('probe:rules=' + rules());
+        document.addEventListener('DOMContentLoaded', () => __order.push('DOMContentLoaded:rules=' + rules()));
     </script>
     <img id="i1" src="logo.svg"><img id="i2" src="./img/x.svg"><img id="i3" src="/img/x.svg">
 </body>
@@ -500,6 +505,7 @@ test.describe('8. markup references: guest markup that names a registered file l
         const img = (id) => { const i = document.getElementById(id); return { size: i.complete ? i.naturalWidth + 'x' + i.naturalHeight : 'pending', src: i.getAttribute('src') }; };
         const head = [...document.head.children];
         return {
+            width: getComputedStyle(document.getElementById('probe')).width,
             order: __order,
             async: __async,
             violations: __violations,
@@ -520,7 +526,8 @@ test.describe('8. markup references: guest markup that names a registered file l
         expect(await sandbox.mount({ html: DOCUMENT })).toBe('ready');
         const r = await inGuest(sandbox, READ_DOCUMENT);
         expect(r).toEqual({
-            order: ['a:sa', 'inline', 'b:sb', 'probe:123px', 'defer:sd:interactive', 'module:blob:null', 'DOMContentLoaded:123px'],
+            width: '123px',
+            order: ['a:sa', 'inline', 'b:sb', 'probe:rules=1', 'defer:sd:interactive', 'module:blob:null', 'DOMContentLoaded:rules=1'],
             async: 'async:sy',
             violations: [],
             images: {
