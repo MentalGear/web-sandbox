@@ -34,15 +34,15 @@ conditional "continue".
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
 | Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); an empty directive is `'none'`, and the defaults leave unset fetch directives to `default-src` (S16); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
-| Files | 🟡 guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); markup references, module graph and CSS `url()` open (C1), writes open (C5) |
+| Files | 🟡 guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`); module graph and CSS `url()` open (C1), writes open (C5) |
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`), and WebKit shows a frame the guest creates the host URL as its referrer (S17) |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
 the virtual-files Service Worker was replaced by guest-realm blob URLs ([ADR-004](ADR-004-files-as-blob-urls.md)):
-S3, C2 and C3 done, C1 partly, C4 rejected, C5 added. S15 and S16 were done on 2026-10-13, and S17
-added. Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
+S3, C2 and C3 done, C1 partly, C4 rejected, C5 added; C1's markup references followed the same day.
+S15 and S16 were done on 2026-10-13, and S17 added. Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
 
@@ -147,7 +147,10 @@ observed by every evidence channel the spec uses (a positive control), in all th
 
 New egress specs follow this already: section 4 of `test/e2e/files.spec.ts` requires, for every
 attempt, both a refused load outcome and the matching CSP violation, with a permitted load as the
-outcome channel's positive control and routing only as secondary evidence.
+outcome channel's positive control and routing only as secondary evidence. Its section 8 does the
+same for markup references that must not resolve: no violation is possible there (the URL never
+resolves), so a refused absolute URL in the same document is the violation channel's positive
+control, and a matched reference the outcome channel's.
 
 ---
 
@@ -788,7 +791,7 @@ Their separate retry/stop field is not adopted: here it follows from the code.
 Decided in [ADR-004](ADR-004-files-as-blob-urls.md): files are registered on the element and reach
 the guest as `blob:` URLs created in its own realm. The Service-Worker hub is gone (Rejected, below).
 
-### C1 · In-sandbox VFS API — 🟡 **read, list and url done; markup, modules and CSS open**
+### C1 · In-sandbox VFS API — 🟡 **read, list, url and markup references done; modules and CSS open**
 
 **Done** (2026-10-13): the guest global `sandboxFiles` with `list()`, `url(path)`, `read(path)` and
 `text(path)`, in iframe and worker mode, built by the bootstrap from a snapshot the host embeds as one
@@ -799,18 +802,26 @@ Writes moved to C5. Tests: `src/lib/files.test.ts`, `src/lib/in-sandbox-files.te
 `test/unit/files.test.ts`, and `test/e2e/files.spec.ts` on Chromium, Firefox and WebKit (every load
 type, containment, isolation, no egress, lifecycle, worker mode).
 
+**Done** (2026-10-13), markup references: `<script src>`, stylesheet/icon/preload/modulepreload
+links, `src` of `img`/`source`/`video`/`audio`/`track` and `video[poster]` in guest markup that
+resolve, against `https://vfs.invalid/index.html`, to a registered path. Host-side `DOMParser` rewrite
+to per-build sentinels (`src/lib/markup-references.ts`); the bootstrap `document.write`s the markup
+with the guest's own `blob:` URLs as its last statement, keeping parser order and the CSP-first rule
+(S2). No match keeps the markup verbatim (byte-identical document); a query or fragment, another
+spelling or an unregistered path stays as written and fails closed with no request. Iframe mode only,
+and only when the bootstrap can run. Rejected: `<base href>`, a `MutationObserver` swap, inlining
+contents, a guest-side parser. Decisions and fidelity notes: [ADR-004, amendment](ADR-004-files-as-blob-urls.md#amendment-markup-references-2026-10-13).
+Tests: `src/lib/markup-references.test.ts`, `test/unit/files.test.ts`, `test/e2e/files.spec.ts`
+section 8 on all three engines.
+
 **Open**, in this order:
-- **Markup references** — `<script src>`, stylesheet/icon/preload links, media `src` and `poster` in
-  guest markup that name a registered file. Host-side `DOMParser` rewrite to per-build sentinels; the
-  bootstrap `document.write`s the markup with the guest's own `blob:` URLs, keeping parser order and
-  the CSP-first rule (S2). Rejected: `<base href>`, a `MutationObserver` swap, inlining contents, a
-  guest-side parser.
-- **Module graph** — relative specifiers in static imports, re-exports and literal `import()`
-  rewritten host-side at registration to virtual URLs, plus exactly one import map to the `blob:`
-  URLs, inserted before any module (Firefox honours only the first map). Needs a JavaScript lexer
+- **Module graph** (PR3; `<script type="module" src>` of a single module already works) — relative
+  specifiers in static imports, re-exports and literal `import()` rewritten host-side at registration
+  to virtual URLs, plus exactly one import map to the `blob:` URLs, inserted before any module
+  (Firefox honours only the first map). Needs a JavaScript lexer
   (es-module-lexer's asm.js build): **the dependency decision is pending**. Computed `import()`,
   `new URL(…, import.meta.url)` and module workers stay unsupported and fail closed.
-- **CSS** — `url()` and `@import` inside registered stylesheets, and `srcset`.
+- **CSS** (PR4) — `url()` and `@import` inside registered stylesheets and `<style>`, and `srcset`.
 
 **Verified** (2026-08-29, kept as a record): one-way only. The host pushed with `registerFiles()`;
 sandboxed code could *load* files through the `<base>` tag but could not list, read or write them.

@@ -52,7 +52,7 @@ export function inSandboxFiles(entries: FileSnapshotEntry[]) {
         return file;
     };
 
-    (globalThis as any).sandboxFiles = Object.freeze({
+    const api = Object.freeze({
         list: () => Array.from(files.keys()),
         url: (path: string) => lookup(path).url,
         read: (path: string) => {
@@ -70,4 +70,34 @@ export function inSandboxFiles(entries: FileSnapshotEntry[]) {
             }
         },
     });
+    (globalThis as any).sandboxFiles = api;
+    // returned too, so the bootstrap's next step (inSandboxMarkup) uses this very object, never a global
+    return api;
+}
+
+/**
+ * Stringified into the guest document as the LAST statement of the bootstrap, when the host rewrote
+ * guest markup that names registered files (markup-references.ts). Same rules as inSandboxFiles:
+ * self-contained, no async/await.
+ *
+ * `parts` is [markup, path, markup, path, ..., markup]: the guest's markup, already parsed and
+ * re-serialised by the host, cut where an attribute named a file. Each path is replaced by this
+ * realm's blob: URL for it, and the whole is written with one document.write(). Called from the
+ * parser-inserted bootstrap script, the write puts the markup into the parser's input right after that
+ * script, so it is parsed by the guest's own parser exactly where the markup would otherwise begin:
+ * its scripts are parser-inserted (sync, defer, async and module keep their ordering, and
+ * document.currentScript is set), and the CSP <meta> before the bootstrap stays first (S2).
+ *
+ * `files` is the object inSandboxFiles just returned, never a lookup of the global: nothing the guest
+ * wrote can run before this, but the bootstrap does not depend on that. Every slot sits inside a
+ * double-quoted attribute value (the host's serialiser quotes them so); the URL is escaped for that
+ * context anyway, so the written markup never depends on the format of a blob: URL.
+ */
+export function inSandboxMarkup(files: { url(path: string): string }, parts: string[]) {
+    let markup = '';
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i] as string;
+        markup += i % 2 === 0 ? part : files.url(part).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    }
+    document.write(markup);
 }

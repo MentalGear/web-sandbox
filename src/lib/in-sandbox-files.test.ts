@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { inSandboxFiles } from './in-sandbox-files';
+import { inSandboxFiles, inSandboxMarkup } from './in-sandbox-files';
 import type { SandboxFiles } from './files';
 
 // The guest receives the function as source text: run that text, not the module import, so a
@@ -81,5 +81,48 @@ describe('inSandboxFiles (the guest bootstrap, run from its source text)', () =>
         expect(shape(thrown)).toEqual(NOT_FOUND);
         await expect(files().read('a.txt').catch(shape)).resolves.toEqual(NOT_FOUND);
         await expect(files().text('a.txt').catch(shape)).resolves.toEqual(NOT_FOUND);
+    });
+});
+
+describe('inSandboxMarkup (the bootstrap\'s last statement, run from its source text)', () => {
+    let written: string[];
+    const originalWrite = document.write;
+    beforeEach(() => {
+        written = [];
+        document.write = vi.fn((...text: string[]) => { written.push(text.join('')); });
+    });
+    afterEach(() => {
+        document.write = originalWrite;
+    });
+
+    // The bootstrap composes the two calls exactly so: the markup step gets the object inSandboxFiles returned.
+    const run = (filesSource: string, parts: unknown) => new Function(`(${inSandboxMarkup.toString()})(${filesSource}, ${JSON.stringify(parts)});`)();
+
+    it('inSandboxFiles returns the object it publishes as sandboxFiles', () => {
+        const returned = new Function(`return (${inSandboxFiles.toString()})([]);`)();
+        expect(returned).toBe((globalThis as any).sandboxFiles);
+        delete (globalThis as any).sandboxFiles;
+    });
+
+    it('writes the parts once, each path replaced by its URL from the given files object, never from the global', () => {
+        (globalThis as any).sandboxFiles = { url: () => 'blob:null/FROM-THE-GLOBAL' };
+        (globalThis as any).__files = { url: (path: string) => `blob:null/${path.length}` };
+        run('globalThis.__files', ['<img src="', 'logo.svg', '"><script src="', 'a.js', '"></script>']);
+        expect(document.write).toHaveBeenCalledTimes(1);
+        expect(written).toEqual(['<img src="blob:null/8"><script src="blob:null/4"></script>']);
+        delete (globalThis as any).sandboxFiles;
+        delete (globalThis as any).__files;
+    });
+
+    it('escapes the URL for the double-quoted attribute it lands in', () => {
+        (globalThis as any).__files = { url: () => 'x" onerror="alert(1)&amp;' };
+        run('globalThis.__files', ['<img src="', 'p', '">']);
+        expect(written).toEqual(['<img src="x&quot; onerror=&quot;alert(1)&amp;amp;">']);
+        delete (globalThis as any).__files;
+    });
+
+    it('writes markup without slots unchanged', () => {
+        run('{ url() { throw new Error("not called") } }', ['<p>only markup</p>']);
+        expect(written).toEqual(['<p>only markup</p>']);
     });
 });

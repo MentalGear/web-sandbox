@@ -58,6 +58,7 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 *   **`src/lib/frame-documents.ts`**: Builds the wrapper and guest documents (see Security Mitigations).
 *   **`src/lib/rpc.ts`**: The broker behind `expose()` and `call()`; the host and the guest run the same code.
 *   **`src/lib/files.ts`**, **`src/lib/in-sandbox-files.ts`**: Registered files: the host's store, and the guest's `sandboxFiles`.
+*   **`src/lib/markup-references.ts`**: Resolves guest markup references (`<script src="app.js">`) to registered files before the guest is built.
 *   **`src/lib/presets.ts`**: A shared library of test scenarios used by both the Playground and automated tests.
 *   **`vite.config.ts`**: The dev server for the playground and the e2e harness.
 *   **`test/e2e`**: Playwright e2e specs, plus the shared harness page and fixture every suite runs on.
@@ -201,12 +202,13 @@ sandbox.registerFiles({
     'logo.png': pngBytes,                                    // a Uint8Array
     'notes': { content: 'plain text', type: 'text/plain' },  // explicit type
 });
-sandbox.load(`<script>
-    const s = document.createElement('script');
-    s.src = sandboxFiles.url('app.js');                      // a blob: URL made in the guest
-    document.head.appendChild(s);
-    sandboxFiles.text('data.json').then(JSON.parse);
-</script>`);
+sandbox.load(`
+    <script src="app.js"></script>                           <!-- markup names files by path -->
+    <img src="logo.png">
+    <script>
+        sandboxFiles.text('data.json').then(JSON.parse);     // code reads them through sandboxFiles
+        const url = sandboxFiles.url('logo.png');            // a blob: URL made in the guest
+    </script>`);
 ```
 
 *   **Files belong to the element.** They survive `reset()`, `load()`, `setConfig()` and `terminate()`.
@@ -227,8 +229,16 @@ sandbox.load(`<script>
 *   **Types** come from the extension (`.js` is `text/javascript`, `.css` is `text/css`, …; unknown is
     `application/octet-stream`). The policy gains `blob:` only for the registered types' directives, and
     a directive you set to `'none'` (or `[]`) stays `'none'`, with a warning.
-*   **Not yet**: guest markup that names a file (`<script src="app.js">`), relative imports between
-    modules, and `url()` inside registered CSS. Use `sandboxFiles.url()` until then.
+*   **Markup references just work** (iframe mode, when the bootstrap runs: `allow-scripts` and the
+    default inline `script-src`): `<script src>` (classic or a
+    single module), stylesheet, icon and preload `<link href>`, and `src` of `img`, `source`, `video`,
+    `audio`, `track` plus `video[poster]`, when the URL resolves to a registered path — `app.js`,
+    `./app.js`, `/app.js`, `img/logo.svg`. Scripts keep their order (`defer`, `async`, modules and
+    `document.currentScript` behave as if served). Anything else — an unregistered path, another case,
+    a query or fragment (`logo.svg?v=2`) — stays as written and fails closed: it loads nothing and
+    sends no request. The matched attribute reads as the `blob:` URL.
+*   **Not yet**: `srcset`, `url()` in CSS, relative imports between modules, and references inside
+    `<template>`. Use `sandboxFiles.url()` for those.
 
 Why it is built this way: [ADR-004](docs/ADR-004-files-as-blob-urls.md).
 
@@ -250,4 +260,4 @@ The sandbox implements several layers of defense:
 7.  **Capability Tiers**: Flags that reach outside the frame require the explicit `unsafeCapabilities` opt-in.
 8.  **Allowlisted Calls**: Each side can call only the methods the other side exposed, and an answer reaches only the frame that made the request, never a frame that replaced it.
 9.  **Realm-Bound Files**: Registered files reach the guest as `blob:` URLs created in its own realm, which no other sandbox and not the host page can load. Lookups are exact, and `blob:` is allowed only for the registered types.
-10. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing (use absolute URLs or `sandboxFiles`). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer; WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)).
+10. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer; WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)).
