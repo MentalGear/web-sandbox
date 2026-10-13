@@ -72,7 +72,7 @@ describe('with no files: the policy is unchanged, and the document differs only 
 describe('with files, the policy admits blob: only for the registered types', () => {
     it('one JavaScript file: script-src and connect-src gain blob:, nothing else changes', async () => {
         const el = await mount(undefined, { 'main.js': 'void 0' });
-        expect(policyOf(el)).toBe("default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline' blob:; connect-src blob:; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob: data:;");
+        expect(policyOf(el)).toBe("default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline' blob:; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob: data:; connect-src blob:;");
     });
 
     it('every type family maps to its own directive; base-uri and form-action stay none', async () => {
@@ -93,7 +93,7 @@ describe('with files, the policy admits blob: only for the registered types', ()
 
     it("never contains 'self', even when default-src carries it into a file directive; the S14 drop still runs last", async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ scriptUnsafe: true, connectionsAllowed: { 'default-src': ["'self'", 'https://cdn.example'], 'script-src': ["'self'"], 'img-src': [] } }, { 'a.js': '', 'b.png': new Uint8Array(1) });
+        const el = await mount({ scriptUnsafe: true, connectionsAllowed: { 'default-src': ["'self'", 'https://cdn.example'], 'script-src': ["'self'"] } }, { 'a.js': '', 'b.png': new Uint8Array(1) });
         const policy = policyOf(el);
         expect(policy.toLowerCase()).not.toContain("'self'");
         expect(directive(policy, 'script-src')).toBe("script-src blob: 'unsafe-eval'");
@@ -102,9 +102,9 @@ describe('with files, the policy admits blob: only for the registered types', ()
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes("'self'"))).toHaveLength(2); // default-src and script-src
     });
 
-    it("keeps an explicit 'none' and warns once per directive across rebuilds", async () => {
+    it.each([["'none'", ["'none'"]], ['[] (S16)', []]])("keeps an explicit %s and warns once per directive across rebuilds", async (_, imgSrc) => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ connectionsAllowed: { 'img-src': ["'none'"] } }, { 'a.png': new Uint8Array(1) });
+        const el = await mount({ connectionsAllowed: { 'default-src': ['https://cdn.example'], 'img-src': imgSrc } }, { 'a.png': new Uint8Array(1) });
         el.reset();
         el.reset();
         expect(directive(policyOf(el), 'img-src')).toBe("img-src 'none'");

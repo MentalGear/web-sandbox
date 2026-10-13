@@ -4,14 +4,15 @@
 - Output: CSP string
 
 # Rules Application
-- default: directive = [] (empty)
-- then add directives from user
-- if directive === [] (empty): ignore
-    -> do not include directive in csp header
-        - this makes the browser use default-src for this (unnamed) directive
-        - otherwise if we were to fill in "none", it would overwrite "default-src" which we do not want
-    - exception: directives WITHOUT a default-src fallback (`base-uri`, `form-action`, see `NON_FALLBACK_DIRECTIVES`)
-        -> emit `'none'`: omitting them would leave them unrestricted (research 12)
+- default: only the directives the shipping config sets (see `DEFAULT_SANDBOX_CONFIG` in `src/host.ts`)
+- then add directives from user (each array replaces the default's)
+- if directive === [] (empty, after blank strings are dropped): emit `'none'` (backlog S16)
+    - `[]` always means deny, for every directive
+    - to use the `default-src` fallback, leave the directive out instead
+    - never omitted: an omitted fetch directive falls back to `default-src`, an omitted `base-uri` /
+      `form-action` is unrestricted (research 12), and an empty `default-src` used to replace the
+      built-in `'none'`, leaving every unset fetch directive unrestricted
+- `default-src 'none'` is always added when the config has no `default-src`
 
 # Validation/Sanitation
 - filter out duplicates in directive list
@@ -23,7 +24,7 @@
 ## Tasks
 [] write function
 [] write tests
-    - must have: empty [] or none defined directive should never be present in output (except non-fallback directives, emitted as 'none')
+    - must have: an empty [] directive is emitted as 'none'; a directive not defined is not present in the output
 [] maybe add a vite csp nounce generator so "script-src": ["'unsafe-inline'"] can be dropped
 [] interesting for testing: google csp evaluator https://github.com/google/csp-evaluator
 
@@ -35,26 +36,18 @@
 {
     "default-src": ["'none'"],
     "script-src": ["'unsafe-inline'"], // never 'self' (dropped for the guest, see drop-self.ts). maybe we can delete 'unsafe-inline' as well and it work for normal on-page js ? only if svelte/vite csp generates nounce for each script
-    "connect-src": [], // we can't add 'none' as default to all the items since that would overwrite the default-src. if empty, we must remove the whole directive later.
-    "base-uri": [],
-    "img-src": [],
+    "base-uri": [], // 'none'
     "style-src": ["'unsafe-inline'"], // might be required to dynamically change colors
-    "font-src": [],
-    "media-src": [],
-    "manifest-src": [],
-    "prefetch-src": [],
-    "form-action": [],
-    "object-src": [],
-    "frame-src": [],
-    "frame-ancestors": [],
+    "form-action": [], // 'none'
     "worker-src": ["blob:", "data:"]
+    // connect-src, img-src, … are left out: they fall back to default-src. Listed as [] they would be 'none'.
 },
 ```
 
 **Output**
 
 ```js
-const csp_string = ` default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; worker-src 'blob:' 'data:' ;`;
+const csp_string = `default-src 'none'; script-src 'unsafe-inline'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob: data:;`;
 ```
 
 ## Why not an external csp lib?

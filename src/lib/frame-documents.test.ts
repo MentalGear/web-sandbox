@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildGuestDocument, buildWrapperDocument, escapeAttribute, toInlineScriptLiteral, WRAPPER_CSP } from './frame-documents';
+import { buildGuestDocument, buildWrapperDocument, escapeAttribute, FRAME_REFERRER_POLICY, toInlineScriptLiteral, WRAPPER_BASE, WRAPPER_CSP } from './frame-documents';
 
 const CSP = "default-src 'none';";
 
@@ -54,6 +54,31 @@ describe('buildWrapperDocument', () => {
         const frame = doc.querySelector('iframe');
         expect(frame?.getAttribute('sandbox')).toBe('allow-scripts allow-forms');
         expect(frame?.getAttribute('srcdoc')).toBe(guest);
+    });
+
+    it('hides the host page URL from the guest (S15): an inert base and a no-referrer policy, both ahead of the guest frame', () => {
+        const guest = buildGuestDocument({ csp: CSP, bootstrapScript: '', content: '<head><base href="https://evil.example/"><meta name="referrer" content="unsafe-url"></head>' });
+        const doc = parse(buildWrapperDocument(guest, 'allow-scripts', ['fullscreen']));
+
+        expect(WRAPPER_BASE).toBe('about:blank');
+        expect(FRAME_REFERRER_POLICY).toBe('no-referrer');
+        // the policy stays first; the wrapper's one <base> and one referrer policy follow it, in <head>
+        const head = [...doc.head.children].map(el => el.outerHTML);
+        expect(head.slice(0, 3)).toEqual([
+            `<meta http-equiv="Content-Security-Policy" content="${WRAPPER_CSP}">`,
+            `<base href="about:blank">`,
+            `<meta name="referrer" content="no-referrer">`,
+        ]);
+        expect(doc.querySelectorAll('base')).toHaveLength(1);
+        expect(doc.querySelectorAll('meta[name="referrer"]')).toHaveLength(1);
+        // the wrapper's policy does not restrict base-uri, so its own <base> applies (the guest's policy does, see below)
+        expect(WRAPPER_CSP).not.toContain('base-uri');
+        expect(doc.baseURI).toBe('about:blank');
+
+        // the guest frame carries the attribute that sets its document.referrer
+        const frame = doc.querySelector('iframe')!;
+        expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
+        expect(frame.getAttribute('srcdoc')).toBe(guest); // the guest's own <base> and referrer meta are only in its document
     });
 
     it('delegates Permissions Policy features to the guest frame only when asked', () => {

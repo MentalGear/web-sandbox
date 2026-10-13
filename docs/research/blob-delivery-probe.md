@@ -65,6 +65,10 @@ Measured under the δ policy. δ must set every blob's `type` from the file exte
   URL, whose path is opaque, so `./x.js` and `/x.js` throw `TypeError`. `import.meta.url` is
   `blob:null/<uuid>`, and `import.meta.resolve('./x.js')` throws. Mapping the importer under a full-URL
   key does not help: the module's base is still its blob URL.
+  *Changed by S15 (2026-10-13)*: the guest document's base URL is now `about:blank`, so an import-map
+  key such as `./x.js` or `/x.js` cannot be resolved either and stays as written. Firefox and WebKit
+  then match the unresolved specifier to that literal key and the import succeeds through the guest's
+  own map; Chromium still throws. Rewriting specifiers to full URLs (below) works in all three.
 - **One inline import map works everywhere.** Bare keys (`app/utils.js`) and full-URL keys
   (`https://vfs.invalid/app/w.js`) both map to guest-created blob URLs. Static `import` chains across
   several blob modules link, and a shared module is evaluated once. Inline modules, blob module scripts

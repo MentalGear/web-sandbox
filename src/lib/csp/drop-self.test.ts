@@ -19,13 +19,14 @@ describe('dropSelfSources', () => {
             'worker-src': ['blob:', "'self'"],
         }, new Set());
 
+        // a directive emptied by the drop stays empty: generateCSP emits it as 'none' (S16, last test)
         expect(out).toEqual({
-            'default-src': ["'none'"],
+            'default-src': [],
             'script-src': ["'unsafe-inline'", 'https://cdn.example'],
             'connect-src': ['https://api.example'],
             'img-src': ['data:'],
-            'base-uri': ["'none'"],
-            'form-action': ["'none'"],
+            'base-uri': [],
+            'form-action': [],
             'worker-src': ['blob:'],
         });
     });
@@ -72,7 +73,7 @@ describe('dropSelfSources', () => {
         expect(warn).toHaveBeenCalledTimes(4);
     });
 
-    it("emits an all-'self' directive as 'none' rather than omitting it (no fallback to a broader default-src)", () => {
+    it("an all-'self' directive is emitted as 'none' rather than omitted (no fallback to a broader default-src)", () => {
         quiet();
         const csp = generateCSP(dropSelfSources({
             'default-src': ['https://broad.example'],

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { addFileSources, directivesForTypes } from './file-sources';
+import { generateCSP } from './csp-generator';
 import type { CSPDirectives } from '@src/csp-directives';
 
 describe('directivesForTypes: blob: goes only where a registered type loads', () => {
@@ -27,14 +28,11 @@ describe('directivesForTypes: blob: goes only where a registered type loads', ()
 describe('addFileSources', () => {
     afterEach(() => { vi.restoreAllMocks(); });
 
+    // the shipping default (DEFAULT_SANDBOX_CONFIG): fetch directives it does not set are left out
     const BASE: CSPDirectives = {
         'default-src': ["'none'"],
         'script-src': ["'unsafe-inline'"],
         'style-src': ["'unsafe-inline'"],
-        'connect-src': [],
-        'img-src': [],
-        'font-src': [],
-        'media-src': [],
         'base-uri': [],
         'form-action': [],
         'worker-src': ['blob:', 'data:'],
@@ -62,11 +60,10 @@ describe('addFileSources', () => {
         expect(input).toEqual(BASE);
     });
 
-    it('an empty or omitted directive keeps what default-src granted it: default-src sources are copied in before blob:', () => {
+    it('an omitted directive keeps what default-src granted it: default-src sources are copied in before blob:', () => {
         const directives: CSPDirectives = {
             'default-src': ['https://cdn.example', "'none'", "'SELF'", "'unsafe-inline' https://two.example"],
-            'img-src': [],
-            // font-src omitted entirely
+            // img-src, font-src and connect-src omitted
         };
         const out = addFileSources(directives, ['image/png', 'font/woff2'], new Set());
         const inherited = ['https://cdn.example', "'unsafe-inline'", 'https://two.example'];
@@ -76,8 +73,31 @@ describe('addFileSources', () => {
         expect(out['default-src']).toEqual(directives['default-src']); // untouched
     });
 
-    it("with default-src 'none', an empty directive becomes blob: alone", () => {
-        expect(addFileSources({ 'default-src': ["'none'"], 'img-src': [] }, ['image/png'], new Set())['img-src']).toEqual(['blob:']);
+    it.each([
+        ['none', ["'none'"]],
+        ['empty', []],
+        ['blank', ['', '  ']],
+        ['omitted', undefined],
+    ])("with a %s default-src, an omitted directive becomes blob: alone", (_, defaultSrc) => {
+        const directives: CSPDirectives = defaultSrc === undefined ? {} : { 'default-src': defaultSrc };
+        const out = addFileSources(directives, ['image/png'], new Set());
+        expect(out['img-src']).toEqual(['blob:']);
+        expect(out['connect-src']).toEqual(['blob:']);
+        // and the emitted policy denies everything else
+        expect(generateCSP(out)).toBe("default-src 'none'; connect-src blob:; img-src blob:;");
+    });
+
+    it("an empty directive is 'none' (S16): kept, with the warning, never widened to default-src's sources", () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const directives: CSPDirectives = { 'default-src': ['https://cdn.example'], 'img-src': [], 'connect-src': [''] };
+        const out = addFileSources(directives, ['image/png'], new Set());
+        expect(out['img-src']).toEqual([]);
+        expect(out['connect-src']).toEqual(['']);
+        expect(generateCSP(out)).toBe("default-src https://cdn.example; img-src 'none'; connect-src 'none';");
+        expect(warn.mock.calls.map(c => String(c[0]))).toEqual([
+            expect.stringContaining('connectionsAllowed.connect-src'),
+            expect.stringContaining('connectionsAllowed.img-src'),
+        ]);
     });
 
     it("keeps an embedder's explicit 'none' and warns once per directive per instance that those files will not load", () => {

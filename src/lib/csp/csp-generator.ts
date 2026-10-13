@@ -1,16 +1,14 @@
 import type { CSPDirectives } from "../../csp-directives";
 
 /**
- * Directives that do NOT fall back to default-src.
- * Omitting one of them leaves it unrestricted, so an empty array has to be emitted as 'none'.
- * (frame-ancestors also has no fallback, but browsers ignore it in a <meta> policy.)
- */
-export const NON_FALLBACK_DIRECTIVES = ["base-uri", "form-action"] as const;
-
-/**
  * Generates a CSP string from a JSON object of directives.
- * Empty arrays mean "deny": fetch directives are omitted so they fall back to default-src,
- * and directives without a fallback (NON_FALLBACK_DIRECTIVES) are emitted as 'none'.
+ *
+ * An empty array (after blank strings are dropped) means "deny" for EVERY directive and is emitted as
+ * 'none' (backlog S16). It is never omitted: an omitted fetch directive falls back to default-src, an
+ * omitted base-uri / form-action is unrestricted, and an empty default-src used to replace the
+ * built-in 'none' and leave every unset fetch directive unrestricted. Emitting 'none' is the narrowest
+ * value a directive can have, so no config can be broader than the same config with that directive
+ * left out. To get the default-src fallback, leave the directive out.
  */
 export function generateCSP(directives: CSPDirectives): string {
 
@@ -28,10 +26,7 @@ export function generateCSP(directives: CSPDirectives): string {
     const cspDirectivesList: string[] = [];
 
     for (const [name, values] of Object.entries(directivesWithDefault)) {
-        const directiveString = formatDirective(name, values);
-        if (directiveString) {
-            cspDirectivesList.push(directiveString);
-        }
+        cspDirectivesList.push(formatDirective(name, values));
     }
 
     // place default-src first
@@ -53,9 +48,10 @@ export function generateCSP(directives: CSPDirectives): string {
  * throws error if a wrong input format is used, as we don't want any ambiguousness
  * we want json input to be correct, and shouldn't rely on us cleaning it
  */
-function formatDirective(directiveName: string, directiveValues: unknown): string | null {
+function formatDirective(directiveName: string, directiveValues: unknown): string {
 
-    // special case: directives of type boolean
+    // special case: directives of type boolean. Present with any value means on: it only ever upgrades
+    // requests, so emitting it can never widen the policy.
     if (directiveName === "upgrade-insecure-requests") { return `${directiveName}` }
 
     if (!Array.isArray(directiveValues)) throw new Error("value type must be array");
@@ -73,11 +69,8 @@ function formatDirective(directiveName: string, directiveValues: unknown): strin
         sanitizedValues.push(trimmed);
     }
 
-    if (sanitizedValues.length === 0) {
-        // no default-src fallback for these: omitting them would mean "allow everything"
-        if ((NON_FALLBACK_DIRECTIVES as readonly string[]).includes(directiveName)) return `${directiveName} 'none'`;
-        return null;
-    }
+    // empty means deny, for every directive: see generateCSP
+    if (sanitizedValues.length === 0) return `${directiveName} 'none'`;
 
     return `${directiveName} ${sanitizedValues.join(' ')}`;
 }

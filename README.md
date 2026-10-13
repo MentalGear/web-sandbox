@@ -226,7 +226,7 @@ sandbox.load(`<script>
     `FILES_QUOTA_EXCEEDED` past 8 MiB in total or 1000 files.
 *   **Types** come from the extension (`.js` is `text/javascript`, `.css` is `text/css`, …; unknown is
     `application/octet-stream`). The policy gains `blob:` only for the registered types' directives, and
-    a directive you set to `'none'` stays `'none'`, with a warning.
+    a directive you set to `'none'` (or `[]`) stays `'none'`, with a warning.
 *   **Not yet**: guest markup that names a file (`<script src="app.js">`), relative imports between
     modules, and `url()` inside registered CSS. Use `sandboxFiles.url()` until then.
 
@@ -242,7 +242,7 @@ existing solution is argued in [`docs/ADR-001-continue-or-adopt.md`](docs/ADR-00
 
 The sandbox implements several layers of defense:
 1.  **Opaque Origin**: Runs in `about:srcdoc`, creating a unique null origin that isolates storage.
-2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`). An empty `base-uri` or `form-action` means `'none'`, since those directives have no `default-src` fallback. The guest policy never contains `'self'`: for the guest's opaque origin, browsers disagree on what it matches (WebKit admits any https origin), so a configured `'self'` is dropped with a warning. List the origins you need explicitly.
+2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`). An empty array means `'none'` for every directive; leave a directive out to fall back to `default-src`. The guest policy never contains `'self'`: for the guest's opaque origin, browsers disagree on what it matches (WebKit admits any https origin), so a configured `'self'` is dropped with a warning. List the origins you need explicitly.
 3.  **CSP First**: The CSP `<meta>` is prepended before any user markup, so it is always the first element of the parsed `<head>`; user content cannot precede or swallow it.
 4.  **Wrapper Frame**: The guest frame is nested in a library-owned frame whose policy is `frame-src 'none'`. That blocks the guest from navigating itself to carry data out in a URL ([research 14](docs/research/14_self_navigation/README.md)).
 5.  **One-Shot Channel**: The private `MessagePort` is handed over exactly once per frame. If the frame ever loads a second document, the sandbox is torn down and fires `terminated`.
@@ -250,3 +250,4 @@ The sandbox implements several layers of defense:
 7.  **Capability Tiers**: Flags that reach outside the frame require the explicit `unsafeCapabilities` opt-in.
 8.  **Allowlisted Calls**: Each side can call only the methods the other side exposed, and an answer reaches only the frame that made the request, never a frame that replaced it.
 9.  **Realm-Bound Files**: Registered files reach the guest as `blob:` URLs created in its own realm, which no other sandbox and not the host page can load. Lookups are exact, and `blob:` is allowed only for the registered types.
+10. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing (use absolute URLs or `sandboxFiles`). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer; WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)).
