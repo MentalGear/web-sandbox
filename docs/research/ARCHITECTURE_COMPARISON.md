@@ -1,5 +1,9 @@
 # Architecture Decision: Virtual Files Access for Sandboxed Iframes
 
+> **Superseded by [ADR-004](../ADR-004-files-as-blob-urls.md)** (2026-10-13). Files now reach the
+> guest as `blob:` URLs created in its own realm; the Service-Worker hub described here never served
+> a file to the opaque-origin guest and was removed. Kept as a record of the earlier design.
+
 This document summarizes the analysis of two proposed architectures for providing virtual file access to untrusted code running within a sandboxed `<iframe>`.
 
 ## The Challenge

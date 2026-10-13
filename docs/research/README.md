@@ -49,4 +49,4 @@ Measurements taken before building a planned design, each backed by an e2e spec.
 
 | Probe | Question | Result |
 | :--- | :--- | :--- |
-| [Blob-URL file delivery (δ)](blob-delivery-probe.md) | Can guest-created blob: URLs plus an import map replace the virtual-files Service Worker? | Viable with changes: `blob:` in five directives, rewrite relative specifiers, one import map before any module. Also found the `script-src 'self'` egress route fixed by S14 |
+| [Blob-URL file delivery (δ)](blob-delivery-probe.md) | Can guest-created blob: URLs plus an import map replace the virtual-files Service Worker? | Viable with changes: `blob:` in five directives, rewrite relative specifiers, one import map before any module. Also found the `script-src 'self'` egress route fixed by S14. Adopted: [ADR-004](../ADR-004-files-as-blob-urls.md) |

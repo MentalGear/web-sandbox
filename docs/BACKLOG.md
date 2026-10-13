@@ -28,16 +28,19 @@ conditional "continue".
 | Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3) |
 | Execution budget | 🟡 opt-in liveness watchdog in default mode: bounded in worker mode and out-of-process frames, not where the frame shares the host's thread; strict mode open (S6) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
-| E2E tests | ✅ e2e + research specs run on a shared harness (T1); virtual files spec is `fixme` (section C) |
+| E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
 | Type check | ✅ `bun run typecheck` is clean and gates CI (H3) |
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
-| Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); no `'self'` in any guest directive, dropped with a warning if configured (S14) |
+| Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
+| Files | 🟡 guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); markup references, module graph and CSS `url()` open (C1), writes open (C5) |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
-M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. Rows re-checked against the items below on
+M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
+the virtual-files Service Worker was replaced by guest-realm blob URLs ([ADR-004](ADR-004-files-as-blob-urls.md)):
+S3, C2 and C3 done, C1 partly, C4 rejected, C5 added. Rows re-checked against the items below on
 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -141,6 +144,10 @@ the browser (as the probe's raw TCP listener did). Keep routing as secondary evi
 **Acceptance**: no egress spec passes on route silence alone; a deliberately permitted request is
 observed by every evidence channel the spec uses (a positive control), in all three engines.
 
+New egress specs follow this already: section 4 of `test/e2e/files.spec.ts` requires, for every
+attempt, both a refused load outcome and the matching CSP violation, with a permitted load as the
+outcome channel's positive control and routing only as secondary evidence.
+
 ---
 
 ## S · Security & Correctness
@@ -203,7 +210,14 @@ before any user content and assert the parsed result. Fuzz it against hostile in
 to fail against today's code), and the meta is asserted to be the first *parsed* head child across
 a corpus of malformed and hostile documents.
 
-### S3 · The session id is readable by sandboxed code — **P1 · S**
+### S3 · The session id is readable by sandboxed code — ✅ **done**
+
+**Done** ([ADR-004](ADR-004-files-as-blob-urls.md)): there is no session id any more. Files reach the
+guest as `blob:` URLs minted in its own realm, which neither another sandbox nor the host page can
+load, and the guest document carries no host identifier and no `<base>`. Tests: section 3 of
+`test/e2e/files.spec.ts` (a second sandbox handed the first one's URL gets a network error and
+`NOT_FOUND` by name; the host page cannot load it either; each lists only its own files) and
+`test/unit/files.test.ts`.
 
 **Verified**: with virtual files enabled, the session UUID is embedded in the `<base href>`
 (`src/host.ts:228`, `:257`). `sw.ts` treats that id as a capability token — *"possession of the
@@ -339,6 +353,8 @@ Tracked as a known limitation; see [ADR-001](ADR-001-continue-or-adopt.md).
 **Done**: `generateCSP()` emits `'none'` for an empty directive listed in `NON_FALLBACK_DIRECTIVES`
 (`base-uri`, `form-action`). `frame-ancestors` is left out on purpose: browsers ignore it under
 `<meta>` delivery (S7). Research 12 passes.
+**Tightened** (2026-10-13, [ADR-004](ADR-004-files-as-blob-urls.md)): `base-uri` no longer gains a
+virtual-files base, so with the default config it is always `'none'`; the guest document has no `<base>`.
 
 *From [Research 12](research/12_non_fallback_directives/README.md).*
 
@@ -462,6 +478,56 @@ warning and changes nothing, identically on Chromium, Firefox and WebKit.
   `reset()`);
 - e2e: section 5a of `test/e2e/blob-delivery.spec.ts` (iframe, plus worker-mode `importScripts` and
   `import()`).
+
+### S15 · The guest can read the host page's URL — **P1 · S**
+
+**Guarantee**: nothing in the guest's own document or location reveals the host page's URL or origin.
+
+**Verified** (2026-10-13, Playwright 1.58.1 builds: Chromium 141, Firefox 146, WebKit 26.0 on Linux;
+iframe mode, default config, guest code run through `execute()`; throwaway probe, not kept):
+
+| Exposed in the guest | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- |
+| `document.baseURI` | **full host page URL** | **full host page URL** | **full host page URL** |
+| `document.referrer` | empty | empty | **host origin** (`http://localhost:4444/`) |
+| `location.ancestorOrigins` | **`["null", host origin]`** | not implemented | **`["null", host origin]`** |
+| `location.href` | `about:srcdoc` | `about:srcdoc` | `about:srcdoc` |
+
+A `srcdoc` document takes its base URL from the document that embeds it, so the guest inherits the
+wrapper's, which inherits the host page's: path, query and fragment included, so a token in the host
+URL is readable by guest code. `ancestorOrigins` lists the wrapper (`null`) and the host's origin.
+In worker mode the worker's own `location` is its `blob:null/…` URL and none of the three exists, so
+the exposure is iframe mode only.
+
+**Work** (proposal, not built): give the wrapper document a fixed, inert base URL — a `<base href>` in
+the wrapper, which its own policy must allow, since the wrapper's CSP is `frame-src 'none'` only — so
+the guest inherits that instead of the host's. Set a no-referrer policy on both frames
+(`referrerpolicy="no-referrer"` and a `<meta name="referrer">`). `ancestorOrigins` cannot be set by
+the page; check whether the referrer policy changes it in Chromium and WebKit, and document what
+remains if it does not.
+
+**Acceptance**: in all three engines, the guest's `document.baseURI`, `document.referrer` and
+`location.ancestorOrigins` reveal nothing of the host page URL; `base-uri` stays `'none'` in the guest
+policy.
+
+### S16 · An empty directive array can widen the policy — **P1 · S**
+
+**Guarantee**: no configuration can make the emitted policy broader than the same configuration with
+that directive left out.
+
+**Verified** (2026-10-13): `generateCSP({ 'default-src': [], 'script-src': ["'unsafe-inline'"] })`
+returns `script-src 'unsafe-inline';` — no `default-src` at all. `generateCSP()` puts its
+`default-src 'none'` first and spreads the config over it, so an empty array replaces it, and an empty
+fetch directive is omitted. `connectionsAllowed: { 'default-src': [] }` therefore leaves every fetch
+directive that is not set explicitly unrestricted. Omitting `default-src` from the config keeps the
+default `'none'`, so `[]` — which the config surface documents as "deny" — is broader than leaving it
+out.
+
+**Work**: by construction, an empty array for any directive emits `'none'`, never an omission, so
+"empty" can only ever mean deny. Unit tests over every directive in `CSPDirectives`.
+
+**Acceptance**: for every directive, the policy from a config with that directive set to `[]` is no
+broader than from the same config without it; `default-src: []` emits `default-src 'none'`.
 
 ## B · API Surface & DX
 
@@ -625,6 +691,11 @@ the host's call with `code === 'HANDLER_ERROR'`. Every refusal test asserts the 
 than message text, runs as the refused side (from inside the guest for guest-to-host refusals), and
 asserts that no handler ran. One test pins the code strings, since they are wire protocol.
 
+**Files** ([ADR-004](ADR-004-files-as-blob-urls.md)) use the same shape outside `RpcErrorCode`, since
+no broker is involved: `registerFiles()` / `unregisterFiles()` throw `INVALID_PATH`, `INVALID_FILE` or
+`FILES_QUOTA_EXCEEDED`, and the guest's `sandboxFiles` lookups throw or reject with `NOT_FOUND`, minted
+in the guest. The strings are pinned in `src/lib/files.test.ts` and `test/e2e/files.spec.ts`.
+
 *Credit*: typed refusal reasons, and the rule for testing refusals, come from Dialog DB
 ([`dialog-capability/src/access.rs`](https://github.com/dialog-db/dialog-db/blob/facd672/rust/dialog-capability/src/access.rs),
 [`.claude/rules/authority-tests.md`](https://github.com/dialog-db/dialog-db/blob/facd672/.claude/rules/authority-tests.md)).
@@ -634,54 +705,89 @@ Their separate retry/stop field is not adopted: here it follows from the code.
 
 ## C · Virtual Files
 
-### C1 · In-sandbox VFS API — **P1 · M**
+Decided in [ADR-004](ADR-004-files-as-blob-urls.md): files are registered on the element and reach
+the guest as `blob:` URLs created in its own realm. The Service-Worker hub is gone (Rejected, below).
 
-**Verified**: one-way only. The host pushes with `registerFiles()` (`src/host.ts:92`); sandboxed
-code can *load* files through the `<base>` tag but cannot list, read or write them.
-[`RESEARCH_VFS_ACCESS.md`](research/RESEARCH_VFS_ACCESS.md) specifies the API; it is unimplemented.
-`test/e2e/virtual-files.spec.ts:19` notes the same absence.
+### C1 · In-sandbox VFS API — 🟡 **read, list and url done; markup, modules and CSS open**
 
-**Work**: implement the research doc's message-bridge option as `sandbox.fs.read/write/list`,
-mediated by the host so policy stays on the trusted side.
+**Done** (2026-10-13): the guest global `sandboxFiles` with `list()`, `url(path)`, `read(path)` and
+`text(path)`, in iframe and worker mode, built by the bootstrap from a snapshot the host embeds as one
+inline literal (`src/lib/in-sandbox-files.ts`). Host side: `registerFiles()`, `unregisterFiles()`,
+`listFiles()` and `fileschanged` with `{ paths }` (`src/lib/files.ts`). Paths are validated, never
+normalised, and the guest's lookup is an exact `Map` lookup, so every other spelling is `NOT_FOUND`.
+Writes moved to C5. Tests: `src/lib/files.test.ts`, `src/lib/in-sandbox-files.test.ts`,
+`test/unit/files.test.ts`, and `test/e2e/files.spec.ts` on Chromium, Firefox and WebKit (every load
+type, containment, isolation, no egress, lifecycle, worker mode).
 
-**Acceptance**: sandboxed code writes a file, reads it back, and the host sees `fileschanged`.
-Containment: the host resolves every path against this instance's grant; `list()` returns only
-granted entries, with guest-relative names (no session id, host path or other instance's names); a
-read or write through `../`, an encoded traversal, an absolute path or another instance's path
-rejects with the same code as a missing file, and the store is unchanged. This inherits S3's
-cross-instance guarantee once the Service Worker is gone.
+**Open**, in this order:
+- **Markup references** — `<script src>`, stylesheet/icon/preload links, media `src` and `poster` in
+  guest markup that name a registered file. Host-side `DOMParser` rewrite to per-build sentinels; the
+  bootstrap `document.write`s the markup with the guest's own `blob:` URLs, keeping parser order and
+  the CSP-first rule (S2). Rejected: `<base href>`, a `MutationObserver` swap, inlining contents, a
+  guest-side parser.
+- **Module graph** — relative specifiers in static imports, re-exports and literal `import()`
+  rewritten host-side at registration to virtual URLs, plus exactly one import map to the `blob:`
+  URLs, inserted before any module (Firefox honours only the first map). Needs a JavaScript lexer
+  (es-module-lexer's asm.js build): **the dependency decision is pending**. Computed `import()`,
+  `new URL(…, import.meta.url)` and module workers stay unsupported and fail closed.
+- **CSS** — `url()` and `@import` inside registered stylesheets, and `srcset`.
+
+**Verified** (2026-08-29, kept as a record): one-way only. The host pushed with `registerFiles()`;
+sandboxed code could *load* files through the `<base>` tag but could not list, read or write them.
+[`RESEARCH_VFS_ACCESS.md`](research/RESEARCH_VFS_ACCESS.md) specified the API.
+
+**Acceptance**: sandboxed code reads and lists files. Containment: `list()` returns only this
+instance's entries, with guest-relative names (no session id, host path or other instance's names); a
+read through `../`, an encoded traversal, an absolute path or another instance's path rejects with the
+same code as a missing file, and the store is unchanged. This inherits S3's cross-instance guarantee.
+Met for reads; the write half is C5's.
 
 *Credit*: the guest sees only what it was granted, never names or origins — Lunet's data model
 ([Readme](https://github.com/Gozala/lunet#readme)). Its encryption at rest is not adopted: with the
 key stored beside the data on the same origin, it protects nothing.
 
-### C2 · MIME types and binary files — **P1 · S**
+### C2 · MIME types and binary files — ✅ **done**
 
-**Verified**, two defects in `src/virtual-files/sw.ts`: every response is served as
-`text/javascript` (`sw.ts:61`, marked `// TODO: Proper MIME`), and `fileCache` is a
-`Map<string, string>` written with `content as string` (`sw.ts:2`, `:29`) although
-`registerFiles()` advertises `Record<string, string | Uint8Array>` (`src/host.ts:92`). **Binary
-registration is broken at the type boundary**, and CSS or images served as JavaScript are rejected
-by strict MIME checking.
+**Done** (2026-10-13): a case-insensitive extension table of about 30 types, never empty (unknown is
+`application/octet-stream`: an empty type is applied as a stylesheet by every engine), with a
+`{ content, type }` override checked against a `type/subtype` pattern. Strings are stored as UTF-8
+and `Uint8Array`s are copied at registration. The guest's blobs carry the type, and `files.spec.ts`
+asserts each blob's type against the table and a byte-exact round trip of all 256 byte values.
 
-**Work**: extension→MIME resolution; store `string | Uint8Array` and build the `Response` from the
-stored type. **Acceptance**: the SVG and CSS in `playground/test-assets/` load inside the sandbox,
-asserted in `test/e2e/virtual-files-real.spec.ts`.
+**Verified** (kept as a record), two defects in `src/virtual-files/sw.ts`: every response was served
+as `text/javascript`, and `fileCache` was a `Map<string, string>` although `registerFiles()`
+advertised `Record<string, string | Uint8Array>`. Binary registration was broken at the type boundary.
 
-### C3 · File lifecycle and eviction — **P2 · S**
+### C3 · File lifecycle and cap — ✅ **done**
+
+**Done** (2026-10-13): files belong to the element and live until `unregisterFiles()` or garbage
+collection; each environment build snapshots them. The guest's blobs belong to its document or
+worker, so teardown — `reset()`, `terminate()`, removal — destroys the realm and frees them; there is
+no session state left behind anywhere. The cap is enforced atomically in `registerFiles()` against
+the store the batch would produce: 8 MiB in total, at most 1000 files, paths of at most 256
+characters, as module constants. Measured on 2026-10-13 to load byte-exact in all three engines in
+both modes (they also loaded 64 MiB, with time to `ready` growing to 4.6–17 s); raise the constants
+only after `files.spec.ts` section 7 passes at the new value everywhere. Memory is about 3–3.5× the
+file bytes across host and guest.
 
 *The lesson of [finding 08](research/08_session_exhaustion/README.md), applied client-side.*
-**Verified**: `fileCache` grows without bound and is never pruned (`sw.ts:2`); entries keyed by a
-dead session id outlive the sandbox for the Service Worker's lifetime.
+**Verified** (kept as a record): `fileCache` grew without bound and was never pruned; entries keyed by
+a dead session id outlived the sandbox for the Service Worker's lifetime.
 
-**Work**: `unregisterFiles()` / `clearSession()`, drop a session's keys on terminate, cap bytes per
-session. **Acceptance**: terminating a sandbox releases its VFS entries.
+### C5 · Guest writes — **P2 · M**
 
-### C4 · Service Worker update integrity — **P2 · M**
+**Guarantee**: a guest can change files only when the embedder opted in, and never past the host's
+path rules and cap.
 
-Adopt the main-thread pre-registration verification and versioned SW paths from
-[`SW-verify-before-update.md`](research/SW-verify-before-update.md).
-**Acceptance**: a modified SW payload fails verification and is not registered.
+**Work**: an opt-in `FS_WRITE` frame on the port, handled before the broker (like the watchdog's
+`PING`), so it is not a callable method a guest could replace. The host validates the path and the
+quota exactly as `registerFiles()` does. The guest's writes form an overlay that `reset()` discards
+unless the host commits it. Opt-in, because otherwise a guest could plant code that the next
+environment runs.
+
+**Acceptance**: without the opt-in, a write rejects and the store is unchanged; with it, a write
+through `../`, an encoded path or past the cap is refused with the same codes as `registerFiles()`;
+an uncommitted overlay is gone after `reset()`, and a committed one fires `fileschanged`.
 
 ---
 
@@ -802,7 +908,7 @@ comparisons; for the 2026 entrants (`quickjs-wasi`, `@tanstack/ai-isolate-quickj
 | Promise-based RPC | ✅ **B1** | ✅ | ✅ | ✅ | ➖ |
 | Typed package / `d.ts` | 🟡 **D1** | ✅ | ✅ | ✅ | ✅ |
 | Headless (worker) execution | ✅ **S1** | ❌ | ❌ | ❌ | ❌ |
-| Virtual files | 🟡 **C1–C3** | ❌ | ➖ | ❌ | ❌ |
+| Virtual files | 🟡 **C1** | ❌ | ➖ | ❌ | ❌ |
 | Host-mediated network | ❌ **B5** | ❌ | ➖ | ✅ | ❌ |
 | Auto-sizing | ❌ **B6** | ❌ | 🟡 | ✅ | ✅ |
 | Execution quotas | 🟡 **S6** | ❌ | ➖ | ❌ | ➖ |
@@ -831,6 +937,8 @@ meets an opaque-origin UI tier. Do not write a JS engine.
 | :--- | :--- | :--- |
 | Wildcard DNS + SSL as the **default** | `cross-origin-html-embed` | Destroys the local-first property, the one thing no competitor offers. Opt-in only. |
 | Iframe-scoped Service Worker ("hub" model) | Considered internally | Needs a sandbox origin that can register SWs, re-opening privilege escalation. See [`ARCHITECTURE_COMPARISON.md`](research/ARCHITECTURE_COMPARISON.md). |
+| Service-Worker VFS (host-level hub) | The original virtual-files design | Never served a file: the opaque-origin `srcdoc` guest is never a client of any Service Worker. The worker was also served as untranspiled TypeScript, partitioned as a third-party iframe, and lost files sent before it loaded. Replaced by guest-realm blob URLs, [ADR-004](ADR-004-files-as-blob-urls.md). |
+| Service Worker update integrity (was C4) | [`SW-verify-before-update.md`](research/SW-verify-before-update.md) | No Service Worker is left to protect (ADR-004). |
 | `allow-same-origin` for API compatibility | `websandbox` | Root cause of findings 01, 02 and 05. Enforced by T2's deny-list test. |
 | Agent runtime in the trusted base | [`RESEARCH_SANDBOXING.md`](research/RESEARCH_SANDBOXING.md) | Keep the base dumb; agents load as user code so their bugs stay inside the sandbox. |
 | BrowserPod / CheerpX as a dependency | [2026-08 field scan](ADR-001-continue-or-adopt.md#field-scan--august-2026) | Proprietary licence — free only for personal and open-source use. Disqualified as a dependency. |
@@ -857,6 +965,7 @@ So `IMPROVEMENTS.md` is not re-proposed wholesale:
 - **Headless worker mode** — isolated inside the sandbox frame since S1.
 - **Lifecycle state machine** (§4) — `state`, `terminate()` and `reset()` on the element, without
   the XState dependency (B2).
+- **Virtual files** — guest-realm blob URLs through `sandboxFiles`, both modes (C1–C3, ADR-004).
 
 ---
 
@@ -866,7 +975,7 @@ So `IMPROVEMENTS.md` is not re-proposed wholesale:
 | :--- | :--- | :--- |
 | **M1 · Turn the lights on** | T1, T2, T3, D2 | Until the suite runs, no security claim is verified and no later change is safe. CI belongs here so the same drift cannot recur. |
 | **M2 · Make the claims true** | S1, S2, S7, S9, D1, B3, B4 | A documented capability that does not hold (S1) or does not install (D1) costs more than a missing one. B3/B4 ride along — DevTools is silent and the element self-registers nowhere. |
-| **M3 · Harden** | S3, S4, S13, T4, T5, H3 | The injection path and the session-id model are the two places where the design's assumptions are unverified; presets and type checking keep them that way. S13 is a candidate egress route that CSP does not cover. |
+| **M3 · Harden** | S3, S4, S13, S15, S16, T4, T5, H3 | The injection path and the session-id model are the two places where the design's assumptions are unverified; presets and type checking keep them that way. S13 is a candidate egress route that CSP does not cover. S15 leaks the host page's URL to the guest; S16 lets a config meant to deny widen the policy. |
 | **M4 · Make it adoptable** | B1, B7, B2, C1, C2 | RPC + lifecycle is the parity bar set by websandbox and Penpal; B7 makes RPC failures safe to branch on; the VFS is the differentiator, so it must actually work. |
-| **M5 · Extend** | B5, B6, C3, C4, S5, S6, D3, H1, H2, H5 | Observability, quotas, docs and hygiene once the base is trustworthy. |
+| **M5 · Extend** | B5, B6, C3, C5, S5, S6, D3, H1, H2, H5 | Observability, quotas, docs and hygiene once the base is trustworthy. |
 | **Bets** | hosted-origin mode, QuickJS spike | Independent; run when there is slack. |

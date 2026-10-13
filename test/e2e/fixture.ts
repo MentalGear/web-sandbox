@@ -12,6 +12,9 @@ export const BASELINE_CONFIG: Partial<SandboxConfig> = {
 
 export type MountResult = 'ready' | 'terminated';
 
+/** A file for SandboxDriver.registerFiles(): text, or bytes as base64 with an optional type override. */
+export type FileSpec = string | { base64: string; type?: string };
+
 /**
  * How a broker call settled. A refusal carries the error's `code` (backlog B7), so specs assert the
  * exact code rather than message text; `keys` lists the error's own enumerable properties, which
@@ -67,6 +70,28 @@ export class SandboxDriver {
             second.setConfig(merged); // detached: only stores the config, the frame is built on insertion
             document.body.appendChild(second);
         }), { ...BASELINE_CONFIG, ...config } as any);
+    }
+
+    /**
+     * Registers files on a sandbox in the page (default: the harness's). A value is a string, or
+     * `{ base64, type? }` for bytes (decoded in the page into a Uint8Array). Settles to 'ok' or the
+     * refusal's code, so specs assert refusals by code (backlog B7).
+     */
+    async registerFiles(files: Record<string, FileSpec>, selector = 'web-sandbox'): Promise<string> {
+        return this.page.evaluate(({ files, selector }) => {
+            const entries: Record<string, unknown> = {};
+            for (const [path, spec] of Object.entries(files)) {
+                if (typeof spec === 'string') { entries[path] = spec; continue; }
+                const bytes = Uint8Array.from(atob(spec.base64), c => c.charCodeAt(0));
+                entries[path] = spec.type ? { content: bytes, type: spec.type } : bytes;
+            }
+            try {
+                (document.querySelector(selector) as any).registerFiles(entries);
+                return 'ok';
+            } catch (e: any) {
+                return String(e?.code);
+            }
+        }, { files, selector });
     }
 
     async run(code: string) {

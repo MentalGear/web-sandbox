@@ -37,7 +37,7 @@ Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the 
 
 4.  **Type-check and build the package**
     ```bash
-    bun run typecheck   # app + service worker
+    bun run typecheck   # src, tests, playground
     bun run build:lib   # dist/: ESM bundle + .d.ts
     ```
 
@@ -57,8 +57,9 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 *   **`src/host.ts`**: The core implementation of the `<web-sandbox>` custom element. It handles frame creation, CSP generation, and communication.
 *   **`src/lib/frame-documents.ts`**: Builds the wrapper and guest documents (see Security Mitigations).
 *   **`src/lib/rpc.ts`**: The broker behind `expose()` and `call()`; the host and the guest run the same code.
+*   **`src/lib/files.ts`**, **`src/lib/in-sandbox-files.ts`**: Registered files: the host's store, and the guest's `sandboxFiles`.
 *   **`src/lib/presets.ts`**: A shared library of test scenarios used by both the Playground and automated tests.
-*   **`vite.config.ts`**: The dev server, which also serves the virtual files hub on `virtual-files.*` hosts.
+*   **`vite.config.ts`**: The dev server for the playground and the e2e harness.
 *   **`test/e2e`**: Playwright e2e specs, plus the shared harness page and fixture every suite runs on.
 *   **`docs/research`**: Security findings, each with a Playwright reproduction that guards its mitigation.
 
@@ -189,6 +190,48 @@ const total = await sandbox.call('sum', 1, 2);              // 3, once the sandb
 
 Why it is built this way: [ADR-002](docs/ADR-002-host-guest-broker.md).
 
+## Files
+
+The host registers files on the element; the guest reads them through the global `sandboxFiles`.
+
+```js
+sandbox.registerFiles({
+    'app.js': 'console.log("hello from app.js")',
+    'data.json': '{ "answer": 42 }',
+    'logo.png': pngBytes,                                    // a Uint8Array
+    'notes': { content: 'plain text', type: 'text/plain' },  // explicit type
+});
+sandbox.load(`<script>
+    const s = document.createElement('script');
+    s.src = sandboxFiles.url('app.js');                      // a blob: URL made in the guest
+    document.head.appendChild(s);
+    sandboxFiles.text('data.json').then(JSON.parse);
+</script>`);
+```
+
+*   **Files belong to the element.** They survive `reset()`, `load()`, `setConfig()` and `terminate()`.
+    Each new environment gets a snapshot of them; a running guest never changes, so a file you register
+    or remove reaches the guest at the next `reset()`, `load()` or `setConfig()`.
+*   **Host API**: `registerFiles(files)` adds or replaces (a string is stored as UTF-8, a `Uint8Array`
+    is copied); `unregisterFiles(paths?)` removes the given paths, or all of them; `listFiles()` returns
+    `{ path, type, size }`. `fileschanged` fires with `{ paths }` when a call changed something.
+*   **Guest API**: `sandboxFiles.list()`, `url(path)`, `read(path)` (a `Uint8Array`) and `text(path)`.
+    It always exists: with no files, `list()` is empty and every lookup fails with `NOT_FOUND`. In
+    worker mode the worker has its own.
+*   **Paths** are relative, like `src/main.js`: letters, digits and `._~!$&'()*+,;=@-`, separated by
+    single slashes, at most 256 characters, no `.` or `..` segments. They are checked, never rewritten.
+*   **Lookups are exact.** Anything other than a registered path — `../x`, `/x`, `%2e%2e/x`, another
+    sandbox's path — fails with `code: 'NOT_FOUND'`, the same as a missing file.
+*   **Refusals** throw an `Error` with a `code` and change nothing: `INVALID_PATH`, `INVALID_FILE`, or
+    `FILES_QUOTA_EXCEEDED` past 8 MiB in total or 1000 files.
+*   **Types** come from the extension (`.js` is `text/javascript`, `.css` is `text/css`, …; unknown is
+    `application/octet-stream`). The policy gains `blob:` only for the registered types' directives, and
+    a directive you set to `'none'` stays `'none'`, with a warning.
+*   **Not yet**: guest markup that names a file (`<script src="app.js">`), relative imports between
+    modules, and `url()` inside registered CSS. Use `sandboxFiles.url()` until then.
+
+Why it is built this way: [ADR-004](docs/ADR-004-files-as-blob-urls.md).
+
 ## Backlog
 
 Open work — broken scaffolding, security follow-ups, planned capabilities — is tracked in
@@ -206,3 +249,4 @@ The sandbox implements several layers of defense:
 6.  **Worker Inside the Frame**: Worker mode spawns its worker from inside the sandbox frame, so it shares the opaque origin and CSP.
 7.  **Capability Tiers**: Flags that reach outside the frame require the explicit `unsafeCapabilities` opt-in.
 8.  **Allowlisted Calls**: Each side can call only the methods the other side exposed, and an answer reaches only the frame that made the request, never a frame that replaced it.
+9.  **Realm-Bound Files**: Registered files reach the guest as `blob:` URLs created in its own realm, which no other sandbox and not the host page can load. Lookups are exact, and `blob:` is allowed only for the registered types.

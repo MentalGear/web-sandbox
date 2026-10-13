@@ -4,6 +4,18 @@
  */
 
 import type { SafeCapability } from "../csp-directives";
+import type { SandboxConfig } from "../host";
+
+export interface Preset {
+    id: string;
+    label: string;
+    code: string;
+    rules: Partial<SandboxConfig>;
+    // Registered on the sandbox before it is built (registerFiles); the guest reads them through sandboxFiles.
+    files?: Record<string, string>;
+}
+
+const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40" viewBox="0 0 120 40"><rect width="120" height="40" rx="6" fill="#4338ca"/><text x="60" y="26" font-family="sans-serif" font-size="16" fill="#fff" text-anchor="middle">logo.svg</text></svg>';
 
 export const PRESETS = {
     "basic": {
@@ -67,14 +79,32 @@ while(true) {}`,
     "virtual-files-test": {
         id: "virtual-files-test",
         label: "Virtual Files System Test",
-        code: `// This requires a VFS Hub running at /virtual-files
-console.log("Checking VFS Base URI...");
-console.log(document.baseURI);
-fetch('main.js')
-  .then(r => r.text())
-  .then(t => console.log("Fetched main.js from VFS:", t))
-  .catch(e => console.error("VFS Fetch Failed:", e));`,
-        rules: { virtualFilesUrl: "http://virtual-files.localhost:4444", scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        // The preset's files are registered on the sandbox; the guest reaches them through sandboxFiles,
+        // as blob: URLs created in its own realm (README "Files", ADR-004).
+        code: `console.log("Registered files:", sandboxFiles.list().join(", "));
+sandboxFiles.text("main.js").then(t => console.log("Read main.js:", t));
+
+const script = document.createElement("script");
+script.src = sandboxFiles.url("main.js");
+document.head.appendChild(script);
+
+fetch(sandboxFiles.url("data.json"))
+  .then(r => r.json())
+  .then(j => console.log("Fetched data.json:", JSON.stringify(j)));
+
+const img = new Image();
+img.onload = () => console.log("logo.svg loaded:", img.naturalWidth + "x" + img.naturalHeight);
+img.onerror = () => console.error("logo.svg failed to load");
+img.src = sandboxFiles.url("logo.svg");
+document.body.appendChild(img);
+
+try { sandboxFiles.url("../main.js"); } catch (e) { console.log("../main.js:", e.code); }`,
+        files: {
+            "main.js": 'console.log("main.js ran from a guest-realm blob: URL");',
+            "data.json": '{ "hello": "from data.json" }',
+            "logo.svg": LOGO_SVG,
+        },
+        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "websocket-bypass": {
         id: "websocket-bypass",
@@ -277,7 +307,7 @@ console.log('TEST_DONE');`,
 
     <div class="test-section" id="dynamic-section">
         <h3>3. Dynamic Internal Image</h3>
-        <button onclick="loadInternal()">Load logo.png</button>
+        <button onclick="loadInternal()">Load logo.svg</button>
         <div id="img-target"></div>
     </div>
 
@@ -301,8 +331,8 @@ console.log('TEST_DONE');`,
         function loadInternal() {
             const target = document.getElementById('img-target');
             const img = document.createElement('img');
-            // Tests relative path resolution
-            img.src = "logo.png";
+            // A registered file (this preset's "files"), through its guest-realm blob: URL
+            img.src = sandboxFiles.url("logo.svg");
             img.alt = "Internal Logo";
             target.innerHTML = '';
             target.appendChild(img);
@@ -342,8 +372,7 @@ console.log('TEST_DONE');`,
             },
             // scriptUnsafe: true,
             capabilities: ["allow-scripts"],
-            // Optional: point to a VFS if you want logo.png to actually resolve
-            virtualFilesUrl: "http://virtual-files.localhost:4444"
-        }
+        },
+        files: { "logo.svg": LOGO_SVG },
     }
-};
+} satisfies Record<string, Preset>;
