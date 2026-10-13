@@ -92,6 +92,60 @@ describe('inSandboxFiles (the guest bootstrap, run from its source text)', () =>
         expect(Object.isFrozen(files())).toBe(true);
     });
 
+    // A stylesheet entry as the host builds it (files.ts): byte ranges of the registered text, each with a slot.
+    const b64 = (text: string) => btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+    const sheetEntry = (path: string, css: string, slots: [string, string][]) => {
+        const at = (text: string) => new TextEncoder().encode(css.slice(0, css.indexOf(text))).length;
+        const edits = slots.flatMap(([text, target]) => [at(text), at(text) + new TextEncoder().encode(text).length, [target]]);
+        return [path, 'text/css', b64(css), edits];
+    };
+    const textOf = async (blob: Blob) => new TextDecoder().decode(new Uint8Array(await bytesOf(blob)));
+    const blobFor = (url: string) => ((URL.createObjectURL as any).mock.calls as [Blob][])[Number(url.split('-').at(-1)) - first]![0];
+    let first = 0;
+
+    it('a stylesheet: each slot becomes a CSS string holding the URL of a file made earlier in the literal; read() keeps the registered bytes', async () => {
+        first = minted + 1;
+        const css = 'é @import "b.css"; a { b: url( img/x.svg ) }';
+        install([
+            ['img/x.svg', 'image/svg+xml', b64('<svg/>')],
+            ['b.css', 'text/css', b64('')],
+            sheetEntry('a.css', css, [['"b.css"', 'b.css'], [' img/x.svg ', 'img/x.svg']]),
+        ]);
+        const url = files().url('a.css');
+        expect(await textOf(blobFor(url))).toBe(`é @import "${files().url('b.css')}"; a { b: url("${files().url('img/x.svg')}") }`);
+        expect(blobFor(url).type).toBe('text/css');
+    });
+
+    it('a slot naming a file not made yet (later in the literal, or the stylesheet itself) keeps its registered bytes: one pass, nothing followed, nothing loops', async () => {
+        first = minted + 1;
+        const a = '@import "b.css"; @import "a.css"; x { y: url(i.svg) }';
+        install([
+            ['i.svg', 'image/svg+xml', b64('<svg/>')],
+            sheetEntry('a.css', a, [['"b.css"', 'b.css'], ['"a.css"', 'a.css'], ['i.svg', 'i.svg']]),
+            sheetEntry('b.css', '@import "a.css";', [['"a.css"', 'a.css']]),
+        ]);
+        expect(await textOf(blobFor(files().url('a.css')))).toBe(`@import "b.css"; @import "a.css"; x { y: url("${files().url('i.svg')}") }`);
+        expect(await textOf(blobFor(files().url('b.css')))).toBe(`@import "${files().url('a.css')}";`);
+        expect((URL.createObjectURL as any).mock.calls).toHaveLength(3); // one URL per file
+    });
+
+    it('escapes the URL for a CSS string, whatever it contains, so the string cannot end early or break a <style>', async () => {
+        first = minted + 1;
+        let calls = 0;
+        URL.createObjectURL = vi.fn(() => (++calls === 1 ? 'blob:x"y\'z\\w<v>u\nt\u0000s' : `blob:null/fake-${++minted}`)) as any;
+        install([
+            ['i.svg', 'image/svg+xml', b64('<svg/>')],
+            sheetEntry('a.css', 'a { b: url(i.svg) }', [['i.svg', 'i.svg']]),
+        ]);
+        const blob = ((URL.createObjectURL as any).mock.calls as [Blob][])[1]![0];
+        expect(await textOf(blob)).toBe('a { b: url("blob:x\\22 y\\27 z\\5c w\\3c v\\3e u\\a t\\0 s") }');
+    });
+
+    it('list() is sorted by path, whatever order the literal is in (the host orders it for dependencies)', () => {
+        install([['z.svg', 'image/svg+xml', b64('')], ['b.css', 'text/css', b64('')], ['a.css', 'text/css', b64('')]]);
+        expect(files().list()).toEqual(['a.css', 'b.css', 'z.svg']);
+    });
+
     it('an empty snapshot (no files registered) installs the same API: list() is empty and every lookup is NOT_FOUND', async () => {
         install([]);
         expect(files().list()).toEqual([]);
@@ -137,6 +191,23 @@ describe('inSandboxMarkup (the bootstrap\'s last statement, run from its source 
         (globalThis as any).__files = { url: () => 'x" onerror="alert(1)&amp;' };
         run('globalThis.__files', ['<img src="', 'p', '">']);
         expect(written).toEqual(['<img src="x&quot; onerror=&quot;alert(1)&amp;amp;">']);
+        delete (globalThis as any).__files;
+    });
+
+    it('a CSS slot in a <style> gets the URL escaped for a CSS string; in a style attribute, then for the attribute too', () => {
+        (globalThis as any).__files = { url: (path: string) => (path === 'odd' ? 'x"y\'z\\w<v>u&t' : `blob:null/${path}`) };
+        run('globalThis.__files', [
+            '<style>a { b: url("', ['i.svg', 'css'], '") } c { d: url("', ['odd', 'css'], '") }</style><p style="b: url(&quot;', ['odd', 'css-attribute'], '&quot;)" title="', 'odd', '">',
+        ]);
+        expect(written).toEqual([
+            '<style>a { b: url("blob:null/i.svg") } c { d: url("x\\22 y\\27 z\\5c w\\3c v\\3e u&t") }</style>'
+            + '<p style="b: url(&quot;x\\22 y\\27 z\\5c w\\3c v\\3e u&amp;t&quot;)" title="x&quot;y\'z\\w<v>u&amp;t">',
+        ]);
+        // what the guest's parser makes of it: one <style> whose text is one rule per reference, and an
+        // attribute whose CSS string holds the URL exactly
+        const doc = new DOMParser().parseFromString(written[0]!, 'text/html');
+        expect(doc.querySelectorAll('style')).toHaveLength(1);
+        expect(doc.querySelector('p')!.getAttribute('style')).toBe('b: url("x\\22 y\\27 z\\5c w\\3c v\\3e u&t")');
         delete (globalThis as any).__files;
     });
 

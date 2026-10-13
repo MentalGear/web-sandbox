@@ -24,6 +24,15 @@ import type { FileSnapshotEntry } from './files';
  * names the module form, assembled from slices of the registered blob and the replacement texts, so
  * the literal carries the file once; read() and text() return the bytes as registered.
  *
+ * A stylesheet whose url() and @import references name registered files (css-references.ts) carries
+ * the same fourth element, with a slot, `[path]`, in place of a replacement text: the reference becomes
+ * a CSS string holding that file's blob: URL from THIS realm, escaped for a CSS string. So a stylesheet
+ * can only be assembled once the URLs it names exist: the host orders the literal so that every file
+ * comes after the files it references, and leaves every reference that lies on a cycle out (files.ts).
+ * This loop is one pass in literal order and looks a slot up in the files made so far; a slot naming a
+ * file not made yet (which the host's order never produces) keeps its bytes as registered, where it
+ * fails closed. Nothing here follows a reference, so nothing can loop.
+ *
  * A lookup is an exact Map lookup of the given string: nothing is resolved, decoded or normalised,
  * so `../x`, `%2e%2e/x`, `/x` or another instance's path is simply absent. Every failed lookup is the
  * same plain Error with an own `code: 'NOT_FOUND'` (the B7 shape), minted here, and its message
@@ -40,6 +49,9 @@ export function inSandboxFiles(entries: FileSnapshotEntry[]) {
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         return bytes;
     };
+    // A double-quoted CSS string holding `url`: every character that could end or break the string,
+    // or end a <style> element, is a CSS escape, so the result never depends on the format of a blob: URL.
+    const cssString = (url: string) => '"' + url.replace(/[\u0000-\u001f\u007f"'\\<>]/g, (c: string) => '\\' + c.charCodeAt(0).toString(16) + ' ') + '"';
     for (const entry of entries) {
         const bytes = decode(entry[2]);
         const blob = new Blob([bytes], { type: entry[1] });
@@ -49,7 +61,16 @@ export function inSandboxFiles(entries: FileSnapshotEntry[]) {
             const parts: BlobPart[] = [];
             let at = 0;
             for (let i = 0; i < edits.length; i += 3) {
-                parts.push(blob.slice(at, edits[i] as number), edits[i + 2] as string);
+                const replacement = edits[i + 2];
+                let text: string;
+                if (typeof replacement === 'string') {
+                    text = replacement;
+                } else {
+                    const target = files.get((replacement as [string])[0]);
+                    if (!target) continue; // not made yet: the reference keeps its registered bytes
+                    text = cssString(target.url);
+                }
+                parts.push(blob.slice(at, edits[i] as number), text);
                 at = edits[i + 1] as number;
             }
             parts.push(blob.slice(at));
@@ -70,7 +91,7 @@ export function inSandboxFiles(entries: FileSnapshotEntry[]) {
     };
 
     const api = Object.freeze({
-        list: () => Array.from(files.keys()),
+        list: () => Array.from(files.keys()).sort(), // the literal is in dependency order, not path order
         url: (path: string) => lookup(path).url,
         read: (path: string) => {
             try {
@@ -106,15 +127,22 @@ export function inSandboxFiles(entries: FileSnapshotEntry[]) {
  * document.currentScript is set), and the CSP <meta> before the bootstrap stays first (S2).
  *
  * `files` is the object inSandboxFiles just returned, never a lookup of the global: nothing the guest
- * wrote can run before this, but the bootstrap does not depend on that. Every slot sits inside a
- * double-quoted attribute value (the host's serialiser quotes them so); the URL is escaped for that
- * context anyway, so the written markup never depends on the format of a blob: URL.
+ * wrote can run before this, but the bootstrap does not depend on that. A slot that is a path sits
+ * inside a double-quoted attribute value (the host's serialiser quotes them so); a CSS slot,
+ * [path, context], sits inside a double-quoted CSS string, in the raw text of a <style> ('css') or in
+ * a double-quoted style attribute ('css-attribute'). The URL is escaped for exactly that context
+ * anyway — CSS escapes for every character that could end the string or the <style>, then attribute
+ * escapes — so the written markup never depends on the format of a blob: URL.
  */
-export function inSandboxMarkup(files: { url(path: string): string }, parts: string[]) {
+export function inSandboxMarkup(files: { url(path: string): string }, parts: (string | [string, string])[]) {
+    const attribute = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const cssStringContent = (value: string) => value.replace(/[\u0000-\u001f\u007f"'\\<>]/g, (c: string) => '\\' + c.charCodeAt(0).toString(16) + ' ');
     let markup = '';
     for (let i = 0; i < parts.length; i++) {
-        const part = parts[i] as string;
-        markup += i % 2 === 0 ? part : files.url(part).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+        const part = parts[i]!;
+        if (i % 2 === 0) markup += part as string;
+        else if (typeof part === 'string') markup += attribute(files.url(part));
+        else markup += part[1] === 'css' ? cssStringContent(files.url(part[0])) : attribute(cssStringContent(files.url(part[0])));
     }
     document.write(markup);
 }

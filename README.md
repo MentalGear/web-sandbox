@@ -217,9 +217,14 @@ sandbox.registerFiles({
     'logo.png': pngBytes,                                    // a Uint8Array
     'notes': { content: 'plain text', type: 'text/plain' },  // explicit type
 });
+sandbox.registerFiles({
+    'css/site.css': '@import "base.css"; body { background: url(../logo.png); }',  // stylesheets too
+    'css/base.css': 'p { margin: 0; }',
+});
 sandbox.load(`
     <script type="module" src="app.js"></script>             <!-- markup names files by path -->
-    <img src="logo.png">
+    <link rel="stylesheet" href="css/site.css">
+    <img src="logo.png" srcset="logo.png 1x">
     <script>
         sandboxFiles.text('data.json').then(JSON.parse);     // code reads them through sandboxFiles
         const url = sandboxFiles.url('logo.png');            // a blob: URL made in the guest
@@ -266,8 +271,22 @@ sandbox.load(`
     unregistered file is refused by the policy. A file the lexer cannot parse is delivered unchanged,
     with a warning. A rewritten JavaScript file counts its registered bytes plus what the rewrite adds
     against the 8 MiB cap.
-*   **Not yet**: `srcset`, `url()` in CSS, and references inside `<template>`. Use `sandboxFiles.url()`
-    for those.
+*   **Stylesheets name files by `url()` and `@import`** (same conditions): in a registered `.css`
+    file, relative to that file (`url(../img/bg.svg)`, `@import "base.css"`, `@font-face` `src`,
+    `image-set()`), and in inline `<style>` and `style=""`, relative to the page. `srcset` on `<img>`
+    and `<source>` works per candidate. The host finds the references with a CSS tokenizer when you
+    register the file (comments, strings like `content: "x.png"`, `format()` and `local()` are left
+    alone), and the guest writes its own `blob:` URLs in, each stylesheet after the files it names.
+    `read()` and `text()` return the stylesheet as you registered it; `url()` serves the rewritten one.
+    Each reference that could name a file counts its path plus 72 bytes against the 8 MiB cap.
+*   **CSS: what does not work** (fails closed, left as written): a query or fragment
+    (`url(bg.svg?v=2)`), an unregistered path, and references that lie on a cycle (`a.css` imports
+    `b.css` which imports `a.css`, or a sheet that imports itself), which get one warning — the
+    sheets' other rules and references still apply. URLs that only exist at run time (`url(var(--x))`,
+    styles set from script), `imagesrcset`, SVG `<style>`, at-rule preludes other than `@import`, and
+    a stylesheet that is not UTF-8 (delivered unchanged, with a warning).
+*   **Not yet**: references inside `<template>`. Use `sandboxFiles.url()` for those, and for anything
+    built at run time.
 
 Why it is built this way: [ADR-004](docs/ADR-004-files-as-blob-urls.md).
 

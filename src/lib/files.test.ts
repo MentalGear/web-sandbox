@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
     FALLBACK_TYPE, FileStore, MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES,
-    isJavaScriptType, isValidMimeType, isValidPath, mimeTypeFor, rewriteCost, type ByteEdits, type FileErrorCode,
+    isJavaScriptType, isStylesheetType, isValidMimeType, isValidPath, mimeTypeFor, referenceCost, rewriteCost, SLOT_URL_BYTES,
+    type ByteEdits, type FileErrorCode, type FileSnapshotEntry,
 } from './files';
 
 const BASE = 'https://vfs.invalid/';
@@ -383,6 +384,296 @@ describe('FileStore: the module rewrite of JavaScript files (PR3)', () => {
         const source = statement.repeat(Math.floor(MAX_TOTAL_BYTES / 2 / statement.length));
         expect(utf8(source).length).toBeLessThan(MAX_TOTAL_BYTES);
         expect(refusal(() => store.register({ 'many.js': source }))).toEqual(refused('FILES_QUOTA_EXCEEDED'));
+        expect(store.list()).toEqual([]);
+    });
+});
+
+// What the guest delivers for a stylesheet entry (inSandboxFiles): each slot's range replaced by a CSS
+// string holding the URL of the file it names, here "blob:<path>"; a slot naming a file not made yet
+// (earlier in `made`) keeps its registered bytes. Returned as text.
+function stylesheetText(entry: FileSnapshotEntry, made: ReadonlySet<string>): string {
+    const bytes = Uint8Array.from(atob(entry[2]), c => c.charCodeAt(0));
+    const edits = entry[3] ?? [];
+    const parts: number[] = [];
+    let at = 0;
+    for (let i = 0; i < edits.length; i += 3) {
+        const slot = edits[i + 2] as [string];
+        if (!made.has(slot[0])) continue;
+        parts.push(...bytes.subarray(at, edits[i] as number), ...utf8(JSON.stringify('blob:' + slot[0])));
+        at = edits[i + 1] as number;
+    }
+    parts.push(...bytes.subarray(at));
+    return new TextDecoder('utf-8', { ignoreBOM: true }).decode(Uint8Array.from(parts));
+}
+const everything = (store: FileStore) => new Set(store.list().map(f => f.path));
+const entryOf = (store: FileStore, path: string) => store.snapshot().find(entry => entry[0] === path)!;
+
+describe('FileStore: stylesheet references (PR4)', () => {
+    it('isStylesheetType is text/css only', () => {
+        expect(isStylesheetType('text/css')).toBe(true);
+        for (const type of ['text/plain', 'text/javascript', 'text/css2', 'application/css', '']) expect(isStylesheetType(type)).toBe(false);
+    });
+
+    it("a stylesheet's url() and @import references to registered files become slots, resolved against the stylesheet's own path; the guest delivers exactly the rewritten sheet", () => {
+        const store = new FileStore();
+        const css = [
+            '@import "base.css";',
+            '@import url(../shared/reset.css) print;',
+            '@font-face { font-family: F; src: url("/fonts/f.woff2") format("woff2"), local("F"); }',
+            'a { background: url( ./img/bg.svg ) , image-set("img/bg.svg" 1x, url(../../../img/x.svg) 2x); }',
+            '/* url(img/bg.svg) */ b::after { content: "img/bg.svg"; }',
+        ].join('\n');
+        store.register({
+            'css/site.css': css, 'css/base.css': '', 'shared/reset.css': '', 'fonts/f.woff2': new Uint8Array(4),
+            'css/img/bg.svg': '<svg/>', 'img/x.svg': '<svg/>',
+        });
+        const entry = entryOf(store, 'css/site.css');
+        expect(entry).toHaveLength(4);
+        expect((entry[3] as ByteEdits).filter((_, i) => i % 3 === 2)).toEqual([
+            ['css/base.css'], ['shared/reset.css'], ['fonts/f.woff2'], ['css/img/bg.svg'], ['css/img/bg.svg'], ['img/x.svg'],
+        ]);
+        expect(stylesheetText(entry, everything(store))).toBe([
+            '@import "blob:css/base.css";',
+            '@import url("blob:shared/reset.css") print;',
+            '@font-face { font-family: F; src: url("blob:fonts/f.woff2") format("woff2"), local("F"); }',
+            'a { background: url("blob:css/img/bg.svg") , image-set("blob:css/img/bg.svg" 1x, url("blob:img/x.svg") 2x); }',
+            '/* url(img/bg.svg) */ b::after { content: "img/bg.svg"; }',
+        ].join('\n'));
+        // the bytes as registered stay what read() returns
+        expect(decode(Uint8Array.from(atob(entry[2]), c => c.charCodeAt(0)))).toBe(css);
+    });
+
+    it('byte offsets with multi-byte text before, between and inside references', () => {
+        const store = new FileStore();
+        const css = '/* é 𝄞 */ a { content: "€"; b: url(i.svg); c: url("€.svg") } /* ü */ d { e: url(\'dir/j.svg\') } f { g: url(ü.svg) }';
+        store.register({ 's.css': css, 'i.svg': '', 'dir/j.svg': '' });
+        // a non-ASCII reference names no file: paths are ASCII (and "€" percent-encodes)
+        expect(stylesheetText(entryOf(store, 's.css'), everything(store))).toBe(
+            '/* é 𝄞 */ a { content: "€"; b: url("blob:i.svg"); c: url("€.svg") } /* ü */ d { e: url("blob:dir/j.svg") } f { g: url(ü.svg) }');
+    });
+
+    it('a non-ASCII path is never a file, so a non-ASCII reference can never name one', () => {
+        const store = new FileStore();
+        for (const path of ['ü/i.svg', '€.svg']) expect(refusal(() => store.register({ [path]: '' }))).toEqual(refused('INVALID_PATH'));
+    });
+
+    it.each([
+        ['an unregistered file', 'url(missing.svg)'],
+        ['a query', 'url(i.svg?v=1)'],
+        ['an empty query', 'url("i.svg?")'],
+        ['a fragment', 'url(i.svg#x)'],
+        ['a fragment only', 'url(#x)'],
+        ['another case', 'url(I.SVG)'],
+        ['another percent-encoding', 'url(%69.svg)'],
+        ['a data: URL', 'url(data:image/svg+xml,<svg/>)'],
+        ['another origin', 'url(https://cdn.example/i.svg)'],
+        ['a scheme-relative URL', 'url(//cdn.example/i.svg)'],
+        ['the virtual origin with a port', 'url(https://vfs.invalid:8443/i.svg)'],
+        ['an empty url', 'url()'],
+        ['a blank string', 'url("  ")'],
+        ['a bad url', 'url(i .svg)'],
+        ['a string that is not a URL', '; content: "i.svg"'],
+        ['a comment', '/* url(i.svg) */'],
+    ])('names no file, so no slot: %s', (_label, value) => {
+        const store = new FileStore();
+        store.register({ 's.css': `a { b: ${value} }`, 'i.svg': '' });
+        expect(entryOf(store, 's.css')).toHaveLength(3);
+    });
+
+    it('the virtual origin spelled out and ".." above the root name the file, as on any server', () => {
+        const store = new FileStore();
+        store.register({ 'a/s.css': 'a { b: url(https://vfs.invalid/i.svg); c: url(../../../../i.svg); d: url(%2e%2e/i.svg) }', 'i.svg': '' });
+        expect(stylesheetText(entryOf(store, 'a/s.css'), everything(store))).toBe('a { b: url("blob:i.svg"); c: url("blob:i.svg"); d: url("blob:i.svg") }');
+    });
+
+    it('whether a reference becomes a slot is decided per snapshot: registering or removing its target changes the next snapshot, not the stylesheet', () => {
+        const store = new FileStore();
+        store.register({ 's.css': 'a { b: url(later.svg) }' });
+        expect(entryOf(store, 's.css')).toHaveLength(3);
+        const cost = store.list(); // unchanged by the target
+        store.register({ 'later.svg': '<svg/>' });
+        expect(stylesheetText(entryOf(store, 's.css'), everything(store))).toBe('a { b: url("blob:later.svg") }');
+        store.unregister(['later.svg']);
+        expect(entryOf(store, 's.css')).toHaveLength(3);
+        expect(store.list()).toEqual(cost);
+    });
+
+    it('a type override decides: a .txt registered as text/css is rewritten, a .css registered as text/plain is not', () => {
+        const store = new FileStore();
+        store.register({ 's.txt': { content: 'a { b: url(i.svg) }', type: 'text/css' }, 'p.css': { content: 'a { b: url(i.svg) }', type: 'text/plain' }, 'i.svg': '' });
+        expect(entryOf(store, 's.txt')).toHaveLength(4);
+        expect(entryOf(store, 'p.css')).toHaveLength(3);
+    });
+
+    it('JavaScript and other files are never searched for CSS references', () => {
+        const store = new FileStore();
+        store.register({ 'a.js': 'const s = "url(i.svg)";', 'b.html': '<style>a{b:url(i.svg)}</style>', 'i.svg': '' });
+        expect(store.snapshot().map(entry => entry.length)).toEqual([3, 3, 3]);
+    });
+
+    it('a stylesheet that is not UTF-8 is delivered unchanged, with one warning per registration of the file', () => {
+        const warn = vi.fn();
+        const store = new FileStore(warn);
+        const bad = Uint8Array.from([...utf8('a { b: url(i.svg) } /* '), 0xff, ...utf8(' */')]);
+        store.register({ 'bad.css': bad, 'good.css': 'a { b: url(i.svg) }', 'i.svg': '' });
+        expect(entryOf(store, 'bad.css')).toHaveLength(3);
+        expect(entryOf(store, 'good.css')).toHaveLength(4);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0]![0])).toContain('"bad.css" is registered as CSS but is not UTF-8');
+        store.register({ 'bad.css': bad });
+        expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('a byte order mark is kept, and offsets count it', () => {
+        const store = new FileStore();
+        store.register({ 's.css': Uint8Array.from([0xef, 0xbb, 0xbf, ...utf8('@import "b.css";')]), 'b.css': '' });
+        const entry = entryOf(store, 's.css');
+        expect(entry[3]).toEqual([11, 18, ['b.css']]);
+        expect(Array.from(utf8(stylesheetText(entry, everything(store))))).toEqual([0xef, 0xbb, 0xbf, ...utf8('@import "blob:b.css";')]);
+    });
+});
+
+describe('FileStore.snapshot: delivery order and reference cycles (PR4)', () => {
+    const order = (store: FileStore) => store.snapshot().map(entry => entry[0]);
+    const slotsOf = (store: FileStore, path: string) => ((entryOf(store, path)[3] ?? []) as ByteEdits).filter((_, i) => i % 3 === 2).map(slot => (slot as [string])[0]);
+
+    // every slot names a file that comes earlier in the literal: what the guest's single pass needs
+    const assertDependencyOrder = (store: FileStore) => {
+        const seen = new Set<string>();
+        for (const entry of store.snapshot()) {
+            for (let i = 2; i < (entry[3] ?? []).length; i += 3) {
+                const slot = entry[3]![i];
+                if (Array.isArray(slot)) expect(seen.has(slot[0])).toBe(true);
+            }
+            seen.add(entry[0]);
+        }
+        expect(seen.size).toBe(store.list().length);
+    };
+
+    it('without references between files, the order is the path order, as before', () => {
+        const store = new FileStore();
+        store.register({ 'z.css': 'a{}', 'b.js': "import './z.js';", 'a.svg': '', 'm.css': 'a { b: url(nothing.svg) }' });
+        expect(order(store)).toEqual(['a.svg', 'b.js', 'm.css', 'z.css']);
+    });
+
+    it('files without slots first, in path order; then each stylesheet after every file it names', () => {
+        const store = new FileStore();
+        store.register({
+            'a.css': '@import "b.css"; x { y: url(z.svg) }',
+            'b.css': '@import "c/c.css";',
+            'c/c.css': 'x { y: url(../z.svg) }',
+            'd.css': '@import "a.css"; @import "c/c.css";',
+            'z.svg': '',
+            'plain.css': 'x { y: red }',
+        });
+        expect(order(store)).toEqual(['plain.css', 'z.svg', 'c/c.css', 'b.css', 'a.css', 'd.css']);
+        assertDependencyOrder(store);
+        expect(slotsOf(store, 'd.css')).toEqual(['a.css', 'c/c.css']);
+    });
+
+    it('an @import cycle: every reference on it stays as registered, the others resolve, and one warning names its files', () => {
+        const warn = vi.fn();
+        const store = new FileStore(warn);
+        store.register({
+            'a.css': '@import "b.css"; @import "leaf.css"; x { y: url(i.svg) }',
+            'b.css': '@import "a.css";',
+            'leaf.css': '',
+            'i.svg': '',
+            'outside.css': '@import "a.css"; @import "b.css";', // into the cycle from outside: resolves
+        });
+        expect(slotsOf(store, 'a.css')).toEqual(['leaf.css', 'i.svg']);
+        expect(slotsOf(store, 'b.css')).toEqual([]);
+        expect(slotsOf(store, 'outside.css')).toEqual(['a.css', 'b.css']);
+        expect(stylesheetText(entryOf(store, 'a.css'), everything(store))).toBe('@import "b.css"; @import "blob:leaf.css"; x { y: url("blob:i.svg") }');
+        assertDependencyOrder(store);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0]![0])).toContain('the stylesheets "a.css", "b.css" reference each other in a cycle');
+        // the same cycle in every later build: no second warning
+        store.snapshot();
+        store.snapshot();
+        expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('a stylesheet that names itself is a cycle of one: that reference stays, with one warning', () => {
+        const warn = vi.fn();
+        const store = new FileStore(warn);
+        store.register({ 's.css': '@import "s.css"; x { y: url(./s.css) } z { w: url(i.svg) }', 'i.svg': '' });
+        expect(slotsOf(store, 's.css')).toEqual(['i.svg']);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0]![0])).toContain('"s.css"');
+    });
+
+    it('longer cycles and two cycles joined by a reference: only the references on a cycle stay; one warning per cycle', () => {
+        const warn = vi.fn();
+        const store = new FileStore(warn);
+        store.register({
+            'p.css': '@import "q.css";', 'q.css': '@import "r.css";', 'r.css': '@import "p.css"; @import "s.css";', // p → q → r → p
+            's.css': '@import "t.css";', 't.css': '@import "s.css"; @import "u.css";', // s ↔ t, entered from r
+            'u.css': 'x { y: red }',
+        });
+        expect([slotsOf(store, 'p.css'), slotsOf(store, 'q.css'), slotsOf(store, 'r.css'), slotsOf(store, 's.css'), slotsOf(store, 't.css')])
+            .toEqual([[], [], ['s.css'], [], ['u.css']]);
+        assertDependencyOrder(store);
+        expect(warn.mock.calls.map(call => String(call[0]).match(/stylesheets (.*?) reference each other/)![1])).toEqual(['"p.css", "q.css", "r.css"', '"s.css", "t.css"']);
+    });
+
+    it('a cycle that a registration closes or opens changes the next snapshot only', () => {
+        const store = new FileStore(() => {});
+        store.register({ 'a.css': '@import "b.css";', 'b.css': 'x { y: red }' });
+        expect(slotsOf(store, 'a.css')).toEqual(['b.css']);
+        store.register({ 'b.css': '@import "a.css";' });
+        expect(slotsOf(store, 'a.css')).toEqual([]);
+        expect(slotsOf(store, 'b.css')).toEqual([]);
+        store.unregister(['b.css']);
+        expect(entryOf(store, 'a.css')).toHaveLength(3);
+    });
+
+    it('a large graph: 999 stylesheets in a chain and one cycle back to the start, in any registration order', () => {
+        const files: Record<string, string> = {};
+        for (let i = 0; i < 999; i++) files[`s${String(i).padStart(3, '0')}.css`] = i === 998 ? '@import "s000.css";' : `@import "s${String(i + 1).padStart(3, '0')}.css";`;
+        const store = new FileStore(() => {});
+        store.register(files);
+        // everything is on one cycle: every reference stays, nothing to order
+        expect(store.snapshot().every(entry => entry.length === 3)).toBe(true);
+        // break the cycle: a chain, delivered from its end
+        store.register({ 's998.css': 'x { y: red }' });
+        expect(order(store)[0]).toBe('s998.css');
+        expect(order(store).at(-1)).toBe('s000.css');
+        assertDependencyOrder(store);
+    });
+});
+
+describe('FileStore: the quota counts what stylesheet references add (PR4)', () => {
+    it('each reference that could name a file costs its path, the edit overhead and the blob: URL that replaces it, at registration, whether or not its target is registered', () => {
+        const store = new FileStore();
+        const css = 'a { b: url(i.svg); c: url(missing/x.svg); d: url(https://cdn.example/x.svg); e: url(i.svg?v=1) }';
+        store.register({ 's.css': css });
+        const size = utf8(css).length;
+        expect(store.list()).toEqual([{ path: 's.css', type: 'text/css', size }]);
+        const cost = ('i.svg'.length + 24 + SLOT_URL_BYTES) + ('missing/x.svg'.length + 24 + SLOT_URL_BYTES);
+        expect(referenceCost([[0, 0, 'i.svg'], [0, 0, 'missing/x.svg']])).toBe(cost);
+        expect(SLOT_URL_BYTES).toBe('"blob:null/00000000-0000-0000-0000-000000000000"'.length);
+
+        // fill the rest of the cap exactly: accepted; one byte more is refused and changes nothing
+        expect(refusal(() => store.register({ 'fill.bin': new Uint8Array(MAX_TOTAL_BYTES - size - cost) }))).toBe('no refusal');
+        const before = store.snapshot();
+        expect(refusal(() => store.register({ 'one.bin': new Uint8Array(1) }))).toEqual(refused('FILES_QUOTA_EXCEEDED'));
+        // a stylesheet that grows by one reference is refused whole
+        expect(refusal(() => store.register({ 's.css': css.replace('}', '; f: url(z.svg) }') }))).toEqual(refused('FILES_QUOTA_EXCEEDED'));
+        expect(store.snapshot()).toEqual(before);
+        // registering the target costs only its own bytes: the reference was counted already
+        store.unregister(['fill.bin']);
+        expect(refusal(() => store.register({ 'i.svg': '<svg/>' }))).toBe('no refusal');
+        // unregistering the stylesheet frees its whole cost
+        store.unregister(['s.css', 'i.svg']);
+        expect(refusal(() => store.register({ 'max.bin': new Uint8Array(MAX_TOTAL_BYTES) }))).toBe('no refusal');
+    });
+
+    it('a stylesheet of nothing but references cannot grow the snapshot or the guest past the cap', () => {
+        const store = new FileStore();
+        const rule = 'a{b:url(a)}'; // 11 bytes, each reference costs 1 + 24 + 48
+        const css = rule.repeat(Math.floor(MAX_TOTAL_BYTES / 4 / rule.length));
+        expect(refusal(() => store.register({ 'many.css': css }))).toEqual(refused('FILES_QUOTA_EXCEEDED'));
         expect(store.list()).toEqual([]);
     });
 });

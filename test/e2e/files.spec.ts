@@ -17,9 +17,11 @@ import { useRecorder, wss } from './recorder';
  *      and every other reference fails closed (iframe mode only: worker mode has no markup)
  *   9. module graph: registered modules import each other by relative path through one import map,
  *      a module is evaluated once however it is reached, and every unsupported form fails closed
+ *  10. CSS references and srcset: stylesheets and inline styles name files by url() and @import,
+ *      srcset by candidate; a reference cycle and every unmatched reference fail closed
  */
 
-// The listener outside the browser for the egress tests (sections 4 and 9, backlog T5).
+// The listener outside the browser for the egress tests (sections 4, 9 and 10, backlog T5).
 const recorder = useRecorder();
 
 // The NOT_FOUND refusal exactly as guest code sees it: a plain Error with an own code, and a message
@@ -836,5 +838,268 @@ test.describe('9. module graph: relative imports between registered modules reso
             };
         `);
         expect(r).toEqual({ scope: 'worker', classic: 'ran', leaf: 'b', graph: 'error:TypeError', registered: main });
+    });
+});
+
+test.describe('10. CSS references and srcset: stylesheets and inline styles name files by url() and @import, srcset by candidate (iframe mode)', () => {
+    const FONT = { base64: FONT_WOFF2_B64 };
+    const SVG = (w: number, h: number) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"></svg>`;
+
+    // Measured per engine (2026-10-13), like the blob delivery probe: a <link> whose sheet has an @import
+    // that names nothing (a relative URL left as written cannot resolve against a blob: base) fires
+    // 'error' in Chromium and WebKit and 'load' in Firefox; the sheet's own rules apply in all three. An
+    // <img> whose only srcset candidate cannot resolve fires 'error' in Chromium and WebKit and no event
+    // in Firefox. Either way nothing loads and nothing is requested. What such an @import rule exposes
+    // as its sheet differs too: a sheet whose rules are unreadable (Chromium), an empty sheet (Firefox),
+    // no sheet (WebKit).
+    const UNRESOLVED_IMPORT_EVENT = { chromium: 'error', firefox: 'load', webkit: 'error' } as const;
+    const UNRESOLVED_IMPORT_SHEET = { chromium: 'SecurityError', firefox: 0, webkit: 'none' } as const;
+    const UNRESOLVED_SRCSET_EVENT = { chromium: 'error', firefox: undefined, webkit: 'error' } as const;
+
+    // Collects violations and the load/error event of every element that has an id, from the first
+    // parsed script on: the evidence channels of this section (T5).
+    const PRELUDE = `<script>
+            window.__v = []; window.__events = {};
+            addEventListener('securitypolicyviolation', e => __v.push(e.effectiveDirective + ' ' + e.blockedURI));
+            // on the document: a load event never propagates to the window (DOM, "get the parent")
+            document.addEventListener('load', e => { if (e.target.id) __events[e.target.id] = 'load'; }, true);
+            document.addEventListener('error', e => { if (e.target.id) __events[e.target.id] = 'error'; }, true);
+        </script>`;
+    // Guest helpers: the document has loaded (every <link>, @import and <img> settled), a face's load outcome.
+    const LOADED = `
+        if (document.readyState !== 'complete') await new Promise(res => addEventListener('load', res, { once: true }));
+        const face = async (family) => {
+            await document.fonts.load('16px ' + family).catch(() => {});
+            const f = [...document.fonts].find(f => f.family.replace(/["']/g, '') === family);
+            return f ? f.status : 'missing';
+        };
+        const cssUrl = (path) => 'url("' + sandboxFiles.url(path) + '")';
+        // What an @import rule's sheet exposes: its rule count, 'none' without a sheet, 'unreadable' when
+        // the engine refuses access (Chromium, for an import whose URL did not resolve).
+        const imported = (rule) => { if (!rule.styleSheet) return 'none'; try { return rule.styleSheet.cssRules.length; } catch (e) { return e.name; } };
+        const settle = async (expected) => {
+            for (let i = 0; i < 100 && !expected.every(x => __v.includes(x)); i++) await new Promise(res => setTimeout(res, 50));
+            await new Promise(res => setTimeout(res, 300)); // violation events are queued as tasks
+            return [...new Set(__v)].sort();
+        };
+    `;
+
+    test('a registered stylesheet linked from markup loads the image and the font its url() references name, by ../ and quoted paths; read() keeps the bytes as registered; no violation', async ({ sandbox }) => {
+        const SITE = [
+            '@font-face { font-family: sitefont; src: url("../fonts/f.woff2") format("woff2"), local("No Such Font"); }',
+            '/* url(../img/commented.svg) */',
+            '#probe { background-image: url( ../img/bg.svg ); content: "../img/bg.svg"; }',
+        ].join('\n');
+        expect(await sandbox.registerFiles({ 'css/site.css': SITE, 'fonts/f.woff2': FONT, 'img/bg.svg': SVG(7, 9) })).toBe('ok');
+        expect(await sandbox.mount({ html: `${PRELUDE}<link id="l" rel="stylesheet" href="css/site.css"><div id="probe"></div>` })).toBe('ready');
+        const r = await inGuest(sandbox, `${LOADED}
+            const rules = document.getElementById('l').sheet.cssRules;
+            const background = rules[1].style.backgroundImage;
+            const image = await new Promise(res => { const i = new Image(); i.onload = () => res(i.naturalWidth + 'x' + i.naturalHeight); i.onerror = () => res('error'); i.src = background.slice(5, -2); });
+            return {
+                link: __events.l,
+                background: background === cssUrl('img/bg.svg'),
+                image,
+                fontSrc: rules[0].style.getPropertyValue('src').includes(sandboxFiles.url('fonts/f.woff2')),
+                font: await face('sitefont'),
+                registered: await sandboxFiles.text('css/site.css'),
+                delivered: await (await fetch(sandboxFiles.url('css/site.css'))).text(),
+                expected: ${JSON.stringify(SITE)}.replace('"../fonts/f.woff2"', JSON.stringify(sandboxFiles.url('fonts/f.woff2'))).replace(' ../img/bg.svg ', JSON.stringify(sandboxFiles.url('img/bg.svg'))),
+                violations: await settle([]),
+            };
+        `);
+        expect(r).toEqual({
+            link: 'load', background: true, image: '7x9', fontSrc: true, font: 'loaded',
+            registered: SITE, delivered: r.expected, expected: r.expected, violations: [],
+        });
+        // what the comment and the string said is not a reference: left as written
+        expect(r.delivered).toContain('/* url(../img/commented.svg) */');
+        expect(r.delivered).toContain('content: "../img/bg.svg"');
+    });
+
+    test('an @import chain two levels deep applies every level: each stylesheet is made after the ones it imports', async ({ sandbox }) => {
+        expect(await sandbox.registerFiles({
+            'theme/main.css': '@import "parts/base.css";\n#a { width: 11px; }',
+            'theme/parts/base.css': '@import url(../../shared/reset.css);\n#b { width: 12px; }',
+            'shared/reset.css': '#c { width: 13px; }',
+        })).toBe('ok');
+        expect(await sandbox.mount({ html: `${PRELUDE}<link id="l" rel="stylesheet" href="theme/main.css">` })).toBe('ready');
+        const r = await inGuest(sandbox, `${LOADED}
+            const main = document.getElementById('l').sheet;
+            const base = main.cssRules[0].styleSheet;
+            const reset = base && base.cssRules[0].styleSheet;
+            return {
+                link: __events.l,
+                hrefs: [main.cssRules[0].href === sandboxFiles.url('theme/parts/base.css'), base.cssRules[0].href === sandboxFiles.url('shared/reset.css')],
+                widths: [main.cssRules[1].style.width, base.cssRules[1].style.width, reset && reset.cssRules[0].style.width],
+                violations: await settle([]),
+            };
+        `);
+        expect(r).toEqual({ link: 'load', hrefs: [true, true], widths: ['11px', '12px', '13px'], violations: [] });
+    });
+
+    test('an @import cycle fails closed without hanging: the references on the cycle stay as written and load nothing, every other rule and import applies, and the page stays responsive', async ({ sandbox, browserName }) => {
+        const A = '@import "b.css";\n@import "../leaf.css";\n#ca { width: 21px; }';
+        const B = '@import "a.css";\n#cb { width: 22px; }';
+        const SELF = '@import "self.css";\n#cs { width: 24px; }';
+        expect(await sandbox.registerFiles({ 'cycle/a.css': A, 'cycle/b.css': B, 'leaf.css': '#leaf { width: 23px; }', 'self.css': SELF })).toBe('ok');
+        const boxes = ['ca', 'cb', 'cs', 'leaf'].map(id => `<div id="${id}"></div>`).join('');
+        expect(await sandbox.mount({ html: `${PRELUDE}<link id="la" rel="stylesheet" href="cycle/a.css"><link id="lb" rel="stylesheet" href="cycle/b.css"><link id="ls" rel="stylesheet" href="self.css">${boxes}` })).toBe('ready');
+        const r = await inGuest(sandbox, `${LOADED}
+            const sheet = (id) => document.getElementById(id).sheet;
+            // an import left as written keeps its href, and names nothing in a blob: stylesheet
+            const empty = (rule, href) => rule.href === href && imported(rule) === ${JSON.stringify(UNRESOLVED_IMPORT_SHEET[browserName])} ? true : { href: rule.href, imported: imported(rule) };
+            const a = sheet('la'), b = sheet('lb'), s = sheet('ls');
+            const delivered = async (path) => (await fetch(sandboxFiles.url(path))).text();
+            const started = performance.now();
+            await new Promise(res => setTimeout(res, 0));
+            return {
+                events: __events,
+                a: { cyclic: empty(a.cssRules[0], 'b.css'), leaf: a.cssRules[1].styleSheet.cssRules[0].style.width, own: a.cssRules[2].style.width },
+                b: { cyclic: empty(b.cssRules[0], 'a.css'), own: b.cssRules[1].style.width },
+                self: { cyclic: empty(s.cssRules[0], 'self.css'), own: s.cssRules[1].style.width },
+                // applied, not only parsed: read once the document has loaded (section 8)
+                applied: ['ca', 'cb', 'cs', 'leaf'].map(id => getComputedStyle(document.getElementById(id)).width),
+                delivered: { a: await delivered('cycle/a.css'), b: await delivered('cycle/b.css'), self: await delivered('self.css') },
+                leafUrl: sandboxFiles.url('leaf.css'),
+                responsive: performance.now() - started < 5000,
+                violations: await settle([]),
+            };
+        `);
+        const event = UNRESOLVED_IMPORT_EVENT[browserName];
+        expect(r.events).toEqual({ la: event, lb: event, ls: event });
+        expect(r.applied).toEqual(['21px', '22px', '24px', '23px']);
+        expect(r.a).toEqual({ cyclic: true, leaf: '23px', own: '21px' });
+        expect(r.b).toEqual({ cyclic: true, own: '22px' });
+        expect(r.self).toEqual({ cyclic: true, own: '24px' });
+        // the references on the cycle are delivered as registered; the one off the cycle is a blob: URL
+        expect(r.delivered).toEqual({ a: A.replace('"../leaf.css"', JSON.stringify(r.leafUrl)), b: B, self: SELF });
+        expect(r.responsive).toBe(true);
+        expect(r.violations).toEqual([]);
+    });
+
+    test('inline <style> and style="" in guest markup name files by url() and @import, resolved against the virtual index.html', async ({ sandbox }) => {
+        expect(await sandbox.registerFiles({ 'img/bg.svg': SVG(7, 9), 'fonts/f.woff2': FONT, 'shared/reset.css': '#c { width: 13px; }' })).toBe('ok');
+        const html = `${PRELUDE}<style id="s">@import "./shared/reset.css";
+                @font-face { font-family: inlinefont; src: url('/fonts/f.woff2'); }
+                #i1 { background-image: url(img/bg.svg); }</style>
+            <div id="i1"></div><div id="i2" style="background-image: url(img/bg.svg); width: 3px"></div>`;
+        expect(await sandbox.mount({ html })).toBe('ready');
+        const r = await inGuest(sandbox, `${LOADED}
+            const rules = document.getElementById('s').sheet.cssRules;
+            const i2 = document.getElementById('i2');
+            return {
+                imported: rules[0].href === sandboxFiles.url('shared/reset.css') && rules[0].styleSheet.cssRules[0].style.width,
+                font: await face('inlinefont'),
+                rule: rules[2].style.backgroundImage === cssUrl('img/bg.svg'),
+                attribute: i2.style.backgroundImage === cssUrl('img/bg.svg') && i2.style.width,
+                stray: document.documentElement.outerHTML.includes('vfs-slot-'),
+                violations: await settle([]),
+            };
+        `);
+        expect(r).toEqual({ imported: '13px', font: 'loaded', rule: true, attribute: '3px', stray: false, violations: [] });
+    });
+
+    test('srcset on img and picture source: a candidate that names a file loads from its blob: URL; one that names none stays as written', async ({ sandbox, browserName }) => {
+        expect(await sandbox.registerFiles({ 'img/bg.svg': SVG(7, 9), 'img/x.svg': SVG(5, 3) })).toBe('ok');
+        // one candidate each, so the choice does not depend on the device pixel ratio
+        const html = `${PRELUDE}<img id="s1" srcset="img/bg.svg 1x">
+            <picture><source id="src" srcset="./img/x.svg" type="image/svg+xml"><img id="s2" src="missing.svg"></picture>
+            <img id="s3" srcset="missing.svg 1x, img/bg.svg?v=2 2x">`;
+        expect(await sandbox.mount({ html })).toBe('ready');
+        const r = await inGuest(sandbox, `${LOADED}
+            const img = (id) => { const i = document.getElementById(id); return { event: __events[id], current: i.currentSrc, size: i.naturalWidth + 'x' + i.naturalHeight }; };
+            return {
+                s1: img('s1'), s2: img('s2'), s3: { ...img('s3'), srcset: document.getElementById('s3').getAttribute('srcset') },
+                urls: { bg: sandboxFiles.url('img/bg.svg'), x: sandboxFiles.url('img/x.svg') },
+                violations: await settle([]),
+            };
+        `);
+        expect(r.s1).toEqual({ event: 'load', current: r.urls.bg, size: '7x9' });
+        expect(r.s2).toEqual({ event: 'load', current: r.urls.x, size: '5x3' });
+        // the document's load event waits for every image, so 0x0 after it means the load failed
+        expect(r.s3.event).toBe(UNRESOLVED_SRCSET_EVENT[browserName]);
+        expect(r.s3).toMatchObject({ size: '0x0', srcset: 'missing.svg 1x, img/bg.svg?v=2 2x' });
+        expect(r.violations).toEqual([]);
+    });
+
+    test('unregistered, queried and differently spelled references in a stylesheet, an inline style and srcset fail closed: left as written, nothing loads, and no request is made', async ({ sandbox, browserName }) => {
+        const BLOCKED = recorder.blocked;
+        const MISSES = ['missing.svg', 'logo.svg?v=1', 'logo.svg#f', 'LOGO.SVG', '%6Cogo.svg'];
+        const rules = (prefix: string, control: string) => [
+            ...MISSES.map((url, i) => `#${prefix}${i} { background-image: url(${JSON.stringify(url)}); }`),
+            `#${prefix}ok { background-image: url(logo.svg); }`,
+            // positive control for the violation channel: the same kind of load, to a refused origin
+            `#${prefix}control { background-image: url(${control}); }`,
+        ].join('\n');
+        const SHEET = `@import "missing.css";\n${rules('f', `${BLOCKED}/sheet.svg`)}`;
+        expect(await sandbox.registerFiles({ 'logo.svg': SVG(7, 9), 'fc.css': SHEET })).toBe('ok');
+        const boxes = (prefix: string) => [...MISSES.map((_, i) => `${prefix}${i}`), `${prefix}ok`, `${prefix}control`]
+            .map(id => `<div id="${id}" style="width: 10px; height: 10px"></div>`).join('');
+        const html = `${PRELUDE}<link id="l" rel="stylesheet" href="fc.css">
+            <style id="s">${rules('n', `${BLOCKED}/inline.svg`)}</style>
+            ${boxes('f')}${boxes('n')}
+            ${MISSES.map((url, i) => `<div id="a${i}" style="width: 10px; height: 10px; background-image: url('${url}')"></div>`).join('')}
+            <img id="srcset" srcset="missing.svg 1x">`;
+        expect(await sandbox.mount({ html })).toBe('ready');
+        const r = await inGuest(sandbox, `${LOADED}
+            const sheetRules = document.getElementById('l').sheet.cssRules;
+            const inlineRules = document.getElementById('s').sheet.cssRules;
+            const misses = ${JSON.stringify(MISSES)};
+            return {
+                link: __events.l,
+                srcset: __events.srcset,
+                // the import is left as written and names nothing; the rest of the sheet applies
+                importLoaded: sheetRules[0].href !== 'missing.css' || imported(sheetRules[0]) !== ${JSON.stringify(UNRESOLVED_IMPORT_SHEET[browserName])},
+                // positive control for the outcome channel: the matched reference names the file's blob: URL
+                ok: [sheetRules[1 + misses.length].style.backgroundImage === cssUrl('logo.svg'), inlineRules[misses.length].style.backgroundImage === cssUrl('logo.svg')],
+                written: misses.every((url, i) => !sheetRules[1 + i].style.backgroundImage.includes('blob:')
+                    && !inlineRules[i].style.backgroundImage.includes('blob:')
+                    && !document.getElementById('a' + i).style.backgroundImage.includes('blob:')),
+                violations: await settle(['img-src ${BLOCKED}/sheet.svg', 'img-src ${BLOCKED}/inline.svg']),
+            };
+        `);
+        expect(r).toEqual({
+            link: UNRESOLVED_IMPORT_EVENT[browserName],
+            srcset: UNRESOLVED_SRCSET_EVENT[browserName],
+            importLoaded: false,
+            ok: [true, true],
+            written: true,
+            // Only the controls. The policy admits only blob: for images, so a request for any other URL
+            // would have been refused with a violation like theirs: the misses never resolved to a URL.
+            violations: [`img-src ${BLOCKED}/inline.svg`, `img-src ${BLOCKED}/sheet.svg`],
+        });
+        expect(recorder.paths('blocked')).toEqual([]);
+    });
+
+    test('a rewritten stylesheet adds no egress: its loads to a non-allowlisted origin are refused AND reported, while its own references load (T5)', async ({ sandbox }) => {
+        const BLOCKED = recorder.blocked;
+        expect(await sandbox.registerFiles({
+            'egress/sheet.css': [
+                '@font-face { font-family: own; src: url(../fonts/f.woff2); }',
+                `@font-face { font-family: away; src: url(${BLOCKED}/f.woff2); }`,
+                `#e1 { width: 10px; height: 10px; background-image: url(${BLOCKED}/e.svg); }`,
+                '#e2 { width: 10px; height: 10px; background-image: url(../img/bg.svg); }',
+            ].join('\n'),
+            'egress/import.css': `@import url(${BLOCKED}/i.css);\n@import "../shared/reset.css";`,
+            'shared/reset.css': '#c { width: 13px; }',
+            'fonts/f.woff2': FONT,
+            'img/bg.svg': SVG(7, 9),
+        })).toBe('ok');
+        expect(await sandbox.mount({ html: `${PRELUDE}<link id="sheet" rel="stylesheet" href="egress/sheet.css"><link id="import" rel="stylesheet" href="egress/import.css"><div id="e1"></div><div id="e2"></div>` })).toBe('ready');
+        const r = await inGuest(sandbox, `${LOADED}
+            return {
+                events: __events,
+                // outcome channel: the sheet's own font loads (positive control), the refused one does not
+                fonts: { own: await face('own'), away: await face('away') },
+                violations: await settle(['font-src ${BLOCKED}/f.woff2', 'img-src ${BLOCKED}/e.svg', 'style-src-elem ${BLOCKED}/i.css']),
+            };
+        `);
+        // a refused @import fails its whole sheet (an error event) in all three engines, as in section 4
+        expect(r.events).toEqual({ sheet: 'load', import: 'error' });
+        expect(r.fonts).toEqual({ own: 'loaded', away: 'error' });
+        // every refusal has its violation, so a request that left and merely failed would show up here
+        expect(r.violations).toEqual([`font-src ${BLOCKED}/f.woff2`, `img-src ${BLOCKED}/e.svg`, `style-src-elem ${BLOCKED}/i.css`]);
+        expect(recorder.paths('blocked')).toEqual([]);
     });
 });

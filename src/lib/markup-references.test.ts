@@ -1,11 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createSlotNonce, inlineScriptsAllowed, resolveReference, rewriteGuestMarkup, rewriteMarkupReferences, VIRTUAL_DOCUMENT_URL } from './markup-references';
+import { createSlotNonce, inlineScriptsAllowed, resolveReference, rewriteGuestMarkup, rewriteMarkupReferences, VIRTUAL_DOCUMENT_URL, type MarkupParts } from './markup-references';
 
 const NONCE = '0123456789abcdef0123456789abcdef';
 const PATHS = new Set(['logo.svg', 'img/x.svg', 'app.js', 'style.css', 'clip.mp4', 'subs.vtt', 'poster.png', 'mod/main.js', 'icon.ico', 'font.woff2', 'index.html']);
 
 // Joins parts the way the guest bootstrap does, with a recognisable URL per path.
-const join = (parts: string[]) => parts.map((part, i) => (i % 2 === 0 ? part : `blob:null/${part}`)).join('');
+// A CSS slot gets the URL as the bootstrap would put it into a CSS string (no character to escape here).
+const join = (parts: MarkupParts) => parts.map((part, i) => (i % 2 === 0 ? part : `blob:null/${typeof part === 'string' ? part : part[0]}`)).join('');
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
 
 describe('resolveReference: resolved against the virtual index.html, then matched exactly', () => {
@@ -104,8 +105,9 @@ describe('rewriteMarkupReferences: which attributes become slots', () => {
     it.each([
         ['a link that loads nothing', '<link rel="canonical" href="logo.svg"><link rel="next" href="logo.svg"><link href="style.css">'],
         ['an anchor, a form, a frame, an embed, an object, an input', '<a href="logo.svg">x</a><form action="app.js"></form><iframe src="index.html"></iframe><embed src="logo.svg"><object data="logo.svg"></object><input type="image" src="logo.svg">'],
-        ['srcset (PR4)', '<img srcset="logo.svg 1x"><picture><source srcset="logo.svg"></picture>'],
-        ['CSS url() (PR4)', '<style>body { background: url(logo.svg) }</style><div style="background: url(logo.svg)"></div>'],
+        ['srcset and CSS that name no file', '<img srcset="missing.svg 1x, logo.svg?v=1 2x"><style>body { background: url(missing.svg) }</style><div style="background: url(https://cdn.example/logo.svg)"></div>'],
+        ['srcset and CSS on SVG elements', '<svg><style>a { fill: url(logo.svg) }</style><image style="background: url(logo.svg)"></image></svg>'],
+        ['imagesrcset on a preload link', '<link rel="preload" as="image" imagesrcset="logo.svg 1x">'],
         ['an import inside an inline module (references only: the module graph rewrites it, below)', '<script type="module">import "./app.js";</script>'],
         ['inside <template>', '<template><img src="logo.svg"><script src="app.js"></script></template>'],
         ['SVG elements', '<svg><script src="app.js"></script><image href="logo.svg"></image><video src="clip.mp4"></video></svg>'],
@@ -134,10 +136,10 @@ describe('rewriteMarkupReferences: parts and sentinels', () => {
         expect(parts).toHaveLength(5);
         expect(parts[1]).toBe('logo.svg');
         expect(parts[3]).toBe('app.js');
-        expect(parts[0]!.endsWith('<img src="')).toBe(true);
-        expect(parts[2]!.startsWith('">')).toBe(true);
+        expect((parts[0] as string).endsWith('<img src="')).toBe(true);
+        expect((parts[2] as string).startsWith('">')).toBe(true);
         expect(parts[2]).toContain('<p>between</p>');
-        expect(parts[4]!.startsWith('"></script>')).toBe(true);
+        expect((parts[4] as string).startsWith('"></script>')).toBe(true);
     });
 
     it('leaves no sentinel and no nonce in the parts', () => {
@@ -179,8 +181,8 @@ describe('rewriteMarkupReferences: parts and sentinels', () => {
     it('slots sit in double-quoted attribute values, whatever quoting the markup used', () => {
         for (const markup of [`<img src=logo.svg>`, `<img src='logo.svg'>`, `<img src="logo.svg">`, `<img\nsrc = "logo.svg" >`]) {
             const parts = rewriteMarkupReferences(markup, PATHS, NONCE)!;
-            expect(parts[0]!.endsWith('src="')).toBe(true);
-            expect(parts[2]!.startsWith('"')).toBe(true);
+            expect((parts[0] as string).endsWith('src="')).toBe(true);
+            expect((parts[2] as string).startsWith('"')).toBe(true);
         }
     });
 });
@@ -245,7 +247,7 @@ describe('rewriteGuestMarkup with the module graph on (PR3): inline modules and 
         const { parts, importMaps } = rewriteGuestMarkup(html, PATHS, MODULES);
         expect(importMaps).toEqual([]);
         expect(parts).toHaveLength(1);
-        const script = parse(parts![0]!).querySelector('script')!;
+        const script = parse(parts![0] as string).querySelector('script')!;
         expect(script.textContent).toBe(`import { a } from ${v('mod/main.js')}; import(${v('app.js')}); import x from 'lodash';`);
         expect(parts![0]).not.toContain('vfs-slot');
     });
@@ -264,7 +266,7 @@ describe('rewriteGuestMarkup with the module graph on (PR3): inline modules and 
             expect(parts).toBeNull();
             return;
         }
-        expect(parse(parts![0]!).querySelector('script')!.textContent).toBe(`import ${v('app.js')};`);
+        expect(parse(parts![0] as string).querySelector('script')!.textContent).toBe(`import ${v('app.js')};`);
     });
 
     it('leaves alone: a module script with src (a markup reference, with a slot), module text inside <template>, SVG scripts, and every change when modules are off', () => {
@@ -285,7 +287,7 @@ describe('rewriteGuestMarkup with the module graph on (PR3): inline modules and 
         const html = `<head><script type="importmap">{"imports":{"a":"https://a.example/a.js"}}</script></head><body><p>x</p><script type=" ImportMap ">not json</script><script type="importmap" src="https://x.example/map.json"></script></body>`;
         const { parts, importMaps } = rewriteGuestMarkup(html, PATHS, MODULES);
         expect(importMaps).toEqual(['{"imports":{"a":"https://a.example/a.js"}}', 'not json']);
-        const doc = parse(parts![0]!);
+        const doc = parse(parts![0] as string);
         expect([...doc.querySelectorAll('script')].map(s => s.getAttribute('src'))).toEqual(['https://x.example/map.json']);
         expect(doc.body.querySelector('p')!.textContent).toBe('x');
     });
@@ -309,16 +311,81 @@ describe('rewriteGuestMarkup with the module graph on (PR3): inline modules and 
         const html = `<script type="module">import './app.js';</script><script type="module">import {</script>`;
         const { parts } = rewriteGuestMarkup(html, PATHS, { modules: true, onModuleFailure });
         expect(onModuleFailure.mock.calls).toEqual([[1]]);
-        const scripts = [...parse(parts![0]!).querySelectorAll('script')].map(s => s.textContent);
+        const scripts = [...parse(parts![0] as string).querySelectorAll('script')].map(s => s.textContent);
         expect(scripts).toEqual([`import ${v('app.js')};`, 'import {']);
     });
 
     it("re-serialised markup keeps the script's extent: no rewritten text can close it or open a comment", () => {
         const html = `<script type="module">import './a.js'; const s = "</scr" + "ipt>"; /* <!-- */ import('./b.js');</script><p id="after">after</p>`;
         const { parts } = rewriteGuestMarkup(html, PATHS, MODULES);
-        const doc = parse(parts![0]!);
+        const doc = parse(parts![0] as string);
         expect(doc.querySelectorAll('script')).toHaveLength(1);
         expect(doc.querySelector('script')!.textContent).toBe(`import ${v('a.js')}; const s = "</scr" + "ipt>"; /* <!-- */ import(${v('b.js')});`);
         expect(doc.getElementById('after')!.textContent).toBe('after');
+    });
+});
+
+describe('srcset and CSS in guest markup (PR4)', () => {
+    const slotsOf = (parts: MarkupParts) => parts.filter((_, i) => i % 2 === 1);
+
+    it('srcset of img and source: each candidate that names a file gets a slot, every other candidate and every descriptor stays as written', () => {
+        const html = '<img srcset="logo.svg 1x, missing.svg 2x, ./img/x.svg 3x"><picture><source srcset="/img/x.svg 100w, logo.svg?v=1 200w" type="image/svg+xml"><img src="logo.svg"></picture>';
+        const parts = rewriteMarkupReferences(html, PATHS, NONCE)!;
+        expect(slotsOf(parts)).toEqual(['logo.svg', 'img/x.svg', 'img/x.svg', 'logo.svg']);
+        const doc = parse(join(parts));
+        expect(doc.querySelector('img')!.getAttribute('srcset')).toBe('blob:null/logo.svg 1x, missing.svg 2x, blob:null/img/x.svg 3x');
+        expect(doc.querySelector('source')!.getAttribute('srcset')).toBe('blob:null/img/x.svg 100w, logo.svg?v=1 200w');
+    });
+
+    it('a comma inside a srcset URL belongs to it (no match); trailing commas stay', () => {
+        const parts = rewriteMarkupReferences('<img srcset="logo.svg,, logo.svg,x 2x">', PATHS, NONCE)!;
+        expect(slotsOf(parts)).toEqual(['logo.svg']);
+        expect(parse(join(parts)).querySelector('img')!.getAttribute('srcset')).toBe('blob:null/logo.svg,, logo.svg,x 2x');
+    });
+
+    it('<style>: url() and @import that name a file become CSS strings holding a sentinel, with a "css" slot; comments, strings and misses stay', () => {
+        const css = '@import "style.css"; @import url(missing.css); p { background: url( img/x.svg ) } /* url(logo.svg) */ q::after { content: "logo.svg" } r { b: url(logo.svg#f) }';
+        const parts = rewriteMarkupReferences(`<style>${css}</style><p>x</p>`, PATHS, NONCE)!;
+        expect(slotsOf(parts)).toEqual([['style.css', 'css'], ['img/x.svg', 'css']]);
+        expect(parts[0]).toMatch(/<style>@import "$/);
+        expect(parse(join(parts)).querySelector('style')!.textContent).toBe(
+            '@import "blob:null/style.css"; @import url(missing.css); p { background: url("blob:null/img/x.svg") } /* url(logo.svg) */ q::after { content: "logo.svg" } r { b: url(logo.svg#f) }');
+    });
+
+    it('style="": its declarations get "css-attribute" slots, the sentinel inside a CSS string inside the double-quoted attribute', () => {
+        const parts = rewriteMarkupReferences(`<div style='background: url(logo.svg); mask: image-set("img/x.svg" 1x); --x: "logo.svg"'></div>`, PATHS, NONCE)!;
+        expect(slotsOf(parts)).toEqual([['logo.svg', 'css-attribute'], ['img/x.svg', 'css-attribute']]);
+        expect(parts[0]).toMatch(/style="background: url\(&quot;$/);
+        expect(parse(join(parts)).querySelector('div')!.getAttribute('style')).toBe('background: url("blob:null/logo.svg"); mask: image-set("blob:null/img/x.svg" 1x); --x: "logo.svg"');
+    });
+
+    it('resolves against the virtual index.html, like every markup reference', () => {
+        const parts = rewriteMarkupReferences('<style>a { b: url(../../img/x.svg) } c { d: url(https://vfs.invalid/logo.svg) } e { f: url(//vfs.invalid/logo.svg) }</style>', PATHS, NONCE)!;
+        expect(slotsOf(parts).map(slot => (slot as [string, string])[0])).toEqual(['img/x.svg', 'logo.svg', 'logo.svg']);
+    });
+
+    it('leaves alone: SVG <style> and SVG style attributes, <template> contents, imagesrcset, data: and other origins', () => {
+        const html = '<svg><style>a { fill: url(logo.svg) }</style><rect style="fill: url(logo.svg)"/></svg><template><style>a { b: url(logo.svg) }</style><img srcset="logo.svg"></template><link rel="preload" as="image" imagesrcset="logo.svg 1x"><p style="background: url(data:image/svg+xml,x) , url(https://cdn.example/logo.svg)"></p>';
+        expect(rewriteMarkupReferences(html, PATHS, NONCE)).toBeNull();
+    });
+
+    it('a reference whose source text holds "<" or ">" can never name a file (the URL parser percent-encodes them), so no rewrite can move the end of a <style>', () => {
+        expect(rewriteMarkupReferences('<style>a { b: url("logo.svg<") } c { d: url(logo\\3c .svg) } e { f: url(">logo.svg") }</style>', PATHS, NONCE)).toBeNull();
+    });
+
+    it('re-serialised markup keeps the <style> extent and every element after it', () => {
+        const html = '<style>a { b: url(logo.svg) } /* </p><script>alert(1)</script> */ c { d: "<!--" }</style><p id="after">after</p>';
+        const parts = rewriteMarkupReferences(html, PATHS, NONCE)!;
+        const doc = parse(join(parts));
+        expect(doc.querySelectorAll('style')).toHaveLength(1);
+        expect(doc.querySelectorAll('script')).toHaveLength(0);
+        expect(doc.querySelector('style')!.textContent).toBe('a { b: url("blob:null/logo.svg") } /* </p><script>alert(1)</script> */ c { d: "<!--" }');
+        expect(doc.getElementById('after')!.textContent).toBe('after');
+    });
+
+    it('slots of every kind share one nonce and one index sequence, in document order of the parse', () => {
+        const parts = rewriteMarkupReferences('<img src="logo.svg"><img srcset="img/x.svg"><style>a{b:url(logo.svg)}</style><i style="b:url(img/x.svg)"></i>', PATHS, NONCE)!;
+        expect(slotsOf(parts)).toEqual(['logo.svg', 'img/x.svg', ['logo.svg', 'css'], ['img/x.svg', 'css-attribute']]);
+        expect(parts.join('')).not.toContain(NONCE);
     });
 });

@@ -6,7 +6,7 @@ import { dropMetaIgnoredDirectives } from "./lib/csp/drop-meta-ignored";
 import { addFileSources } from "./lib/csp/file-sources";
 import { FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
-import { inlineScriptsAllowed, rewriteGuestMarkup } from "./lib/markup-references";
+import { inlineScriptsAllowed, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { deepMerge } from "./lib/utils";
 import { inSandboxScript } from "./lib/in-sandbox-script";
@@ -76,7 +76,7 @@ const RESET_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was reset or 
 // What the bootstrap writes and registers for one build's guest markup (iframe mode).
 interface GuestMarkupPlan {
     // the markup cut into parts for the bootstrap to write (markup-references.ts), or null to embed it as written
-    parts: string[] | null;
+    parts: MarkupParts | null;
     // the one import map (module graph, PR3): every registered JavaScript file, plus the guest's own
     // inline maps merged (import-map.ts), or null when no JavaScript file is registered
     importMap: { paths: string[]; guest: string | null } | null;
