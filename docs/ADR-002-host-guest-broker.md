@@ -1,6 +1,6 @@
 # ADR-002: How should host and guest call each other?
 
-**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes))
+**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes)), 2026-10-13 ([strict mode renders bypass the host](#amendment-2026-10-13-strict-mode-renders-bypass-the-host))
 
 ## Why this ADR exists
 
@@ -159,3 +159,29 @@ code is still `HANDLER_ERROR`. The calling side accepts a library code only for 
 and only when created with `acceptLibraryCodes`, which only the guest's broker is. So on the host every
 response is clamped exactly as the B7 amendment says, and nothing the guest sends can produce a library
 code there. Proof: `src/lib/rpc.test.ts` ("reserved methods and library codes").
+
+## Amendment (2026-10-13): strict mode renders bypass the host
+
+**When**: backlog S6, strict mode ([ADR-005](ADR-005-strict-mode.md)). The table above expected strict mode's
+render updates to be "applied by the host to the frame" over the broker. **Decision**: they are not. Renders
+travel on a third port, the *render port*, directly from the worker to the view; the host is not on the path.
+
+- **Why not through the host.** The host would have to hold, validate and re-post every render, and in
+  Firefox and WebKit, where the view shares the host page's thread, every byte would then cost the host twice.
+  The view has the document and an inert parser of its own; it validates each frame itself (`VIEW_RENDER`:
+  html at most 256 Ki characters, a target id or null) and is the only party that can apply it.
+- **Why not through the broker.** A render is fire-and-forget, latest-wins and flow-controlled (one in
+  flight, released by the view's `VIEW_ACK`); a call is request/response with a timeout and a pending entry.
+  Events (`VIEW_EVENT`) flow the other way, to handlers registered with `sandboxView.on()`, not to exposed
+  methods. Neither fits the broker's registry or correlation.
+- **Who holds which port.** The logic port (host ↔ worker) carries the broker exactly as in worker mode:
+  `call()`, `expose()`, the reserved `sandbox:fetch`, logs, the watchdog and the worker's violation reports.
+  The view port (host ↔ view) carries only the library's own frames: the view's violations, its height, an
+  entry failure, its liveness answers. The render port (view ↔ worker) is created by the view and kept by the
+  worker's library prelude in a closure, used only through primitives captured before guest code ran, so guest
+  code cannot post on it and cannot bypass the flow control. Each port belongs to one environment and is
+  closed with it; answers still go back on the port the request arrived on.
+
+Proof: `test/e2e/strict.spec.ts` ("the render port is out of guest reach"), `strict-render-flood.spec.ts`,
+and the strict cases of `test/e2e/broker.spec.ts`, which runs the whole broker suite in strict mode too.
+

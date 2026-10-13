@@ -50,3 +50,4 @@ Measurements taken before building a planned design, each backed by an e2e spec.
 | Probe | Question | Result |
 | :--- | :--- | :--- |
 | [Blob-URL file delivery (δ)](blob-delivery-probe.md) | Can guest-created blob: URLs plus an import map replace the virtual-files Service Worker? | Viable with changes: `blob:` in five directives, rewrite relative specifiers, one import map before any module. Also found the `script-src 'self'` egress route fixed by S14. Adopted: [ADR-004](../ADR-004-files-as-blob-urls.md) |
+| [Strict mode (15)](15_strict_mode/README.md) | Does the strict-mode design hold, measured before building it (P1–P8)? | Holds with nine amendments (A1–A9): no nested frames, move never clone, hash the parsed text, render flow control, a view liveness check, worker hardening. Found S18 (WebKit same-site Referer). Adopted: [ADR-005](../ADR-005-strict-mode.md) |

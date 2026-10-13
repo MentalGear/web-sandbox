@@ -10,7 +10,8 @@
  * process from the host — worker mode on every browser, and iframe mode where the browser puts the
  * sandboxed frame in its own process (browser policy: Chromium often does, not in every environment). What it cannot: where the frame shares
  * the host's thread, a guest loop blocks these timers too, so nothing here runs until the guest yields.
- * That is a platform limit; strict mode (S6, still open) addresses it. It is a liveness check, not a
+ * That is a platform limit; strict mode (ADR-005) avoids it by running guest code only in a worker, which
+ * this watchdog watches there on every browser. It is a liveness check, not a
  * security boundary: a guest that answers pings is merely alive, and the host keeps explicit control
  * through terminate().
  *

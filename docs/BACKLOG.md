@@ -28,7 +28,8 @@ conditional "continue".
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
 | Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3); `violation` for refused loads, capped per environment (S5) |
 | Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
-| Execution budget | 🟡 opt-in liveness watchdog in default mode: bounded in worker mode and out-of-process frames, not where the frame shares the host's thread; strict mode open (S6) |
+| Execution budget | ✅ strict mode bounds guest logic on every engine: it runs only in a worker the watchdog stops (S6, [ADR-005](ADR-005-strict-mode.md)); default mode: opt-in watchdog, bounded in worker mode and out-of-process frames, not where the frame shares the host's thread |
+| Strict mode | ✅ opt-in `mode: 'strict'`: guest code only in a worker, a view running only the hash-admitted library bootstrap, rendered markup cleaned (no nested frames, scripts, `meta`, `base`) and moved, one render in flight, delegated events, view liveness check (S6, S13, S17, S18; [ADR-005](ADR-005-strict-mode.md)) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C); the specs run the playground's presets, and a security preset without a spec fails the unit suite (T4) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
@@ -37,14 +38,16 @@ conditional "continue".
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
 | Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); an empty directive is `'none'`, and the defaults leave unset fetch directives to `default-src` (S16); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
 | Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); writes open (C5) |
-| Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`), and WebKit shows a frame the guest creates the host URL as its referrer (S17) |
+| Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18). ✅ in strict mode: guest code sees only its worker's `blob:` URL and no request carries a `Referer` |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
 the virtual-files Service Worker was replaced by guest-realm blob URLs ([ADR-004](ADR-004-files-as-blob-urls.md)):
 S3, C2 and C3 done, C1 partly, C4 rejected, C5 added; C1's markup references, module graph and CSS references followed the same day, completing C1.
-S15 and S16 were done on 2026-10-13, and S17 added. Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
+S15 and S16 were done on 2026-10-13, and S17 added. Strict mode landed on 2026-10-13 ([ADR-005](ADR-005-strict-mode.md), measured first in
+[research 15](research/15_strict_mode/README.md)): S6 done, S13 and S17 done in strict mode with their default-mode residuals stated, S18 added.
+Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
 
@@ -365,7 +368,20 @@ success log with a 2s timeout — slow and prone to false green.
 a first-class event. **Acceptance**: a blocked request produces an observable `violation` event on
 the host, and the security specs assert on it directly.
 
-### S6 · No execution budget in iframe mode — 🟡 **default-mode watchdog done; strict mode open**
+### S6 · No execution budget in iframe mode — ✅ **done** (strict mode; default-mode watchdog)
+
+**Done (strict mode, 2026-10-13)**, decided in [ADR-005](ADR-005-strict-mode.md): `mode: 'strict'` runs guest
+code only in a worker spawned by a view document whose policy admits one script, the library's bootstrap, by
+its hash; the worker draws into the view with `sandboxView.render()` over a render port the host is not on.
+`watchdogTimeout` and `workerExecutionTimeout` watch the worker, so a guest loop never blocks the host's
+timers: the acceptance below holds on Chromium, Firefox and WebKit (`test/e2e/watchdog.spec.ts`: a loop at
+the entry's top level and through `execute()`, terminated within 1.25 budgets plus slack, the host answering
+meanwhile; `reset()` recovers). Rendering stays host-thread work where the view shares the host's thread
+(Firefox, WebKit): one render in flight bounds the stall to one apply — measured for a maximal render
+(256 Ki characters) ≤ 10 ms in Chromium, 30–150 ms in Firefox, 0.09–0.47 s in WebKit; pathological markup
+(20 000 nested elements) about 0.7 s per apply in Firefox and WebKit — and a worker that renders and then
+loops is stopped within the budget plus that stall (`strict-render-flood.spec.ts`, `watchdog.spec.ts`). A
+view that stops answering ends the sandbox (`the sandbox view stopped responding`, 5 s, always on).
 
 **Done (default mode)**: an opt-in liveness watchdog, `watchdogTimeout` (ms, off by default). The
 host pings the guest over the port and the guest bootstrap answers outside the broker; a guest
@@ -380,7 +396,7 @@ the README. Tests: `test/e2e/watchdog.spec.ts` (iframe mode measures the process
 every browser, then asserts the endless-loop bound out of process or that host stalls are not charged
 to the guest on a shared thread; worker loop, no false positives across a reset, and stop on
 removal/termination on every browser) and `src/lib/watchdog.test.ts` (timing).
-**Still open**: strict mode, and the memory and inbound-traffic note under *Open* below.
+**Still open**: the memory and inbound-traffic note under *Open* below.
 
 **Guarantee**: untrusted code can never keep the host page busy indefinitely; the host can always
 stop the guest within a bounded time.
@@ -564,7 +580,16 @@ ones are dropped from `capabilities` with a warning and accepted only through `u
 which warns once per capability per instance. `allow-forms` stays safe: `form-action` defaults to
 `'none'` (S9) and a form submission is a navigation the wrapper blocks (S10).
 
-### S13 · No WebRTC egress guarantee — 🟡 **guest realm and workers done; frames the guest creates: residual**
+### S13 · No WebRTC egress guarantee — ✅ **done in strict mode**; default iframe mode: residual (frames the guest creates)
+
+**Done (strict mode, 2026-10-13, [ADR-005](ADR-005-strict-mode.md))**: guest code runs only in a worker, which
+has no peer-connection constructor, and the view runs no guest script; a frame in rendered markup is removed
+before it is inserted, so no realm with `RTCPeerConnection` is reachable at all. `test/e2e/webrtc.spec.ts`
+(strict case, all three engines): the worker has none; markup carrying the ICE probe inline and inside two
+frames renders no frame, runs nothing and sends 0 UDP packets, while the same probe on the host page reaches
+the loopback listener (Chromium, WebKit; Firefox sends no loopback STUN even from the host). **Default-mode
+residual, unchanged**: a frame the guest creates in iframe mode keeps `RTCPeerConnection` and its ICE traffic
+leaves in Chromium and WebKit (below); use strict mode where that matters.
 
 **Guarantee**: guest code cannot reach the network through WebRTC.
 
@@ -719,7 +744,9 @@ Measured 2026-10-13 (same builds as above), before → after; "host URL" include
   `referrerpolicy="no-referrer"` does not mask it in either engine.
 - Firefox and WebKit send the host origin as `Referer` on image requests whenever the policy in force
   allows one. By default it does not; the guest can ask for one per request or with its own
-  `<meta name="referrer">`, and no document can prevent that. Path and query never appear.
+  `<meta name="referrer">`, and no document can prevent that. Path and query never appear **to a cross-site
+  target** (what was measured here); to a target that is same-site with the host page, WebKit sends the full
+  host URL (S18, research 15 P8).
 - WebKit gives a frame the guest creates the host page URL, minus fragment, as `document.referrer`
   (S17). That is the full path and query, so the guarantee does not hold in WebKit until S17 is done.
 
@@ -761,7 +788,13 @@ Tests:
 - e2e: `test/e2e/empty-directive.spec.ts` — with `connectionsAllowed: { 'default-src': [] }` an image
   and a fetch to a non-allowlisted origin are refused, each with its violation, in all three engines.
 
-### S17 · WebKit shows a frame the guest creates the host page URL — **P1 · M** — open
+### S17 · WebKit shows a frame the guest creates the host page URL — ✅ **done in strict mode**; default iframe mode: open (P1 · M)
+
+**Done (strict mode, 2026-10-13, [ADR-005](ADR-005-strict-mode.md))**: guest code runs only in the worker, which
+has no document and whose location is its own `blob:` URL, and the renderer removes every frame from rendered
+markup before insertion, so no frame the guest could read a referrer from exists. `test/e2e/host-url.spec.ts`
+(strict case, all three engines). **Default-mode residual, unchanged**: in iframe mode a frame the guest
+creates still reads the host page URL in WebKit, asserted as measured; the work below stands for that mode.
 
 *Found while doing S15.*
 
@@ -780,6 +813,29 @@ files); a host-made `blob:` URL inherits the host page's policy container. Measu
 S11 and the file tests before choosing; report upstream to WebKit in any case.
 
 **Acceptance**: in WebKit, no frame the guest can create reads the host page's path or query.
+
+### S18 · WebKit sends the host page URL to same-site origins when the guest asks — ✅ **closed in strict mode**; default iframe mode: residual
+
+*Found by [research 15](research/15_strict_mode/README.md), P8 (amendment A9).*
+
+**Verified** (2026-10-13, WebKit 26.0 on Linux, library code): in default iframe mode a guest that asks for
+`unsafe-url` — `referrerPolicy` on a request, `referrerpolicy` on an element, or its own
+`<meta name="referrer">` — sends the host page's **full URL, path and query**, as `Referer` to any allowed
+origin that is same-site with the host page (`https://localhost:<port>` from a host page on
+`http://localhost:4444`). S15 measured cross-site targets only, where WebKit trims to the origin. Chromium
+sends nothing; Firefox sends the host origin. The inherited `no-referrer` holds when the guest asks for
+nothing. `test/e2e/host-url.spec.ts` asserts the measured value per engine ("residual S18"), so a change shows up.
+
+**Why no default-mode fix**: the guest's own script chooses its referrer policy per request; no document,
+attribute or policy the library controls can stop that (S15). The host page can narrow it from outside only by
+not allowing same-site origins in the guest policy.
+
+**Closed in strict mode** ([ADR-005](ADR-005-strict-mode.md)): guest code runs in the worker, whose requests
+carry no `Referer`, and the renderer removes `<meta>` and forces `referrerpolicy="no-referrer"` on every
+element of rendered markup. `test/e2e/host-url.spec.ts` (strict case): requests from the worker and from
+rendered markup asking for `unsafe-url` every way it can (attribute, `<meta>`, CSS, a nested frame, `ping`),
+cross-site and same-site, carry no `Referer` and no host `Origin` in all three engines, while the host page's
+own control shows what each engine would send (WebKit: the full URL same-site).
 
 ## B · API Surface & DX
 
@@ -1258,10 +1314,11 @@ comparisons; for the 2026 entrants (`quickjs-wasi`, `@tanstack/ai-isolate-quickj
 | Virtual files | ✅ **C1** | ❌ | ➖ | ❌ | ❌ |
 | Host-mediated network | ✅ **B5** | ❌ | ➖ | ✅ | ❌ |
 | Auto-sizing | ✅ **B6** | ❌ | 🟡 | ✅ | ✅ |
-| Execution quotas | 🟡 **S6** | ❌ | ➖ | ❌ | ➖ |
+| Execution quotas | ✅ **S6** (time, strict mode; memory open) | ❌ | ➖ | ❌ | ➖ |
 
 We lead on four rows: isolation without server config, headless (worker) execution and virtual
-files outright, and execution quotas as the only solution with even partial support. Those four,
+files outright, and execution quotas as the only solution with any support (a time bound on every
+engine in strict mode; memory is still open). Those four,
 plus the private channel (matched only by Zoid), are the rows the backlog must not regress.
 
 Larger bets that follow from the same comparison, both **P3**: an **opt-in host-served mode** that

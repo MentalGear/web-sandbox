@@ -1,6 +1,6 @@
 # ADR-003: How does the host observe and control a sandbox's lifecycle?
 
-**Status**: Accepted · **Date**: 2026-10-11
+**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine))
 
 ## Why this ADR exists
 
@@ -49,7 +49,7 @@ environment (a 3 s guest loop left the host answering in 3 ms) and on the host's
 WebKit ran it on the host's thread (the host was blocked for the whole loop). So nothing is claimed
 per browser; the iframe-mode test measures the process model at runtime and asserts the contract
 that applies. Where the frame shares the host's thread, a guest loop stops the
-watchdog's timers too: a platform limit, which strict mode (S6, still open) is meant to remove. It
+watchdog's timers too: a platform limit, which strict mode removes (see the amendment below). It
 is a liveness check, not a security boundary: a guest that answers pings is only alive, and the
 host keeps explicit control through `terminate()`.
 
@@ -110,3 +110,30 @@ Costs and limits:
 
 - strict mode lands, so guest logic always runs in a worker and the same-thread limit disappears; or
 - `execute()` gains completion reporting, which would make a `running` state truthful.
+
+## Amendment (2026-10-13): strict mode bounds execution on every engine
+
+**When**: backlog S6, strict mode ([ADR-005](ADR-005-strict-mode.md)), the "Revisit if" above. **Decision**: in
+strict mode guest code runs only in a worker, and `watchdogTimeout` and `workerExecutionTimeout` watch that
+worker, so a guest loop never blocks the host's timers, on any engine and whatever the browser's process model.
+
+- **Asserted on Chromium, Firefox and WebKit** (`test/e2e/watchdog.spec.ts`): an endless loop at the entry's
+  top level and one started through `execute()` are terminated between one and 1.25 budgets after the last
+  answer, the host answering in well under 500 ms meanwhile; `reset()` recovers.
+- **Rendering is host-thread work where the view shares the host's thread** (Firefox, WebKit). A worker that
+  renders and then loops is still stopped, within the budget plus the stall of the one render in flight
+  (flow control, ADR-005). Measured for a maximal render (256 Ki characters of one word): ≤ 10 ms in Chromium (the view
+  runs out of process), 30–60 ms in Firefox, 0.36–0.47 s in WebKit. Ticks still never count a host stall
+  against the guest.
+- **A second, always-on liveness check, for the view.** The host pings the view on its own port with a
+  5 s budget (`VIEW_LIVENESS_TIMEOUT_MS`). The view runs no guest script, so it answers unless it is gone —
+  Chromium replaces a view whose navigation the wrapper refuses with an error page, ending the worker with
+  it (research 15, P4) — or rendering keeps its thread busy that long; either way the sandbox terminates with
+  `the sandbox view stopped responding` instead of going silent. Not configurable, since it watches the
+  library's own document, not guest work.
+- **Entry failure is a termination.** An entry that does not start (a syntax error, a throw at its top level)
+  terminates with `the guest entry failed to start`; later uncaught errors are logged.
+
+What strict mode does not change: the watchdog is still opt-in for guest logic; a worker that ends itself is
+noticed only through it; memory and inbound traffic remain unbounded (S6's open notes).
+
