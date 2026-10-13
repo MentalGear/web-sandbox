@@ -1,4 +1,5 @@
 import { test, expect, HARNESS, ORIGIN } from '../../../test/e2e/fixture';
+import { fromPreset } from '../../../test/e2e/presets';
 
 /**
  * Research 11: CSP delivery via <meta> — limits and failure modes.
@@ -75,18 +76,10 @@ test.describe('Research 11: meta-CSP delivery', () => {
     // 11.3 — the security block used to be regex-spliced into user markup, where a comment could swallow it.
     // Fixed by prepending the block before any user content (backlog S2, src/lib/frame-documents.ts).
     test('11.3 user content cannot delete the injected CSP', async ({ sandbox }) => {
-        await sandbox.mount();
+        const preset = fromPreset('csp-swallow');
+        await sandbox.mount(preset.rules);
 
-        const payloads = [
-            `<html><body><!-- <head> --></body></html>`,
-            `<!-- <html><head> --><html><head></head><body></body></html>`,
-            `<html><head><img src=x><!--</head><body></body></html>`,
-            `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>full document</p></body></html>`,
-            `<textarea><head></textarea>`,
-            `<plaintext>`,
-        ];
-
-        for (const payload of payloads) {
+        for (const [, payload] of preset.payloads) {
             await sandbox.clearLogs();
             await sandbox.load(payload);
             await sandbox.run(`

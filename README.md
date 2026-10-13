@@ -47,7 +47,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full workflow.
 
 Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/playground/index.html).
 
-*   **Presets:** Select a scenario from the dropdown to load pre-configured code and security rules. These presets match the automated test cases in `docs/research/`.
+*   **Presets:** Select a scenario from the dropdown to load pre-configured code and security rules. The regression specs run the very same presets (`fromPreset()` in `test/e2e/presets.ts`), and a unit test fails if a security preset has no spec. A preset says whether to use "Run Code" or "Run as HTML".
 *   **Code Editor:** Modify the JavaScript code to test different behaviors.
 *   **Rules Editor:** Configure the Content Security Policy (CSP) and execution mode (iframe/worker).
 *   **Logs:** View `console.log` output and security events from within the sandbox.
@@ -62,7 +62,7 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 *   **`src/lib/module-specifiers.ts`**, **`src/lib/import-map.ts`**: The module graph: relative imports in registered modules rewritten to virtual URLs (with the bundled es-module-lexer), and the guest's own import maps merged into the one the bootstrap registers.
 *   **`src/lib/auto-resize.ts`**: Auto-sizing on the host: validates, clamps and rate-limits the guest's height reports.
 *   **`src/lib/fetch-bridge.ts`**: The fetch bridge on the host: the allowlist, the request discipline, and the `fetch` log.
-*   **`src/lib/presets.ts`**: A shared library of test scenarios used by both the Playground and automated tests.
+*   **`src/lib/presets.ts`**: The scenarios both the Playground and the regression specs run: one definition per attack (payload, rules, research folder).
 *   **`vite.config.ts`**: The dev server for the playground and the e2e harness.
 *   **`test/e2e`**: Playwright e2e specs, plus the shared harness page and fixture every suite runs on.
 *   **`docs/research`**: Security findings, each with a Playwright reproduction that guards its mitigation.

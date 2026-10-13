@@ -30,7 +30,7 @@ conditional "continue".
 | Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
 | Execution budget | 🟡 opt-in liveness watchdog in default mode: bounded in worker mode and out-of-process frames, not where the frame shares the host's thread; strict mode open (S6) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
-| E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C) |
+| E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C); the specs run the playground's presets, and a security preset without a spec fails the unit suite (T4) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
 | Type check | ✅ `bun run typecheck` is clean and gates CI (H3) |
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
@@ -115,7 +115,32 @@ README now says `bun run test`); Playwright starts Vite itself; `vite build` tar
 
 **Acceptance**: `bun test` runs unit **and** e2e from a clean checkout; `bun run build` completes.
 
-### T4 · Presets are not wired into the tests — **P1 · M**
+### T4 · Presets are not wired into the tests — ✅ **done**
+
+**Guarantee**: an attack is written down once, in `src/lib/presets.ts`, and the playground and the
+regression specs run that same definition; a security preset without a spec, or a research reproduction
+without a preset, fails the unit suite.
+
+**Done**: a preset now carries a `category` (`security` or `demo`), how its code runs (`run`: `script`
+through `execute()`, or `markup` through `load()`), the research folder it reproduces (`research`), the URL
+that stands for the attacker (`target`) and further payloads for the same attack (`variants`). Specs reach
+presets only through `fromPreset('<id>')` (`test/e2e/presets.ts`): the preset's rules as a fresh copy, its
+payloads, and `aimedAt(listener)`, which replaces the target and throws when the payload does not contain
+it, so an edited preset cannot leave a spec aiming at the placeholder instead of the listener (T5). The
+coverage test, `test/unit/presets.test.ts`, scans every spec file for `fromPreset()` literals and fails
+when a security preset has no spec, a `docs/research/*/reproduce.spec.ts` runs no preset, a preset's
+`research` folder does not run it, a spec reads `PRESETS` directly, or a target is missing from a payload
+(both failure directions checked by mutation). Changes: all fourteen reproductions source payload and rules
+from a preset; four presets added for the findings that had none (`csp-swallow` 11, `form-action-exfil`
+12, `popup-exfiltration` 13, `self-navigation` 14, with variants for 11.3 and 14.1); `security.spec.ts`
+runs the `outer-frame-tampering`, `sw-tamper`, `storage-sharing` and `allow-same-origin` payloads it used
+to duplicate, `worker-timeout.spec.ts` the `worker-timeout` preset; the four capability-filter presets
+(`alert-test`, `allow-same-origin`, `allow-top-nav`, `allow-popups-escape`), which no spec ran, have one
+now (`test/e2e/capability-presets.spec.ts`, each with a positive control where one exists). Two presets
+were wrong and are fixed: `alert-test` logged `PWN_SUCCESS` whenever `alert()` returned, which a blocked
+dialog does at once (now the host watches for a dialog); `storage-sharing` wrote before it read, so it
+could only ever read its own write (now it reads first). T5's evidence rules are unchanged: every egress
+assertion keeps its listener and positive control.
 
 The README's stated USP is *"Use the same Preset definitions for both manual testing (Playground)
 and automated regression testing"*.

