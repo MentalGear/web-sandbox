@@ -9,6 +9,9 @@
 - [**ADR-002 — How should host and guest call each other?**](ADR-002-host-guest-broker.md) —
   why the call broker was built in-house rather than adopted, its design choices, and the
   guarantees they give.
+- [**ADR-003 — How does the host observe and control a sandbox's lifecycle?**](ADR-003-lifecycle-and-liveness.md) —
+  per-instance events, the lifecycle states, `terminate()` / `reset()`, and the opt-in liveness
+  watchdog with what it can and cannot bound.
 - [research/ARCHITECTURE_COMPARISON.md](research/ARCHITECTURE_COMPARISON.md) — host-level vs
   iframe-level Service Worker.
 

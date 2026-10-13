@@ -47,7 +47,7 @@ function capturedBroker(timeoutMs = 0) {
 }
 
 // The texts the host uses for its own termination refusals (src/host.ts). The other side can send these verbatim.
-const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call setConfig() or load() to start a new one.';
+const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.';
 const RESET_TEXT = '[Sandbox] call() rejected: the sandbox was reset or terminated.';
 
 describe('correlation and round-trip (guarantee: a call resolves with its own handler result)', () => {

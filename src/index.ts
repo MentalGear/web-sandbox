@@ -3,7 +3,7 @@
  * Importing it registers nothing: call defineWebSandbox() (optionally with your own tag name).
  */
 export { WebSandbox, defineWebSandbox } from "./host";
-export type { SandboxConfig } from "./host";
+export type { SandboxConfig, SandboxState } from "./host";
 export type { RpcError, RpcErrorCode } from "./lib/rpc";
 
 export {

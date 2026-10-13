@@ -73,8 +73,50 @@ sandbox.setConfig({ capabilities: ['allow-scripts'] });
 sandbox.load('<h1>Hello</h1>');
 ```
 
-Importing the module registers nothing, so you choose the tag name. The element fires `ready` when
-the sandbox is up and `terminated` if it had to be torn down.
+Importing the module registers nothing, so you choose the tag name.
+
+## Lifecycle
+
+`sandbox.state` tells where the sandbox is: `idle` (not in the document), `loading` (a frame is
+being built), `ready` (the guest can be reached) or `terminated`. There is no "running" state:
+`execute()` does not report when guest code finishes.
+
+```js
+sandbox.addEventListener('ready', () => { /* state is 'ready' */ });
+sandbox.addEventListener('terminated', (e) => console.warn(e.detail.reason));
+sandbox.addEventListener('sandbox-log', (e) => console.log(e.detail.level, ...e.detail.args));
+
+sandbox.terminate('user pressed stop');  // tears it down; 'terminated' fires once
+sandbox.reset();                         // a fresh frame and opaque origin, from any state
+```
+
+*   **`terminate(reason?)`** removes the frame now and fires `terminated` with `{ reason }`. Calling
+    it again while terminated does nothing. The sandbox stays terminated until `reset()`, `load()` or
+    `setConfig()`.
+*   **`reset()`** builds a fresh environment with the current config, from any state. Guest methods
+    are gone, host methods stay; pending calls reject with `TERMINATED`.
+*   **Removing the element** tears the sandbox down the same way, without a `terminated` event, and
+    leaves it `idle`. Inserting it again builds a fresh one.
+*   **Events** are dispatched on the element. `sandbox-log` (guest `console` output and errors) bubbles,
+    so a listener on `window` hears every sandbox on the page and `event.target` says which one.
+*   **`state === 'terminated'` is a second, authoritative signal** next to a call's `TERMINATED`
+    code: the element sets both from its own state, so the guest can produce neither.
+
+**Watchdog** (opt-in): with `watchdogTimeout: ms`, the host checks that the guest's event loop keeps
+answering and terminates a guest that falls silent for that long (reason: `the guest stopped
+responding (watchdog)`). It works in worker mode on every browser, and in iframe mode where the browser
+runs the sandboxed frame in its own process. That is the browser's choice, not the page's: Chromium
+often does, but not in every environment, and Safari does not. Where the frame shares the host
+page's thread, a guest stuck in a loop freezes the host page too, and no watchdog can run until it
+stops; the watchdog then only guarantees that the host's own stall is never blamed on the guest. It is off by default because a guest doing long synchronous work on
+purpose would be stopped as well. It checks liveness only; `terminate()` is how the host stops a
+guest at will.
+
+```js
+sandbox.setConfig({ capabilities: ['allow-scripts'], watchdogTimeout: 2000 });
+```
+
+Why it is built this way: [ADR-003](docs/ADR-003-lifecycle-and-liveness.md).
 
 ## Capabilities
 
@@ -131,10 +173,11 @@ const total = await sandbox.call('sum', 1, 2);              // 3, once the sandb
     `Object.assign`, which turns an own `__proto__` key into a prototype change.
 *   **Every call times out** after 30 seconds by default. `callWithTimeout(ms, method, ...args)`
     sets a different limit for one call; `0` turns it off.
-*   **Host methods belong to the element**, so they survive `load()` and `setConfig()`. Guest
+*   **Host methods belong to the element**, so they survive `reset()`, `load()` and `setConfig()`. Guest
     methods belong to one frame: a new frame starts with none until its own code exposes them.
-*   **A reset settles every pending call.** When `load()` or `setConfig()` recreates the frame, or
-    the sandbox is terminated, pending calls reject; calls made after termination reject at once.
+*   **A reset settles every pending call.** When `reset()`, `load()` or `setConfig()` recreates the
+    frame, the element is removed, or the sandbox is terminated, pending calls reject; calls made
+    after termination reject at once.
 *   **Every rejection has a `code`; branch on it, not on the message.** `TIMEOUT`, `TERMINATED`,
     `ARGS_NOT_TRANSFERABLE`, `SEND_FAILED` and `INVALID_CALL` are set only by the side that made the
     call, so the other side can never produce them. `UNKNOWN_METHOD`, `HANDLER_ERROR` and

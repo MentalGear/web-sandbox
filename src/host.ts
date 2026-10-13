@@ -6,6 +6,7 @@ import { inSandboxScript } from "./lib/in-sandbox-script";
 import { createBroker } from "./lib/rpc";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { filterCapabilities } from "./lib/capabilities";
+import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { buildGuestDocument, buildWrapperDocument, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
 
 export interface SandboxConfig {
@@ -18,7 +19,22 @@ export interface SandboxConfig {
     virtualFilesUrl?: string; // URL to the Virtual Files Hub
     mode?: 'iframe' | 'worker'; // Execution mode
     workerExecutionTimeout?: number; // Max execution time in ms (Worker mode only)
+    // Liveness watchdog budget in ms (0 = off, the default): terminates a guest that stops answering for this long.
+    // Off by default because legitimate synchronous work longer than the budget would be stopped too. See src/lib/watchdog.ts for what it can and cannot bound.
+    watchdogTimeout?: number;
 }
+
+/**
+ * Where the element is in its lifecycle (read it from `sandbox.state`):
+ *   idle        constructed, or removed from the document: no frame
+ *   loading     a frame was created and is waiting for its one load
+ *   ready       the port was handed over and 'ready' dispatched
+ *   terminated  torn down by terminate(), a frame-integrity check or the watchdog; stays so until
+ *               reset(), load() or setConfig() builds a new environment
+ * There is deliberately no 'running' state: execute() is fire-and-forget and nothing reports when guest
+ * code finishes, so the element could never say truthfully that code is running (or that it stopped).
+ */
+export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 
 const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     connectionsAllowed: {
@@ -46,18 +62,23 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     virtualFilesUrl: '',
     mode: 'iframe',
     workerExecutionTimeout: 0,
+    watchdogTimeout: 0,
 };
 
 // Texts of the host's own refusals, for people reading them. Code branches on the error's `code`
 // ('TERMINATED', set by the broker), never on these texts: a guest handler can throw the very same text,
 // and that call rejects with code 'HANDLER_ERROR' instead.
-const TERMINATED_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was terminated. Call setConfig() or load() to start a new one.";
+const TERMINATED_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.";
 const RESET_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was reset or terminated.";
+
+const DEFAULT_TERMINATE_REASON = 'terminated by the host';
+const WATCHDOG_REASON = 'the guest stopped responding (watchdog)';
 
 export class WebSandbox extends HTMLElement {
     private _iframe: HTMLIFrameElement | null = null;
     private _frameLoaded = false;
-    private _terminated = false;
+    private _state: SandboxState = 'idle'; // changed only by _enterState()
+    private _watchdog: Watchdog | null = null;
     private _config: SandboxConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
     private _sessionId: string;
     private _port: MessagePort | null = null;
@@ -79,7 +100,39 @@ export class WebSandbox extends HTMLElement {
         this._sessionId = crypto.randomUUID();
     }
 
+    /** Where the sandbox is in its lifecycle; see SandboxState. Agrees with 'ready' / 'terminated' when they fire. */
+    get state(): SandboxState {
+        return this._state;
+    }
+
     connectedCallback() {
+        this.initialize();
+    }
+
+    // Removing the element ends its environment: a frame outside the document cannot be used, and keeping
+    // its port, timers and watchdog alive would only let pending calls hang. Pending calls reject with
+    // TERMINATED. This is not a termination — no 'terminated' event — and re-inserting the element builds
+    // a fresh environment through connectedCallback (which also makes moving the element a clean re-init).
+    disconnectedCallback() {
+        this._teardown();
+        this._enterState('idle');
+    }
+
+    /**
+     * Tears the sandbox down now and fires 'terminated' with `{ reason }`. Pending calls reject with
+     * TERMINATED, later calls are refused at once, and `state` stays 'terminated' until reset(), load()
+     * or setConfig(). Calling it again while terminated does nothing, so 'terminated' fires once per termination.
+     */
+    terminate(reason: string = DEFAULT_TERMINATE_REASON): void {
+        this._terminate(typeof reason === 'string' ? reason : DEFAULT_TERMINATE_REASON);
+    }
+
+    /**
+     * Recreates the environment now, from any state (terminated included): a fresh frame with a fresh
+     * opaque origin and the current config. Guest-exposed methods are gone, host-exposed ones persist,
+     * and pending calls reject with TERMINATED. Wait for 'ready' before relying on the new frame.
+     */
+    reset(): void {
         this.initialize();
     }
 
@@ -144,8 +197,8 @@ export class WebSandbox extends HTMLElement {
             return;
         }
 
-        if (this._terminated) {
-            console.warn("[Sandbox] execute() ignored: the sandbox was terminated. Call setConfig() or load() to start a new one.");
+        if (this._state === 'terminated') {
+            console.warn("[Sandbox] execute() ignored: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.");
             return;
         }
 
@@ -172,13 +225,13 @@ export class WebSandbox extends HTMLElement {
      * Works WITHOUT scriptUnsafe: it calls a pre-registered function on the guest, it never evals.
      */
     call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
-        if (this._terminated) return Promise.reject(this._broker.terminationError(TERMINATED_CALL_MESSAGE));
+        if (this._state === 'terminated') return Promise.reject(this._broker.terminationError(TERMINATED_CALL_MESSAGE));
         return this._broker.call(method, ...args) as Promise<T>;
     }
 
     /** Like call(), but with an explicit timeout in ms for this one call (0 disables the timeout). */
     callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T> {
-        if (this._terminated) return Promise.reject(this._broker.terminationError(TERMINATED_CALL_MESSAGE));
+        if (this._state === 'terminated') return Promise.reject(this._broker.terminationError(TERMINATED_CALL_MESSAGE));
         return this._broker.callWithTimeout(timeoutMs, method, ...args) as Promise<T>;
     }
 
@@ -205,7 +258,7 @@ export class WebSandbox extends HTMLElement {
         if (this._config.mode === 'worker' && this._config.workerExecutionTimeout && this._config.workerExecutionTimeout > 0) {
             this._timeoutId = setTimeout(() => {
                 console.warn("[Sandbox] Execution Timeout - Terminating Worker");
-                window.dispatchEvent(new CustomEvent('sandbox-log', { detail: { type: 'LOG', level: 'error', args: ['Execution Timeout'] } }));
+                this._dispatchLog({ type: 'LOG', level: 'error', args: ['Execution Timeout'] });
 
                 // the worker lives inside the frame: recreating the frame terminates it
                 this.initialize();
@@ -220,8 +273,12 @@ export class WebSandbox extends HTMLElement {
         this._port = port;
         port.onmessage = (e) => {
             const data = e.data;
+            if (data?.type === 'PONG') {
+                this._watchdog?.handlePong(data.n); // validated there; only this generation's watchdog is live
+                return;
+            }
             if (data?.type === 'LOG') {
-                window.dispatchEvent(new CustomEvent('sandbox-log', { detail: data }));
+                this._dispatchLog(data);
                 return;
             }
             // Everything else on this port is RPC (or not ours); the broker validates every frame.
@@ -271,6 +328,35 @@ export class WebSandbox extends HTMLElement {
         if (skipped > 0) console.warn(`[Sandbox] skipped ${skipped} queued RPC frame(s) that could not be posted (not transferable).`);
     }
 
+    // Log lines are dispatched on the element and bubble, so one event serves both kinds of listener:
+    // one on the element hears only its own sandbox, and one on window (the playground, the e2e harness)
+    // hears every sandbox and tells them apart by event.target. Not composed: the element sits in the
+    // embedding page's DOM, and an event of ours has no business crossing a consumer's shadow boundary.
+    // The name stays namespaced because it bubbles: a generic 'log' would collide with other code on window.
+    private _dispatchLog(detail: unknown) {
+        this.dispatchEvent(new CustomEvent('sandbox-log', { detail, bubbles: true }));
+    }
+
+    // Arms the liveness watchdog for the port just handed over, if the config asks for one (see
+    // src/lib/watchdog.ts). Pings go on THIS port: teardown closes it and stops the watchdog together.
+    private _startWatchdog(port: MessagePort) {
+        const budget = watchdogBudget(this._config.watchdogTimeout);
+        if (budget === 0) return;
+        this._watchdog = startWatchdog({
+            timeoutMs: budget,
+            ping: (n) => port.postMessage({ type: 'PING', n }),
+            onExpire: () => this._terminate(WATCHDOG_REASON),
+        });
+    }
+
+    // The one place `state` changes. The 'ready' and 'terminated' events are dispatched here, after the
+    // state is set, so a listener always reads the state its event announces.
+    private _enterState(next: SandboxState, reason?: string) {
+        this._state = next;
+        if (next === 'ready') this.dispatchEvent(new CustomEvent('ready'));
+        if (next === 'terminated') this.dispatchEvent(new CustomEvent('terminated', { detail: { reason } }));
+    }
+
     private _teardown() {
         this._queuedMessages = []; // Clear queue for the old environment
         this._rpcQueue = [];       // same for the host's RPC requests queued for the old environment
@@ -280,18 +366,27 @@ export class WebSandbox extends HTMLElement {
         if (this._iframe) { this._iframe.onload = null; this._iframe.remove(); this._iframe = null; }
         if (this._port) { this._port.close(); this._port = null; }
         if (this._timeoutId) { clearTimeout(this._timeoutId); this._timeoutId = null; }
+        if (this._watchdog) { this._watchdog.stop(); this._watchdog = null; }
     }
 
+    // Every termination comes through here: terminate(), the frame-integrity checks in _onFrameLoad and
+    // the watchdog. Already terminated means nothing to do, which is what makes 'terminated' fire once.
     private _terminate(reason: string) {
+        if (this._state === 'terminated') return;
         console.warn(`[Sandbox] terminated: ${reason}`);
         this._teardown();
-        this._terminated = true;
-        this.dispatchEvent(new CustomEvent('terminated', { detail: { reason } }));
+        this._enterState('terminated', reason);
     }
 
+    // Builds a fresh environment from the current config. Outside the document there is nothing to build
+    // into (a detached iframe never loads), so the element stays idle and connectedCallback builds it.
     private initialize() {
         this._teardown();
-        this._terminated = false;
+        if (!this.isConnected) {
+            this._enterState('idle');
+            return;
+        }
+        this._enterState('loading');
         this.createIframe();
     }
 
@@ -406,7 +501,10 @@ export class WebSandbox extends HTMLElement {
         }
 
         this.setupChannel(guestWindow);
-        this.dispatchEvent(new CustomEvent('ready'));
+        // Armed before 'ready' is dispatched: a 'ready' listener that resets or terminates the sandbox then
+        // stops this watchdog with the rest, instead of leaving one running for a port that is gone.
+        if (this._port) this._startWatchdog(this._port);
+        this._enterState('ready');
     }
 }
 

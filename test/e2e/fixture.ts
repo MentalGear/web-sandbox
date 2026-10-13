@@ -44,6 +44,31 @@ export class SandboxDriver {
         return this.page.evaluate((markup) => whenSettled(s => s.load(markup)), html);
     }
 
+    /** Recreates the environment (reset()) and waits for it to settle. */
+    async reset(): Promise<MountResult> {
+        return this.page.evaluate(() => whenSettled(s => s.reset()));
+    }
+
+    /** The element's lifecycle state (backlog B2). */
+    async state(): Promise<string> {
+        return this.page.evaluate(() => (document.querySelector('web-sandbox') as any).state);
+    }
+
+    /**
+     * Mounts a second <web-sandbox id="second"> next to the harness's, with BASELINE_CONFIG merged with
+     * `config`, and waits for it to become ready. Its log lines land in sandboxLogs too (they bubble to window).
+     */
+    async mountSecond(config: Partial<SandboxConfig> = {}): Promise<MountResult> {
+        return this.page.evaluate((merged) => new Promise<MountResult>(resolve => {
+            const second = document.createElement('web-sandbox') as any;
+            second.id = 'second';
+            second.addEventListener('ready', () => resolve('ready'), { once: true });
+            second.addEventListener('terminated', () => resolve('terminated'), { once: true });
+            second.setConfig(merged); // detached: only stores the config, the frame is built on insertion
+            document.body.appendChild(second);
+        }), { ...BASELINE_CONFIG, ...config } as any);
+    }
+
     async run(code: string) {
         await this.page.evaluate((source) => (document.querySelector('web-sandbox') as any).execute(source), code);
     }
@@ -136,7 +161,11 @@ export class SandboxDriver {
 }
 
 // Injected into the page: resolves once the sandbox reports 'ready' or 'terminated'.
-declare global { function whenSettled(action: (sandbox: any) => void): Promise<MountResult>; }
+// settleOutcome turns a call's promise into a CallOutcome, for page-side code that awaits several at once.
+declare global {
+    function whenSettled(action: (sandbox: any) => void): Promise<MountResult>;
+    function settleOutcome(promise: Promise<unknown>): Promise<CallOutcome>;
+}
 
 export const test = base.extend<{ sandbox: SandboxDriver }>({
     sandbox: async ({ page }, use) => {
@@ -152,6 +181,9 @@ export const test = base.extend<{ sandbox: SandboxDriver }>({
                 sandbox.addEventListener('terminated', settle);
                 action(sandbox);
             });
+            (window as any).settleOutcome = (promise: Promise<unknown>) => promise.then(
+                (value) => ({ status: 'resolved', value }),
+                (e: any) => ({ status: 'rejected', isError: e instanceof Error, message: e?.message, code: e?.code, keys: e && typeof e === 'object' ? Object.keys(e) : null }));
         });
         const driver = new SandboxDriver(page);
         await driver.open();

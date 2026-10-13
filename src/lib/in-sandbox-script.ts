@@ -38,6 +38,14 @@ export function inSandboxScript(
 
         port.onmessage = (ev: any) => {
             const data = ev.data;
+            // The host's liveness watchdog (backlog S6, src/lib/watchdog.ts). Answered here, before the
+            // broker, so it is not a callable method: it can never collide with a name the guest exposes,
+            // and guest code cannot unexpose or replace it. Answering at all is the signal — a blocked
+            // event loop cannot run this handler.
+            if (data?.type === 'PING') {
+                if (typeof data.n === 'number') port.postMessage({ type: 'PONG', n: data.n });
+                return;
+            }
             if (data?.type === 'EXECUTE') {
                 try {
                     // try ensures the code execution itself doesn't crash the port logic

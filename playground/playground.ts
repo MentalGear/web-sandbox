@@ -119,7 +119,7 @@ window.appendLocalLog = (msg: string) => {
     appendLog({ source: 'playground', message: msg, level: 'log' });
 };
 
-// Listen for internal log events dispatch on window by host.ts
+// Log events are dispatched on each sandbox element and bubble up to window; event.target names the sandbox
 window.addEventListener('sandbox-log', (event) => {
     const data = (event as CustomEvent<LogEntry>).detail;
     // Map sandbox log format to UI log format if needed

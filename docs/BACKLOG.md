@@ -25,6 +25,8 @@ conditional "continue".
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker |
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
+| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3) |
+| Execution budget | 🟡 opt-in liveness watchdog in default mode: bounded in worker mode and out-of-process frames, not where the frame shares the host's thread; strict mode open (S6) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); virtual files spec is `fixme` (section C) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
@@ -218,7 +220,22 @@ success log with a 2s timeout — slow and prone to false green.
 a first-class event. **Acceptance**: a blocked request produces an observable `violation` event on
 the host, and the security specs assert on it directly.
 
-### S6 · No execution budget in iframe mode — **P2 · M** — design settled
+### S6 · No execution budget in iframe mode — 🟡 **default-mode watchdog done; strict mode open**
+
+**Done (default mode)**: an opt-in liveness watchdog, `watchdogTimeout` (ms, off by default). The
+host pings the guest over the port and the guest bootstrap answers outside the broker; a guest
+silent for the whole budget is terminated (reason `the guest stopped responding (watchdog)`),
+between one and 1.25 budgets after its last answer. Mechanism in `src/lib/watchdog.ts`, decision in
+[ADR-003](ADR-003-lifecycle-and-liveness.md). What holds, verified 2026-10-11: case 1 (worker mode)
+on every browser, since the port is handed to the worker and a looping worker stops answering; case 2
+wherever the browser runs the frame out of process. Which case iframe mode lands in is browser policy
+and varies by environment: headless Chromium ran the frame out of process in one environment and on
+the host's thread in CI; WebKit ran it on the host's thread. Case 3 stays a platform limit, stated in
+the README. Tests: `test/e2e/watchdog.spec.ts` (iframe mode measures the process model at runtime on
+every browser, then asserts the endless-loop bound out of process or that host stalls are not charged
+to the guest on a shared thread; worker loop, no false positives across a reset, and stop on
+removal/termination on every browser) and `src/lib/watchdog.test.ts` (timing).
+**Still open**: strict mode, and the memory and inbound-traffic note under *Open* below.
 
 **Guarantee**: untrusted code can never keep the host page busy indefinitely; the host can always
 stop the guest within a bounded time.
@@ -233,8 +250,8 @@ after code that finished. Background: [`RESOURCE_QUOTAS.md`](research/RESOURCE_Q
 1. **Worker mode — holds today, by construction.** Guest logic runs on its own thread and never
    blocks the host's. On expiry the host recreates the frame (`initialize()`), which terminates the
    worker. Shipped; asserted by `test/e2e/worker-timeout.spec.ts`.
-2. **Iframe mode, frame in its own process** (desktop Chromium isolates opaque-origin sandboxed
-   frames this way). A guest loop blocks only the guest's process and the host stays responsive, so
+2. **Iframe mode, frame in its own process** (browser policy: Chromium often isolates opaque-origin
+   sandboxed frames this way, but not in every environment). A guest loop blocks only the guest's process and the host stays responsive, so
    a host-side heartbeat watchdog can remove the frame. Holds once that watchdog exists; it pairs
    with B2's lifecycle owner.
 3. **Iframe mode, frame on the host's thread** (platforms without that isolation). A guest loop
@@ -424,7 +441,16 @@ symmetric `host.call()` inside; keep `execute()` as the `scriptUnsafe`-gated esc
 **Acceptance**: `await sandbox.call('sum', 1, 2) === 3`; a sandbox-side throw rejects with the
 original message; identical behaviour in both modes.
 
-### B2 · Lifecycle: `terminate()`, `reset()`, state — **P1 · M**
+### B2 · Lifecycle: `terminate()`, `reset()`, state — ✅ **done**
+
+**Done**: `terminate(reason?)`, `reset()` and a readonly `state` (`idle`, `loading`, `ready`,
+`terminated`) on the element, all transitions in one method that also dispatches `ready` and
+`terminated`, so the events always agree with `state`. `terminated` fires once per termination;
+`reset()` works from any state; removing the element tears it down (pending calls reject with
+`TERMINATED`, state `idle`, no `terminated` event) and re-inserting rebuilds it. There is no
+`running` state, since nothing reports when guest code finishes. The watchdog this item asked for
+is S6's, done there. Decision in [ADR-003](ADR-003-lifecycle-and-liveness.md). Tests:
+`test/e2e/lifecycle.spec.ts`, both modes.
 
 **Verified**: teardown is private (`initialize()`, `_cleanupWorker()`); consumers have no
 supported way to stop a runaway sandbox or to observe its state.
@@ -435,7 +461,14 @@ state-machine sketch in `IMPROVEMENTS.md` §4 without the XState dependency.
 
 **Acceptance**: `reset()` yields a fresh opaque origin; `terminated` fires exactly once.
 
-### B3 · Per-instance events — fixes a live defect — **P1 · S**
+### B3 · Per-instance events — fixes a live defect — ✅ **done**
+
+**Done**: `sandbox-log` is dispatched on the element with `bubbles: true` (log lines and the worker
+execution-timeout line). A listener on the element hears only its sandbox; a listener on `window`
+still hears all of them, with the element as `event.target`, so no global mirror option was needed
+([ADR-003](ADR-003-lifecycle-and-liveness.md)). `SandboxDevTools` listens on its element and prints
+its sandbox's logs. Tests: `test/e2e/events.spec.ts` (two sandboxes, both modes; the timeout line;
+DevTools output via a console spy in the host page).
 
 **Verified**: logs dispatch on `window` (`src/host.ts:139`, `:156`, `:212`) while
 `SandboxDevTools` filters `if (e.target !== this._sandbox) return;` (`src/devtools.ts:13`). The
@@ -771,6 +804,8 @@ So `IMPROVEMENTS.md` is not re-proposed wholesale:
   `default-src 'none'` fallback and 12 passing unit tests.
 - **Opaque origin via `srcdoc`** — closes findings 03 and 05 by construction.
 - **Headless worker mode** — isolated inside the sandbox frame since S1.
+- **Lifecycle state machine** (§4) — `state`, `terminate()` and `reset()` on the element, without
+  the XState dependency (B2).
 
 ---
 
