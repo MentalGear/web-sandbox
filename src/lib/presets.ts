@@ -15,7 +15,7 @@ fetch("https://jsonplaceholder.typicode.com/todos/1")
   .then(j => console.log("Fetched:", j));`,
         rules: {
             connectionsAllowed: {
-                "script-src": ["'self'", "'unsafe-inline'"],
+                "script-src": ["'unsafe-inline'"],
                 "connect-src": ["https://jsonplaceholder.typicode.com"]
             },
             scriptUnsafe: true,
@@ -336,7 +336,7 @@ console.log('TEST_DONE');`,
 </html>`,
         rules: {
             connectionsAllowed: {
-                "script-src": ["'self'", "'unsafe-inline'"],
+                "script-src": ["'unsafe-inline'"],
                 "style-src": ["'unsafe-inline'"],
                 "img-src": ["https://picsum.dev"]
             },

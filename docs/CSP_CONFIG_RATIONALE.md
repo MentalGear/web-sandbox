@@ -19,6 +19,7 @@ Allowing `'unsafe-inline'` creates potential side-channels for data exfiltration
 | Directive | Setting | Purpose |
 | :--- | :--- | :--- |
 | `default-src` | `'none'` | Deny-by-default fallback for all unspecified directives. |
+| `script-src` | `'unsafe-inline'`, never `'self'` | `'self'` has no agreed meaning for the guest's opaque origin (WebKit admits any https origin), so it is dropped from every directive, with a warning (backlog S14). |
 | `img-src` | `vfsBase` | Allows local/virtual images while blocking external exfiltration. |
 | `font-src` | `'none'` | Prevents exfiltration via custom font loading. |
 | `media-src` | `'none'` | Prevents exfiltration via audio/video sources. |

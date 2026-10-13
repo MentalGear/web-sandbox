@@ -1,6 +1,7 @@
 import type { CSPDirectives, SafeCapability, UnsafeCapability } from "./csp-directives";
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./csp-directives";
 import { generateCSP } from "./lib/csp/csp-generator";
+import { dropSelfSources } from "./lib/csp/drop-self";
 import { deepMerge } from "./lib/utils";
 import { inSandboxScript } from "./lib/in-sandbox-script";
 import { createBroker } from "./lib/rpc";
@@ -40,7 +41,7 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     connectionsAllowed: {
         "upgrade-insecure-requests": true,
         "default-src": ["'none'"],
-        "script-src": ["'self'", "'unsafe-inline'"],
+        "script-src": ["'unsafe-inline'"], // never 'self': see src/lib/csp/drop-self.ts
         "connect-src": [],
         "base-uri": [], // no default-src fallback: emitted as 'none'
         "img-src": [],
@@ -87,6 +88,7 @@ export class WebSandbox extends HTMLElement {
     private _queuedMessages: { code: string }[] = [];
     private _rpcQueue: unknown[] = []; // the host's own RPC requests waiting for a port (cloned at call time)
     private _warnedUnsafeCapabilities = new Set<string>();
+    private _warnedSelfDirectives = new Set<string>(); // directives already warned about for 'self' (drop-self.ts)
 
     // One broker lives on the element for its whole life, so host-exposed methods persist across
     // frame recreation (the guest's broker is per-frame and resets with each new frame). Its send only
@@ -448,7 +450,11 @@ export class WebSandbox extends HTMLElement {
             directives["script-src"]?.push("'unsafe-eval'");
         }
 
-        return generateCSP(directives);
+        // The one place every guest policy is built (worker mode inherits this frame's policy), so the
+        // guest never gets 'self', whatever the config says: its meaning for an opaque origin differs by
+        // engine (drop-self.ts). Done last, so a directive emptied by the drop becomes 'none' only if
+        // nothing else was added to it.
+        return generateCSP(dropSelfSources(directives, this._warnedSelfDirectives));
     }
 
     private createIframe() {
