@@ -42,3 +42,11 @@ closed by construction rather than by a fix.
 
 Findings 11 and 12 include probe scripts and the environment they were measured in; see
 [`11_meta_csp_delivery/probes/METHOD.md`](11_meta_csp_delivery/probes/METHOD.md).
+
+## Design probes
+
+Measurements taken before building a planned design, each backed by an e2e spec.
+
+| Probe | Question | Result |
+| :--- | :--- | :--- |
+| [Blob-URL file delivery (δ)](blob-delivery-probe.md) | Can guest-created blob: URLs plus an import map replace the virtual-files Service Worker? | Viable with changes: `blob:` in five directives, rewrite relative specifiers, one import map before any module. Also found the `script-src 'self'` egress route fixed by S14 |

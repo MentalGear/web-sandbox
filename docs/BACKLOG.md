@@ -33,11 +33,11 @@ conditional "continue".
 | Type check | ✅ `bun run typecheck` is clean and gates CI (H3) |
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
-| Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9) |
+| Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); no `'self'` in any guest directive, dropped with a warning if configured (S14) |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
-M1 plus S1, S2, S9 and the new S10–S12 are done. Rows re-checked against the items below on
+M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. Rows re-checked against the items below on
 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -122,6 +122,24 @@ specs hard-code their payloads. The unification is documented but not built.
 
 **Acceptance**: each `reproduce.spec.ts` sources its payload and rules from a preset id; adding a
 preset without a spec fails a coverage assertion.
+
+### T5 · Egress specs rely on request routing that can miss guest requests — **P1 · S**
+
+**Guarantee**: every "nothing left the sandbox" assertion rests on evidence that cannot silently
+miss a request.
+
+**Verified** (2026-10-13, during the [blob delivery probe](research/blob-delivery-probe.md)): in
+Chromium, Playwright's `context.route` saw the guest frame's subresource requests only
+intermittently (1 run in 4, unless the host page made a request first). A spec whose only evidence is
+"the route recorded no request" can therefore pass while a request went out.
+
+**Work**: audit the egress specs (`security`, `hard-security`, `worker-security`, the research
+specs) and back every route-only check with evidence that cannot be missed: a CSP violation event
+from inside the guest, the guest's own load/error outcome, and where it matters a listener outside
+the browser (as the probe's raw TCP listener did). Keep routing as secondary evidence.
+
+**Acceptance**: no egress spec passes on route silence alone; a deliberately permitted request is
+observed by every evidence channel the spec uses (a positive control), in all three engines.
 
 ---
 
@@ -411,6 +429,39 @@ this item and may make it larger than S.
 
 **Acceptance**: by default, in iframe mode, `typeof RTCPeerConnection === 'undefined'` in the guest
 and in any frame it creates, on Chromium, Firefox and WebKit (CI).
+
+### S14 · **script-src 'self'** admits other origins in the guest — ✅ **done**
+
+*From the [blob-delivery probe](research/blob-delivery-probe.md).*
+
+**Verified** (2026-10-13, Playwright 1.58.1 builds: Chromium 141, Firefox 146, WebKit 26.0 on Linux):
+the default guest policy was `script-src 'self' 'unsafe-inline'`. The guest's origin is opaque, and
+the engines disagreed on what `'self'` matched there:
+- **WebKit** admitted any https origin. With the shipping config (`scriptUnsafe: false`), a classic
+  script, a module script and `import()` from a non-allowlisted origin loaded and ran, with no
+  violation. A raw TCP listener received the connection. This was an egress route in the default
+  config.
+- **Chromium** resolved `'self'` to the host page's origin, so the guest could load scripts from the
+  host's server.
+- **Firefox** matched nothing.
+
+To re-measure in Safari proper: Playwright's WebKit on Linux is not Safari.
+
+**Work**: remove `'self'` from the default `script-src` and the playground presets. Drop it from every
+directive a config supplies, at the one place each guest policy is built. Warn once per directive per
+instance. A directive emptied by the drop becomes `'none'` rather than falling back to `default-src`.
+
+**Acceptance**: no guest policy contains `'self'`, in either mode. With the shipping default, no engine
+loads a script from another origin or from the host origin. A configured `'self'` is dropped with a
+warning and changes nothing, identically on Chromium, Firefox and WebKit.
+
+**Done**: `dropSelfSources()` (`src/lib/csp/drop-self.ts`) is applied last in `_getCSP`
+(`src/host.ts`), the one builder of the guest policy (worker mode inherits it). The default
+`script-src` is `'unsafe-inline'`. Tests:
+- unit: `src/lib/csp/drop-self.test.ts` and `test/unit/host.test.ts` (iframe and worker mode, across
+  `reset()`);
+- e2e: section 5a of `test/e2e/blob-delivery.spec.ts` (iframe, plus worker-mode `importScripts` and
+  `import()`).
 
 ## B · API Surface & DX
 
@@ -815,7 +866,7 @@ So `IMPROVEMENTS.md` is not re-proposed wholesale:
 | :--- | :--- | :--- |
 | **M1 · Turn the lights on** | T1, T2, T3, D2 | Until the suite runs, no security claim is verified and no later change is safe. CI belongs here so the same drift cannot recur. |
 | **M2 · Make the claims true** | S1, S2, S7, S9, D1, B3, B4 | A documented capability that does not hold (S1) or does not install (D1) costs more than a missing one. B3/B4 ride along — DevTools is silent and the element self-registers nowhere. |
-| **M3 · Harden** | S3, S4, S13, T4, H3 | The injection path and the session-id model are the two places where the design's assumptions are unverified; presets and type checking keep them that way. S13 is a candidate egress route that CSP does not cover. |
+| **M3 · Harden** | S3, S4, S13, T4, T5, H3 | The injection path and the session-id model are the two places where the design's assumptions are unverified; presets and type checking keep them that way. S13 is a candidate egress route that CSP does not cover. |
 | **M4 · Make it adoptable** | B1, B7, B2, C1, C2 | RPC + lifecycle is the parity bar set by websandbox and Penpal; B7 makes RPC failures safe to branch on; the VFS is the differentiator, so it must actually work. |
 | **M5 · Extend** | B5, B6, C3, C4, S5, S6, D3, H1, H2, H5 | Observability, quotas, docs and hygiene once the base is trustworthy. |
 | **Bets** | hosted-origin mode, QuickJS spike | Independent; run when there is slack. |

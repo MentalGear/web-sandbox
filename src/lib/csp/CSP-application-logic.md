@@ -34,7 +34,7 @@
 ```json
 {
     "default-src": ["'none'"],
-    "script-src": ["'self'", "'unsafe-inline'"], // maybe we can delete 'unsafe-inline' as well and it work for normal on-page js ? only if svelte/vite csp generates nounce for each script
+    "script-src": ["'unsafe-inline'"], // never 'self' (dropped for the guest, see drop-self.ts). maybe we can delete 'unsafe-inline' as well and it work for normal on-page js ? only if svelte/vite csp generates nounce for each script
     "connect-src": [], // we can't add 'none' as default to all the items since that would overwrite the default-src. if empty, we must remove the whole directive later.
     "base-uri": [],
     "img-src": [],
@@ -54,7 +54,7 @@
 **Output**
 
 ```js
-const csp_string = ` default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; worker-src 'blob:' 'data:' ;`;
+const csp_string = ` default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; worker-src 'blob:' 'data:' ;`;
 ```
 
 ## Why not an external csp lib?
