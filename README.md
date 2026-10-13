@@ -88,6 +88,7 @@ being built), `ready` (the guest can be reached) or `terminated`. There is no "r
 sandbox.addEventListener('ready', () => { /* state is 'ready' */ });
 sandbox.addEventListener('terminated', (e) => console.warn(e.detail.reason));
 sandbox.addEventListener('sandbox-log', (e) => console.log(e.detail.level, ...e.detail.args));
+sandbox.addEventListener('violation', (e) => console.warn(e.detail.directive, e.detail.blockedURI));
 
 sandbox.terminate('user pressed stop');  // tears it down; 'terminated' fires once
 sandbox.reset();                         // a fresh frame and opaque origin, from any state
@@ -102,6 +103,13 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     leaves it `idle`. Inserting it again builds a fresh one.
 *   **Events** are dispatched on the element. `sandbox-log` (guest `console` output and errors) bubbles,
     so a listener on `window` hears every sandbox on the page and `event.target` says which one.
+*   **`violation`** reports a load the guest policy refused: `{ directive, blockedURI }`, plus
+    `sourceFile`, `lineNumber` and `columnNumber` when the browser gives them. It bubbles like
+    `sandbox-log`. The guest's bootstrap listens before any guest code runs, but every field comes from
+    the guest and guest code can suppress its own reports, so an event is evidence that the guest tried
+    something; no event proves nothing. A frame the guest creates reports to itself, not here, and in
+    worker mode it depends on the engine (WebKit raises none in workers; Firefox none for
+    `importScripts`). At most 100 per environment (`VIOLATION_EVENT_LIMIT`); type `SandboxViolation`.
 *   **`state === 'terminated'` is a second, authoritative signal** next to a call's `TERMINATED`
     code: the element sets both from its own state, so the guest can produce neither.
 
@@ -146,6 +154,11 @@ has a fresh opaque origin that the default allowlist never matches. The risk is 
 browsers soften by requiring a user gesture and showing an exit hint.
 
 `allow-same-origin` and the `allow-top-navigation*` flags are never accepted.
+
+**`scriptUnsafe` is for testing.** It adds `'unsafe-eval'` to the guest policy, so guest code can run
+strings as code (`eval`, `new Function`), and it enables `execute()`. The e2e suite and most playground
+presets turn it on; content you do not trust should run without it. Enabling it logs one warning per
+element.
 
 ## Calling between host and guest
 
@@ -268,7 +281,7 @@ existing solution is argued in [`docs/ADR-001-continue-or-adopt.md`](docs/ADR-00
 
 The sandbox implements several layers of defense:
 1.  **Opaque Origin**: Runs in `about:srcdoc`, creating a unique null origin that isolates storage.
-2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`). An empty array means `'none'` for every directive; leave a directive out to fall back to `default-src`. The guest policy never contains `'self'`: for the guest's opaque origin, browsers disagree on what it matches (WebKit admits any https origin), so a configured `'self'` is dropped with a warning. List the origins you need explicitly.
+2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`). An empty array means `'none'` for every directive; leave a directive out to fall back to `default-src`. The guest policy never contains `'self'`: for the guest's opaque origin, browsers disagree on what it matches (WebKit admits any https origin), so a configured `'self'` is dropped with a warning. List the origins you need explicitly. `frame-ancestors`, `report-uri`, `report-to` and `sandbox` are dropped with a warning too: browsers ignore them in a `<meta>` policy, which the guest's always is.
 3.  **CSP First**: The CSP `<meta>` is prepended before any user markup, so it is always the first element of the parsed `<head>`; user content cannot precede or swallow it.
 4.  **Wrapper Frame**: The guest frame is nested in a library-owned frame whose policy is `frame-src 'none'`. That blocks the guest from navigating itself to carry data out in a URL ([research 14](docs/research/14_self_navigation/README.md)).
 5.  **One-Shot Channel**: The private `MessagePort` is handed over exactly once per frame. If the frame ever loads a second document, the sandbox is torn down and fires `terminated`.
@@ -276,4 +289,5 @@ The sandbox implements several layers of defense:
 7.  **Capability Tiers**: Flags that reach outside the frame require the explicit `unsafeCapabilities` opt-in.
 8.  **Allowlisted Calls**: Each side can call only the methods the other side exposed, and an answer reaches only the frame that made the request, never a frame that replaced it.
 9.  **Realm-Bound Files**: Registered files reach the guest as `blob:` URLs created in its own realm, which no other sandbox and not the host page can load. Lookups are exact, and `blob:` is allowed only for the registered types.
-10. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer; WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)).
+10. **No WebRTC in the Guest**: The bootstrap removes `RTCPeerConnection` from the guest's global scope before guest code runs (workers never have it), since no CSP directive governs ICE traffic. A frame the guest creates is a realm of its own and keeps it, and in Chromium and WebKit its ICE traffic leaves the sandbox ([backlog S13](docs/BACKLOG.md)).
+11. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer; WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)).

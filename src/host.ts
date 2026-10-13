@@ -2,6 +2,7 @@ import type { CSPDirectives, SafeCapability, UnsafeCapability } from "./csp-dire
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./csp-directives";
 import { generateCSP } from "./lib/csp/csp-generator";
 import { dropSelfSources } from "./lib/csp/drop-self";
+import { dropMetaIgnoredDirectives } from "./lib/csp/drop-meta-ignored";
 import { addFileSources } from "./lib/csp/file-sources";
 import { FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
@@ -13,12 +14,14 @@ import { createBroker } from "./lib/rpc";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
+import { toViolationDetail, VIOLATION_EVENT_LIMIT } from "./lib/violation";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
 
 export interface SandboxConfig {
     connectionsAllowed: CSPDirectives; // Providing a key here will merge with/override the default for that directive.
-    // TODO: maybe add a warning/error when scriptUnsafe is active, that it should only be used for testing, never in production (as long as webcontent works in it witout it)
-    scriptUnsafe?: boolean; // 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox)
+    // 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox). For testing: enabling it
+    // logs one warning per instance (backlog S4), since it lets guest code compile strings as code.
+    scriptUnsafe?: boolean;
     capabilities?: SafeCapability[]; // Sandbox attributes that keep the guest inside the frame
     unsafeCapabilities?: UnsafeCapability[]; // Capabilities that reach outside the frame (popups, modals, downloads, presentation, fullscreen). Opt-in only, logs a warning.
     html?: string; // Initial HTML content for iframe mode
@@ -89,15 +92,19 @@ export class WebSandbox extends HTMLElement {
     private _frameLoaded = false;
     private _state: SandboxState = 'idle'; // changed only by _enterState()
     private _watchdog: Watchdog | null = null;
+    private _violationCount = 0; // 'violation' events dispatched for the current environment (capped, violation.ts)
     private _config: SandboxConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
     private _port: MessagePort | null = null;
     private _timeoutId: ReturnType<typeof setTimeout> | null = null;
     private _queuedMessages: { code: string }[] = [];
     private _rpcQueue: unknown[] = []; // the host's own RPC requests waiting for a port (cloned at call time)
     private _warnedUnsafeCapabilities = new Set<string>();
+    private _warnedScriptUnsafe = false; // the scriptUnsafe guard rail warns once per instance (S4)
     private _warnedSelfDirectives = new Set<string>(); // directives already warned about for 'self' (drop-self.ts)
+    private _warnedMetaIgnored = new Set<string>(); // directives a <meta> policy discards, already warned about (drop-meta-ignored.ts)
     private _warnedFileDirectives = new Set<string>(); // directives already warned about for an explicit 'none' (file-sources.ts)
     private _warnedVirtualFilesUrl = false;
+    private _warnedBootstrapRefused = false; // the guest policy refuses the inline bootstrap (S13), once per instance
     private _warnedGuestMarkup = new Set<string>(); // module-graph warnings about guest markup, once per text (_warnOnce)
 
     // Files are part of the environment: they live on the element, survive reset(), load(), setConfig()
@@ -162,11 +169,14 @@ export class WebSandbox extends HTMLElement {
             capabilities: filterCapabilities(config.capabilities, SAFE_CAPABILITIES, 'capabilities'),
             unsafeCapabilities: filterCapabilities(config.unsafeCapabilities, UNSAFE_CAPABILITIES, 'unsafeCapabilities'),
         };
+        // Only a literal true enables eval: the value is also interpolated into the guest bootstrap.
+        if (Object.hasOwn(config, 'scriptUnsafe')) sanitizedConfig.scriptUnsafe = config.scriptUnsafe === true;
         this._dropVirtualFilesUrl(sanitizedConfig);
 
         // apply new config
         this._config = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig);
         this._warnAboutUnsafeCapabilities();
+        this._warnAboutScriptUnsafe();
 
         this.initialize();
     }
@@ -279,6 +289,15 @@ export class WebSandbox extends HTMLElement {
         }
     }
 
+    // The guard rail for scriptUnsafe (backlog S4). It is on in most presets and every e2e spec, so it is the
+    // path of least resistance for a copy-paste consumer; one warning per instance says what it costs
+    // without repeating on every reset(), load() or setConfig().
+    private _warnAboutScriptUnsafe() {
+        if (this._config.scriptUnsafe !== true || this._warnedScriptUnsafe) return;
+        this._warnedScriptUnsafe = true;
+        console.warn("[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content.");
+    }
+
     private _startTimeout() {
         if (this._timeoutId) clearTimeout(this._timeoutId);
 
@@ -306,6 +325,10 @@ export class WebSandbox extends HTMLElement {
             }
             if (data?.type === 'LOG') {
                 this._dispatchLog(data);
+                return;
+            }
+            if (data?.type === 'VIOLATION') {
+                this._dispatchViolation(data);
                 return;
             }
             // Everything else on this port is RPC (or not ours); the broker validates every frame.
@@ -364,6 +387,22 @@ export class WebSandbox extends HTMLElement {
         this.dispatchEvent(new CustomEvent('sandbox-log', { detail, bubbles: true }));
     }
 
+    // A CSP violation reported by the guest (backlog S5): dispatched on the element and bubbling, like
+    // sandbox-log. The detail is guest-supplied, so it is validated and clamped (violation.ts) and the
+    // number of events per environment is capped: past VIOLATION_EVENT_LIMIT reports are dropped, with one
+    // warning, so a guest cannot make the host run embedder listeners without bound.
+    private _dispatchViolation(frame: unknown) {
+        if (this._violationCount > VIOLATION_EVENT_LIMIT) return;
+        const detail = toViolationDetail(frame);
+        if (!detail) return;
+        this._violationCount++;
+        if (this._violationCount > VIOLATION_EVENT_LIMIT) {
+            console.warn(`[Sandbox] the guest reported more than ${VIOLATION_EVENT_LIMIT} CSP violations; further ones are not dispatched until the next reset(), load() or setConfig().`);
+            return;
+        }
+        this.dispatchEvent(new CustomEvent('violation', { detail, bubbles: true }));
+    }
+
     // Arms the liveness watchdog for the port just handed over, if the config asks for one (see
     // src/lib/watchdog.ts). Pings go on THIS port: teardown closes it and stops the watchdog together.
     private _startWatchdog(port: MessagePort) {
@@ -387,6 +426,7 @@ export class WebSandbox extends HTMLElement {
     private _teardown() {
         this._queuedMessages = []; // Clear queue for the old environment
         this._rpcQueue = [];       // same for the host's RPC requests queued for the old environment
+        this._violationCount = 0;  // the violation cap is per environment
         // Reject any in-flight calls so their promises never hang once this environment goes away.
         // They reject with code TERMINATED, minted by the broker (see rpc.ts).
         this._broker.rejectAllPending(RESET_CALL_MESSAGE);
@@ -471,10 +511,12 @@ export class WebSandbox extends HTMLElement {
 
     private _getCSPDirectives(files: FileSnapshotEntry[]): CSPDirectives {
         // Clone the config directives to avoid mutating the original config
-        // passing the refs of the original object
-        const cloned = structuredClone(
+        // passing the refs of the original object. Directives a <meta> policy discards (frame-ancestors,
+        // report-uri, report-to, sandbox) are dropped first, with a warning: the guest policy is always a
+        // <meta> policy, so emitting them would only look like control (drop-meta-ignored.ts, S7).
+        const cloned = dropMetaIgnoredDirectives(structuredClone(
             this._config.connectionsAllowed
-        );
+        ), this._warnedMetaIgnored);
 
         cloned["upgrade-insecure-requests"] = true
 
@@ -514,6 +556,17 @@ export class WebSandbox extends HTMLElement {
         return { parts: markup.parts, importMap: { paths: javascript, guest } };
     }
 
+    // The guarantees that live in the guest bootstrap — WebRTC removed from the guest realm (S13), violation
+    // reports (S5), the bridge and sandboxFiles — hold only where it runs. It is an inline script, so a policy
+    // that refuses inline scripts while the sandbox flags allow scripts lets guest scripts from allowlisted
+    // origins run without it. Said once per instance, since only the embedder's config can cause it.
+    private _warnIfBootstrapRefused(sandboxFlags: string, directives: CSPDirectives) {
+        if (this._warnedBootstrapRefused) return;
+        if (!sandboxFlags.split(' ').includes('allow-scripts') || inlineScriptsAllowed(directives)) return;
+        this._warnedBootstrapRefused = true;
+        console.warn("[Sandbox] the guest policy refuses inline scripts, so the sandbox bootstrap cannot run: guest scripts would run with no bridge, no sandboxFiles, no violation reports, and with WebRTC available. Keep 'unsafe-inline' in script-src (without nonces or hashes).");
+    }
+
     // Warnings about the guest's markup come back with every build of the same markup: one each per element.
     private _warnOnce(message: string) {
         if (this._warnedGuestMarkup.has(message)) return;
@@ -531,6 +584,7 @@ export class WebSandbox extends HTMLElement {
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
         const directives = this._getCSPDirectives(files);
+        this._warnIfBootstrapRefused(sandboxFlags, directives);
 
         // TODO: run through DOMPurify ?
         let guestDocument: string;

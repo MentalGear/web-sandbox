@@ -38,12 +38,14 @@ fetch("https://jsonplaceholder.typicode.com/todos/1")
         id: "csp-bypass",
         label: "Security Test: CSP Bypass",
         // A nested frame declares a permissive policy of its own. It must still inherit the sandbox's
-        // policy (policies only ever add up), so its fetch has to fail.
+        // policy (policies only ever add up), so its fetch has to fail. The nested frame raises the
+        // violation in its own document, where the sandbox's reporting does not reach, so it relays it.
         code: `addEventListener('message', (e) => console.log(e.data));
 
 const iframe = document.createElement('iframe');
 iframe.srcdoc = \`<meta http-equiv="Content-Security-Policy" content="default-src *; script-src 'unsafe-inline'">
 <script>
+  addEventListener('securitypolicyviolation', (e) => parent.postMessage('NESTED_VIOLATION ' + e.effectiveDirective + ' ' + e.blockedURI, '*'));
   fetch('https://example.com/', { mode: 'no-cors' })
     .then(() => parent.postMessage('PWN_SUCCESS', '*'))
     .catch(() => parent.postMessage('PWN_FAILURE', '*'));

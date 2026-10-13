@@ -25,7 +25,7 @@ conditional "continue".
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker |
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
-| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3) |
+| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3); `violation` for refused loads, capped per environment (S5) |
 | Execution budget | 🟡 opt-in liveness watchdog in default mode: bounded in worker mode and out-of-process frames, not where the frame shares the host's thread; strict mode open (S6) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C) |
@@ -127,10 +127,45 @@ specs hard-code their payloads. The unification is documented but not built.
 **Acceptance**: each `reproduce.spec.ts` sources its payload and rules from a preset id; adding a
 preset without a spec fails a coverage assertion.
 
-### T5 · Egress specs rely on request routing that can miss guest requests — **P1 · S**
+### T5 · Egress specs rely on request routing that can miss guest requests — ✅ **done**
 
 **Guarantee**: every "nothing left the sandbox" assertion rests on evidence that cannot silently
 miss a request.
+
+**Done**: no egress spec rests on route or request silence any more. Playwright routing is gone from
+every egress assertion; its place is taken by `test/e2e/recorder.ts`, two HTTPS listeners on loopback
+outside the browser (ALLOWED, which positive controls put in the policy, and BLOCKED, which every attempt
+targets) that also answer WebSocket handshakes. Each attempt is asserted by the guest's own outcome
+and, where the engine raises one, the violation reported on the host (S5); the listener must stay silent.
+Every file has a positive control per channel: the same loads to ALLOWED succeed, reach the listener and
+raise no violation, or, where no configuration can permit the load, the same load from a frame on the host
+page reaches BLOCKED. Specs changed:
+- `test/e2e/security.spec.ts` (nested frame), `hard-security.spec.ts` (CSS, image, beacon, ping, popup),
+  `worker-security.spec.ts` (fetch, `importScripts`), `empty-directive.spec.ts`;
+- `test/e2e/blob-delivery.spec.ts` sections 5 and 5a (blob: script, module, stylesheet and worker
+  attempts, now with fetch, import, image, WebSocket and per-engine violations, plus a positive control in
+  both modes); the blob: stylesheet test asserted route silence alone before;
+- `test/e2e/files.spec.ts` sections 4 and 9 (listener instead of route, and a positive control); section
+  8 drops its request recording, which had no positive control;
+- research 01 (the nested frame relays its own violation; preset updated), 04 (WebSocket listener), 05
+  and 06 (assert the refusal, not the absence of success), 08, 09, 10 (base-uri violation), 12.2, 13, 14.1.
+
+**Not strengthened further**, and why:
+- 14.1 self-navigation: the refusal is reported to the wrapper, which runs no script, so there is no
+  violation and no outcome event to await. The evidence is the listener after a fixed 2 s wait and the
+  page's frame URLs; each vector's positive control (the same markup in a sandboxed frame without the
+  wrapper) reaches the listener well within that wait.
+- 12.2 form-action in Chromium: the guest document is replaced by the refused submission's error page
+  before a report is forwarded (measured), so the listener after a 2 s wait is the evidence there.
+  Firefox and WebKit report `form-action`. A permitted form cannot be a control (the wrapper refuses
+  every navigation), so the control submits the same form from a host-page frame.
+- worker mode: WebKit raises no violations in workers and Firefox none for `importScripts` (S5); there the
+  load outcome and the listener are the evidence.
+- link ping in Firefox: pings are off by default, so there is nothing to refuse; the control shows that
+  Firefox sends none to an allowed origin either.
+- a frame the guest creates reports violations to itself (research 01 relays them from the payload).
+- research 07 (top navigation to `data:`) is asserted by the host page's URL, a browser fact, not a request.
+- S8's pre-policy window is not covered by any of these: it is an accepted risk of `<meta>` delivery.
 
 **Verified** (2026-10-13, during the [blob delivery probe](research/blob-delivery-probe.md)): in
 Chromium, Playwright's `context.route` saw the guest frame's subresource requests only
@@ -237,7 +272,20 @@ even when handed its session id.
 If the Service Worker is replaced by blob-URL files, this guarantee moves to C1's containment
 acceptance rather than disappearing with it.
 
-### S4 · `scriptUnsafe` has no guard rail — **P1 · S**
+### S4 · `scriptUnsafe` has no guard rail — ✅ **done**
+
+**Guarantee**: an instance that enables `scriptUnsafe` says so on the console exactly once, naming the
+risk: guest code can run strings as code.
+
+**Done**: `setConfig()` warns once per instance when `scriptUnsafe` is on (`_warnAboutScriptUnsafe` in
+`src/host.ts`), however often `reset()`, `load()` or `setConfig()` rebuild the environment; only a
+literal `true` enables it, since the value is also interpolated into the guest bootstrap. The README
+states that it exists for testing. Tests:
+- unit: `test/unit/host.test.ts` (one warning across `setConfig()`, `reset()`, `load()`, a mode switch
+  and an off/on toggle; one more for a second instance; none, and no `'unsafe-eval'`, for any value
+  other than `true`);
+- e2e: section S4 of `test/e2e/guard-rails.spec.ts` (one warning across reset and setConfig in both
+  modes, the guest's `eval` runs with it on and is refused with an `EvalError` without it).
 
 **Verified**: `scriptUnsafe: true` appends `'unsafe-eval'` to `script-src` (`src/host.ts:246`)
 with no warning at any level; the TODO at `src/host.ts:9` asks for one. It is enabled in most
@@ -246,7 +294,41 @@ presets and in every e2e spec, so it is the path of least resistance for a copy-
 **Work**: a one-time console warning when enabled, and a prominent README note that it exists for
 testing. **Acceptance**: enabling it emits exactly one warning per instance.
 
-### S5 · No CSP violation reporting — **P2 · M**
+### S5 · No CSP violation reporting — ✅ **done**
+
+**Guarantee**: every CSP violation the engine raises in the guest's own document (iframe mode) or worker
+(worker mode) is offered to the host as a `violation` event on the element, by a listener installed
+before any guest code runs. A report is evidence that the guest attempted a refused load; it is never a
+host fact, and its absence proves nothing.
+
+**Done**: the guest bootstrap (`src/lib/in-sandbox-script.ts`) registers a capture listener for
+`securitypolicyviolation` on the global object as its first act, so it is the first listener on every
+violation's path, and forwards trusted events as a first-class `VIOLATION` frame on the port (outside the
+broker, so no exposed method name can collide); reports raised while the markup is still parsed wait for
+the port. The host (`_dispatchViolation`, `src/host.ts`) validates and clamps the frame
+(`toViolationDetail`, `src/lib/violation.ts`: a lowercase directive name, strings cut at 2048 characters,
+positions only as positive integers, nothing else read) and dispatches `violation`, bubbling like
+`sandbox-log`. Both sides cap it at 100 per environment (`VIOLATION_EVENT_LIMIT`); the host's cap is the
+bound, with one warning, since guest code can reach the port. Tests:
+- unit: `src/lib/violation.test.ts` (validation and clamping), `src/lib/in-sandbox-script.test.ts`
+  (registered first, as a capture listener; buffered before the port; synthetic events ignored; guest-side
+  cap), `test/unit/host.test.ts` (detail, bubbling, host cap with one warning, reset per environment);
+- e2e: `test/e2e/violations.spec.ts` (image and fetch reported with the element as target; a second
+  sandbox apart; a violation during markup parsing; guest listeners that stop propagation on window and
+  document cannot hide one; synthetic events not forwarded; a frame forged on the port clamped; the flood
+  cap; worker mode per engine). `security.spec.ts`, `hard-security.spec.ts` and `worker-security.spec.ts`
+  now assert the violation instead of waiting for silence.
+
+**Residuals**, stated in the README:
+- guest code can suppress its own reports (it can patch `MessagePort.prototype.postMessage` and so reach
+  the port), and can forge reports in their place: the detail is validated, never believed;
+- a frame the guest creates raises its violations in its own document, which has no listener of ours;
+  a navigation the wrapper's `frame-src 'none'` refuses is reported to the wrapper, which runs no script;
+- worker mode, measured 2026-10-13 (Chromium 141, Firefox 146, WebKit 26.0 on Linux): Chromium raises
+  violations in workers for `fetch` and `importScripts`, Firefox for `fetch` and `WebSocket` but not
+  `importScripts`, WebKit none. There the load outcome is the only evidence;
+- the cap bounds dispatch, not receipt: a guest that floods the port still costs host time per message
+  (S6's open note).
 
 `test/e2e/security.spec.ts:29` records the gap in a comment: *"web-sandbox doesn't have CSP
 violation reporting hooked up to postMessage yet"*. Tests must therefore assert the *absence* of a
@@ -312,7 +394,8 @@ isolates the frame (case 2), with case 3's limit documented.
 `performance.measureUserAgentSpecificMemory()` where available remains a follow-up. Likewise the
 host does not cap inbound traffic: a guest that floods it with calls or log lines costs host time.
 That belongs to the same watchdog, not to a per-channel cap, since an RPC limit alone would leave
-`console.log` in a loop unbounded.
+`console.log` in a loop unbounded. (The `violation` event is capped at 100 per environment (S5), which bounds the embedder
+listeners a guest can trigger through it, not the cost of receiving its messages.)
 
 **Acceptance**: in strict mode, an unbounded loop in guest logic is stopped within the configured
 budget on Chromium, Firefox and WebKit (CI); in default mode, the watchdog stops it where the frame
@@ -320,9 +403,27 @@ runs in its own process, and the README states the same-thread limit plainly.
 
 ---
 
-### S7 · Silently ignored CSP directives — **P1 · S**
+### S7 · Silently ignored CSP directives — ✅ **done**
 
 *From [Research 11.1](research/11_meta_csp_delivery/README.md).*
+
+**Guarantee**: the guest policy contains no directive the browser discards, and a consumer who configures
+one is told, once per directive per instance.
+
+**Done**: `dropMetaIgnoredDirectives()` (`src/lib/csp/drop-meta-ignored.ts`) removes `frame-ancestors`,
+`report-uri`, `report-to` and `sandbox` (any case, any value) at the start of `_getCSPDirectives`
+(`src/host.ts`), the one builder of the guest policy, so worker mode is covered too. Each is left out,
+not emitted as `'none'`: the browser would discard `'none'` just the same. Every other directive keeps
+S16's rule (empty means `'none'`). The warning names where the concern is handled instead: embedding
+by the host page, reporting by the element's `violation` event (S5), flags by `capabilities`.
+`CSPDirectives['frame-ancestors']` is marked `@deprecated`; `generateCSP()` itself is unchanged, since
+it does not know how its output is delivered. Tests:
+- unit: `src/lib/csp/drop-meta-ignored.test.ts` (each directive with a source list, an empty list and a
+  single value; case variants; one warning per directive per instance; other directives untouched) and
+  `test/unit/host.test.ts` (iframe and worker mode across `reset()`);
+- e2e: section S7 of `test/e2e/guard-rails.spec.ts` (absent from the guest's own policy, one warning
+  each across reset and a mode switch, and in Chromium no "ignored when delivered via a `<meta>`
+  element" message, the channel research 11.1 shows is live).
 
 **Verified**: a `<meta>`-delivered policy discards `frame-ancestors`, `report-uri`/`report-to` and
 `sandbox` — Chromium logs *"is ignored when delivered via a `<meta>` element"* for each.
@@ -436,24 +537,65 @@ ones are dropped from `capabilities` with a warning and accepted only through `u
 which warns once per capability per instance. `allow-forms` stays safe: `form-action` defaults to
 `'none'` (S9) and a form submission is a navigation the wrapper blocks (S10).
 
-### S13 · No WebRTC egress guarantee — **P1 · S** — candidate
+### S13 · No WebRTC egress guarantee — 🟡 **guest realm and workers done; frames the guest creates: residual**
 
 **Guarantee**: guest code cannot reach the network through WebRTC.
 
-**Observed**: in one headless-Chromium run, `RTCPeerConnection` was available in the guest, and its
-ICE traffic is not governed by `connect-src`; adding the experimental `webrtc 'block'` directive did
-not change that. Treat this as a candidate until it is confirmed on Firefox and WebKit.
+**What holds now**: the guest's own realm has no peer-connection constructor from its first script on, in
+iframe mode, and a worker never has one, on Chromium, Firefox and WebKit. **What does not**: a frame the
+guest creates is a realm of its own and keeps `RTCPeerConnection`; in Chromium and WebKit its ICE
+traffic leaves. So the guarantee does not hold in default iframe mode until guest script is kept out of
+the DOM frame (strict mode, S6).
 
-**Work**: remove `RTCPeerConnection` (and `webkitRTCPeerConnection`) from the guest's global scope
-in the bootstrap, before any guest code runs, and offer WebRTC only as an explicit unsafe
-capability. The removal must also hold in frames the guest creates: `frame-src 'none'` stops frames
-that load a URL, but a `srcdoc` frame still loads (research 01 relies on this) and has a global
-scope of its own, where a Chromium check still found the constructor after it had been removed from
-the guest. Covering those frames, or ruling out script in them as strict mode (S6) does, is part of
-this item and may make it larger than S.
+**Measured** (2026-10-13, Playwright 1.58.1 builds: Chromium 141, Firefox 146, WebKit 26.0 on Linux;
+default config plus `scriptUnsafe` to run the probe; a peer connection with a data channel, an offer, and
+STUN and TURN servers on a loopback UDP listener; a throwaway probe, whose findings
+`test/e2e/webrtc.spec.ts` now asserts):
 
-**Acceptance**: by default, in iframe mode, `typeof RTCPeerConnection === 'undefined'` in the guest
-and in any frame it creates, on Chromium, Firefox and WebKit (CI).
+| | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- |
+| guest realm, before | `RTCPeerConnection`, `webkitRTCPeerConnection`; constructs, host candidates, UDP leaves | `RTCPeerConnection`; constructs, gathering completes | `RTCPeerConnection`; constructs, UDP leaves |
+| srcdoc frame the guest creates | same | same | same |
+| about:blank frame the guest creates | cross-origin to the guest (`SecurityError`) | same | same |
+| worker | no `RTCPeerConnection` (only `RTCDataChannel`, encoded frames) | same | same (`RTCDataChannel` only) |
+| UDP to loopback STUN/TURN, host page (control) | yes | none (Firefox sends nothing to a loopback ICE server) | yes |
+| `webrtc 'block'` in the guest policy | no effect | no effect | no effect |
+| `allow="local-network-access 'none'"` | no effect | n/a | n/a |
+| constructible network-capable RTC interfaces | `RTCPeerConnection`, `webkitRTCPeerConnection` | `RTCPeerConnection` | `RTCPeerConnection` |
+
+So no policy or sandbox flag makes any engine refuse peer connections, and the frame-src `'none'` the
+guest inherits from the wrapper does not cover `srcdoc` frames. The constructor is the only lever.
+The TURN username never left (the listener did not answer the binding), but the destination of a STUN
+request, or a DNS lookup of a `stun:` host name, is enough to carry data out.
+
+**Done**: the guest bootstrap (`src/lib/in-sandbox-script.ts`) deletes `RTCPeerConnection`,
+`webkitRTCPeerConnection` and `mozRTCPeerConnection` from the global object before any guest code runs,
+in both modes. It cannot be undone from the guest realm: those are the only constructible network-capable
+WebRTC interfaces in each engine, and the guest has no same-origin realm to take one from, because every
+frame it creates gets a fresh opaque origin (no `allow-same-origin`) and workers have none. The host warns
+once per instance when the policy refuses the inline bootstrap while scripts are allowed, since then
+guest scripts from allowlisted origins would run without it. No unsafe capability is offered for WebRTC:
+nothing needs it yet, and with any reachable TURN server it is an egress route. Tests:
+- unit: `src/lib/in-sandbox-script.test.ts` (the constructors are removed, nothing else), `test/unit/host.test.ts`
+  (the bootstrap-refused warning);
+- e2e: `test/e2e/webrtc.spec.ts`, all three engines: the shipping config's first guest script sees none;
+  an about:blank or srcdoc frame the guest creates, and `window[n]`, are cross-origin to it; the worker has
+  none; and the residual, asserted as measured: the created frame has `RTCPeerConnection`, gathers host
+  candidates, and in Chromium and WebKit reaches the loopback listener (Firefox: no traffic, as for its
+  control).
+
+**Residual, and why no by-construction fix exists in default mode**: a created frame runs its own script
+under the guest's inherited policy (`script-src 'unsafe-inline'` is what the guest itself needs), so the
+bootstrap never runs there. Measured alternatives: overriding `HTMLIFrameElement.prototype` access is
+moot (created frames are already cross-origin; what matters is their own script), and refusing frame
+creation would need every insertion path (`innerHTML`, `insertAdjacentHTML`, `document.write`,
+`setHTMLUnsafe`, the parser on the guest's own markup, closed declarative shadow roots that no observer
+sees) and `javascript:` URLs: no single chokepoint. Strict mode (S6) is the structural answer: with no
+guest script in the DOM frame, no frame can be created that runs one.
+
+**Acceptance (original)**: by default, in iframe mode, `typeof RTCPeerConnection === 'undefined'` in the guest
+and in any frame it creates, on Chromium, Firefox and WebKit (CI). Met for the guest; not for frames it
+creates.
 
 ### S14 · **script-src 'self'** admits other origins in the guest — ✅ **done**
 

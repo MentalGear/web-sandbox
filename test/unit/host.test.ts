@@ -122,3 +122,137 @@ describe('the guest policy and frames built by the element (S15, S16)', () => {
     }
   });
 });
+
+describe('the scriptUnsafe guard rail (backlog S4)', () => {
+  const mount = async () => {
+    const { defineWebSandbox } = await import('@src/host');
+    defineWebSandbox();
+    const el = document.createElement('web-sandbox') as any;
+    document.body.appendChild(el);
+    return el;
+  };
+  const scriptUnsafeWarnings = (warn: { mock: { calls: unknown[][] } }) =>
+    warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('scriptUnsafe is enabled'));
+
+  it('warns exactly once per instance across setConfig(), reset() and load(), naming eval in the guest', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const first = await mount();
+    first.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true });
+    first.reset();
+    first.load('<p>again</p>');
+    first.setConfig({ scriptUnsafe: false });
+    first.setConfig({ scriptUnsafe: true, mode: 'worker' });
+    first.reset();
+    const warnings = scriptUnsafeWarnings(warn);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("'unsafe-eval'");
+    expect(warnings[0]).toContain('eval');
+    expect(warnings[0]).toContain('testing');
+
+    // a second instance has its own guard rail
+    const second = await mount();
+    second.setConfig({ scriptUnsafe: true });
+    expect(scriptUnsafeWarnings(warn)).toHaveLength(2);
+    first.remove();
+    second.remove();
+    warn.mockRestore();
+  });
+
+  it('never warns while scriptUnsafe is off, and only a literal true enables it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const el = await mount();
+    el.setConfig({ capabilities: ['allow-scripts'] });
+    el.setConfig({ scriptUnsafe: false });
+    el.setConfig({ scriptUnsafe: 'true' as any });
+    el.setConfig({ scriptUnsafe: 1 as any });
+    el.reset();
+    expect(scriptUnsafeWarnings(warn)).toEqual([]);
+    const wrapper = new DOMParser().parseFromString(el.shadowRoot!.querySelector('iframe')!.srcdoc, 'text/html');
+    const guest = new DOMParser().parseFromString(wrapper.querySelector('iframe')!.getAttribute('srcdoc')!, 'text/html');
+    expect(guest.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')).not.toContain('unsafe-eval');
+    el.remove();
+    warn.mockRestore();
+  });
+});
+
+describe('directives a <meta> policy discards are dropped from the guest policy (backlog S7)', () => {
+  const guestPolicy = (el: HTMLElement): string => {
+    const wrapper = new DOMParser().parseFromString(el.shadowRoot!.querySelector('iframe')!.srcdoc, 'text/html');
+    const guest = new DOMParser().parseFromString(wrapper.querySelector('iframe')!.getAttribute('srcdoc')!, 'text/html');
+    return guest.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
+  };
+
+  it('in iframe and worker mode, none of the four is emitted, with one warning per directive per instance across resets', async () => {
+    const { defineWebSandbox } = await import('@src/host');
+    defineWebSandbox();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const mode of ['iframe', 'worker']) {
+      warn.mockClear();
+      const el = document.createElement('web-sandbox') as any;
+      document.body.appendChild(el);
+      const connectionsAllowed = { 'frame-ancestors': ["'none'"], 'report-uri': ['https://r.example/'], 'report-to': ['group'], 'sandbox': ['allow-scripts'], 'frame-src': [] };
+      el.setConfig({ mode, connectionsAllowed });
+      el.reset();
+      el.setConfig({ mode, connectionsAllowed });
+      const policy = guestPolicy(el);
+      for (const directive of ['frame-ancestors', 'report-uri', 'report-to', 'sandbox']) {
+        expect(policy).not.toMatch(new RegExp(`(^|; )${directive} `));
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes(`connectionsAllowed.${directive}"`))).toHaveLength(1);
+      }
+      expect(policy).toContain("frame-src 'none';"); // S16 still holds for every other directive
+      el.remove();
+    }
+    warn.mockRestore();
+  });
+});
+
+describe("the element's 'violation' event (backlog S5)", () => {
+  it('dispatches a validated detail that bubbles, caps events per environment with one warning, and the cap resets with the environment', async () => {
+    const { defineWebSandbox } = await import('@src/host');
+    defineWebSandbox();
+    const el = document.createElement('web-sandbox') as any;
+    document.body.appendChild(el);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const heard: unknown[] = [];
+    const onWindow = (e: Event) => { if (e.target === el) heard.push((e as CustomEvent).detail); };
+    window.addEventListener('violation', onWindow);
+
+    el._dispatchViolation({ type: 'VIOLATION', directive: 'img-src', blockedURI: 'https://a.test/x', lineNumber: 2, forged: true });
+    el._dispatchViolation({ type: 'VIOLATION', directive: 'not a directive', blockedURI: 'x' });
+    expect(heard).toEqual([{ directive: 'img-src', blockedURI: 'https://a.test/x', lineNumber: 2 }]);
+
+    for (let i = 0; i < 300; i++) el._dispatchViolation({ directive: 'connect-src', blockedURI: 'x' });
+    expect(heard).toHaveLength(100);
+    expect(warn.mock.calls.filter(c => String(c[0]).includes('CSP violations'))).toHaveLength(1);
+
+    el.reset();
+    el._dispatchViolation({ directive: 'connect-src', blockedURI: 'after-reset' });
+    expect(heard).toHaveLength(101);
+
+    window.removeEventListener('violation', onWindow);
+    el.remove();
+    warn.mockRestore();
+  });
+});
+
+describe('the guest bootstrap must be able to run (backlog S13, S5)', () => {
+  it('warns once per instance when scripts are allowed but the policy refuses the inline bootstrap, and never otherwise', async () => {
+    const { defineWebSandbox } = await import('@src/host');
+    defineWebSandbox();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const refused = () => warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('cannot run'));
+    const el = document.createElement('web-sandbox') as any;
+    document.body.appendChild(el);
+
+    el.setConfig({ capabilities: ['allow-scripts'] });
+    el.setConfig({ capabilities: [] , connectionsAllowed: { 'script-src': ['https://cdn.example'] } }); // no scripts at all: nothing to warn about
+    expect(refused()).toEqual([]);
+
+    for (const mode of ['iframe', 'worker']) el.setConfig({ mode, capabilities: ['allow-scripts'], connectionsAllowed: { 'script-src': ['https://cdn.example'] } });
+    el.reset();
+    expect(refused()).toHaveLength(1);
+    expect(refused()[0]).toContain('WebRTC');
+    el.remove();
+    warn.mockRestore();
+  });
+});
