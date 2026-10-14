@@ -28,6 +28,7 @@
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
 import type { RpcLibraryCode } from './rpc';
+import { parseOrigin, type Origin, type OriginRules } from './origin';
 
 /** The method name the bridge is exposed under: reserved, so no exposed method can collide with it. */
 export const FETCH_METHOD = 'sandbox:fetch';
@@ -63,7 +64,7 @@ export interface FetchBridgeConfig {
 
 /** A validated FetchBridgeConfig: every field present and in range. */
 export interface FetchPolicy {
-    allow: readonly string[];
+    allow: readonly Origin[];
     maxBytes: number;
     timeoutMs: number;
     methods: readonly string[];
@@ -147,23 +148,12 @@ const boundedInteger = (value: unknown, fallback: number, max: number): number =
 };
 
 /**
- * One allowlist entry as an exact origin, or null: an http(s) URL with nothing but scheme, host and port
- * (a trailing '/' is fine). Paths, queries, fragments, credentials and wildcards are refused, so an entry
- * can only ever mean one origin.
+ * The schemes an allowlist entry may have: https and http, for any host. Each entry is read by the one origin parser
+ * the guest policy's `origins` use too (origin.ts, ADR-007): an exact origin as written, so an entry can only ever
+ * mean one origin. Paths, queries, fragments, credentials, wildcards, IPv6 literals and anything the URL parser
+ * would rewrite are refused.
  */
-export function toAllowedOrigin(entry: unknown): string | null {
-    if (typeof entry !== 'string') return null;
-    let url: URL;
-    try {
-        url = new URL(entry);
-    } catch {
-        return null;
-    }
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
-    if (url.username || url.password || url.search || url.hash || url.pathname !== '/') return null;
-    if (entry.includes('*')) return null;
-    return url.origin;
-}
+export const FETCH_ORIGIN_RULES: OriginRules = { anyHost: ['https:', 'http:'], loopbackOnly: [] };
 
 /**
  * Validates a `fetchBridge` config into a policy, or returns null when there is none to apply (not an
@@ -174,9 +164,9 @@ export function toFetchPolicy(config: unknown, warn: (message: string) => void):
     if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
     const source = config as Record<string, unknown>;
 
-    const allow = new Set<string>();
+    const allow = new Set<Origin>();
     for (const entry of Array.isArray(source.allow) ? source.allow : []) {
-        const origin = toAllowedOrigin(entry);
+        const origin = parseOrigin(entry, FETCH_ORIGIN_RULES);
         if (origin === null) {
             warn(`[Sandbox] fetchBridge.allow entry ${JSON.stringify(entry)} was dropped: list exact origins like "https://api.example" (scheme, host, optional port).`);
             continue;
@@ -351,7 +341,7 @@ export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigi
     if (url.username || url.password) return fetchRefusal('FETCH_NOT_ALLOWED', 'URLs with credentials are not fetched');
     url.hash = '';
 
-    if (!policy.allow.includes(url.origin)) {
+    if (!(policy.allow as readonly string[]).includes(url.origin)) {
         // One text to the guest for every origin that is not listed (broad review 2026-10-14, CB6): a refusal that
         // said "the host page's own origin" told the guest which origin embeds it, by probing. Why it is not listed
         // stays on the host, in the record's `reason`.

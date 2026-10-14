@@ -1,6 +1,6 @@
 # ADR-006: A host-mediated fetch bridge
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([the platform validates](#amendment-2026-10-14-the-platform-validates-the-request), [bound per build](#amendment-2026-10-14-the-method-is-bound-to-its-build), [one refusal text](#amendment-2026-10-14-one-refusal-text-for-every-unlisted-origin))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([the platform validates](#amendment-2026-10-14-the-platform-validates-the-request), [bound per build](#amendment-2026-10-14-the-method-is-bound-to-its-build), [one refusal text](#amendment-2026-10-14-one-refusal-text-for-every-unlisted-origin), [one origin parser](#amendment-2026-10-14-one-origin-parser))
 
 ## Why this ADR exists
 
@@ -174,3 +174,12 @@ origin" for that one origin, so a guest could find the origin that embeds it by 
 told `<origin> is not in fetchBridge.allow` for every unlisted origin; what the host knows beyond that (the host
 page's own origin; a loopback, private or link-local host) is the `fetch` record's new `reason` field, never sent to
 the guest. Proof: `test/unit/broad-review.test.ts` ("CB6"), `test/e2e/fetch-bridge.spec.ts`.
+
+## Amendment (2026-10-14): one origin parser
+
+**When**: [ADR-007](ADR-007-typed-origins.md). `fetchBridge.allow` and the guest policy's `origins` read their entries
+with one parser (`src/lib/origin.ts`, `parseOrigin`); the bridge's rules are `https:` and `http:` for any host
+(`FETCH_ORIGIN_RULES`). The parser compares the host the URL parser read with the host as written, so an entry the
+parser would rewrite into another spelling is now refused with the same warning: IPv4 shorthand (`https://127.1`),
+percent-encoding, a non-ASCII name (write its `xn--` form), a trailing dot, whitespace, and IPv6 literals (a policy
+cannot name one, and the bridge keeps the same grammar). Tests: `src/lib/origin.test.ts`, `src/lib/fetch-bridge.test.ts`.
