@@ -116,6 +116,7 @@ describe('generateCSP', () => {
 const LIST_DIRECTIVES = [
   'default-src', 'script-src', 'connect-src', 'base-uri', 'img-src', 'style-src', 'font-src', 'media-src',
   'manifest-src', 'prefetch-src', 'form-action', 'object-src', 'frame-src', 'frame-ancestors', 'worker-src',
+  'script-src-elem', 'script-src-attr', 'style-src-elem', 'style-src-attr', 'child-src',
 ] as const satisfies readonly Exclude<keyof CSPDirectives, 'upgrade-insecure-requests'>[];
 type Unlisted = Exclude<keyof CSPDirectives, 'upgrade-insecure-requests' | (typeof LIST_DIRECTIVES)[number]>;
 const everyDirectiveListed: [Unlisted] extends [never] ? true : Unlisted = true;
@@ -153,6 +154,11 @@ const FALLBACK: Record<Directive, string[]> = {
   'base-uri': ['base-uri'],
   'form-action': ['form-action'],
   'frame-ancestors': ['frame-ancestors'],
+  'script-src-elem': ['script-src-elem', 'script-src', 'default-src'],
+  'script-src-attr': ['script-src-attr', 'script-src', 'default-src'],
+  'style-src-elem': ['style-src-elem', 'style-src', 'default-src'],
+  'style-src-attr': ['style-src-attr', 'style-src', 'default-src'],
+  'child-src': ['child-src', 'default-src'],
 };
 
 function parsePolicy(policy: string): Map<string, string[]> {
@@ -217,7 +223,7 @@ describe('generateCSP: an empty directive means deny, for every directive (S16)'
     expect(policy).toBe("default-src 'none'; script-src 'unsafe-inline';");
     const parsed = parsePolicy(policy);
     for (const directive of LIST_DIRECTIVES) {
-      if (FALLBACK[directive].includes('default-src') && directive !== 'script-src' && directive !== 'worker-src') {
+      if (FALLBACK[directive].includes('default-src') && !FALLBACK[directive].includes('script-src')) {
         expect(enforced(parsed, directive), directive).toEqual(new Set());
       }
     }
@@ -240,7 +246,7 @@ describe('generateCSP: an empty directive means deny, for every directive (S16)'
     expect(broaderIn('default-src *;', "default-src *; connect-src 'none';")).toEqual(['connect-src']);
     // the pre-S16 output for { 'default-src': [], 'script-src': ["'unsafe-inline'"] } versus leaving default-src out
     expect(broaderIn("script-src 'unsafe-inline';", "default-src 'none'; script-src 'unsafe-inline';"))
-      .toEqual(LIST_DIRECTIVES.filter(d => !['script-src', 'worker-src', 'base-uri', 'form-action', 'frame-ancestors'].includes(d)));
+      .toEqual(LIST_DIRECTIVES.filter(d => !FALLBACK[d].includes('script-src') && !['base-uri', 'form-action', 'frame-ancestors'].includes(d)));
     // an omitted base-uri is unrestricted
     expect(broaderIn("default-src 'none';", "default-src 'none'; base-uri 'none';")).toEqual(['base-uri']);
   });

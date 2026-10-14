@@ -304,13 +304,15 @@ const tokensOf = (values: readonly unknown[]): string[] => {
 };
 
 /**
- * Whether the guest's inline bootstrap can run under these (final) directives: script-src, or
- * default-src when script-src is left out, must allow 'unsafe-inline', and must carry no nonce, hash
- * or 'strict-dynamic' (each makes the browser ignore 'unsafe-inline'). The markup is written by the
- * bootstrap only when it can run; otherwise it stays in the document as written.
+ * Whether the guest's inline bootstrap can run under these (final) directives. An inline <script> element is
+ * checked against script-src-elem, falling back to script-src and then default-src (CSP Level 3); the first of
+ * those present must allow 'unsafe-inline', and must carry no nonce, hash or 'strict-dynamic' (each makes the
+ * browser ignore 'unsafe-inline'). The markup is written by the bootstrap only when it can run; otherwise it
+ * stays in the document as written. (Review A3: script-src-elem used to be ignored here, so a policy that
+ * refused the bootstrap through it went unwarned.)
  */
 export function inlineScriptsAllowed(directives: CSPDirectives): boolean {
-    const values = directives['script-src'] ?? directives['default-src'];
+    const values = directives['script-src-elem'] ?? directives['script-src'] ?? directives['default-src'];
     if (!Array.isArray(values)) return false;
     const tokens = tokensOf(values);
     if (!tokens.includes("'unsafe-inline'")) return false;

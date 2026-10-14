@@ -1,3 +1,5 @@
+import { assertParserSafeScript } from './csp/script-hash';
+
 /**
  * Builds the two documents the sandbox is made of:
  *
@@ -81,6 +83,9 @@ export interface GuestDocumentParts {
  * or swallow it (research 11.3).
  */
 export function buildGuestDocument(parts: GuestDocumentParts): string {
+    // The bootstrap is library text plus literals that escape "<" (toInlineScriptLiteral); asserted anyway,
+    // since a build (a consumer's bundler, a minifier) could put "</script" into a library function's source.
+    assertParserSafeScript(parts.bootstrapScript);
     const securityBlock = [
         `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(parts.csp)}">`,
         `<script>${parts.bootstrapScript}</script>`,

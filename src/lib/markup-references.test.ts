@@ -233,6 +233,11 @@ describe('inlineScriptsAllowed: whether the inline bootstrap can run under the f
         [{ 'script-src': ["'unsafe-inline'", "'nonce-abc'"] }, false], // a nonce or hash disables 'unsafe-inline'
         [{ 'script-src': ["'unsafe-inline'", "'sha256-abc='"] }, false],
         [{ 'script-src': ["'unsafe-inline'", "'strict-dynamic'"] }, false],
+        // review A3: an inline <script> is checked against script-src-elem first, then script-src, then default-src
+        [{ 'script-src': ["'unsafe-inline'"], 'script-src-elem': ['https://cdn.example'] }, false],
+        [{ 'script-src': ["'unsafe-inline'"], 'script-src-elem': [] }, false],
+        [{ 'script-src': ['blob:'], 'script-src-elem': ["'unsafe-inline'"] }, true],
+        [{ 'default-src': ["'unsafe-inline'"], 'script-src-elem': ["'unsafe-inline'", "'nonce-abc'"] }, false],
     ])('%j → %s', (directives, allowed) => {
         expect(inlineScriptsAllowed(directives as any)).toBe(allowed);
     });

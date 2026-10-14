@@ -37,14 +37,21 @@ export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];
 export type UnsafePermission = (typeof UNSAFE_PERMISSIONS)[number];
 export type SandboxCapability = (typeof ALLOWED_CAPABILITIES)[number];
 
+// Only these names reach a policy: any other key, or a name with other spelling or case, is dropped with a
+// warning, and so is any value token that is not one CSP source expression (src/lib/csp/policy-grammar.ts).
+// 'unsafe-eval' and 'wasm-unsafe-eval' are the library's to add, with scriptUnsafe (src/lib/csp/drop-eval.ts).
 export interface CSPDirectives {
     "upgrade-insecure-requests"?: true; // the host always sets it
     "default-src"?: string[];
     "script-src"?: string[];
+    "script-src-elem"?: string[]; // <script> elements (falls back to script-src)
+    "script-src-attr"?: string[]; // event handler attributes (falls back to script-src)
     "connect-src"?: string[];
     "base-uri"?: string[];
     "img-src"?: string[];
     "style-src"?: string[];
+    "style-src-elem"?: string[]; // <style> and stylesheet links (falls back to style-src)
+    "style-src-attr"?: string[]; // style="" attributes (falls back to style-src)
     "font-src"?: string[];
     "media-src"?: string[];
     "manifest-src"?: string[];
@@ -58,4 +65,5 @@ export interface CSPDirectives {
      */
     "frame-ancestors"?: string[];
     "worker-src"?: string[]; // 'blob' or 'data' might be needed for frontend-frameworks to spawn workers
+    "child-src"?: string[]; // fallback for frame-src and worker-src
 }

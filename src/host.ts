@@ -3,6 +3,8 @@ import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./cs
 import { generateCSP } from "./lib/csp/csp-generator";
 import { dropSelfSources } from "./lib/csp/drop-self";
 import { dropMetaIgnoredDirectives } from "./lib/csp/drop-meta-ignored";
+import { dropEvalSources } from "./lib/csp/drop-eval";
+import { sanitizeDirectives } from "./lib/csp/policy-grammar";
 import { addFileSources } from "./lib/csp/file-sources";
 import { FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
@@ -59,6 +61,10 @@ export interface SandboxConfig {
  * code finishes, so the element could never say truthfully that code is running (or that it stopped).
  */
 export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
+
+/** The execution modes. Anything else is refused: the sandbox does not start (review A4). */
+const SANDBOX_MODES = ['iframe', 'worker', 'strict'] as const;
+const isSandboxMode = (mode: unknown): mode is SandboxConfig['mode'] => (SANDBOX_MODES as readonly unknown[]).includes(mode);
 
 const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     // An empty array means 'none' for every directive (generateCSP, backlog S16), so the defaults list
@@ -146,6 +152,8 @@ export class WebSandbox extends HTMLElement {
     private _warnedSelfDirectives = new Set<string>(); // directives already warned about for 'self' (drop-self.ts)
     private _warnedMetaIgnored = new Set<string>(); // directives a <meta> policy discards, already warned about (drop-meta-ignored.ts)
     private _warnedFileDirectives = new Set<string>(); // directives already warned about for an explicit 'none' (file-sources.ts)
+    private _warnedEvalDirectives = new Set<string>(); // directives already warned about for an eval keyword (drop-eval.ts)
+    private _warnedPolicy = new Set<string>(); // names and sources the policy grammar dropped, once each (policy-grammar.ts)
     private _warnedVirtualFilesUrl = false;
     private _warnedBootstrapRefused = false; // the guest policy refuses the inline bootstrap (S13), once per instance
     private _warnedAutoResizeWorker = false; // autoResize asked for in worker mode, once per instance
@@ -231,6 +239,14 @@ export class WebSandbox extends HTMLElement {
 
         // apply new config
         this._config = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig);
+        // Normalised once more on the merged copy, which is plain data read from the input exactly once
+        // (deepMerge): checks above that read the caller's object a second time (Object.hasOwn, then the value)
+        // could see something else than the merge did, as a Proxy or a getter could arrange (review A6). These
+        // values are interpolated into the guest bootstrap, so only a literal true may come out.
+        this._config.scriptUnsafe = this._config.scriptUnsafe === true;
+        this._config.autoResize = this._config.autoResize === true;
+        if (typeof this._config.entry !== 'string') delete this._config.entry;
+        this._warnAboutUnknownMode();
         this._warnAboutUnsafeCapabilities();
         this._warnAboutScriptUnsafe();
         this._warnAboutAutoResizeInWorker();
@@ -341,6 +357,22 @@ export class WebSandbox extends HTMLElement {
             return;
         }
         this._rpcQueue.push(frame);
+    }
+
+    // A mode the element does not know is refused, never read as the default (review A4): strict mode is a
+    // security opt-in, so a misspelt 'Strict' must not quietly give the weaker iframe mode. initialize() then
+    // terminates every build with a reason until a config names a valid mode; this says why, once per value.
+    private _warnAboutUnknownMode() {
+        const mode = this._config.mode;
+        if (isSandboxMode(mode)) return;
+        const message = `[Sandbox] mode ${this._describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}: the sandbox will not start until setConfig() names one of them.`;
+        if (this._warnedStrict.has(message)) return;
+        this._warnedStrict.add(message);
+        console.warn(message);
+    }
+
+    private _describeMode(mode: unknown): string {
+        return typeof mode === 'string' ? JSON.stringify(mode.slice(0, 32)) : `of type ${mode === null ? 'null' : typeof mode}`;
     }
 
     private _warnAboutUnsafeCapabilities() {
@@ -641,6 +673,12 @@ export class WebSandbox extends HTMLElement {
             this._enterState('idle');
             return;
         }
+        // Fail closed on a mode the element does not know (review A4): no environment at all, rather than one
+        // of a mode the embedder did not ask for.
+        if (!isSandboxMode(this._config.mode)) {
+            this._terminate(`unknown mode ${this._describeMode(this._config.mode)}`);
+            return;
+        }
         this._enterState('loading');
         this.createIframe();
     }
@@ -711,9 +749,15 @@ export class WebSandbox extends HTMLElement {
         // passing the refs of the original object. Directives a <meta> policy discards (frame-ancestors,
         // report-uri, report-to, sandbox) are dropped first, with a warning: the guest policy is always a
         // <meta> policy, so emitting them would only look like control (drop-meta-ignored.ts, S7).
-        const cloned = dropMetaIgnoredDirectives(structuredClone(
+        // Then the policy grammar (review A1): only known directive names, and only tokens that are one CSP
+        // source expression, go on, so every later step sees the tokens the policy will hold and no value can
+        // add a directive. generateCSP enforces the same grammar again on whatever reaches it. Then the eval
+        // keywords, which only scriptUnsafe grants (review A5).
+        const metaApplicable = dropMetaIgnoredDirectives(structuredClone(
             this._config.connectionsAllowed
         ), this._warnedMetaIgnored);
+        const grammatical = sanitizeDirectives(metaApplicable, (message) => this._warnPolicy(message));
+        const cloned = dropEvalSources(grammatical, this._config.scriptUnsafe === true, this._warnedEvalDirectives);
 
         cloned["upgrade-insecure-requests"] = true
 
@@ -770,6 +814,14 @@ export class WebSandbox extends HTMLElement {
         console.warn("[Sandbox] the guest policy refuses inline scripts, so the sandbox bootstrap cannot run: guest scripts would run with no bridge, no sandboxFiles, no violation reports, and with WebRTC available. Keep 'unsafe-inline' in script-src (without nonces or hashes).");
     }
 
+    // What the policy grammar dropped (policy-grammar.ts): the same config is built again on every reset(),
+    // load() or setConfig(), so each message is said once per element.
+    private _warnPolicy(message: string) {
+        if (this._warnedPolicy.has(message)) return;
+        this._warnedPolicy.add(message);
+        console.warn(message);
+    }
+
     // Warnings about the guest's markup come back with every build of the same markup: one each per element.
     private _warnOnce(message: string) {
         if (this._warnedGuestMarkup.has(message)) return;
@@ -799,13 +851,13 @@ export class WebSandbox extends HTMLElement {
         let guestDocument: string;
         if (isWorkerMode) {
             // worker mode is headless: no guest markup, so no markup references either
-            guestDocument = buildGuestDocument({ csp: generateCSP(directives), bootstrapScript: this._getWorkerBootstrapScript(files), content: '' });
+            guestDocument = buildGuestDocument({ csp: generateCSP(directives, (message) => this._warnPolicy(message)), bootstrapScript: this._getWorkerBootstrapScript(files), content: '' });
         } else {
             const html = this._config.html || '<div id="root"></div>';
             // A fresh slot nonce per build (inside rewriteGuestMarkup); null parts keep the markup verbatim.
             const plan = this._getMarkupPlan(html, files, sandboxFlags, directives);
             guestDocument = buildGuestDocument({
-                csp: generateCSP(directives),
+                csp: generateCSP(directives, (message) => this._warnPolicy(message)),
                 bootstrapScript: this._getSandboxCommsScript('iframe', files, plan),
                 content: plan.parts ? '' : html,
                 bootstrapWritesContent: plan.parts !== null,
@@ -855,7 +907,7 @@ export class WebSandbox extends HTMLElement {
             html: this._config.html || '<div id="root"></div>',
             autoResize: this._autoResizeEnabled(),
         };
-        const view = buildViewDocument(generateCSP(directives), viewBootstrapText());
+        const view = buildViewDocument(generateCSP(directives, (message) => this._warnPolicy(message)), viewBootstrapText());
 
         this._iframe = document.createElement("iframe");
         this._iframe.setAttribute("sandbox", sandboxFlags);
@@ -895,7 +947,8 @@ export class WebSandbox extends HTMLElement {
         }
         const unsafe = this._config.unsafeCapabilities || [];
         if (unsafe.length > 0) warn(`[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: ${unsafe.join(', ')}.`);
-        for (const message of strictPolicyOverrides(this._config.connectionsAllowed, DEFAULT_SANDBOX_CONFIG.connectionsAllowed)) warn(message);
+        // Compared in the grammar's tokens (policy-grammar.ts): a name the grammar drops is warned about there.
+        for (const message of strictPolicyOverrides(sanitizeDirectives(this._config.connectionsAllowed), sanitizeDirectives(DEFAULT_SANDBOX_CONFIG.connectionsAllowed))) warn(message);
     }
 
     // The view liveness check (A5): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.
