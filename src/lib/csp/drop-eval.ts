@@ -1,5 +1,6 @@
 import type { CSPDirectives } from "../../csp-directives";
 import { defineData } from "../utils";
+import { assertWidensOnly } from "./effective-directive";
 
 /**
  * 'unsafe-eval' and 'wasm-unsafe-eval' belong to scriptUnsafe (review A5). scriptUnsafe is the one switch for
@@ -25,5 +26,5 @@ export function dropEvalSources(directives: CSPDirectives, scriptUnsafe: boolean
         warned.add(name);
         console.warn(`[Sandbox] 'unsafe-eval' and 'wasm-unsafe-eval' are not allowed in "connectionsAllowed.${name}" and were dropped: evaluating strings as code is enabled only by scriptUnsafe, which warns about what it costs.`);
     }
-    return output as CSPDirectives;
+    return assertWidensOnly(directives, output as CSPDirectives, [], 'dropEvalSources');
 }

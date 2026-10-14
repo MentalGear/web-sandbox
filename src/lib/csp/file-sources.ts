@@ -1,6 +1,6 @@
 import type { CSPDirectives } from "../../csp-directives";
 import { admits, LOAD_KIND_NAMES, LOAD_KINDS } from "../load-kinds";
-import { directiveOf, effectiveDirective, fallbackList, inheritedDefaultSources, type LoadKind } from "./effective-directive";
+import { assertWidensOnly, directiveOf, effectiveDirective, effectiveSources, fallbackList, inheritedDefaultSources, LOAD_KIND_LIST, type LoadKind } from "./effective-directive";
 import { defineData } from "../utils";
 
 /**
@@ -91,7 +91,8 @@ export function addFileSources(directives: CSPDirectives, types: Iterable<string
     const output: Record<string, unknown> = { ...directives };
     const inherited = inheritedDefaultSources(directives);
 
-    for (const kind of kindsForTypes(types, options.exclude)) {
+    const needed = kindsForTypes(types, options.exclude);
+    for (const kind of needed) {
         const governing = effectiveDirective(directives, kind);
         if (governing === null || governing === 'default-src') {
             defineData(output, ownDirective(kind), [...inherited, BLOB]);
@@ -111,5 +112,21 @@ export function addFileSources(directives: CSPDirectives, types: Iterable<string
         defineData(output, governing, [...(values as string[]), BLOB]);
     }
 
-    return output as CSPDirectives;
+    // Every other kind keeps what it had (broad review 2026-10-14, PA1). A directive extended or created above is
+    // also the fallback of kinds that have no directive of their own: blob: for registered scripts in script-src
+    // reached worker-src through it (worker-src → child-src → script-src) when the policy set neither. Such a kind
+    // is pinned to what it admitted before, in a directive of its own (the first of its fallback list), before
+    // the postcondition checks every kind.
+    for (const kind of LOAD_KIND_LIST) {
+        if ((needed as Set<string>).has(kind)) continue;
+        const before = effectiveSources(directives, kind);
+        const after = effectiveSources(output as CSPDirectives, kind);
+        if ([...after].every(source => before.has(source))) continue;
+        const own = fallbackList(kind)[0]!;
+        if (Object.hasOwn(output, own)) continue; // it has a directive of its own already: the postcondition decides
+        const governing = effectiveDirective(directives, kind);
+        const values = governing === null ? [] : directiveOf(directives, governing);
+        defineData(output, own, Array.isArray(values) ? [...values] : []);
+    }
+    return assertWidensOnly(directives, output as CSPDirectives, needed, 'addFileSources');
 }

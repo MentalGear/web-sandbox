@@ -87,6 +87,59 @@ export function inheritedDefaultSources(policy: CSPDirectives): string[] {
     return tokensOf(values).filter(token => token.toLowerCase() !== "'none'" && token.toLowerCase() !== "'self'");
 }
 
+/** Every kind of check the table knows, for a step's postcondition (assertWidensOnly). */
+export const LOAD_KIND_LIST = Object.keys(FALLBACK_LISTS) as LoadKind[];
+
+const EVAL_SOURCES = ["'unsafe-eval'", "'wasm-unsafe-eval'"];
+const ATTRIBUTE_KINDS: readonly LoadKind[] = ['script-src-attr', 'style-src-attr'];
+
+/**
+ * The sources that decide `kind`'s checks in `policy`: the tokens of the directive that governs it (effectiveDirective),
+ * as a set, keywords lower-cased (CSP keywords and schemes are case-insensitive), 'none' left out (it is the empty set).
+ * Only what can decide that kind counts: 'eval' reads only 'unsafe-eval' and 'wasm-unsafe-eval', which nothing else
+ * reads; an attribute check loads no URL, so only quoted sources (keywords, hashes) count there. So blob: added to
+ * script-src for registered scripts changes no handler attribute and no eval check, while blob: reaching worker-src
+ * through script-src does change worker-src.
+ */
+export function effectiveSources(policy: CSPDirectives, kind: LoadKind): Set<string> {
+    const governing = effectiveDirective(policy, kind);
+    const values = governing === null ? undefined : directiveOf(policy, governing);
+    const sources = new Set<string>();
+    if (!Array.isArray(values)) return sources; // none, or a bad value generateCSP refuses: nothing it admits
+    for (const raw of tokensOf(values)) {
+        const token = raw.toLowerCase();
+        if (token === "'none'") continue;
+        const evalSource = EVAL_SOURCES.includes(token);
+        if (kind === 'eval' ? !evalSource : evalSource) continue;
+        if (ATTRIBUTE_KINDS.includes(kind) && !token.startsWith("'")) continue;
+        sources.add(token);
+    }
+    return sources;
+}
+
+/**
+ * The postcondition of every policy step (broad review 2026-10-14, PA1): a step may add sources only to the kinds of
+ * check it names (`mayWiden`); for every other kind the sources after the step are a subset of those before
+ * (effectiveSources). Throws when a step widened another kind, so the build fails closed with a reason ('the
+ * environment could not be built') instead of shipping the wider policy. Returns `after`.
+ *
+ * Why at every step rather than at the end: what a kind falls back to depends on which directives exist, so a step
+ * that creates or extends one directive for one kind can change what another kind is checked against. File sources
+ * did: blob: added to (or a script-src created for) registered scripts also reached worker-src through its fallback
+ * to script-src, when the policy had no worker-src or child-src.
+ */
+export function assertWidensOnly<T extends CSPDirectives>(before: CSPDirectives, after: T, mayWiden: Iterable<LoadKind>, step: string): T {
+    const allowed = new Set(mayWiden);
+    for (const kind of LOAD_KIND_LIST) {
+        if (allowed.has(kind)) continue;
+        const was = effectiveSources(before, kind);
+        for (const source of effectiveSources(after, kind)) {
+            if (!was.has(source)) throw new Error(`[Sandbox] the policy step ${step} would add ${source} to what ${kind} admits; refused.`);
+        }
+    }
+    return after;
+}
+
 const UNSAFE_EVAL = "'unsafe-eval'";
 
 /**
@@ -104,5 +157,5 @@ export function addEvalSource(policy: CSPDirectives): CSPDirectives {
     const current = effectiveDirective(policy, 'eval') === 'script-src' ? directiveOf(policy, 'script-src') : inheritedDefaultSources(policy);
     if (!Array.isArray(current)) return output;
     defineData(output, 'script-src', [...current, UNSAFE_EVAL]);
-    return output;
+    return assertWidensOnly(policy, output, ['eval'], 'addEvalSource');
 }
