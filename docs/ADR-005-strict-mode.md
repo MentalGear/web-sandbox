@@ -1,6 +1,6 @@
 # ADR-005: Strict mode — guest logic in a worker, a view that runs no guest script
 
-**Status**: Accepted · **Date**: 2026-10-13
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review))
 
 ## Why this ADR exists
 
@@ -219,3 +219,44 @@ configuration, fetch bridge, auto-sizing), `strict-render-flood.spec.ts` (A4),
 - a platform primitive makes created frames governable from their parent (then nested frames could return);
 - `ShadowRealm` or a reliable out-of-process view lands in Firefox and WebKit (the host-thread residual);
 - a logic tier such as a QuickJS worker is adopted (backlog parity note): the view and render protocol stay.
+
+## Amendment (2026-10-14): adversarial review
+
+**When**: the adversarial review of 2026-10 ([report](security/ADVERSARIAL-REVIEW-2026-10.md), A1, C1–C5).
+
+- **The view policy cannot be widened from a value (A1).** A `;` inside a passed-through value (for example
+  `default-src`) used to emit directives ahead of the fixed ones, and the first occurrence of a directive wins:
+  measured, a handler attribute ran in the view in all three engines. Every policy now goes through a grammar
+  (`src/lib/csp/policy-grammar.ts`): only known directive names, and only tokens that are one CSP source
+  expression, so the fixed directives are the only ones of their name.
+- **The entry runs in its own scope (C2).** The worker's source is one classic script, and a script's
+  declarations are instantiated before any of it runs, so a top-level `function Reflect() {}` in the entry
+  replaced a global before the prelude captured it, and a declared `Worker` made the prelude's deletion fail
+  silently (measured: `Worker` stayed, as the guest's function). The host now evaluates the entry inside
+  `(function () { … }).call(this)`: **its top-level declarations are local** (a visible change: an entry that
+  wants a global assigns it, `globalThis.x = …`; `this` is still the global object). An entry that closes that
+  function early to declare at the script's top level is refused before the prelude runs: a top-level function
+  declaration is the only thing that leaves a non-configurable function on the global object (measured in all
+  three engines), and the first step of the prelude checks for one. A name the prelude cannot delete is now an
+  error, not a silent pass.
+- **The prelude's lists have no prototype (C3).** Its render queue, handlers and subscribed types are
+  null-prototype lists, so guest code with a setter (or a Proxy) in `Array.prototype`'s chain sees none of
+  them; flow control holds with such a trap installed.
+- **A8 is a content guarantee (C1), and it is narrowed here.** The renderer removes attributes that name a
+  `blob:` URL the view did not mint; it does not read `<style>` text or CSS escapes in a `style` attribute. What
+  holds is: **the view renders no `blob:` content but registered files.** The worker cannot mint URLs, so the
+  only other `blob:` URLs it knows are its copies of registered files (registered content, same type; a copy of
+  a JavaScript file is refused as a stylesheet by its type) and its own source URL, which resolves in the view
+  but renders nothing there (typed `text/javascript`, it begins with the library's prelude: neither a stylesheet
+  nor an image or font signature). Revoking the source URL once the worker exists was tried and rejected: in
+  WebKit it makes every `blob:` URL the worker minted unreadable (sandboxFiles fails with `NotReadableError`)
+  and mutes its error messages.
+- **G6 is complete up to the cap, and the cap is shared (C4).** The view's reports include refusals of the
+  guest's own rendered markup, so a guest that renders 100 refused loads uses up the view's cap for the
+  environment; later view refusals are not reported. Measured in all three engines.
+- **G4 covers the page, not the browser's own UI (C5).** Rendered links keep their `href`, and the view cancels
+  every click and submit, but a user's own actions through the browser — "open in new tab", dragging a link —
+  are not events the page can cancel. That needs the user's action; it is a residual (backlog S24).
+
+Proof: `test/e2e/review-policy.spec.ts`, `test/e2e/review-strict.spec.ts`, the strict cases of
+`test/unit/policy-guarantees.test.ts`, `src/lib/in-sandbox-view.test.ts`, `test/unit/strict.test.ts`.

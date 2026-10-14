@@ -40,3 +40,29 @@ test('the built package runs strict mode: the view bootstrap is admitted by its 
     await expect.poll(() => page.evaluate(() => (document.querySelector('packaged-sandbox') as HTMLElement).style.height)).toMatch(/^3[45]\d?px$/);
     expect(violations).toEqual([]);
 });
+
+// Review A8 (docs/security/ADVERSARIAL-REVIEW-2026-10.md): the default bootstrap is asserted parser-safe when the
+// guest document is built (no "</script", "<script", "<!--" or NUL), and the bundle's function text is what is
+// asserted here. Every variant of the bootstrap is built: iframe mode with files, the module graph, markup
+// references, the fetch bridge and auto-sizing, and worker mode. A text that failed the assertion would throw in
+// setConfig() and never reach 'ready'.
+test('the built package passes the parser-safety assertion for every default bootstrap variant (review A8)', async ({ page }) => {
+    await page.goto(`${ORIGIN}/test/e2e/package-harness.html`);
+    await page.waitForFunction(() => (window as any).harnessReady === true);
+    const outcomes = await page.evaluate(async () => {
+        const sandbox = document.querySelector('packaged-sandbox') as any;
+        sandbox.registerFiles({ 'app.js': 'import "./lib.js"; console.log("module ran")', 'lib.js': 'export {}', 'a.css': 'p { color: red }', 'i.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>' });
+        const settle = (config: object) => new Promise<string>(resolve => {
+            const done = (event: Event) => { sandbox.removeEventListener('ready', done); sandbox.removeEventListener('terminated', done); resolve(event.type); };
+            sandbox.addEventListener('ready', done);
+            sandbox.addEventListener('terminated', done);
+            try { sandbox.setConfig(config); } catch (error) { resolve('threw: ' + String(error)); }
+        });
+        const html = '<script type="module" src="app.js"></script><link rel="stylesheet" href="a.css"><img src="i.svg">';
+        return [
+            await settle({ capabilities: ['allow-scripts'], scriptUnsafe: true, autoResize: true, fetchBridge: { allow: ['https://api.example'] }, html }),
+            await settle({ mode: 'worker', scriptUnsafe: true, fetchBridge: { allow: [] } }),
+        ];
+    });
+    expect(outcomes).toEqual(['ready', 'ready']);
+});

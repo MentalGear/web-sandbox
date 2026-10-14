@@ -1,4 +1,5 @@
 import type { CSPDirectives } from "../../csp-directives";
+import { sanitizeDirectives } from "./policy-grammar";
 
 /**
  * Generates a CSP string from a JSON object of directives.
@@ -9,19 +10,24 @@ import type { CSPDirectives } from "../../csp-directives";
  * built-in 'none' and leave every unset fetch directive unrestricted. Emitting 'none' is the narrowest
  * value a directive can have, so no config can be broader than the same config with that directive
  * left out. To get the default-src fallback, leave the directive out.
+ *
+ * Every name and source goes through the policy grammar first (policy-grammar.ts, review A1): only known
+ * directive names, and only tokens that are one CSP source expression, reach the string, so no value can
+ * end a directive and start another. What is dropped is reported through `onDrop`.
  */
-export function generateCSP(directives: CSPDirectives): string {
+export function generateCSP(directives: CSPDirectives, onDrop?: (message: string) => void): string {
 
     if (!directives || typeof directives !== 'object') throw new Error("directives must be provided as a key/value pair (object)");
+    const sanitized = sanitizeDirectives(directives, onDrop);
     // ensure there are no duplicate directives
-    if (Object.keys(directives).length !== new Set(Object.keys(directives)).size) throw new Error("duplicate directive names found");
+    if (Object.keys(sanitized).length !== new Set(Object.keys(sanitized)).size) throw new Error("duplicate directive names found");
 
     // for security we always at least add `default-src 'none'`
     // even though that contradicts our approach to not transform the input,
     // this is a special case for security. I'd rather have more security in the library than it being "pure"
     // and a fallback where `default-src: 'none'` is added is better than just placing all bets on 1 single upstream config file
     // ideally, this makes it 2x secure defaults backed by 2x tests
-    const directivesWithDefault = { 'default-src': [`'none'`], ...directives };
+    const directivesWithDefault = { 'default-src': [`'none'`], ...sanitized };
 
     const cspDirectivesList: string[] = [];
 

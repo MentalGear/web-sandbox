@@ -3,6 +3,8 @@ import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./cs
 import { generateCSP } from "./lib/csp/csp-generator";
 import { dropSelfSources } from "./lib/csp/drop-self";
 import { dropMetaIgnoredDirectives } from "./lib/csp/drop-meta-ignored";
+import { dropEvalSources } from "./lib/csp/drop-eval";
+import { sanitizeDirectives } from "./lib/csp/policy-grammar";
 import { addFileSources } from "./lib/csp/file-sources";
 import { FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
@@ -15,10 +17,11 @@ import { workerBootstrap } from "./lib/worker-bootstrap";
 import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { toViolationDetail, VIOLATION_EVENT_LIMIT } from "./lib/violation";
+import { createLogLimiter, LOG_EVENTS_PER_SECOND, toLogDetail, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
-import { buildViewDocument, ENTRY_DONE_NAME, inStrictWorker, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, ENTRY_DONE_NAME, inStrictWorker, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
 import { strictPolicyOverrides, strictViewDirectives } from "./lib/csp/strict-policy";
 
 export interface SandboxConfig {
@@ -59,6 +62,10 @@ export interface SandboxConfig {
  * code finishes, so the element could never say truthfully that code is running (or that it stopped).
  */
 export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
+
+/** The execution modes. Anything else is refused: the sandbox does not start (review A4). */
+const SANDBOX_MODES = ['iframe', 'worker', 'strict'] as const;
+const isSandboxMode = (mode: unknown): mode is SandboxConfig['mode'] => (SANDBOX_MODES as readonly unknown[]).includes(mode);
 
 const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     // An empty array means 'none' for every directive (generateCSP, backlog S16), so the defaults list
@@ -133,6 +140,12 @@ export class WebSandbox extends HTMLElement {
     private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
     private _warnedFetchBridge = new Set<string>();  // fetchBridge config warnings, once each per instance
     private _violationCounts = new Map<string, number>(); // 'violation' events dispatched per source for the current environment (capped, violation.ts)
+    private _logLimiter = createLogLimiter(); // guest 'sandbox-log' events per second for the current environment (sandbox-log.ts)
+    private _warnedLogLimit = false;          // the log rate limit warned for the current environment
+    // Counts environments: every teardown increments it. A host action that dispatches an event and then acts
+    // on the environment compares it before acting, so a listener that reset or terminated the sandbox in
+    // between is never undone (review B5).
+    private _generation = 0;
     private _config: SandboxConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
     private _port: MessagePort | null = null;     // the guest's port: the iframe's bootstrap, or the worker (logic port)
     private _viewPort: MessagePort | null = null; // strict mode: the view's port (violations, resize, entry errors, liveness)
@@ -146,6 +159,8 @@ export class WebSandbox extends HTMLElement {
     private _warnedSelfDirectives = new Set<string>(); // directives already warned about for 'self' (drop-self.ts)
     private _warnedMetaIgnored = new Set<string>(); // directives a <meta> policy discards, already warned about (drop-meta-ignored.ts)
     private _warnedFileDirectives = new Set<string>(); // directives already warned about for an explicit 'none' (file-sources.ts)
+    private _warnedEvalDirectives = new Set<string>(); // directives already warned about for an eval keyword (drop-eval.ts)
+    private _warnedPolicy = new Set<string>(); // names and sources the policy grammar dropped, once each (policy-grammar.ts)
     private _warnedVirtualFilesUrl = false;
     private _warnedBootstrapRefused = false; // the guest policy refuses the inline bootstrap (S13), once per instance
     private _warnedAutoResizeWorker = false; // autoResize asked for in worker mode, once per instance
@@ -231,6 +246,14 @@ export class WebSandbox extends HTMLElement {
 
         // apply new config
         this._config = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig);
+        // Normalised once more on the merged copy, which is plain data read from the input exactly once
+        // (deepMerge): checks above that read the caller's object a second time (Object.hasOwn, then the value)
+        // could see something else than the merge did, as a Proxy or a getter could arrange (review A6). These
+        // values are interpolated into the guest bootstrap, so only a literal true may come out.
+        this._config.scriptUnsafe = this._config.scriptUnsafe === true;
+        this._config.autoResize = this._config.autoResize === true;
+        if (typeof this._config.entry !== 'string') delete this._config.entry;
+        this._warnAboutUnknownMode();
         this._warnAboutUnsafeCapabilities();
         this._warnAboutScriptUnsafe();
         this._warnAboutAutoResizeInWorker();
@@ -343,6 +366,22 @@ export class WebSandbox extends HTMLElement {
         this._rpcQueue.push(frame);
     }
 
+    // A mode the element does not know is refused, never read as the default (review A4): strict mode is a
+    // security opt-in, so a misspelt 'Strict' must not quietly give the weaker iframe mode. initialize() then
+    // terminates every build with a reason until a config names a valid mode; this says why, once per value.
+    private _warnAboutUnknownMode() {
+        const mode = this._config.mode;
+        if (isSandboxMode(mode)) return;
+        const message = `[Sandbox] mode ${this._describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}: the sandbox will not start until setConfig() names one of them.`;
+        if (this._warnedStrict.has(message)) return;
+        this._warnedStrict.add(message);
+        console.warn(message);
+    }
+
+    private _describeMode(mode: unknown): string {
+        return typeof mode === 'string' ? JSON.stringify(mode.slice(0, 32)) : `of type ${mode === null ? 'null' : typeof mode}`;
+    }
+
     private _warnAboutUnsafeCapabilities() {
         if (this._config.mode === 'strict') return; // dropped there instead, with one warning (_warnAboutStrictConfig)
         for (const capability of this._config.unsafeCapabilities || []) {
@@ -367,7 +406,9 @@ export class WebSandbox extends HTMLElement {
         if ((this._config.mode === 'worker' || this._config.mode === 'strict') && this._config.workerExecutionTimeout && this._config.workerExecutionTimeout > 0) {
             this._timeoutId = setTimeout(() => {
                 console.warn("[Sandbox] Execution Timeout - Terminating Worker");
-                this._dispatchLog({ type: 'LOG', level: 'error', args: ['Execution Timeout'] });
+                const generation = this._generation;
+                this._dispatchHostLog('error', 'Execution Timeout');
+                if (generation !== this._generation) return; // a listener already reset or terminated it (review B5)
 
                 // the worker lives inside the frame: recreating the frame terminates it
                 this.initialize();
@@ -380,7 +421,10 @@ export class WebSandbox extends HTMLElement {
         const channel = new MessageChannel();
         const port = channel.port1;
         this._port = port;
-        port.onmessage = (e) => this._onGuestMessage(port, e.data, null);
+        // One reply channel per port: answers go back where their request came from, and the broker counts the
+        // calls it runs per channel (review B7), so the count belongs to this environment.
+        const reply = (frame: unknown) => port.postMessage(frame);
+        port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, null);
 
         // An opaque origin cannot be named as targetOrigin, hence '*'.
         // What keeps the port from reaching a foreign document is that this runs exactly once per frame (see _onFrameLoad).
@@ -390,13 +434,16 @@ export class WebSandbox extends HTMLElement {
 
     // One frame from the guest's port: the iframe bootstrap's, or (worker and strict mode) the worker's.
     // `source` labels its violation reports in strict mode ('logic'); null elsewhere.
-    private _onGuestMessage(port: MessagePort, data: any, source: 'logic' | null) {
+    // Only the current environment's port is heard (review B4): teardown closes a port, and a closed port
+    // delivers nothing more, but this does not rely on it — a frame from any other port changes nothing.
+    private _onGuestMessage(port: MessagePort, reply: (frame: unknown) => void, data: any, source: 'logic' | null) {
+        if (!port || port !== this._port) return;
         if (data?.type === 'PONG') {
             this._watchdog?.handlePong(data.n); // validated there; only this generation's watchdog is live
             return;
         }
         if (data?.type === 'LOG') {
-            this._dispatchLog(data);
+            this._dispatchGuestLog(data);
             return;
         }
         if (data?.type === 'VIOLATION') {
@@ -417,7 +464,7 @@ export class WebSandbox extends HTMLElement {
         // a response only ever reaches the generation that asked for it. (An answer that cannot be
         // cloned may still throw while being posted; sendResult turns that into an error frame,
         // which is discarded the same way.)
-        this._broker.handleMessage(data, (frame) => port.postMessage(frame));
+        this._broker.handleMessage(data, reply);
     }
 
     /**
@@ -435,8 +482,9 @@ export class WebSandbox extends HTMLElement {
         const viewPort = view.port1;
         this._port = port;
         this._viewPort = viewPort;
-        port.onmessage = (e) => this._onGuestMessage(port, e.data, 'logic');
-        viewPort.onmessage = (e) => this._onViewMessage(e.data);
+        const reply = (frame: unknown) => port.postMessage(frame);
+        port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, 'logic');
+        viewPort.onmessage = (e) => this._onViewMessage(viewPort, e.data);
 
         const init = this._strictInit;
         this._strictInit = null;
@@ -444,7 +492,8 @@ export class WebSandbox extends HTMLElement {
         this._flushQueues(port);
     }
 
-    private _onViewMessage(data: any) {
+    private _onViewMessage(viewPort: MessagePort, data: any) {
+        if (!viewPort || viewPort !== this._viewPort) return; // only the current environment's view (review B4)
         if (data?.type === 'VIEW_PONG') {
             this._viewWatchdog?.handlePong(data.n);
             return;
@@ -460,7 +509,9 @@ export class WebSandbox extends HTMLElement {
         if (data?.type === 'GUEST_ERROR') {
             // the worker's own error text (guest-influenced): logged, clamped, never the reason
             const message = typeof data.message === 'string' ? data.message.slice(0, 2048) : '';
-            this._dispatchLog({ type: 'LOG', level: 'error', args: [`[Sandbox] ${ENTRY_FAILED_REASON}: ${message}`] });
+            const generation = this._generation;
+            this._dispatchHostLog('error', `[Sandbox] ${ENTRY_FAILED_REASON}: ${message}`);
+            if (generation !== this._generation) return; // a listener already reset or terminated it (review B5)
             this._terminate(ENTRY_FAILED_REASON);
         }
     }
@@ -504,8 +555,26 @@ export class WebSandbox extends HTMLElement {
     // hears every sandbox and tells them apart by event.target. Not composed: the element sits in the
     // embedding page's DOM, and an event of ours has no business crossing a consumer's shadow boundary.
     // The name stays namespaced because it bubbles: a generic 'log' would collide with other code on window.
+    // Every detail is normalised and labelled with where it came from (sandbox-log.ts, review B3).
     private _dispatchLog(detail: unknown) {
         this.dispatchEvent(new CustomEvent('sandbox-log', { detail, bubbles: true }));
+    }
+
+    // A LOG frame from the guest's port: normalised, labelled 'guest', and at most LOG_EVENTS_PER_SECOND per
+    // environment, so a guest cannot make the host run embedder listeners without bound (one warning).
+    private _dispatchGuestLog(frame: unknown) {
+        if (!this._logLimiter.admit()) {
+            if (this._warnedLogLimit) return;
+            this._warnedLogLimit = true;
+            console.warn(`[Sandbox] the guest logged more than ${LOG_EVENTS_PER_SECOND} lines in one second; lines past that rate are not dispatched as 'sandbox-log' events.`);
+            return;
+        }
+        this._dispatchLog(toLogDetail(frame, 'guest'));
+    }
+
+    // A line the element writes itself: labelled 'host', never rate-limited.
+    private _dispatchHostLog(level: SandboxLogLevel, text: string) {
+        this._dispatchLog(toLogDetail({ level, args: [text] }, 'host'));
     }
 
     // A CSP violation reported by the guest (backlog S5): dispatched on the element and bubbling, like
@@ -607,6 +676,9 @@ export class WebSandbox extends HTMLElement {
     }
 
     private _teardown() {
+        this._generation++;
+        this._logLimiter = createLogLimiter(); // the log rate limit is per environment
+        this._warnedLogLimit = false;
         this._queuedMessages = []; // Clear queue for the old environment
         this._rpcQueue = [];       // same for the host's RPC requests queued for the old environment
         this._violationCounts.clear(); // the violation cap is per environment
@@ -639,6 +711,12 @@ export class WebSandbox extends HTMLElement {
         this._teardown();
         if (!this.isConnected) {
             this._enterState('idle');
+            return;
+        }
+        // Fail closed on a mode the element does not know (review A4): no environment at all, rather than one
+        // of a mode the embedder did not ask for.
+        if (!isSandboxMode(this._config.mode)) {
+            this._terminate(`unknown mode ${this._describeMode(this._config.mode)}`);
             return;
         }
         this._enterState('loading');
@@ -711,9 +789,15 @@ export class WebSandbox extends HTMLElement {
         // passing the refs of the original object. Directives a <meta> policy discards (frame-ancestors,
         // report-uri, report-to, sandbox) are dropped first, with a warning: the guest policy is always a
         // <meta> policy, so emitting them would only look like control (drop-meta-ignored.ts, S7).
-        const cloned = dropMetaIgnoredDirectives(structuredClone(
+        // Then the policy grammar (review A1): only known directive names, and only tokens that are one CSP
+        // source expression, go on, so every later step sees the tokens the policy will hold and no value can
+        // add a directive. generateCSP enforces the same grammar again on whatever reaches it. Then the eval
+        // keywords, which only scriptUnsafe grants (review A5).
+        const metaApplicable = dropMetaIgnoredDirectives(structuredClone(
             this._config.connectionsAllowed
         ), this._warnedMetaIgnored);
+        const grammatical = sanitizeDirectives(metaApplicable, (message) => this._warnPolicy(message));
+        const cloned = dropEvalSources(grammatical, this._config.scriptUnsafe === true, this._warnedEvalDirectives);
 
         cloned["upgrade-insecure-requests"] = true
 
@@ -770,6 +854,14 @@ export class WebSandbox extends HTMLElement {
         console.warn("[Sandbox] the guest policy refuses inline scripts, so the sandbox bootstrap cannot run: guest scripts would run with no bridge, no sandboxFiles, no violation reports, and with WebRTC available. Keep 'unsafe-inline' in script-src (without nonces or hashes).");
     }
 
+    // What the policy grammar dropped (policy-grammar.ts): the same config is built again on every reset(),
+    // load() or setConfig(), so each message is said once per element.
+    private _warnPolicy(message: string) {
+        if (this._warnedPolicy.has(message)) return;
+        this._warnedPolicy.add(message);
+        console.warn(message);
+    }
+
     // Warnings about the guest's markup come back with every build of the same markup: one each per element.
     private _warnOnce(message: string) {
         if (this._warnedGuestMarkup.has(message)) return;
@@ -799,13 +891,13 @@ export class WebSandbox extends HTMLElement {
         let guestDocument: string;
         if (isWorkerMode) {
             // worker mode is headless: no guest markup, so no markup references either
-            guestDocument = buildGuestDocument({ csp: generateCSP(directives), bootstrapScript: this._getWorkerBootstrapScript(files), content: '' });
+            guestDocument = buildGuestDocument({ csp: generateCSP(directives, (message) => this._warnPolicy(message)), bootstrapScript: this._getWorkerBootstrapScript(files), content: '' });
         } else {
             const html = this._config.html || '<div id="root"></div>';
             // A fresh slot nonce per build (inside rewriteGuestMarkup); null parts keep the markup verbatim.
             const plan = this._getMarkupPlan(html, files, sandboxFlags, directives);
             guestDocument = buildGuestDocument({
-                csp: generateCSP(directives),
+                csp: generateCSP(directives, (message) => this._warnPolicy(message)),
                 bootstrapScript: this._getSandboxCommsScript('iframe', files, plan),
                 content: plan.parts ? '' : html,
                 bootstrapWritesContent: plan.parts !== null,
@@ -855,7 +947,7 @@ export class WebSandbox extends HTMLElement {
             html: this._config.html || '<div id="root"></div>',
             autoResize: this._autoResizeEnabled(),
         };
-        const view = buildViewDocument(generateCSP(directives), viewBootstrapText());
+        const view = buildViewDocument(generateCSP(directives, (message) => this._warnPolicy(message)), viewBootstrapText());
 
         this._iframe = document.createElement("iframe");
         this._iframe.setAttribute("sandbox", sandboxFlags);
@@ -867,19 +959,24 @@ export class WebSandbox extends HTMLElement {
         this.shadowRoot!.appendChild(this._iframe);
     }
 
-    // The worker's source in strict mode: the comms script (bridge, logs, violations, execute, the fetch
-    // bridge), sandboxFiles with every registered file, the strict prelude (hardening, sandboxView, the
-    // ports), then the guest's entry as written, then the line that marks the entry as having run to its end.
+    // The worker's source in strict mode: the scope check, the comms script (bridge, logs, violations, execute,
+    // the fetch bridge), sandboxFiles with every registered file, the strict prelude (hardening, sandboxView, the
+    // ports), then the guest's entry in a function scope of its own, then the line that marks the entry as having
+    // run to its end. The entry's own scope (review C2): its top-level declarations are local to it, so none can
+    // replace a global before the prelude has captured or deleted it; an entry that wants a global assigns it
+    // (globalThis.x = …). `this` inside is the global object, as at a script's top level. The scope check
+    // (assertEntryScoped) refuses to start a worker whose entry escaped that scope.
     private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string): string {
         const features: { fetchBridge?: { timeoutMs: number }; externalPort: true } = { externalPort: true };
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, entryDoneName: ENTRY_DONE_NAME, eventTypes: VIEW_EVENT_TYPES };
-        const prelude = '(function () {'
+        const prelude = '(function (g) {'
+            + `(${assertEntryScoped.toString()})(g);`
             + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)});`
-            + '})();';
-        return `${prelude}\n${entrySource}\n;${ENTRY_DONE_NAME}();\n`;
+            + '})(this);';
+        return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${ENTRY_DONE_NAME}();\n`;
     }
 
     // Strict-mode configuration the element will not honour, said once per instance each.
@@ -895,7 +992,8 @@ export class WebSandbox extends HTMLElement {
         }
         const unsafe = this._config.unsafeCapabilities || [];
         if (unsafe.length > 0) warn(`[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: ${unsafe.join(', ')}.`);
-        for (const message of strictPolicyOverrides(this._config.connectionsAllowed, DEFAULT_SANDBOX_CONFIG.connectionsAllowed)) warn(message);
+        // Compared in the grammar's tokens (policy-grammar.ts): a name the grammar drops is warned about there.
+        for (const message of strictPolicyOverrides(sanitizeDirectives(this._config.connectionsAllowed), sanitizeDirectives(DEFAULT_SANDBOX_CONFIG.connectionsAllowed))) warn(message);
     }
 
     // The view liveness check (A5): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.

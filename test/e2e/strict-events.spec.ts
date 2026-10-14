@@ -54,6 +54,7 @@ test('the schema: a click on a button inside a box, an input and its keys, a che
 
     await page.evaluate(() => { (window as any).viewEvents = []; });
     await clickInSandbox(page, 190, 15); // #text
+    await waitInView(page, browserName, `document.activeElement && document.activeElement.id === 'text'`); // keys go to the focused frame
     await page.keyboard.type('ab');
     await page.keyboard.press('Tab'); // blur: change
     await expect.poll(async () => (await events(sandbox)).map(e => e.label).filter(l => l !== 'click').join(' ')).toBe('keydown input keydown input keydown change');
@@ -127,6 +128,9 @@ test('limits: at most 32 ids, innermost first; strings at most 64 Ki characters'
     await sandbox.run(`sandboxView.render(${JSON.stringify(nested)})`);
     await waitInView(page, browserName, `!!document.getElementById('deep')`);
     await clickInSandbox(page, 50, 215);
+    // Type only once the click has moved focus into the view: keyboard input goes to the focused frame, and
+    // with an out-of-process view Chromium can deliver it before focus crosses the process boundary.
+    await waitInView(page, browserName, `document.activeElement && document.activeElement.id === 'deep'`);
     await page.keyboard.insertText('y'.repeat(70000));
     await expect.poll(() => events(sandbox).then(e => e.map(x => x.label))).toEqual(['click', 'input']);
     const [click, input] = await events(sandbox);

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { inSandboxView, inStrictWorker, RENDER_REMOVED_ELEMENTS, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, viewBootstrapText } from './in-sandbox-view';
+import { assertEntryScoped, inSandboxView, inStrictWorker, RENDER_REMOVED_ELEMENTS, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, viewBootstrapText } from './in-sandbox-view';
 import { REFERENCES } from './markup-references';
 import { VIOLATION_EVENT_LIMIT } from './violation';
 
@@ -211,5 +211,46 @@ describe('the strict worker prelude (unit; the e2e specs cover it in real worker
         expect([attached.length, guestSaw]).toEqual([0, 1]);
         // the entry marker cannot be replaced
         expect(Object.getOwnPropertyDescriptor(w, '__testEntryDone')).toMatchObject({ writable: false, configurable: false });
+    });
+});
+
+describe('review C2 and C3: the strict worker prelude against hostile globals', () => {
+    const start = (w: any) => {
+        const run = new Function('globalThis', `return (${inStrictWorker.toString()})`)(w);
+        run({ attach: () => {} }, { scriptUnsafe: false, maxRender: 100, maxTarget: 5, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
+    };
+
+    it('assertEntryScoped refuses a global object holding a non-configurable function (what a top-level declaration leaves), whatever happened to the name Object', () => {
+        const g: any = {};
+        Object.defineProperty(g, 'Object', { value: function Object() {}, writable: true, configurable: true });
+        expect(() => assertEntryScoped(g)).not.toThrow();
+        Object.defineProperty(g, 'Worker', { value: function Worker() {}, writable: true, enumerable: true, configurable: false });
+        expect(() => assertEntryScoped(g)).toThrowError(/the entry declares "Worker" at the top level/);
+        const values: any = {};
+        Object.defineProperty(values, 'NaN', { value: NaN, configurable: false });
+        expect(() => assertEntryScoped(values)).not.toThrow(); // non-configurable, but not a function: the platform's own
+    });
+
+    it('a name the prelude must remove but cannot is an error, not a silent pass (C2)', () => {
+        const w = new EventTarget() as any;
+        Object.defineProperty(w, 'Worker', { value: function Worker() {}, writable: true, enumerable: true, configurable: false });
+        Object.assign(w, { URL: {} });
+        expect(() => start(w)).toThrowError(/could not remove Worker/);
+    });
+
+    it("writes to the prelude's lists never reach a setter on Array.prototype (C3)", () => {
+        const w = new EventTarget() as any;
+        Object.assign(w, { URL: {} });
+        start(w);
+        const seen: unknown[] = [];
+        Object.defineProperty(Array.prototype, '0', { configurable: true, set(value) { seen.push(value); Object.defineProperty(this, '0', { value, writable: true, enumerable: true, configurable: true }); } });
+        try {
+            w.sandboxView.render('<p>a</p>');
+            w.sandboxView.on('click', null, () => {});
+            w.sandboxView.render('<p>b</p>', 'x');
+        } finally {
+            delete (Array.prototype as any)['0'];
+        }
+        expect(seen).toEqual([]);
     });
 });

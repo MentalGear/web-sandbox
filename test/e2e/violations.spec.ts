@@ -83,25 +83,42 @@ test.describe('3. a report is a guest claim', () => {
         expect((await sandbox.violations()).map(v => v.blockedURI)).toEqual([`${ATTACKER}/real`]);
     });
 
-    test('a frame the guest forges on the port is validated and clamped: a bad directive is dropped, long strings are cut, extra fields never reach the host', async ({ sandbox }) => {
+    test('guest code cannot reach the port (review B2), but it can bend what the bootstrap reads: forged fields are validated and clamped, a bad directive is dropped, extra fields never reach the host', async ({ sandbox }) => {
         expect(await sandbox.mount()).toBe('ready');
-        // Guest code can reach the port by patching MessagePort.prototype.postMessage before the bootstrap's
-        // next post (here: its console relay). This is why a report is never a host fact.
+        // Before review B2, guest code took the port by patching MessagePort.prototype.postMessage and posted
+        // VIOLATION frames of its own. The bootstrap now calls only primitives captured before guest code ran, so
+        // that yields nothing (asserted at length in review-channels.spec.ts). What remains guest-influenced is
+        // what the bootstrap reads from a real violation event, through getters guest code can replace: a
+        // report stays a claim, and the host validates it.
         await sandbox.run(`
+            globalThis.__port = null;
             const original = MessagePort.prototype.postMessage;
-            MessagePort.prototype.postMessage = function (message, ...rest) {
-                MessagePort.prototype.postMessage = original;
-                this.postMessage({ type: 'VIOLATION', directive: 'img-src; script-src *', blockedURI: 'x' });
-                this.postMessage({ type: 'VIOLATION', directive: 'connect-src', blockedURI: 'y'.repeat(10000), lineNumber: -4, hostFact: true });
-                this.postMessage({ type: 'VIOLATION', directive: 'connect-src', blockedURI: 'FORGED_DONE' });
-                return original.call(this, message, ...rest);
-            };
-            console.log('trigger');
+            MessagePort.prototype.postMessage = function (...args) { globalThis.__port = this; return original.apply(this, args); };
+            const forged = [
+                { effectiveDirective: 'img-src; script-src *', blockedURI: 'x' },
+                { effectiveDirective: 'connect-src', blockedURI: 'y'.repeat(10000), lineNumber: -4 },
+                { effectiveDirective: 'connect-src', blockedURI: 'FORGED_DONE' },
+            ];
+            // which forgery an event gets follows from its real blockedURI (…/forge-<i>), read through the original getter
+            const P = SecurityPolicyViolationEvent.prototype;
+            const realBlocked = Object.getOwnPropertyDescriptor(P, 'blockedURI').get;
+            for (const name of ['effectiveDirective', 'blockedURI', 'lineNumber']) {
+                const d = Object.getOwnPropertyDescriptor(P, name);
+                Object.defineProperty(P, name, { configurable: true, get() {
+                    const f = forged[Number(realBlocked.call(this).slice(-1))];
+                    return f && name in f ? f[name] : d.get.call(this);
+                } });
+            }
+            for (let i = 0; i < 3; i++) new Image().src = '${ATTACKER}/forge-' + i;
+            console.log('forging');
         `);
+        await sandbox.waitForLog('forging');
+        expect(await sandbox.inGuest('return globalThis.__port')).toBeNull();
         await sandbox.waitForViolation('connect-src', 'FORGED_DONE');
         const forged = await sandbox.violations();
         expect(forged.map(v => [v.directive, v.blockedURI.length])).toEqual([['connect-src', 2048], ['connect-src', 'FORGED_DONE'.length]]);
-        expect(forged[0]).toEqual({ sandbox: 'main', directive: 'connect-src', blockedURI: 'y'.repeat(2048) });
+        const { sandbox: _, sourceFile: __, columnNumber: ___, ...detail } = forged[0]!;
+        expect(detail).toEqual({ directive: 'connect-src', blockedURI: 'y'.repeat(2048) });
     });
 
     test('an honest guest stops forwarding at 100 per environment, below the host cap that warns; the next environment starts a fresh count', async ({ sandbox, page }) => {
@@ -150,7 +167,7 @@ test.describe('4. worker mode', () => {
 
 
 test.describe('5. strict mode', () => {
-    test('view reports are labelled view, worker reports logic (per engine); forged frames on the logic port are logic and use up only the logic cap', async ({ sandbox, page, browserName }) => {
+    test('view reports are labelled view, worker reports logic (per engine); a flood on the logic port is logic and uses up only the logic cap', async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ mode: 'strict' })).toBe('ready');
         // the worker's own refusals: Chromium raises both in the worker; Firefox raises the importScripts
         // refusal in the VIEW (research 15, P3); WebKit raises none in workers
@@ -162,10 +179,11 @@ test.describe('5. strict mode', () => {
         `);
         expect(outcome).toEqual({ fetched: 'refused', imported: 'refused' });
         await page.waitForTimeout(800);
-        // then a flood of forged reports on the worker's own port, past the cap
-        await sandbox.run(`const o = MessagePort.prototype.postMessage; MessagePort.prototype.postMessage = function (m, ...r) { MessagePort.prototype.postMessage = o; for (let i = 0; i < 150; i++) this.postMessage({ type: 'VIOLATION', directive: 'img-src', blockedURI: 'forged-' + i, source: 'view' }); return o.call(this, m, ...r); }; console.log('forged')`);
-        await sandbox.waitForLog('forged');
-        await page.waitForTimeout(500);
+        // then a flood of real refusals in the worker, past the cap (the worker cannot post on its port itself
+        // since review B2, so the flood is what the engine raises: none in WebKit)
+        await sandbox.run(`for (let i = 0; i < 150; i++) fetch('${ATTACKER}/flood-' + i).catch(() => {}); console.log('flooded')`);
+        await sandbox.waitForLog('flooded');
+        await page.waitForTimeout(800);
         // the view's own refusal still arrives, labelled view
         await sandbox.run(`sandboxView.render('<img src="${ATTACKER}/view.svg">')`);
         expect((await sandbox.waitForViolation('img-src', `${ATTACKER}/view.svg`)).source).toBe('view');
@@ -177,10 +195,10 @@ test.describe('5. strict mode', () => {
             firefox: ['logic connect-src', 'view script-src-elem'],
             webkit: [],
         }[browserName]);
-        // the logic port's cap: its real reports first, then forged ones up to 100, every one labelled logic
-        // whatever the frame claimed
-        const forged = all.filter(v => v.blockedURI.startsWith('forged-'));
-        expect(all.filter(v => v.source === 'logic')).toHaveLength(100);
-        expect(new Set(forged.map(v => v.source))).toEqual(new Set(['logic']));
+        // the logic port's cap: its first reports, then the flood up to 100, every one labelled logic; the view's
+        // report above arrived after it, on its own count
+        const flood = all.filter(v => v.blockedURI.startsWith(`${ATTACKER}/flood-`));
+        expect(all.filter(v => v.source === 'logic')).toHaveLength(browserName === 'webkit' ? 0 : 100);
+        expect(new Set(flood.map(v => v.source))).toEqual(new Set(browserName === 'webkit' ? [] : ['logic']));
     });
 });

@@ -90,6 +90,18 @@ export function assertHashableScript(text: string): void {
     if (/<\/script|<!--|<script/i.test(text)) throw new Error('[Sandbox] a hashed script must not contain "</script", "<script" or "<!--": its parsed text would differ from its source');
 }
 
+/**
+ * Throws unless `text` can be placed inside an inline <script> element and parsed back as exactly one script
+ * (review A8): no "</script" (it would end the element and turn the rest into markup), no "<!--" or "<script"
+ * (they move the tokenizer into the escaped states, where a later "</script>" is no longer the end), no NUL
+ * (replaced by U+FFFD). Used for the default bootstrap, which is not hashed, so a CR is harmless there; the
+ * strict view's bootstrap is held to assertHashableScript, which refuses that too.
+ */
+export function assertParserSafeScript(text: string): void {
+    if (/\u0000/.test(text)) throw new Error('[Sandbox] an inline script must not contain NUL: the HTML parser replaces it');
+    if (/<\/script|<!--|<script/i.test(text)) throw new Error('[Sandbox] an inline script must not contain "</script", "<script" or "<!--": the HTML parser would not read it back as one script');
+}
+
 /** The CSP hash-source for a script whose parsed text is `text`: `'sha256-<base64>'`. */
 export function scriptHashSource(text: string): string {
     assertHashableScript(text);

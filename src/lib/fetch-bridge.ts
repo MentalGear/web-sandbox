@@ -115,6 +115,8 @@ const FORBIDDEN_HEADER = /^(accept-charset|accept-encoding|access-control-reques
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]{1,64}$/;
 const MAX_HEADERS = 64;
 const MAX_HEADER_VALUE = 8192;
+// Code points up to U+00FF (a ByteString) except NUL, LF and CR.
+const BYTE_STRING_HEADER_VALUE = /^[\u0001-\u0009\u000b\u000c\u000e-\u00ff]*$/;
 const MAX_REPORTED_URL = 2048;
 const MAX_URL = 8192;
 const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
@@ -307,7 +309,9 @@ const toHeaders = (value: unknown, allowed: readonly string[]): [string, string]
         if (typeof name !== 'string' || typeof headerValue !== 'string') return 'header names and values must be strings';
         const lower = name.toLowerCase();
         if (!allowed.includes(lower)) return `header "${lower.slice(0, 64)}" is not allowed`;
-        if (headerValue.length > MAX_HEADER_VALUE || /[\r\n\0]/.test(headerValue)) return `header "${lower}" has an invalid value`;
+        // A header value is a ByteString with no CR, LF or NUL (review B6): anything else would make fetch() throw
+        // before sending, and the request be reported as made ('failed') when none was.
+        if (headerValue.length > MAX_HEADER_VALUE || !BYTE_STRING_HEADER_VALUE.test(headerValue)) return `header "${lower}" has an invalid value`;
         headers.push([lower, headerValue]);
     }
     return headers;

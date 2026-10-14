@@ -6,12 +6,18 @@ import type { Frame, Page } from '@playwright/test';
  *
  *   main (harness) / wrapper (the element's iframe) / view / ...
  *
- * Firefox and WebKit: through page.frames(). Chromium: the sandboxed wrapper is usually an out-of-process
- * iframe, and Playwright 1.58 with Chromium 141 lists it with no child frames (research 15, "Note on
- * Chromium and Playwright"), so below the host page Chromium is then read through a CDP session on that
- * target: its frame tree, and Runtime.evaluate in each frame's default execution context. When Chromium keeps
- * the wrapper in process (seen under CPU load), page.frames() lists everything and is used instead. DevTools evaluation is not subject
- * to the page's CSP in any engine, so reading never depends on the policy under test.
+ * Firefox and WebKit: through page.frames(). Chromium: always through CDP, from ground truth, never through
+ * Playwright's frame model. The sandboxed wrapper is an out-of-process iframe (measured: every time, idle or
+ * under CPU load), and Playwright 1.58 maps that OOPIF target to its Frame asynchronously and not reliably:
+ * right after 'ready' it may already list the wrapper's children, may list none yet, or (under CPU load, about
+ * 1 run in 10) never attach the target at all, so that newCDPSession(wrapper) keeps failing with "part of the
+ * parent frame's session" although the wrapper has its own target. So Chromium is read through one CDP session
+ * on the page: Page.getFrameTree lists the frames that share the page's process, Target.getTargets lists the
+ * out-of-process ones with their parentFrameId, and each of those is read through a non-flattened
+ * Target.attachToTarget from that same session, recursively. The same code reads an in-process wrapper and an
+ * out-of-process one, at any depth, so no test depends on the process model or on Playwright's attach timing.
+ * Each frame is evaluated with Runtime.evaluate in its default execution context. DevTools evaluation is not
+ * subject to the page's CSP in any engine, so reading never depends on the policy under test.
  */
 
 export interface FrameValue<T = unknown> { path: string; url: string; value: T | 'no-context' }
@@ -19,66 +25,126 @@ export interface FrameValue<T = unknown> { path: string; url: string; value: T |
 const withTimeout = <T>(promise: Promise<T>, ms: number, fallback: T) =>
     Promise.race([promise.catch(() => fallback), new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))]);
 
+const frameName = (depth: number, name: string | undefined) => (depth === 0 ? 'main' : depth === 1 ? 'wrapper' : depth === 2 ? 'view' : name || `d${depth}`);
+
 function framePath(frame: Frame): string {
     const chain: Frame[] = [];
     for (let f: Frame | null = frame; f; f = f.parentFrame()) chain.unshift(f);
-    return chain.map((f, depth) => (depth === 0 ? 'main' : depth === 1 ? 'wrapper' : depth === 2 ? 'view' : f.name() || `d${depth}`)).join('/');
+    return chain.map((f, depth) => frameName(depth, f.name())).join('/');
 }
 
 type CdpFrameTree = { frame: { id: string; name?: string; url: string; urlFragment?: string }; childFrames?: CdpFrameTree[] };
+type CDPSession = Awaited<ReturnType<ReturnType<Page['context']>['newCDPSession']>>;
+
+/** One CDP target to talk to: the page's own session, or a target attached through it (non-flattened). */
+interface Cdp {
+    send(method: string, params?: object): Promise<any>;
+    on(event: string, listener: (params: any) => void): void;
+    close(): Promise<void>;
+}
+
+function pageCdp(session: CDPSession): Cdp {
+    return {
+        send: (method, params) => session.send(method as any, params as any),
+        on: (event, listener) => { session.on(event as any, listener); },
+        close: () => session.detach().catch(() => {}),
+    };
+}
+
+// Non-flattened attach: the target's protocol messages travel as Target.sendMessageToTarget /
+// Target.receivedMessageFromTarget on the page's session, so they never depend on Playwright knowing the target.
+async function attachedCdp(session: CDPSession, targetId: string): Promise<Cdp> {
+    const { sessionId } = await session.send('Target.attachToTarget' as any, { targetId, flatten: false }) as { sessionId: string };
+    let nextId = 0;
+    const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+    const listeners = new Map<string, ((params: any) => void)[]>();
+    const onMessage = (event: { sessionId: string; message: string }) => {
+        if (event.sessionId !== sessionId) return;
+        const message = JSON.parse(event.message);
+        if (typeof message.id === 'number') {
+            const entry = pending.get(message.id);
+            pending.delete(message.id);
+            if (message.error) entry?.reject(new Error(message.error.message));
+            else entry?.resolve(message.result);
+        } else {
+            for (const listener of listeners.get(message.method) ?? []) listener(message.params);
+        }
+    };
+    session.on('Target.receivedMessageFromTarget' as any, onMessage);
+    return {
+        send: (method, params = {}) => new Promise((resolve, reject) => {
+            const id = ++nextId;
+            pending.set(id, { resolve, reject });
+            session.send('Target.sendMessageToTarget' as any, { sessionId, message: JSON.stringify({ id, method, params }) })
+                .catch((e: Error) => { pending.delete(id); reject(e); });
+        }),
+        on: (event, listener) => { listeners.set(event, [...(listeners.get(event) ?? []), listener]); },
+        close: async () => {
+            session.off('Target.receivedMessageFromTarget' as any, onMessage);
+            for (const entry of pending.values()) entry.reject(new Error('detached'));
+            await session.send('Target.detachFromTarget' as any, { sessionId }).catch(() => {});
+        },
+    };
+}
+
+async function inFramesThroughCdp<T>(page: Page, expression: string, only: (path: string) => boolean): Promise<FrameValue<T>[]> {
+    const results: FrameValue<T>[] = [];
+    const session = await page.context().newCDPSession(page);
+    const clients: Cdp[] = [];
+    try {
+        const { targetInfos } = await session.send('Target.getTargets' as any) as { targetInfos: { type: string; targetId: string; parentFrameId?: string }[] };
+        const outOfProcess = targetInfos.filter(t => t.type === 'iframe' && t.parentFrameId);
+        // Reads every frame local to `cdp`'s target, depth first, descending into out-of-process children in place.
+        const readTarget = async (cdp: Cdp, parentPath: string, depth: number) => {
+            const contexts = new Map<string, number>();
+            // Runtime.enable reports every existing context before it returns
+            cdp.on('Runtime.executionContextCreated', (event: any) => {
+                const aux = event.context.auxData ?? {};
+                if (aux.isDefault) contexts.set(aux.frameId, event.context.id);
+            });
+            await cdp.send('Runtime.enable');
+            const { frameTree } = await cdp.send('Page.getFrameTree') as { frameTree: CdpFrameTree };
+            const walk = async (tree: CdpFrameTree, parentPath: string, depth: number) => {
+                const name = frameName(depth, tree.frame.name);
+                const path = parentPath ? `${parentPath}/${name}` : name;
+                const contextId = contexts.get(tree.frame.id);
+                let value: T | 'no-context' = 'no-context';
+                if (contextId !== undefined && only(path)) {
+                    const reply = await withTimeout(cdp.send('Runtime.evaluate', { expression, contextId, returnByValue: true, awaitPromise: true }), 3000, null);
+                    if (reply && !reply.exceptionDetails) value = reply.result.value as T;
+                }
+                results.push({ path, url: tree.frame.url + (tree.frame.urlFragment ?? ''), value });
+                for (const child of tree.childFrames ?? []) await walk(child, path, depth + 1);
+                for (const target of outOfProcess.filter(t => t.parentFrameId === tree.frame.id)) {
+                    // a target outlives its frame for a moment (a rebuilt sandbox's previous wrapper): only frames still owned count
+                    const owned = await cdp.send('DOM.getFrameOwner', { frameId: target.targetId }).then(() => true, () => false);
+                    if (!owned) continue;
+                    const child = await attachedCdp(session, target.targetId);
+                    clients.push(child);
+                    await readTarget(child, path, depth + 1);
+                }
+            };
+            await walk(frameTree, parentPath, depth);
+        };
+        await readTarget(pageCdp(session), '', 0);
+    } finally {
+        for (const client of clients) await client.close();
+        await session.detach().catch(() => {});
+    }
+    return results;
+}
 
 /**
  * Evaluates `expression` (a JS expression; JSON-serialisable result, promises awaited) in every frame of the
  * page, or only in the frames whose path `only` accepts (the others are listed with 'no-context').
  */
 export async function inFrames<T = unknown>(page: Page, browserName: string, expression: string, only: (path: string) => boolean = () => true): Promise<FrameValue<T>[]> {
+    if (browserName === 'chromium') return inFramesThroughCdp<T>(page, expression, only);
     const results: FrameValue<T>[] = [];
-    // Chromium usually runs the sandboxed wrapper out of process, but not always (measured: under CPU load it
-    // sometimes stays in the page's process, and then has no CDP session of its own); Playwright lists an
-    // in-process wrapper's child frames itself, so that case is read like Firefox and WebKit.
-    const wrapperFrame = page.mainFrame().childFrames()[0];
-    const outOfProcess = browserName === 'chromium' && !!wrapperFrame && wrapperFrame.childFrames().length === 0;
-    if (!outOfProcess) {
-        for (const frame of page.frames()) {
-            const path = framePath(frame);
-            const value = only(path) ? await withTimeout<T | 'no-context'>(frame.evaluate(expression) as Promise<T>, 3000, 'no-context') : 'no-context';
-            results.push({ path, url: frame.url(), value });
-        }
-        return results;
-    }
-    const main = page.mainFrame();
-    const wrapper = wrapperFrame!;
-    let session: Awaited<ReturnType<ReturnType<Page['context']>['newCDPSession']>>;
-    try {
-        session = await page.context().newCDPSession(wrapper);
-    } catch {
-        // in process after all, with its view not yet listed: read through Playwright's frames
-        return inFrames<T>(page, 'playwright-frames', expression, only);
-    }
-    results.push({ path: 'main', url: main.url(), value: only('main') ? await withTimeout<T | 'no-context'>(main.evaluate(expression) as Promise<T>, 3000, 'no-context') : 'no-context' });
-    try {
-        const contexts = new Map<string, number>();
-        session.on('Runtime.executionContextCreated' as any, (event: any) => {
-            const aux = event.context.auxData ?? {};
-            if (aux.isDefault) contexts.set(aux.frameId, event.context.id);
-        });
-        await session.send('Runtime.enable' as any);
-        const { frameTree } = await session.send('Page.getFrameTree' as any) as { frameTree: CdpFrameTree };
-        const walk = async (tree: CdpFrameTree, parentPath: string, depth: number) => {
-            const name = depth === 1 ? 'wrapper' : depth === 2 ? 'view' : tree.frame.name || `d${depth}`;
-            const path = `${parentPath}/${name}`;
-            const contextId = contexts.get(tree.frame.id);
-            let value: T | 'no-context' = 'no-context';
-            if (contextId !== undefined && only(path)) {
-                const reply = await withTimeout(session.send('Runtime.evaluate' as any, { expression, contextId, returnByValue: true, awaitPromise: true }) as Promise<any>, 3000, null);
-                if (reply && !reply.exceptionDetails) value = reply.result.value as T;
-            }
-            results.push({ path, url: tree.frame.url + (tree.frame.urlFragment ?? ''), value });
-            for (const child of tree.childFrames ?? []) await walk(child, path, depth + 1);
-        };
-        await walk(frameTree, 'main', 1);
-    } finally {
-        await session.detach().catch(() => {});
+    for (const frame of page.frames()) {
+        const path = framePath(frame);
+        const value = only(path) ? await withTimeout<T | 'no-context'>(frame.evaluate(expression) as Promise<T>, 3000, 'no-context') : 'no-context';
+        results.push({ path, url: frame.url(), value });
     }
     return results;
 }

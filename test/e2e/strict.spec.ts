@@ -190,6 +190,9 @@ test.describe('G4 navigation', () => {
             await page.waitForTimeout(150);
         }
         await clickInSandbox(page, 220, 120); // focus the input, then implicit submission
+        // Only press Enter once the input has focus: otherwise the key never reaches the form and the
+        // "no navigation" assertion below would pass without testing implicit submission at all.
+        await waitInView(page, browserName, `document.activeElement && document.activeElement.name === 'q'`);
         await page.keyboard.press('Enter');
         await clickInSandbox(page, 20, 20); // and a middle click on a link
         await page.mouse.click((await page.locator('web-sandbox').boundingBox())!.x + 20, (await page.locator('web-sandbox').boundingBox())!.y + 20, { button: 'middle' });
@@ -290,8 +293,8 @@ test.describe('G2 the worker', () => {
         await render(sandbox, browserName, '<p>honest</p>', 'honest');
         const tried = await sandbox.inGuest('return tryAllPorts()');
         await page.waitForTimeout(800);
-        // the guest saw exactly one port, the logic port (reachable as in worker mode); nothing it holds reaches the view
-        expect(tried).toBe(1);
+        // the guest saw no port at all: since review B2 the logic port is as far out of reach as the render port
+        expect(tried).toBe(0);
         expect(await inView(page, browserName, `!!document.getElementById('bypass')`)).toBe(false);
         await render(sandbox, browserName, '<p>still honest</p>', 'honest-2'); // positive control: the library's path still works
     });
@@ -300,13 +303,13 @@ test.describe('G2 the worker', () => {
 // ---- the entry ----------------------------------------------------------------------------------------------
 
 test.describe('the entry', () => {
-    test('the entry runs first, as a classic script at the worker top level', async ({ sandbox, page, browserName }) => {
-        await sandbox.registerFiles({ 'app.js': `var declared = 'global'; function greet() { return 'hi'; }
+    test('the entry runs first, as a classic script in a function scope of its own: its top-level declarations are local (review C2), `this` is the global object', async ({ sandbox, page, browserName }) => {
+        await sandbox.registerFiles({ 'app.js': `var declared = 'local'; function greet() { return 'hi'; } globalThis.shared = 'global';
             sandboxView.render('<h1 id="title">' + greet() + '</h1>');
-            bridge.expose('declared', () => [typeof declared, self.declared, typeof greet]);` });
+            bridge.expose('declared', () => [typeof declared, self.declared, typeof greet, self.shared, this === self]);` });
         expect(await sandbox.mount(strict({ entry: 'app.js' }))).toBe('ready');
         await waitInView(page, browserName, `document.getElementById('title') && document.getElementById('title').textContent === 'hi'`);
-        expect(await sandbox.call('declared')).toEqual(['string', 'global', 'function']);
+        expect(await sandbox.call('declared')).toEqual(['string', undefined, 'function', 'global', true]);
     });
 
     for (const [label, source] of [['a syntax error', 'let = ;'], ['a throw at its top level', 'throw new Error("entry broke")']] as const) {
@@ -438,15 +441,16 @@ test.describe('configuration', () => {
         expect(recorder.paths('blocked')).toEqual([]);
     });
 
-    test('autoResize: the view reports its height (B6); a RESIZE forged on the logic port is ignored', async ({ sandbox, page, browserName }) => {
+    test('autoResize: the view reports its height (B6); the worker cannot post a RESIZE on the logic port', async ({ sandbox, page, browserName }) => {
         await page.addStyleTag({ content: 'web-sandbox { height: 50px }' });
         expect(await sandbox.mount(strict({ autoResize: true }))).toBe('ready');
         await render(sandbox, browserName, '<div style="height: 420px"></div>', 'tall');
         await expect.poll(() => page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).getBoundingClientRect().height), { timeout: 5000 }).toBeGreaterThan(420);
         const before = await page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).style.height);
-        // the worker can reach its own (logic) port and post anything; only the view's reports count
-        await sandbox.run(`const o = MessagePort.prototype.postMessage; MessagePort.prototype.postMessage = function (m, ...r) { MessagePort.prototype.postMessage = o; this.postMessage({ type: 'RESIZE', height: 5 }); return o.call(this, m, ...r); }; console.log('forge')`);
+        // only the view's reports count; the worker cannot even reach its own (logic) port to post one (review B2)
+        await sandbox.run(`globalThis.__port = null; const o = MessagePort.prototype.postMessage; MessagePort.prototype.postMessage = function (m, ...r) { globalThis.__port = this; this.postMessage = o; return o.call(this, m, ...r); }; console.log('forge')`);
         await sandbox.waitForLog('forge');
+        expect(await sandbox.inGuest('return globalThis.__port')).toBeNull();
         await page.waitForTimeout(400);
         expect(await page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).style.height)).toBe(before);
     });

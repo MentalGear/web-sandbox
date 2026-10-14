@@ -31,6 +31,10 @@
 
 ## Security research
 
+- [**security/ADVERSARIAL-REVIEW-2026-10.md**](security/ADVERSARIAL-REVIEW-2026-10.md) — the adversarial review of
+  2026-10: 21 candidates by area (policy, channels, strict mode), each fixed, asserted or stated as a residual, with
+  the tests that prove it on Chromium, Firefox and WebKit.
+
 - [research/](research/README.md) — fourteen documented attack vectors with reproductions, design probes
   (blob delivery, strict mode), plus the CSP and virtual-files architecture analyses.
 - [CSP_CONFIG_RATIONALE.md](CSP_CONFIG_RATIONALE.md) — why `'unsafe-inline'`, why not nonces.
