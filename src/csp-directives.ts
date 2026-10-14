@@ -1,6 +1,7 @@
 // Capabilities that keep the guest inside the frame and its network policy.
 // allow-forms is safe because form-action defaults to 'none' and the wrapper frame blocks
 // the guest frame from navigating (which is what a form submission does).
+/** The values `capabilities` accepts: sandbox flags that keep the guest inside the frame. */
 export const SAFE_CAPABILITIES = [
     "allow-forms",
     "allow-orientation-lock",
@@ -13,6 +14,7 @@ export const SAFE_CAPABILITIES = [
 // - allow-modals: alert/confirm/prompt can imitate host UI and block the host's main thread
 // - allow-downloads: writes files to the user's disk
 // - allow-presentation: the Presentation API opens a URL on a second screen, outside the frame's CSP
+/** The sandbox flags among UNSAFE_CAPABILITIES. */
 export const UNSAFE_SANDBOX_FLAGS = [
     "allow-downloads",
     "allow-modals",
@@ -23,10 +25,12 @@ export const UNSAFE_SANDBOX_FLAGS = [
 // Not sandbox flags: these are Permissions Policy features, granted through the iframe `allow` attribute.
 // - fullscreen: a fullscreen guest can draw fake browser UI (phishing). Browsers require a user gesture
 //   to enter fullscreen and show an exit hint.
+/** The Permissions Policy features among UNSAFE_CAPABILITIES, granted through the frames' `allow` attribute. */
 export const UNSAFE_PERMISSIONS = [
     "fullscreen",
 ] as const;
 
+/** The values `unsafeCapabilities` accepts: each reaches outside the frame and warns once when enabled. */
 export const UNSAFE_CAPABILITIES = [...UNSAFE_SANDBOX_FLAGS, ...UNSAFE_PERMISSIONS] as const;
 
 // Everything that may end up in the sandbox attribute
@@ -40,6 +44,7 @@ export type SandboxCapability = (typeof ALLOWED_CAPABILITIES)[number];
 // Only these names reach a policy: any other key, or a name with other spelling or case, is dropped with a
 // warning, and so is any value token that is not one CSP source expression (src/lib/csp/policy-grammar.ts).
 // 'unsafe-eval' and 'wasm-unsafe-eval' are the library's to add, with scriptUnsafe (src/lib/csp/drop-eval.ts).
+/** The guest policy as `connectionsAllowed` takes it: one key per directive, each value a list of CSP source expressions. */
 export interface CSPDirectives {
     "upgrade-insecure-requests"?: true; // the host always sets it
     "default-src"?: string[];

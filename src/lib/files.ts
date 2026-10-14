@@ -17,13 +17,18 @@ export const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 export const MAX_FILES = 1000;
 export const MAX_PATH_LENGTH = 256;
 
+/** A file's content for registerFiles(): a string is stored as UTF-8; a Uint8Array is copied. */
 export type FileContent = string | Uint8Array; // a string is stored as UTF-8; a Uint8Array is copied
+/** One registerFiles() entry: content typed by its path's extension, or `{ content, type }` with an explicit MIME type. */
 export type FileEntry = FileContent | { content: FileContent; type: string };
 
+/** One registered file, as listFiles() reports it. */
 export interface FileInfo {
+    /** The path it was registered under, e.g. `src/main.js`. */
     path: string;
+    /** Its MIME type: given at registration, or from the extension (FALLBACK_TYPE when unknown). */
     type: string;
-    size: number; // bytes
+    size: number; // bytes, as registered
 }
 
 /**
@@ -45,9 +50,13 @@ export type FileErrorCode = 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEE
  * every environment, empty when no file is registered. Every failed lookup is an Error with `code: 'NOT_FOUND'`.
  */
 export interface SandboxFiles {
+    /** The registered paths, sorted. */
     list(): string[];
+    /** The file's blob: URL, minted in the guest's own realm (the rewritten form of a module or stylesheet). Throws NOT_FOUND. */
     url(path: string): string;
+    /** The bytes as registered, a fresh copy per call. Rejects NOT_FOUND. */
     read(path: string): Promise<Uint8Array>;
+    /** The content as registered, decoded as UTF-8. Rejects NOT_FOUND. */
     text(path: string): Promise<string>;
 }
 
