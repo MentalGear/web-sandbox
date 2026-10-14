@@ -26,7 +26,7 @@ conditional "continue".
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7); at most 256 inbound calls in flight per environment, then `BUSY` (S22) |
 | Host-mediated network | ✅ opt-in `fetchBridge`: `sandboxFetch()` under the bridge discipline, every request logged as a `fetch` event, refusals coded (B5, [ADR-006](ADR-006-fetch-bridge.md)) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1); it keeps only allowlisted globals, so every request it can make goes through `fetch`, `XMLHttpRequest`, `WebSocket` or `importScripts`, each governed by the policy on every engine (S43) |
-| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5; per directive for the strict view, S24); a listener's `reset()`/`terminate()` is never undone, through one helper (S22); every build failure, and every config that cannot be used, is a termination with a reason, and the config is a copy (S26); `workerExecutionTimeout` requires a free event loop at each `execute()` deadline, else terminates (B8, S30) |
+| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5; per directive for the strict view, S24); a listener's `reset()`/`terminate()` is never undone, through one helper (S22); every build failure, and every config that cannot be used, is a termination with a reason, and the config is a copy (S26); `workerExecutionTimeout` requires a free event loop at each `execute()` deadline, else terminates (B8, S30); `ready` is the guest's check-in, never its subresources, with its calls and `execute()` held in the guest until its document is parsed (S46) |
 | Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
 | Execution budget | ✅ strict mode bounds guest logic on every engine: it runs only in a worker the watchdog stops (S6, [ADR-005](ADR-005-strict-mode.md)); default mode: opt-in watchdog, bounded in worker mode and out-of-process frames, not where the frame shares the host's thread |
 | Strict mode | ✅ opt-in `mode: 'strict'`: guest code only in a worker, a view running only the hash-admitted library bootstrap, rendered markup cleaned (no nested frames, scripts, `meta`, `base`, SVG animation) and moved, links inert (one constant href), one render in flight, delegated events, view liveness check, the worker's source URL revoked once it ran (S6, S13, S17, S18, S24; [ADR-005](ADR-005-strict-mode.md)) |
@@ -43,7 +43,7 @@ conditional "continue".
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 | Adversarial review 2026-10 | ✅ 21 candidates: 19 fixed (S19–S24), 1 held and is now asserted (A8, S20), 1 documented by design (S25), none of them left as a residual (the default-mode residuals stated elsewhere remain: S44); the follow-up by-construction audit moved C1, C4 and C5 to done (S24), found two gaps (S26) and hardened A3, A6, A7, B5, B6; [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
 | Broad review 2026-10-14 | ✅ reviewers A, B, D (S32–S37): the guest announces its port (CB1, PD8), bounded loading (CB3), no `data:` workers (PD1), guest-realm hardening for keepalive, history, `window.name`, DNS prefetch (PD2–PD4, PD6) with residuals stated (S35, S36); reviewer C's strict-mode findings (ST1–ST4) are reported separately; [report](security/BROAD-REVIEW-2026-10-14.md) |
-| Independent verification 2026-10-14 | ✅ five verifiers (63 of 66 mutations caught): a Firefox worker's `EventSource` and `FontFace` passed the policy, closed by an allowlist of worker globals (S43); a strict entry's synchronous console lines arrive (S45); the default-mode residuals in one list, user actions and history added (S44); 9 test gaps closed and the design probes in CI (S45); [report](security/VERIFICATION-2026-10-14.md) |
+| Independent verification 2026-10-14 | ✅ five verifiers (63 of 66 mutations caught): a Firefox worker's `EventSource` and `FontFace` passed the policy, closed by an allowlist of worker globals (S43); a strict entry's synchronous console lines arrive (S45); the default-mode residuals in one list, user actions and history added (S44); 9 test gaps closed and the design probes in CI (S45); decision 1, `ready` on the guest's check-in (S46); [report](security/VERIFICATION-2026-10-14.md) |
 | Focused review 2026-10-14 | ✅ 11 findings and one hardening, all closed (S27–S31): a reference names a file only for the kind of load its type is for (W1), rates hold in any one-second window (W2), the strict renderer removes SVG animation (F1), `workerExecutionTimeout` is a free event loop at the deadline (F2), no error text in reasons (F3), no assigned config keys (F4), one eval writer (F5), refused configs never stored (F6); [report](security/FOCUSED-REVIEW-2026-10-14.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
@@ -60,7 +60,7 @@ as a reserved broker method, `sandbox:write` ([ADR-004 amendment](ADR-004-files-
 Two focused review rounds the same day ([report](security/FOCUSED-REVIEW-2026-10-14.md)) added and closed S27–S31.
 The broad review the same day ([report](security/BROAD-REVIEW-2026-10-14.md)) added S32–S37: S32–S35 and S37 done, S35's and S36's residuals stated.
 Its strict-mode reviewer added S38–S42 (S42 open). The independent verification the same day ([report](security/VERIFICATION-2026-10-14.md))
-added S43–S45: S43 and S45 done, S44 the one list of default-mode residuals.
+added S43–S45: S43 and S45 done, S44 the one list of default-mode residuals. Its decision 1 added and closed S46.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1097,7 +1097,8 @@ Worker mode's frame does the same. Tests: `test/e2e/broad-review.spec.ts` ("CB1"
 `LOAD_TIMEOUT_MS` with a reason (Chromium and WebKit stayed `loading` while a guest kept its document open); a
 `terminated` listener that rebuilds from the same inputs gets one answer, not a recursion of about 590; an element
 moved into another document stops its guest and builds nothing there (Firefox had lost its methods and left the
-guest running). Tests: `test/e2e/broad-review.spec.ts`, `test/unit/broad-review.test.ts`.
+guest running). Tests: `test/e2e/broad-review.spec.ts`, `test/unit/broad-review.test.ts`. *Since S46 the deadline
+bounds only the guest's check-in: a guest that keeps its document open is `ready`, and its slow images never count.*
 
 ### S34 · Policy: no `data:` workers; every policy step widens only its own kinds — ✅ **done**
 
@@ -1215,13 +1216,12 @@ S15 and the cookies (its rendered markup loads from allowed origins too):
   wrapper refuses adds one in Chromium;
 - Firefox's `<meta refresh>` replaces the guest with a document that announces nothing: a silent channel, ended by
   the watchdog where it is on (S32);
-- a guest page whose load takes longer than `LOAD_TIMEOUT_MS` (5 s) terminates (S33);
 - Firefox and WebKit attach the host site's cookies to a guest request to an allowed origin same-site with the host
   page (observed by the verification);
 - the pre-policy window of a `<meta>` policy (S8), the host origin in `ancestorOrigins` and image `Referer` (S15), and
   WebKit's full host URL to same-site origins when asked (S18).
 
-Tests: `verification.spec.ts` ("V1 … residual", "V3", "H1"), `broad-review.spec.ts` (PD2–PD8, CB3), `webrtc.spec.ts`,
+Tests: `verification.spec.ts` ("V1 … residual", "V3", "H1"), `broad-review.spec.ts` (PD2–PD8), `webrtc.spec.ts`,
 `host-url.spec.ts`.
 
 ### S45 · Verification gaps: the policy steps' input, a strict entry's first log lines, tests that could not fail, CI — ✅ **done**
@@ -1236,6 +1236,27 @@ F5, B1 retargeted at the host's listener, CB7 with Firefox's foreign prototype, 
 two heavy unit tests are cheaper or state their bound; a guest cannot outlive `terminate()`/`reset()` and a forged
 announcement to `top` is not accepted (new tests); the strict-mode design probes run in CI (`bun run test:probes`).
 Docs: README mitigation 2, B8's "Done", the reports' "skipped" wording, the adversarial review's stale claims.
+
+### S46 · `ready` is the guest's check-in — ✅ **done**
+
+*From the [independent verification](security/VERIFICATION-2026-10-14.md#decisions-after-the-verification), decision 1;
+[ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-ready-is-the-guests-check-in), ADR-002
+amendment.*
+
+**Verified**: `ready` waited for the wrapper's load, which waits for the guest document's subresources, so
+`LOAD_TIMEOUT_MS` (S33) terminated a legitimate guest whose images took longer than 5 s; the bootstrap announces itself
+after about 26, 117 and 93 ms (Chromium, Firefox, WebKit) whatever the guest loads. **Done**, by construction: in
+iframe and worker mode the host is `ready` when it accepts the announcement; the wrapper's load is only checked (a
+second load, or a first load whose guest frame is not the one that announced, terminates); without `allow-scripts`
+and in strict mode `ready` still comes with the load. `LOAD_TIMEOUT_MS` bounds only the check-in. In the guest (iframe
+mode) a startup gate holds the host's calls and `execute()` code, in one queue, until the document is parsed (a
+trusted `DOMContentLoaded`, or `complete`; never while `loading`), checked on every arriving frame; `PING` and answers
+pass at once; at most `MAX_INBOUND_IN_FLIGHT` wait, then `BUSY` or a dropped `execute()` with a log line; everything on
+primitives captured before guest code. A guest that never closes its document (the CB3 case) is now `ready` on every
+engine and its calls time out, where Chromium and WebKit terminated it. Not covered by the gate: methods exposed from
+`async` scripts, after an `await` or in a `load` handler. `watchdogTimeout` now covers the guest's startup scripts;
+`autoResize` may report while the document loads. Tests: `test/e2e/ready.spec.ts`, `broad-review.spec.ts` ("CB3"),
+`src/lib/in-sandbox-script.test.ts` ("the startup gate").
 
 ## B · API Surface & DX
 

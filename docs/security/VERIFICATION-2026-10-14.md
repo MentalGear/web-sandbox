@@ -160,3 +160,15 @@ call removed, the outbox written by assignment, console lines dropped before att
 `adoptedCallback` a no-op, teardown through the element's methods, the prototype not restored (unit); the announcement
 listener's `event.source` check, the playground's, the worker allowlist not applied, the console relay only on attach
 (end to end, three engines). `bun run typecheck`, `bun run build` and `scripts/smoke-package.sh` pass.
+
+## Decisions after the verification
+
+1. **`ready` means the guest's startup script checked in** — ✅ done
+   ([backlog S46](../BACKLOG.md#s46--ready-is-the-guests-check-in---done); ADR-002 and
+   [ADR-003](../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-ready-is-the-guests-check-in) amendments).
+   `ready` waited for the wrapper's load, which waits for the guest's subresources, so `LOAD_TIMEOUT_MS` (CB3) also
+   ended a legitimate page with slow images. Measured by a verifier: the bootstrap's announcement arrives after about
+   26, 117 and 93 ms (Chromium, Firefox, WebKit) while a 3 s image holds the wrapper's load to about 3.1 s, and a
+   guest that never closes its document still announces within 22–40 ms. Now the host is `ready` on the
+   announcement, the deadline bounds only that, and the guest holds the host's calls and `execute()` code until its
+   document is parsed.

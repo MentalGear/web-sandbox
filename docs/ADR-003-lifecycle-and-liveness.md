@@ -1,6 +1,6 @@
 # ADR-003: How does the host observe and control a sandbox's lifecycle?
 
-**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)), 2026-10-14 ([one rule per budget, build and missing environment](#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)), 2026-10-14 ([the execution budget is a free event loop at the deadline](#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline)), 2026-10-14 ([loading is bounded; one answer per build; one document](#amendment-2026-10-14-loading-is-bounded-one-answer-per-build-one-document))
+**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)), 2026-10-14 ([one rule per budget, build and missing environment](#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)), 2026-10-14 ([the execution budget is a free event loop at the deadline](#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline)), 2026-10-14 ([loading is bounded; one answer per build; one document](#amendment-2026-10-14-loading-is-bounded-one-answer-per-build-one-document)), 2026-10-14 ([`ready` is the guest's check-in](#amendment-2026-10-14-ready-is-the-guests-check-in))
 
 ## Why this ADR exists
 
@@ -239,7 +239,9 @@ Proof: `test/e2e/focused-review.spec.ts` ("F2"), `test/unit/followup-guarantees.
   guest document's subresources, so a guest page that needs longer than that for its images must load them after
   it loaded; that is the stated limit. Rejected: firing `ready` on the announcement alone (guest methods exposed by
   markup scripts would not exist yet at `ready`, which callers rely on); the embedder's `watchdogTimeout` (off by
-  default, so `loading` would stay unbounded by default).
+  default, so `loading` would stay unbounded by default). *Superseded in part by the
+  [check-in amendment](#amendment-2026-10-14-ready-is-the-guests-check-in): `ready` now comes with the announcement,
+  the deadline bounds only that, and a startup gate in the guest answers the rejection above.*
 - **The queue holds only calls still waiting (CB3).** A call made while loading that timed out stayed queued and ran
   at the next flush; a caller that retried ran it twice. A queued request now leaves the queue when its call settles.
 - **One answer per build (CB5).** A `terminated` listener that called `reset()` on a refused config re-entered the
@@ -256,3 +258,46 @@ Proof: `test/e2e/focused-review.spec.ts` ("F2"), `test/unit/followup-guarantees.
   prototype Firefox replaced gets the class's prototype back and builds again.
 
 Proof: `test/e2e/broad-review.spec.ts` ("CB3", "CB7"), `test/unit/broad-review.test.ts` ("CB3", "CB5").
+
+## Amendment (2026-10-14): `ready` is the guest's check-in
+
+**When**: after the independent verification of 2026-10-14 ([report](security/VERIFICATION-2026-10-14.md), decision
+1; backlog S46). **Why**: `ready` waited for the wrapper frame's load, and that load waits for the guest document's
+own subresources, so `LOAD_TIMEOUT_MS` (the CB3 amendment above) bounded the guest's images too: a legitimate page
+whose images took longer than 5 s was terminated. The bound and the subresources were in conflict only because one
+event stood for both. Measured: the bootstrap's announcement arrives after about 26, 117 and 93 ms (Chromium,
+Firefox, WebKit) while a 3 s image holds the wrapper's load to about 3.1 s; a guest that calls `document.open()` and
+never closes it still announces within 22–40 ms.
+
+**Decision**: `ready` means the guest's startup script checked in. In iframe and worker mode the host enters `ready`
+when it accepts the announcement (ADR-002), whether or not the wrapper has loaded. The wrapper's load is recorded
+and checked: a second load terminates as before (research 14.2), and so does a first load whose guest frame is not
+the window that announced (a wrapper navigated before its first load fires one load, for a document the library did
+not write). A guest without a bootstrap (no `allow-scripts`, or a policy that refuses it) is still `ready` on the
+wrapper's load, and strict mode is unchanged (its view holds no guest bytes). `LOAD_TIMEOUT_MS` now bounds only the
+wait for the check-in (or that load): the deadline-versus-subresources trade-off is gone by construction, since the
+check-in comes before any guest byte is parsed.
+
+The rejection in the CB3 amendment (methods exposed by markup scripts would not exist yet at `ready`) is answered in
+the guest, by a startup gate in the bootstrap (iframe mode): the host's calls (`RPC_REQ`) and `execute()` frames that
+arrive while the guest document is being parsed wait in one queue, in arrival order, until a trusted
+`DOMContentLoaded` has fired (deferred and module scripts have run) or `readyState` reads `complete`, and never while
+it reads `loading` (a guest that reopened its document). The queue is checked on every arriving frame, because
+`document.open()` erases listeners. `PING` and `RPC_RES` never wait. At most `MAX_INBOUND_IN_FLIGHT` frames wait; past
+that a call is answered `BUSY` and an `execute()` dropped with a log line. All of it runs on primitives captured
+before guest code (ADR-002, B2), so guest code cannot open the gate early; it can only keep it closed for itself.
+
+**Consequences**:
+- A guest that never finishes parsing (`document.open()` without `close()`) is `ready` and alive, where Chromium and
+  WebKit used to end it with `the sandbox did not finish loading`: the calls it is sent time out, and the watchdog,
+  where it is on, keeps measuring its event loop.
+- Methods a guest exposes from `async` scripts, after an `await`, or from its `load` event are not covered by the
+  gate: a call that arrives first is `UNKNOWN_METHOD`, as for any method exposed late.
+- `watchdogTimeout` now covers the guest's startup scripts (it starts at `ready`); `autoResize` may report while the
+  document is still loading; `load()` and `setConfig()` reach `ready` sooner.
+- Rejected: holding `ready` until `DOMContentLoaded` on the host (the host would again wait on guest behaviour, and a
+  guest that never finishes parsing would have to be ended by a deadline); a separate `loaded` event or state (a new
+  public name, and nothing to decide with it that the gate does not already decide).
+
+Proof: `test/e2e/ready.spec.ts`, `test/e2e/broad-review.spec.ts` ("CB3"), `src/lib/in-sandbox-script.test.ts` ("the
+startup gate").

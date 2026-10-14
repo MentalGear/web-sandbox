@@ -95,9 +95,9 @@ name (the guest's own frame cannot; its `window.name` is inert).
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
 | `connectionsAllowed` | `CSPDirectives` | see [below](#connectionsallowed) | all (strict: a subset) | The guest's Content Security Policy, merged per directive over the defaults. |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
-| `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in worker and strict mode on every browser, and in iframe mode only where the browser runs the frame in its own process. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
+| `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in worker and strict mode on every browser, and in iframe mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
-| `autoResize` | `boolean` | `false` | iframe, strict | Only a literal `true` enables it. The element's height follows the guest's content height; see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
+| `autoResize` | `boolean` | `false` | iframe, strict | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Gives the guest [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off. [ADR-006](ADR-006-fetch-bridge.md) |
 | `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
 
@@ -201,7 +201,8 @@ before any guest code ran. Nothing reaches the host: no return value, no report 
 - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
 - While `idle` (not in the document) or `terminated` there is no environment: it warns and does nothing, as
   `call()` rejects then.
-- While `loading` the code is queued and runs when the guest is ready.
+- While `loading` the code is queued and sent when the guest is ready. In iframe mode it runs once the guest
+  document is parsed (see [the startup gate](#ready-and-the-startup-gate)), in order with calls.
 - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
 - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
   **the guest's event loop is free at the deadline.** The element pings the guest there; the bootstrap answers from
@@ -235,8 +236,9 @@ rejection reaches the guest as `HANDLER_ERROR` with the error's message.
 - Arguments and results are copied by structured clone (no functions, DOM nodes or symbols).
 - Default timeout: 30 s.
 - Calls made while `loading` are queued and sent when the guest is ready; one that settles while queued (its
-  timeout) leaves the queue and never runs. Calls made while `idle` (not in the document) or `terminated` reject
-  at once with `TERMINATED`, as `execute()` does nothing then.
+  timeout) leaves the queue and never runs. In iframe mode a call reaches the guest's method once the guest
+  document is parsed (see [the startup gate](#ready-and-the-startup-gate)). Calls made while `idle` (not in the
+  document) or `terminated` reject at once with `TERMINATED`, as `execute()` does nothing then.
 - Rejects with an `RpcError` (an `Error` with a `code`); see [Refusal codes](#refusal-codes).
 
 ### `callWithTimeout(timeoutMs, method, ...args)`
@@ -316,7 +318,7 @@ All events are `CustomEvent`s dispatched on the element. None is `composed`.
 
 | Event | `detail` | Bubbles | When |
 | :--- | :--- | :--- | :--- |
-| `ready` | none | no | The guest can be reached: `state` is now `ready`. Once per environment. (In iframe mode without `allow-scripts` no guest script runs to answer, so calls time out.) |
+| `ready` | none | no | The guest checked in: its startup script announced itself, and `state` is now `ready` (see [the startup gate](#ready-and-the-startup-gate)). Once per environment. In iframe mode its document may still be loading. (Without `allow-scripts` no guest script runs: `ready` comes with the frame's load, and calls time out.) |
 | `terminated` | `{ reason: string }` | no | The sandbox was terminated: `state` is now `terminated`. Once per termination. |
 | `sandbox-log` | `SandboxLog` | yes | A log line from the guest or from the element. |
 | `violation` | `SandboxViolation` | yes | The guest policy refused a load. |
@@ -391,9 +393,9 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned, or `connectionsAllowed` is not an object. |
 | `the environment could not be built (…)` | Building the frame failed, e.g. a directive given a string instead of a list. |
 | `the executed code ran longer than workerExecutionTimeout` | The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline. |
-| `the sandbox frame loaded a second time` | Something navigated or reloaded the library's frame. |
+| `the sandbox frame loaded a second time` | Something navigated or reloaded the library's frame (also before its first load, once the guest had checked in). |
 | `the guest frame announced itself again (it reloaded or rewrote its document)` | Iframe and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. |
-| `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time: the frame had not loaded (a guest document that never finishes, its subresources included) or, in iframe and worker mode, the guest had not announced its port. |
+| `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time: in iframe and worker mode the guest had not checked in (announced its port); without `allow-scripts`, and in strict mode, the frame had not loaded (subresources included). |
 | `the guest frame is missing` | The library's frame has no guest frame. |
 
 Branch on `state` and the event, not on these texts. A reason never carries the text of an error the element
@@ -407,8 +409,8 @@ name.
 | State | Meaning |
 | :--- | :--- |
 | `idle` | Not in the document (constructed, or removed): no frame. |
-| `loading` | A frame was built and is loading; at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
-| `ready` | The guest can be reached; `ready` was dispatched. |
+| `loading` | A frame was built; waiting for the guest to check in (without `allow-scripts`, and in strict mode, for the frame to load); at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
+| `ready` | The guest can be reached; `ready` was dispatched. In iframe mode the guest document may still be loading. |
 | `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`), an integrity check or a failed build; `terminated` was dispatched. |
 
 There is no `running` state: nothing reports that guest code is running or that it stopped.
@@ -422,6 +424,22 @@ There is no `running` state: nothing reports that guest code is running or that 
 Every rebuild and teardown rejects pending calls with `TERMINATED`, aborts in-flight `sandboxFetch()` requests,
 and resets the per-environment caps (log rate, violations). Listeners run synchronously; a listener that calls
 `reset()` or `terminate()` is never undone by what the element was doing.
+
+### `ready` and the startup gate
+
+`ready` means the guest's startup script checked in: the bootstrap, the first script of the guest document (iframe
+mode) or of the worker's frame (worker mode), announced its port. It does not wait for the guest's images or its own
+scripts, so `LOAD_TIMEOUT_MS` bounds only that check-in; a page with slow images, or one that never finishes its
+document, is `ready`. Strict mode is `ready` when its view has loaded, as before.
+
+In iframe mode the guest document can still be loading at `ready`. Calls and `execute()` code that arrive while it is
+being parsed wait in the guest, in one queue in the order they were sent, until it is parsed: `DOMContentLoaded` has
+fired (classic, deferred and module scripts have run) or it has loaded. So a method a guest script exposes is there
+when a call reaches it. Not covered: methods exposed from `async` scripts, after an `await`, or in a `load` handler
+(a call that arrives first is `UNKNOWN_METHOD`). At most `MAX_INBOUND_IN_FLIGHT` calls and executions wait: past
+that a call rejects with `BUSY` and an `execute()` is dropped with an error line. A guest that never finishes parsing
+(`document.open()` without `close()`) stays `ready` and alive; the calls it is sent time out (`TIMEOUT`). Guest code
+cannot open the gate early.
 
 | Kept across a rebuild | Not kept |
 | :--- | :--- |
@@ -690,7 +708,7 @@ Choose strict mode for content you do not trust at all. [ADR-005](ADR-005-strict
 | Strict: nesting depth below the view's body | 256 | — |
 | Strict: characters of one event detail, all strings together | 262144 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
-| Longest `loading` (ms of host time) | 5000 | `LOAD_TIMEOUT_MS` |
+| Longest `loading`, until the guest checks in (ms of host time) | 5000 | `LOAD_TIMEOUT_MS` |
 | `workerExecutionTimeout`: how long the event loop may stay busy past a deadline (ms) | 1000 | `EXECUTION_TIMEOUT_GRACE_MS` |
 | Files: total bytes | 8388608 (8 MiB) | — |
 | Files: count | 1000 | — |

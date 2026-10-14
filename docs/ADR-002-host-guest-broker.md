@@ -1,6 +1,6 @@
 # ADR-002: How should host and guest call each other?
 
-**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes)), 2026-10-13 ([strict mode renders bypass the host](#amendment-2026-10-13-strict-mode-renders-bypass-the-host)), 2026-10-14 ([adversarial review: the channel](#amendment-2026-10-14-adversarial-review-the-channel)), 2026-10-14 ([broad review: the guest announces its port](#amendment-2026-10-14-broad-review-the-guest-announces-its-port))
+**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes)), 2026-10-13 ([strict mode renders bypass the host](#amendment-2026-10-13-strict-mode-renders-bypass-the-host)), 2026-10-14 ([adversarial review: the channel](#amendment-2026-10-14-adversarial-review-the-channel)), 2026-10-14 ([broad review: the guest announces its port](#amendment-2026-10-14-broad-review-the-guest-announces-its-port)), 2026-10-14 ([the announcement completes the build](#amendment-2026-10-14-the-announcement-completes-the-build))
 
 ## Why this ADR exists
 
@@ -265,3 +265,16 @@ loaded and the port arrived, in either order), so the guest's early frames are d
 
 Proof: `test/e2e/broad-review.spec.ts` ("CB1", "PD8"), `test/e2e/review-channels.spec.ts` (B1, B2 re-run),
 `src/lib/in-sandbox-script.test.ts`.
+
+## Amendment (2026-10-14): the announcement completes the build
+
+**When**: backlog S46 ([ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-ready-is-the-guests-check-in)).
+**Decision**: the accepted announcement is the guest's check-in: the host takes its port and enters `ready` at once,
+without waiting for the wrapper's load (which waits for the guest's subresources). The guest frame's window whose
+announcement was accepted is kept, and the wrapper's load must still hold it. On the guest's side the broker frames
+that run guest code (`RPC_REQ`, and `EXECUTE` beside the broker) wait in the bootstrap until the guest document is
+parsed, in one queue, so a call still reaches a method a classic script of the guest exposes; `RPC_RES` and `PING` are
+handled on arrival. The queue holds at most `MAX_INBOUND_IN_FLIGHT` frames, the bound the broker keeps on calls in
+flight; past it a call is refused with `BUSY` in the broker's frame shape.
+
+Proof: `test/e2e/ready.spec.ts`, `src/lib/in-sandbox-script.test.ts` ("the startup gate").
