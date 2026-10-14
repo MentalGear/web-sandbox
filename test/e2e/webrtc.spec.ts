@@ -60,19 +60,23 @@ test('worker mode: the worker has no peer-connection constructor', async ({ sand
 
 // ---- 3. the residual -------------------------------------------------------------------------------
 
-// Gathers ICE candidates against a STUN and a TURN server on 127.0.0.1:<port> for 3 s and reports what it saw.
-const iceProbe = (port: number) => `(done) => {
+// Gathers ICE candidates against a STUN and a TURN server on 127.0.0.1:<port> for `ms` and reports what it saw. The
+// controls run longer (CONTROL_MS): on a CI runner Firefox gathered host candidates while its host-page control
+// delivered no packet to the listener within 3 s (passing locally), so the control gets a wider window and reports
+// its candidates when it hears nothing.
+const CONTROL_MS = 8000;
+const iceProbe = (port: number, ms = 3000) => `(done) => {
     const r = { pc: typeof RTCPeerConnection, candidates: [] };
     if (typeof RTCPeerConnection !== 'function') { done(r); return; }
     const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:127.0.0.1:${port}' }, { urls: 'turn:127.0.0.1:${port}?transport=udp', username: 'u', credential: 'c' }] });
     pc.createDataChannel('x');
     pc.onicecandidate = (e) => { if (e.candidate) r.candidates.push(e.candidate.type); };
     pc.createOffer().then(o => pc.setLocalDescription(o));
-    setTimeout(() => { pc.close(); done(r); }, 3000);
+    setTimeout(() => { pc.close(); done(r); }, ${ms});
 }`;
 
 test('residual: a frame the guest creates keeps RTCPeerConnection, and its ICE traffic leaves (measured; Firefox with loopback ICE on)', async ({ sandbox }) => {
-    test.setTimeout(45000);
+    test.setTimeout(60000);
     const udp = dgram.createSocket('udp4');
     let packets = 0;
     udp.on('message', () => packets++);
@@ -80,7 +84,7 @@ test('residual: a frame the guest creates keeps RTCPeerConnection, and its ICE t
     const port = (udp.address() as AddressInfo).port;
     try {
         // control for the listener: the host page itself, outside any sandbox
-        const host = await sandbox.page.evaluate(`new Promise(res => (${iceProbe(port)})(res))`) as { pc: string; candidates: string[] };
+        const host = await sandbox.page.evaluate(`new Promise(res => (${iceProbe(port, CONTROL_MS)})(res))`) as { pc: string; candidates: string[] };
         const hostPackets = packets;
         packets = 0;
 
@@ -88,16 +92,16 @@ test('residual: a frame the guest creates keeps RTCPeerConnection, and its ICE t
         const nested = await sandbox.inGuest(`return await new Promise(res => {
             addEventListener('message', e => { if (e.data && e.data.ice) res(e.data.ice); });
             const frame = document.createElement('iframe');
-            frame.srcdoc = '<script>(' + ${JSON.stringify(iceProbe(port))} + ')(r => parent.postMessage({ ice: r }, "*"))<\\/script>';
+            frame.srcdoc = '<script>(' + ${JSON.stringify(iceProbe(port, CONTROL_MS))} + ')(r => parent.postMessage({ ice: r }, "*"))<\\/script>';
             document.body.appendChild(frame);
-            setTimeout(() => res('timeout'), 10000);
-        })`, 20000);
+            setTimeout(() => res('timeout'), ${CONTROL_MS + 5000});
+        })`, CONTROL_MS + 15000);
 
         expect(host.pc).toBe('function');
         expect(nested.pc).toBe('function');
         expect(nested.candidates).toContain('host');
-        expect(hostPackets).toBeGreaterThan(0);
-        expect(packets).toBeGreaterThan(0);
+        expect(hostPackets, `host-page control heard nothing; candidates ${JSON.stringify(host.candidates)}`).toBeGreaterThan(0);
+        expect(packets, `nested frame: candidates ${JSON.stringify(nested.candidates)}`).toBeGreaterThan(0);
     } finally {
         udp.close();
     }
@@ -106,7 +110,7 @@ test('residual: a frame the guest creates keeps RTCPeerConnection, and its ICE t
 // ---- 4. strict mode -----------------------------------------------------------------------------------
 
 test('strict mode: no peer connection in the worker; a rendered frame carrying the ICE probe is absent, nothing runs, no UDP leaves (control: the host page, every engine)', async ({ sandbox, page, browserName }) => {
-    test.setTimeout(45000);
+    test.setTimeout(60000);
     const udp = dgram.createSocket('udp4');
     let packets = 0;
     udp.on('message', () => packets++);
@@ -129,10 +133,10 @@ test('strict mode: no peer connection in the worker; a rendered frame carrying t
 
         // control: the host page itself, outside any sandbox
         packets = 0;
-        const host = await page.evaluate(`new Promise(res => (${iceProbe(port)})(res))`) as { pc: string; candidates: string[] };
+        const host = await page.evaluate(`new Promise(res => (${iceProbe(port, CONTROL_MS)})(res))`) as { pc: string; candidates: string[] };
         expect(host.pc).toBe('function');
         expect(strictPackets).toBe(0);
-        expect(packets).toBeGreaterThan(0); // the listener hears the host page's ICE: silence above is evidence
+        expect(packets, `host-page control heard nothing; candidates ${JSON.stringify(host.candidates)}`).toBeGreaterThan(0); // the listener hears the host page's ICE: silence above is evidence
     } finally {
         udp.close();
     }
