@@ -518,7 +518,8 @@ test.describe('8. markup references: guest markup that names a registered file l
             bodyClass: document.body.className,
             title: document.title,
             first: head[0] && head[0].outerHTML.startsWith('<meta http-equiv="Content-Security-Policy"'),
-            second: head[1] && head[1].tagName === 'SCRIPT' && !head[1].hasAttribute('src') && head[1].textContent.includes('document.write'),
+            // after the policy: DNS prefetching off (broad review PD3), then the bootstrap
+            second: !!head[1] && head[1].httpEquiv === 'x-dns-prefetch-control' && !!head[2] && head[2].tagName === 'SCRIPT' && !head[2].hasAttribute('src') && head[2].textContent.includes('document.write'),
             stray: document.querySelectorAll('[src*="vfs-slot"], [href*="vfs-slot"]').length + (document.documentElement.outerHTML.includes('vfs-slot-') ? 1 : 0),
         };
     `;
@@ -563,7 +564,7 @@ test.describe('8. markup references: guest markup that names a registered file l
             const img = document.getElementById('i');
             const src = img.getAttribute('src');
             const strip = (html) => html.split(src).join('SRC').split('logo.svg').join('SRC').split('unregistered.svg').join('SRC');
-            const head = [...document.head.children].slice(2).map(e => e.outerHTML); // after the CSP meta and the bootstrap
+            const head = [...document.head.children].slice(3).map(e => e.outerHTML); // after the CSP meta, the DNS-prefetch switch and the bootstrap
             return { head: strip(head.join('')), body: strip(document.body.outerHTML), template: document.querySelector('template').innerHTML, ran: __ran, loaded: img.complete && img.naturalWidth > 0, srcIsBlob: src.startsWith('blob:null/') };
         `;
         expect(await sandbox.load(fragment('logo.svg'))).toBe('ready');

@@ -192,7 +192,7 @@ const SAMPLE_CONFIGS: CSPDirectives[] = [
   {},
   {
     'upgrade-insecure-requests': true, 'default-src': ["'none'"], 'script-src': ["'unsafe-inline'"],
-    'base-uri': [], 'style-src': ["'unsafe-inline'"], 'form-action': [], 'worker-src': ['blob:', 'data:'],
+    'base-uri': [], 'style-src': ["'unsafe-inline'"], 'form-action': [], 'worker-src': ['blob:'],
   },
   { 'default-src': ['https:', "'unsafe-inline'"] },
   { 'default-src': ['*'], 'script-src': ["'unsafe-inline'"] },

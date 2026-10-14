@@ -165,7 +165,7 @@ describe('docs/API.md lists the public surface', () => {
 
     it('every public method of the element, and no other', () => {
         const isPrivate = new Set([...read('src/host.ts').matchAll(/^ {4}private (\w+)/gm)].map(match => match[1]!));
-        const callbacks = new Set(['constructor', 'connectedCallback', 'disconnectedCallback', 'state']);
+        const callbacks = new Set(['constructor', 'connectedCallback', 'disconnectedCallback', 'adoptedCallback', 'state']);
         const methods = Object.getOwnPropertyNames(WebSandbox.prototype).filter(name => !isPrivate.has(name) && !callbacks.has(name));
         const documented = [...section('## Methods').matchAll(/^### `(\w+)\(/gm)].map(match => match[1]!);
         expect(sorted(documented)).toEqual(sorted(methods));

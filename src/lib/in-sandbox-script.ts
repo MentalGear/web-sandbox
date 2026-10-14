@@ -1,9 +1,17 @@
 import type { createBroker } from './rpc';
 
 /**
+ * The type of the one message the guest frame posts to the host page in iframe mode, carrying its port (the
+ * announcement, broad review 2026-10-14 CB1); the worker-mode frame posts the same one. host.ts accepts exactly one
+ * per environment. The stringified functions spell the literal out (they close over nothing); a unit test keeps
+ * them equal to this constant.
+ */
+export const ANNOUNCEMENT_TYPE = 'SANDBOX_PORT';
+
+/**
  * This function is stringified and injected into the sandbox (iframe or worker).
- * It handles the initial handshake, relays console output, keeps the EXECUTE escape hatch,
- * and installs the β RPC bridge.
+ * It makes (iframe mode) or receives (worker mode) the guest's end of the channel, relays console output, keeps the
+ * EXECUTE escape hatch, and installs the β RPC bridge.
  *
  * The RPC broker is injected the same way this function is — createBroker is stringified and
  * passed in — so the guest runs the exact same dispatcher as the host (see rpc.ts). It is
@@ -22,6 +30,21 @@ export function inSandboxScript(
     // `guestWrites`: the host records the guest's file writes (backlog C5); returned as `writeFiles` below.
     features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean },
 ): { attach(port: MessagePort): void; writeFiles: ((request: unknown) => Promise<unknown>) | null } {
+    // The announcement (broad review 2026-10-14, CB1), the first statement, before anything else in the guest
+    // document can run: in iframe mode the bootstrap makes the channel itself, keeps port1 in this closure and
+    // posts port2 to the host page (parent.parent: the guest's parent is the wrapper). The host takes exactly one
+    // announcement per environment, from this frame's window, and ends the environment on a second one (a guest
+    // that reloads or rewrites itself runs a bootstrap again). Before, the host posted its port INTO the guest
+    // frame after the wrapper loaded, and a capture listener here took it; document.open() erases every listener
+    // of the window, so guest code that called it before the wrapper's load received the host's port in a
+    // listener of its own (and could answer the watchdog from a nested worker). Now no listener in the guest realm
+    // ever carries a port of ours: the guest's end never leaves this closure, and the host's end never enters
+    // the guest. Worker mode: the frame (worker-bootstrap.ts) announces the same way and hands port1 to the worker,
+    // whose one INIT_PORT listener below takes it (a worker has no document to open, and no guest code runs in it
+    // before the port is there).
+    const announced = mode === 'iframe' ? new MessageChannel() : null;
+    if (announced) parent.parent.postMessage({ type: 'SANDBOX_PORT' }, '*', [announced.port2]);
+
     // The port never reaches guest code (review B2). Every operation on it, and on the events that carry it,
     // goes through a primitive captured here, before any guest code runs, and is called through the captured
     // Reflect.apply: patching MessagePort.prototype (postMessage, onmessage), MessageEvent.prototype (data,
@@ -38,16 +61,14 @@ export function inSandboxScript(
     const setOnMessage = accessor(MessagePort.prototype, 'onmessage').set!;
     const dataOf = accessor(MessageEvent.prototype, 'data').get!;
     const portsOf = accessor(MessageEvent.prototype, 'ports').get!;
-    const sourceOf = accessor(MessageEvent.prototype, 'source').get!;
     const stopImmediate = Event.prototype.stopImmediatePropagation;
+    const PromiseConstructor = Promise;
+    const rejected = Promise.reject;
     // What execute() compiles with (focused review 2026-10-14, F2): captured now, so guest code that replaces
     // globalThis.Function (or Reflect) later cannot choose what an EXECUTE frame runs, or when.
     const FunctionConstructor = Function;
     const construct = Reflect.construct;
     const append = (list: unknown[], value: unknown) => defineOwn(list, list.length, { value, writable: true, enumerable: true, configurable: true });
-    // Iframe mode: the host page, the only sender of INIT_PORT (review B1). The guest frame's parent is the
-    // wrapper; the wrapper's parent is the host. Read now, before guest code could replace `parent`.
-    const host = mode === 'iframe' ? parent.parent : null;
 
     // The port does not exist until INIT_PORT, but guest content scripts parse BEFORE that and may
     // call bridge.expose()/bridge.call() straight away. So the bridge is created now with a send that
@@ -73,6 +94,70 @@ export function inSandboxScript(
     const PEER_CONNECTION_CONSTRUCTORS = ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection'];
     for (const name of PEER_CONNECTION_CONSTRUCTORS) {
         if (name in globalThis) Reflect.deleteProperty(globalThis, name);
+    }
+
+    // Hardening of the guest realm against platform gaps CSP does not cover (broad review 2026-10-14), each made
+    // here, before guest code, with primitives captured above, and each limited to this realm: a frame or a worker
+    // the guest creates is a realm of its own and keeps the platform's behaviour (the residual of backlog S13).
+    //
+    // PD2, keepalive. Firefox sends `fetch(url, { keepalive: true })` without checking connect-src (measured on a
+    // plain page with a header policy too: a platform bug). The guest's fetch builds the Request first with the
+    // captured constructor, exactly as fetch() itself would, reads `keepalive` from that Request (so a getter on
+    // the init, or a Request made with keepalive, cannot answer twice), refuses a keepalive request, and hands
+    // only that Request to the platform's fetch. Writable, so guest code can still wrap fetch; not configurable,
+    // so the guard stays underneath any wrapper. Every engine, every mode: the rule is the same everywhere.
+    const nativeFetch = g.fetch;
+    const RequestConstructor = g.Request;
+    let keepaliveOf: (() => unknown) | undefined;
+    for (let proto = typeof RequestConstructor === 'function' ? RequestConstructor.prototype : null; proto && !keepaliveOf; proto = Object.getPrototypeOf(proto)) {
+        keepaliveOf = Object.getOwnPropertyDescriptor(proto, 'keepalive')?.get; // own on Request.prototype in every engine measured
+    }
+    if (typeof nativeFetch === 'function' && keepaliveOf) {
+        const TypeErrorConstructor = TypeError;
+        const guardedFetch = function fetch(input: unknown, init?: unknown) {
+            let request;
+            try {
+                request = construct(RequestConstructor, init === undefined ? [input] : [input, init]);
+            } catch (error) {
+                return apply(rejected, PromiseConstructor, [error]);
+            }
+            if (apply(keepaliveOf, request, []) === true) {
+                return apply(rejected, PromiseConstructor, [construct(TypeErrorConstructor, ['fetch() with keepalive is not available in the sandbox'])]);
+            }
+            return apply(nativeFetch, g, [request]);
+        };
+        defineOwn(g, 'fetch', { value: guardedFetch, writable: true, enumerable: true, configurable: false });
+    }
+    if (mode === 'iframe') {
+        // PD4, history traversal. history.back(), forward() and go() traverse the whole tab's session history, so a
+        // guest's history.back() navigated the HOST page in Firefox and WebKit; the Navigation API's back(),
+        // forward() and traverseTo() reach the same history where it exists. In the guest realm they do nothing
+        // (the Navigation API's resolve nothing and reject as when there is no entry to go to): not configurable,
+        // so guest code cannot put them back, and no other same-origin realm holds the originals.
+        const nothing = function () {};
+        for (const name of ['back', 'forward', 'go']) {
+            if (typeof History === 'function') defineOwn(History.prototype, name, { value: nothing, writable: false, enumerable: true, configurable: false });
+        }
+        const NavigationConstructor = g.Navigation;
+        if (typeof NavigationConstructor === 'function') {
+            const DOMExceptionConstructor = DOMException;
+            const catchOf = Promise.prototype.catch;
+            const refused = function () {
+                const result = apply(rejected, PromiseConstructor, [construct(DOMExceptionConstructor, ['history traversal is not available in the sandbox', 'InvalidStateError'])]);
+                apply(catchOf, result, [nothing]); // handled here: a guest that ignores it sees no unhandled rejection
+                return { committed: result, finished: result };
+            };
+            for (const name of ['back', 'forward', 'traverseTo']) {
+                defineOwn(NavigationConstructor.prototype, name, { value: refused, writable: false, enumerable: true, configurable: false });
+            }
+        }
+        // PD6, window.name. A frame's name is a target the host page's links, forms and window.open() look up, so a
+        // guest that named itself received the host's navigations and window.open() handles meant for a window of
+        // the host's own. Here window.name reads '' and ignores writes. The platform's accessor is an own property of
+        // the window and nothing else holds it, so once it is replaced no guest code can reach it: redefining or
+        // deleting this one leaves the frame's name as it is (left configurable, as the platform's was). A frame the
+        // guest creates can still be named (`<iframe name>`): host pages should not use named targets (README).
+        defineOwn(g, 'name', { get: function () { return ''; }, set: nothing, enumerable: true, configurable: true });
     }
 
     // CSP violation reports (backlog S5, src/lib/violation.ts). Installed here, in the bootstrap, so it is
@@ -129,6 +214,7 @@ export function inSandboxScript(
     // The guest's broker accepts a library code (FETCH_*) in the refusal of a call to a reserved method, so
     // sandboxFetch() rejects with the host's code; the host's broker never accepts one (see rpc.ts).
     const bridge = createBrokerFn ? createBrokerFn(send, { acceptLibraryCodes: true }) : null;
+    const handleBridgeMessage = bridge ? bridge.handleMessage : null;
     if (bridge) (globalThis as any).bridge = bridge;
 
     // The host-mediated fetch bridge (backlog B5, src/lib/fetch-bridge.ts, ADR-006), opt-in, both modes. A
@@ -196,11 +282,18 @@ export function inSandboxScript(
             if (data?.type === 'EXECUTE') {
                 // Compiled with the Function captured above and called through the captured apply: what runs is the
                 // embedder's code, now. Nothing is reported back: workerExecutionTimeout is the host's ping at the
-                // deadline, answered above only by a free event loop (host.ts, _armExecutionBudget).
+                // deadline, answered above only by a free event loop (host.ts, _armExecutionBudget). No global is
+                // looked up on this path (broad review 2026-10-14, CB2): the code must already be a string (the host
+                // sends one; execute() refuses anything else), and nothing converts it, so guest code that replaced
+                // String, Error or any other global cannot change what runs.
+                if (!scriptUnsafe) {
+                    post({ type: 'LOG', level: 'error', args: ['Execution blocked: scriptUnsafe is false'] });
+                    return;
+                }
+                const code = data.code;
+                if (typeof code !== 'string') return;
                 try {
-                    // try ensures the code execution itself doesn't crash the port logic
-                    if (!scriptUnsafe) throw new Error("Execution blocked: scriptUnsafe is false");
-                    apply(construct(FunctionConstructor, [String(data.code)]) as () => void, undefined, []);
+                    apply(construct(FunctionConstructor, [code]) as () => void, undefined, []);
                 } catch (e: any) {
                     try {
                         post({ type: 'LOG', level: 'error', args: [e.message] });
@@ -211,8 +304,9 @@ export function inSandboxScript(
                 return;
             }
             // RPC frames (RPC_REQ / RPC_RES) and anything else go to the broker, which validates every
-            // frame defensively and never throws back out at the message handler.
-            if (bridge) bridge.handleMessage(data);
+            // frame defensively and never throws back out at the message handler. Its handleMessage was taken when
+            // the broker was made: guest code can replace bridge.handleMessage, never what this calls.
+            if (handleBridgeMessage) handleBridgeMessage(data);
         }]);
 
         // Every level a 'sandbox-log' detail can carry (sandbox-log.ts), info included (backlog B8).
@@ -246,28 +340,32 @@ export function inSandboxScript(
         post({ type: 'LOG', level: 'info', args: [`${mode} Ready`] });
     };
 
-    // The one INIT_PORT (review B1): a trusted message with exactly one port and, in iframe mode, from the host
-    // page — so neither another frame on the host page nor guest code can hand the bridge a port of its own, or
-    // a portless message that would leave the bridge dead. Anything else is ignored and the listener stays, so a
-    // forgery cannot use up the one the host sends. A capture listener registered before guest code, which
-    // stops the event there: no guest listener ever sees the host's port. It never throws.
+    // Iframe mode: the bootstrap's own end of the channel it announced, attached now, before any guest code runs.
+    if (announced) {
+        attach(announced.port1);
+        return { attach, writeFiles };
+    }
+
+    // Worker mode: the one INIT_PORT (review B1), the port1 the frame made and announced (worker-bootstrap.ts): a
+    // trusted message with exactly one port. In a dedicated worker only the frame that made it can post to it, and
+    // no guest code runs here before the port is attached (guest code arrives only as EXECUTE frames on it). A
+    // capture listener that stops the event; anything else is ignored and the listener stays. It never throws.
+    // Strict mode (externalPort): the strict prelude hands the logic port to attach() itself.
     const onInit = (event: MessageEvent) => {
         if (port || event.isTrusted !== true) return; // isTrusted is an own, unforgeable property
-        let data, ports, source;
+        let data, ports;
         try {
             data = apply(dataOf, event, []);
             ports = apply(portsOf, event, []);
-            source = apply(sourceOf, event, []);
         } catch {
             return;
         }
         if (!data || data.type !== 'INIT_PORT' || !ports || ports.length !== 1) return;
-        if (mode === 'iframe' && source !== host) return;
         apply(stopImmediate, event, []);
         try {
             attach(ports[0]);
         } catch {
-            port = null; // not a port after all: keep listening for the host's
+            port = null; // not a port after all: keep listening for the frame's
         }
     };
     if (!features?.externalPort) g.addEventListener('message', onInit, true);

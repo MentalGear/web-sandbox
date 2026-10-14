@@ -330,6 +330,20 @@ export class FileStore {
         return this.apply({ remove: paths }, 'unregisterFiles()');
     }
 
+    /**
+     * A copy of the store as it is now, for one environment build (host.ts): the build's snapshot and the guest-write
+     * overlay's answers come from it, never from the store as it changes afterwards. Cheap: stored files are never
+     * mutated, only replaced. Warnings are shared with this store, so a build's snapshot warns once per element.
+     */
+    copy(): FileStore {
+        const copy = new FileStore(this._warn);
+        copy._files = new Map(this._files);
+        copy._totalBytes = this._totalBytes;
+        copy._warnedCycles = this._warnedCycles;
+        copy._warnedKinds = this._warnedKinds;
+        return copy;
+    }
+
     /** Whether a file is stored at `path`. */
     has(path: string): boolean {
         return this._files.has(path);

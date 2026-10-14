@@ -6,6 +6,15 @@ const CSP = "default-src 'none';";
 // parse the way the browser will: the HTML parser, not string matching
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
 
+// The guest document's security block as the element writes it: the policy, the DNS-prefetch switch (broad review
+// PD3), then the bootstrap. Returns the head's children without the switch, after checking it is the second one.
+const DNS_PREFETCH_OFF = '<meta http-equiv="x-dns-prefetch-control" content="off">';
+const securityChildren = (doc: Document): Element[] => {
+    const children = [...doc.head.children];
+    expect(children[1]?.outerHTML).toBe(DNS_PREFETCH_OFF);
+    return [children[0]!, ...children.slice(2)];
+};
+
 const HOSTILE_CONTENT = [
     '',
     '<div id="root"></div>',
@@ -32,7 +41,7 @@ describe('buildGuestDocument', () => {
     it('places the bootstrap script right after the CSP, ahead of any guest <base>', () => {
         const doc = parse(buildGuestDocument({ csp: CSP, bootstrapScript: 'void 0', content: '<head><base href="https://evil.example/"></head>' }));
 
-        const [meta, script, guestBase] = [...doc.head.children];
+        const [meta, script, guestBase] = securityChildren(doc);
         expect(meta?.tagName).toBe('META');
         expect(script?.textContent).toBe('void 0');
         // the guest's own <base> lands after the policy, which keeps base-uri 'none' in force over it
@@ -41,8 +50,8 @@ describe('buildGuestDocument', () => {
 
     it('when the bootstrap writes the markup, the document ends with the bootstrap script: nothing follows it, not even </head>', () => {
         const guest = buildGuestDocument({ csp: CSP, bootstrapScript: 'void 0', bootstrapWritesContent: true });
-        expect(guest).toBe(`<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${CSP}"><script>void 0</script>`);
-        const [meta, script] = [...parse(guest).head.children];
+        expect(guest).toBe(`<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${CSP}">${DNS_PREFETCH_OFF}<script>void 0</script>`);
+        const [meta, script] = securityChildren(parse(guest));
         expect(meta?.getAttribute('content')).toBe(CSP);
         expect(script?.textContent).toBe('void 0');
         // markup is either written or embedded, never both

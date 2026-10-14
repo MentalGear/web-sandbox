@@ -57,6 +57,15 @@ web-sandbox { display: block; height: 320px; }
 With [`autoResize`](#configuration) the element sets its own `style.height`; it still needs a non-inline
 `display`. In worker mode the frame is hidden (`display: none`).
 
+The element builds an environment only in the document of the window that defined it. Moved into another document
+(`adoptNode()`, an iframe's document), it tears its environment down and stays `idle` there, with one warning; moved
+back, it builds again.
+
+The guest can post messages to the host page's window (any frame can; it reaches your own `message` listeners).
+Act on a message only from a sender you know, by `event.source`, never by the message's shape. Do not give host
+windows or frames names that host links, forms or `window.open()` target: a frame the guest creates can take such a
+name (the guest's own frame cannot; its `window.name` is inert).
+
 ---
 
 ## Configuration
@@ -104,7 +113,7 @@ The default guest policy:
     "style-src":   ["'unsafe-inline'"],
     "base-uri":    [],            // 'none'
     "form-action": [],            // 'none'
-    "worker-src":  ["blob:", "data:"],
+    "worker-src":  ["blob:"],
 }
 ```
 
@@ -224,8 +233,9 @@ rejection reaches the guest as `HANDLER_ERROR` with the error's message.
 
 - Arguments and results are copied by structured clone (no functions, DOM nodes or symbols).
 - Default timeout: 30 s.
-- Calls made while `loading` are queued and sent when the guest is ready. Calls made while `idle` (not in the
-  document) or `terminated` reject at once with `TERMINATED`, as `execute()` does nothing then.
+- Calls made while `loading` are queued and sent when the guest is ready; one that settles while queued (its
+  timeout) leaves the queue and never runs. Calls made while `idle` (not in the document) or `terminated` reject
+  at once with `TERMINATED`, as `execute()` does nothing then.
 - Rejects with an `RpcError` (an `Error` with a `code`); see [Refusal codes](#refusal-codes).
 
 ### `callWithTimeout(timeoutMs, method, ...args)`
@@ -361,6 +371,7 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | `outcome` | `'ok' \| 'refused' \| 'failed' \| 'aborted'` | `ok`: a response was handed over (any HTTP status). `refused`: no request was made (the bridge's rules, or the browser's `Request` refused it). `failed`: the browser's `fetch` rejected or no whole response was handed over; not proof that a request left the page, since `fetch` also rejects before sending (the host page's own `connect-src`, mixed content, local-network blocking). `aborted`: the environment was torn down meanwhile. |
 | `status` | `number?` | The HTTP status, when a response arrived. |
 | `code` | `FetchErrorCode?` | Why it was refused, failed or aborted. |
+| `reason` | `string?` | For a refusal of an origin that is not listed, what the host knows beyond the guest's text: the host page's own origin, or a loopback, private or link-local host. The guest is told the same for every unlisted origin. |
 | `bytes` | `number` | Response body bytes read. |
 | `durationMs` | `number` | From the request to its settlement. |
 
@@ -378,6 +389,8 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | `the environment could not be built (…)` | Building the frame failed, e.g. a directive given a string instead of a list. |
 | `the executed code ran longer than workerExecutionTimeout` | The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline. |
 | `the sandbox frame loaded a second time` | Something navigated or reloaded the library's frame. |
+| `the guest frame announced itself again (it reloaded or rewrote its document)` | Iframe and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. |
+| `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time: the frame had not loaded (a guest document that never finishes, its subresources included) or, in iframe and worker mode, the guest had not announced its port. |
 | `the guest frame is missing` | The library's frame has no guest frame. |
 
 Branch on `state` and the event, not on these texts. A reason never carries the text of an error the element
@@ -391,7 +404,7 @@ name.
 | State | Meaning |
 | :--- | :--- |
 | `idle` | Not in the document (constructed, or removed): no frame. |
-| `loading` | A frame was built and is loading. |
+| `loading` | A frame was built and is loading; at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
 | `ready` | The guest can be reached; `ready` was dispatched. |
 | `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`), an integrity check or a failed build; `terminated` was dispatched. |
 
@@ -617,6 +630,7 @@ Choose strict mode for content you do not trust at all. [ADR-005](ADR-005-strict
 | Strict: characters per `sandboxView.render()` | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
+| Longest `loading` (ms of host time) | 5000 | `LOAD_TIMEOUT_MS` |
 | `workerExecutionTimeout`: how long the event loop may stay busy past a deadline (ms) | 1000 | `EXECUTION_TIMEOUT_GRACE_MS` |
 | Files: total bytes | 8388608 (8 MiB) | — |
 | Files: count | 1000 | — |
@@ -643,7 +657,7 @@ Values:
 | `SandboxDevTools` | `new SandboxDevTools(element)`, then `activate()`, `deactivate()` or `toggle()`: prints the element's `sandbox-log` lines to the host console. |
 | `SAFE_CAPABILITIES`, `UNSAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS`, `UNSAFE_PERMISSIONS` | The capability lists accepted by `capabilities` and `unsafeCapabilities`. |
 | `FETCH_ERROR_CODES` | Every `FetchErrorCode`. |
-| `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS`, `EXECUTION_TIMEOUT_GRACE_MS`, `GUEST_WRITES_PER_SECOND`, `GUEST_WRITE_BYTES_PER_SECOND` | See [Limits](#limits). |
+| `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS`, `LOAD_TIMEOUT_MS`, `EXECUTION_TIMEOUT_GRACE_MS`, `GUEST_WRITES_PER_SECOND`, `GUEST_WRITE_BYTES_PER_SECOND` | See [Limits](#limits). |
 
 Types: `SandboxConfig`, `SandboxState`, `RpcError`, `RpcErrorCode`, `SandboxLog`, `SandboxLogLevel`,
 `SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,

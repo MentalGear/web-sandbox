@@ -80,7 +80,7 @@ test.describe('A3 class: registered files load under the directive that governs 
             'base-uri': "'none'",
             'style-src': "'unsafe-inline'",
             'form-action': "'none'",
-            'worker-src': 'blob: data:',
+            'worker-src': 'blob:', // never data: (broad review PD1)
             'script-src-elem': "'unsafe-inline' blob:",
             'style-src-elem': "'unsafe-inline' blob:",
             'upgrade-insecure-requests': '',

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { inSandboxScript } from "./in-sandbox-script";
+import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./in-sandbox-script";
 import { createBroker } from "./rpc";
+import { workerBootstrap } from "./worker-bootstrap";
 
 // The bootstrap captures MessagePort.prototype.postMessage and its onmessage setter, and the MessageEvent
 // getters, before any guest code runs, and only ever calls those (review B2). The tests run it against
@@ -30,7 +31,18 @@ class FakePort {
     /** Delivers `data` to the handler the bootstrap set, as a MessageEvent would. */
     deliver(data: unknown) { this.handler!(new FakeMessageEvent({ data })); }
 }
-const PLATFORM = { MessagePort: FakePort, MessageEvent: FakeMessageEvent, Event: FakeEvent };
+// Iframe mode makes its own channel (broad review CB1): port1 stays with the bootstrap, port2 is announced to the host.
+// A test that wants to watch the bootstrap's end sets `next` to its FakePort first.
+class FakeMessageChannel {
+    static next: FakePort | null = null;
+    readonly port1: FakePort;
+    readonly port2 = new FakePort();
+    constructor() {
+        this.port1 = FakeMessageChannel.next ?? new FakePort();
+        FakeMessageChannel.next = null;
+    }
+}
+const PLATFORM = { MessagePort: FakePort, MessageEvent: FakeMessageEvent, Event: FakeEvent, MessageChannel: FakeMessageChannel };
 const originals: Record<string, unknown> = {};
 
 /** The host's INIT_PORT as the guest frame receives it: trusted, from parent.parent (jsdom: the window), one port. */
@@ -40,11 +52,16 @@ const initPort = (port: unknown, overrides: Record<string, unknown> = {}) =>
 describe("inSandboxScript", () => {
     const originalAddEventListener = globalThis.addEventListener;
 
+    // parent.parent is the host page; in jsdom it is this window. What the bootstrap announces lands here.
+    let announcements: { data: unknown; target: unknown; transfer: unknown }[] = [];
     beforeEach(() => {
         for (const [name, value] of Object.entries(PLATFORM)) {
             originals[name] = (globalThis as any)[name];
             (globalThis as any)[name] = value;
         }
+        announcements = [];
+        vi.spyOn(window, 'postMessage').mockImplementation(((data: unknown, target: unknown, transfer: unknown) => { announcements.push({ data, target, transfer }); }) as any);
+        FakeMessageChannel.next = null;
     });
 
     afterEach(() => {
@@ -63,11 +80,10 @@ describe("inSandboxScript", () => {
         return { log, warn, error, _log: log, _warn: warn, _error: error } as any;
     };
 
-    it("should initialize and send ready message on INIT_PORT", () => {
+    it("iframe mode (broad review CB1): announces port2 of its own channel to parent.parent, once, keeps port1, and listens for no port at all", () => {
         const port = createMockPort();
+        FakeMessageChannel.next = port;
         const sandboxConsole = createMockConsole();
-        
-        // Simulate the environment
         const listeners: Record<string, Function> = {};
         (globalThis as any).addEventListener = (type: string, cb: Function) => {
             listeners[type] = cb;
@@ -75,9 +91,16 @@ describe("inSandboxScript", () => {
 
         inSandboxScript(true, 'iframe', sandboxConsole);
 
-        // Trigger handshake
-        listeners['message']?.(initPort(port));
-
+        expect(ANNOUNCEMENT_TYPE).toBe('SANDBOX_PORT');
+        // the stringified functions spell the literal out: both carry this constant
+        for (const fn of [inSandboxScript, workerBootstrap]) expect(fn.toString()).toMatch(new RegExp(`type: ["']${ANNOUNCEMENT_TYPE}["']`));
+        expect(announcements).toHaveLength(1);
+        expect(announcements[0]!.data).toEqual({ type: ANNOUNCEMENT_TYPE });
+        expect(announcements[0]!.target).toBe('*');
+        const [handed] = announcements[0]!.transfer as FakePort[];
+        expect(handed).toBeInstanceOf(FakePort);
+        expect(handed).not.toBe(port); // the other end: the bootstrap's own stays here
+        expect(listeners['message']).toBeUndefined(); // nothing in the guest realm ever listens for a port
         expect(port.posted).toHaveBeenCalledWith({
             type: 'LOG',
             level: 'info',
@@ -133,8 +156,8 @@ describe("inSandboxScript", () => {
             listeners[type] = cb;
         };
 
+        FakeMessageChannel.next = port;
         inSandboxScript(true, 'iframe', sandboxConsole);
-        listeners['message']?.(initPort(port));
 
         sandboxConsole.log("hello", { a: 1 });
 
@@ -206,8 +229,8 @@ describe("inSandboxScript", () => {
         (globalThis as any).addEventListener = (type: string, cb: Function) => {
             listeners[type] = cb;
         };
+        FakeMessageChannel.next = port;
         inSandboxScript(true, 'iframe', sandboxConsole);
-        listeners['message']?.(initPort(port));
         for (const level of ['log', 'info', 'warn', 'error'] as const) sandboxConsole[level](`via ${level}`);
         const relayed = port.posted.mock.calls.map(call => call[0]).filter((f: any) => f.type === 'LOG' && String(f.args[0]).startsWith('via '));
         expect(relayed.map((f: any) => [f.level, f.args[0]])).toEqual([['log', 'via log'], ['info', 'via info'], ['warn', 'via warn'], ['error', 'via error']]);
@@ -228,7 +251,7 @@ describe("inSandboxScript", () => {
         };
 
         // timeouts off: the queued calls never get an answer from the mock port
-        inSandboxScript(true, 'iframe', sandboxConsole, (send) => createBroker(send, { timeoutMs: 0 }));
+        inSandboxScript(true, 'worker', sandboxConsole, (send) => createBroker(send, { timeoutMs: 0 }));
         const bridge = (globalThis as any).bridge;
         bridge.call('unpostable'); // queued before the port exists...
         bridge.call('later');      // ...and so is this one, behind it
@@ -237,7 +260,7 @@ describe("inSandboxScript", () => {
 
         const calls = posted.filter(frame => frame.type === 'RPC_REQ');
         expect(calls.map(frame => frame.method)).toEqual(['later']);
-        expect(posted).toContainEqual({ type: 'LOG', level: 'info', args: ['iframe Ready'] });
+        expect(posted).toContainEqual({ type: 'LOG', level: 'info', args: ['worker Ready'] });
         const warnings = posted.filter(frame => frame.type === 'LOG' && frame.level === 'warn');
         expect(warnings).toHaveLength(1);
         expect(String(warnings[0].args[0])).toContain('could not be posted');
@@ -251,11 +274,11 @@ describe("inSandboxScript", () => {
             listeners[type] = cb;
         };
 
+        FakeMessageChannel.next = port;
         inSandboxScript(true, 'iframe', sandboxConsole, createBroker);
         const bridge = (globalThis as any).bridge;
         const guestPing = vi.fn(() => 'guest method');
         bridge.expose('PING', guestPing); // a guest method of the same name is never reached by the watchdog
-        listeners['message']?.(initPort(port));
         port.posted.mockClear();
 
         port.deliver({ type: 'PING', n: 7 });
@@ -283,50 +306,40 @@ describe("inSandboxScript", () => {
         expect(port.posted).not.toHaveBeenCalled();
     });
 
-    describe("the one INIT_PORT (review B1)", () => {
-        const start = (mode: 'iframe' | 'worker') => {
+    describe("the one INIT_PORT of a worker (review B1)", () => {
+        const start = () => {
             const registered: { type: string; cb: Function; options: unknown }[] = [];
             (globalThis as any).addEventListener = (type: string, cb: Function, options?: unknown) => { registered.push({ type, cb, options }); };
-            inSandboxScript(false, mode, createMockConsole(), createBroker);
+            inSandboxScript(false, 'worker', createMockConsole(), createBroker);
             return registered.find(r => r.type === 'message')!;
         };
 
-        it("is a capture listener; ignores, without throwing, a message from another sender, an untrusted one, one without exactly one port, and any other type; then accepts the host's", () => {
-            const listener = start('iframe');
+        it("is a capture listener; ignores, without throwing, an untrusted message, one without exactly one port, and any other type; then accepts the frame's, once", () => {
+            const listener = start();
             expect(listener.options).toBe(true);
             const port = createMockPort();
-            const stranger = { postMessage() {} }; // another frame on the host page
             const forgeries = [
-                initPort(createMockPort(), { source: stranger }),
-                initPort(createMockPort(), { source: null }),
-                initPort(createMockPort(), { isTrusted: false }),
-                new FakeMessageEvent({ data: { type: 'INIT_PORT' }, ports: [], source: window }),
-                new FakeMessageEvent({ data: { type: 'INIT_PORT' }, ports: [createMockPort(), createMockPort()], source: window }),
-                new FakeMessageEvent({ data: { type: 'OTHER' }, ports: [createMockPort()], source: window }),
-                new FakeMessageEvent({ data: null, ports: [createMockPort()], source: window }),
+                initPort(createMockPort(), { isTrusted: false, source: null }),
+                new FakeMessageEvent({ data: { type: 'INIT_PORT' }, ports: [], source: null }),
+                new FakeMessageEvent({ data: { type: 'INIT_PORT' }, ports: [createMockPort(), createMockPort()], source: null }),
+                new FakeMessageEvent({ data: { type: 'OTHER' }, ports: [createMockPort()], source: null }),
+                new FakeMessageEvent({ data: null, ports: [createMockPort()], source: null }),
             ];
             for (const forged of forgeries) {
                 expect(() => listener.cb(forged)).not.toThrow();
                 expect(forged.stopped).toBe(false);
             }
             // something that is not a port at all (a browser never delivers one): no throw, and still listening
-            expect(() => listener.cb(initPort({ notAPort: true }))).not.toThrow();
-            const genuine = initPort(port);
+            expect(() => listener.cb(initPort({ notAPort: true }, { source: null }))).not.toThrow();
+            const genuine = initPort(port, { source: null });
             listener.cb(genuine);
-            expect(genuine.stopped).toBe(true); // no guest listener sees the host's port
-            expect(port.posted).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['iframe Ready'] });
+            expect(genuine.stopped).toBe(true);
+            expect(port.posted).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['worker Ready'] });
             // and only once: a later INIT_PORT, even a valid-looking one, changes nothing
             const late = createMockPort();
-            listener.cb(initPort(late));
+            listener.cb(initPort(late, { source: null }));
             expect(late.posted).not.toHaveBeenCalled();
-        });
-
-        it("in a worker (no parent, source null) a trusted message with one port is the owner's", () => {
-            const listener = start('worker');
-            const port = createMockPort();
-            listener.cb(initPort(createMockPort(), { isTrusted: false, source: null }));
-            listener.cb(initPort(port, { source: null }));
-            expect(port.posted).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['worker Ready'] });
+            expect(announcements).toEqual([]); // a worker announces nothing: its frame does (worker-bootstrap.ts)
         });
     });
 
@@ -335,9 +348,11 @@ describe("inSandboxScript", () => {
             const listeners: Record<string, Function> = {};
             (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
             const sandboxConsole = createMockConsole();
+            const port = createMockPort();
+            FakeMessageChannel.next = port;
             inSandboxScript(true, 'iframe', sandboxConsole, createBroker);
 
-            // guest code, after the bootstrap and before INIT_PORT
+            // guest code, after the bootstrap (which attached its own port before any guest code ran)
             const seen: unknown[] = [];
             const keep = (value: unknown) => { if (value instanceof FakePort) seen.push(value); };
             const originalPost = FakePort.prototype.postMessage;
@@ -354,8 +369,6 @@ describe("inSandboxScript", () => {
                 FakeEvent.prototype.stopImmediatePropagation = function (this: FakeEvent) { keep((this as any).ports?.[0]); return originalStop.call(this); };
                 Reflect.apply = function (f: Function, self: unknown, args: ArrayLike<unknown>) { keep(self); for (let i = 0; i < args.length; i++) keep(args[i]); return reflectApply(f, self, args); } as typeof Reflect.apply;
 
-                const port = createMockPort();
-                listeners['message']!(initPort(port));
                 sandboxConsole.log('a line');
                 onmessage.get!.call(port)(new FakeMessageEvent({ data: { type: 'PING', n: 1 } }));
                 (globalThis as any).bridge.call('hostMethod').catch(() => {});
@@ -380,7 +393,7 @@ describe("inSandboxScript", () => {
             (globalThis as any).addEventListener = (type: string, cb: Function, options?: unknown) => {
                 registered.push({ type, cb, options });
             };
-            inSandboxScript(false, 'iframe', createMockConsole(), createBroker);
+            inSandboxScript(false, 'worker', createMockConsole(), createBroker);
             const listener = (type: string) => registered.find(r => r.type === type)!;
             return { registered, listener };
         };
@@ -445,9 +458,10 @@ describe("inSandboxScript", () => {
         const start = (mode: 'iframe' | 'worker', autoResize: boolean | undefined) => {
             const listeners: Record<string, Function> = {};
             (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
-            inSandboxScript(false, mode, createMockConsole(), createBroker, autoResize === undefined ? undefined : { autoResize: autoResize as any });
             const port = createMockPort();
-            listeners['message']?.(initPort(port));
+            FakeMessageChannel.next = port;
+            inSandboxScript(false, mode, createMockConsole(), createBroker, autoResize === undefined ? undefined : { autoResize: autoResize as any });
+            listeners['message']?.(initPort(port, { source: null })); // worker mode: the frame's INIT_PORT
             return port;
         };
         const resizeFrames = (port: FakePort) => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RESIZE');
@@ -491,21 +505,20 @@ describe("inSandboxScript", () => {
         const start = (features?: any) => {
             const listeners: Record<string, Function> = {};
             (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
-            inSandboxScript(false, 'iframe', createMockConsole(), createBroker, features);
             const port = createMockPort();
-            listeners['message']?.(initPort(port));
+            FakeMessageChannel.next = port;
+            inSandboxScript(false, 'iframe', createMockConsole(), createBroker, features);
             const requests = () => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RPC_REQ');
             const answer = (frame: Record<string, unknown>) => port.deliver({ type: 'RPC_RES', id: requests().at(-1).id, ...frame });
             return { requests, answer };
         };
 
-        it("exists only when the host turned the bridge on, as a separate global: fetch is untouched", () => {
-            const originalFetch = globalThis.fetch;
+        it("exists only when the host turned the bridge on, as a separate global: fetch is not the bridge", () => {
             start();
             expect((globalThis as any).sandboxFetch).toBeUndefined();
             start({ fetchBridge: { timeoutMs: 1000 } });
             expect(typeof (globalThis as any).sandboxFetch).toBe('function');
-            expect(globalThis.fetch).toBe(originalFetch);
+            expect(globalThis.fetch).not.toBe((globalThis as any).sandboxFetch);
         });
 
         it("sends only url, method, headers and body to the reserved method, and turns the answer into a Response", async () => {
@@ -543,9 +556,9 @@ describe("inSandboxScript", () => {
         const start = (features?: any) => {
             const listeners: Record<string, Function> = {};
             (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
-            const comms = inSandboxScript(false, 'iframe', createMockConsole(), createBroker, features);
             const port = createMockPort();
-            listeners['message']?.(initPort(port));
+            FakeMessageChannel.next = port;
+            const comms = inSandboxScript(false, 'iframe', createMockConsole(), createBroker, features);
             const requests = () => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RPC_REQ');
             const answer = (frame: Record<string, unknown>) => port.deliver({ type: 'RPC_RES', id: requests().at(-1).id, ...frame });
             return { comms, port, requests, answer };
