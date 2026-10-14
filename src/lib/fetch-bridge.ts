@@ -86,6 +86,7 @@ export interface FetchRecord {
     outcome: 'ok' | 'refused' | 'failed' | 'aborted';
     /** The HTTP status, when a response arrived. */
     status?: number;
+    /** Why the request was refused, failed or aborted; absent when outcome is 'ok'. */
     code?: FetchErrorCode;
     /** Response body bytes read. */
     bytes: number;

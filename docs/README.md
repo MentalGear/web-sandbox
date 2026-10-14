@@ -1,5 +1,11 @@
 # Documentation
 
+## Reference
+
+- [**API.md**](API.md) — the public surface: the element, every configuration option, methods, events,
+  lifecycle, refusal codes, the globals guest code gets in each mode, and the limits. Checked against the
+  source by `test/unit/api-docs.test.ts`.
+
 ## Decisions
 
 - [**ADR-001 — Continue, or adopt an existing solution?**](ADR-001-continue-or-adopt.md) —
@@ -43,6 +49,7 @@
 
 ## Reading order
 
-Start with the [backlog snapshot](BACKLOG.md#snapshot) for the current state, then
+To integrate the sandbox, read the [API reference](API.md). To work on it, start with the
+[backlog snapshot](BACKLOG.md#snapshot) for the current state, then
 [ADR-001](ADR-001-continue-or-adopt.md) for why the project exists in the form it does. The
 research index is the primary asset — ADR-001 argues it is the hardest part to replicate.

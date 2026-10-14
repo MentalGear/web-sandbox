@@ -24,30 +24,67 @@ import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permis
 import { assertEntryScoped, buildViewDocument, ENTRY_DONE_NAME, inStrictWorker, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
 import { strictPolicyOverrides, strictViewDirectives } from "./lib/csp/strict-policy";
 
+/**
+ * The element's configuration, passed to setConfig() as a Partial: every option left out takes its default
+ * (DEFAULT_SANDBOX_CONFIG), not its previous value. Reference with defaults and modes: docs/API.md#configuration.
+ */
 export interface SandboxConfig {
-    connectionsAllowed: CSPDirectives; // Providing a key here will merge with/override the default for that directive.
-    // 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox). For testing: enabling it
-    // logs one warning per instance (backlog S4), since it lets guest code compile strings as code.
+    /**
+     * The guest's Content Security Policy. Providing a key here will merge with/override the default for that
+     * directive. `[]` means 'none'; 'self' and eval keywords are dropped with a warning (src/lib/csp/).
+     */
+    connectionsAllowed: CSPDirectives;
+    /**
+     * 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox). For testing: enabling it
+     * logs one warning per instance (backlog S4), since it lets guest code compile strings as code.
+     * Only a literal `true` enables it. Default false.
+     */
     scriptUnsafe?: boolean;
-    capabilities?: SafeCapability[]; // Sandbox attributes that keep the guest inside the frame
-    unsafeCapabilities?: UnsafeCapability[]; // Capabilities that reach outside the frame (popups, modals, downloads, presentation, fullscreen). Opt-in only, logs a warning.
-    html?: string; // Initial HTML content: the guest document in iframe mode, the initial view in strict mode
-    // Execution mode. 'strict' (ADR-005): guest code runs only in a worker spawned by a view document that runs
-    // no guest script; the worker draws into the view with sandboxView.render().
+    /** Sandbox attributes that keep the guest inside the frame (SAFE_CAPABILITIES). Default []. */
+    capabilities?: SafeCapability[];
+    /**
+     * Capabilities that reach outside the frame (popups, modals, downloads, presentation, fullscreen). Opt-in
+     * only, logs a warning. Dropped in strict mode. Default [].
+     */
+    unsafeCapabilities?: UnsafeCapability[];
+    /**
+     * Initial HTML content: the guest document in iframe mode, the initial view in strict mode. Ignored in
+     * worker mode. Empty (the default) means `<div id="root"></div>`. load() sets it too.
+     */
+    html?: string;
+    /**
+     * Execution mode, default 'iframe'. 'strict' (ADR-005): guest code runs only in a worker spawned by a view
+     * document that runs no guest script; the worker draws into the view with sandboxView.render(). Any other
+     * value starts no environment: the sandbox terminates until a config names a valid mode.
+     */
     mode?: 'iframe' | 'worker' | 'strict';
-    // Strict mode: the path of a registered JavaScript file the worker runs first, as a classic script.
+    /**
+     * Strict mode: the path of a registered JavaScript file the worker runs first, as a classic script.
+     * Ignored (with a warning) in other modes.
+     */
     entry?: string;
-    workerExecutionTimeout?: number; // Max execution time in ms (worker and strict mode)
-    // Liveness watchdog budget in ms (0 = off, the default): terminates a guest that stops answering for this long.
-    // Off by default because legitimate synchronous work longer than the budget would be stopped too. See src/lib/watchdog.ts for what it can and cannot bound.
+    /**
+     * Max execution time in ms (worker and strict mode); 0 (the default) is off. Each execute() restarts it;
+     * when it fires the host logs 'Execution Timeout' and rebuilds the environment. Nothing reports that code
+     * finished, so it fires after code that completed too.
+     */
+    workerExecutionTimeout?: number;
+    /**
+     * Liveness watchdog budget in ms (0 = off, the default): terminates a guest that stops answering for this long.
+     * Off by default because legitimate synchronous work longer than the budget would be stopped too. See src/lib/watchdog.ts for what it can and cannot bound.
+     */
     watchdogTimeout?: number;
-    // Content auto-sizing (iframe mode, off by default): the element's height follows the guest's content
-    // height, validated, clamped and rate-limited on the host (src/lib/auto-resize.ts). Only a literal true
-    // enables it. No effect in worker mode, which has no document (one warning per instance).
+    /**
+     * Content auto-sizing (iframe and strict mode, off by default): the element's height follows the guest's content
+     * height, validated, clamped and rate-limited on the host (src/lib/auto-resize.ts). Only a literal true
+     * enables it. No effect in worker mode, which has no document (one warning per instance).
+     */
     autoResize?: boolean;
-    // The host-mediated fetch bridge (off by default): the guest gets sandboxFetch(url, init), and the host makes
-    // the request under a fixed discipline (exact-origin allowlist, no credentials, no redirects, capped body
-    // and time) and reports each one as a 'fetch' event. The guest policy is unchanged. See src/lib/fetch-bridge.ts.
+    /**
+     * The host-mediated fetch bridge (off by default): the guest gets sandboxFetch(url, init), and the host makes
+     * the request under a fixed discipline (exact-origin allowlist, no credentials, no redirects, capped body
+     * and time) and reports each one as a 'fetch' event. The guest policy is unchanged. See src/lib/fetch-bridge.ts.
+     */
     fetchBridge?: FetchBridgeConfig;
 }
 
@@ -129,6 +166,10 @@ interface StrictInit {
     autoResize: boolean;
 }
 
+/**
+ * The `<web-sandbox>` element: one sandboxed environment for untrusted web content, rebuilt by setConfig(),
+ * load() and reset(). Register it with defineWebSandbox(). Public surface: docs/API.md.
+ */
 export class WebSandbox extends HTMLElement {
     private _iframe: HTMLIFrameElement | null = null;
     private _frameLoaded = false;
@@ -221,7 +262,11 @@ export class WebSandbox extends HTMLElement {
         this.initialize();
     }
 
-    // Partial: anything left out keeps its default (see DEFAULT_SANDBOX_CONFIG)
+    /**
+     * Replaces the configuration and rebuilds the environment now (when the element is in the document).
+     * Partial: anything left out keeps its default (see DEFAULT_SANDBOX_CONFIG), not its previous value: `html`
+     * included. Values that cannot be used are dropped with a warning before anything is applied.
+     */
     setConfig(config: Partial<SandboxConfig>) {
 
         // ---- Parse and Sanitize Input
@@ -304,11 +349,21 @@ export class WebSandbox extends HTMLElement {
         console.warn('[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).');
     }
 
+    /**
+     * Sets `html` (the guest document, or the initial view in strict mode), keeps the rest of the configuration
+     * and rebuilds the environment now. Worker mode ignores the markup but still rebuilds.
+     */
     load(html: string) {
         this._config.html = html;
         this.initialize();
     }
 
+    /**
+     * Runs `code` in the guest's global scope as a function body (the guest document, or the worker in worker
+     * and strict mode). Fire-and-forget: nothing reports completion. Needs scriptUnsafe; ignored with a warning
+     * otherwise and while terminated. Queued while loading; a synchronous throw becomes a 'sandbox-log' error.
+     * In worker and strict mode it (re)starts workerExecutionTimeout.
+     */
     execute(code: string) {
         if (!this._config.scriptUnsafe) {
             console.warn("[Sandbox] execute() blocked: scriptUnsafe is false. Enable it in config to run arbitrary code.");
@@ -331,6 +386,8 @@ export class WebSandbox extends HTMLElement {
     /**
      * Publishes a host method the guest can invoke with `bridge.call(name, ...)`.
      * Methods live on the element, so they survive frame recreation (load()/setConfig()).
+     * Exposing a name again replaces its handler; names starting with "sandbox:" are reserved (refused with a
+     * warning). The arguments are the guest's data: validate them before use.
      */
     expose(name: string, fn: (...args: any[]) => unknown): void {
         if (typeof name === 'string' && name.startsWith(RESERVED_METHOD_PREFIX)) {
@@ -345,6 +402,7 @@ export class WebSandbox extends HTMLElement {
      * `code` (RpcErrorCode, see rpc.ts); UNKNOWN_METHOD, HANDLER_ERROR and RESULT_NOT_TRANSFERABLE
      * are reported by the guest, and their message is the guest's text.
      * Works WITHOUT scriptUnsafe: it calls a pre-registered function on the guest, it never evals.
+     * Times out after 30 s (TIMEOUT). Queued while loading; rejects with TERMINATED when the environment goes away.
      */
     call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
         if (this._state === 'terminated') return Promise.reject(this._broker.terminationError(TERMINATED_CALL_MESSAGE));
@@ -1036,6 +1094,8 @@ export class WebSandbox extends HTMLElement {
 /**
  * Registers the element under `tagName` (default `<web-sandbox>`). Safe to call more than once.
  * Importing the library does not register anything, so you can pick your own tag name.
+ * Throws if `tagName` is taken by another element; the class can be registered under one name only (the
+ * browser throws NotSupportedError for a second, different name).
  */
 export function defineWebSandbox(tagName = 'web-sandbox'): typeof WebSandbox {
     const existing = customElements.get(tagName);

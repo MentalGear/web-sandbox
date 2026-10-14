@@ -81,6 +81,9 @@ sandbox.load('<h1>Hello</h1>');
 
 Importing the module registers nothing, so you choose the tag name.
 
+**API reference**: [`docs/API.md`](docs/API.md) lists every option, method, event, refusal code, guest global
+and limit. The sections below walk through each feature.
+
 ## Lifecycle
 
 `sandbox.state` tells where the sandbox is: `idle` (not in the document), `loading` (a frame is

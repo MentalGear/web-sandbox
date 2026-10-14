@@ -39,6 +39,7 @@ conditional "continue".
 | Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); an empty directive is `'none'`, and the defaults leave unset fetch directives to `default-src` (S16); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
 | Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); writes open (C5) |
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18). ✅ in strict mode: guest code sees only its worker's `blob:` URL and no request carries a `Referer` |
+| API reference | ✅ [`API.md`](API.md): the whole public surface, checked against the code by a unit test (D3); framework adapters out of scope |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 | Adversarial review 2026-10 | ✅ 21 candidates: 16 fixed (S19–S23), 1 held and is now asserted (A8, S20), 1 documented by design (S25), 3 residuals stated (S24); [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
 
@@ -49,6 +50,7 @@ S3, C2 and C3 done, C1 partly, C4 rejected, C5 added; C1's markup references, mo
 S15 and S16 were done on 2026-10-13, and S17 added. Strict mode landed on 2026-10-13 ([ADR-005](ADR-005-strict-mode.md), measured first in
 [research 15](research/15_strict_mode/README.md)): S6 done, S13 and S17 done in strict mode with their default-mode residuals stated, S18 added.
 The adversarial review of 2026-10-14 ([report](security/ADVERSARIAL-REVIEW-2026-10.md)) added S19–S25: S19–S23 done, S24 open (residuals), S25 documented.
+D3 was done on 2026-10-14 as an API reference only; its framework adapters moved to Rejected.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -684,6 +686,12 @@ warning and changes nothing, identically on Chromium, Firefox and WebKit.
 - e2e: section 5a of `test/e2e/blob-delivery.spec.ts` (iframe, plus worker-mode `importScripts` and
   `import()`).
 
+**Upstream** (2026-10-14): WebKit main matches nothing for `'self'` in an opaque origin since `314912@main`
+(the `!scheme.isEmpty()` guard in `ContentSecurityPolicySource::schemeMatches`). Minimal conditions measured:
+any opaque-origin document (`sandbox` without `allow-same-origin`, or a `data:` frame) with `'self'` in its
+policy; every fetch directive; with `upgrade-insecure-requests`, http origins too. The drop stays: it does not
+depend on the engine.
+
 ### S15 · The guest can read the host page's URL — ✅ **done** (platform limits below; WebKit residual in S17)
 
 **Guarantee**: nothing in the guest's own document or location reveals the host page's URL or origin.
@@ -1179,6 +1187,25 @@ Their separate retry/stop field is not adopted: here it follows from the code.
 
 ---
 
+### B8 · Behaviour the API reference surfaced — **P2 · S**
+
+*Found while writing [`API.md`](API.md) (D3), where the code and its comments or the README disagreed.*
+
+- `workerExecutionTimeout` rebuilds the environment N ms after the last `execute()` even when that code has
+  finished; the warning says it terminates, yet no `terminated` event fires and the state returns to `loading`
+  (`src/host.ts`, `execute()`). Decide: a budget for code still running, or a documented idle reset.
+- `execute()` on an element not yet in the document is dropped silently on insertion, while `call()` in the same
+  state rejects with `TERMINATED`. One rule for both.
+- The guest's `console.info` is not relayed (`log`, `warn`, `error` are), and uncaught guest errors reach the host
+  only in strict mode.
+- `VIEW_LIVENESS_TIMEOUT_MS` is exported from `host.ts` but not from the package entry.
+- `setConfig()` applies over the defaults, not the previous config, so it also clears `html` from `load()`:
+  documented as is; kept.
+
+**Acceptance**: each behaviour is one rule, documented in `API.md`, with a test.
+
+---
+
 ## C · Virtual Files
 
 Decided in [ADR-004](ADR-004-files-as-blob-urls.md): files are registered on the element and reach
@@ -1344,9 +1371,21 @@ undetected.
 **Acceptance**: reverting any mitigation fails the PR. Order this immediately after T1–T3, or the
 same drift recurs.
 
-### D3 · API reference and adapters — **P3 · M**
+### D3 · API reference — ✅ **done**
 
-Document the public surface once B1–B4 stabilise it; thin React/Vue wrappers around the element.
+**Done**: [`API.md`](API.md) documents the current public surface: registration, the element and its
+`state`, every `SandboxConfig` option (type, default, modes), `connectionsAllowed` rules and `fetchBridge`
+fields, every method with its rejections, the events and their detail shapes, the lifecycle, the refusal codes
+(local vs reported), the guest globals per mode, the limits, the exports and examples. It links the ADRs for
+the reasoning. `test/unit/api-docs.test.ts` derives the surface from the code (exports, config and detail
+interfaces, methods, dispatched events, codes, termination reasons, guest globals, limits and their values)
+and fails when the reference and the code drift apart. TSDoc on `SandboxConfig`, the element's methods and
+the file types filled in. Linked from `README.md` and `docs/README.md`.
+
+Framework adapters (React/Vue wrappers) were part of this item and are out of scope by the owner's decision
+(Rejected, below).
+
+Original scope: document the public surface once B1–B4 stabilise it; thin React/Vue wrappers around the element.
 **Acceptance**: a consumer can integrate from the docs without reading `host.ts`.
 
 ---
@@ -1465,6 +1504,7 @@ meets an opaque-origin UI tier. Do not write a JS engine.
 | Declarative argument rules per method (UCAN policy) | [Dialog DB](https://github.com/dialog-db/dialog-db) | In UCAN a third party writes the policy; here the embedder writes both policy and handler, so checking arguments in code is strictly more expressive. |
 | Method-first names so read-only is a prefix | Dialog DB | There are no grants to narrow; an exposed name is the whole grant. |
 | UCAN delegation between host and guest | Dialog DB | One host, one guest, no third party: holding the one-shot port already is the authority. Would add keys, signatures and a clock to a self-contained broker. |
+| React/Vue adapters (was part of D3) | Backlog D3 | Owner's decision: a custom element already works in every framework, and wrappers would be a second API surface to keep in step with the element. |
 | Server-side session quotas (rate limit, TTL, LRU) | [Finding 08](research/08_session_exhaustion/README.md), `IMPROVEMENTS.md` §1 | The local-first architecture has no server. Becomes P1 the moment a hosted mode ships; recorded so the requirement is not lost with the server that was removed. |
 
 ---
