@@ -124,7 +124,9 @@ engine) failed there; of the 18 new unit tests that run against `12d7924`, 14 fa
   reason at about 5 s while Firefox is `ready`; a guest whose load takes 1.5 s is `ready` (control).
 - **Decision for the owner**: the wrapper's load waits for the guest document's subresources, so a guest page whose
   images take longer than 5 s now terminates. Stated in API.md and README; an embedder that needs more must load
-  them after the load event.
+  them after the load event. *Superseded (backlog S46, after the [verification](VERIFICATION-2026-10-14.md#decisions-after-the-verification)):
+  `ready` is the guest's check-in, the deadline bounds only that, and a guest that never closes its document is
+  `ready` with its calls timing out.*
 
 ### CB4 · Guest-write answers revealed files registered after the build
 
@@ -280,7 +282,7 @@ the last six rows were added by the [independent verification](VERIFICATION-2026
 | PD6 | A frame the guest creates can take a name the host page targets | As PD2; host pages should not use named targets | `broad-review.spec.ts` "PD6 … residual" |
 | PD7 | The guest can post messages to the host window | Any frame can; embedders check `event.source` | `broad-review.spec.ts` "PD8 … (PD7 …)" |
 | PD8 | Firefox's `<meta refresh>` replaces the guest with a document that announces nothing | Nothing of the guest's runs any more; the watchdog bounds the silent channel where it is on | `broad-review.spec.ts` "PD8 … meta refresh" |
-| CB3 | A guest page whose load (subresources included) takes longer than 5 s of host time terminates | The bound on `loading` (decision above) | `broad-review.spec.ts` "CB3" |
+| CB3 | Closed by S46: a guest page whose load took longer than 5 s of host time terminated; `ready` is now the guest's check-in, which comes before its subresources | — | `ready.spec.ts`, `broad-review.spec.ts` "CB3" |
 | S13, S17 | A frame the guest creates keeps WebRTC (its ICE leaves) and, in WebKit, reads the host page URL as its referrer; `frame-src 'none'` refuses frames that load a URL, not frames made from markup | The frame is a realm of its own | `webrtc.spec.ts`, `host-url.spec.ts` |
 | V1 | A worker the guest creates (iframe mode) is a realm the library never reaches: Firefox sends its `EventSource` and loads its `FontFace` past the policy | As PD2; worker and strict mode have no such worker (their worker keeps only allowlisted globals) | `verification.spec.ts` "V1 … residual" |
 | V3 | The user's Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens a new tab at the guest's URL (Chromium, Firefox; Playwright's WebKit opens none, a measurement limit) | Platform behaviour of any sandboxed frame; no policy governs a new top-level context. Strict mode's links are inert | `verification.spec.ts` "V3" |

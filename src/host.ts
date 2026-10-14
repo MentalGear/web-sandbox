@@ -102,8 +102,10 @@ export interface SandboxConfig {
 /**
  * Where the element is in its lifecycle (read it from `sandbox.state`):
  *   idle        constructed, or removed from the document: no frame
- *   loading     a frame was created and is waiting for its one load
- *   ready       the port was handed over and 'ready' dispatched
+ *   loading     a frame was created; waiting for the guest to check in (its bootstrap announces its port, S46), or
+ *               without a bootstrap (no allow-scripts) and in strict mode, for the frame's one load
+ *   ready       the guest's port is this environment's and 'ready' dispatched; in iframe mode the guest document
+ *               may still be loading (its calls and execute() wait in the guest until it is parsed)
  *   terminated  torn down by terminate(), a budget (watchdog, workerExecutionTimeout), a frame-integrity check
  *               or a build that failed; stays so until reset(), load() or setConfig() builds a new environment
  * There is deliberately no 'running' state: nothing the guest reports could make it truthful (execute() reports
@@ -165,6 +167,7 @@ const VIEW_LOST_REASON = 'the sandbox view stopped responding';
 const EXECUTION_TIMEOUT_REASON = 'the executed code ran longer than workerExecutionTimeout';
 const CONFIG_REFUSED_REASON = 'the configuration could not be used';
 const BUILD_FAILED_REASON = 'the environment could not be built';
+const SECOND_LOAD_REASON = 'the sandbox frame loaded a second time';
 const SECOND_ANNOUNCEMENT_REASON = 'the guest frame announced itself again (it reloaded or rewrote its document)';
 const LOAD_TIMEOUT_REASON = 'the sandbox did not finish loading';
 
@@ -195,6 +198,14 @@ function errorName(error: unknown): string {
 const workerGlobalsStatement = (global: string) =>
     `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(WORKER_GLOBALS)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)});`;
 
+// The guest frame's window: the wrapper's frames[0], or null. Read by length first: the wrapper is cross-origin to
+// the host, and reading an index a cross-origin window does not have throws a SecurityError.
+function guestWindowOf(iframe: HTMLIFrameElement | null): Window | null {
+    const wrapper = iframe?.contentWindow;
+    if (!wrapper || wrapper.length < 1) return null;
+    return wrapper[0] ?? null;
+}
+
 // A worker's uncaught error as a guest line, prefixed once: Chromium's ErrorEvent message already starts with
 // "Uncaught", Firefox's and WebKit's do not.
 const uncaughtLine = (message: string) => (message.startsWith('Uncaught ') ? message : `Uncaught ${message}`);
@@ -216,11 +227,12 @@ export const VIEW_LIVENESS_TIMEOUT_MS = 5000;
 
 /**
  * How long a build may stay `loading` (broad review 2026-10-14, CB3): the liveness budget, counted in host ticks
- * (watchdog.ts), so a host stall never counts. A frame that has not loaded by then (and, in iframe and worker mode,
- * announced its port) is terminated with 'the sandbox did not finish loading'. Measured: a guest that calls
- * document.open() and never closes the document held WebKit in `loading` indefinitely. The wrapper's load waits for
- * the guest document's own load, subresources included: a guest page that needs longer than this for its images
- * should load them after it loaded.
+ * (watchdog.ts), so a host stall never counts. It bounds the wait for the guest's check-in, the announcement its
+ * bootstrap posts as its first statement (iframe and worker mode, S46), and, where no bootstrap runs (no
+ * allow-scripts) and in strict mode, the wait for the frame's one load. A build still `loading` then is terminated
+ * with 'the sandbox did not finish loading'. Where a bootstrap checks in, the guest's own subresources and scripts
+ * never count (the check-in comes before them): a guest page with slow images, or one that never finishes its
+ * document, is `ready`. Without one, the frame's load waits for the guest's subresources, and they count.
  */
 export const LOAD_TIMEOUT_MS = VIEW_LIVENESS_TIMEOUT_MS;
 
@@ -239,13 +251,13 @@ interface StrictInit {
 export class WebSandbox extends HTMLElement {
     private _iframe: HTMLIFrameElement | null = null;
     private _frameLoaded = false;
-    // The reversed handshake (broad review 2026-10-14, CB1): the port the guest frame announced, kept unstarted until
-    // the build completes; whether this build's guest runs a bootstrap that announces one; and the listener on the
-    // host's window, removed by _teardown. Iframe and worker mode only.
-    private _announcedPort: MessagePort | null = null;
+    // The reversed handshake (broad review 2026-10-14, CB1): whether this build's guest runs a bootstrap that announces
+    // its port; the guest frame's window whose announcement was accepted (S46: the wrapper's load must still hold it);
+    // and the listener on the host's window, removed by _teardown. Iframe and worker mode only.
     private _expectAnnouncement = false;
+    private _guestWindow: Window | null = null;
     private _stopListening: (() => void) | null = null;
-    private _loadDeadline: Watchdog | null = null; // LOAD_TIMEOUT_MS while loading (CB3)
+    private _loadDeadline: Watchdog | null = null; // LOAD_TIMEOUT_MS until the guest checks in, or the frame loads (CB3, S46)
     // A build termination being dispatched from initialize(), and the build inputs it was for (CB5): a 'terminated'
     // listener that builds again from the same inputs gets the same answer, so it is not dispatched again.
     private _buildTermination: { reason: string; inputs: number } | null = null;
@@ -798,8 +810,8 @@ export class WebSandbox extends HTMLElement {
         // One reply channel per port: answers go back where their request came from, and the broker counts the
         // calls it runs per channel (review B7), so the count belongs to this environment.
         const reply = (frame: unknown) => port.postMessage(frame);
-        // Setting onmessage starts the port: frames the guest posted while the frame loaded are delivered now,
-        // after 'ready', as they were when the host handed the port over at this point.
+        // Setting onmessage starts the port: frames the guest posted before its announcement was accepted are
+        // delivered now, after 'ready'.
         port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, null);
         this._flushQueues(port);
     }
@@ -819,7 +831,7 @@ export class WebSandbox extends HTMLElement {
         const host = window;
         let accepted = false;
         const onMessage = (event: MessageEvent) => {
-            const guestWindow = iframe.contentWindow?.frames[0];
+            const guestWindow = guestWindowOf(iframe);
             if (!guestWindow || event.source !== guestWindow) return;
             const data = event.data;
             if (!data || typeof data !== 'object' || data.type !== ANNOUNCEMENT_TYPE) return;
@@ -829,8 +841,10 @@ export class WebSandbox extends HTMLElement {
                 return;
             }
             accepted = true;
-            this._announcedPort = event.ports[0]!;
-            this._finishBuild();
+            // The check-in (S46): the environment is ready now, whether or not the wrapper has loaded (its load waits
+            // for the guest's subresources). The guest frame it came from is the one the wrapper's load must still hold.
+            this._guestWindow = guestWindow;
+            this._finishBuild(event.ports[0]!);
         };
         host.addEventListener('message', onMessage, true);
         this._stopListening = () => host.removeEventListener('message', onMessage, true);
@@ -946,7 +960,7 @@ export class WebSandbox extends HTMLElement {
     // Posts the host's own RPC requests queued while there was no port — the queue never holds answers
     // (those go back on the port their request arrived on). Requests are cloned when the call is made
     // (see callWithTimeout in rpc.ts), so a post failure is not expected here; the per-frame catch is a
-    // backstop so that one bad frame could never drop the frames behind it or — since _onFrameLoad
+    // backstop so that one bad frame could never drop the frames behind it or — since _finishBuild
     // dispatches 'ready' only after setupChannel returns — stop 'ready' from firing.
     private _flushRpcQueue(port: MessagePort) {
         const frames = this._rpcQueue;
@@ -1121,7 +1135,8 @@ export class WebSandbox extends HTMLElement {
         this._broker.rejectAllPending(RESET_CALL_MESSAGE);
         if (this._stopListening) { this._stopListening(); this._stopListening = null; }
         if (this._loadDeadline) { this._loadDeadline.stop(); this._loadDeadline = null; }
-        if (this._announcedPort) { this._announcedPort.close(); this._announcedPort = null; }
+        this._expectAnnouncement = false;
+        this._guestWindow = null;
         if (this._iframe) { this._iframe.onload = null; this._iframe.remove(); this._iframe = null; }
         if (this._port) { this._port.close(); this._port = null; }
         if (this._viewPort) { this._viewPort.close(); this._viewPort = null; }
@@ -1197,7 +1212,8 @@ export class WebSandbox extends HTMLElement {
     }
 
     // `loading` is bounded (CB3): a build that has not completed within LOAD_TIMEOUT_MS of host ticks ends with a
-    // reason. A watchdog that nothing answers: it expires after the whole budget, never counting a host stall.
+    // reason. Completed means the guest checked in (S46), or, without a bootstrap and in strict mode, the frame loaded.
+    // A watchdog that nothing answers: it expires after the whole budget, never counting a host stall.
     private _startLoadDeadline() {
         this._loadDeadline = startWatchdog({
             timeoutMs: LOAD_TIMEOUT_MS,
@@ -1523,8 +1539,9 @@ export class WebSandbox extends HTMLElement {
         });
     }
 
-    // The second half of a build, run on the wrapper's one load: like createIframe(), anything it throws ends the
-    // sandbox with a reason instead of leaving it 'loading' (initialize).
+    // The wrapper's one load: completes a build that waits for it (strict mode, or a guest that runs no bootstrap), and
+    // checks the frame's integrity in every mode. Like createIframe(), anything it throws ends the sandbox with a reason
+    // instead of leaving it 'loading' (initialize).
     private _onFrameLoad() {
         try {
             this._completeBuild();
@@ -1538,34 +1555,42 @@ export class WebSandbox extends HTMLElement {
         // A second load means something navigated or reloaded it: never hand a port
         // (or queued code) to a document we did not write.
         if (this._frameLoaded) {
-            this._terminate('the sandbox frame loaded a second time');
+            this._terminate(SECOND_LOAD_REASON);
             return;
         }
         this._frameLoaded = true;
 
-        const guestWindow = this._iframe?.contentWindow?.frames[0];
+        const guestWindow = guestWindowOf(this._iframe);
+        // The guest checked in already (S46), and the build completed then: the load must hold the frame that
+        // announced. A wrapper navigated before its first load fires one load only, for a document we did not write.
+        if (this._guestWindow) {
+            if (guestWindow !== this._guestWindow) this._terminate(SECOND_LOAD_REASON);
+            return;
+        }
         if (!guestWindow) {
             this._terminate('the guest frame is missing');
             return;
         }
+        // A bootstrap runs: its check-in completes the build, after this load.
+        if (this._expectAnnouncement) return;
 
         if (this._config.mode === 'strict') {
             this._setupStrictChannels(guestWindow);
             this._enterReady();
             return;
         }
-        this._finishBuild();
+        this._finishBuild(null);
     }
 
-    // Iframe and worker mode: the build completes once the wrapper has loaded and, where this build's guest runs a
-    // bootstrap, the guest has announced its port (CB1), in whichever order the two arrive. Called by both; acts
-    // once, when the second of them arrives. Anything it throws ends the sandbox, as in _onFrameLoad.
-    private _finishBuild() {
-        if (!this._frameLoaded || this._state !== 'loading') return;
-        if (this._expectAnnouncement && !this._announcedPort) return;
+    // Iframe and worker mode: the build completes when the guest checks in, its bootstrap's announcement accepted
+    // (CB1, S46), with the port it announced; where this build's guest runs no bootstrap (no allow-scripts, or a policy
+    // that refuses it), on the wrapper's one load, with no port. Anything it throws ends the sandbox, as in _onFrameLoad.
+    private _finishBuild(port: MessagePort | null) {
+        if (this._state !== 'loading') {
+            port?.close();
+            return;
+        }
         try {
-            const port = this._announcedPort;
-            this._announcedPort = null;
             this.setupChannel(port);
             this._enterReady();
         } catch (error) {

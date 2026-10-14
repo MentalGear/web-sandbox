@@ -92,7 +92,7 @@ and limit. The sections below walk through each feature.
 ## Lifecycle
 
 `sandbox.state` tells where the sandbox is: `idle` (not in the document), `loading` (a frame is
-being built), `ready` (the guest can be reached) or `terminated`. There is no "running" state: nothing the
+being built), `ready` (the guest's startup script checked in; its document may still be loading) or `terminated`. There is no "running" state: nothing the
 guest reports could make it truthful. `workerExecutionTimeout` checks that the event loop is free at each
 `execute()`'s deadline ([API](docs/API.md#executecode)).
 A config or build the element cannot use ends in `terminated` with a reason; `setConfig()` never throws.
@@ -115,8 +115,10 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 *   **Removing the element** tears the sandbox down the same way, without a `terminated` event, and
     leaves it `idle`. Inserting it again builds a fresh one. Moved into another window's document, it builds
     nothing there (one warning) until it is back.
-*   **`loading` is bounded:** a build that has not loaded within `LOAD_TIMEOUT_MS` (5 s of host time, the guest
-    document's own subresources included) ends with `the sandbox did not finish loading`. A guest that reloads or
+*   **`ready` is the guest's check-in**, not its load: slow images never delay it. Calls and `execute()` sent while
+    the guest document is still being parsed wait in the guest until it is, in order, so methods its scripts expose
+    are there ([API](docs/API.md#ready-and-the-startup-gate)). A build whose guest has not checked in within
+    `LOAD_TIMEOUT_MS` (5 s of host time) ends with `the sandbox did not finish loading`. A guest that reloads or
     rewrites its own document ends its environment (`the guest frame announced itself again …`).
 *   **Events** are dispatched on the element. `sandbox-log` (guest `console` output and errors) bubbles,
     so a listener on `window` hears every sandbox on the page and `event.target` says which one. Its detail
@@ -529,7 +531,6 @@ same list as the [backlog's S44](docs/BACKLOG.md). Strict mode closes all of the
     them first), and in Chromium so does a navigation the wrapper refuses.
 *   **A silent reload**: Firefox replaces a guest's `<meta refresh>` with a document that announces nothing; the
     watchdog ends that environment where it is on.
-*   **The load deadline**: a guest page whose load, subresources included, takes over 5 s terminates.
 *   **Cookies**: Firefox and WebKit attach the host site's cookies to a guest request to an allowed origin that is
     same-site with the host page.
 *   **Platform limits**: the pre-policy window of a `<meta>` policy (S8); the host origin in `ancestorOrigins` and

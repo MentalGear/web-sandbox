@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./in-sandbox-script";
-import { createBroker } from "./rpc";
+import { createBroker, MAX_INBOUND_IN_FLIGHT } from "./rpc";
 import { workerBootstrap } from "./worker-bootstrap";
 
 // The bootstrap captures MessagePort.prototype.postMessage and its onmessage setter, and the MessageEvent
@@ -670,6 +670,219 @@ describe("inSandboxScript", () => {
             (globalThis as any).addEventListener = () => {};
             expect(() => inSandboxScript(false, 'worker', createMockConsole(), createBroker)).not.toThrow();
             for (const name of NAMES) expect(name in globalThis).toBe(false);
+        });
+    });
+
+    // The startup gate (backlog S46, iframe mode). `ready` comes when the bootstrap checks in, so the host's calls and
+    // execute() can arrive while the guest document is still being parsed: they wait in one queue until it is parsed.
+    describe("the startup gate (backlog S46): calls and execute() wait until the guest document is parsed", () => {
+        let readyState = 'loading';
+        let original: PropertyDescriptor | undefined;
+        afterEach(() => {
+            if (original) Object.defineProperty(Document.prototype, 'readyState', original);
+            delete (document as any).readyState;
+            delete (globalThis as any).__order;
+        });
+
+        // Runs the bootstrap against a document whose readyState the test sets, and records the DOMContentLoaded
+        // listeners it registers through EventTarget.prototype.addEventListener (fired by the test as the platform would).
+        const start = (mode: 'iframe' | 'worker' = 'iframe', scriptUnsafe = true) => {
+            readyState = 'loading';
+            original = Object.getOwnPropertyDescriptor(Document.prototype, 'readyState');
+            Object.defineProperty(Document.prototype, 'readyState', { configurable: true, get: () => readyState });
+            const add = vi.spyOn(EventTarget.prototype, 'addEventListener');
+            const listeners: Record<string, Function> = {};
+            (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
+            const port = createMockPort();
+            FakeMessageChannel.next = port;
+            inSandboxScript(scriptUnsafe, mode, createMockConsole(), (send) => createBroker(send, { timeoutMs: 0 }));
+            if (mode === 'worker') listeners['message']?.(initPort(port));
+            port.posted.mockClear();
+            const parsedListeners = () => {
+                const found = new Set<Function>();
+                for (const [type, listener] of add.mock.calls) if (type === 'DOMContentLoaded') found.add(listener as Function);
+                return [...found];
+            };
+            const fireParsed = (isTrusted = true) => { for (const listener of parsedListeners()) listener.call(window, { type: 'DOMContentLoaded', isTrusted }); };
+            const posted = () => port.posted.mock.calls.map(call => call[0] as any);
+            const answers = () => posted().filter(frame => frame.type === 'RPC_RES');
+            (globalThis as any).__order = [];
+            (globalThis as any).bridge.expose('note', (tag: string) => { (globalThis as any).__order.push(tag); return [...(globalThis as any).__order]; });
+            return { port, fireParsed, parsedListeners, posted, answers };
+        };
+        const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+        const order = () => (globalThis as any).__order;
+        const execute = (tag: string) => ({ type: 'EXECUTE', code: `__order.push(${JSON.stringify(tag)})` });
+        const request = (id: number, tag: string) => ({ type: 'RPC_REQ', id, method: 'note', args: [tag] });
+
+        it("while the document is loading, EXECUTE and RPC_REQ wait in one queue; PING is answered and the guest's own call settles at once; a trusted DOMContentLoaded runs the queue in arrival order, each frame as if it had just arrived", async () => {
+            const { port, fireParsed, posted, answers } = start();
+            const own = (globalThis as any).bridge.call('hostMethod'); // the guest's own call: its answer never waits
+            const ownId = posted().at(-1).id;
+            port.posted.mockClear();
+            port.deliver(execute('exec1'));
+            port.deliver(request(1, 'call1'));
+            port.deliver(execute('exec2'));
+            port.deliver(request(2, 'call2'));
+            port.deliver({ type: 'PING', n: 4 });
+            port.deliver({ type: 'RPC_RES', id: ownId, ok: true, value: 'host answer' });
+            await expect(own).resolves.toBe('host answer');
+            await tick();
+            expect(order()).toEqual([]);
+            expect(posted()).toEqual([{ type: 'PONG', n: 4 }]);
+
+            readyState = 'interactive';
+            fireParsed();
+            await tick();
+            expect(order()).toEqual(['exec1', 'call1', 'exec2', 'call2']); // a call's method runs before the next frame, as on arrival
+            expect(answers().map(frame => [frame.id, frame.value])).toEqual([[1, ['exec1', 'call1']], [2, ['exec1', 'call1', 'exec2', 'call2']]]);
+
+            port.deliver(request(3, 'call3')); // parsed: handled on arrival (positive control)
+            await tick();
+            expect(order().at(-1)).toBe('call3');
+        });
+
+        it("'interactive' alone does not open it (deferred and module scripts run before DOMContentLoaded); 'complete' does, checked when the next frame arrives, so a listener document.open() erased is not needed", async () => {
+            const { port, posted } = start();
+            port.deliver(execute('held'));
+            readyState = 'interactive';
+            port.deliver({ type: 'PING', n: 1 });
+            await tick();
+            expect(order()).toEqual([]);
+            readyState = 'complete'; // no DOMContentLoaded fired here: the arrival of any frame drains the queue first
+            port.deliver({ type: 'PING', n: 2 });
+            await tick();
+            expect(order()).toEqual(['held']);
+            expect(posted()).toEqual([{ type: 'PONG', n: 1 }, { type: 'PONG', n: 2 }]);
+        });
+
+        it("each held frame registers the DOMContentLoaded listener again (a no-op while it is registered): after document.open() erased it, the reopened document's own DOMContentLoaded still drains the queue", async () => {
+            const { port, fireParsed, parsedListeners } = start();
+            expect(parsedListeners()).toHaveLength(1); // registered while the bootstrap runs, before guest code
+            port.deliver(execute('first'));
+            port.deliver(execute('second'));
+            expect(parsedListeners()).toHaveLength(1); // the same function each time
+            readyState = 'interactive';
+            fireParsed();
+            await tick();
+            expect(order()).toEqual(['first', 'second']);
+        });
+
+        it("reads readyState through the getter captured before guest code: a replaced Document.prototype.readyState, an own document.readyState and a synthetic DOMContentLoaded leave it closed; the platform's own opens it (positive control)", async () => {
+            const { port, fireParsed } = start();
+            Object.defineProperty(Document.prototype, 'readyState', { configurable: true, get: () => 'complete' }); // guest code
+            Object.defineProperty(document, 'readyState', { configurable: true, value: 'complete' });
+            port.deliver(execute('held'));
+            fireParsed(false); // dispatched by guest code: isTrusted is false
+            port.deliver({ type: 'PING', n: 1 });
+            await tick();
+            expect(order()).toEqual([]);
+            readyState = 'interactive'; // what the captured getter reads
+            fireParsed();
+            await tick();
+            expect(order()).toEqual(['held']);
+        });
+
+        it("closes again while the guest has reopened its document (document.open(): readyState 'loading'), and opens when it is parsed", async () => {
+            const { port, fireParsed } = start();
+            readyState = 'interactive';
+            fireParsed();
+            port.deliver(execute('before'));
+            readyState = 'loading';
+            port.deliver(execute('reopened'));
+            await tick();
+            expect(order()).toEqual(['before']);
+            readyState = 'complete';
+            port.deliver({ type: 'PING', n: 1 });
+            await tick();
+            expect(order()).toEqual(['before', 'reopened']);
+        });
+
+        it("a held frame that runs guest code which reopens the document stops the drain there; the rest waits, in order", async () => {
+            const { port, fireParsed } = start();
+            (globalThis as any).__reopen = () => { readyState = 'loading'; };
+            try {
+                port.deliver(execute('one'));
+                port.deliver({ type: 'EXECUTE', code: '__order.push("reopens"); __reopen()' });
+                port.deliver(execute('three'));
+                readyState = 'interactive';
+                fireParsed();
+                await tick();
+                expect(order()).toEqual(['one', 'reopens']);
+                readyState = 'interactive';
+                fireParsed();
+                await tick();
+                expect(order()).toEqual(['one', 'reopens', 'three']);
+            } finally {
+                delete (globalThis as any).__reopen;
+            }
+        });
+
+        it("a DOMContentLoaded listener run again while the queue drains (guest code calling it) never runs a frame twice or out of order", async () => {
+            const { port, fireParsed } = start();
+            (globalThis as any).__fire = () => fireParsed();
+            try {
+                port.deliver({ type: 'EXECUTE', code: '__order.push("one"); __fire()' });
+                port.deliver(request(1, 'two'));
+                port.deliver(execute('three'));
+                readyState = 'interactive';
+                fireParsed();
+                await tick();
+                expect(order()).toEqual(['one', 'two', 'three']);
+            } finally {
+                delete (globalThis as any).__fire;
+            }
+        });
+
+        it(`holds at most MAX_INBOUND_IN_FLIGHT (${MAX_INBOUND_IN_FLIGHT}) frames: past that a call is answered BUSY at once and an execute() is dropped with one log line each; room again once drained`, async () => {
+            const { port, fireParsed, posted, answers } = start();
+            for (let i = 0; i < MAX_INBOUND_IN_FLIGHT - 1; i++) port.deliver(request(i + 1, `call${i + 1}`));
+            port.deliver(execute('last held'));
+            port.deliver(request(1000, 'over'));
+            port.deliver(request(1001, 'over'));
+            port.deliver(execute('over'));
+            port.deliver({ type: 'RPC_REQ', method: 'note', args: ['no id'] }); // malformed: dropped, as the broker drops it
+            const busy = { ok: false, error: `too many calls waiting for the guest document to be parsed (${MAX_INBOUND_IN_FLIGHT})`, code: 'BUSY' };
+            expect(posted()).toEqual([
+                { type: 'RPC_RES', id: 1000, ...busy },
+                { type: 'RPC_RES', id: 1001, ...busy },
+                { type: 'LOG', level: 'error', args: [`[Sandbox] execute() was dropped: ${MAX_INBOUND_IN_FLIGHT} calls and executions are already waiting for the guest document to be parsed.`] },
+            ]);
+            readyState = 'interactive';
+            fireParsed();
+            await tick();
+            expect(order()).toHaveLength(MAX_INBOUND_IN_FLIGHT);
+            expect(order().at(-1)).toBe('last held');
+            expect(answers().filter(frame => frame.ok)).toHaveLength(MAX_INBOUND_IN_FLIGHT - 1);
+            readyState = 'loading';
+            port.deliver(execute('room again'));
+            readyState = 'complete';
+            port.deliver({ type: 'PING', n: 1 });
+            await tick();
+            expect(order().at(-1)).toBe('room again');
+        });
+
+        it("the bootstrap's bound is MAX_INBOUND_IN_FLIGHT (declared inside the stringified function)", () => {
+            expect(inSandboxScript.toString()).toContain(`MAX_HELD = ${MAX_INBOUND_IN_FLIGHT}`);
+        });
+
+        it("a held execute() is still refused when scriptUnsafe is false, when it runs", async () => {
+            const { port, fireParsed, posted } = start('iframe', false);
+            port.deliver(execute('never'));
+            expect(posted()).toEqual([]);
+            readyState = 'interactive';
+            fireParsed();
+            await tick();
+            expect(order()).toEqual([]);
+            expect(posted()).toEqual([{ type: 'LOG', level: 'error', args: ['Execution blocked: scriptUnsafe is false'] }]);
+        });
+
+        it("worker mode has no gate: the worker has no document, and guest code arrives only as EXECUTE frames", async () => {
+            const { port } = start('worker');
+            port.deliver(execute('at once'));
+            port.deliver(request(1, 'call'));
+            await tick();
+            expect(order()).toEqual(['at once', 'call']);
         });
     });
 });

@@ -11,7 +11,8 @@ export const ANNOUNCEMENT_TYPE = 'SANDBOX_PORT';
 /**
  * This function is stringified and injected into the sandbox (iframe or worker).
  * It makes (iframe mode) or receives (worker mode) the guest's end of the channel, relays console output, keeps the
- * EXECUTE escape hatch, and installs the β RPC bridge.
+ * EXECUTE escape hatch, and installs the β RPC bridge; in iframe mode the host's calls and EXECUTE frames wait until
+ * the guest document is parsed (the startup gate, below).
  *
  * The RPC broker is injected the same way this function is — createBroker is stringified and
  * passed in — so the guest runs the exact same dispatcher as the host (see rpc.ts). It is
@@ -291,12 +292,125 @@ export function inSandboxScript(
         };
     }
 
+    // One frame from the host that runs guest code: an EXECUTE, or an RPC_REQ (the broker calls the exposed method).
+    const run = (data: any) => {
+        if (data?.type === 'EXECUTE') {
+            // Compiled with the Function captured above and called through the captured apply: what runs is the
+            // embedder's code, now. Nothing is reported back: workerExecutionTimeout is the host's ping at the
+            // deadline, answered above only by a free event loop (host.ts, _armExecutionBudget). No global is
+            // looked up on this path (broad review 2026-10-14, CB2): the code must already be a string (the host
+            // sends one; execute() refuses anything else), and nothing converts it, so guest code that replaced
+            // String, Error or any other global cannot change what runs.
+            if (!scriptUnsafe) {
+                post({ type: 'LOG', level: 'error', args: ['Execution blocked: scriptUnsafe is false'] });
+                return;
+            }
+            const code = data.code;
+            if (typeof code !== 'string') return;
+            try {
+                apply(construct(FunctionConstructor, [code]) as () => void, undefined, []);
+            } catch (e: any) {
+                try {
+                    post({ type: 'LOG', level: 'error', args: [e.message] });
+                } catch {
+                    // a thrown value whose message cannot be read or cloned: no line
+                }
+            }
+            return;
+        }
+        // RPC frames (RPC_REQ / RPC_RES) and anything else go to the broker, which validates every
+        // frame defensively and never throws back out at the message handler. Its handleMessage was taken when
+        // the broker was made: guest code can replace bridge.handleMessage, never what this calls.
+        if (handleBridgeMessage) handleBridgeMessage(data);
+    };
+
+    // The startup gate (backlog S46, iframe mode; ADR-003 amendment). The host is `ready` as soon as this bootstrap
+    // has announced its port, before the parser has reached the guest's own scripts, so a call or an execute() can
+    // arrive while the methods those scripts expose do not exist yet. Such frames (RPC_REQ, EXECUTE) wait here, in
+    // one queue in arrival order, until the guest document is parsed: a trusted DOMContentLoaded has fired (deferred
+    // and module scripts have run by then), or readyState reads 'complete'; and readyState does not read 'loading'
+    // (a guest that reopened its document with document.open() is parsing again). PING and RPC_RES never wait: the
+    // watchdog measures the event loop from `ready` on, and the guest's own calls get their answers. A guest that
+    // never finishes parsing (document.open() without close()) stays ready and alive; the calls it is sent time out.
+    // The queue is checked on every frame that arrives, not only at DOMContentLoaded (a capture listener on the
+    // document), because document.open() erases the document's listeners; each frame that waits registers it again
+    // (a no-op while it is registered), so the reopened document's own DOMContentLoaded drains the queue too. Held
+    // frames run one per microtask, so a call's method runs before the next frame, as it would have on arrival. At
+    // most MAX_HELD wait: past that a call is answered BUSY at once and an execute() is dropped with a log line.
+    // Every primitive is captured here, before guest code (review B2): a guest that replaces
+    // Document.prototype.readyState, shadows document.readyState or dispatches its own DOMContentLoaded cannot open
+    // the gate early. A guest can only keep it closed for itself (document.open(), or stopping the event in a
+    // listener of its window): its own calls then wait for 'complete' or time out. Worker and strict mode have no
+    // gate: their guest code runs only in a worker, which has no document.
+    // Mirrors the exported MAX_INBOUND_IN_FLIGHT (rpc.ts; a test keeps them equal): declared here to survive stringification.
+    const MAX_HELD = 256;
+    const gatedDocument = mode === 'iframe' ? document : null;
+    let readyStateOf: (() => unknown) | undefined;
+    for (let proto = gatedDocument ? Object.getPrototypeOf(gatedDocument) : null; proto && !readyStateOf; proto = Object.getPrototypeOf(proto)) {
+        readyStateOf = Object.getOwnPropertyDescriptor(proto, 'readyState')?.get; // on Document.prototype in every engine
+    }
+    const listen = EventTarget.prototype.addEventListener;
+    const queueMicrotaskFn = g.queueMicrotask;
+    const held: unknown[] = [];
+    let nextHeld = 0;     // index of the next frame to run; held.length - nextHeld frames wait
+    let parsed = false;   // a trusted DOMContentLoaded has fired
+    let draining = false; // a drain is running, one frame per microtask
+    const gateOpen = () => {
+        if (!gatedDocument || !readyStateOf) return true;
+        const state = apply(readyStateOf, gatedDocument, []);
+        return state === 'complete' || (parsed && state !== 'loading');
+    };
+    const drainStep = () => {
+        if (nextHeld >= held.length || !gateOpen()) {
+            if (nextHeld >= held.length) {
+                held.length = 0;
+                nextHeld = 0;
+            }
+            draining = false;
+            return;
+        }
+        const frame = held[nextHeld];
+        defineOwn(held, nextHeld, { value: undefined, writable: true, enumerable: true, configurable: true });
+        nextHeld++;
+        try {
+            run(frame);
+        } finally {
+            apply(queueMicrotaskFn, g, [drainStep]);
+        }
+    };
+    const drain = () => {
+        if (draining || nextHeld >= held.length || !gateOpen()) return;
+        draining = true;
+        drainStep();
+    };
+    const onParsed = (event: Event) => {
+        if (event.isTrusted !== true) return; // isTrusted is an own, unforgeable property
+        parsed = true;
+        drain();
+    };
+    const hold = (data: any) => {
+        if (held.length - nextHeld < MAX_HELD) {
+            append(held, data);
+            apply(listen, gatedDocument, ['DOMContentLoaded', onParsed, true]);
+            return;
+        }
+        if (data.type === 'EXECUTE') {
+            post({ type: 'LOG', level: 'error', args: [`[Sandbox] execute() was dropped: ${MAX_HELD} calls and executions are already waiting for the guest document to be parsed.`] });
+            return;
+        }
+        const id = data.id;
+        if (typeof id !== 'string' && typeof id !== 'number') return; // malformed: dropped, as the broker drops it
+        post({ type: 'RPC_RES', id, ok: false, error: `too many calls waiting for the guest document to be parsed (${MAX_HELD})`, code: 'BUSY' });
+    };
+    if (gatedDocument) apply(listen, gatedDocument, ['DOMContentLoaded', onParsed, true]);
+
     const attach = (handedPort: MessagePort) => {
         if (port) return;
         port = handedPort;
 
         apply(setOnMessage, port, [(ev: MessageEvent) => {
             const data = apply(dataOf, ev, []);
+            drain(); // frames that waited go first, once the document is parsed
             // The host's liveness watchdog (backlog S6, src/lib/watchdog.ts). Answered here, before the
             // broker, so it is not a callable method: it can never collide with a name the guest exposes,
             // and guest code cannot unexpose or replace it. Answering at all is the signal — a blocked
@@ -305,34 +419,12 @@ export function inSandboxScript(
                 if (typeof data.n === 'number') post({ type: 'PONG', n: data.n });
                 return;
             }
-            if (data?.type === 'EXECUTE') {
-                // Compiled with the Function captured above and called through the captured apply: what runs is the
-                // embedder's code, now. Nothing is reported back: workerExecutionTimeout is the host's ping at the
-                // deadline, answered above only by a free event loop (host.ts, _armExecutionBudget). No global is
-                // looked up on this path (broad review 2026-10-14, CB2): the code must already be a string (the host
-                // sends one; execute() refuses anything else), and nothing converts it, so guest code that replaced
-                // String, Error or any other global cannot change what runs.
-                if (!scriptUnsafe) {
-                    post({ type: 'LOG', level: 'error', args: ['Execution blocked: scriptUnsafe is false'] });
-                    return;
-                }
-                const code = data.code;
-                if (typeof code !== 'string') return;
-                try {
-                    apply(construct(FunctionConstructor, [code]) as () => void, undefined, []);
-                } catch (e: any) {
-                    try {
-                        post({ type: 'LOG', level: 'error', args: [e.message] });
-                    } catch {
-                        // a thrown value whose message cannot be read or cloned: no line
-                    }
-                }
+            const runsGuestCode = data?.type === 'EXECUTE' || data?.type === 'RPC_REQ';
+            if (runsGuestCode && (nextHeld < held.length || !gateOpen())) {
+                hold(data);
                 return;
             }
-            // RPC frames (RPC_REQ / RPC_RES) and anything else go to the broker, which validates every
-            // frame defensively and never throws back out at the message handler. Its handleMessage was taken when
-            // the broker was made: guest code can replace bridge.handleMessage, never what this calls.
-            if (handleBridgeMessage) handleBridgeMessage(data);
+            run(data);
         }]);
 
         // Flush anything the guest queued before the port existed, then announce readiness. A frame that
