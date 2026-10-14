@@ -2,8 +2,9 @@
 
 **Date**: 2026-10-14 · **Code reviewed**: `main` at `ca2110c` · **Result**: 21 candidates — 19 fixed (16 in the review,
 C1, C4 and C5 in the [follow-up](#follow-up-2026-10-14-by-construction-audit)), 1 held (now asserted), 1 documented by
-design, no residual left open; the follow-up found 2 more gaps, both fixed · **Backlog**: [S19–S26](../BACKLOG.md#s19--a-configured-value-or-key-could-add-csp-directives---done)
-· **Next**: [focused review 2026-10-14](FOCUSED-REVIEW-2026-10-14.md) (guest writes and the follow-up's fixes; S27–S31) · **Then**: [broad review 2026-10-14](BROAD-REVIEW-2026-10-14.md) (S32–S37)
+design; none of its candidates is left as a residual (the default-mode residuals stated before it remain, now in
+[one list](../../README.md#default-mode-residuals)); the follow-up found 2 more gaps, both fixed · **Backlog**: [S19–S26](../BACKLOG.md#s19--a-configured-value-or-key-could-add-csp-directives---done)
+· **Next**: [focused review 2026-10-14](FOCUSED-REVIEW-2026-10-14.md) (guest writes and the follow-up's fixes; S27–S31) · **Then**: [broad review 2026-10-14](BROAD-REVIEW-2026-10-14.md) (S32–S37), [independent verification](VERIFICATION-2026-10-14.md) (S43–S45)
 
 ## Scope and method
 
@@ -339,7 +340,10 @@ Commands: `bun run typecheck`; `bunx vitest run`; the full Playwright suite per 
 | The same specs once, under CPU load (a busy loop per core) | 73 passed, 1 failed ² | 74 passed | 74 passed |
 
 Unit (`bunx vitest run`): 1165 passed in 28 files (998 in 25 before). `bun run typecheck`, `bun run build` and
-`scripts/smoke-package.sh` pass. The skipped tests are per-engine measurements that do not apply to that engine.
+`scripts/smoke-package.sh` pass. The skipped tests (8, 9 and 10 per engine) are the strict-mode design probes of research 15 (8 per engine), which run
+only under their own config (`bun run test:probes`, in CI since the [independent verification](VERIFICATION-2026-10-14.md)),
+and 3 per-engine measurements that do not apply to that engine (research 11 on Firefox and WebKit, research 01's
+sanity check on WebKit).
 
 ¹ A first full WebKit run had one failure in `strict-render-flood.spec.ts` ("Execution context was destroyed" on the
 host page during the 3 s maximal-render flood). **Root cause: the test server, not the library.** The e2e server was
@@ -352,7 +356,8 @@ run: 21 of 21 passed, no host navigation. The view-liveness check was examined a
 falsely: it counts host ticks, so a render stall on a shared thread is never charged (12 s floods under load, 16 of 16
 still `ready`).
 ² `strict.spec.ts` "a script corpus rendered into the view": under load the harness read the view as `no-context`.
-**Root cause: the test helper.** Chromium kept the wrapper out of process every time; what varied was Playwright
+**Root cause: the test helper.** Chromium kept the wrapper out of process every time in these runs (the broad review's
+runs later measured the wrapper and the view in the host page's process, ST2; `strict-view.ts` reads either); what varied was Playwright
 linking that frame, which in 6 of 100 runs under load it never did, and the helper then fell back to an in-process
 read that cannot see the view. Fix: `test/e2e/strict-view.ts` reads every Chromium frame directly over CDP
 (`Page.getFrameTree`, `Target.getTargets` by `parentFrameId`, non-flattened `Target.attachToTarget`), independent of

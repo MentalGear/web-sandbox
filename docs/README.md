@@ -47,6 +47,10 @@
   the guest announces its own port (no listener in the guest realm carries one), bounded loading, no `data:` workers,
   guest-realm hardening against platform gaps (keepalive, history, `window.name`), residuals measured per engine, and
   paste-ready upstream reports for WebKit and Firefox.
+- [**security/VERIFICATION-2026-10-14.md**](security/VERIFICATION-2026-10-14.md) — an independent verification of the three
+  reviews by five verifiers (mutations, black box, claims and CI, decisions): a guest worker keeps only allowlisted
+  globals (Firefox let a worker's `EventSource` and `FontFace` pass the policy), the default-mode residuals in one list,
+  test gaps closed, the strict-mode design probes in CI.
 
 - [research/](research/README.md) — fourteen documented attack vectors with reproductions, design probes
   (blob delivery, strict mode), plus the CSP and virtual-files architecture analyses.

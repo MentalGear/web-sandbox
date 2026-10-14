@@ -13,6 +13,7 @@ import { KNOWN_DIRECTIVES } from '@src/lib/csp/policy-grammar';
 import { META_IGNORED_DIRECTIVES } from '@src/lib/csp/drop-meta-ignored';
 import { STRICT_FIXED, STRICT_PASSED_THROUGH } from '@src/lib/csp/strict-policy';
 import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_TARGET_MAX_LENGTH } from '@src/lib/in-sandbox-view';
+import { WORKER_GLOBALS } from '@src/lib/worker-globals';
 
 /**
  * docs/API.md is the consumer's reference (backlog D3): this test fails when the public surface and the
@@ -110,8 +111,10 @@ describe('docs/API.md lists the public surface', () => {
         const fetchDefaults = toFetchPolicy({ allow: [] }, () => {})!;
         const fetchBounds = toFetchPolicy({ allow: [], maxBytes: 1e15, timeoutMs: 1e15, maxConcurrent: 1e15 }, () => {})!;
         const rpcDefault = Number(read('src/lib/rpc.ts').match(/const DEFAULT_TIMEOUT_MS = (\d+);/)![1]);
+        const logBuffer = Number(read('src/lib/in-sandbox-script.ts').match(/const LOG_BUFFER_LIMIT = (\d+);/)![1]);
         const expected: [string, number][] = [
             ['Default call timeout', rpcDefault],
+            ['Guest log lines kept until the guest is connected', logBuffer],
             ['Strict: characters of a render or event target id', VIEW_TARGET_MAX_LENGTH],
             ['Strict: elements in the view', VIEW_MAX_ELEMENTS],
             ['Strict: nesting depth below the view', VIEW_MAX_DEPTH],
@@ -242,6 +245,16 @@ describe('docs/API.md lists the public surface', () => {
         const globals = section('## Guest globals', true);
         expect(sorted(rowKeys(globals))).toEqual(sorted(installed));
         for (const name of removed) expect(globals, name).toContain(name);
+        // the worker's allowlist: where it lives, and the four listed globals that can make a request
+        expect(globals).toContain('src/lib/worker-globals.ts');
+        for (const name of ['fetch', 'XMLHttpRequest', 'WebSocket', 'importScripts']) {
+            expect(WORKER_GLOBALS, name).toContain(name);
+            expect(globals, name).toContain(`\`${name}\``);
+        }
+        for (const name of ['EventSource', 'FontFace', 'WebTransport', 'Worker']) {
+            expect(WORKER_GLOBALS, name).not.toContain(name);
+            expect(globals, name).toContain(`\`${name}\``);
+        }
     });
 
     it('every member of bridge, sandboxFiles and sandboxView', () => {

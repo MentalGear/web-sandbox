@@ -1,6 +1,6 @@
 # ADR-005: Strict mode — guest logic in a worker, a view that runs no guest script
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view); [independent verification](#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist))
 
 ## Why this ADR exists
 
@@ -60,15 +60,17 @@ text stays constant) and hands the worker the logic and render ports.
   `meta`, `base`, `noscript`, nested `template`, and `link` unless it is a stylesheet or icon naming a file the
   view minted. So no frame exists below the view at all, and a copy of the bootstrap can never run (a copy that
   ran a second time in the view would also return at once).
-- **G2 — guest logic is confined to one worker.** Before any guest code the worker prelude deletes `Worker`
-  and `SharedWorker` (a nested blob worker would be admitted by `worker-src blob:`, P3), `WebAssembly` unless
-  `scriptUnsafe` (WebKit compiles it without `'unsafe-eval'`, P3) and `URL.createObjectURL` (A8 below); a
-  worker never has `RTCPeerConnection` or a document. Its location is its own `blob:null/…` URL.
+- **G2 — guest logic is confined to one worker.** Before any guest code the worker keeps only allowlisted globals
+  (amendment below), so it has no `Worker` or `SharedWorker` (a nested blob worker would be admitted by
+  `worker-src blob:`, P3); the prelude deletes `WebAssembly` unless `scriptUnsafe` (WebKit compiles it without
+  `'unsafe-eval'`, P3) and `URL.createObjectURL` (A8 below); a worker never has `RTCPeerConnection` or a document.
+  Its location is its own `blob:null/…` URL.
 - **G3 — the host can always stop the guest.** The watchdog (`watchdogTimeout`) and `workerExecutionTimeout`
   watch the worker, which never shares the host's thread: the S6 bound holds on every engine
   ([ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)).
 - **G4 — egress is the policy, and nothing navigates.** The worker inherits the view policy exactly
-  (`connect-src` governs it); the view's loads are governed by `img-src`, `style-src`, `font-src`, `media-src`.
+  (`connect-src` governs it), and requests only through the four globals of its allowlist that the policy governs on
+  every engine (amendment below); the view's loads are governed by `img-src`, `style-src`, `font-src`, `media-src`.
   No WebRTC is reachable. The view cancels the default of every click on or inside a link (HTML and SVG `a`,
   `area`, anything with an `href`, including fragment links, which resolve against the inherited `about:blank`
   base and so are navigations) and of every submit; `form-action 'none'` and the wrapper's `frame-src 'none'`
@@ -386,3 +388,37 @@ URLs and `data:`, ST2 fan-out with host lag and the budgets, ST3, ST4); `src/lib
 `test/unit/strict.test.ts`. Existing specs that relied on what is gone now probe the same guarantee another way:
 the policy's `script-src-attr` with a handler set from outside (`review-policy.spec.ts`, A1), C4's second
 directive with a refused audio load, F1's positive control with an HTML image, and the files specs with PNG.
+
+## Amendment (2026-10-14): independent verification, the worker's globals are an allowlist
+
+**When**: the independent verification of 2026-10-14 ([report](security/VERIFICATION-2026-10-14.md), V1, V2). **Why**: G4
+said egress is the policy, and it held for every network API the probes had tried; it did not for one they had not.
+In Firefox (146), `new EventSource(url)` from the strict worker reached an origin `connect-src` blocks, and
+`new FontFace(name, 'url(…)')` one `font-src` blocks, with no violation; `fetch`, `XMLHttpRequest`, `WebSocket` and
+`importScripts` from the same worker were refused, and so was the document's EventSource (re-measured on a plain page
+with a header policy: the same; an upstream bug). Worker mode's worker the same. The prelude was a denylist (`Worker`,
+`SharedWorker`, `WebAssembly`), so one engine's gap in one API was a gap in the sandbox.
+
+**Decision (G4 amended)**: the worker keeps only an allowlist of globals. Its first statement, in strict mode and in
+worker mode (`keepOnlyWorkerGlobals`, `src/lib/worker-globals.ts`), deletes every name off `WORKER_GLOBALS` from the
+global object and from its scope prototypes (where the engines keep `fetch`, `fonts`, `caches`, `importScripts`, …),
+and every member off `WORKER_NAVIGATOR_MEMBERS` from the navigator's prototype, before the library's scripts and any
+guest code. Four listed globals can make a request — `fetch`, `XMLHttpRequest`, `WebSocket` (`connect-src`) and
+`importScripts` (`script-src`) — each measured as governed on all three engines; the rest of the list makes none (the
+language, timers, events, encoding, streams, crypto, blobs and URLs, IndexedDB, OffscreenCanvas, WebCodecs). So G4
+reads: **the worker requests only through APIs the policy governs on every engine, and any other platform API,
+present or future, is absent.** A listed name added later must be measured the same way first. A name off the list
+that cannot be deleted stops the worker before the channel exists (fails closed); WebIDL constants, primitives, are
+left. Worker mode thereby loses nested workers, as strict mode had: a nested worker is a realm the prelude never
+reaches.
+
+**Residual**: in iframe mode the guest can still create a worker of its own, and in Firefox its EventSource and
+FontFace pass (the S13 class: a realm of its own). Strict mode and worker mode have none.
+
+**V2, the entry's first log lines**: the comms script installed its console relay when the logic port was attached,
+which in strict mode is after the entry's top level ran, so those lines were lost. The relay is now installed while
+the bootstrap runs and buffers up to 1000 lines (in order with bridge frames) until the port exists.
+
+Tests: `test/e2e/verification.spec.ts` ("V1": every worker global on the list, every network API of every engine
+aimed at a blocked listener, the four kept ones reaching an allowed one; "V2"), `src/lib/worker-globals.test.ts`,
+`src/lib/in-sandbox-script.test.ts`.

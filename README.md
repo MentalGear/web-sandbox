@@ -8,10 +8,11 @@ Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the 
 
 **Key Features:**
 *   **Local-First:** No server round-trips for code execution.
-*   **Secure:** The guest runs in an opaque origin: no storage or Service Workers shared with the host, no access to
-    the host page's DOM or scripts. It can still post messages to the host window, as any frame can (check
-    `event.source` in your `message` listeners), and default mode has the residuals listed under
-    [Security Mitigations](#security-mitigations); strict mode closes most of them.
+*   **Secure:** The guest runs in an opaque origin: no access to the host origin's storage, Service Workers, DOM or
+    scripts (Firefox and WebKit still attach the host site's cookies to a guest request to an allowed origin that is
+    same-site with the host page). It can still post messages to the host window, as any frame can (check
+    `event.source` in your `message` listeners), and default mode has the [residuals listed
+    below](#default-mode-residuals); strict mode closes most of them.
 *   **Unified:** Use the same "Preset" definitions for both manual testing (Playground) and automated regression testing.
 
 ## Getting Started
@@ -35,6 +36,7 @@ Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the 
     bun run test        # everything
     bun run test:unit   # vitest only
     bun run test:e2e    # playwright only; add --project=chromium for one browser
+    bun run test:probes # the strict-mode design probes (research 15), on their own server
     ```
     Use `bun run test`, not `bun test`: the latter is Bun's built-in runner, not the project script.
 
@@ -122,7 +124,8 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     `error`; `args` holds at most 64 values, strings cut at 64 Ki characters; `source` is `'host'` for the
     element's own lines (an execution timeout, an entry that failed) and `'guest'` for everything from the
     guest, whatever it claims. Guest lines are limited to 1000 per second per environment
-    (`LOG_EVENTS_PER_SECOND`, one warning). `args` are the guest's data: read them, don't merge them into
+    (`LOG_EVENTS_PER_SECOND`, one warning); lines logged before the guest is connected (a strict entry's top level)
+    are kept, up to 1000, and arrive once it is. `args` are the guest's data: read them, don't merge them into
     your objects with `Object.assign` (an own `__proto__` key survives the copy).
 *   **`violation`** reports a load the guest policy refused: `{ directive, blockedURI }`, plus
     `sourceFile`, `lineNumber` and `columnNumber` when the browser gives them. It bubbles like
@@ -187,7 +190,9 @@ Capabilities that let the guest act outside the frame — `allow-popups`, `allow
 `allow-downloads`, `allow-presentation` and `fullscreen` — are dropped from `capabilities` with a
 warning. If you really need one, pass it in `unsafeCapabilities`; the sandbox logs a warning for each
 one enabled. A popup, for example, is a new top-level window that no CSP governs, so its URL is an
-exfiltration channel ([research 13](docs/research/13_popup_exfiltration/README.md)).
+exfiltration channel ([research 13](docs/research/13_popup_exfiltration/README.md)). Without `allow-popups` guest
+code opens no window, but the user still can: a Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link
+opens it in a new tab in Chromium and Firefox, as for any sandboxed frame (strict mode's links are inert).
 
 ```js
 sandbox.setConfig({
@@ -457,7 +462,8 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     changes afterwards; the view holds at most 50 000 elements, 256 deep, and shows only files that never open as
     a document (no SVG, HTML or XML; no `data:` images); guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
-    `Referer`); links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
+    `Referer`); the worker keeps only allowlisted globals, so it can request only through `fetch`, `XMLHttpRequest`,
+    `WebSocket` and `importScripts`, which the policy governs on every engine; links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
     the browser's own link actions (copy, open in a new tab, drag) carry no guest URL (open external URLs through
     a method you `expose()`); the watchdog stops a looping guest on every
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
@@ -487,19 +493,46 @@ existing solution is argued in [`docs/ADR-001-continue-or-adopt.md`](docs/ADR-00
 
 The sandbox implements several layers of defense:
 1.  **Opaque Origin**: Runs in `about:srcdoc`, creating a unique null origin that isolates storage.
-2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`). Only known directive names and values that are single CSP source expressions reach the policy, so no configured value or key can add a directive (a `;` in a value is dropped with a warning); `'unsafe-eval'` comes only from `scriptUnsafe`. An empty array means `'none'` for every directive; leave a directive out to fall back to `default-src`. The guest policy never contains `'self'`: for the guest's opaque origin, browsers disagree on what it matches (WebKit admits any https origin), so a configured `'self'` is dropped with a warning. List the origins you need explicitly. `frame-ancestors`, `report-uri`, `report-to` and `sandbox` are dropped with a warning too: browsers ignore them in a `<meta>` policy, which the guest's always is.
+2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and frames that load a URL (`frame-src 'none'`; frames the guest makes from markup, `srcdoc` or `about:blank`, still exist and are realms of their own: see the residuals below). Only known directive names and values that are single CSP source expressions reach the policy, so no configured value or key can add a directive (a `;` in a value is dropped with a warning); `'unsafe-eval'` comes only from `scriptUnsafe`. An empty array means `'none'` for every directive; leave a directive out to fall back to `default-src`. The guest policy never contains `'self'`: for the guest's opaque origin, browsers disagree on what it matches (WebKit admits any https origin), so a configured `'self'` is dropped with a warning. List the origins you need explicitly. `frame-ancestors`, `report-uri`, `report-to` and `sandbox` are dropped with a warning too: browsers ignore them in a `<meta>` policy, which the guest's always is.
 3.  **CSP First**: The CSP `<meta>` is prepended before any user markup, so it is always the first element of the parsed `<head>`; user content cannot precede or swallow it.
 4.  **Wrapper Frame**: The guest frame is nested in a library-owned frame whose policy is `frame-src 'none'`. That blocks the guest from navigating itself to carry data out in a URL ([research 14](docs/research/14_self_navigation/README.md)).
 5.  **One Channel, Announced by the Bootstrap**: The guest bootstrap's first statement makes the private `MessageChannel`, keeps one end in its closure and posts the other to the host page; the host accepts exactly one such announcement per environment, from the guest frame's own window, and ends the environment on a second (a guest that reloads or rewrites itself). No listener in the guest realm ever carries a port of the library's, and guest code can never reach the bootstrap's end (it uses only primitives captured before guest code runs), so it cannot answer the watchdog for a looping guest. The host hears only the current environment's port. If the wrapper frame ever loads a second document, the sandbox is torn down and fires `terminated`.
-6.  **Worker Inside the Frame**: Worker mode spawns its worker from inside the sandbox frame, so it shares the opaque origin and CSP.
+6.  **Worker Inside the Frame**: Worker mode spawns its worker from inside the sandbox frame, so it shares the opaque origin and CSP. The worker keeps only allowlisted globals (`src/lib/worker-globals.ts`, worker and strict mode): it requests only through `fetch`, `XMLHttpRequest`, `WebSocket` and `importScripts`, each governed by the policy on every engine (Firefox sent a worker's `EventSource` and loaded its `FontFace` past the policy), and has no nested workers.
 7.  **Capability Tiers**: Flags that reach outside the frame require the explicit `unsafeCapabilities` opt-in.
 8.  **Allowlisted Calls**: Each side can call only the methods the other side exposed, and an answer reaches only the frame that made the request, never a frame that replaced it.
 9.  **Realm-Bound Files**: Registered files reach the guest as `blob:` URLs created in its own realm, which no other sandbox and not the host page can load. Lookups are exact, `blob:` is allowed only for the registered types, and a reference names a file only for the kind of load its type is for (a text file is never a script).
-10. **No WebRTC in the Guest**: The bootstrap removes `RTCPeerConnection` from the guest's global scope before guest code runs (workers never have it), since no CSP directive governs ICE traffic. A frame the guest creates is a realm of its own and keeps it, and in Chromium and WebKit its ICE traffic leaves the sandbox ([backlog S13](docs/BACKLOG.md)); strict mode closes this.
+10. **No WebRTC in the Guest**: The bootstrap removes `RTCPeerConnection` from the guest's global scope before guest code runs (workers never have it), since no CSP directive governs ICE traffic. A frame the guest creates is a realm of its own and keeps it, and its ICE traffic leaves the sandbox ([backlog S13](docs/BACKLOG.md)); strict mode closes this.
 11. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer, and WebKit sends the full host URL to a same-site origin ([backlog S18](docs/BACKLOG.md)); WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)). Strict mode closes S17 and S18.
 12. **Mediated Network, Opt-In**: With `fetchBridge`, the host makes the guest's requests itself, to exact listed origins only, without credentials, referrer or redirects, with capped bodies, time and concurrency, and logs each one. The guest policy stays as strict as configured ([ADR-006](docs/ADR-006-fetch-bridge.md)).
 13. **Strict Mode, Opt-In**: Guest code only in a worker; a view whose one script is the library's, admitted by its hash, with rendered markup cleaned before it is inserted and moved, never cloned ([ADR-005](docs/ADR-005-strict-mode.md)).
 14. **Fail Closed on Configuration**: A `mode` the element does not know starts no environment (the sandbox terminates with a reason) rather than falling back to iframe mode.
-15. **Guest-Realm Hardening (default modes)**: Gaps no CSP directive covers are closed in the guest's realm before guest code runs: `fetch()` with `keepalive` is refused (Firefox sends it past `connect-src`); `history.back()`, `forward()`, `go()` and the Navigation API's traversal do nothing (Firefox and WebKit let them move the host page); `window.name` is inert (a named guest frame received the host's named navigations and `window.open()` handles); DNS prefetching is off; no worker loads from `data:` (WebKit runs a `data:` SharedWorker outside the policy). **Residuals in default mode**, measured: a frame the guest creates is a realm of its own and keeps the platform's `fetch`, history and naming (do not use named targets on a host page that embeds sandboxes); WebKit opens a connection for `<link rel=preconnect>` to any origin; guest code can take focus from the host page (Chromium, Firefox) and, after a user's click in the guest, write the clipboard (Firefox `writeText()`, Chromium and Firefox `execCommand('copy')`). Strict mode runs no guest script in a document. [Broad review](docs/security/BROAD-REVIEW-2026-10-14.md).
+15. **Guest-Realm Hardening (default modes)**: Gaps no CSP directive covers are closed in the guest's realm before guest code runs: `fetch()` with `keepalive` is refused (Firefox sends it past `connect-src`); `history.back()`, `forward()`, `go()` and the Navigation API's traversal do nothing (Firefox and WebKit let them move the host page); `window.name` is inert (a named guest frame received the host's named navigations and `window.open()` handles); DNS prefetching is off; no worker loads from `data:` (WebKit runs a `data:` SharedWorker outside the policy). [Broad review](docs/security/BROAD-REVIEW-2026-10-14.md).
 
-The guarantees above were tested adversarially on 2026-10-14, with every finding fixed, asserted or stated as a residual: [adversarial review report](docs/security/ADVERSARIAL-REVIEW-2026-10.md), [focused review](docs/security/FOCUSED-REVIEW-2026-10-14.md), [broad review](docs/security/BROAD-REVIEW-2026-10-14.md).
+### Default-mode residuals
+
+What iframe mode (and, where it applies, worker mode) does not close, measured per engine and asserted by tests; the
+same list as the [backlog's S44](docs/BACKLOG.md). Strict mode closes all of them but the last two items.
+
+*   **A frame the guest creates** (from markup: `srcdoc`, `about:blank`) is a realm of its own, with the platform's
+    WebRTC (its ICE leaves), `fetch` (Firefox sends its `keepalive` past `connect-src`), history traversal (moves the
+    host page in Firefox and WebKit) and naming (do not use named targets on a host page that embeds sandboxes); in
+    WebKit it reads the host page URL as its referrer.
+*   **A worker the guest creates** (iframe mode): in Firefox its `EventSource` and `FontFace` pass the policy.
+*   **WebKit's preconnect**: `<link rel=preconnect>` opens a connection to any origin.
+*   **Focus and the clipboard**: guest code takes focus from the host page (Chromium, Firefox) and, in a user's click,
+    writes the clipboard (`writeText()` in Firefox and, in the click's own handler, WebKit; `execCommand('copy')` in
+    Chromium and Firefox).
+*   **Messages**: the guest can post to the host window; check `event.source`.
+*   **The user's link actions**: Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens a new tab at
+    the guest's URL in Chromium and Firefox, without `allow-popups`.
+*   **Session history**: the guest's fragment navigations add entries to the tab's history (the back button walks
+    them first), and in Chromium so does a navigation the wrapper refuses.
+*   **A silent reload**: Firefox replaces a guest's `<meta refresh>` with a document that announces nothing; the
+    watchdog ends that environment where it is on.
+*   **The load deadline**: a guest page whose load, subresources included, takes over 5 s terminates.
+*   **Cookies**: Firefox and WebKit attach the host site's cookies to a guest request to an allowed origin that is
+    same-site with the host page.
+*   **Platform limits**: the pre-policy window of a `<meta>` policy (S8); the host origin in `ancestorOrigins` and
+    image `Referer` (S15); WebKit's full host URL to same-site origins on request (S18, closed in strict mode).
+
+The guarantees above were tested adversarially on 2026-10-14, with every finding fixed, asserted or stated as a residual, then checked by an independent verification: [adversarial review report](docs/security/ADVERSARIAL-REVIEW-2026-10.md), [focused review](docs/security/FOCUSED-REVIEW-2026-10-14.md), [broad review](docs/security/BROAD-REVIEW-2026-10-14.md), [independent verification](docs/security/VERIFICATION-2026-10-14.md).
