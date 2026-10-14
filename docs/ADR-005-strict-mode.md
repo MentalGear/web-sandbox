@@ -1,6 +1,6 @@
 # ADR-005: Strict mode — guest logic in a worker, a view that runs no guest script
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-and-c4-by-construction))
 
 ## Why this ADR exists
 
@@ -39,9 +39,9 @@ Three ports per environment, all `MessageChannel`s:
 
 | Port | Ends | Carries |
 | :--- | :--- | :--- |
-| logic | host ↔ worker | RPC (`call`/`expose`), `LOG`, `PING`/`PONG`, `VIOLATION` (labelled `logic`), `EXECUTE` — as in worker mode |
-| view | host ↔ view | `VIOLATION` (labelled `view`), `RESIZE`, `GUEST_ERROR`, `VIEW_PING`/`VIEW_PONG` |
-| render | view ↔ worker | `VIEW_RENDER`, `VIEW_ACK`, `VIEW_LISTEN`, `VIEW_EVENT` — the host is not on this path ([ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-13-strict-mode-renders-bypass-the-host)) |
+| logic | host ↔ worker | RPC (`call`/`expose`), `LOG`, `PING`/`PONG`, `VIOLATION` (labelled `logic`), `EXECUTE`/`EXECUTED` — as in worker mode |
+| view | host ↔ view | `VIOLATION` (labelled `view`), `RESIZE`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `VIEW_PING`/`VIEW_PONG` |
+| render | view ↔ worker | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_ACK`, `VIEW_LISTEN`, `VIEW_EVENT` — the host is not on this path ([ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-13-strict-mode-renders-bypass-the-host)) |
 
 On the wrapper's one `load`, the host posts `INIT_VIEW { workerSource, viewFiles, html, autoResize }` to the
 view with the logic and view ports. The bootstrap accepts exactly one `INIT_VIEW`, from `parent.parent`, in a
@@ -78,7 +78,9 @@ text stays constant) and hands the worker the logic and render ports.
   `referrerpolicy="no-referrer"` and removes `<meta name=referrer>`, which closes S17 and S18 here.
 - **G6 — the view's violation reports are complete and unforgeable** (A6, rescoped). No guest code runs in
   the view, and the host labels reports by the port they arrive on, so `source: 'view'` reports are the
-  library's own, complete up to `VIOLATION_EVENT_LIMIT`, which is counted per port. Worker reports
+  library's own, complete up to `VIOLATION_EVENT_LIMIT` **per directive** (the view and the host count each
+  directive the browser names apart, so the guest's refused loads of one kind cannot hide a report of another;
+  the buckets are the known directive names plus one, which bounds the view's events). Worker reports
   (`source: 'logic'`) are forgeable like any default-mode report and per engine (below).
 
 ### API
@@ -260,3 +262,33 @@ configuration, fetch bridge, auto-sizing), `strict-render-flood.spec.ts` (A4),
 
 Proof: `test/e2e/review-policy.spec.ts`, `test/e2e/review-strict.spec.ts`, the strict cases of
 `test/unit/policy-guarantees.test.ts`, `src/lib/in-sandbox-view.test.ts`, `test/unit/strict.test.ts`.
+
+## Amendment (2026-10-14): follow-up audit, C1 and C4 by construction
+
+**When**: the by-construction audit of the review's fixes ([report](security/ADVERSARIAL-REVIEW-2026-10.md#follow-up-2026-10-14-by-construction-audit)).
+
+- **C1: the worker's source URL is revoked once its script ran.** The view revokes it on the first message the
+  worker sends on the render port (`VIEW_STARTED`, which the prelude posts when it takes `INIT_WORKER`, so only
+  after the whole worker script ran; guest code cannot post on that port). From then on the URL resolves nowhere,
+  so the only `blob:` URLs rendered CSS could name are the worker's copies of registered files: the narrowed A8
+  guarantee, **the view renders no `blob:` content but registered files**, holds by construction instead of by
+  the source's type and prefix. The earlier attempt revoked when the Worker object existed, before WebKit had read
+  the script, and broke `sandboxFiles` there. At this point, measured on all three engines: `sandboxFiles`
+  (`url`, `read`, `text`), fetches of the worker's own `blob:` URLs, Blob reads and `execute()` keep working. One
+  WebKit effect was found and is handled: inside the worker, a later uncaught error thrown by code from the revoked
+  script reads `Script error.` (no error object), while the Worker object in the view still gets its text. So the
+  prelude logs the later errors it can describe and leaves a muted one to the view, which logs it as the same
+  `Uncaught …` guest line (`GUEST_UNCAUGHT` on the view port). The view tells the entry's own errors (which end the
+  sandbox) from later ones without trusting the order of two channels: before `VIEW_STARTED` only the entry's can
+  arrive (a later describable one is cancelled in the worker, a muted one needs the revocation, which follows
+  `VIEW_STARTED`), and `VIEW_STARTED` carries how many of the Worker object's errors were the entry's (errors on
+  one Worker object arrive in the order they were raised). Executed code's late errors, muted in WebKit's worker
+  before this change too, now keep their text as well.
+- **C4: the view's violations are counted per directive.** G6 above. The logic port and the default modes keep
+  one count, since guest code writes the directive name there.
+
+Refuted alternatives, kept here so they are not tried again: a `data:` URL for the worker (WebKit then cannot
+read the worker's own `blob:` URLs, `NotReadableError`, and Chromium mutes the errors of a large `data:` worker);
+the entry as a second script loaded with `importScripts(blob:)` (it is checked against `script-src-elem`, and
+admitting `blob:` there would admit `<script src=blob:>` in the view). Proof: `test/e2e/review-strict.spec.ts`
+("C1", "C4"), `src/lib/in-sandbox-view.test.ts`, `test/unit/followup-guarantees.test.ts` ("C4").

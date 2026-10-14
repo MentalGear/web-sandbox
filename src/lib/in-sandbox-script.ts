@@ -183,8 +183,16 @@ export function inSandboxScript(
                     const func = new Function(data.code);
                     func();
                 } catch (e: any) {
-                    post({ type: 'LOG', level: 'error', args: [e.message] });
+                    try {
+                        post({ type: 'LOG', level: 'error', args: [e.message] });
+                    } catch {
+                        // a thrown value whose message cannot be cloned: no line, but the report below still goes
+                    }
                 }
+                // The code returned (or threw): the host stops this execute()'s workerExecutionTimeout budget
+                // (backlog B8). Posted with the captured primitives, like every frame of this script, so guest
+                // code can neither post it early nor stop it.
+                if (typeof data.n === 'number') post({ type: 'EXECUTED', n: data.n });
                 return;
             }
             // RPC frames (RPC_REQ / RPC_RES) and anything else go to the broker, which validates every
@@ -192,7 +200,8 @@ export function inSandboxScript(
             if (bridge) bridge.handleMessage(data);
         }]);
 
-        const levels = ['log', 'error', 'warn'] as const;
+        // Every level a 'sandbox-log' detail can carry (sandbox-log.ts), info included (backlog B8).
+        const levels = ['log', 'info', 'warn', 'error'] as const;
         for (let i = 0; i < levels.length; i++) {
             const level = levels[i]!;
             const original = sandboxConsole[level];

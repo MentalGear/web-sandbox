@@ -26,7 +26,7 @@ conditional "continue".
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7); at most 256 inbound calls in flight per environment, then `BUSY` (S22) |
 | Host-mediated network | ✅ opt-in `fetchBridge`: `sandboxFetch()` under the bridge discipline, every request logged as a `fetch` event, refusals coded (B5, [ADR-006](ADR-006-fetch-bridge.md)) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
-| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5); a listener's `reset()`/`terminate()` is never undone (S22) |
+| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5; per directive for the strict view, S24); a listener's `reset()`/`terminate()` is never undone, through one helper (S22); every build failure, and every config that cannot be used, is a termination with a reason, and the config is a copy (S26); `workerExecutionTimeout` is a budget for code still running, which terminates (B8) |
 | Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
 | Execution budget | ✅ strict mode bounds guest logic on every engine: it runs only in a worker the watchdog stops (S6, [ADR-005](ADR-005-strict-mode.md)); default mode: opt-in watchdog, bounded in worker mode and out-of-process frames, not where the frame shares the host's thread |
 | Strict mode | ✅ opt-in `mode: 'strict'`: guest code only in a worker, a view running only the hash-admitted library bootstrap, rendered markup cleaned (no nested frames, scripts, `meta`, `base`) and moved, one render in flight, delegated events, view liveness check (S6, S13, S17, S18; [ADR-005](ADR-005-strict-mode.md)) |
@@ -41,7 +41,7 @@ conditional "continue".
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18). ✅ in strict mode: guest code sees only its worker's `blob:` URL and no request carries a `Referer` |
 | API reference | ✅ [`API.md`](API.md): the whole public surface, checked against the code by a unit test (D3); framework adapters out of scope |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
-| Adversarial review 2026-10 | ✅ 21 candidates: 16 fixed (S19–S23), 1 held and is now asserted (A8, S20), 1 documented by design (S25), 3 residuals stated (S24); [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
+| Adversarial review 2026-10 | ✅ 21 candidates: 16 fixed (S19–S23), 1 held and is now asserted (A8, S20), 1 documented by design (S25), 3 residuals stated (S24); the follow-up by-construction audit moved C1 and C4 to done, found two gaps (S26) and hardened A3, A6, A7, B5, B6; [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -50,6 +50,7 @@ S3, C2 and C3 done, C1 partly, C4 rejected, C5 added; C1's markup references, mo
 S15 and S16 were done on 2026-10-13, and S17 added. Strict mode landed on 2026-10-13 ([ADR-005](ADR-005-strict-mode.md), measured first in
 [research 15](research/15_strict_mode/README.md)): S6 done, S13 and S17 done in strict mode with their default-mode residuals stated, S18 added.
 The adversarial review of 2026-10-14 ([report](security/ADVERSARIAL-REVIEW-2026-10.md)) added S19–S25: S19–S23 done, S24 open (residuals), S25 documented.
+Its follow-up audit the same day made C1 and C4 (S24) hold by construction, added and closed S26, and closed B8.
 D3 was done on 2026-10-14 as an API reference only; its framework adapters moved to Rejected.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
@@ -881,6 +882,16 @@ no longer means iframe mode: every build terminates with `unknown mode …` unti
 bootstrap is asserted parser-safe when the guest document is built (A8). Tests: `test/unit/policy-guarantees.test.ts`,
 `src/lib/markup-references.test.ts`, `test/e2e/package.spec.ts` (A8 on the bundle).
 
+**Follow-up (2026-10-14, by-construction audit)**: A3's order now lives in one CSP3 fallback table
+(`src/lib/csp/effective-directive.ts`) that every consumer reads: the bootstrap check, file sources (`blob:` goes
+to the directive that governs each load, so `script-src-elem` / `style-src-elem` when configured; before, those
+policies refused every registered script or stylesheet) and strict mode (only the view's own directives are
+asked). Byte-identical for policies without `-elem` directives (property test). A6: `setConfig()` reads one
+`structuredClone` of its argument, and every boolean interpolated into a bootstrap is `=== true` at the
+interpolation. A7: `deepMerge` defines every key as an own data property, so no key list is needed (property test
+with `__proto__`, `constructor`, `prototype` at any depth). Tests: `src/lib/csp/file-sources.test.ts`,
+`test/unit/policy-guarantees.test.ts`, `test/e2e/review-policy.spec.ts` ("A3 class").
+
 ### S21 · The channel: one trusted INIT_PORT, a port guest code cannot reach — ✅ **done**
 
 *From the review, B1, B2 and B4; [ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-14-adversarial-review-the-channel).*
@@ -914,6 +925,13 @@ not `failed` (B6). At most 256 inbound calls run at once per channel; beyond tha
 the new reported code `BUSY` (B7). Tests: `test/unit/channel-guarantees.test.ts`, `src/lib/rpc.test.ts`,
 `test/e2e/review-channels.spec.ts` (B7).
 
+**Follow-up (2026-10-14, by-construction audit)**: B5's re-checks are one helper, `_notifyThenAct`, the only
+reader of the environment count; a unit test forces every dispatch-then-act path and fails on a hand-written
+check. B6: the bridge builds the `Request` before it records anything, and what the constructor refuses is
+`refused`; the ByteString regex is gone (the platform's rule, not a copy), `fetch()` gets that `Request`, and
+`failed` is documented as "the browser's fetch rejected", not "a request was sent". B3: `_dispatchLog` makes
+the detail itself from the raw line and its source.
+
 ### S23 · Strict mode: the entry's scope and the prelude's lists — ✅ **done**
 
 *From the review, C2 and C3; [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-adversarial-review).*
@@ -930,18 +948,25 @@ holds a non-configurable function, which only a top-level declaration of an entr
 a name the prelude cannot delete is an error. The prelude's lists have no prototype. Tests:
 `test/e2e/review-strict.spec.ts`, `src/lib/in-sandbox-view.test.ts`, `test/unit/strict.test.ts`.
 
-### S24 · Strict view residuals: CSS references, the shared violation cap, browser link actions — **P3 · residual**
+### S24 · Strict view residuals: CSS references, the shared violation cap, browser link actions — C1 and C4 ✅ **done**; C5 **P3 · residual**
 
 *From the review, C1, C4 and C5.*
 
-- **C1, A8 on attributes only.** The renderer does not read `<style>` text or CSS escapes in `style` attributes,
-  so rendered CSS can name the worker's copies of registered files and the worker's own source URL. The
-  guarantee that holds, and that ADR-005 now states, is about content: the view renders no `blob:` content but
-  registered files (the source URL renders nothing: `text/javascript`, it starts with the prelude). Revoking the
-  source URL was rejected: in WebKit it breaks the worker's own `blob:` URLs. Asserted:
-  `test/e2e/review-strict.spec.ts` ("C1").
-- **C4, the view's violation cap is shared** with the guest's own refused loads: 100 refused loads in rendered
-  markup use it up for the environment. G6 is complete up to the cap. Asserted ("C4").
+- **C1, A8 on attributes only** — ✅ done by construction (follow-up audit 2026-10-14). The renderer does not read
+  `<style>` text or CSS escapes in `style` attributes, so rendered CSS can name the worker's copies of registered
+  files and (before) the worker's own source URL. The guarantee is about content: the view renders no `blob:`
+  content but registered files. It held by the source's type and prefix; now the view revokes the source URL on
+  the worker's first render-port message (`VIEW_STARTED`, after the whole worker script ran), so it resolves
+  nowhere. Revoking earlier had broken WebKit's `sandboxFiles`; at this point `sandboxFiles`, the worker's own
+  `blob:` URLs, Blob reads and `execute()` work on all three engines, and WebKit's in-worker muting of later error
+  text from the revoked script is routed around (the view logs those errors, with their text).
+  [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-follow-up-audit-c1-and-c4-by-construction).
+  Asserted: `test/e2e/review-strict.spec.ts` ("C1", 3 tests), `src/lib/in-sandbox-view.test.ts`.
+- **C4, the view's violation cap was shared** with the guest's own refused loads — ✅ done (follow-up audit): the
+  view and the host count the view's reports per directive (the browser names the directive there; the logic port
+  keeps one count, since guest code names it), bounded at (known directives + 1) × 100. 150 refused images no
+  longer hide a later `script-src-attr` report. Asserted: `review-strict.spec.ts` ("C4"),
+  `test/unit/followup-guarantees.test.ts`.
 - **C5, browser link actions.** Rendered links keep their `href`; the view cancels clicks and submits, but "open in
   new tab" or dragging a link are the browser's own actions, outside any page's control, and they need the user.
   Asserted that the `href` stays ("C5"). Option if it matters: the renderer could drop `href` from rendered links
@@ -956,6 +981,22 @@ Structured clone keeps an own `__proto__` key (measured in all three engines), s
 `Object.prototype`; merging it with `Object.assign` sets the target's prototype. Documented next to `expose()` and
 `sandbox-log` in the README; `deepMerge` (the element's own config merge) skips the key (S20). Asserted:
 `test/e2e/review-channels.spec.ts` ("B8").
+
+### S26 · A build that fails is a termination; the config is a copy — ✅ **done**
+
+*From the follow-up by-construction audit of the review (2026-10-14).*
+
+**Verified**: a string directive value (`'img-src': "x; script-src *"`) or a `Proxy` array made `setConfig()` throw
+from the build: the old environment was torn down, the state stayed `loading`, with no frame and no `terminated`
+event. And the merged config shared the caller's arrays, so an array changed after `setConfig()` changed the
+policy the next `reset()` built.
+
+**Done**: `initialize()`, the one place a build starts, and the frame's load handler, where it completes, end any
+throw with `terminated` and `the environment could not be built: …`. `setConfig()` reads one `structuredClone` of
+its argument; a config that cannot be cloned or is not an object applies nothing and terminates with
+`the configuration could not be used: …`, refusing every build until a usable config arrives (like A4's unknown
+mode). `setConfig()` never throws. [ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment).
+Tests: `test/unit/policy-guarantees.test.ts` ("Every build failure is a termination"), `test/e2e/review-followup.spec.ts`.
 
 ## B · API Surface & DX
 
@@ -1187,7 +1228,7 @@ Their separate retry/stop field is not adopted: here it follows from the code.
 
 ---
 
-### B8 · Behaviour the API reference surfaced — **P2 · S**
+### B8 · Behaviour the API reference surfaced — ✅ **done**
 
 *Found while writing [`API.md`](API.md) (D3), where the code and its comments or the README disagreed.*
 
@@ -1203,6 +1244,20 @@ Their separate retry/stop field is not adopted: here it follows from the code.
   documented as is; kept.
 
 **Acceptance**: each behaviour is one rule, documented in `API.md`, with a test.
+
+**Done** (2026-10-14, [ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)):
+- `workerExecutionTimeout` is a budget for code still running: each `execute()` has its own timer, the guest
+  reports `EXECUTED` through the bootstrap's captured port when the code returned or threw, and code still running
+  at the deadline ends the sandbox (`Execution Timeout` host line, then `terminated` with
+  `the executed code ran longer than workerExecutionTimeout`). Decision: terminate, as the watchdog does; one rule
+  for every budget. Tests: `test/unit/followup-guarantees.test.ts`, `test/e2e/worker-timeout.spec.ts`.
+- While `idle` or `terminated`, `call()` rejects at once with `TERMINATED` and `execute()` warns and does nothing.
+  Decision: refuse at once, since work belongs to an environment and there is none (a call already rejected on
+  insertion; queuing across it would contradict "every build rejects pending work"). Tests: the same unit file,
+  `test/e2e/review-followup.spec.ts`.
+- `console.info` is relayed (level `info`) in every mode. Uncaught guest errors still reach the host only in strict
+  mode (default modes have no such hook to rely on); left as documented.
+- `VIEW_LIVENESS_TIMEOUT_MS` is exported from the package entry and listed in `API.md` Limits.
 
 ---
 

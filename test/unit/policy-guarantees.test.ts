@@ -165,37 +165,84 @@ describe("A5: 'unsafe-eval' and 'wasm-unsafe-eval' come only from scriptUnsafe",
     });
 });
 
-describe('A6: the values interpolated into the bootstrap are normalised on the merged config', () => {
-    it('a config whose scriptUnsafe changes between reads (a Proxy) yields a literal false, never its text', async () => {
+describe('A6: the values interpolated into the bootstrap come from one copy of the config', () => {
+    it('a config whose scriptUnsafe changes between reads (a getter) is read once, by the copy: a literal false, never its text', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        let descriptorReads = 0;
-        const target = { capabilities: ['allow-scripts'], scriptUnsafe: '1, globalThis.__A6 = 1, 0' };
-        const shifty = new Proxy(target, {
-            // the first read (the spread) sees the property, the second (Object.hasOwn) does not
-            getOwnPropertyDescriptor(t, key) {
-                if (key === 'scriptUnsafe' && ++descriptorReads > 1) return undefined;
-                return Reflect.getOwnPropertyDescriptor(t, key);
-            },
-        });
+        let reads = 0;
+        const shifty = {
+            capabilities: ['allow-scripts'],
+            get scriptUnsafe() { return ++reads === 1 ? '1, globalThis.__A6 = 1, 0' : true; },
+        };
         const el = await mount(shifty as any);
+        expect(reads).toBe(1);
         expect(bootstrapOf(el)).not.toContain('__A6');
         expect(bootstrapOf(el)).toMatch(/^\(function inSandboxScript\(|\(false, 'iframe'/);
         expect(el._config.scriptUnsafe).toBe(false);
     });
+
+    it('a Proxy config cannot be copied: the sandbox terminates with a reason and builds nothing from it (before: its traps were read, twice)', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        let trapped = 0;
+        const shifty = new Proxy({ capabilities: ['allow-scripts'], scriptUnsafe: '1, globalThis.__A6 = 1, 0' }, {
+            getOwnPropertyDescriptor(t, key) { trapped++; return Reflect.getOwnPropertyDescriptor(t, key); },
+        });
+        const el = await mount();
+        const reasons: string[] = [];
+        el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
+        expect(() => el.setConfig(shifty)).not.toThrow();
+        expect([el.state, wrapperOf(el), trapped]).toEqual(['terminated', null, 0]);
+        expect(reasons).toEqual([expect.stringMatching(/^the configuration could not be used: DataCloneError/)]);
+    });
 });
 
-describe('A7: a merge never writes prototypes', () => {
-    it('deepMerge skips __proto__, constructor and prototype keys, at any depth, and reads only own keys', () => {
-        const target = { a: 1, nested: { b: 2 } };
-        const source = JSON.parse('{"__proto__": {"polluted": 1}, "constructor": {"x": 1}, "nested": {"__proto__": {"c": 3}, "d": 4}}');
-        const inherited = Object.create({ inheritedKey: 1 });
-        const merged: any = deepMerge(target as any, source);
-        expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
-        expect(Object.getPrototypeOf(merged.nested)).toBe(Object.prototype);
-        expect([merged.polluted, merged.nested.c, ({} as any).polluted]).toEqual([undefined, undefined, undefined]);
-        expect(merged).toEqual({ a: 1, nested: { b: 2, d: 4 } });
-        expect(Object.hasOwn(merged, 'constructor')).toBe(false);
-        expect(Object.hasOwn(deepMerge({} as any, inherited), 'inheritedKey')).toBe(false);
+describe('A7: a merge never writes prototypes, with no list of keys', () => {
+    // JSON values: what a config parsed from a file can hold. Keys include the three that are special to [[Set]].
+    const KEYS = ['a', 'b', 'mode', 'html', '__proto__', 'constructor', 'prototype', 'script-src'];
+    const SPECIAL = ['__proto__', 'constructor', 'prototype'];
+    const randomJson = (random: () => number, depth: number, keys: string[]): unknown => {
+        const kind = random();
+        if (depth <= 0 || kind < 0.3) return [1, 'x', true, null, 0, ''][Math.floor(random() * 6)];
+        if (kind < 0.45) return ['x', 'y'].slice(0, Math.floor(random() * 3));
+        const out: Record<string, unknown> = {};
+        for (let i = Math.floor(random() * 4); i > 0; i--) {
+            const key = keys[Math.floor(random() * keys.length)]!;
+            Object.defineProperty(out, key, { value: randomJson(random, depth - 1, keys), enumerable: true, writable: true, configurable: true });
+        }
+        return out;
+    };
+    // deepMerge as it was before the denylist and before definitions (for…in and [[Set]]), on keys that are not special
+    const assignMerge = (target: any, source: any): any => {
+        const output = { ...target };
+        for (const key of Object.keys(source)) {
+            const value = source[key];
+            if (value && typeof value === 'object' && !Array.isArray(value)) output[key] = assignMerge(Object.hasOwn(target, key) ? target[key] || {} : {}, value);
+            else if (value !== undefined) output[key] = value;
+        }
+        return output;
+    };
+    const prototypesOf = (value: unknown, seen: unknown[] = []): unknown[] => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return seen;
+        seen.push(Object.getPrototypeOf(value));
+        for (const key of Object.keys(value)) prototypesOf((value as any)[key], seen);
+        return seen;
+    };
+
+    it('property: 500 JSON sources with "__proto__", "constructor" and "prototype" at any depth change no prototype and are kept as own data; without them a merge is what assignment gave', () => {
+        const random = prng(0xa7);
+        for (let run = 0; run < 500; run++) {
+            const target = JSON.parse(JSON.stringify(randomJson(random, 3, ['a', 'b', 'mode']) ?? {})) as object;
+            const source = JSON.parse(JSON.stringify(randomJson(random, 4, KEYS))) as object;
+            if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+            const safeTarget = target && typeof target === 'object' && !Array.isArray(target) ? target : {};
+            const merged = deepMerge(safeTarget as any, source as any);
+            const label = JSON.stringify(source);
+            for (const prototype of prototypesOf(merged)) expect(prototype, label).toBe(Object.prototype);
+            expect(({} as any).mode, label).toBeUndefined();
+            for (const key of SPECIAL) {
+                if (Object.hasOwn(source, key)) expect(Object.getOwnPropertyDescriptor(merged, key), label).toMatchObject({ enumerable: true, writable: true });
+            }
+            if (!SPECIAL.some(key => label.includes(`"${key}"`))) expect(merged, label).toEqual(assignMerge(safeTarget, source));
+        }
     });
 
     it('a JSON config with "__proto__" keys gives the element no inherited settings', async () => {
@@ -203,11 +250,80 @@ describe('A7: a merge never writes prototypes', () => {
         const config = JSON.parse('{"capabilities": ["allow-scripts"], "__proto__": {"scriptUnsafe": true, "mode": "worker", "entry": "x.js"}, "connectionsAllowed": {"__proto__": {"img-src": ["*"]}}}');
         const el = await mount(config);
         expect(Object.getPrototypeOf(el._config)).toBe(Object.prototype);
+        expect(Object.getPrototypeOf(el._config.connectionsAllowed)).toBe(Object.prototype);
         expect([el._config.scriptUnsafe, el._config.mode, el._config.entry]).toEqual([false, 'iframe', undefined]);
         expect(policyOf(el)).not.toContain('img-src');
     });
 });
 
+describe('Every build failure is a termination (follow-up audit 2026-10-14)', () => {
+    const terminations = (el: any) => {
+        const reasons: string[] = [];
+        el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
+        return reasons;
+    };
+
+    it.each([
+        ['a string where a directive takes a list', { connectionsAllowed: { 'img-src': 'x; script-src *' } }],
+        ['a number where a directive takes a list', { connectionsAllowed: { 'connect-src': 7 } }],
+        ['a list holding a non-string', { connectionsAllowed: { 'img-src': [1] } }],
+    ])('%s: setConfig() does not throw; state terminated, one event with the reason, no frame; reset() stays closed; a usable config starts again', async (_, config) => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount();
+        const reasons = terminations(el);
+        expect(() => el.setConfig(config)).not.toThrow();
+        expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
+        expect(reasons).toEqual([expect.stringMatching(/^the environment could not be built: Error: value type must be/)]);
+        expect(() => el.reset()).not.toThrow();
+        expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
+        expect(warn.mock.calls.some(c => String(c[0]).startsWith('[Sandbox] terminated: the environment could not be built'))).toBe(true);
+        el.setConfig({ capabilities: ['allow-scripts'] });
+        expect(el.state).toBe('loading');
+        expect(wrapperOf(el)).not.toBeNull();
+    });
+
+    it.each([
+        ['a Proxy array', () => ({ connectionsAllowed: { 'connect-src': new Proxy(['https://a.example'], {}) } })],
+        ['a function value', () => ({ html: () => '<p>' })],
+        ['null', () => null],
+        ['an array', () => []],
+    ])('%s: the configuration could not be used: terminated with the reason, nothing applied; load() and reset() stay closed', async (_, config) => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount({ capabilities: ['allow-scripts'], html: '<p id="kept">' });
+        const reasons = terminations(el);
+        expect(() => el.setConfig(config())).not.toThrow();
+        expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
+        expect(reasons).toEqual([expect.stringMatching(/^the configuration could not be used: /)]);
+        expect(el._config.html).toBe('<p id="kept">'); // nothing of the refused config was applied
+        el.load('<p>x</p>');
+        el.reset();
+        expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
+        el.setConfig({});
+        expect(el.state).toBe('loading');
+    });
+
+    it("the config is a copy: an array the caller changes after setConfig() never changes the policy a later reset() builds", async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const list = ['https://a.example'];
+        const capabilities: string[] = ['allow-scripts'];
+        const el = await mount({ capabilities, connectionsAllowed: { 'connect-src': list } });
+        list.push('https://later.example');
+        capabilities.push('allow-forms');
+        el.reset();
+        expect(policyOf(el)).toContain('connect-src https://a.example;');
+        expect(policyOf(el)).not.toContain('later.example');
+        expect(wrapperOf(el)!.getAttribute('sandbox')).toBe('allow-scripts');
+    });
+
+    it('a throw while the frame loads (the second half of a build) is a termination too', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount();
+        const reasons = terminations(el);
+        el._completeBuild = () => { throw new Error('could not hand over the port'); };
+        el._onFrameLoad();
+        expect([el.state, wrapperOf(el), reasons]).toEqual(['terminated', null, ['the environment could not be built: Error: could not hand over the port']]);
+    });
+});
 describe('A8: the default bootstrap is parser-safe', () => {
     it('buildGuestDocument refuses a bootstrap that the HTML parser would not read back as one script', () => {
         for (const bad of ['a</script>b', 'a</SCRIPT b', 'a<!--b', 'a<script>b', 'a\u0000b']) {

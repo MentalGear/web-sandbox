@@ -62,7 +62,8 @@ which realms a `blob:` URL resolves in.
 5. **`blob:` only where a registered type loads.** The guest policy gains `blob:` only when files are
    registered, and only in the directives their types need: JavaScript → `script-src`, `text/css` →
    `style-src`, `image/*` → `img-src`, `font/*` → `font-src`, `audio/*`, `video/*` and `text/vtt` →
-   `media-src`, and any file → `connect-src`. An empty directive falls back to `default-src`, so
+   `media-src`, and any file → `connect-src` (amended 2026-10-14: the directive that *governs* each kind of
+   load, so `script-src-elem` / `style-src-elem` when configured; see the amendment below). An empty directive falls back to `default-src`, so
    adding only `blob:` would narrow it; the `default-src` sources (minus `'none'` and `'self'`) are
    copied in first. An embedder's explicit `'none'` is kept, with one warning that those files will
    not load. This runs before `'unsafe-eval'` and before the `'self'` drop, which stays the last step
@@ -679,3 +680,16 @@ lists and reads every file; a worker-minted `blob:` URL, also obfuscated, is rem
 for images and styles and never in `script-src`. Unit: `src/lib/in-sandbox-view.test.ts` (resolution, link
 rules, `blob:` filtering), `src/lib/csp/file-sources.test.ts` (`exclude`), `test/unit/strict.test.ts`.
 
+## Amendment (2026-10-14): `blob:` goes to the directive that governs the load
+
+**When**: the follow-up audit of the adversarial review ([report](security/ADVERSARIAL-REVIEW-2026-10.md#follow-up-2026-10-14-by-construction-audit)).
+**Why**: decision 5 named `script-src` and `style-src`, but a browser checks `<script src>`, `import()` and
+stylesheets against `script-src-elem` and `style-src-elem` first (CSP Level 3 fallback lists). An embedder who
+configured either got every registered script or stylesheet refused, while the bootstrap check already read
+`script-src-elem` (review A3): two answers to one question.
+**Decision**: one fallback table (`src/lib/csp/effective-directive.ts`) answers which directive governs each kind
+of check, and every consumer reads it: the bootstrap check, file sources (`blob:` goes to the governing directive;
+where only `default-src` governs, the kind's own directive is created from its sources as before) and strict
+mode, which asks only the directives its view will hold. A policy without `-elem` directives comes out
+byte-identical (a 500-config property test against the previous implementation). Proof:
+`src/lib/csp/file-sources.test.ts`, `test/e2e/review-policy.spec.ts` ("A3 class").

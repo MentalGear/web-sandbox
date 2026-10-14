@@ -455,10 +455,11 @@ test.describe('configuration', () => {
         expect(await page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).style.height)).toBe(before);
     });
 
-    test('workerExecutionTimeout recreates the environment after execute() in strict mode too', async ({ sandbox, page }) => {
+    test('workerExecutionTimeout terminates the sandbox when executed code is still running in strict mode too; reset() recovers', async ({ sandbox }) => {
         expect(await sandbox.mount(strict({ workerExecutionTimeout: 300 }))).toBe('ready');
         await sandbox.run('while (true) {}');
         expect(await sandbox.waitForLog('Execution Timeout', 4000)).toBeTruthy();
-        await page.waitForFunction(() => (document.querySelector('web-sandbox') as any).state === 'ready');
+        await expect.poll(() => sandbox.state(), { timeout: 4000 }).toBe('terminated');
+        expect(await sandbox.reset()).toBe('ready');
     });
 });

@@ -175,6 +175,35 @@ describe('the view bootstrap', () => {
         expect(document.getElementById('initial')).not.toBeNull();
         document.body.replaceChildren();
     });
+
+    it("revokes the worker's source URL on the first message the worker sends on the render port, and not before (review C1)", async () => {
+        const workers: { url: string; transfer: MessagePort[] }[] = [];
+        (globalThis as any).Worker = class {
+            onerror: unknown = null;
+            constructor(url: string) { workers.push({ url, transfer: [] }); }
+            postMessage(_message: unknown, transfer: MessagePort[]) { workers[workers.length - 1]!.transfer = transfer; }
+        };
+        const revoked: string[] = [];
+        const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation((url: string) => { revoked.push(url); });
+        try {
+            new Function(viewBootstrapText())();
+            const a = new MessageChannel(), b = new MessageChannel();
+            window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '' }, source: window, ports: [a.port1, b.port1] }));
+            expect(workers).toHaveLength(1);
+            await new Promise(resolve => setTimeout(resolve, 20));
+            expect(revoked).toEqual([]); // the worker exists, but has not run its script to the end yet
+
+            const render = workers[0]!.transfer[1]!; // the worker's end of the render port
+            render.postMessage({ type: 'VIEW_STARTED' });
+            render.postMessage({ type: 'VIEW_LISTEN', types: [] });
+            await new Promise(resolve => setTimeout(resolve, 20));
+            expect(revoked).toEqual([workers[0]!.url]);
+            expect(workers[0]!.url).toMatch(/^blob:/);
+            for (const port of [a.port1, a.port2, b.port1, b.port2, ...workers[0]!.transfer]) port.close();
+        } finally {
+            revoke.mockRestore();
+        }
+    });
 });
 
 describe('the strict worker prelude (unit; the e2e specs cover it in real workers)', () => {
@@ -252,5 +281,24 @@ describe('review C2 and C3: the strict worker prelude against hostile globals', 
             delete (Array.prototype as any)['0'];
         }
         expect(seen).toEqual([]);
+    });
+
+    it("the prelude's error texts use a join captured before guest code: a patched Array.prototype.join never receives the prelude's own list (C3)", () => {
+        const w = new EventTarget() as any;
+        Object.assign(w, { URL: {} });
+        start(w);
+        const receivers: unknown[] = [];
+        const join = Array.prototype.join;
+        Array.prototype.join = function (this: unknown[], ...args: [string?]) { receivers.push(this); return join.apply(this, args); };
+        let message = '';
+        try {
+            w.sandboxView.on('scroll', null, () => {});
+        } catch (error) {
+            message = (error as Error).message;
+        } finally {
+            Array.prototype.join = join;
+        }
+        expect(message).toBe('sandboxView.on: type must be one of click, keydown');
+        expect(receivers).toEqual([]);
     });
 });

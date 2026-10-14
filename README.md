@@ -87,8 +87,9 @@ and limit. The sections below walk through each feature.
 ## Lifecycle
 
 `sandbox.state` tells where the sandbox is: `idle` (not in the document), `loading` (a frame is
-being built), `ready` (the guest can be reached) or `terminated`. There is no "running" state:
-`execute()` does not report when guest code finishes.
+being built), `ready` (the guest can be reached) or `terminated`. There is no "running" state: only code
+from `execute()` reports that it returned (which ends its `workerExecutionTimeout`), never guest code as a whole.
+A config or build the element cannot use ends in `terminated` with a reason; `setConfig()` never throws.
 
 ```js
 sandbox.addEventListener('ready', () => { /* state is 'ready' */ });
@@ -121,7 +122,8 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     the guest and guest code can suppress its own reports, so an event is evidence that the guest tried
     something; no event proves nothing. A frame the guest creates reports to itself, not here, and in
     worker mode it depends on the engine (WebKit raises none in workers; Firefox none for
-    `importScripts`). At most 100 per environment (`VIOLATION_EVENT_LIMIT`); type `SandboxViolation`. In
+    `importScripts`). At most 100 per environment (`VIOLATION_EVENT_LIMIT`; for the strict view, per directive);
+    type `SandboxViolation`. In
     strict mode each report also carries `source`, `'view'` or `'logic'` (see [Strict mode](#strict-mode)).
 *   **`state === 'terminated'` is a second, authoritative signal** next to a call's `TERMINATED`
     code: the element sets both from its own state, so the guest can produce neither.
@@ -409,12 +411,12 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     `noscript` and `template` are removed before insertion, so no nested frame exists; guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
     `Referer`); links and form submissions navigate nowhere; the watchdog stops a looping guest on every
-    browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap and cannot be forged; the
-    view renders no `blob:` content but registered files.
+    browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
+    directive apart, and cannot be forged; the view renders no `blob:` content but registered files (the worker's
+    own source URL is revoked once its script ran).
 *   **What it does not**: rendering is host-thread work in Firefox and WebKit (one render at a time, but one
     render of heavy markup can take hundreds of milliseconds there); CSS within what the policy allows;
-    memory; worker `violation` reports (`source: 'logic'`) are per engine and guest-influenced; the view's cap
-    is shared with the guest's own refused loads, so rendered markup can use it up; a user's own browser actions
+    memory; worker `violation` reports (`source: 'logic'`) are per engine and guest-influenced; a user's own browser actions
     on a rendered link ("open in new tab", dragging it) are outside what the view can cancel; a worker that
     closes itself is noticed only by the watchdog.
 *   **Limits**: no inline `<script>` and no nested frames in rendered markup; files are named by path in

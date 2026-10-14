@@ -1,6 +1,6 @@
 # ADR-003: How does the host observe and control a sandbox's lifecycle?
 
-**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone))
+**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)), 2026-10-14 ([one rule per budget, build and missing environment](#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment))
 
 ## Why this ADR exists
 
@@ -149,3 +149,41 @@ it undone by the rebuild; one that called `reset()` had its new environment torn
 an event and then acts compares the count first and does nothing if a listener has torn the environment down
 meanwhile. The lifecycle events keep their rule from decision 2 (dispatched after the state is set, last in
 their path), so they needed no change. Proof: `test/unit/channel-guarantees.test.ts` ("B5").
+
+**Follow-up (same day, by-construction audit)**: the count is now compared in exactly one place,
+`_notifyThenAct(notify, act)` in `src/host.ts`, which every dispatch-then-act path uses (the execution timeout,
+an entry that failed). A unit test forces each path with a listener that resets, one that terminates and none,
+and fails if the count is compared anywhere else or a path calls the helper without a row in its table.
+
+## Amendment (2026-10-14): one rule per budget, build and missing environment
+
+**When**: backlog B8 and the follow-up audit of the adversarial review
+([report](security/ADVERSARIAL-REVIEW-2026-10.md#follow-up-2026-10-14-by-construction-audit)).
+
+- **`workerExecutionTimeout` is a budget for code still running, and exceeding it terminates.** Each `execute()`
+  carries a number; the guest bootstrap posts `EXECUTED` with it once the code returned or threw (through the
+  captured port primitives, so guest code cannot post it), which stops that call's timer. Code still running at the
+  deadline ends the sandbox: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with
+  `the executed code ran longer than workerExecutionTimeout`. Decision: terminate, not rebuild, because it is the
+  same situation as the watchdog's (a guest that does not give its thread back) and the watchdog terminates;
+  rebuilding would bring back a sandbox the embedder did not ask for and fire no event. One rule for every budget:
+  a guest over a budget is terminated, and `reset()` is the embedder's choice. Before, one timer per element was
+  restarted by every `execute()` and rebuilt the environment even after code that had finished, with no
+  `terminated` event. Work the code scheduled for later is the watchdog's to bound. The "Revisit if" above is met
+  only in part: `execute()` reports completion, but guest code as a whole does not, so there is still no `running`
+  state.
+- **Every build failure is a termination.** A build that threw (a directive given a string instead of a list,
+  for example) used to escape `setConfig()` or `reset()` and leave the element `loading`, with no frame and no
+  event. Now `initialize()`, the one place a build starts, and the frame's load handler, where it completes, end
+  any throw with `terminated` and `the environment could not be built: …`; and `setConfig()` copies its argument
+  with `structuredClone` first, so a config that cannot be copied (a `Proxy`, a function value) or is not an object
+  terminates with `the configuration could not be used: …`, applies nothing, and keeps every build closed until a
+  usable config arrives, like an unknown mode (review A4). Each failed build attempt is one termination with its
+  reason. The copy also means that arrays the caller changes later never change the policy a `reset()` builds.
+- **No environment, one rule for work.** While `idle` (not in the document) or `terminated`, `call()` rejects at
+  once with `TERMINATED` and `execute()` warns and does nothing. While idle, a call used to wait for the insertion,
+  whose build then rejected it anyway, and executed code was dropped there silently.
+
+Proof: `test/unit/followup-guarantees.test.ts`, `test/unit/policy-guarantees.test.ts` ("Every build failure is a
+termination"), `test/unit/channel-guarantees.test.ts` ("B5"), `test/e2e/worker-timeout.spec.ts`,
+`test/e2e/review-followup.spec.ts`.

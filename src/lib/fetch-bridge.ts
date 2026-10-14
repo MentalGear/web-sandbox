@@ -79,8 +79,10 @@ export interface FetchRecord {
     url: string;
     /**
      * ok        a response was handed to the guest (any HTTP status)
-     * refused   no request was made (code says why)
-     * failed    a request was made but no response was handed over (code says why)
+     * refused   no request was made: the bridge's policy or the Request constructor refused it (code says why)
+     * failed    fetch() was called and no response was handed over (code says why). Not proof that a request
+     *           left the page: the browser's fetch rejects some requests before sending them (the host page's
+     *           own connect-src, mixed content, local-network blocking), and a page cannot tell those apart
      * aborted   the sandbox was reset, terminated or removed while the request was in flight
      */
     outcome: 'ok' | 'refused' | 'failed' | 'aborted';
@@ -116,8 +118,6 @@ const FORBIDDEN_HEADER = /^(accept-charset|accept-encoding|access-control-reques
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]{1,64}$/;
 const MAX_HEADERS = 64;
 const MAX_HEADER_VALUE = 8192;
-// Code points up to U+00FF (a ByteString) except NUL, LF and CR.
-const BYTE_STRING_HEADER_VALUE = /^[\u0001-\u0009\u000b\u000c\u000e-\u00ff]*$/;
 const MAX_REPORTED_URL = 2048;
 const MAX_URL = 8192;
 const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
@@ -310,9 +310,9 @@ const toHeaders = (value: unknown, allowed: readonly string[]): [string, string]
         if (typeof name !== 'string' || typeof headerValue !== 'string') return 'header names and values must be strings';
         const lower = name.toLowerCase();
         if (!allowed.includes(lower)) return `header "${lower.slice(0, 64)}" is not allowed`;
-        // A header value is a ByteString with no CR, LF or NUL (review B6): anything else would make fetch() throw
-        // before sending, and the request be reported as made ('failed') when none was.
-        if (headerValue.length > MAX_HEADER_VALUE || !BYTE_STRING_HEADER_VALUE.test(headerValue)) return `header "${lower}" has an invalid value`;
+        // The value's size is policy; its syntax (a ByteString without NUL, CR or LF) is the platform's, checked
+        // by the Request the bridge builds before it records anything (createFetchBridge, review B6).
+        if (headerValue.length > MAX_HEADER_VALUE) return `header "${lower}" has a value longer than ${MAX_HEADER_VALUE} characters`;
         headers.push([lower, headerValue]);
     }
     return headers;
@@ -435,13 +435,16 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
         if (valid instanceof Error) return refuse(valid);
         if (inFlight.size >= policy.maxConcurrent) refuse(fetchRefusal('FETCH_BUSY', `${policy.maxConcurrent} requests are already in flight`));
 
+        // The platform validates the request before anything is recorded as made (review B6, follow-up audit
+        // 2026-10-14): the Request constructor applies the Fetch standard's own checks (a header value is a
+        // ByteString without NUL, CR or LF; the body is a BufferSource or a string; the method and mode agree),
+        // so nothing it refuses can reach fetch() and be reported as 'failed'. What it throws is a refusal; no
+        // request exists then. validateRequest() keeps only what is policy: the origin allowlist, private hosts,
+        // methods, header names, sizes. The Request is what fetch() is given, so what was checked is what is sent.
         const controller = new AbortController();
-        inFlight.add(controller);
-        const timer = setTimeout(() => controller.abort(TIMEOUT), policy.timeoutMs);
-        let bytes = 0;
-        let status: number | undefined;
+        let outgoing: Request;
         try {
-            const response = await (fetchImpl ?? globalThis.fetch)(valid.url.href, {
+            outgoing = new Request(valid.url.href, {
                 method: valid.method,
                 headers: valid.headers,
                 body: valid.body as BodyInit | undefined,
@@ -453,6 +456,15 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
                 cache: 'no-store',
                 keepalive: false,
             });
+        } catch (error) {
+            return refuse(fetchRefusal('FETCH_NOT_ALLOWED', `the browser refused the request (${error instanceof Error ? error.name : 'error'})`));
+        }
+        inFlight.add(controller);
+        const timer = setTimeout(() => controller.abort(TIMEOUT), policy.timeoutMs);
+        let bytes = 0;
+        let status: number | undefined;
+        try {
+            const response = await (fetchImpl ?? globalThis.fetch)(outgoing);
             if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400 && response.headers.has('location'))) {
                 await response.body?.cancel().catch(() => {});
                 throw fetchRefusal('FETCH_REDIRECT', 'the response was a redirect, which the bridge never follows');

@@ -13,9 +13,9 @@ import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './markup-referen
  *         └─ worker  new Worker(blob:) spawned by the view: the guest's logic, the bridge, sandboxView
  *
  * Three ports, all MessageChannels created per environment:
- *   logic   host ↔ worker   RPC, LOG, PING/PONG, VIOLATION (source 'logic'), EXECUTE — as in worker mode
- *   view    host ↔ view     VIOLATION (source 'view'), RESIZE, GUEST_ERROR, VIEW_PING/VIEW_PONG
- *   render  view ↔ worker   VIEW_RENDER, VIEW_ACK, VIEW_LISTEN, VIEW_EVENT — the host is not on this path
+ *   logic   host ↔ worker   RPC, LOG, PING/PONG, VIOLATION (source 'logic'), EXECUTE/EXECUTED — as in worker mode
+ *   view    host ↔ view     VIOLATION (source 'view'), RESIZE, GUEST_ERROR, GUEST_UNCAUGHT, VIEW_PING/VIEW_PONG
+ *   render  view ↔ worker   VIEW_STARTED, VIEW_RENDER, VIEW_ACK, VIEW_LISTEN, VIEW_EVENT — the host is not on this path
  * The render port is created by the view and handed to the library's worker prelude, which keeps it in a
  * closure and only ever uses primitives it captured before any guest code ran (A4): guest code cannot post
  * on it, so it cannot get past the flow control below.
@@ -232,15 +232,22 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
 
     // The view document's own CSP violations (G6): complete and unforgeable, since no guest code runs in this
-    // document and the host labels whatever arrives on the view port as source 'view'. Capped like the
-    // default bootstrap's (VIOLATION_EVENT_LIMIT).
-    let violations = 0;
+    // document and the host labels whatever arrives on the view port as source 'view'. Capped per directive
+    // (VIOLATION_EVENT_LIMIT each; the host keeps the same buckets, review C4): the view's reports include
+    // refusals of the guest's own rendered markup, so one shared cap let a guest that rendered 100 refused
+    // images hide a later script-src-attr report. The directive is the browser's, so the buckets are the
+    // browser's directive names; past 32 distinct names everything shares one more bucket.
+    const violationCounts = new Map<string, number>();
     addEventListener('securitypolicyviolation', (event: any) => {
-        if (!event.isTrusted || violations >= options.violationLimit) return;
-        violations++;
+        if (!event.isTrusted) return;
+        const directive = event.effectiveDirective || event.violatedDirective;
+        const bucket = violationCounts.has(directive) || violationCounts.size < 32 ? directive : '';
+        const count = violationCounts.get(bucket) || 0;
+        if (count >= options.violationLimit) return;
+        violationCounts.set(bucket, count + 1);
         toHost({
             type: 'VIOLATION',
-            directive: event.effectiveDirective || event.violatedDirective,
+            directive,
             blockedURI: event.blockedURI,
             sourceFile: event.sourceFile,
             lineNumber: event.lineNumber,
@@ -438,25 +445,62 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             minted.add(url);
         }
 
+        // The worker's source URL is revoked on the first message the worker sends on the render port (review C1,
+        // follow-up audit 2026-10-14). Only the worker prelude can post there, and it first does so (VIEW_STARTED)
+        // when it takes INIT_WORKER, which a worker handles only after its whole script (prelude, entry, marker)
+        // has run: the source has been read and evaluated by then, and the entry's own errors have been raised.
+        // From then on the URL resolves nowhere, so the view can no longer load or fetch the worker's source: the
+        // only blob: URLs left that rendered markup could name are the worker's copies of registered files, and the
+        // narrowed A8 guarantee, "the view renders no blob: content but registered files", holds by construction.
+        // Revoking earlier (once the Worker object exists) was rejected in the review: in WebKit the worker's
+        // script had not been read yet, and every blob: URL it then minted was unreadable (sandboxFiles failed
+        // with NotReadableError). Measured at this point on all three engines: Blob reads, fetches of the
+        // worker's own URLs, sandboxFiles and execute() keep working (test/e2e/review-strict.spec.ts, "C1").
+        //
+        // One thing does change, in WebKit only: inside the worker, an uncaught error thrown later by code from the
+        // revoked script is muted ("Script error.", no error object), since WebKit can no longer resolve the
+        // script's URL to its origin; here, on the Worker object, the same error keeps its text. So the prelude
+        // logs every later error it can describe itself and leaves a muted one to this document, which logs it
+        // (GUEST_UNCAUGHT). Which errors are the entry's own (they end the sandbox: GUEST_ERROR) is decided without
+        // relying on the order of two channels: an error before VIEW_STARTED can only be the entry's (a later one
+        // the worker can describe never reaches here, and a muted one needs the revocation, which follows
+        // VIEW_STARTED); after it, VIEW_STARTED says how many of the Worker object's errors were the entry's, and
+        // errors on one Worker object arrive in the order they were raised.
+        let sourceUrl: string | null = null;
+        let started = false;
+        let entryErrors = 0; // from VIEW_STARTED: how many of the worker's first error events are the entry's
+        let errorsSeen = 0;
         const channel = new MessageChannel();
         renderPort = channel.port1;
-        renderPort.onmessage = onRender;
+        renderPort.onmessage = (event: MessageEvent) => {
+            if (!started) {
+                started = true;
+                const first = event.data;
+                if (first && first.type === 'VIEW_STARTED' && typeof first.entryErrors === 'number') entryErrors = first.entryErrors;
+                if (sourceUrl !== null) URL.revokeObjectURL(sourceUrl);
+                sourceUrl = null;
+            }
+            onRender(event);
+        };
         let worker: Worker;
         try {
-            // The worker's source URL is never revoked (review C1): in WebKit, revoking it makes every blob: URL
-            // the worker minted unreadable there (sandboxFiles fails with NotReadableError) and mutes its error
-            // messages ("Script error."). It resolves in the view too, but renders nothing there: it is typed
-            // text/javascript and begins with the library's prelude, so it is neither a stylesheet (MIME) nor an
-            // image or font (no signature at its start). So what the view can render from a blob: URL is registered content.
-            worker = new Worker(URL.createObjectURL(new Blob([data.workerSource], { type: 'text/javascript' })));
+            sourceUrl = URL.createObjectURL(new Blob([data.workerSource], { type: 'text/javascript' }));
+            worker = new Worker(sourceUrl);
         } catch (error: any) {
             viewPort.postMessage({ type: 'GUEST_ERROR', message: String((error && error.message) || error) });
             return;
         }
-        // Reaches here only for an error the worker did not cancel: one raised while the guest's entry ran
-        // (a syntax error, or a throw at its top level). The worker's prelude cancels every later one.
+        // Errors the worker did not cancel: the entry's own (a syntax error, a throw at its top level), which end
+        // the sandbox, and later ones the worker could not describe (muted, above), which are logged.
         worker.onerror = (error: ErrorEvent) => {
-            viewPort!.postMessage({ type: 'GUEST_ERROR', message: String(error.message || 'the worker failed') });
+            const index = errorsSeen++;
+            const message = String(error.message || 'the worker failed');
+            if (!started || index < entryErrors) {
+                viewPort!.postMessage({ type: 'GUEST_ERROR', message });
+                return;
+            }
+            error.preventDefault();
+            viewPort!.postMessage({ type: 'GUEST_UNCAUGHT', message });
         };
         worker.postMessage({ type: 'INIT_WORKER' }, [logicPort, channel.port2]);
 
@@ -497,8 +541,11 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
     const portsOf = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'ports')!.get!;
     const stopImmediate = Event.prototype.stopImmediatePropagation;
     const cancel = Event.prototype.preventDefault;
+    const defaultPreventedOf = Object.getOwnPropertyDescriptor(Event.prototype, 'defaultPrevented')!.get!;
+    const laterMicrotask = g.queueMicrotask;
     const post = MessagePort.prototype.postMessage;
     const startPort = MessagePort.prototype.start;
+    const join = Array.prototype.join; // for error texts: a patched join would otherwise receive the prelude's own list as `this`
     const sandboxConsole = console;
     const reportError = typeof g.reportError === 'function' ? g.reportError : null;
 
@@ -577,7 +624,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
         apply(post, renderPort, [{ type: 'VIEW_LISTEN', types }]);
     };
     const on = (type: unknown, id: unknown, handler: unknown) => {
-        if (!isEventType(type)) throw new TypeError('sandboxView.on: type must be one of ' + options.eventTypes.join(', '));
+        if (!isEventType(type)) throw new TypeError('sandboxView.on: type must be one of ' + apply(join, options.eventTypes, [', ']));
         const target = id === undefined || id === null ? null : id;
         if (target !== null && (typeof target !== 'string' || target.length === 0 || target.length > options.maxTarget)) {
             throw new TypeError('sandboxView.on: id must be an element id or null');
@@ -644,6 +691,10 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
         renderPort = ports[1];
         apply(addListener, renderPort, ['message', onRenderMessage]);
         apply(startPort, renderPort, []);
+        // Always the first frame on the render port: it tells the view that this script ran to its end, and how
+        // many of the errors that reach the Worker object were the entry's (the view ends the sandbox for those);
+        // the view revokes the worker's source URL on it (review C1). Before attach(), so it precedes everything.
+        apply(post, renderPort, [{ type: 'VIEW_STARTED', entryErrors }]);
         comms.attach(ports[0]);
         syncListen();
         sendNext();
@@ -651,11 +702,22 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
 
     // ---- entry failure ----
     // An uncaught error while the entry runs (before the line after it calls the marker) is left alone: it
-    // reaches the Worker object in the view, which reports GUEST_ERROR, and the host ends the sandbox. Every
-    // later uncaught error is cancelled here and logged, so it never ends the sandbox.
+    // reaches the Worker object in the view, which reports GUEST_ERROR, and the host ends the sandbox. It is
+    // counted once its dispatch is over, if nothing cancelled it, since only then does it reach the view;
+    // VIEW_STARTED carries the count. Every later uncaught error is cancelled here and logged, so it never ends
+    // the sandbox, except one the browser muted here: in WebKit, once the view has revoked the worker's source
+    // URL (review C1), an error thrown by code from that script reads "Script error." in the worker, while the
+    // Worker object in the view still gets its text. Such an error is left to the view, which logs it.
     let entryRan = false;
+    let entryErrors = 0;
+    const isMuted = (event: ErrorEvent) => event.error === null && event.message === 'Script error.';
     apply(addListener, g, ['error', (event: ErrorEvent) => {
-        if (!entryRan) return;
+        if (!event.isTrusted) return; // isTrusted is an own, unforgeable property; only trusted errors reach the view
+        if (!entryRan) {
+            apply(laterMicrotask, g, [() => { if (!apply(defaultPreventedOf, event, [])) entryErrors++; }]);
+            return;
+        }
+        if (isMuted(event)) return;
         apply(cancel, event, []);
         sandboxConsole.error('Uncaught ' + String(event.message));
     }, true]);
