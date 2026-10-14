@@ -7,6 +7,7 @@ import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-global
  *   V1  a guest worker (worker mode, strict mode) keeps only the allowlisted globals: Firefox sent a worker's
  *       EventSource (and loaded a worker's FontFace) past the policy; every other network API of a worker is gone or
  *       governed. A worker the guest creates in iframe mode is a realm of its own (residual, measured).
+ *   V2  a strict entry's synchronous console lines arrive (they were lost before the logic port was attached);
  * Evidence (T5): the recorder's listeners outside the browser, with a positive control beside each negative.
  */
 
@@ -92,4 +93,13 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         await sandbox.page.waitForTimeout(1000);
         expect(recorder.paths('blocked').sort()).toEqual(browserName === 'firefox' ? ['/v1-guest-worker-es', '/v1-guest-worker-font.woff'] : []);
     });
+});
+
+// ---- V2: a strict entry's synchronous console lines -------------------------------------------------------------
+
+test('V2: a strict entry\'s synchronous console lines arrive as sandbox-log, in order, before its asynchronous ones (before: only the asynchronous ones did)', async ({ sandbox }) => {
+    await sandbox.registerFiles({ 'main.js': `console.log('V2 sync 1'); console.info('V2 sync 2'); console.warn('V2 sync 3'); setTimeout(() => console.log('V2 async'), 0);` });
+    expect(await sandbox.mount({ mode: 'strict', entry: 'main.js' })).toBe('ready');
+    await sandbox.waitForLog('V2 async');
+    expect((await sandbox.logs()).filter(line => line.startsWith('V2 '))).toEqual(['V2 sync 1', 'V2 sync 2', 'V2 sync 3', 'V2 async']);
 });

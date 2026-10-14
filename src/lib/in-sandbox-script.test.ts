@@ -125,6 +125,48 @@ describe("inSandboxScript", () => {
         expect(port.posted).toHaveBeenCalledWith({ type: 'PONG', n: 1 });
     });
 
+    it("console lines logged before the port is attached (a strict entry's top level) are relayed on attach, in order, before the ready line; past 1000 they are counted and one warning says so (independent verification 2026-10-14)", () => {
+        const sandboxConsole = createMockConsole();
+        (globalThis as any).addEventListener = () => {};
+        const comms = inSandboxScript(false, 'strict', sandboxConsole, createBroker, { externalPort: true });
+        sandboxConsole.log('first');
+        sandboxConsole.warn('second');
+        for (let i = 0; i < 1100; i++) sandboxConsole.log('flood', i);
+        const port = createMockPort();
+        comms.attach(port as any);
+        const frames = port.posted.mock.calls.map(call => call[0]).filter((frame: any) => frame.type === 'LOG');
+        expect(frames.slice(0, 2)).toEqual([{ type: 'LOG', level: 'log', args: ['first'] }, { type: 'LOG', level: 'warn', args: ['second'] }]);
+        expect(frames).toHaveLength(1000 + 2);
+        expect(frames.at(-2)).toEqual({ type: 'LOG', level: 'warn', args: ['[Sandbox] 102 console line(s) logged before the sandbox was connected were dropped: at most 1000 are kept until then.'] });
+        expect(frames.at(-1)).toEqual({ type: 'LOG', level: 'info', args: ['strict Ready'] });
+        sandboxConsole.log('after');
+        expect(port.posted.mock.calls.at(-1)![0]).toEqual({ type: 'LOG', level: 'log', args: ['after'] });
+    });
+
+    it("C3, the outbox: frames queued before the port is attached (a strict entry's bridge calls and console lines) never reach a setter on Array.prototype, and all arrive on attach", () => {
+        const sandboxConsole = { log() {}, info() {}, warn() {}, error() {} } as unknown as Console; // no mock: it records calls in arrays
+        (globalThis as any).addEventListener = () => {};
+        const comms = inSandboxScript(false, 'strict', sandboxConsole, createBroker, { externalPort: true });
+        const seen = new Map<number, unknown>(); // a Map: recording must not write an array index itself
+        // guest code (the entry's top level) poisons every index the outbox could be written at by assignment
+        for (const index of ['0', '1', '2', '3']) {
+            Object.defineProperty(Array.prototype, index, { configurable: true, set(value) { seen.set(seen.size, value); }, get() { return undefined; } });
+        }
+        try {
+            (globalThis as any).bridge.call('hostMethod', 1).catch(() => {});
+            sandboxConsole.log('queued line');
+            (globalThis as any).bridge.expose('guestMethod', () => 1);
+        } finally {
+            for (const index of ['0', '1', '2', '3']) delete (Array.prototype as any)[index];
+        }
+        expect([...seen.values()]).toEqual([]);
+        const port = createMockPort();
+        comms.attach(port as any);
+        const types = port.posted.mock.calls.map(call => (call[0] as any).type);
+        expect(types).toContain('RPC_REQ');
+        expect(port.posted.mock.calls.map(call => call[0])).toContainEqual({ type: 'LOG', level: 'log', args: ['queued line'] });
+    });
+
     it("should block execution when scriptUnsafe is false", () => {
         const port = createMockPort();
         const sandboxConsole = createMockConsole();
