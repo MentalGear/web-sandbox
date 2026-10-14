@@ -12,14 +12,20 @@ import { inFrames, waitInView } from './strict-view';
  *   2. the guest cannot take it back from another realm: every frame it creates is cross-origin to it;
  * and the residual, asserted as measured so a change is noticed:
  *   3. a frame the guest creates is a realm of its own, runs its own script and keeps RTCPeerConnection;
- *      in Chromium and WebKit its ICE gathering reaches a loopback UDP listener. Firefox sends nothing to a
- *      loopback STUN/TURN server even from the host page (the listener's control), so there only
- *      candidate gathering is observable.
+ *      its ICE gathering reaches a loopback UDP listener on every engine.
  * Strict mode (ADR-005) closes the residual by construction:
  *   4. guest code runs in a worker, which has no peer-connection constructor, and the view runs no guest
  *      script; a frame in rendered markup is removed before it is inserted (A1), so the same ICE probe
- *      never runs and no UDP reaches the listener, while the host-page control does (Chromium, WebKit).
+ *      never runs and no UDP reaches the listener, while the host-page control does, on every engine.
+ *
+ * The positive control on Firefox (independent verification 2026-10-14): Firefox sends no STUN/TURN traffic to a
+ * loopback server by default, not even from the host page, which left "no UDP from strict mode" without a control
+ * there. This file runs Firefox with `media.peerconnection.ice.loopback` on (Playwright's firefoxUserPrefs; the other
+ * engines ignore it), so the host-page control sends packets on all three engines and silence means something. The
+ * pref changes only where ICE may send, not whether a realm has RTCPeerConnection.
  */
+
+test.use({ launchOptions: { firefoxUserPrefs: { 'media.peerconnection.ice.loopback': true } } });
 
 const PEER_CONNECTION_NAMES = `Object.getOwnPropertyNames(globalThis).filter(n => /^(webkit|moz)?RTCPeerConnection$/.test(n))`;
 
@@ -65,7 +71,7 @@ const iceProbe = (port: number) => `(done) => {
     setTimeout(() => { pc.close(); done(r); }, 3000);
 }`;
 
-test('residual: a frame the guest creates keeps RTCPeerConnection, and in Chromium and WebKit its ICE traffic leaves (measured)', async ({ sandbox, browserName }) => {
+test('residual: a frame the guest creates keeps RTCPeerConnection, and its ICE traffic leaves (measured; Firefox with loopback ICE on)', async ({ sandbox }) => {
     test.setTimeout(45000);
     const udp = dgram.createSocket('udp4');
     let packets = 0;
@@ -90,13 +96,8 @@ test('residual: a frame the guest creates keeps RTCPeerConnection, and in Chromi
         expect(host.pc).toBe('function');
         expect(nested.pc).toBe('function');
         expect(nested.candidates).toContain('host');
-        if (browserName === 'firefox') {
-            // Firefox sends no STUN/TURN traffic to a loopback server, not even from the host page
-            expect({ hostPackets, nestedPackets: packets }).toEqual({ hostPackets: 0, nestedPackets: 0 });
-        } else {
-            expect(hostPackets).toBeGreaterThan(0);
-            expect(packets).toBeGreaterThan(0);
-        }
+        expect(hostPackets).toBeGreaterThan(0);
+        expect(packets).toBeGreaterThan(0);
     } finally {
         udp.close();
     }
@@ -104,7 +105,7 @@ test('residual: a frame the guest creates keeps RTCPeerConnection, and in Chromi
 
 // ---- 4. strict mode -----------------------------------------------------------------------------------
 
-test('strict mode: no peer connection in the worker; a rendered frame carrying the ICE probe is absent, nothing runs, no UDP leaves (control: the host page)', async ({ sandbox, page, browserName }) => {
+test('strict mode: no peer connection in the worker; a rendered frame carrying the ICE probe is absent, nothing runs, no UDP leaves (control: the host page, every engine)', async ({ sandbox, page, browserName }) => {
     test.setTimeout(45000);
     const udp = dgram.createSocket('udp4');
     let packets = 0;
@@ -131,8 +132,7 @@ test('strict mode: no peer connection in the worker; a rendered frame carrying t
         const host = await page.evaluate(`new Promise(res => (${iceProbe(port)})(res))`) as { pc: string; candidates: string[] };
         expect(host.pc).toBe('function');
         expect(strictPackets).toBe(0);
-        if (browserName === 'firefox') expect(packets).toBe(0); // no loopback STUN from Firefox at all
-        else expect(packets).toBeGreaterThan(0);
+        expect(packets).toBeGreaterThan(0); // the listener hears the host page's ICE: silence above is evidence
     } finally {
         udp.close();
     }

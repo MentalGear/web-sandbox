@@ -8,6 +8,9 @@ import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-global
  *       EventSource (and loaded a worker's FontFace) past the policy; every other network API of a worker is gone or
  *       governed. A worker the guest creates in iframe mode is a realm of its own (residual, measured).
  *   V2  a strict entry's synchronous console lines arrive (they were lost before the logic port was attached);
+ *   L1  a guest's timers, promise loops and nested workers stop at terminate() and reset();
+ *   L2  an announcement a frame the guest creates posts to top is never accepted;
+ *   PD7 the playground acts only on messages from its own window;
  * Evidence (T5): the recorder's listeners outside the browser, with a positive control beside each negative.
  */
 
@@ -102,4 +105,82 @@ test('V2: a strict entry\'s synchronous console lines arrive as sandbox-log, in 
     expect(await sandbox.mount({ mode: 'strict', entry: 'main.js' })).toBe('ready');
     await sandbox.waitForLog('V2 async');
     expect((await sandbox.logs()).filter(line => line.startsWith('V2 '))).toEqual(['V2 sync 1', 'V2 sync 2', 'V2 sync 3', 'V2 async']);
+});
+
+// ---- L1: a guest cannot outlive terminate() or reset() ------------------------------------------------------------
+
+// A guest that tries to keep running: an interval, a chain of timeouts, a promise loop over a slow fetch, and (where
+// the mode has one) a nested worker of its own, each fetching the allowed listener.
+const OUTLIVE = (origin: string) => `
+    setInterval(() => fetch('${origin}/l1-interval').catch(() => {}), 50);
+    (function again() { setTimeout(() => { fetch('${origin}/l1-timeout').catch(() => {}); again(); }, 70); })();
+    (async () => { for (;;) { await fetch('${origin}/l1-promise').catch(() => {}); await new Promise((r) => setTimeout(r, 60)); } })();
+    if (typeof Worker === 'function') new Worker(URL.createObjectURL(new Blob(["setInterval(() => fetch('${origin}/l1-worker').catch(() => {}), 50)"], { type: 'text/javascript' })));
+`;
+
+test.describe('L1: a guest cannot outlive terminate() or reset()', () => {
+    for (const mode of ['iframe', 'worker'] as const) {
+        for (const ending of ['terminate', 'reset'] as const) {
+            test(`${mode} mode, ${ending}(): timers, a promise loop${mode === 'iframe' ? ' and a nested worker' : ''} all stop; they ran before (positive control)`, async ({ sandbox }) => {
+                expect(await sandbox.mount({ mode, connectionsAllowed: { 'connect-src': [recorder.allowed] } })).toBe('ready');
+                await sandbox.run(OUTLIVE(recorder.allowed));
+                for (const path of ['/l1-interval', '/l1-timeout', '/l1-promise', ...(mode === 'iframe' ? ['/l1-worker'] : [])]) await recorder.waitFor('allowed', path);
+                if (ending === 'terminate') await sandbox.page.evaluate(() => (document.querySelector('web-sandbox') as any).terminate('L1'));
+                else expect(await sandbox.reset()).toBe('ready');
+                await sandbox.page.waitForTimeout(300); // requests already on their way
+                recorder.clear();
+                await sandbox.page.waitForTimeout(1500);
+                expect(recorder.paths('allowed')).toEqual([]);
+            });
+        }
+    }
+});
+
+// ---- L2: a forged announcement to the top window is never accepted -------------------------------------------------
+
+test.describe('L2: an announcement posted to top by a frame the guest creates is never accepted (the guest frame\'s own forgery ends its environment: broad-review.spec.ts, PD8)', () => {
+    test('a frame the guest creates posts SANDBOX_PORT with a port to top: the host does not take it, the bridge stays the guest\'s, the forged port hears nothing', async ({ sandbox, page }) => {
+        expect(await sandbox.mount({ html: '<p>guest</p>', watchdogTimeout: 2000 })).toBe('ready');
+        await page.evaluate(() => {
+            (window as any).terminations = [];
+            (window as any).forgedDelivered = 0;
+            document.querySelector('web-sandbox')!.addEventListener('terminated', (e) => (window as any).terminations.push((e as CustomEvent).detail.reason));
+            window.addEventListener('message', (e) => { if (e.data?.type === 'SANDBOX_PORT' && e.data.forged) (window as any).forgedDelivered++; }, true);
+        });
+        // the nested frame keeps announcing for a while, and reports anything its ports receive to the guest
+        await sandbox.run(`
+            globalThis.__forgedHeard = [];
+            addEventListener('message', (e) => { if (e.data && e.data.forgedHeard) __forgedHeard.push(e.data.forgedHeard); });
+            const f = document.createElement('iframe');
+            f.srcdoc = '<script>let n = 0; const t = setInterval(() => { const c = new MessageChannel(); c.port1.onmessage = (e) => parent.postMessage({ forgedHeard: JSON.stringify(e.data) }, "*"); top.postMessage({ type: "SANDBOX_PORT", forged: true }, "*", [c.port2]); if (++n > 40) clearInterval(t); }, 25);<\\/script>';
+            document.body.append(f);
+        `);
+        await page.waitForTimeout(2500); // the watchdog pings the real port meanwhile
+        expect(await page.evaluate(() => (window as any).forgedDelivered)).toBeGreaterThan(10); // positive control: they reach top
+        await sandbox.exposeGuest('twice', '(x) => x * 2');
+        expect(await sandbox.call('twice', 21)).toBe(42);
+        expect(await page.evaluate(() => (window as any).terminations)).toEqual([]);
+        expect(await sandbox.inGuest('return __forgedHeard')).toEqual([]);
+    });
+});
+
+// ---- PD7: the playground acts only on its own messages ----------------------------------------------------------
+
+test('PD7: the playground ignores a RESET_COMPLETE posted by the guest (it reloads only for its own window\'s message: positive control)', async ({ page }) => {
+    await page.goto(`${ORIGIN}/playground/index.html`);
+    await page.waitForFunction(() => !!(window as any).SandboxControl);
+    const ready = await page.evaluate(() => new Promise<string>((resolve) => {
+        const el = (window as any).SandboxControl.sandboxElement;
+        el.addEventListener('ready', () => resolve('ready'), { once: true });
+        el.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true, html: '<p>pd7</p>' });
+        setTimeout(() => resolve('timeout'), 8000);
+    }));
+    expect(ready).toBe('ready');
+    await page.evaluate(() => { (window as any).__pd7NotReloaded = true; });
+    await page.evaluate(() => (window as any).SandboxControl.sandboxElement.execute(`parent.parent.postMessage({ type: 'RESET_COMPLETE' }, '*')`));
+    await page.waitForTimeout(1000);
+    expect(await page.evaluate(() => (window as any).__pd7NotReloaded)).toBe(true);
+    // positive control: the page's own message reloads it
+    await Promise.all([page.waitForEvent('load'), page.evaluate(() => window.postMessage({ type: 'RESET_COMPLETE' }, '*'))]);
+    expect(await page.evaluate(() => (window as any).__pd7NotReloaded)).toBeUndefined();
 });
