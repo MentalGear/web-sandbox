@@ -26,10 +26,10 @@ conditional "continue".
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7); at most 256 inbound calls in flight per environment, then `BUSY` (S22) |
 | Host-mediated network | ✅ opt-in `fetchBridge`: `sandboxFetch()` under the bridge discipline, every request logged as a `fetch` event, refusals coded (B5, [ADR-006](ADR-006-fetch-bridge.md)) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
-| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5; per directive for the strict view, S24); a listener's `reset()`/`terminate()` is never undone, through one helper (S22); every build failure, and every config that cannot be used, is a termination with a reason, and the config is a copy (S26); `workerExecutionTimeout` is a budget for code still running, which terminates (B8) |
+| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5; per directive for the strict view, S24); a listener's `reset()`/`terminate()` is never undone, through one helper (S22); every build failure, and every config that cannot be used, is a termination with a reason, and the config is a copy (S26); `workerExecutionTimeout` requires a free event loop at each `execute()` deadline, else terminates (B8, S30) |
 | Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
 | Execution budget | ✅ strict mode bounds guest logic on every engine: it runs only in a worker the watchdog stops (S6, [ADR-005](ADR-005-strict-mode.md)); default mode: opt-in watchdog, bounded in worker mode and out-of-process frames, not where the frame shares the host's thread |
-| Strict mode | ✅ opt-in `mode: 'strict'`: guest code only in a worker, a view running only the hash-admitted library bootstrap, rendered markup cleaned (no nested frames, scripts, `meta`, `base`) and moved, links inert (one constant href), one render in flight, delegated events, view liveness check, the worker's source URL revoked once it ran (S6, S13, S17, S18, S24; [ADR-005](ADR-005-strict-mode.md)) |
+| Strict mode | ✅ opt-in `mode: 'strict'`: guest code only in a worker, a view running only the hash-admitted library bootstrap, rendered markup cleaned (no nested frames, scripts, `meta`, `base`, SVG animation) and moved, links inert (one constant href), one render in flight, delegated events, view liveness check, the worker's source URL revoked once it ran (S6, S13, S17, S18, S24; [ADR-005](ADR-005-strict-mode.md)) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C); the specs run the playground's presets, and a security preset without a spec fails the unit suite (T4) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
@@ -37,11 +37,12 @@ conditional "continue".
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
 | Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); an empty directive is `'none'`, and the defaults leave unset fetch directives to `default-src` (S16); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
-| Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); guest writes opt-in (`guestWrites`): checked by the store's own rules into a per-environment overlay, never given a URL, kept only by an explicit `commitGuestWrites(paths)`, code only with `{ code: true }` (C5) |
+| Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`), each only for a load its type is for (S27); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); guest writes opt-in (`guestWrites`): checked by the store's own rules into a per-environment overlay, never given a URL, kept only by an explicit `commitGuestWrites(paths)`, code only with `{ code: true }` (C5) |
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18). ✅ in strict mode: guest code sees only its worker's `blob:` URL and no request carries a `Referer` |
 | API reference | ✅ [`API.md`](API.md): the whole public surface, checked against the code by a unit test (D3); framework adapters out of scope |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 | Adversarial review 2026-10 | ✅ 21 candidates: 19 fixed (S19–S24), 1 held and is now asserted (A8, S20), 1 documented by design (S25), no residual open; the follow-up by-construction audit moved C1, C4 and C5 to done (S24), found two gaps (S26) and hardened A3, A6, A7, B5, B6; [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
+| Focused review 2026-10-14 | ✅ 11 findings and one hardening, all closed (S27–S31): a reference names a file only for the kind of load its type is for (W1), rates hold in any one-second window (W2), the strict renderer removes SVG animation (F1), `workerExecutionTimeout` is a free event loop at the deadline (F2), no error text in reasons (F3), no assigned config keys (F4), one eval writer (F5), refused configs never stored (F6); [report](security/FOCUSED-REVIEW-2026-10-14.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -54,6 +55,7 @@ Its follow-up audit the same day made C1 and C4 (S24) hold by construction, adde
 by option B (inert link hrefs), approved by the owner.
 D3 was done on 2026-10-14 as an API reference only; its framework adapters moved to Rejected. C5 (guest writes) was done the same day
 as a reserved broker method, `sandbox:write` ([ADR-004 amendment](ADR-004-files-as-blob-urls.md#amendment-guest-writes-2026-10-14)).
+Two focused review rounds the same day ([report](security/FOCUSED-REVIEW-2026-10-14.md)) added and closed S27–S31.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1006,6 +1008,69 @@ its argument; a config that cannot be cloned or is not an object applies nothing
 `the configuration could not be used: …`, refusing every build until a usable config arrives (like A4's unknown
 mode). `setConfig()` never throws. [ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment).
 Tests: `test/unit/policy-guarantees.test.ts` ("Every build failure is a termination"), `test/e2e/review-followup.spec.ts`.
+
+### S27 · A committed inert file could run as a script of the next build — ✅ **done**
+
+*From the [focused review 2026-10-14](security/FOCUSED-REVIEW-2026-10-14.md), W1 (high).*
+
+**Verified** (2026-10-14, all three engines): a guest-written `app.js` committed as `text/plain` (inert, so no
+`{ code: true }`) became the script of the next build's `<script src="app.js">` and ran: reference resolution
+ignored the load kind, and engines run a classic `blob:` script whatever its type. Host-registered mistyped files
+loaded the same way.
+
+**Done**: one table (`src/lib/load-kinds.ts`) of which types each kind of load admits; markup and inline CSS
+resolution, registered stylesheets' references, the strict renderer, the import map, the strict entry and the
+policy's `blob:` admission all read it. A mismatch stays as written, with one warning. Limits stated in API.md and
+[ADR-004](ADR-004-files-as-blob-urls.md#amendment-2026-10-14-a-reference-names-a-file-only-for-the-kind-of-load-its-type-is-for):
+committed CSS still styles the next build's markup; code that loads `sandboxFiles.url()` as a script itself
+decides what runs. Tests: `src/lib/load-kinds.test.ts`, `test/unit/focused-review.test.ts`, `test/e2e/focused-review.spec.ts`.
+
+### S28 · Guest writes: rate windows, stale marks, a synchronous throw, a documented disagreement — ✅ **done**
+
+*From the focused review, W2–W5 (low, info).*
+
+**Done**: the guest-write rates and the guest log rate are one sliding-window limiter (`src/lib/rate-limit.ts`), so
+"at most N in any one-second window" holds (fixed windows let 199 of 100 writes, 1999 of 1000 lines through around a
+boundary); auto-sizing already held it by spacing its writes (now asserted) and the fetch bridge has no per-second
+limit (W2). A removal mark whose path the host unregistered is forgotten before marks are listed or committed (W3).
+`sandboxFiles.write()` inspects its entry inside its `try`, so it always returns a promise (W4). API.md states when
+the guest's view and `listGuestWrites()` disagree by design: a `fileswritten` listener that terminates, or blocks
+past the 30 s call timeout (W5). Tests: `test/unit/focused-review.test.ts`.
+
+### S29 · SVG animation re-animated a checked attribute in the strict view — ✅ **done**
+
+*From the focused review, F1 (medium).*
+
+**Verified** (all three engines): `<set>`/`<animate>` inside a rendered link set its `href` back to the guest's
+URL after the renderer made it `about:blank#` (`animVal`, and Chromium's accessibility tree); inside an `<image>`
+it loaded an unchecked URL (Chromium, Firefox). **Done**: the renderer removes every SVG animation element
+([ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer)).
+Tests: `test/e2e/focused-review.spec.ts` ("F1"), `src/lib/in-sandbox-view.test.ts`.
+
+### S30 · `workerExecutionTimeout` could be evaded — ✅ **done**
+
+*From the focused review, F2 (medium).*
+
+**Verified** (worker and strict mode, all three engines): `setTimeout(() => { for (;;) {} }, 0)` stopped its own
+budget and looped; replacing `globalThis.Function` made the bootstrap report completion before the embedder's code
+ran. **Done**: the budget is "the event loop is free at each deadline": the host pings through the bootstrap's
+captured handler and terminates unless it answers within `EXECUTION_TIMEOUT_GRACE_MS`; the guest reports nothing;
+executed code is compiled with a captured `Function`
+([ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline)).
+Tests: `test/e2e/focused-review.spec.ts` ("F2"), `test/unit/followup-guarantees.test.ts`.
+
+### S31 · Error text in reasons, assigned config keys, two eval writers, a refused config stored; fetch per build — ✅ **done**
+
+*From the focused review, F3–F6 (low, info) and a hardening.*
+
+**Done**: reasons and host lines carry a fixed text and the error's name, never its message; the strict entry's
+error text is a guest line (F3). Every CSP step writes config-derived keys with one helper, `defineData`, and reads
+directives as own keys only (F4: `drop-meta-ignored.ts` assigned a configured `__proto__` as its output's
+prototype). `addEvalSource` is the one writer of `'unsafe-eval'`, for the host and the strict view, and never puts
+it in `default-src` (F5). `setConfig()` checks and warns on the candidate and stores it last; a `connectionsAllowed`
+that is not an object is refused (F6). `sandbox:fetch` is registered per build, closed over that build's bridge
+([ADR-006 amendment](ADR-006-fetch-bridge.md#amendment-2026-10-14-the-method-is-bound-to-its-build)).
+Tests: `test/unit/focused-review.test.ts`.
 
 ## B · API Surface & DX
 

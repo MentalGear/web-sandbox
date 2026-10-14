@@ -599,8 +599,11 @@ describe('FileStore.snapshot: delivery order and reference cycles (PR4)', () => 
         const store = new FileStore(warn);
         store.register({ 's.css': '@import "s.css"; x { y: url(./s.css) } z { w: url(i.svg) }', 'i.svg': '' });
         expect(slotsOf(store, 's.css')).toEqual(['i.svg']);
-        expect(warn).toHaveBeenCalledTimes(1);
-        expect(String(warn.mock.calls[0]![0])).toContain('"s.css"');
+        // the @import is the cycle; url(./s.css) names a stylesheet where an image is loaded (focused review W1):
+        // it stays for that reason, with its own warning, and is no edge of the cycle
+        expect(warn).toHaveBeenCalledTimes(2);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('cycle'))).toEqual([expect.stringContaining('"s.css"')]);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('as an image'))).toHaveLength(1);
     });
 
     it('longer cycles and two cycles joined by a reference: only the references on a cycle stay; one warning per cycle', () => {
@@ -651,7 +654,7 @@ describe('FileStore: the quota counts what stylesheet references add (PR4)', () 
         const size = utf8(css).length;
         expect(store.list()).toEqual([{ path: 's.css', type: 'text/css', size }]);
         const cost = ('i.svg'.length + 24 + SLOT_URL_BYTES) + ('missing/x.svg'.length + 24 + SLOT_URL_BYTES);
-        expect(referenceCost([[0, 0, 'i.svg'], [0, 0, 'missing/x.svg']])).toBe(cost);
+        expect(referenceCost([[0, 0, 'i.svg', 'image'], [0, 0, 'missing/x.svg', 'image']])).toBe(cost);
         expect(SLOT_URL_BYTES).toBe('"blob:null/00000000-0000-0000-0000-000000000000"'.length);
 
         // fill the rest of the cap exactly: accepted; one byte more is refused and changes nothing

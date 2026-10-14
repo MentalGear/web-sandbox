@@ -4,7 +4,7 @@ import { KNOWN_DIRECTIVES } from '@src/lib/csp/policy-grammar';
 
 /**
  * Follow-up audit 2026-10-14 (docs/security/ADVERSARIAL-REVIEW-2026-10.md, "Follow-up"), host side: the execution
- * budget and the rule for work handed to a sandbox with no environment (backlog B8), the one place a log detail
+ * budget (backlog B8; since the focused review 2026-10-14, F2: a free event loop at each deadline) and the rule for work handed to a sandbox with no environment (backlog B8), the one place a log detail
  * is made (B3), and the per-directive violation counts of the strict view (C4). The in-browser halves are in
  * test/e2e/worker-timeout.spec.ts and test/e2e/review-strict.spec.ts.
  */
@@ -30,9 +30,11 @@ afterEach(() => {
     document.body.replaceChildren();
 });
 
-describe('B8: workerExecutionTimeout is a budget for code still running', () => {
-    const start = async (mode: string, budget = 50) => {
+describe('B8, focused review F2: workerExecutionTimeout requires a free event loop at each deadline', () => {
+    const REASON = 'the executed code ran longer than workerExecutionTimeout';
+    const start = async (mode: string, budget: unknown = 50) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { EXECUTION_TIMEOUT_GRACE_MS } = await import('@src/host');
         const el = await mount({ mode, scriptUnsafe: true, workerExecutionTimeout: budget });
         const port = recordingPort();
         el._port = port;
@@ -41,62 +43,81 @@ describe('B8: workerExecutionTimeout is a budget for code still running', () => 
         const logs: string[] = [];
         el.addEventListener('sandbox-log', (e: CustomEvent) => logs.push(e.detail.args[0]));
         vi.useFakeTimers();
-        const executed = (n: number) => el._onGuestMessage(port, () => {}, { type: 'EXECUTED', n }, mode === 'strict' ? 'logic' : null);
-        return { el, port, reasons, logs, executed };
+        const source = mode === 'strict' ? 'logic' : null;
+        const say = (frame: unknown) => el._onGuestMessage(port, () => {}, frame, source);
+        const pings = () => port.posted.filter((f: any) => f.type === 'PING').map((f: any) => f.n as number);
+        return { el, port, reasons, logs, say, pings, grace: EXECUTION_TIMEOUT_GRACE_MS };
     };
 
-    it.each(['worker', 'strict'])('%s mode: code that reports it returned stops its timer: nothing happens at the deadline, and the environment is kept (before: rebuilt)', async (mode) => {
-        const { el, port, reasons, logs, executed } = await start(mode);
+    it.each(['worker', 'strict'])('%s mode: at the deadline the host pings through the bootstrap; an answer (a free event loop) passes: nothing happens and the environment is kept', async (mode) => {
+        const { el, port, reasons, logs, say, pings, grace } = await start(mode);
         el.execute('globalThis.x = 1');
-        expect(port.posted).toEqual([{ type: 'EXECUTE', code: 'globalThis.x = 1', n: expect.any(Number) }]);
-        executed(port.posted[0].n);
+        expect(port.posted).toEqual([{ type: 'EXECUTE', code: 'globalThis.x = 1' }]); // nothing to report back: no number
+        vi.advanceTimersByTime(49);
+        expect(pings()).toEqual([]);
+        vi.advanceTimersByTime(1);
+        expect(pings()).toEqual([-1]); // a number of its own, never the watchdog's
+        say({ type: 'PONG', n: -1 });
         const frame = el.shadowRoot.querySelector('iframe');
-        vi.advanceTimersByTime(500);
-        expect([el.state, reasons, logs]).toEqual(['loading', [], []]);
+        vi.advanceTimersByTime(grace * 3);
+        expect([el.state, reasons, logs, pings()]).toEqual(['loading', [], [], [-1]]);
         expect(el.shadowRoot.querySelector('iframe')).toBe(frame);
     });
 
-    it.each(['worker', 'strict'])('%s mode: code still running at the deadline ends the sandbox: the host line, then terminated with the reason (before: a rebuild, no event)', async (mode) => {
-        const { el, reasons, logs } = await start(mode);
+    it.each(['worker', 'strict'])('%s mode: no answer within the grace ends the sandbox: the host line, then terminated with the reason; pings repeat each tick meanwhile', async (mode) => {
+        const { el, reasons, logs, pings, grace } = await start(mode);
         el.execute('for (;;) {}');
-        vi.advanceTimersByTime(49);
+        vi.advanceTimersByTime(50 + grace - 1);
         expect(el.state).toBe('loading');
+        expect(pings()).toEqual([-1, -2, -3, -4]);
         vi.advanceTimersByTime(1);
-        expect([el.state, reasons, logs]).toEqual(['terminated', ['the executed code ran longer than workerExecutionTimeout'], ['Execution Timeout']]);
+        expect([el.state, reasons, logs]).toEqual(['terminated', [REASON], ['Execution Timeout']]);
         expect(el.shadowRoot.querySelector('iframe')).toBeNull();
     });
 
-    it('each execute() has its own budget: one that returned does not cover one still running, and a later execute() does not restart an earlier one', async () => {
-        const { el, port, reasons, executed } = await start('worker', 100);
+    it('nothing the guest says ends a budget: the old EXECUTED report, the watchdog\'s numbers, another probe\'s number or a non-number change nothing (A1, A2)', async () => {
+        const { el, reasons, say, grace } = await start('worker');
+        el.execute('a');
+        say({ type: 'EXECUTED', n: 1 });
+        vi.advanceTimersByTime(50);
+        for (const n of [1, 0, -2, '-1', null]) say({ type: 'PONG', n });
+        vi.advanceTimersByTime(grace);
+        expect(reasons).toEqual([REASON]);
+    });
+
+    it('each execute() has its own deadline, and each deadline checks the one event loop: the first answered, the second not, terminated at the second; an answer to an earlier probe does not pass a later one', async () => {
+        const { el, reasons, say, pings, grace } = await start('worker', 100);
         el.execute('a');
         vi.advanceTimersByTime(60);
         el.execute('b');
-        executed(port.posted[1].n); // b returned, a has not
-        vi.advanceTimersByTime(40);
-        expect(reasons).toEqual(['the executed code ran longer than workerExecutionTimeout']);
+        vi.advanceTimersByTime(40); // a's deadline
+        expect(pings()).toEqual([-1]);
+        say({ type: 'PONG', n: -1 });
+        vi.advanceTimersByTime(60); // b's deadline
+        expect(pings()).toEqual([-1, -2]);
+        say({ type: 'PONG', n: -1 }); // a's answer again: proves nothing about now
+        vi.advanceTimersByTime(grace);
+        expect(reasons).toEqual([REASON]);
     });
 
-    it('a report that names no running execute() changes nothing; a teardown ends every budget', async () => {
-        const { el, port, reasons, executed } = await start('worker');
+    it('a teardown ends every deadline and every probe in flight', async () => {
+        const { el, port, reasons, pings, grace } = await start('worker');
         el.execute('a');
-        executed(port.posted[0].n + 1);
-        executed('1' as any);
-        vi.advanceTimersByTime(50);
-        expect(reasons).toHaveLength(1);
-        el.reset();
-        el._port = port;
+        vi.advanceTimersByTime(50); // probing
         el.execute('b');
         el.reset();
-        vi.advanceTimersByTime(500);
-        expect([el.state, reasons]).toEqual(['loading', ['the executed code ran longer than workerExecutionTimeout']]);
+        el._port = port;
+        vi.advanceTimersByTime(grace * 3);
+        expect([el.state, reasons, pings()]).toEqual(['loading', [], [-1]]);
+        expect(el._executionProbes.size).toBe(0);
     });
 
     it('iframe mode has no budget, and a budget that is not a finite number > 0 is off', async () => {
         for (const [mode, budget] of [['iframe', 50], ['worker', '50'], ['worker', -1], ['worker', Infinity]] as const) {
-            const { el, reasons } = await start(mode, budget as number);
+            const { el, reasons, pings, grace } = await start(mode, budget);
             el.execute('for (;;) {}');
-            vi.advanceTimersByTime(1000);
-            expect(reasons, `${mode} ${String(budget)}`).toEqual([]);
+            vi.advanceTimersByTime(1000 + grace);
+            expect([reasons, pings()], `${mode} ${String(budget)}`).toEqual([[], []]);
             vi.useRealTimers();
         }
     });

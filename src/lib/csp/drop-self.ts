@@ -1,4 +1,5 @@
 import type { CSPDirectives } from "../../csp-directives";
+import { defineData } from "../utils";
 
 /**
  * Why the guest policy never contains 'self':
@@ -39,7 +40,7 @@ export function dropSelfSources(directives: CSPDirectives, warned: Set<string>):
         }
         if (!dropped) continue;
 
-        output[name] = kept;
+        defineData(output, name, kept); // defined, never assigned (F4)
         if (!warned.has(name)) {
             warned.add(name);
             console.warn(`[Sandbox] "'self'" is not allowed in "connectionsAllowed.${name}" and was dropped. The guest has an opaque origin, for which browsers disagree on what 'self' matches (WebKit admits any https origin); list the origins you need explicitly.`);

@@ -40,6 +40,10 @@ export function inSandboxScript(
     const portsOf = accessor(MessageEvent.prototype, 'ports').get!;
     const sourceOf = accessor(MessageEvent.prototype, 'source').get!;
     const stopImmediate = Event.prototype.stopImmediatePropagation;
+    // What execute() compiles with (focused review 2026-10-14, F2): captured now, so guest code that replaces
+    // globalThis.Function (or Reflect) later cannot choose what an EXECUTE frame runs, or when.
+    const FunctionConstructor = Function;
+    const construct = Reflect.construct;
     const append = (list: unknown[], value: unknown) => defineOwn(list, list.length, { value, writable: true, enumerable: true, configurable: true });
     // Iframe mode: the host page, the only sender of INIT_PORT (review B1). The guest frame's parent is the
     // wrapper; the wrapper's parent is the host. Read now, before guest code could replace `parent`.
@@ -190,22 +194,20 @@ export function inSandboxScript(
                 return;
             }
             if (data?.type === 'EXECUTE') {
+                // Compiled with the Function captured above and called through the captured apply: what runs is the
+                // embedder's code, now. Nothing is reported back: workerExecutionTimeout is the host's ping at the
+                // deadline, answered above only by a free event loop (host.ts, _armExecutionBudget).
                 try {
                     // try ensures the code execution itself doesn't crash the port logic
                     if (!scriptUnsafe) throw new Error("Execution blocked: scriptUnsafe is false");
-                    const func = new Function(data.code);
-                    func();
+                    apply(construct(FunctionConstructor, [String(data.code)]) as () => void, undefined, []);
                 } catch (e: any) {
                     try {
                         post({ type: 'LOG', level: 'error', args: [e.message] });
                     } catch {
-                        // a thrown value whose message cannot be cloned: no line, but the report below still goes
+                        // a thrown value whose message cannot be read or cloned: no line
                     }
                 }
-                // The code returned (or threw): the host stops this execute()'s workerExecutionTimeout budget
-                // (backlog B8). Posted with the captured primitives, like every frame of this script, so guest
-                // code can neither post it early nor stop it.
-                if (typeof data.n === 'number') post({ type: 'EXECUTED', n: data.n });
                 return;
             }
             // RPC frames (RPC_REQ / RPC_RES) and anything else go to the broker, which validates every

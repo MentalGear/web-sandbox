@@ -3,8 +3,12 @@ import { buildGuestDocument, buildWrapperDocument, escapeAttribute, toInlineScri
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from '@src/lib/in-sandbox-files';
 import { rewriteMarkupReferences } from '@src/lib/markup-references';
+import { mimeTypeFor } from '@src/lib/files';
 import { createBroker } from '@src/lib/rpc';
 import { workerBootstrap } from '@src/lib/worker-bootstrap';
+
+// The files a build can name, typed by extension as the store types them.
+const typesOf = (paths: string[]) => new Map(paths.map(path => [path, mimeTypeFor(path)]));
 
 /**
  * Files on the element (ADR-004), as far as the host's own output shows them: what goes into the
@@ -259,7 +263,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
     it('a match: the document ends with the bootstrap, whose last statement writes the parts with the URLs inSandboxFiles returns', async () => {
         const html = '<h1>t</h1><img src="logo.svg"><script src="./app.js"></script><img src="/img/x.svg"><img src="missing.svg">';
         const el = await mount({ ...SCRIPTS, html }, FILES);
-        const parts = rewriteMarkupReferences(html, new Set(Object.keys(FILES)), NONCE)!;
+        const parts = rewriteMarkupReferences(html, typesOf(Object.keys(FILES)), NONCE)!;
         expect(parts.filter((_, i) => i % 2 === 1)).toEqual(['logo.svg', 'app.js', 'img/x.svg']);
         const bootstrap = comms() + `(${inSandboxMarkup.toString()})(${filesStep(el)}, ${toInlineScriptLiteral(parts)});`;
         expect(guestDocumentOf(el)).toBe(`<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policyOf(el))}"><script>${bootstrap}</script>`);
@@ -311,7 +315,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
         '<img src="logo.svg"></head></html><head>',
         '<html><head><img src=logo.svg><!--</head><body></body></html>',
         '<!-- <html><head> --><html><head><script src="app.js"></script></head><body></body></html>',
-        '<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="default-src *"><link rel="stylesheet" href="logo.svg"></head></html>',
+        '<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="default-src *"><link rel="icon" href="logo.svg"></head></html>',
         '<head><base href="https://evil.example/"></head><img src="logo.svg">',
         '<img src="logo.svg" alt="   vfs-slot-0123456789abcdef0123456789abcdef-0">',
         '<svg><style><img src="logo.svg"></style></svg><img src="logo.svg">',
@@ -333,7 +337,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
 
         // what the guest parser sees after the write: the written markup follows the bootstrap script
         // (any nonce but the host's gives the host's parts; the corpus forges NONCE, which the host never draws)
-        const parts = rewriteMarkupReferences(html, new Set(Object.keys(FILES)), 'f'.repeat(32))!;
+        const parts = rewriteMarkupReferences(html, typesOf(Object.keys(FILES)), 'f'.repeat(32))!;
         expect(script!.textContent!.endsWith(`, ${toInlineScriptLiteral(parts)});`)).toBe(true);
         const written = parse(guest + parts.map((part, i) => (i % 2 === 0 ? part : `blob:null/${i}`)).join(''));
         const [writtenMeta, writtenScript] = [...written.head.children];
@@ -497,7 +501,7 @@ describe('CSS references and srcset (PR4)', () => {
     it('inline <style>, style="" and srcset that name files are written by the bootstrap with CSS and attribute slots', async () => {
         const html = '<style>p { background: url(logo.svg) }</style><p style="background: url(logo.svg)">x</p><img srcset="logo.svg 1x">';
         const el = await mount({ ...SCRIPTS, html }, FILES);
-        const parts = rewriteMarkupReferences(html, new Set(Object.keys(FILES)), 'f'.repeat(32))!;
+        const parts = rewriteMarkupReferences(html, typesOf(Object.keys(FILES)), 'f'.repeat(32))!;
         expect(parts.filter((_, i) => i % 2 === 1)).toEqual([['logo.svg', 'css'], ['logo.svg', 'css-attribute'], 'logo.svg']);
         expect(bootstrapScriptOf(el).endsWith(`(${inSandboxMarkup.toString()})((${inSandboxFiles.toString()})(${toInlineScriptLiteral(el._files.snapshot())}), ${toInlineScriptLiteral(parts)});`)).toBe(true);
     });
@@ -532,7 +536,7 @@ describe('CSS references and srcset (PR4)', () => {
         expect(script!.textContent).not.toContain('<!--');
 
         // what the guest parser sees after the write, with each slot filled as the bootstrap fills it
-        const parts = rewriteMarkupReferences(html, new Set(Object.keys(FILES).concat('evil.css')), 'f'.repeat(32))!;
+        const parts = rewriteMarkupReferences(html, typesOf([...Object.keys(FILES), 'evil.css']), 'f'.repeat(32))!;
         expect(script!.textContent!.endsWith(`, ${toInlineScriptLiteral(parts)});`)).toBe(true);
         const filled = parts.map((part, i) => (i % 2 === 0 ? part : `blob:null/${i}`)).join('');
         const written = parse(guest + filled);

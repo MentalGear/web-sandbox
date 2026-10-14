@@ -1,6 +1,7 @@
 import type { CSPDirectives } from "../../csp-directives";
-import { isJavaScriptType } from "../files";
-import { effectiveDirective, fallbackList, type LoadKind } from "./effective-directive";
+import { admits, LOAD_KIND_NAMES, LOAD_KINDS } from "../load-kinds";
+import { directiveOf, effectiveDirective, fallbackList, inheritedDefaultSources, type LoadKind } from "./effective-directive";
+import { defineData } from "../utils";
 
 /**
  * Which directives admit the guest's own files (ADR-004). A registered file reaches the guest as a
@@ -26,7 +27,6 @@ import { effectiveDirective, fallbackList, type LoadKind } from "./effective-dir
  */
 const BLOB = 'blob:';
 const NONE = "'none'";
-const SELF = "'self'";
 
 /** The kinds of load a registered file can be the target of. */
 export type FileKind = Extract<LoadKind, 'script-src-elem' | 'style-src-elem' | 'img-src' | 'font-src' | 'media-src' | 'connect-src'>;
@@ -38,13 +38,10 @@ export type FileKind = Extract<LoadKind, 'script-src-elem' | 'style-src-elem' | 
  */
 export function kindsForTypes(types: Iterable<string>, exclude: readonly FileKind[] = []): Set<FileKind> {
     const needed = new Set<FileKind>();
+    // the table reference resolution reads too (load-kinds.ts): a type gets blob: in the directive of exactly the
+    // loads that may name it, so what the policy admits and what a reference resolves to cannot drift apart
     for (const type of types) {
-        needed.add('connect-src');
-        if (isJavaScriptType(type)) needed.add('script-src-elem');
-        if (type === 'text/css') needed.add('style-src-elem');
-        if (type.startsWith('image/')) needed.add('img-src');
-        if (type.startsWith('font/')) needed.add('font-src');
-        if (type.startsWith('audio/') || type.startsWith('video/') || type === 'text/vtt') needed.add('media-src');
+        for (const kind of LOAD_KIND_NAMES) if (admits(kind, type)) needed.add(LOAD_KINDS[kind].directive);
     }
     for (const kind of exclude) needed.delete(kind);
     return needed;
@@ -92,17 +89,15 @@ const isKeyword = (token: string, keyword: string) => token.toLowerCase() === ke
  */
 export function addFileSources(directives: CSPDirectives, types: Iterable<string>, warned: Set<string>, options: { exclude?: readonly FileKind[] } = {}): CSPDirectives {
     const output: Record<string, unknown> = { ...directives };
-    const source = directives as Record<string, unknown>;
-    const defaultSrc = Array.isArray(directives['default-src']) ? tokensOf(directives['default-src']) : [];
-    const inherited = defaultSrc.filter(token => !isKeyword(token, NONE) && !isKeyword(token, SELF));
+    const inherited = inheritedDefaultSources(directives);
 
     for (const kind of kindsForTypes(types, options.exclude)) {
         const governing = effectiveDirective(directives, kind);
         if (governing === null || governing === 'default-src') {
-            output[ownDirective(kind)] = [...inherited, BLOB];
+            defineData(output, ownDirective(kind), [...inherited, BLOB]);
             continue;
         }
-        const values = source[governing];
+        const values = directiveOf(directives, governing);
         if (!Array.isArray(values)) continue; // a bad value generateCSP rejects
 
         // every() of no tokens is true: [] and [''] are 'none' here exactly as in generateCSP
@@ -113,7 +108,7 @@ export function addFileSources(directives: CSPDirectives, types: Iterable<string
             }
             continue;
         }
-        output[governing] = [...(values as string[]), BLOB];
+        defineData(output, governing, [...(values as string[]), BLOB]);
     }
 
     return output as CSPDirectives;

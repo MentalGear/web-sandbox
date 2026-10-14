@@ -3,6 +3,7 @@ import { rewriteInlineModule } from "./module-specifiers";
 import { cssUrlReferences, replaceRanges } from "./css-references";
 import { srcsetCandidates } from "./srcset";
 import { effectiveDirective } from "./csp/effective-directive";
+import { admitsAll, linkKinds, type LoadKindName } from "./load-kinds";
 
 /**
  * Markup references to registered files (ADR-004, PR2). Host-only: nothing here is stringified into
@@ -41,6 +42,11 @@ import { effectiveDirective } from "./csp/effective-directive";
  * reference with a CSS string, `"<sentinel>"`, and its part tells the bootstrap to escape the blob: URL
  * for a CSS string (and then for the attribute, in a `style` attribute) rather than for an attribute.
  *
+ * Every reference names a file only for the kind of load it makes (load-kinds.ts; focused review 2026-10-14,
+ * W1): `<script src>` only JavaScript, `<link rel=stylesheet>` only CSS, `<img>` only images, and so on. A
+ * reference to a file of another type is left as written and fails closed, with one warning: a classic
+ * `<script src="blob:…">` runs whatever the blob's type, so the type the store gave a file has to be decided here.
+ *
  * Safety of parsing untrusted markup here: DOMParser.parseFromString() creates an inert document. It
  * has no browsing context, its scripting flag is off, scripts in it never run, and nothing in it is
  * fetched (no images, styles or frames), so the host page runs nothing of the guest's. What the host
@@ -54,26 +60,38 @@ export const VIRTUAL_ROOT = 'https://vfs.invalid/';
 
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 
-// The attributes that name a file by one URL. srcset and CSS (PR4) are handled below, by their own
-// parsers; <iframe src>, <embed>, <object>, <a href>, imagesrcset and anything inside <template> stay as
+// The attributes that name a file by one URL, with the kind of load each makes (load-kinds.ts): 'link' takes its
+// kinds from the link's rel and as (linkKinds). srcset (always images) and CSS (PR4) are handled below, by their
+// own parsers; <iframe src>, <embed>, <object>, <a href>, imagesrcset and anything inside <template> stay as
 // written. Imports inside inline modules are the module graph's (rewriteGuestMarkup, below).
-export const REFERENCES: readonly (readonly [element: string, attribute: string])[] = [
-    ['script', 'src'],
-    ['link', 'href'],
-    ['img', 'src'],
-    ['source', 'src'],
-    ['video', 'src'],
-    ['video', 'poster'],
-    ['audio', 'src'],
-    ['track', 'src'],
+export const REFERENCES: readonly (readonly [element: string, attribute: string, kind: LoadKindName | 'link'])[] = [
+    ['script', 'src', 'script'],
+    ['link', 'href', 'link'],
+    ['img', 'src', 'image'],
+    ['source', 'src', 'media'], // <source src> belongs to <audio> and <video>; <picture> sources use srcset
+    ['video', 'src', 'media'],
+    ['video', 'poster', 'image'],
+    ['audio', 'src', 'media'],
+    ['track', 'src', 'track'],
 ];
 const REFERENCE_SELECTOR = REFERENCES.map(([element, attribute]) => `${element}[${attribute}]`).join(', ');
 const SRCSET_SELECTOR = 'img[srcset], source[srcset]';
 
-// A <link> loads a file only for these relations (any one of its rel tokens).
-const LINK_RELATIONS = new Set(['stylesheet', 'icon', 'preload', 'modulepreload']);
+/** The registered files a build can name: path → the type the store gave it. */
+export type FileTypes = ReadonlyMap<string, string>;
 
-const ASCII_WHITESPACE = /[\t\n\f\r ]+/;
+/** A reference that named a registered file of a type its load does not admit: left as written. */
+export interface KindMismatch {
+    path: string;
+    type: string;
+    kinds: readonly LoadKindName[];
+}
+
+/** The one warning text for a KindMismatch (markup here, stylesheets in files.ts say the same of url() and @import). */
+export function kindMismatchMessage({ path, type, kinds }: KindMismatch): string {
+    const what = kinds.length === 0 ? 'a preload without a usable "as"' : kinds.join(' and ');
+    return `[Sandbox] guest markup names ${JSON.stringify(path.slice(0, 80))} for a load of ${what}, but its type is ${type}, so the reference was left as written and will not load. A file is named only by loads its type is for (a script only by JavaScript, a stylesheet only by text/css, …).`;
+}
 
 /**
  * The path in the files' URL space that `value` names when resolved against `baseUrl`, or null when it
@@ -98,7 +116,11 @@ export function virtualPathOf(value: string, baseUrl: string): string | null {
 
 /**
  * The registered path that `value` names when resolved against `baseUrl` (by default
- * VIRTUAL_DOCUMENT_URL), or null.
+ * VIRTUAL_DOCUMENT_URL), for a load of `kinds`, or null: the one place a reference is resolved, for markup here
+ * and for inline CSS (stylesheets resolve in files.ts with the same table).
+ *
+ * The file's type must be admitted for every kind (load-kinds.ts, focused review 2026-10-14, W1). A registered file
+ * of another type is not named: `onMismatch` hears of it, and the reference is left as written (fails closed).
  *
  * Resolution is the URL parser's, as a browser would do it: `logo.svg`, `./logo.svg`, `/logo.svg`,
  * `img/../logo.svg` (also spelled `img/%2e%2e/logo.svg`, a dot segment by the URL standard) and
@@ -112,9 +134,16 @@ export function virtualPathOf(value: string, baseUrl: string): string | null {
  * An empty or whitespace-only value is never a reference (it would resolve to index.html itself): a
  * browser does not load `src=""` either.
  */
-export function resolveReference(value: string, paths: ReadonlySet<string>, baseUrl: string = VIRTUAL_DOCUMENT_URL): string | null {
+export function resolveReference(value: string, files: FileTypes, kinds: readonly LoadKindName[], onMismatch?: (mismatch: KindMismatch) => void, baseUrl: string = VIRTUAL_DOCUMENT_URL): string | null {
     const path = virtualPathOf(value, baseUrl);
-    return path !== null && paths.has(path) ? path : null;
+    if (path === null) return null;
+    const type = files.get(path);
+    if (type === undefined) return null;
+    if (!admitsAll(kinds, type)) {
+        onMismatch?.({ path, type, kinds });
+        return null;
+    }
+    return path;
 }
 
 /** A fresh 128-bit nonce, as 32 hex characters. One per environment build. */
@@ -147,8 +176,8 @@ export type MarkupParts = (string | CssSlot)[];
  * tags and attributes, implied and closing tags, character references; the doctype is dropped (the
  * guest document has its own, and a later one is ignored by the parser anyway).
  */
-export function rewriteMarkupReferences(markup: string, paths: ReadonlySet<string>, givenNonce?: string): MarkupParts | null {
-    return rewriteGuestMarkup(markup, paths, { modules: false }, givenNonce).parts;
+export function rewriteMarkupReferences(markup: string, files: FileTypes, givenNonce?: string): MarkupParts | null {
+    return rewriteGuestMarkup(markup, files, { modules: false }, givenNonce).parts;
 }
 
 export interface GuestMarkupOptions {
@@ -158,6 +187,8 @@ export interface GuestMarkupOptions {
     // Called when an inline module cannot be lexed (it is then left as written); `index` counts the
     // inline module scripts in document order, from 0.
     onModuleFailure?: (index: number) => void;
+    // Called for each reference to a file of a type its load does not admit (left as written).
+    onKindMismatch?: (mismatch: KindMismatch) => void;
 }
 
 export interface GuestMarkup {
@@ -178,10 +209,11 @@ const scriptType = (script: Element) => (script.getAttribute('type') ?? '').repl
  * inline import maps (no src) are removed and returned. `parts` is non-null when anything changed;
  * a build that only rewrote modules or took out a map returns a single part and draws no nonce.
  */
-export function rewriteGuestMarkup(markup: string, paths: ReadonlySet<string>, options: GuestMarkupOptions, givenNonce?: string): GuestMarkup {
+export function rewriteGuestMarkup(markup: string, files: FileTypes, options: GuestMarkupOptions, givenNonce?: string): GuestMarkup {
     if (givenNonce !== undefined && !/^[0-9a-f]{32}$/.test(givenNonce)) throw new Error('[Sandbox] the slot nonce must be 32 lowercase hex characters');
     const unchanged: GuestMarkup = { parts: null, importMaps: [] };
-    if (paths.size === 0 || markup === '') return unchanged;
+    if (files.size === 0 || markup === '') return unchanged;
+    const resolve = (value: string, kinds: readonly LoadKindName[]) => resolveReference(value, files, kinds, options.onKindMismatch);
     let nonce = givenNonce; // drawn at the first match: a build that rewrites nothing draws none
 
     // Inert: no script runs and nothing is fetched (see the comment at the top of this file).
@@ -191,12 +223,14 @@ export function rewriteGuestMarkup(markup: string, paths: ReadonlySet<string>, o
     for (const element of doc.querySelectorAll(REFERENCE_SELECTOR)) {
         if (element.namespaceURI !== HTML_NAMESPACE) continue;
         const tag = element.localName;
-        if (tag === 'link' && !hasLoadingRelation(element)) continue;
-        for (const [referenceTag, attribute] of REFERENCES) {
+        // a <link> loads only for its loading relations, and the kind of load is theirs
+        const relKinds = tag === 'link' ? linkKinds(element.getAttribute('rel'), element.getAttribute('as')) : null;
+        if (tag === 'link' && relKinds === null) continue;
+        for (const [referenceTag, attribute, kind] of REFERENCES) {
             if (referenceTag !== tag) continue;
             const value = element.getAttribute(attribute);
             if (value === null) continue;
-            const path = resolveReference(value, paths);
+            const path = resolve(value, kind === 'link' ? relKinds! : [kind]);
             if (path === null) continue;
             nonce ??= createSlotNonce();
             element.setAttribute(attribute, slotName(nonce, slots.length));
@@ -206,10 +240,10 @@ export function rewriteGuestMarkup(markup: string, paths: ReadonlySet<string>, o
 
     // A slot for each reference in `refs` that names a registered file; `text` becomes the slot's
     // markup. Returns the rewritten source, or null when nothing named a file.
-    const cutSlots = (source: string, refs: readonly { start: number; end: number; url: string }[], slot: (path: string) => string | CssSlot, text: (name: string) => string): string | null => {
+    const cutSlots = (source: string, refs: readonly { start: number; end: number; url: string; kind: LoadKindName }[], slot: (path: string) => string | CssSlot, text: (name: string) => string): string | null => {
         const edits: { start: number; end: number; text: string }[] = [];
         for (const ref of refs) {
-            const path = resolveReference(ref.url, paths);
+            const path = resolve(ref.url, [ref.kind]);
             if (path === null) continue;
             nonce ??= createSlotNonce();
             edits.push({ start: ref.start, end: ref.end, text: text(slotName(nonce, slots.length)) });
@@ -222,7 +256,7 @@ export function rewriteGuestMarkup(markup: string, paths: ReadonlySet<string>, o
     for (const element of doc.querySelectorAll(SRCSET_SELECTOR)) {
         if (element.namespaceURI !== HTML_NAMESPACE) continue;
         const value = element.getAttribute('srcset')!;
-        const rewritten = cutSlots(value, srcsetCandidates(value), path => path, name => name);
+        const rewritten = cutSlots(value, srcsetCandidates(value).map(candidate => ({ ...candidate, kind: 'image' as const })), path => path, name => name);
         if (rewritten !== null) element.setAttribute('srcset', rewritten);
     }
 
@@ -278,11 +312,6 @@ export function rewriteGuestMarkup(markup: string, paths: ReadonlySet<string>, o
     }
     parts.push(serialised.slice(last));
     return { parts, importMaps };
-}
-
-function hasLoadingRelation(link: Element): boolean {
-    const rel = (link.getAttribute('rel') ?? '').toLowerCase().split(ASCII_WHITESPACE);
-    return rel.some(token => LINK_RELATIONS.has(token));
 }
 
 // The document's children in order, without the doctype: comments around <html>, and <html> itself.

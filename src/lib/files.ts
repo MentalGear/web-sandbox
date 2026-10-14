@@ -10,6 +10,7 @@
 import { moduleSpecifierEdits, VIRTUAL_ROOT } from './module-specifiers';
 import { cssUrlReferences } from './css-references';
 import { virtualPathOf } from './markup-references';
+import { admits, type LoadKindName } from './load-kinds';
 
 // The cap (backlog C3). Module constants rather than config: each value was measured to load in all
 // three engines (test/e2e/files.spec.ts), so raise one only after that test passes at the new value.
@@ -152,17 +153,17 @@ const MIME_TYPES: Readonly<Record<string, string>> = {
     ogv: 'video/ogg',
 };
 
-// The JavaScript MIME types a file can be given; only text/javascript comes from the extension table.
-const JAVASCRIPT_TYPES = new Set(['text/javascript', 'application/javascript', 'text/ecmascript', 'application/ecmascript']);
-
-/** Whether a file of this type is JavaScript: it loads through script-src, and its module specifiers are rewritten. */
+/**
+ * Whether a file of this type is JavaScript: a script load admits it (load-kinds.ts, the one table), it loads
+ * through script-src, and its module specifiers are rewritten. Only text/javascript comes from the extension table.
+ */
 export function isJavaScriptType(type: string): boolean {
-    return JAVASCRIPT_TYPES.has(type);
+    return admits('script', type);
 }
 
-/** Whether a file of this type is a stylesheet: it loads through style-src, and its url() and @import references are rewritten. */
+/** Whether a file of this type is a stylesheet (load-kinds.ts): its url() and @import references are rewritten. */
 export function isStylesheetType(type: string): boolean {
-    return type === 'text/css';
+    return admits('style', type);
 }
 
 /** The type a file gets from its extension (case-insensitive), or FALLBACK_TYPE. Never empty. */
@@ -216,10 +217,11 @@ export type FileSnapshotEntry = [path: string, type: string, base64: string] | [
 
 /**
  * A stylesheet's reference that could name a file, found at registration: [start, end) in the
- * registered bytes, and the path it resolves to against the stylesheet's own virtual URL. Whether a
- * file is registered at that path is decided per build, in snapshot(): the store can change in between.
+ * registered bytes, the path it resolves to against the stylesheet's own virtual URL, and the kind of load it
+ * makes (css-references.ts). Whether a file of an admitted type is registered at that path is decided per build,
+ * in snapshot(): the store can change in between.
  */
-export type CssReferenceRange = [start: number, end: number, path: string];
+export type CssReferenceRange = [start: number, end: number, path: string, kind: LoadKindName];
 
 // What one rewritten specifier adds to the snapshot literal besides its text: two offsets of up to
 // 8 digits, three commas and two quotes, rounded up.
@@ -301,6 +303,7 @@ export class FileStore {
     private _files = new Map<string, StoredFile>();
     private _totalBytes = 0; // the sum of every file's cost
     private _warnedCycles = new Set<string>(); // reference cycles already warned about (snapshot)
+    private _warnedKinds = new Set<string>(); // references to a file of a type their load does not admit, warned about (snapshot)
 
     // Lexer failures are reported here, once per registration of the file (console.warn by default).
     constructor(private readonly _warn: (message: string) => void = message => console.warn(message)) {}
@@ -444,13 +447,26 @@ export class FileStore {
      * component) is left as registered and fails closed in the guest, as an unresolvable relative URL.
      * Their other references, and references into the cycle from outside, still resolve. One warning
      * per distinct cycle per store.
+     *
+     * A reference names a registered file only if the file's type is admitted for the reference's kind of load
+     * (load-kinds.ts; focused review 2026-10-14, W1): an @import names a stylesheet, a url() in @font-face a font,
+     * any other url() an image. A reference to a file of another type is left as written (fails closed), with one
+     * warning per stylesheet, target and kind; it is no edge either, so it can make no cycle.
      */
     snapshot(): FileSnapshotEntry[] {
+        // the references of a stylesheet that name a registered file of an admitted type: the one test, used below
+        const resolves = (from: string, [, , target, kind]: CssReferenceRange): boolean => {
+            const file = this._files.get(target);
+            if (!file) return false;
+            if (admits(kind, file.type)) return true;
+            this._warnKindMismatch(from, target, file.type, kind);
+            return false;
+        };
         const targets = new Map<string, string[]>(); // a stylesheet's registered targets, sorted, unique
         for (const [path, file] of this._files) {
             if (!file.references) continue;
             const named = new Set<string>();
-            for (const [, , target] of file.references) if (this._files.has(target)) named.add(target);
+            for (const reference of file.references) if (resolves(path, reference)) named.add(reference[2]);
             if (named.size > 0) targets.set(path, [...named].sort());
         }
         const component = stronglyConnectedComponents(targets);
@@ -460,8 +476,9 @@ export class FileStore {
         const entryOf = (path: string, file: StoredFile): FileSnapshotEntry => {
             if (file.edits) return [path, file.type, file.base64, [...file.edits]];
             const edits: ByteEdits = [];
-            for (const [start, end, target] of file.references ?? []) {
-                if (this._files.has(target) && !onCycle(path, target)) edits.push(start, end, [target]);
+            for (const [start, end, target, kind] of file.references ?? []) {
+                const named = this._files.get(target);
+                if (named && admits(kind, named.type) && !onCycle(path, target)) edits.push(start, end, [target]);
             }
             return edits.length > 0 ? [path, file.type, file.base64, edits] : [path, file.type, file.base64];
         };
@@ -487,6 +504,13 @@ export class FileStore {
         };
         for (const path of [...slotted.keys()].sort()) visit(path);
         return entries;
+    }
+
+    private _warnKindMismatch(from: string, target: string, type: string, kind: LoadKindName) {
+        const message = `[Sandbox] the stylesheet ${describePath(from)} names ${describePath(target)} as ${kind === 'style' ? 'a stylesheet (@import)' : kind === 'font' ? 'a font (@font-face)' : 'an image (url())'}, but its type is ${type}, so the reference is left as written and will not load in the guest.`;
+        if (this._warnedKinds.has(message)) return;
+        this._warnedKinds.add(message);
+        this._warn(message);
     }
 
     // One warning per distinct cycle (a strongly connected component with more than one file, or a
@@ -583,7 +607,7 @@ function stylesheetReferences(path: string, bytes: Uint8Array): StylesheetRefere
     for (const reference of cssUrlReferences(source)) {
         const target = virtualPathOf(reference.url, VIRTUAL_ROOT + path);
         if (target === null || !isValidPath(target)) continue;
-        references.push([toBytes(reference.start), toBytes(reference.end), target]);
+        references.push([toBytes(reference.start), toBytes(reference.end), target, reference.kind]);
     }
     return { references: references.length > 0 ? references : null };
 }
@@ -616,7 +640,10 @@ function rewriteModule(path: string, bytes: Uint8Array): ModuleRewrite {
     try {
         edits = moduleSpecifierEdits(source, VIRTUAL_ROOT + path);
     } catch (e) {
-        return { edits: null, failure: e instanceof Error ? e.message.slice(0, 80) : 'lexer error' };
+        // The lexer's position only, never its message as such (the one rule for caught errors, focused review
+        // 2026-10-14 F3): es-module-lexer says "Parse error @:line:column", and nothing else reaches the warning.
+        const at = /@:(\d{1,9}):(\d{1,9})/.exec(e instanceof Error ? String(e.message) : '');
+        return { edits: null, failure: at ? `parse error at ${at[1]}:${at[2]}` : 'lexer error' };
     }
     if (edits.length === 0) return { edits: null };
 

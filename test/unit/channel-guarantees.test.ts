@@ -1,3 +1,4 @@
+import { EXECUTION_TIMEOUT_GRACE_MS } from '@src/host';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_STRING, toLogDetail } from '@src/lib/sandbox-log';
 import { SandboxDevTools } from '@src/devtools';
@@ -63,8 +64,8 @@ describe('B3: every sandbox-log detail is normalised and labelled', () => {
         el._port = port1;
         el._onGuestMessage(port1, () => {}, { type: 'LOG', level: 'error', args: ['Execution Timeout'], source: 'host' }, null);
         vi.useFakeTimers();
-        el.execute('for (;;) {}'); // never reports EXECUTED here: its budget expires
-        vi.advanceTimersByTime(20);
+        el.execute('for (;;) {}'); // nobody answers the probe at the deadline here: its budget expires
+        vi.advanceTimersByTime(20 + EXECUTION_TIMEOUT_GRACE_MS);
         expect(heard.map(d => [d.source, d.args[0]])).toEqual([['guest', 'Execution Timeout'], ['host', 'Execution Timeout']]);
         port1.close();
     });
@@ -147,7 +148,8 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
                 const { port1 } = new MessageChannel();
                 el._port = port1;
                 vi.useFakeTimers();
-                return { el, force: () => { el.execute('for (;;) {}'); vi.advanceTimersByTime(20); }, done: () => port1.close() };
+                // the deadline, then a grace without an answer
+                return { el, force: () => { el.execute('for (;;) {}'); vi.advanceTimersByTime(20 + EXECUTION_TIMEOUT_GRACE_MS); }, done: () => port1.close() };
             },
         },
         {

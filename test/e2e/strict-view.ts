@@ -87,8 +87,11 @@ async function attachedCdp(session: CDPSession, targetId: string): Promise<Cdp> 
     };
 }
 
-async function inFramesThroughCdp<T>(page: Page, expression: string, only: (path: string) => boolean): Promise<FrameValue<T>[]> {
-    const results: FrameValue<T>[] = [];
+// Visits every Chromium frame of the page (see the top of this file), depth first, with the CDP client that owns
+// it, its frame id, its path and its default execution context (if any).
+type FrameVisitor = (cdp: Cdp, frame: CdpFrameTree['frame'], path: string, contextId: number | undefined) => Promise<void>;
+
+async function walkChromiumFrames(page: Page, visit: FrameVisitor): Promise<void> {
     const session = await page.context().newCDPSession(page);
     const clients: Cdp[] = [];
     try {
@@ -107,13 +110,7 @@ async function inFramesThroughCdp<T>(page: Page, expression: string, only: (path
             const walk = async (tree: CdpFrameTree, parentPath: string, depth: number) => {
                 const name = frameName(depth, tree.frame.name);
                 const path = parentPath ? `${parentPath}/${name}` : name;
-                const contextId = contexts.get(tree.frame.id);
-                let value: T | 'no-context' = 'no-context';
-                if (contextId !== undefined && only(path)) {
-                    const reply = await withTimeout(cdp.send('Runtime.evaluate', { expression, contextId, returnByValue: true, awaitPromise: true }), 3000, null);
-                    if (reply && !reply.exceptionDetails) value = reply.result.value as T;
-                }
-                results.push({ path, url: tree.frame.url + (tree.frame.urlFragment ?? ''), value });
+                await visit(cdp, tree.frame, path, contexts.get(tree.frame.id));
                 for (const child of tree.childFrames ?? []) await walk(child, path, depth + 1);
                 for (const target of outOfProcess.filter(t => t.parentFrameId === tree.frame.id)) {
                     // a target outlives its frame for a moment (a rebuilt sandbox's previous wrapper): only frames still owned count
@@ -131,7 +128,40 @@ async function inFramesThroughCdp<T>(page: Page, expression: string, only: (path
         for (const client of clients) await client.close();
         await session.detach().catch(() => {});
     }
+}
+
+async function inFramesThroughCdp<T>(page: Page, expression: string, only: (path: string) => boolean): Promise<FrameValue<T>[]> {
+    const results: FrameValue<T>[] = [];
+    await walkChromiumFrames(page, async (cdp, frame, path, contextId) => {
+        let value: T | 'no-context' = 'no-context';
+        if (contextId !== undefined && only(path)) {
+            const reply = await withTimeout(cdp.send('Runtime.evaluate', { expression, contextId, returnByValue: true, awaitPromise: true }), 3000, null);
+            if (reply && !reply.exceptionDetails) value = reply.result.value as T;
+        }
+        results.push({ path, url: frame.url + (frame.urlFragment ?? ''), value });
+    });
     return results;
+}
+
+/**
+ * Chromium only: the URL its accessibility tree exposes for every link in the view (Accessibility.getFullAXTree
+ * of the view frame, the `url` property of each node with the role link), in tree order. What assistive
+ * technology announces and acts on, read from the browser, not from the page. null when there is no view.
+ */
+export async function chromiumViewLinkUrls(page: Page): Promise<string[] | null> {
+    let urls: string[] | null = null;
+    await walkChromiumFrames(page, async (cdp, frame, path) => {
+        if (path !== 'main/wrapper/view') return;
+        const reply = await withTimeout(cdp.send('Accessibility.getFullAXTree', { frameId: frame.id }), 3000, null);
+        if (!reply) return;
+        urls = [];
+        for (const node of reply.nodes as { role?: { value?: string }; properties?: { name: string; value: { value?: unknown } }[] }[]) {
+            if (node.role?.value !== 'link') continue;
+            const url = node.properties?.find(property => property.name === 'url')?.value.value;
+            urls.push(typeof url === 'string' ? url : '');
+        }
+    });
+    return urls;
 }
 
 /**

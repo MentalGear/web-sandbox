@@ -1,6 +1,6 @@
 # ADR-003: How does the host observe and control a sandbox's lifecycle?
 
-**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)), 2026-10-14 ([one rule per budget, build and missing environment](#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment))
+**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)), 2026-10-14 ([one rule per budget, build and missing environment](#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)), 2026-10-14 ([the execution budget is a free event loop at the deadline](#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline))
 
 ## Why this ADR exists
 
@@ -160,7 +160,8 @@ and fails if the count is compared anywhere else or a path calls the helper with
 **When**: backlog B8 and the follow-up audit of the adversarial review
 ([report](security/ADVERSARIAL-REVIEW-2026-10.md#follow-up-2026-10-14-by-construction-audit)).
 
-- **`workerExecutionTimeout` is a budget for code still running, and exceeding it terminates.** Each `execute()`
+- **`workerExecutionTimeout` is a budget for code still running, and exceeding it terminates.** (Its mechanism, a
+  report from the guest, was replaced by the [next amendment](#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline): a free event loop at the deadline.) Each `execute()`
   carries a number; the guest bootstrap posts `EXECUTED` with it once the code returned or threw (through the
   captured port primitives, so guest code cannot post it), which stops that call's timer. Code still running at the
   deadline ends the sandbox: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with
@@ -187,3 +188,42 @@ and fails if the count is compared anywhere else or a path calls the helper with
 Proof: `test/unit/followup-guarantees.test.ts`, `test/unit/policy-guarantees.test.ts` ("Every build failure is a
 termination"), `test/unit/channel-guarantees.test.ts` ("B5"), `test/e2e/worker-timeout.spec.ts`,
 `test/e2e/review-followup.spec.ts`.
+
+## Amendment (2026-10-14): the execution budget is a free event loop at the deadline
+
+**When**: the focused review of 2026-10-14 ([report](security/FOCUSED-REVIEW-2026-10-14.md), F2 and F3). **Why**: the budget above trusted the
+guest's word. Code that returned at once but left a loop scheduled (`setTimeout(() => { for (;;) {} }, 0)`) posted
+`EXECUTED` and stopped its own timer, then looped; guest code that replaced `globalThis.Function` made the
+bootstrap's `new Function(code)` return a function of its choosing, so `EXECUTED` was posted before the embedder's
+code had run at all. Worker and strict mode, all three engines: neither was ever terminated.
+
+**Decision**: `workerExecutionTimeout` bounds exactly this: **the guest's event loop is free at each `execute()`'s
+deadline**.
+
+- The guest reports nothing (`EXECUTED` is gone). At the deadline, `budget` ms after the element posts the code, the
+  host pings the guest through the bootstrap's own `PING` handler, which guest code cannot reach (review B2), and
+  terminates with the same line and reason as before unless a `PONG` arrives within `EXECUTION_TIMEOUT_GRACE_MS`
+  (1000 ms). Only a free event loop can run the handler, so nothing the guest says or schedules can stand in for
+  the answer. The check is a one-off watchdog over the grace (ticks, so a stall of the host page never counts), and
+  its pings carry negative numbers, so an answer names its probe and never the liveness watchdog's.
+- The bootstrap compiles executed code with the `Function` and `Reflect.construct` it captured before any guest
+  code ran, so what runs is the embedder's code, at once.
+- Several calls each have a deadline, and every deadline checks the one event loop: a loop started by any code ends
+  the sandbox at the first deadline it blocks. Code that ran to its end and left the loop free is never terminated
+  by this budget, whatever it scheduled.
+- **Relation to `watchdogTimeout`**: the watchdog checks the event loop continuously, from the first `ready`; the
+  execution budget checks it at points the embedder chose. A loop that starts after the last deadline is the
+  watchdog's to bound. Both terminate; neither is a security boundary (decision 5).
+- Alternatives rejected: keeping `EXECUTED` and adding the ping (the report would still be a thing the guest
+  could forge or time; it adds nothing the ping does not prove); a grace of zero (a message in flight at the
+  deadline would end a free guest); counting the grace in wall time (a host stall would be charged to the guest).
+
+**And one rule for caught errors (F3).** A reason, a host line or a console warning of the element never carries
+the text of an error it caught: only a fixed text and the error's name, checked to be a short identifier (a
+thrown primitive is named by its type). Chromium's `DataCloneError` quoted the source of the function it could not
+clone, a throwing getter's error carried any text, and the strict entry's error text is the guest's. The entry's
+text now arrives as a `source: 'guest'` line; the reasons read `the configuration could not be used (DataCloneError)`
+and `the environment could not be built (Error)`.
+
+Proof: `test/e2e/focused-review.spec.ts` ("F2"), `test/unit/followup-guarantees.test.ts` ("B8, focused review F2"),
+`src/lib/in-sandbox-script.test.ts`, `test/unit/focused-review.test.ts` ("F3").

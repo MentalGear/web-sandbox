@@ -2,13 +2,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_REMOVED_ELEMENTS, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, viewBootstrapText } from './in-sandbox-view';
 import { REFERENCES } from './markup-references';
 import { VIOLATION_EVENT_LIMIT } from './violation';
+import { mimeTypeFor } from './files';
 
-/** Parses `html` into an inert fragment the way the view does, and runs the renderer on it. */
+/** Parses `html` into an inert fragment the way the view does, and runs the renderer on it. `files`: path → the URL the view minted, typed by extension. */
 function sanitize(html: string, files: Record<string, string> = {}) {
     const template = document.createElement('template');
     template.innerHTML = html;
     const minted = new Set(Object.values(files));
-    sanitizeRender(template.content, (path) => files[path] ?? null, (url) => minted.has(url), RENDER_RULES);
+    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), RENDER_RULES);
     return template.content;
 }
 const serialise = (fragment: DocumentFragment) => {
@@ -39,6 +40,14 @@ describe('the renderer (A1): every listed element type is removed, with its subt
         const left = Array.from(fragment.querySelectorAll('*')).map(e => `${e.localName}`);
         expect(left.filter(name => (RENDER_REMOVED_ELEMENTS as readonly string[]).includes(name))).toEqual([]);
         expect(left).toEqual(['svg', 'foreignObject', 'math', 'annotation-xml']);
+    });
+
+    it('removes every SVG animation element in its own namespace and case (focused review F1): nothing can change a checked attribute after the renderer ran', () => {
+        const fragment = sanitize('<svg><a href="https://guest.example/a"><set attributeName="href" to="https://guest.example/b"/><animate attributeName="href" values="x"/><text>t</text></a>'
+            + '<image href="x.png"><animateMotion dur="1s"><mpath href="#p"/></animateMotion><animateTransform attributeName="transform"/><animateColor/><discard/><animation/></image></svg>');
+        const left = Array.from(fragment.querySelectorAll('*')).map(e => e.localName);
+        expect(left).toEqual(['svg', 'a', 'text', 'image']);
+        expect(fragment.querySelector('a')!.getAttribute('href')).toBe(INERT_HREF);
     });
 
     it('keeps a <link> only as a stylesheet or icon whose href is a URL the view minted', () => {

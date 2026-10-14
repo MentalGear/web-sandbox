@@ -15,6 +15,8 @@
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
 
+import { createRateLimiter } from './rate-limit';
+
 export type SandboxLogLevel = 'log' | 'info' | 'warn' | 'error';
 
 /** The detail of a 'sandbox-log' event. Frozen. */
@@ -56,22 +58,13 @@ export function toLogDetail(frame: unknown, source: 'guest' | 'host'): SandboxLo
 }
 
 /**
- * A fixed one-second window counter: `admit()` says whether one more guest line may be dispatched now.
- * One per environment (host.ts creates a fresh one on every teardown).
+ * `admit()` says whether one more guest line may be dispatched now: at most LOG_EVENTS_PER_SECOND in any one-second
+ * window, a sliding window (rate-limit.ts; focused review 2026-10-14, W2: the fixed window this replaced let twice
+ * the limit through around its boundary). One per environment (host.ts creates a fresh one on every teardown).
  */
 export function createLogLimiter(now: () => number = () => performance.now()) {
-    let windowStart = -Infinity;
-    let count = 0;
+    const limiter = createRateLimiter(LOG_EVENTS_PER_SECOND);
     return {
-        admit(): boolean {
-            const time = now();
-            if (time - windowStart >= 1000) {
-                windowStart = time;
-                count = 0;
-            }
-            if (count >= LOG_EVENTS_PER_SECOND) return false;
-            count++;
-            return true;
-        },
+        admit: (): boolean => limiter.admit(now()),
     };
 }

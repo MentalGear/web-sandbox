@@ -34,12 +34,18 @@
  * Each reference carries the range to replace (UTF-16 offsets) and its decoded value. The replacement is
  * always a CSS string, `"<url>"`: for a url token the range is everything between `url(` and `)`, so
  * `url( a.png )` becomes `url("blob:…")`; for a string it is the string token, quotes included.
+ *
+ * And the kind of load it makes (load-kinds.ts; focused review 2026-10-14, W1), which decides the types of file it
+ * may name: 'style' for the first token of an @import prelude, 'font' for a url() inside an @font-face block (at
+ * any depth: @font-face may sit in @media or @supports), 'image' for every other url() and image-set() string
+ * (backgrounds, list and border images, cursors, masks, content).
  */
 
 export interface CssReference {
     start: number; // [start, end): the range a CSS string replaces
     end: number;
     url: string; // the value, escapes decoded
+    kind: 'style' | 'font' | 'image';
 }
 
 // Character classes by UTF-16 code unit. At the end of the input a code is NaN, which is in no class.
@@ -301,52 +307,61 @@ export function cssUrlReferences(source: string): CssReference[] {
     const next = tokenizer(source);
     const references: CssReference[] = [];
 
-    // Open blocks and functions, innermost last.
-    const stack: { closer: ')' | ']' | '}'; imageSet: boolean }[] = [];
+    // Open blocks and functions, innermost last. `fontFace`: the block of an @font-face rule.
+    const stack: { closer: ')' | ']' | '}'; imageSet: boolean; fontFace: boolean }[] = [];
     // An at-rule prelude in progress: 'import' until its first token, then 'skip'; 'skip' for any other
     // at-rule. It ends at ";" or "{" at the depth it started, or when its enclosing block closes.
     let prelude: 'none' | 'import' | 'skip' = 'none';
     let preludeDepth = 0;
-    // The previous significant token was an accepted `url(` function: its first token is the argument.
-    let urlArgument = false;
+    let preludeName = ''; // the at-keyword of the prelude in progress
+    // The previous significant token was an accepted `url(` function: its first token is the argument, of this kind.
+    let urlArgument: CssReference['kind'] | null = null;
 
-    const push = (start: number, end: number, url: string) => references.push({ start, end, url });
+    const push = (start: number, end: number, url: string, kind: CssReference['kind']) => references.push({ start, end, url, kind });
+    const inFontFace = () => stack.some(entry => entry.fontFace);
 
     for (let token = next(); token !== null; token = next()) {
         if (token.type === 'whitespace') continue;
-        const isUrlArgument = urlArgument;
-        urlArgument = false;
+        const argumentKind = urlArgument;
+        urlArgument = null;
 
         const firstOfImport = prelude === 'import' && stack.length === preludeDepth;
         if (firstOfImport) prelude = 'skip'; // only the first token of an @import prelude names a file
         const accepted = prelude === 'none' || firstOfImport;
+        // what a reference made by this token loads: a stylesheet for @import, a font inside @font-face, else an image
+        const kind: CssReference['kind'] = firstOfImport ? 'style' : inFontFace() ? 'font' : 'image';
 
         switch (token.type) {
             case 'string':
                 if (!token.closed) break;
-                if (isUrlArgument || (accepted && (firstOfImport || stack.at(-1)?.imageSet))) push(token.start, token.end, token.value);
+                if (argumentKind !== null) push(token.start, token.end, token.value, argumentKind);
+                else if (accepted && (firstOfImport || stack.at(-1)?.imageSet)) push(token.start, token.end, token.value, kind);
                 break;
             case 'url':
-                if (token.closed && accepted) push(token.start, token.end, token.value);
+                if (token.closed && accepted) push(token.start, token.end, token.value, kind);
                 break;
             case 'function':
-                stack.push({ closer: ')', imageSet: IMAGE_SET.has(token.name) });
-                if (token.name === 'url' && accepted) urlArgument = true;
+                stack.push({ closer: ')', imageSet: IMAGE_SET.has(token.name), fontFace: false });
+                if (token.name === 'url' && accepted) urlArgument = kind;
                 break;
             case 'at-keyword':
                 // at block level only: top level, or directly inside a block (nested at-rules)
                 if (prelude === 'none' && (stack.length === 0 || stack.at(-1)!.closer === '}')) {
                     prelude = token.name === 'import' && stack.length === 0 ? 'import' : 'skip';
                     preludeDepth = stack.length;
+                    preludeName = token.name;
                 }
                 break;
             case 'semicolon':
                 if (prelude !== 'none' && stack.length === preludeDepth) prelude = 'none';
                 break;
-            case 'open':
-                if (token.closer === '}' && prelude !== 'none' && stack.length === preludeDepth) prelude = 'none';
-                stack.push({ closer: token.closer, imageSet: false });
+            case 'open': {
+                // the block an at-rule's prelude ends with; it is an @font-face block when that rule was one
+                const opensRule = token.closer === '}' && prelude !== 'none' && stack.length === preludeDepth;
+                if (opensRule) prelude = 'none';
+                stack.push({ closer: token.closer, imageSet: false, fontFace: opensRule && preludeName === 'font-face' });
                 break;
+            }
             case 'close':
                 if (stack.at(-1)?.closer === token.char) {
                     stack.pop();

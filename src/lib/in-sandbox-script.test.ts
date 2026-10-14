@@ -169,7 +169,7 @@ describe("inSandboxScript", () => {
         });
     });
 
-    it("reports EXECUTED with the host's number once executed code returned or threw, after what it logged (backlog B8)", () => {
+    it("runs executed code with the Function captured before guest code, and reports nothing back (focused review F2: no EXECUTED frame; a free loop answers the host's ping)", () => {
         const port = createMockPort();
         const sandboxConsole = createMockConsole();
         const listeners: Record<string, Function> = {};
@@ -179,14 +179,24 @@ describe("inSandboxScript", () => {
         inSandboxScript(true, 'worker', sandboxConsole);
         listeners['message']?.(initPort(port));
         port.posted.mockClear();
-
-        port.deliver({ type: 'EXECUTE', code: 'console.log("ran")', n: 1 });
-        port.deliver({ type: 'EXECUTE', code: 'throw new Error("Boom")', n: 2 });
-        port.deliver({ type: 'EXECUTE', code: 'throw { get message() { return () => {}; } }', n: 3 }); // a message that cannot be cloned
-        port.deliver({ type: 'EXECUTE', code: 'void 0' }); // no number: nothing to report
+        const original = globalThis.Function;
+        const replacement = vi.fn(() => () => {});
+        try {
+            (globalThis as any).Function = replacement; // guest code replacing Function after the bootstrap ran
+            port.deliver({ type: 'EXECUTE', code: 'globalThis.__ranByCaptured = (globalThis.__ranByCaptured || 0) + 1', n: 1 });
+            port.deliver({ type: 'EXECUTE', code: 'throw new Error("Boom")' });
+            port.deliver({ type: 'EXECUTE', code: 'throw { get message() { return () => {}; } }' }); // a message that cannot be cloned
+        } finally {
+            (globalThis as any).Function = original;
+        }
+        expect(replacement).not.toHaveBeenCalled();
+        expect((globalThis as any).__ranByCaptured).toBe(1);
+        delete (globalThis as any).__ranByCaptured;
         const frames = port.posted.mock.calls.map(call => call[0]);
-        expect(frames.filter((f: any) => f.type === 'EXECUTED')).toEqual([{ type: 'EXECUTED', n: 1 }, { type: 'EXECUTED', n: 2 }, { type: 'EXECUTED', n: 3 }]);
-        expect(frames.findIndex((f: any) => f.type === 'LOG' && f.args[0] === 'ran')).toBeLessThan(frames.findIndex((f: any) => f.type === 'EXECUTED'));
+        expect(frames.filter((f: any) => f.type === 'EXECUTED')).toEqual([]);
+        expect(frames.filter((f: any) => f.type === 'LOG' && typeof f.args[0] === 'string').map((f: any) => f.args[0])).toEqual(['Boom']);
+        port.deliver({ type: 'PING', n: -3 }); // a probe's ping: answered like any ping
+        expect(port.posted.mock.calls.at(-1)![0]).toEqual({ type: 'PONG', n: -3 });
     });
 
     it("relays console.info as level 'info', like log, warn and error (backlog B8)", () => {

@@ -1,4 +1,5 @@
 import type { CSPDirectives } from "../../csp-directives";
+import { defineData } from "../utils";
 
 /**
  * The grammar every guest policy is held to (adversarial review 2026-10, A1/A2).
@@ -95,11 +96,12 @@ export function sanitizeDirectives(directives: CSPDirectives, onDrop: (message: 
             onDrop(`[Sandbox] "connectionsAllowed" had the directive name ${shown(name)}, which is not one this sandbox supports, and it was dropped: one lower-case directive name per key (${KNOWN_DIRECTIVES.join(', ')}).`);
             continue;
         }
+        // defined, never assigned (utils.ts, F4); only known names get here anyway
         if (name === 'upgrade-insecure-requests' || !Array.isArray(values)) {
-            output[name] = values;
+            defineData(output, name, values);
             continue;
         }
-        output[name] = sourcesOf(name, values, onDrop);
+        defineData(output, name, sourcesOf(name, values, onDrop));
     }
     return output as CSPDirectives;
 }

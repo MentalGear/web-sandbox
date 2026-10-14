@@ -71,10 +71,11 @@ With [`autoResize`](#configuration) the element sets its own `style.height`; it 
   changes nothing, not even at the next `reset()`.
 - Values are validated before they are applied; what cannot be used is dropped with one `console.warn` per
   element, never applied half-way.
-- A config that cannot be used at all (not an object, or not cloneable: a `Proxy`, a function value) applies
-  nothing, and the sandbox terminates with the reason `the configuration could not be used: …`, as for an unknown
-  mode, until a usable config is set. A build that fails (for example a directive given a string instead of a
-  list) terminates with `the environment could not be built: …`. `setConfig()` never throws.
+- A config that cannot be used at all (not an object, not cloneable: a `Proxy`, a function value, or a
+  `connectionsAllowed` that is not an object) applies nothing, and the sandbox terminates with the reason
+  `the configuration could not be used (…)`, as for an unknown mode, until a usable config is set; the previous
+  config stays. A build that fails (for example a directive given a string instead of a list) terminates with
+  `the environment could not be built (…)`. `setConfig()` never throws.
 
 | Option | Type | Default | Modes | What it does |
 | :--- | :--- | :--- | :--- | :--- |
@@ -86,7 +87,7 @@ With [`autoResize`](#configuration) the element sets its own `style.height`; it 
 | `connectionsAllowed` | `CSPDirectives` | see [below](#connectionsallowed) | all (strict: a subset) | The guest's Content Security Policy, merged per directive over the defaults. |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in worker and strict mode on every browser, and in iframe mode only where the browser runs the frame in its own process. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
-| `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A budget for each `execute()`, from when the element posts the code until the guest reports that it returned or threw. Code still running at the deadline ends the sandbox: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. Work the code scheduled for later is not counted (use `watchdogTimeout`). Anything but a finite number `> 0` is off. |
+| `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
 | `autoResize` | `boolean` | `false` | iframe, strict | Only a literal `true` enables it. The element's height follows the guest's content height; see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Gives the guest [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off. [ADR-006](ADR-006-fetch-bridge.md) |
 | `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
@@ -184,15 +185,25 @@ terminated until `reset()`, `load()` or `setConfig()`.
 ### `execute(code)`
 
 `execute(code: string): void` — runs `code` in the guest's global scope as the body of a function (the guest
-document in iframe mode, the worker in worker and strict mode). No return value reaches the host; the guest
-reports only that the code returned, which ends its `workerExecutionTimeout` budget.
+document in iframe mode, the worker in worker and strict mode), compiled with the `Function` the bootstrap captured
+before any guest code ran. Nothing reaches the host: no return value, no report that it returned.
 
 - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
 - While `idle` (not in the document) or `terminated` there is no environment: it warns and does nothing, as
   `call()` rejects then.
 - While `loading` the code is queued and runs when the guest is ready.
 - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
-- In worker and strict mode each call has its own `workerExecutionTimeout` budget.
+- In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
+  **the guest's event loop is free at the deadline.** The element pings the guest there; the bootstrap answers from
+  a handler guest code cannot reach, and only a free event loop can run it. No answer within
+  `EXECUTION_TIMEOUT_GRACE_MS` (counted so that a stall of the host page never counts) terminates the sandbox.
+  - Code that is still running at the deadline, or that returned but left work running then (a loop in a
+    `setTimeout`), is terminated. Code that ran to its end and left the loop free stays ready, whatever it scheduled
+    for later.
+  - Several calls each have their own deadline, and every deadline checks the one event loop: a loop started by
+    any code ends the sandbox at the first deadline it blocks.
+  - A loop that starts after the last deadline is not bounded by it: `watchdogTimeout` checks the event loop
+    continuously and covers that case.
 
 ### `expose(name, fn)`
 
@@ -238,6 +249,14 @@ type instead of deriving it from the extension.
 - **Types** come from the extension (`.js`/`.mjs` `text/javascript`, `.css` `text/css`, `.json`
   `application/json`, `.svg` `image/svg+xml`, `.png`, `.woff2`, `.mp4`, …); unknown extensions are
   `application/octet-stream`.
+- **A reference names a file only for the kind of load its type is for**: `<script src>`, `modulepreload`,
+  `preload as=script` and module imports only JavaScript types; a stylesheet `<link>`, `preload as=style` and
+  `@import` only `text/css`; `img`, `srcset`, `poster`, icon links and CSS `url()` only `image/*`; `url()` in
+  `@font-face` and `preload as=font` only `font/*`; `audio`, `video` and `source` only `audio/*` and `video/*`;
+  `track` only `text/vtt`. A reference to a file of another type stays as written and fails closed, with one
+  warning. This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a
+  script. Code that passes `sandboxFiles.url()` to a script element or `importScripts()` itself decides what it
+  loads (Chromium runs such a file whatever its type; Firefox and WebKit refuse it in `importScripts()`).
 - How the guest names files (markup, module imports, stylesheets) is described in the README's
   [Files](../README.md#files) section; why: [ADR-004](ADR-004-files-as-blob-urls.md).
 
@@ -274,6 +293,9 @@ to the files, as one `registerFiles()` / `unregisterFiles()` would, and removes 
   add, against the files as they are now: a refusal throws `INVALID_PATH`, `FILES_NOT_ALLOWED` or
   `FILES_QUOTA_EXCEEDED` and changes neither the files nor the pending list.
 - Fires `fileschanged` when the files changed. The guest sees committed files from the next build on.
+- A committed file loads only as what its type is for (see [`registerFiles()`](#registerfilesfiles)): an inert
+  file never runs as a script. Committed `text/css` is inert but still CSS: markup of the next build that links it
+  is styled by it.
 
 ---
 
@@ -306,11 +328,12 @@ guest's data: read them, don't merge them into your objects.
 
 Lines with `source: 'guest'`: the guest's `console.log`, `console.info`, `console.warn` and `console.error`; a throw from
 `execute()`; one `info` line `<mode> Ready` per environment; in strict mode, `Uncaught …` for an uncaught error
-after the entry ran. Guest code can post anything here. Guest lines are limited to `LOG_EVENTS_PER_SECOND` per
-environment (one warning, then dropped until the next second).
+after the entry ran. Guest code can post anything here. Guest lines are limited to `LOG_EVENTS_PER_SECOND` in any
+one-second window per environment (one warning; lines past it are dropped).
 
 Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`), and
-`[Sandbox] the guest entry failed to start: …` (strict mode).
+`[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
+`Uncaught …`).
 
 ### `violation` — `SandboxViolation`
 
@@ -351,13 +374,15 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
 | `unknown mode …` | `mode` is not `iframe`, `worker` or `strict`. |
-| `the configuration could not be used: …` | `setConfig()` got something that is not an object or cannot be cloned. |
-| `the environment could not be built: …` | Building the frame failed, e.g. a directive given a string instead of a list. |
-| `the executed code ran longer than workerExecutionTimeout` | Code from `execute()` was still running at its budget. |
+| `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned, or `connectionsAllowed` is not an object. |
+| `the environment could not be built (…)` | Building the frame failed, e.g. a directive given a string instead of a list. |
+| `the executed code ran longer than workerExecutionTimeout` | The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline. |
 | `the sandbox frame loaded a second time` | Something navigated or reloaded the library's frame. |
 | `the guest frame is missing` | The library's frame has no guest frame. |
 
-Branch on `state` and the event, not on these texts.
+Branch on `state` and the event, not on these texts. A reason never carries the text of an error the element
+caught (that can quote your config, or be the guest's words): only a fixed text and, in parentheses, the error's
+name.
 
 ---
 
@@ -370,7 +395,7 @@ Branch on `state` and the event, not on these texts.
 | `ready` | The guest can be reached; `ready` was dispatched. |
 | `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`), an integrity check or a failed build; `terminated` was dispatched. |
 
-There is no `running` state: only code from `execute()` reports that it returned, never guest code as a whole.
+There is no `running` state: nothing reports that guest code is running or that it stopped.
 
 | From | Action | To |
 | :--- | :--- | :--- |
@@ -442,7 +467,7 @@ HTTP error statuses resolve, as with `fetch`. `sandboxFetch()` can also reject w
 | `INVALID_FILE` | `registerFiles()`, guest `write()` | The batch is not an object, or an entry is not a string, a `Uint8Array` or `{ content, type }` with a valid MIME type (in the guest: a string, `Blob`, `ArrayBuffer` or typed array). |
 | `FILES_QUOTA_EXCEEDED` | `registerFiles()`, `commitGuestWrites()`, guest `write()` | The files would exceed `MAX_FILES` files or `MAX_TOTAL_BYTES` (a rewritten JavaScript or CSS file counts what its rewrite adds; a guest write counts the files with every pending change applied). |
 | `FILES_NOT_ALLOWED` | `commitGuestWrites()`, guest `write()` / `remove()` | An opt-in is missing: `guestWrites` is off, or a non-inert file is committed without `{ code: true }`. |
-| `FILES_BUSY` | guest `write()` / `remove()` | Past `GUEST_WRITES_PER_SECOND` requests or `GUEST_WRITE_BYTES_PER_SECOND` bytes in one second; nothing was recorded. Retryable. |
+| `FILES_BUSY` | guest `write()` / `remove()` | Past `GUEST_WRITES_PER_SECOND` requests or `GUEST_WRITE_BYTES_PER_SECOND` bytes in any one-second window; nothing was recorded. Retryable. |
 | `NOT_FOUND` | guest `sandboxFiles` | Any lookup of a path that is not there, exactly as written; a `remove()` of a path that is in neither the files nor the guest's writes. |
 
 In the guest, the codes other than `NOT_FOUND` come from the element through the broker, so `write()` and
@@ -499,12 +524,18 @@ With `guestWrites: true`, `sandboxFiles.write()` and `remove()` change the guest
 has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` (nothing
 the guest writes gets a URL). The element checks each request as `registerFiles()` would (path, entry, type, the
 quota with every pending change applied) and at most `GUEST_WRITES_PER_SECOND` requests and
-`GUEST_WRITE_BYTES_PER_SECOND` bytes per second; a refused request changes nothing on either side. Nothing the
+`GUEST_WRITE_BYTES_PER_SECOND` bytes in any one-second window; a refused request changes nothing on either side. Nothing the
 guest writes reaches the files, a policy or another environment until the host calls
 [`commitGuestWrites()`](#commitguestwritespaths-options); it is listed by
 [`listGuestWrites()`](#listguestwrites) and announced by `fileswritten`. Without `guestWrites`, both methods
 reject with `FILES_NOT_ALLOWED`, and so does the element for any request that reaches it. Treat written
 content as the guest's data. [ADR-004](ADR-004-files-as-blob-urls.md)
+
+The element records a change before it announces it, and `listGuestWrites()` is the truth; the guest's view
+changes only when the element's answer arrives. They disagree by design in two cases: a `fileswritten` listener
+that calls `terminate()` (the change stays listed and committable, and the environment that asked is gone before
+any answer), and a listener that blocks longer than the guest's call timeout, 30 s (the guest's `write()` rejects
+with `TIMEOUT`, and the change is listed all the same). A listener's `reset()` discards the change with the rest.
 
 ### `sandboxFetch`
 
@@ -522,8 +553,10 @@ assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](
 | `on` | `(type, id: string \| null, handler: (detail) => void) => () => void` | Subscribes to `click`, `input`, `change`, `submit` or `keydown` on the element with that id (or inside it), or anywhere with `null`. Returns `off`. |
 
 The renderer removes `iframe`, `frame`, `frameset`, `object`, `embed`, `portal`, `fencedframe`, `script`, `meta`,
-`base`, `noscript` and `template` with their content; handler attributes and `javascript:` URLs never run; link
-clicks and form submissions navigate nowhere. Registered files are named by path in `src`, `href` and `poster`.
+`base`, `noscript` and `template` with their content, and the SVG animation elements `animate`, `set`,
+`animateMotion`, `animateTransform`, `animateColor`, `discard` and `animation`, so no attribute it checked can change
+afterwards; handler attributes and `javascript:` URLs never run; link clicks and form submissions navigate nowhere.
+Registered files are named by path in `src`, `href` and `poster`.
 
 Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
 `about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and
@@ -584,6 +617,7 @@ Choose strict mode for content you do not trust at all. [ADR-005](ADR-005-strict
 | Strict: characters per `sandboxView.render()` | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
+| `workerExecutionTimeout`: how long the event loop may stay busy past a deadline (ms) | 1000 | `EXECUTION_TIMEOUT_GRACE_MS` |
 | Files: total bytes | 8388608 (8 MiB) | — |
 | Files: count | 1000 | — |
 | Files: path length | 256 | — |
@@ -609,7 +643,7 @@ Values:
 | `SandboxDevTools` | `new SandboxDevTools(element)`, then `activate()`, `deactivate()` or `toggle()`: prints the element's `sandbox-log` lines to the host console. |
 | `SAFE_CAPABILITIES`, `UNSAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS`, `UNSAFE_PERMISSIONS` | The capability lists accepted by `capabilities` and `unsafeCapabilities`. |
 | `FETCH_ERROR_CODES` | Every `FetchErrorCode`. |
-| `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS`, `GUEST_WRITES_PER_SECOND`, `GUEST_WRITE_BYTES_PER_SECOND` | See [Limits](#limits). |
+| `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS`, `EXECUTION_TIMEOUT_GRACE_MS`, `GUEST_WRITES_PER_SECOND`, `GUEST_WRITE_BYTES_PER_SECOND` | See [Limits](#limits). |
 
 Types: `SandboxConfig`, `SandboxState`, `RpcError`, `RpcErrorCode`, `SandboxLog`, `SandboxLogLevel`,
 `SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,
