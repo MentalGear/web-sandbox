@@ -30,7 +30,11 @@ export default defineConfig({
     webServer: {
         // build the package first: test/e2e/package.spec.ts mounts the sandbox from dist/
         command: "bun run build:lib && bun x vite",
-        url: "http://localhost:4444/test/e2e/harness.html",
+        // no HMR socket (vite.config.ts): a file written during a run never reloads a page under test.
+        // /__e2e answers only on such a server, so a running `bun run dev` is not reused (port 4444 is
+        // then taken, and the run stops with that error instead of failing at random).
+        env: { WEB_SANDBOX_E2E: "1" },
+        url: "http://localhost:4444/__e2e",
         reuseExistingServer: !process.env.CI,
         stdout: 'pipe',
         stderr: 'pipe',

@@ -190,6 +190,9 @@ test.describe('G4 navigation', () => {
             await page.waitForTimeout(150);
         }
         await clickInSandbox(page, 220, 120); // focus the input, then implicit submission
+        // Only press Enter once the input has focus: otherwise the key never reaches the form and the
+        // "no navigation" assertion below would pass without testing implicit submission at all.
+        await waitInView(page, browserName, `document.activeElement && document.activeElement.name === 'q'`);
         await page.keyboard.press('Enter');
         await clickInSandbox(page, 20, 20); // and a middle click on a link
         await page.mouse.click((await page.locator('web-sandbox').boundingBox())!.x + 20, (await page.locator('web-sandbox').boundingBox())!.y + 20, { button: 'middle' });

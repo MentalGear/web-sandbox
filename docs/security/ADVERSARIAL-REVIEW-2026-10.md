@@ -336,12 +336,24 @@ Unit (`bunx vitest run`): 1165 passed in 28 files (998 in 25 before). `bun run t
 `scripts/smoke-package.sh` pass. The skipped tests are per-engine measurements that do not apply to that engine.
 
 ¹ A first full WebKit run had one failure in `strict-render-flood.spec.ts` ("Execution context was destroyed" on the
-host page during the 3 s maximal-render flood, before any assertion); the spec then passed 16 of 16 with
-`--repeat-each 4`, and a second full run was clean. Not reproduced; the render path it exercises is unchanged
-except for C3's null-prototype lists.
-² `strict.spec.ts` "a script corpus rendered into the view": under load the harness read the view's bootstrap text
-as `no-context` (the Chromium out-of-process frame-reading limitation described in `test/e2e/strict-view.ts`); the
-test is unchanged by this review, and `strict.spec.ts` passed 46 of 46 with `--repeat-each 2` under the same load.
+host page during the 3 s maximal-render flood). **Root cause: the test server, not the library.** The e2e server was
+Vite in dev mode with its hot-reload socket on, which reloads every open page when a file in its module graph is
+rewritten (e.g. `dist/index.js` by `scripts/smoke-package.sh`, run alongside); a reload mid-test destroys any
+pending `page.evaluate`. Reproduced by rebuilding during the spec (2 of 8 failed, each with a host-page reload).
+Fix: e2e runs set `WEB_SANDBOX_E2E`, which turns the reload socket off (`vite.config.ts`), and the test runner only
+reuses a server started in that mode (`playwright.config.ts`, probe endpoint `/__e2e`). With 15 rebuilds during the
+run: 21 of 21 passed, no host navigation. The view-liveness check was examined at the same time and does not fire
+falsely: it counts host ticks, so a render stall on a shared thread is never charged (12 s floods under load, 16 of 16
+still `ready`).
+² `strict.spec.ts` "a script corpus rendered into the view": under load the harness read the view as `no-context`.
+**Root cause: the test helper.** Chromium kept the wrapper out of process every time; what varied was Playwright
+linking that frame, which in 6 of 100 runs under load it never did, and the helper then fell back to an in-process
+read that cannot see the view. Fix: `test/e2e/strict-view.ts` reads every Chromium frame directly over CDP
+(`Page.getFrameTree`, `Target.getTargets` by `parentFrameId`, non-flattened `Target.attachToTarget`), independent of
+the process model and of Playwright's frame linking: 100 of 100 under load, including the unlinked case. A related
+race found on the way: keyboard input sent right after a click could reach the page before focus crossed into an
+out-of-process view, so the events and implicit-submission tests now wait for the expected `document.activeElement`
+before typing. Without that wait the strict "no navigation" test could pass without the key ever reaching the form.
 
 Changed or new spec files: `review-policy`, `review-channels`, `review-strict`, `package`, `auto-resize`,
 `violations`, `strict`, `strict-events`, `strict-render-flood` (repeat and load runs), `events`.
