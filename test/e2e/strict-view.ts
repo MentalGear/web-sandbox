@@ -6,10 +6,11 @@ import type { Frame, Page } from '@playwright/test';
  *
  *   main (harness) / wrapper (the element's iframe) / view / ...
  *
- * Firefox and WebKit: through page.frames(). Chromium: the sandboxed wrapper is an out-of-process iframe,
- * and Playwright 1.58 with Chromium 141 lists it with no child frames (research 15, "Note on Chromium and
- * Playwright"), so below the host page Chromium is read through a CDP session on that target: its frame
- * tree, and Runtime.evaluate in each frame's default execution context. DevTools evaluation is not subject
+ * Firefox and WebKit: through page.frames(). Chromium: the sandboxed wrapper is usually an out-of-process
+ * iframe, and Playwright 1.58 with Chromium 141 lists it with no child frames (research 15, "Note on
+ * Chromium and Playwright"), so below the host page Chromium is then read through a CDP session on that
+ * target: its frame tree, and Runtime.evaluate in each frame's default execution context. When Chromium keeps
+ * the wrapper in process (seen under CPU load), page.frames() lists everything and is used instead. DevTools evaluation is not subject
  * to the page's CSP in any engine, so reading never depends on the policy under test.
  */
 
@@ -32,7 +33,12 @@ type CdpFrameTree = { frame: { id: string; name?: string; url: string; urlFragme
  */
 export async function inFrames<T = unknown>(page: Page, browserName: string, expression: string, only: (path: string) => boolean = () => true): Promise<FrameValue<T>[]> {
     const results: FrameValue<T>[] = [];
-    if (browserName !== 'chromium') {
+    // Chromium usually runs the sandboxed wrapper out of process, but not always (measured: under CPU load it
+    // sometimes stays in the page's process, and then has no CDP session of its own); Playwright lists an
+    // in-process wrapper's child frames itself, so that case is read like Firefox and WebKit.
+    const wrapperFrame = page.mainFrame().childFrames()[0];
+    const outOfProcess = browserName === 'chromium' && !!wrapperFrame && wrapperFrame.childFrames().length === 0;
+    if (!outOfProcess) {
         for (const frame of page.frames()) {
             const path = framePath(frame);
             const value = only(path) ? await withTimeout<T | 'no-context'>(frame.evaluate(expression) as Promise<T>, 3000, 'no-context') : 'no-context';
@@ -41,10 +47,15 @@ export async function inFrames<T = unknown>(page: Page, browserName: string, exp
         return results;
     }
     const main = page.mainFrame();
+    const wrapper = wrapperFrame!;
+    let session: Awaited<ReturnType<ReturnType<Page['context']>['newCDPSession']>>;
+    try {
+        session = await page.context().newCDPSession(wrapper);
+    } catch {
+        // in process after all, with its view not yet listed: read through Playwright's frames
+        return inFrames<T>(page, 'playwright-frames', expression, only);
+    }
     results.push({ path: 'main', url: main.url(), value: only('main') ? await withTimeout<T | 'no-context'>(main.evaluate(expression) as Promise<T>, 3000, 'no-context') : 'no-context' });
-    const wrapper = main.childFrames()[0];
-    if (!wrapper) return results;
-    const session = await page.context().newCDPSession(wrapper);
     try {
         const contexts = new Map<string, number>();
         session.on('Runtime.executionContextCreated' as any, (event: any) => {
