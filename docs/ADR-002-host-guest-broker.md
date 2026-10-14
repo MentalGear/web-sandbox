@@ -159,6 +159,9 @@ code is still `HANDLER_ERROR`. The calling side accepts a library code only for 
 and only when created with `acceptLibraryCodes`, which only the guest's broker is. So on the host every
 response is clamped exactly as the B7 amendment says, and nothing the guest sends can produce a library
 code there. Proof: `src/lib/rpc.test.ts` ("reserved methods and library codes").
+*Extended (2026-10-14, guest writes, [ADR-004](ADR-004-files-as-blob-urls.md#amendment-guest-writes-2026-10-14)):
+the library codes also hold the file codes `INVALID_PATH`, `INVALID_FILE`, `FILES_QUOTA_EXCEEDED`,
+`FILES_NOT_ALLOWED` and `FILES_BUSY`, reported by the reserved `sandbox:write`; same rules, still disjoint.*
 
 ## Amendment (2026-10-13): strict mode renders bypass the host
 

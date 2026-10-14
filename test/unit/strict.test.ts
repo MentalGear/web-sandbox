@@ -135,3 +135,33 @@ describe('review C2: the worker source runs the entry in its own scope, after th
         expect(source.endsWith('}).call(this);\n__sandboxEntryRan();\n')).toBe(true);
     });
 });
+
+describe('guest writes in strict mode (backlog C5): the worker carries the writer, the view never sees the overlay', () => {
+    const sourceOf = (el: any): string => el._strictInit?.workerSource ?? el._getStrictWorkerSource(el._files.snapshot(), '');
+
+    it("with guestWrites: the prelude hands sandboxFiles the comms script's captured write call, and still removes URL.createObjectURL before the entry", async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount({ mode: 'strict', guestWrites: true, entry: 'main.js' }, { 'main.js': 'void 0', 'a.png': 'x' });
+        const source = sourceOf(el);
+        expect(source).toContain('"guestWrites":true');
+        expect(source).toMatch(/\}\)\(\[\[[^\n]*\]\], comms\.writeFiles\);\(function inStrictWorker\(/);
+        const removal = source.search(/remove\(g\.URL, ['"]createObjectURL['"]\)/);
+        expect(removal).toBeGreaterThan(0);
+        expect(removal).toBeLessThan(source.indexOf('(function () {\nvoid 0\n}).call(this);'));
+        expect(el._guestWrites).not.toBeNull();
+        // the view gets the snapshot's non-JavaScript files and nothing else: the overlay never reaches it
+        if (el._strictInit) expect(el._strictInit.viewFiles.map((f: any) => f[0])).toEqual(['a.png']);
+    });
+
+    it('without guestWrites (or with anything but a literal true): no writer, no feature, no overlay', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        for (const guestWrites of [undefined, 'true', 1]) {
+            const el = await mount({ mode: 'strict', guestWrites });
+            const source = sourceOf(el);
+            expect(source).not.toContain('"guestWrites":true');
+            expect(source).not.toContain('comms.writeFiles');
+            expect(el._guestWrites).toBeNull();
+            el.remove();
+        }
+    });
+});

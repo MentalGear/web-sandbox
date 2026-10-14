@@ -529,6 +529,61 @@ describe("inSandboxScript", () => {
         });
     });
 
+    describe("guest writes: the captured sandbox:write call (backlog C5)", () => {
+        const start = (features?: any) => {
+            const listeners: Record<string, Function> = {};
+            (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
+            const comms = inSandboxScript(false, 'iframe', createMockConsole(), createBroker, features);
+            const port = createMockPort();
+            listeners['message']?.(initPort(port));
+            const requests = () => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RPC_REQ');
+            const answer = (frame: Record<string, unknown>) => port.deliver({ type: 'RPC_RES', id: requests().at(-1).id, ...frame });
+            return { comms, port, requests, answer };
+        };
+
+        it("is null unless the host turned guest writes on (only a literal true), and never a global", () => {
+            for (const features of [undefined, {}, { guestWrites: 'yes' }, { guestWrites: 1 }, { fetchBridge: { timeoutMs: 1 } }]) {
+                expect(start(features).comms.writeFiles, JSON.stringify(features)).toBeNull();
+            }
+            const { comms } = start({ guestWrites: true });
+            expect(typeof comms.writeFiles).toBe('function');
+            expect(Object.keys(globalThis).filter(name => /write/i.test(name))).toEqual([]);
+        });
+
+        it("calls the reserved method with the request, and resolves or rejects with the host's answer and library code", async () => {
+            const { comms, requests, answer } = start({ guestWrites: true });
+            const pending = comms.writeFiles!({ change: 'remove', path: 'a.txt' });
+            expect(requests().map(r => [r.method, r.args])).toEqual([['sandbox:write', [{ change: 'remove', path: 'a.txt' }]]]);
+            answer({ ok: true, value: { path: 'a.txt', change: 'remove' } });
+            await expect(pending).resolves.toEqual({ path: 'a.txt', change: 'remove' });
+            const refused = comms.writeFiles!({ change: 'write', path: '../x', entry: 'x' });
+            answer({ ok: false, error: 'refused', code: 'INVALID_PATH' });
+            await expect(refused).rejects.toMatchObject({ code: 'INVALID_PATH' });
+        });
+
+        it("guest code replacing bridge.callWithTimeout, bridge.call and the port's prototype afterwards changes nothing on this path", async () => {
+            const { comms, port, requests, answer } = start({ guestWrites: true });
+            const bridge = (globalThis as any).bridge;
+            const forged = vi.fn(() => Promise.resolve('forged'));
+            bridge.callWithTimeout = forged;
+            bridge.call = forged;
+            const patched = vi.fn();
+            const original = FakePort.prototype.postMessage;
+            FakePort.prototype.postMessage = patched;
+            try {
+                const pending = comms.writeFiles!({ change: 'write', path: 'a.txt', entry: 'x' });
+                expect(forged).not.toHaveBeenCalled();
+                expect(patched).not.toHaveBeenCalled();
+                expect(requests().at(-1)).toMatchObject({ method: 'sandbox:write' });
+                answer({ ok: true, value: { path: 'a.txt', change: 'write', type: 'text/plain', size: 1 } });
+                await expect(pending).resolves.toMatchObject({ change: 'write' });
+            } finally {
+                FakePort.prototype.postMessage = original;
+            }
+            expect(port.posted).toHaveBeenCalled();
+        });
+    });
+
     describe("no WebRTC in the guest realm (backlog S13)", () => {
         const NAMES = ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection'];
         afterEach(() => { for (const name of NAMES) delete (globalThis as any)[name]; });

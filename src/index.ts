@@ -15,6 +15,8 @@ export { VIEW_RENDER_MAX_LENGTH } from "./lib/in-sandbox-view";
 export type { FetchBridgeConfig, FetchErrorCode, FetchRecord } from "./lib/fetch-bridge";
 export { FETCH_ERROR_CODES } from "./lib/fetch-bridge";
 export type { FileContent, FileEntry, FileInfo, FileError, FileErrorCode, SandboxFiles } from "./lib/files";
+export type { GuestWrite } from "./lib/guest-writes";
+export { GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECOND } from "./lib/guest-writes";
 
 export {
     SAFE_CAPABILITIES,

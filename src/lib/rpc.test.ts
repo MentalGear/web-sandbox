@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createBroker, MAX_INBOUND_IN_FLIGHT, RESERVED_METHOD_PREFIX, type RpcErrorCode, type RpcLibraryCode } from './rpc';
+import type { FetchErrorCode } from './fetch-bridge';
+import type { FileErrorCode } from './files';
 
 // A pair of brokers wired straight into each other: a call on one is served by the other.
 // Timeouts are disabled here so no real timer lingers; timeout behaviour has its own suite.
@@ -581,10 +583,19 @@ describe('reply routing (guarantee: a response goes back only on the channel its
 });
 
 describe('reserved methods and library codes (backlog B5; guarantee: the library namespace and its codes are disjoint from everything else)', () => {
-    const LIBRARY_CODES = ['FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED'] as const;
+    const LIBRARY_CODES = [
+        'FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED',
+        'INVALID_PATH', 'INVALID_FILE', 'FILES_QUOTA_EXCEEDED', 'FILES_NOT_ALLOWED', 'FILES_BUSY',
+    ] as const;
     type Library = typeof LIBRARY_CODES[number];
     const exact: [Exclude<RpcLibraryCode, Library>, Exclude<Library, RpcLibraryCode>] extends [never, never] ? true : false = true;
     const disjoint: [Extract<RpcLibraryCode, RpcErrorCode>] extends [never] ? true : false = true;
+    // The library codes are exactly the fetch bridge's and the files' (guest writes, backlog C5); FetchErrorCode is
+    // only the FETCH_* subset, and NOT_FOUND (minted in the guest) is none of them.
+    type Split = Exclude<RpcLibraryCode, FetchErrorCode | FileErrorCode> | Exclude<FetchErrorCode | FileErrorCode, RpcLibraryCode>;
+    const split: [Split] extends [never] ? true : false = true;
+    const fetchOnly: [Exclude<FetchErrorCode, `FETCH_${string}`>, Extract<FileErrorCode, FetchErrorCode>] extends [never, never] ? true : false = true;
+    const noNotFound: ['NOT_FOUND' extends RpcLibraryCode ? true : never] extends [never] ? true : false = true;
 
     // `host` serves reserved methods; `guest` calls them, accepting library codes as the guest's broker does.
     function hostGuestPair() {
@@ -596,8 +607,10 @@ describe('reserved methods and library codes (backlog B5; guarantee: the library
     const coded = (code: string) => Object.assign(new Error(`refused: ${code}`), { code });
 
     it('pins the prefix and the library code strings, disjoint from RpcErrorCode', () => {
-        expect(exact && disjoint).toBe(true);
+        expect(exact && disjoint && split && fetchOnly && noNotFound).toBe(true);
         expect(RESERVED_METHOD_PREFIX).toBe('sandbox:');
+        // the stringified broker carries the very same list (it closes over nothing)
+        for (const code of LIBRARY_CODES) expect(createBroker.toString(), code).toMatch(new RegExp(`['"]${code}['"]`));
     });
 
     it('expose() never registers a reserved name, and exposeReserved() registers nothing else', async () => {
@@ -628,8 +641,8 @@ describe('reserved methods and library codes (backlog B5; guarantee: the library
             codes.push((await refusal(guest.call('sandbox:fetch'))).code);
         }
         expect(codes).toEqual([...LIBRARY_CODES]);
-        // any other code from a reserved method, local codes included, is a HANDLER_ERROR
-        for (const code of ['TERMINATED', 'TIMEOUT', 'FETCH_OTHER', 'fetch_failed']) {
+        // any other code from a reserved method, local codes included, is a HANDLER_ERROR (NOT_FOUND too: the guest mints it)
+        for (const code of ['TERMINATED', 'TIMEOUT', 'FETCH_OTHER', 'fetch_failed', 'NOT_FOUND', 'FILES_OTHER', 'invalid_path']) {
             next = code;
             expect((await refusal(guest.call('sandbox:fetch'))).code, code).toBe('HANDLER_ERROR');
         }
@@ -667,6 +680,21 @@ describe('reserved methods and library codes (backlog B5; guarantee: the library
         };
         expect((await answer('sandbox:fetch')).code).toBe('FETCH_BUSY');
         expect((await answer('ordinary')).code).toBe('HANDLER_ERROR');
+    });
+
+    it('the file codes travel like the fetch codes: from a reserved method to the guest only; the host clamps them, and an ordinary method cannot report them', async () => {
+        const { host, guest } = hostGuestPair();
+        const FILE_CODES = ['INVALID_PATH', 'INVALID_FILE', 'FILES_QUOTA_EXCEEDED', 'FILES_NOT_ALLOWED', 'FILES_BUSY'];
+        let next = '';
+        host.exposeReserved('sandbox:write', () => { throw coded(next); });
+        host.expose('write', () => { throw coded(next); });
+        guest.exposeReserved('sandbox:write', () => { throw coded(next); });
+        for (const code of FILE_CODES) {
+            next = code;
+            expect((await refusal(guest.call('sandbox:write'))).code, code).toBe(code);
+            expect((await refusal(guest.call('write'))).code, code).toBe('HANDLER_ERROR');
+            expect((await refusal(host.call('sandbox:write'))).code, code).toBe('HANDLER_ERROR');
+        }
     });
 });
 

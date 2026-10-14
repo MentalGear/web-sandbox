@@ -151,7 +151,8 @@ element the bootstrap looks up. An argument to the bootstrap call cannot be reac
 Deferred to backlog C5: an opt-in `FS_WRITE` frame handled before the broker (like the watchdog's
 `PING`), with the host validating path and quota. The guest's overlay is discarded at `reset()`
 unless the host commits it, and it is opt-in because otherwise a guest could plant code that the
-next environment runs.
+next environment runs. *Decided in the [guest writes amendment](#amendment-guest-writes-2026-10-14): a reserved
+broker method rather than a raw frame.*
 
 ## Consequences
 
@@ -693,3 +694,90 @@ where only `default-src` governs, the kind's own directive is created from its s
 mode, which asks only the directives its view will hold. A policy without `-elem` directives comes out
 byte-identical (a 500-config property test against the previous implementation). Proof:
 `src/lib/csp/file-sources.test.ts`, `test/e2e/review-policy.spec.ts` ("A3 class").
+
+## Amendment: guest writes (2026-10-14)
+
+**When**: backlog C5. **Why**: a guest could read its files but not produce any, and the section "Guest writes
+in this step" above deferred it with a sketch (an `FS_WRITE` frame handled before the broker). The guarantee:
+a guest changes files only when the embedder opted in, never past the host's path rules and cap, and nothing it
+writes is kept, loaded or run until the host says so.
+
+### Decision
+
+- **One reserved broker method, `sandbox:write`, for writes and removals; not a raw frame.** The sketch put the
+  write before the broker so that guest code could not replace it. That property now holds for every
+  `sandbox:` name by construction ([ADR-002, reserved methods](ADR-002-host-guest-broker.md#amendment-2026-10-13-reserved-methods-and-library-codes)):
+  `expose()` never registers one, on either side. And since the review's channel fixes (S21) guest code cannot
+  post a frame of its own at all, so a raw frame would not be harder to forge than a call. What a raw frame would
+  lack is everything the broker already does once: request/answer correlation (the guest's view changes only
+  on the host's answer), a timeout, `TERMINATED` on teardown, the 256-calls-in-flight cap, the current-port
+  check (review B4) and the clamp that lets only a reserved method report a library code. A second frame type
+  would need a second copy of each. The guest calls the method through the broker's `callWithTimeout`
+  captured by the bootstrap before guest code runs (like `sandboxFetch`), so replacing `bridge` or the port's
+  prototypes changes nothing on that path. `PING` stays a raw frame for the opposite reason: it is answered in
+  the guest, and answering at all is the signal.
+- **The method is bound to the environment the request arrived in.** The host registers it again with each
+  build, closed over that build's overlay; the broker looks a method up when a request arrives, and only the
+  current port's frames arrive. So a request that runs after a listener rebuilt the sandbox goes to its own,
+  closed, overlay, never to the next one.
+- **`guestWrites: true` (only a literal `true`).** Off, `sandboxFiles.write()` and `remove()` still exist and
+  reject `FILES_NOT_ALLOWED` without sending; the host's method refuses with the same code. The host's refusal
+  is the guarantee, the guest's only saves the round trip.
+- **One store chokepoint.** `FileStore.apply({ put, remove })` is the store's only mutation; `registerFiles()`,
+  `unregisterFiles()` and the commit are wrappers. A write is checked by `CheckedFile.from()`, the same path and
+  entry check, so its type is the one the store will load it as. At write time the quota is `FileStore.check()`
+  of the store with every pending change and this write applied: the count and the registered bytes, which is
+  `apply()`'s first step, without lexing. The commit is `apply()` itself, lexing included, against the store as
+  it is then, so it can still be refused (`FILES_QUOTA_EXCEEDED`) if the host registered more meanwhile.
+- **An overlay per environment, the host the single source of truth.** `Map<path, CheckedFile | removal>`,
+  created by the build (null when off). A refused request changes nothing on either side; the guest's map
+  changes only after the answer, in call order (a `Blob` is read first; every entry's bytes are copied when
+  `write()` is called). A removal of a path in neither the store nor the overlay is answered `none` (the guest
+  mints `NOT_FOUND`) and records nothing, so removal marks only ever name stored paths.
+- **No URL for anything written.** `list()`, `read()` and `text()` show the guest's acknowledged writes;
+  `url()` of a written path is `NOT_FOUND` in every mode, and no `blob:` URL is minted for one. The strict view
+  never sees the overlay. So C1's guarantee, "the view renders no `blob:` content but registered files", holds
+  with written files present, by construction: a written file reaches a URL only as a committed, registered
+  file of a later build, which the view mints itself.
+- **Commit needs an explicit list, and code needs a second opt-in.** `commitGuestWrites(paths, options?)`;
+  there is no commit-all and no discard (`reset()` discards). A write whose type is not on a fixed inert list —
+  the image, font, audio and video types of the extension table without SVG, `text/plain`, `application/json`,
+  `text/css`, exact strings — is refused unless `options.code === true`. JavaScript, HTML, SVG, XML,
+  WebAssembly, unknown types and any type the guest set are code until the embedder says otherwise. The type
+  checked is the `CheckedFile`'s, which is what decides how the file is loaded, never the file name.
+- **Refusal code for a non-inert commit: `FILES_NOT_ALLOWED`, reused.** The code says "an opt-in is missing",
+  the same meaning as for a write while `guestWrites` is off; the message names the path, its type and the flag.
+  A separate code would only add a branch to the host's own call, and the host already knows every pending
+  type from `listGuestWrites()`.
+- **Codes.** `RpcLibraryCode` gains the file codes `INVALID_PATH`, `INVALID_FILE`, `FILES_QUOTA_EXCEEDED`,
+  `FILES_NOT_ALLOWED`, `FILES_BUSY` (disjoint from both call-code groups; only the guest's broker accepts them,
+  only from a reserved method). `FetchErrorCode` is now the `FETCH_*` subset. `NOT_FOUND` stays a guest code.
+- **Rate.** Besides the broker's 256 calls in flight, at most `GUEST_WRITES_PER_SECOND` (100) requests are
+  handled and `GUEST_WRITE_BYTES_PER_SECOND` (8 MiB) recorded per environment and second, refused with
+  `FILES_BUSY`; the request count is taken first, refused requests included, and the byte rate after the quota.
+  That also bounds `fileswritten`, one event per recorded change, dispatched last through `_notifyThenAct`:
+  the guest's write is acknowledged only if no listener reset or terminated the sandbox meanwhile.
+- **Lifecycle: one rule, builds discard and terminations keep.** The next build (`reset()`, `load()`,
+  `setConfig()`) and the element's removal discard the overlay; `terminate()`, the watchdog and
+  `workerExecutionTimeout` (a termination, ADR-003) keep it, closed: listable and committable, accepting
+  nothing more. Not in v1: rename or move.
+
+### Alternatives considered
+
+- **The `FS_WRITE` frame of the original sketch**: see the first decision.
+- **A URL for written files** (minting one in the guest): it would give the guest `blob:` content no build
+  registered, in the view too (strict mode removes `URL.createObjectURL` for exactly that reason, A8).
+- **An inert list by prefix (`image/*`) or by extension**: `image/svg+xml` is a document, a guest's type
+  override can be any `type/subtype`, and a file name decides nothing about how a blob loads.
+- **Commit everything, or a discard method**: an implicit "everything" commits what the embedder did not look
+  at; discarding is what a rebuild already does.
+
+### Tests
+
+`src/lib/guest-writes.test.ts` (path corpus, entries, quota against store and overlay, removal marks, commit
+subset and lexing, the inert list against the extension table, the rate with a fake clock),
+`src/lib/files.test.ts` (`apply()` atomic, `check()`), `src/lib/in-sandbox-files.test.ts` and
+`src/lib/in-sandbox-script.test.ts` (the guest side: view after the answer, `url()`, copies, call order, the
+captured call), `src/lib/rpc.test.ts` (pinned codes), `test/unit/guest-writes.test.ts` (config, lifecycle,
+B4, B5), `test/unit/strict.test.ts`, and `test/e2e/guest-writes.spec.ts` in iframe, worker and strict mode on
+Chromium, Firefox and WebKit, with evidence read from the host page and the recorder.

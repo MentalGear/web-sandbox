@@ -380,6 +380,34 @@ sandbox.load(`
 *   **Not yet**: references inside `<template>`. Use `sandboxFiles.url()` for those, and for anything
     built at run time.
 
+### Guest writes
+
+Off by default. With `guestWrites: true` the guest can write and remove files; the host decides what is kept.
+
+```js
+sandbox.setConfig({ guestWrites: true, /* … */ });
+// in the guest
+await sandboxFiles.write('out/report.json', JSON.stringify(result));  // a string, Blob, ArrayBuffer or typed array
+await sandboxFiles.remove('draft.txt');
+// on the host
+sandbox.addEventListener('fileswritten', (e) => console.log(e.detail.paths));
+sandbox.listGuestWrites();                        // [{ path, change: 'write', type, size, content }, …]
+sandbox.commitGuestWrites(['out/report.json']);   // now a registered file, from the next build on
+sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the flag
+```
+
+*   **The host checks every write** as `registerFiles()` would (paths, types, the 8 MiB / 1000-file cap with
+    every pending write counted) and at most 100 writes and 8 MiB per second; a refusal has the same codes,
+    plus `FILES_BUSY` past the rate and `FILES_NOT_ALLOWED` when writes are off.
+*   **The guest sees its own writes** in `list()`, `read()` and `text()` once the host accepted them, but
+    `url()` of a written path is `NOT_FOUND`: nothing the guest writes gets a URL or loads anywhere.
+*   **Nothing is kept unless you commit it.** Pending writes belong to the environment: `reset()`, `load()`,
+    `setConfig()` and removing the element discard them; `terminate()` keeps them so you can still inspect and
+    commit them. `commitGuestWrites(paths)` takes an explicit list.
+*   **Code needs `{ code: true }`.** Only images, fonts, audio, video, `text/plain`, `application/json` and
+    `text/css` commit without it; JavaScript, HTML, SVG, XML, WebAssembly and anything else is refused with
+    `FILES_NOT_ALLOWED`, judged by the type the file will be loaded as.
+
 Why it is built this way: [ADR-004](docs/ADR-004-files-as-blob-urls.md).
 
 ## Strict mode

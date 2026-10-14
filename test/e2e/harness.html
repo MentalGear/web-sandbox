@@ -27,6 +27,11 @@
         window.addEventListener('fetch', (event) => {
             window.sandboxFetches.push({ sandbox: event.target.id || 'main', ...event.detail });
         });
+        // Every guest write the host recorded (backlog C5), as the host reports it
+        window.sandboxWrites = [];
+        window.addEventListener('fileswritten', (event) => {
+            window.sandboxWrites.push({ sandbox: event.target.id || 'main', paths: [...event.detail.paths], at: performance.now() });
+        });
         window.harnessReady = true;
     </script>
     <style>web-sandbox { display: block; width: 400px; height: 300px; }</style>

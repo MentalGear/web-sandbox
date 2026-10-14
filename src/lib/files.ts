@@ -32,32 +32,48 @@ export interface FileInfo {
 }
 
 /**
- * Why registerFiles() or unregisterFiles() refused a batch. The strings are API (pinned by a test).
- * They are not RpcErrorCode: no broker is involved, the host refuses its own caller.
- *   INVALID_PATH          a path fails isValidPath(), or unregisterFiles() was not given an array of paths
+ * Why a change to the files was refused. The strings are API and, for guest writes, wire protocol (pinned by
+ * tests; src/lib/rpc.ts lists them among the library codes a reserved method may report, RpcLibraryCode).
+ * They are not RpcErrorCode: registerFiles(), unregisterFiles() and commitGuestWrites() refuse the host's own
+ * caller, and a guest write is refused by the host's reserved method (guest-writes.ts).
+ *   INVALID_PATH          a path fails isValidPath(), or a list of paths is not an array
  *   INVALID_FILE          the batch is not an object, or an entry is not a string, a Uint8Array or
- *                         { content, type } with a valid type
- *   FILES_QUOTA_EXCEEDED  the store after the batch would exceed MAX_FILES or MAX_TOTAL_BYTES (a
+ *                         { content, type } with a valid type (a guest write: not a write or a remove)
+ *   FILES_QUOTA_EXCEEDED  the store after the change would exceed MAX_FILES or MAX_TOTAL_BYTES (a
  *                         JavaScript file counts its registered bytes plus what its rewrite adds,
  *                         rewriteCost(); a stylesheet its registered bytes plus what its references
  *                         add, referenceCost())
+ *   FILES_NOT_ALLOWED     an opt-in is missing: a guest write while guestWrites is off, or a commit of a file
+ *                         whose type is not inert (INERT_TYPES, guest-writes.ts) without { code: true }
+ *   FILES_BUSY            a guest write past the per-environment rate (guest-writes.ts); retryable
  * In the guest, every failed lookup is NOT_FOUND (in-sandbox-files.ts).
  */
-export type FileErrorCode = 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEEDED';
+export type FileErrorCode = 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEEDED' | 'FILES_NOT_ALLOWED' | 'FILES_BUSY';
 
 /**
  * The guest's view, published as the global `sandboxFiles` by the bootstrap (in-sandbox-files.ts) in
  * every environment, empty when no file is registered. Every failed lookup is an Error with `code: 'NOT_FOUND'`.
+ * With `guestWrites` the guest's own writes, once the host acknowledged them, are part of this view
+ * (guest-writes.ts); they never get a URL.
  */
 export interface SandboxFiles {
-    /** The registered paths, sorted. */
+    /** The registered paths with the guest's acknowledged writes and removals applied, sorted. */
     list(): string[];
-    /** The file's blob: URL, minted in the guest's own realm (the rewritten form of a module or stylesheet). Throws NOT_FOUND. */
+    /** The file's blob: URL, minted in the guest's own realm (the rewritten form of a module or stylesheet). Throws NOT_FOUND, also for a path the guest wrote. */
     url(path: string): string;
-    /** The bytes as registered, a fresh copy per call. Rejects NOT_FOUND. */
+    /** The bytes as registered (or as the guest wrote them), a fresh copy per call. Rejects NOT_FOUND. */
     read(path: string): Promise<Uint8Array>;
-    /** The content as registered, decoded as UTF-8. Rejects NOT_FOUND. */
+    /** The content as registered (or as the guest wrote it), decoded as UTF-8. Rejects NOT_FOUND. */
     text(path: string): Promise<string>;
+    /**
+     * Asks the host to record a write: `entry` is a string, a Blob, an ArrayBuffer or a typed array, or
+     * `{ content, type }`; its bytes are copied when called. Resolves once the host recorded it, and only then
+     * does this view change. Rejects with the host's FileErrorCode, or FILES_NOT_ALLOWED without sending when
+     * guestWrites is off.
+     */
+    write(path: string, entry: unknown): Promise<void>;
+    /** Asks the host to record a removal. Rejects NOT_FOUND for a path in neither the store nor the guest's writes. */
+    remove(path: string): Promise<void>;
 }
 
 /** The shape of every refusal: a plain Error with an own `code` (backlog B7). */
@@ -241,8 +257,45 @@ export function referenceCost(references: readonly CssReferenceRange[] | null): 
 }
 
 /**
- * The files of one element. Every mutation validates the whole batch against the store it would
- * produce before changing anything, so a refused call leaves the store exactly as it was.
+ * One file checked against the store's rules: a valid path, its bytes copied from the caller's data, and its
+ * type as the store assigns it (the override, or the extension table). `CheckedFile.from()` is the only way to
+ * make one (the constructor is private), so a value of this type has passed the same parseEntry() as every
+ * registered file: the guest-write overlay keeps its writes in this form (guest-writes.ts), and the type it
+ * shows the host and checks against the inert list is the very type the store will load the file as.
+ */
+export class CheckedFile {
+    private constructor(readonly type: string, readonly bytes: Uint8Array) {}
+
+    /** Checks `path` and `entry` (a FileEntry); throws INVALID_PATH or INVALID_FILE. `caller` names the API in messages. */
+    static from(path: unknown, entry: unknown, caller: string): CheckedFile {
+        if (!isValidPath(path)) throw fileError('INVALID_PATH', `${caller} refused the path ${describePath(path)}.`);
+        const { type, bytes } = parseEntry(path, entry, caller);
+        return new CheckedFile(type, bytes);
+    }
+}
+
+/**
+ * One change to the store, for FileStore.apply(): files to add or replace, and paths to remove. Every value of
+ * `put` is a FileEntry or a CheckedFile, every key and every entry of `remove` is checked by isValidPath(). A
+ * path may appear in one of the two only.
+ */
+export interface FileChanges {
+    put?: ReadonlyMap<unknown, unknown>;
+    remove?: readonly unknown[];
+}
+
+// A change that passed every check except the rewrite costs (FileStore._plan).
+interface FilePlan {
+    put: Map<string, CheckedFile>;
+    remove: Set<string>;
+    totalBytes: number; // the store's total cost after the change, counting each put file's registered bytes only
+}
+
+/**
+ * The files of one element. Every mutation goes through apply(), which validates the whole change against
+ * the store it would produce before changing anything, so a refused call leaves the store exactly as it was.
+ * register(), unregister() and the guest-write commit (guest-writes.ts) are thin wrappers over it: path and
+ * entry validation, types, refusal codes and the quota are one implementation.
  */
 export class FileStore {
     private _files = new Map<string, StoredFile>();
@@ -257,23 +310,54 @@ export class FileStore {
      * re-registering an identical file changes nothing. Throws a FileError and changes nothing on refusal.
      */
     register(files: unknown): string[] {
-        const incoming = parseBatch(files);
+        if (files === null || typeof files !== 'object' || Array.isArray(files)) {
+            throw fileError('INVALID_FILE', 'registerFiles() expects an object mapping paths to file contents.');
+        }
+        return this.apply({ put: new Map(Object.entries(files)) }, 'registerFiles()');
+    }
 
-        let fileCount = this._files.size;
-        for (const path of incoming.keys()) if (!this._files.has(path)) fileCount++;
-        if (fileCount > MAX_FILES) throw fileError('FILES_QUOTA_EXCEEDED', `registerFiles() refused: at most ${MAX_FILES} files.`);
-        const quotaError = () => fileError('FILES_QUOTA_EXCEEDED', `registerFiles() refused: at most ${MAX_TOTAL_BYTES} bytes in total.`);
+    /**
+     * Removes the given paths, or every file when `paths` is undefined. Paths that are not registered
+     * are ignored. Returns the paths removed (sorted). Throws INVALID_PATH and removes nothing if
+     * `paths` is not an array of valid paths.
+     */
+    unregister(paths?: unknown): string[] {
+        if (paths === undefined) return this.apply({ remove: [...this._files.keys()] }, 'unregisterFiles()');
+        if (!Array.isArray(paths)) throw fileError('INVALID_PATH', 'unregisterFiles() expects an array of paths.');
+        return this.apply({ remove: paths }, 'unregisterFiles()');
+    }
 
-        // The registered bytes alone first, so an oversized batch is refused before any lexing or encoding work.
-        let totalBytes = this._totalBytes;
-        for (const [path, file] of incoming) totalBytes += file.bytes.length - (this._files.get(path)?.cost ?? 0);
-        if (totalBytes > MAX_TOTAL_BYTES) throw quotaError();
+    /** Whether a file is stored at `path`. */
+    has(path: string): boolean {
+        return this._files.has(path);
+    }
+
+    /**
+     * Checks a change without making it: every path and entry, the file count and the registered bytes against
+     * MAX_TOTAL_BYTES, exactly as apply() does first, but without lexing (rewriteCost, referenceCost) or
+     * encoding anything. Throws the refusal apply() would throw for those; apply() may still refuse the same
+     * change for what the rewrites add. Used for a guest's write (guest-writes.ts), whose full check is its commit.
+     */
+    check(changes: FileChanges, caller: string): void {
+        this._plan(changes, caller);
+    }
+
+    /**
+     * The one mutation of the store: adds or replaces `changes.put` and removes `changes.remove` (paths not
+     * stored are ignored), atomically. Returns the paths whose content or type changed or that were removed,
+     * sorted; re-registering an identical file changes nothing. Throws a FileError and changes nothing on
+     * refusal. `caller` names the public API in refusal messages.
+     */
+    apply(changes: FileChanges, caller: string): string[] {
+        const { put, remove, totalBytes: registeredBytes } = this._plan(changes, caller);
+        const quotaError = () => fileError('FILES_QUOTA_EXCEEDED', `${caller} refused: at most ${MAX_TOTAL_BYTES} bytes in total.`);
+        let totalBytes = registeredBytes;
 
         // Then with what each module rewrite (rewriteCost) and each stylesheet's references
         // (referenceCost) add. Lexed and tokenized now, still before any change.
         const rewrites = new Map<string, ModuleRewrite>();
         const stylesheets = new Map<string, StylesheetReferences>();
-        for (const [path, file] of incoming) {
+        for (const [path, file] of put) {
             if (isJavaScriptType(file.type)) {
                 const rewrite = rewriteModule(path, file.bytes);
                 rewrites.set(path, rewrite);
@@ -288,7 +372,12 @@ export class FileStore {
 
         // validated: apply. Encoded only now.
         const changed: string[] = [];
-        for (const [path, { type, bytes }] of incoming) {
+        for (const path of remove) {
+            if (!this._files.has(path)) continue;
+            this._files.delete(path);
+            changed.push(path);
+        }
+        for (const [path, { type, bytes }] of put) {
             const rewrite = rewrites.get(path);
             const edits = rewrite?.edits ?? null;
             const stylesheet = stylesheets.get(path);
@@ -307,23 +396,32 @@ export class FileStore {
         return changed.sort();
     }
 
-    /**
-     * Removes the given paths, or every file when `paths` is undefined. Paths that are not registered
-     * are ignored. Returns the paths removed (sorted). Throws INVALID_PATH and removes nothing if
-     * `paths` is not an array of valid paths.
-     */
-    unregister(paths?: unknown): string[] {
-        const targets = paths === undefined ? [...this._files.keys()] : parsePathList(paths);
-
-        const removed: string[] = [];
-        for (const path of targets) {
-            const existing = this._files.get(path);
-            if (!existing) continue;
-            this._files.delete(path);
-            this._totalBytes -= existing.cost;
-            removed.push(path);
+    // The first half of every check (apply() and check()): each path and entry in order, then the file count,
+    // then the registered bytes alone, so an oversized change is refused before any lexing or encoding work.
+    // A file being replaced or removed gives back its whole cost (registered bytes plus what its rewrite added).
+    private _plan(changes: FileChanges, caller: string): FilePlan {
+        const put = new Map<string, CheckedFile>();
+        for (const [path, entry] of changes.put ?? []) {
+            // a CheckedFile has been through CheckedFile.from() already: its bytes are a copy, its type the store's
+            put.set(path as string, entry instanceof CheckedFile && isValidPath(path) ? entry : CheckedFile.from(path, entry, caller));
         }
-        return removed.sort();
+        const remove = new Set<string>();
+        for (const path of changes.remove ?? []) {
+            if (!isValidPath(path)) throw fileError('INVALID_PATH', `${caller} refused the path ${describePath(path)}.`);
+            if (put.has(path)) throw fileError('INVALID_PATH', `${caller} refused the path ${describePath(path)}: it is both written and removed.`);
+            remove.add(path);
+        }
+
+        let fileCount = this._files.size;
+        for (const path of put.keys()) if (!this._files.has(path)) fileCount++;
+        for (const path of remove) if (this._files.has(path)) fileCount--;
+        if (fileCount > MAX_FILES) throw fileError('FILES_QUOTA_EXCEEDED', `${caller} refused: at most ${MAX_FILES} files.`);
+
+        let totalBytes = this._totalBytes;
+        for (const [path, file] of put) totalBytes += file.bytes.length - (this._files.get(path)?.cost ?? 0);
+        for (const path of remove) totalBytes -= this._files.get(path)?.cost ?? 0;
+        if (totalBytes > MAX_TOTAL_BYTES) throw fileError('FILES_QUOTA_EXCEEDED', `${caller} refused: at most ${MAX_TOTAL_BYTES} bytes in total.`);
+        return { put, remove, totalBytes };
     }
 
     /** Every file, sorted by path, as fresh objects. */
@@ -547,38 +645,18 @@ interface ParsedFile {
     bytes: Uint8Array; // already a copy of the caller's data
 }
 
-// Validates a whole registerFiles() batch. Returns the files to store; throws on the first bad entry.
-function parseBatch(files: unknown): Map<string, ParsedFile> {
-    if (files === null || typeof files !== 'object' || Array.isArray(files)) {
-        throw fileError('INVALID_FILE', 'registerFiles() expects an object mapping paths to file contents.');
-    }
-
-    const parsed = new Map<string, ParsedFile>();
-    for (const [path, entry] of Object.entries(files)) {
-        if (!isValidPath(path)) throw fileError('INVALID_PATH', `registerFiles() refused the path ${describePath(path)}.`);
-        parsed.set(path, parseEntry(path, entry));
-    }
-    return parsed;
-}
-
-function parseEntry(path: string, entry: unknown): ParsedFile {
+// One entry of a change, at a path already checked (CheckedFile.from): its bytes copied, its type the
+// override or the extension table's. Throws INVALID_FILE.
+function parseEntry(path: string, entry: unknown, caller: string): ParsedFile {
     const isWrapped = entry !== null && typeof entry === 'object' && !isUint8Array(entry);
     const content = isWrapped ? (entry as { content?: unknown }).content : entry;
     const type = isWrapped ? (entry as { type?: unknown }).type : mimeTypeFor(path);
 
     const bytes = toBytes(content);
-    if (!bytes) throw fileError('INVALID_FILE', `registerFiles() refused ${describePath(path)}: content must be a string or a Uint8Array.`);
-    if (!isValidMimeType(type)) throw fileError('INVALID_FILE', `registerFiles() refused ${describePath(path)}: type must be a MIME type such as "text/plain".`);
+    if (!bytes) throw fileError('INVALID_FILE', `${caller} refused ${describePath(path)}: content must be a string or a Uint8Array.`);
+    if (!isValidMimeType(type)) throw fileError('INVALID_FILE', `${caller} refused ${describePath(path)}: type must be a MIME type such as "text/plain".`);
 
     return { type: type.toLowerCase(), bytes };
-}
-
-function parsePathList(paths: unknown): string[] {
-    if (!Array.isArray(paths)) throw fileError('INVALID_PATH', 'unregisterFiles() expects an array of paths.');
-    for (const path of paths) {
-        if (!isValidPath(path)) throw fileError('INVALID_PATH', `unregisterFiles() refused the path ${describePath(path)}.`);
-    }
-    return paths;
 }
 
 // Realm-independent: a Uint8Array from another frame is still one.
@@ -605,8 +683,8 @@ function toBase64(bytes: Uint8Array): string {
     return btoa(binary);
 }
 
-// For messages only: bounded, and quoted so control characters are visible.
-function describePath(path: unknown): string {
+/** A path for a refusal message: bounded, and quoted so control characters are visible. Never throws. */
+export function describePath(path: unknown): string {
     if (typeof path !== 'string') return `of type ${typeof path}`;
     return JSON.stringify(path.length > 80 ? path.slice(0, 80) + '…' : path);
 }

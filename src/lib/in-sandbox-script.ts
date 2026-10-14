@@ -19,8 +19,9 @@ export function inSandboxScript(
     // Opt-in features; the host passes this literal only when one is on, so the bootstrap text of a sandbox
     // without them is unchanged. `externalPort` (strict mode): no INIT_PORT listener of its own; the strict
     // worker prelude takes the ports from the one trusted INIT message and hands the logic port to attach().
-    features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean },
-): { attach(port: MessagePort): void } {
+    // `guestWrites`: the host records the guest's file writes (backlog C5); returned as `writeFiles` below.
+    features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean },
+): { attach(port: MessagePort): void; writeFiles: ((request: unknown) => Promise<unknown>) | null } {
     // The port never reaches guest code (review B2). Every operation on it, and on the events that carry it,
     // goes through a primitive captured here, before any guest code runs, and is called through the captured
     // Reflect.apply: patching MessagePort.prototype (postMessage, onmessage), MessageEvent.prototype (data,
@@ -162,6 +163,18 @@ export function inSandboxScript(
         };
     }
 
+    // Guest writes (backlog C5, src/lib/guest-writes.ts), opt-in, every mode: the one way to send a write or a
+    // removal to the host, the reserved sandbox:write method. Like sandboxFetch, it calls the broker's
+    // callWithTimeout captured here, before any guest code runs, so replacing bridge.callWithTimeout (or the port's
+    // prototypes, see above) later changes nothing on this path. It is not a global: the bootstrap hands it to
+    // inSandboxFiles, which builds sandboxFiles.write() and remove() on it (null when off: they refuse locally).
+    // The host answers at once (it decides synchronously), so the broker's default 30 s timeout is only a backstop.
+    let writeFiles: ((request: unknown) => Promise<unknown>) | null = null;
+    if (bridge && features?.guestWrites === true) {
+        const callWithTimeout = bridge.callWithTimeout;
+        writeFiles = (request: unknown) => callWithTimeout(30000, 'sandbox:write', request);
+    }
+
     const attach = (handedPort: MessagePort) => {
         if (port) return;
         port = handedPort;
@@ -256,5 +269,5 @@ export function inSandboxScript(
         }
     };
     if (!features?.externalPort) g.addEventListener('message', onInit, true);
-    return { attach };
+    return { attach, writeFiles };
 }

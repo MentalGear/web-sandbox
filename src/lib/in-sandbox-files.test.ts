@@ -157,6 +157,150 @@ describe('inSandboxFiles (the guest bootstrap, run from its source text)', () =>
     });
 });
 
+describe('sandboxFiles.write() and remove(): guest writes, the guest side (backlog C5, run from its source text)', () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalArrayBuffer = Blob.prototype.arrayBuffer;
+    beforeEach(() => {
+        URL.createObjectURL = vi.fn(() => 'blob:null/fake');
+        // jsdom's Blob has no arrayBuffer(): give it one through FileReader
+        Blob.prototype.arrayBuffer = function (this: Blob) { return bytesOf(this).then(b => new Uint8Array(b).buffer); };
+    });
+    afterEach(() => {
+        URL.createObjectURL = originalCreateObjectURL;
+        Blob.prototype.arrayBuffer = originalArrayBuffer;
+        delete (globalThis as any).sandboxFiles;
+    });
+
+    // A host stand-in for the captured sandbox:write call: records each request and answers when told to.
+    function host() {
+        const requests: any[] = [];
+        const answers: { resolve: (v: unknown) => void; reject: (e: unknown) => void }[] = [];
+        const writeFiles = vi.fn((request: unknown) => {
+            requests.push(structuredClone(request)); // as the broker clones it
+            return new Promise((resolve, reject) => answers.push({ resolve, reject }));
+        });
+        const accept = (i: number) => {
+            const r = requests[i];
+            answers[i]!.resolve(r.change === 'write' ? { path: r.path, change: 'write', type: 'text/plain', size: r.entry?.content?.length ?? r.entry.length } : { path: r.path, change: 'remove' });
+        };
+        return { requests, answers, writeFiles, accept };
+    }
+    const installWith = (entries: unknown, writeFiles: unknown) =>
+        new Function('writeFiles', `return (${inSandboxFiles.toString()})(${JSON.stringify(entries)}, writeFiles);`)(writeFiles) as SandboxFiles;
+    const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+    const SNAPSHOT = [['kept.txt', 'text/plain', btoa('kept')]];
+
+    it('both exist in every environment; without the write call (guestWrites off) they reject FILES_NOT_ALLOWED and send nothing', async () => {
+        for (const writeFiles of [undefined, null]) {
+            const api = installWith(SNAPSHOT, writeFiles);
+            const notAllowed = { isError: true, code: 'FILES_NOT_ALLOWED', keys: ['code'], message: '[sandboxFiles] FILES_NOT_ALLOWED: guest writes are off' };
+            await expect(api.write('a.txt', 'x').catch(shape)).resolves.toEqual(notAllowed);
+            await expect(api.remove('kept.txt').catch(shape)).resolves.toEqual(notAllowed);
+            expect(api.list()).toEqual(['kept.txt']);
+        }
+    });
+
+    it('the view changes only after the host\'s answer: before it nothing is listed; a refusal leaves the view as it was, with the host\'s code', async () => {
+        const { requests, answers, writeFiles, accept } = host();
+        const api = installWith(SNAPSHOT, writeFiles);
+        const pending = api.write('a.txt', 'héllo');
+        await settle();
+        expect(requests.map(r => [r.change, r.path, Array.from(r.entry)])).toEqual([['write', 'a.txt', Array.from(new TextEncoder().encode('héllo'))]]);
+        expect(api.list()).toEqual(['kept.txt']);
+        accept(0);
+        await expect(pending).resolves.toBeUndefined();
+        expect(api.list()).toEqual(['a.txt', 'kept.txt']);
+        expect(new TextDecoder().decode(await api.read('a.txt'))).toBe('héllo');
+
+        const refused = api.write('b.txt', 'x');
+        await settle();
+        answers[1]!.reject(Object.assign(new Error('refused'), { code: 'FILES_QUOTA_EXCEEDED' }));
+        await expect(refused.catch((e: any) => e.code)).resolves.toBe('FILES_QUOTA_EXCEEDED');
+        const removed = api.remove('kept.txt');
+        await settle();
+        answers[2]!.reject(Object.assign(new Error('refused'), { code: 'FILES_BUSY' }));
+        await expect(removed.catch((e: any) => e.code)).resolves.toBe('FILES_BUSY');
+        expect(api.list()).toEqual(['a.txt', 'kept.txt']);
+    });
+
+    it('url() of a written path is NOT_FOUND, an overwritten snapshot path included; no URL is minted for a write', async () => {
+        const { writeFiles, accept } = host();
+        const api = installWith(SNAPSHOT, writeFiles);
+        const minted = (URL.createObjectURL as any).mock.calls.length;
+        const writes = [api.write('new.txt', 'n'), api.write('kept.txt', 'over')];
+        await settle();
+        accept(0);
+        await settle();
+        accept(1);
+        await Promise.all(writes);
+        for (const path of ['new.txt', 'kept.txt']) {
+            let thrown: unknown;
+            try { api.url(path); } catch (e) { thrown = e; }
+            expect(shape(thrown), path).toEqual(NOT_FOUND);
+        }
+        expect((URL.createObjectURL as any).mock.calls.length).toBe(minted);
+        expect(new TextDecoder().decode(await api.read('kept.txt'))).toBe('over');
+    });
+
+    it('remove(): the path leaves the view after the answer; a "none" answer (in neither store nor writes) rejects NOT_FOUND and changes nothing', async () => {
+        const { requests, answers, writeFiles, accept } = host();
+        const api = installWith(SNAPSHOT, writeFiles);
+        const missing = api.remove('never.txt');
+        await settle();
+        answers[0]!.resolve({ path: 'never.txt', change: 'none' });
+        await expect(missing.catch(shape)).resolves.toEqual(NOT_FOUND);
+        const removed = api.remove('kept.txt');
+        await settle();
+        expect(requests[1]).toEqual({ change: 'remove', path: 'kept.txt' });
+        accept(1);
+        await removed;
+        expect(api.list()).toEqual([]);
+        await expect(api.read('kept.txt').catch(shape)).resolves.toEqual(NOT_FOUND);
+    });
+
+    it('content is copied when write() is called, whatever the caller does next; requests leave in call order even after a Blob\'s read', async () => {
+        const { requests, writeFiles } = host();
+        const api = installWith([], writeFiles);
+        const bytes = new Uint8Array([1, 2, 3]);
+        const buffer = new Uint8Array([4, 5]).buffer;
+        api.write('blob.bin', new Blob([new Uint8Array([9, 9])]));
+        api.write('typed.bin', bytes);
+        api.write('buffer.bin', buffer);
+        api.write('view.bin', new DataView(new Uint8Array([0, 6, 7, 0]).buffer, 1, 2));
+        api.write('wrapped', { content: new Uint16Array([0x4241]), type: 'text/plain' });
+        api.remove('x.txt');
+        bytes.fill(0);
+        new Uint8Array(buffer).fill(0);
+        for (let i = 0; i < 10; i++) await settle();
+        expect(requests.map(r => [r.change, r.path])).toEqual([['write', 'blob.bin'], ['write', 'typed.bin'], ['write', 'buffer.bin'], ['write', 'view.bin'], ['write', 'wrapped'], ['remove', 'x.txt']]);
+        expect(requests.slice(0, 4).map(r => Array.from(r.entry))).toEqual([[9, 9], [1, 2, 3], [4, 5], [6, 7]]);
+        expect([Array.from(requests[4].entry.content), requests[4].entry.type]).toEqual([[0x41, 0x42], 'text/plain']);
+    });
+
+    it('what is not a path or content is sent as null, for the host to refuse; only change, path and entry are sent', async () => {
+        const { requests, writeFiles } = host();
+        const api = installWith([], writeFiles);
+        api.write(7 as any, 5);
+        api.write({ toString: () => 'a.txt' } as any, { content: { a: 1 }, type: 7 });
+        api.remove(null as any);
+        for (let i = 0; i < 5; i++) await settle();
+        expect(requests).toEqual([
+            { change: 'write', path: null, entry: null },
+            { change: 'write', path: null, entry: { content: null, type: null } },
+            { change: 'remove', path: null },
+        ]);
+    });
+
+    it('a throwing getter on a wrapper rejects the write and sends nothing', async () => {
+        const { requests, writeFiles } = host();
+        const api = installWith([], writeFiles);
+        const entry = { get content() { throw new Error('nope'); }, type: 'text/plain' };
+        await expect(api.write('a.txt', entry).catch((e: any) => e.message)).resolves.toBe('nope');
+        await settle();
+        expect(requests).toEqual([]);
+    });
+});
+
 describe('inSandboxMarkup (the bootstrap\'s last statement, run from its source text)', () => {
     let written: string[];
     const originalWrite = document.write;

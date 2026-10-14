@@ -37,7 +37,7 @@ conditional "continue".
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
 | Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); an empty directive is `'none'`, and the defaults leave unset fetch directives to `default-src` (S16); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
-| Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); writes open (C5) |
+| Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); guest writes opt-in (`guestWrites`): checked by the store's own rules into a per-environment overlay, never given a URL, kept only by an explicit `commitGuestWrites(paths)`, code only with `{ code: true }` (C5) |
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18). ✅ in strict mode: guest code sees only its worker's `blob:` URL and no request carries a `Referer` |
 | API reference | ✅ [`API.md`](API.md): the whole public surface, checked against the code by a unit test (D3); framework adapters out of scope |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
@@ -52,7 +52,8 @@ S15 and S16 were done on 2026-10-13, and S17 added. Strict mode landed on 2026-1
 The adversarial review of 2026-10-14 ([report](security/ADVERSARIAL-REVIEW-2026-10.md)) added S19–S25: S19–S23 done, S24 open (residuals), S25 documented.
 Its follow-up audit the same day made C1 and C4 (S24) hold by construction, added and closed S26, and closed B8; S24's C5 was closed
 by option B (inert link hrefs), approved by the owner.
-D3 was done on 2026-10-14 as an API reference only; its framework adapters moved to Rejected.
+D3 was done on 2026-10-14 as an API reference only; its framework adapters moved to Rejected. C5 (guest writes) was done the same day
+as a reserved broker method, `sandbox:write` ([ADR-004 amendment](ADR-004-files-as-blob-urls.md#amendment-guest-writes-2026-10-14)).
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1379,10 +1380,35 @@ file bytes across host and guest.
 **Verified** (kept as a record): `fileCache` grew without bound and was never pruned; entries keyed by
 a dead session id outlived the sandbox for the Service Worker's lifetime.
 
-### C5 · Guest writes — **P2 · M**
+### C5 · Guest writes — ✅ **done**
 
 **Guarantee**: a guest can change files only when the embedder opted in, and never past the host's
 path rules and cap.
+
+**Done** (2026-10-14, [ADR-004 amendment](ADR-004-files-as-blob-urls.md#amendment-guest-writes-2026-10-14)):
+`guestWrites: true` (only a literal `true`) gives `sandboxFiles.write(path, entry)` and `remove(path)` a host behind
+them: the reserved broker method `sandbox:write` (not the raw `FS_WRITE` frame sketched below: the reserved
+namespace already makes a library method unreplaceable, guest code can no longer post frames at all, and the
+broker brings correlation, timeouts, `TERMINATED`, the in-flight cap, the current-port check and the code clamp),
+called through the bootstrap's captured `callWithTimeout`, and bound per build to that environment's overlay
+(`src/lib/guest-writes.ts`). Off, both methods reject `FILES_NOT_ALLOWED` without sending, and the host's method
+refuses with the same code. Every write is checked by `CheckedFile.from()` and `FileStore.check()` against the
+store with the overlay applied; `FileStore.apply({ put, remove })` is now the store's one mutation, and
+`registerFiles()`, `unregisterFiles()` and `commitGuestWrites(paths, options?)` are wrappers. The guest sees its
+writes in `list()`/`read()`/`text()` only after the host's answer; `url()` of a written path is `NOT_FOUND`, so no
+`blob:` URL is ever minted for one (C1's guarantee holds by construction). The host lists them
+(`listGuestWrites()`), hears `fileswritten` (bubbling, dispatched last through `_notifyThenAct`), and commits an
+explicit list; a type not on the inert list (images, fonts, audio, video, `text/plain`, `application/json`,
+`text/css`, as the store types the file) needs `{ code: true }`, else `FILES_NOT_ALLOWED`. New library codes
+`INVALID_PATH`, `INVALID_FILE`, `FILES_QUOTA_EXCEEDED`, `FILES_NOT_ALLOWED`, `FILES_BUSY`; `FetchErrorCode` is the
+`FETCH_*` subset. At most `GUEST_WRITES_PER_SECOND` (100) requests and `GUEST_WRITE_BYTES_PER_SECOND` (8 MiB) per
+environment and second (`FILES_BUSY`). Builds and removal discard the overlay; every termination keeps it, closed.
+Tests: `src/lib/guest-writes.test.ts`, `src/lib/files.test.ts`, `src/lib/in-sandbox-files.test.ts`,
+`src/lib/in-sandbox-script.test.ts`, `src/lib/rpc.test.ts`, `test/unit/guest-writes.test.ts`,
+`test/unit/strict.test.ts`, `test/unit/api-docs.test.ts`, and `test/e2e/guest-writes.spec.ts` (iframe, worker and
+strict mode on all three engines). Not in v1: rename or move.
+
+*Kept as the original plan:*
 
 **Work**: an opt-in `FS_WRITE` frame on the port, handled before the broker (like the watchdog's
 `PING`), so it is not a callable method a guest could replace. The host validates the path and the
