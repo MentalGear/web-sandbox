@@ -350,6 +350,12 @@ sandbox.load(`
     `document.currentScript` behave as if served). Anything else — an unregistered path, another case,
     a query or fragment (`logo.svg?v=2`) — stays as written and fails closed: it loads nothing and
     sends no request. The matched attribute reads as the `blob:` URL.
+*   **A reference names a file only for the kind of load its type is for**: `<script src>` and
+    `modulepreload` only JavaScript, a stylesheet `<link>` and `@import` only `text/css`, images
+    (`img`, `srcset`, `poster`, icons, CSS `url()`) only `image/*`, `@font-face` only `font/*`, media
+    only `audio/*` and `video/*`, `<track>` only `text/vtt`. Anything else stays as written, with a
+    warning. This holds for files you register too: `x.js` registered as `text/plain` is a text file,
+    never a script.
 *   **Modules import each other by relative path** (same conditions): `import { a } from './lib/a.js'`,
     `'../x.js'`, `'/x.js'`, `export * from …`, and `import('./lazy.js')` with a string literal, from a
     registered module or an inline `<script type="module">`. The host rewrites those specifiers to
@@ -398,7 +404,7 @@ sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the fl
 ```
 
 *   **The host checks every write** as `registerFiles()` would (paths, types, the 8 MiB / 1000-file cap with
-    every pending write counted) and at most 100 writes and 8 MiB per second; a refusal has the same codes,
+    every pending write counted) and at most 100 writes and 8 MiB in any one second; a refusal has the same codes,
     plus `FILES_BUSY` past the rate and `FILES_NOT_ALLOWED` when writes are off.
 *   **The guest sees its own writes** in `list()`, `read()` and `text()` once the host accepted them, but
     `url()` of a written path is `NOT_FOUND`: nothing the guest writes gets a URL or loads anywhere.
@@ -407,7 +413,9 @@ sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the fl
     commit them. `commitGuestWrites(paths)` takes an explicit list.
 *   **Code needs `{ code: true }`.** Only images, fonts, audio, video, `text/plain`, `application/json` and
     `text/css` commit without it; JavaScript, HTML, SVG, XML, WebAssembly and anything else is refused with
-    `FILES_NOT_ALLOWED`, judged by the type the file will be loaded as.
+    `FILES_NOT_ALLOWED`, judged by the type the file will be loaded as. A committed file loads only as what its
+    type is for, so an inert file never runs as a script. Committed CSS is still CSS: markup of the next build
+    that links it is styled by it.
 
 Why it is built this way: [ADR-004](docs/ADR-004-files-as-blob-urls.md).
 
@@ -437,7 +445,8 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     (`the guest entry failed to start`).
 *   **What it guarantees**, on Chromium, Firefox and WebKit: no guest script runs in any document — rendered
     scripts, handlers and `javascript:` URLs never run, and frames, `object`/`embed`, `meta`, `base`,
-    `noscript` and `template` are removed before insertion, so no nested frame exists; guest code has no
+    `noscript`, `template` and SVG animation are removed before insertion, so no nested frame exists and no
+    checked attribute changes afterwards; guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
     `Referer`); links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
     the browser's own link actions (copy, open in a new tab, drag) carry no guest URL (open external URLs through
@@ -474,7 +483,7 @@ The sandbox implements several layers of defense:
 6.  **Worker Inside the Frame**: Worker mode spawns its worker from inside the sandbox frame, so it shares the opaque origin and CSP.
 7.  **Capability Tiers**: Flags that reach outside the frame require the explicit `unsafeCapabilities` opt-in.
 8.  **Allowlisted Calls**: Each side can call only the methods the other side exposed, and an answer reaches only the frame that made the request, never a frame that replaced it.
-9.  **Realm-Bound Files**: Registered files reach the guest as `blob:` URLs created in its own realm, which no other sandbox and not the host page can load. Lookups are exact, and `blob:` is allowed only for the registered types.
+9.  **Realm-Bound Files**: Registered files reach the guest as `blob:` URLs created in its own realm, which no other sandbox and not the host page can load. Lookups are exact, `blob:` is allowed only for the registered types, and a reference names a file only for the kind of load its type is for (a text file is never a script).
 10. **No WebRTC in the Guest**: The bootstrap removes `RTCPeerConnection` from the guest's global scope before guest code runs (workers never have it), since no CSP directive governs ICE traffic. A frame the guest creates is a realm of its own and keeps it, and in Chromium and WebKit its ICE traffic leaves the sandbox ([backlog S13](docs/BACKLOG.md)); strict mode closes this.
 11. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer, and WebKit sends the full host URL to a same-site origin ([backlog S18](docs/BACKLOG.md)); WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)). Strict mode closes S17 and S18.
 12. **Mediated Network, Opt-In**: With `fetchBridge`, the host makes the guest's requests itself, to exact listed origins only, without credentials, referrer or redirects, with capped bodies, time and concurrency, and logs each one. The guest policy stays as strict as configured ([ADR-006](docs/ADR-006-fetch-bridge.md)).

@@ -1,6 +1,6 @@
 # ADR-004: Files are guest-realm blob URLs
 
-**Status**: Accepted · **Date**: 2026-10-13
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-13 (markup references, module graph, CSS references, strict mode), 2026-10-14 ([`blob:` by governing directive](#amendment-2026-10-14-blob-goes-to-the-directive-that-governs-the-load), [guest writes](#amendment-guest-writes-2026-10-14), [load kinds](#amendment-2026-10-14-a-reference-names-a-file-only-for-the-kind-of-load-its-type-is-for))
 
 ## Why this ADR exists
 
@@ -781,3 +781,47 @@ subset and lexing, the inert list against the extension table, the rate with a f
 captured call), `src/lib/rpc.test.ts` (pinned codes), `test/unit/guest-writes.test.ts` (config, lifecycle,
 B4, B5), `test/unit/strict.test.ts`, and `test/e2e/guest-writes.spec.ts` in iframe, worker and strict mode on
 Chromium, Firefox and WebKit, with evidence read from the host page and the recorder.
+
+## Amendment (2026-10-14): a reference names a file only for the kind of load its type is for
+
+**When**: the focused review of 2026-10-14 ([report](security/FOCUSED-REVIEW-2026-10-14.md), W1, W2, W3). **Why**: resolution ignored the load
+kind. A guest-written `app.js` committed as `text/plain`, which is inert and needs no `{ code: true }`, became the
+script of the next build's `<script src="app.js">`, and every engine runs a classic `blob:` script whatever its type
+(measured: Chromium and Firefox every inert type, WebKit `text/plain`, JSON, CSS and fonts). The type the store gives
+a file, which the inert list judges, did not decide how it was loaded.
+
+**Decision**: one table, `src/lib/load-kinds.ts`, says which types each kind of load admits, and every place a
+reference is resolved reads it, as does the policy:
+
+| Kind | Admits | Loads | Directive |
+| :--- | :--- | :--- | :--- |
+| script | JavaScript types | `<script src>`, `modulepreload`, `preload as=script`, module imports | `script-src-elem` |
+| style | `text/css` | stylesheet `<link>`, `preload as=style`, `@import` | `style-src-elem` |
+| image | `image/*` | `img`, `srcset`, `poster`, icon links, CSS `url()` outside `@font-face`, `preload as=image` | `img-src` |
+| font | `font/*` | `url()` in `@font-face`, `preload as=font` | `font-src` |
+| media | `audio/*`, `video/*` | `audio`, `video`, `source src`, `preload as=audio\|video` | `media-src` |
+| track | `text/vtt` | `track` | `media-src` |
+| fetch | any | `preload as=fetch` (and `sandboxFiles.read()`) | `connect-src` |
+
+- A reference to a registered file of a type its load does not admit is not a reference: it stays as written and
+  fails closed, with one warning. A link with several loading relations must be admitted for each; a preload
+  without a usable `as` names nothing.
+- The chokepoints: `resolveReference(value, files, kinds)` for markup and inline CSS, `FileStore.snapshot()` for
+  registered stylesheets (each CSS reference carries its kind from the tokenizer), the strict renderer (it gets the
+  table as data), the import map and the strict entry (`isJavaScriptType`, the table's script row), and
+  `kindsForTypes`, which gives a type `blob:` in exactly the directives of the loads that may name it. Admission
+  and resolution cannot drift apart.
+- **Host-registered files are bound by it too**: a host that registers `x.js` as `text/plain` gets a text file,
+  never a script. That is a change for an embedder who relied on a mistyped script loading.
+- **Limits**, stated: committed `text/css` is inert and still CSS, so it restyles markup of the next build that
+  links it (it runs nothing; CSS cannot set attributes or run script). And code that passes `sandboxFiles.url()` to
+  a script element or `importScripts()` itself chooses what it loads (measured: Chromium runs a `text/plain` file
+  both ways; Firefox and WebKit refuse it in `importScripts()`): that is the running code's decision, not a
+  reference the library resolves.
+
+**And the guest-write rules (W2, W3)**: the rates hold in any one-second window (a sliding window shared with the
+log limiter, `src/lib/rate-limit.ts`; the fixed windows let twice the limit through around a boundary), and a
+removal mark whose path the host unregistered after the mark is forgotten before marks are listed or committed.
+
+Tests: `src/lib/load-kinds.test.ts` (every kind × every type, for the table, markup, stylesheets and the renderer),
+`test/unit/focused-review.test.ts` ("W1"–"W4"), `test/e2e/focused-review.spec.ts` ("W1", three engines).

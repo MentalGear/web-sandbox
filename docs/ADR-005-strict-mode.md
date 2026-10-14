@@ -1,6 +1,6 @@
 # ADR-005: Strict mode — guest logic in a worker, a view that runs no guest script
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer))
 
 ## Why this ADR exists
 
@@ -310,3 +310,20 @@ read the worker's own `blob:` URLs, `NotReadableError`, and Chromium mutes the e
 the entry as a second script loaded with `importScripts(blob:)` (it is checked against `script-src-elem`, and
 admitting `blob:` there would admit `<script src=blob:>` in the view). Proof: `test/e2e/review-strict.spec.ts`
 ("C1", "C4"), `src/lib/in-sandbox-view.test.ts`, `test/unit/followup-guarantees.test.ts` ("C4").
+
+## Amendment (2026-10-14): focused review, no attribute changes after the renderer
+
+**When**: the focused review of 2026-10-14 ([report](security/FOCUSED-REVIEW-2026-10-14.md), F1). **Why**: the renderer checks attributes once,
+before insertion, so its guarantees hold only if no attribute changes afterwards. In the view no script runs and
+CSS cannot set an attribute, but SVG animation (SMIL) can: a `<set>` or `<animate>` inside a rendered link animated
+its `href` back to the guest's URL after the renderer had made it `about:blank#` (getAttribute and `baseVal` kept the
+constant; `animVal` and Chromium's accessibility tree had the guest URL, in all three engines), and one inside an
+`<image>` loaded a URL the renderer never saw (Chromium, Firefox).
+
+**Decision**: the renderer removes every SVG animation element with its subtree, compared case-insensitively:
+`animate`, `set`, `animateMotion`, `animateTransform`, `animateColor`, `discard` and SVG Tiny's `animation` (`mpath`
+only names a path for `animateMotion` and goes with it). That closes every attribute the renderer checks at once —
+link hrefs, file references, the `blob:` rule — and any it may check later, rather than one attribute at a time.
+Tests: `test/e2e/focused-review.spec.ts` ("F1": `animVal` and Chromium's accessibility URLs read from outside, the
+recorder for an animated image), `src/lib/in-sandbox-view.test.ts`, `src/lib/load-kinds.test.ts` (the renderer reads
+the load-kind table, ADR-004).

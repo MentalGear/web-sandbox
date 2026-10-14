@@ -3,6 +3,7 @@
 **Date**: 2026-10-14 · **Code reviewed**: `main` at `ca2110c` · **Result**: 21 candidates — 19 fixed (16 in the review,
 C1, C4 and C5 in the [follow-up](#follow-up-2026-10-14-by-construction-audit)), 1 held (now asserted), 1 documented by
 design, no residual left open; the follow-up found 2 more gaps, both fixed · **Backlog**: [S19–S26](../BACKLOG.md#s19--a-configured-value-or-key-could-add-csp-directives---done)
+· **Next**: [focused review 2026-10-14](FOCUSED-REVIEW-2026-10-14.md) (guest writes and the follow-up's fixes; S27–S31)
 
 ## Scope and method
 
@@ -455,3 +456,10 @@ failed before.
 | Changed and new specs, `--repeat-each 3` | 189 passed (63 tests × 3) | 189 passed | 189 passed |
 
 Unit (`bunx vitest run`): 1225 passed in 30 files (1181 in 29 before). `bun run typecheck`, `bun run build` and `scripts/smoke-package.sh` pass.
+
+## Focused review (2026-10-14)
+
+Two focused rounds after this review and its follow-up, on guest writes (C5) and on the follow-up's fixes, found 11
+more candidates and one hardening, all closed: [FOCUSED-REVIEW-2026-10-14.md](FOCUSED-REVIEW-2026-10-14.md)
+(backlog S27–S31). Two touch fixes of this report: C5's inert link hrefs could be re-animated by SVG animation (F1),
+and B8's execution budget could be evaded (F2).

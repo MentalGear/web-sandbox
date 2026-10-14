@@ -1,6 +1,6 @@
 # ADR-006: A host-mediated fetch bridge
 
-**Status**: Accepted · **Date**: 2026-10-13
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([the platform validates](#amendment-2026-10-14-the-platform-validates-the-request), [bound per build](#amendment-2026-10-14-the-method-is-bound-to-its-build))
 
 ## Why this ADR exists
 
@@ -157,3 +157,12 @@ origins, private hosts, methods, header names and sizes. `failed` means that the
 no whole response arrived, not that a request left the page: `fetch()` also rejects before sending (the host
 page's own `connect-src`, mixed content, local-network blocking). Proof: `test/unit/channel-guarantees.test.ts`
 ("B6").
+
+## Amendment (2026-10-14): the method is bound to its build
+
+**When**: the focused review of 2026-10-14 ([report](security/FOCUSED-REVIEW-2026-10-14.md), hardening). The reserved `sandbox:fetch` method read
+the element's current bridge when it ran, and the broker runs a method a microtask after the request arrives, so
+correctness relied on no rebuild happening in between. Now every build registers the method again, closed over
+that build's bridge, as `sandbox:write` is over its overlay: a request is always handled by the bridge of the
+environment it arrived in, which teardown closed, so a request that runs after a rebuild is refused there
+(`FETCH_FAILED`) and never made by the next environment. Test: `test/unit/focused-review.test.ts` ("Hardening").
