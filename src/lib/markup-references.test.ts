@@ -1,8 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
+import { mimeTypeFor } from './files';
 import { createSlotNonce, inlineScriptsAllowed, resolveReference, rewriteGuestMarkup, rewriteMarkupReferences, VIRTUAL_DOCUMENT_URL, type MarkupParts } from './markup-references';
 
+// The files a build can name, typed by extension as the store types them; ANY: a load that admits every type.
+const typesOf = (paths: string[]) => new Map(paths.map(path => [path, mimeTypeFor(path)]));
+const ANY = ['fetch'] as const;
 const NONCE = '0123456789abcdef0123456789abcdef';
-const PATHS = new Set(['logo.svg', 'img/x.svg', 'app.js', 'style.css', 'clip.mp4', 'subs.vtt', 'poster.png', 'mod/main.js', 'icon.ico', 'font.woff2', 'index.html']);
+const PATHS = typesOf(['logo.svg', 'img/x.svg', 'app.js', 'style.css', 'clip.mp4', 'subs.vtt', 'poster.png', 'mod/main.js', 'icon.ico', 'font.woff2', 'index.html']);
 
 // Joins parts the way the guest bootstrap does, with a recognisable URL per path.
 // A CSS slot gets the URL as the bootstrap would put it into a CSS string (no character to escape here).
@@ -34,7 +38,7 @@ describe('resolveReference: resolved against the virtual index.html, then matche
         ['%2e%2e/logo.svg', 'logo.svg'], // the URL standard reads %2e%2e as a dot-dot segment
         ['img/%2E%2E/logo.svg', 'logo.svg'],
     ])('%j names %j', (value, path) => {
-        expect(resolveReference(value, PATHS)).toBe(path);
+        expect(resolveReference(value, PATHS, ANY)).toBe(path);
     });
 
     it.each([
@@ -53,18 +57,18 @@ describe('resolveReference: resolved against the virtual index.html, then matche
         // unparseable
         'https://[/logo.svg', 'https://vfs.invalid:99999/logo.svg',
     ])('%j names nothing', (value) => {
-        expect(resolveReference(value, PATHS)).toBeNull();
+        expect(resolveReference(value, PATHS, ANY)).toBeNull();
     });
 
     it('index.html is a file like any other, but an empty value never resolves to it', () => {
-        expect(resolveReference('index.html', PATHS)).toBe('index.html');
-        expect(resolveReference('', PATHS)).toBeNull();
-        expect(resolveReference('./', PATHS)).toBeNull();
+        expect(resolveReference('index.html', PATHS, ANY)).toBe('index.html');
+        expect(resolveReference('', PATHS, ANY)).toBeNull();
+        expect(resolveReference('./', PATHS, ANY)).toBeNull();
     });
 
     it('matches only registered paths', () => {
-        expect(resolveReference('logo.svg', new Set())).toBeNull();
-        expect(resolveReference('logo.svg', new Set(['other.svg']))).toBeNull();
+        expect(resolveReference('logo.svg', typesOf([]), ANY)).toBeNull();
+        expect(resolveReference('logo.svg', typesOf(['other.svg']), ANY)).toBeNull();
     });
 });
 
@@ -82,7 +86,7 @@ describe('rewriteMarkupReferences: which attributes become slots', () => {
         ['<link rel="STYLESHEET" href="style.css">', 'style.css'],
         ['<img src="logo.svg">', 'logo.svg'],
         ['<IMG SRC=logo.svg>', 'logo.svg'],
-        ['<picture><source src="logo.svg"></picture>', 'logo.svg'],
+        ['<audio><source src="clip.mp4"></audio>', 'clip.mp4'],
         ['<video src="clip.mp4"></video>', 'clip.mp4'],
         ['<video poster="poster.png"></video>', 'poster.png'],
         ['<audio src="clip.mp4"></audio>', 'clip.mp4'],
@@ -113,13 +117,14 @@ describe('rewriteMarkupReferences: which attributes become slots', () => {
         ['SVG elements', '<svg><script src="app.js"></script><image href="logo.svg"></image><video src="clip.mp4"></video></svg>'],
         ['an attribute of another element', '<div src="logo.svg"></div><span poster="poster.png"></span><img poster="poster.png"><audio poster="poster.png"></audio>'],
         ['text that looks like a reference', '<p>&lt;img src="logo.svg"&gt;</p><!-- <img src="logo.svg"> --><textarea><img src="logo.svg"></textarea>'],
+        ['a <source src> in a <picture> (only srcset loads there; src is a media load, and an image is not media)', '<picture><source src="logo.svg"></picture>'],
         ['unregistered and differently spelled references', '<img src="missing.svg"><img src="LOGO.SVG"><img src="logo.svg?x"><img src="logo.svg#y"><script src="%61pp.js"></script><img src="">'],
     ])('leaves %s alone: no match means null, so the caller embeds the markup verbatim', (_, markup) => {
         expect(rewriteMarkupReferences(markup, PATHS, NONCE)).toBeNull();
     });
 
     it('returns null without files or without markup', () => {
-        expect(rewriteMarkupReferences('<img src="logo.svg">', new Set(), NONCE)).toBeNull();
+        expect(rewriteMarkupReferences('<img src="logo.svg">', typesOf([]), NONCE)).toBeNull();
         expect(rewriteMarkupReferences('', PATHS, NONCE)).toBeNull();
     });
 

@@ -2,6 +2,7 @@ import { inSandboxFiles } from './in-sandbox-files';
 import { assertHashableScript, scriptHashSource } from './csp/script-hash';
 import { escapeAttribute } from './frame-documents';
 import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './markup-references';
+import { LINK_REL_KINDS, LOAD_KINDS, type KindRule } from './load-kinds';
 
 /**
  * Strict mode (backlog S6, S13, S17; ADR-005): guest logic runs only in a worker, and the DOM frame — the
@@ -74,8 +75,12 @@ export const INERT_HREF = 'about:blank#';
 export interface RenderRules {
     /** Local names removed with their subtree (RENDER_REMOVED_ELEMENTS). */
     removed: readonly string[];
-    /** [element, attribute] pairs that may name a registered file (markup-references.ts, minus <script src>). */
-    references: readonly (readonly [string, string])[];
+    /** [element, attribute, kind] triples that may name a registered file (markup-references.ts, minus <script src>). */
+    references: readonly (readonly [string, string, string])[];
+    /** Which file types each kind of load admits: the one table (load-kinds.ts), as data. */
+    kinds: Readonly<Record<string, KindRule>>;
+    /** The kind of load of each <link> rel token (load-kinds.ts). */
+    linkRelKinds: Readonly<Record<string, string>>;
     /** The only rel tokens a kept <link> may have. */
     linkRelations: readonly string[];
     /** The only rel tokens an <a> or <area> keeps. */
@@ -94,6 +99,9 @@ export const RENDER_RULES: RenderRules = {
     // derived, not copied: the table markup-references.ts resolves in default mode. Scripts never survive
     // the renderer, so <script src> names nothing here.
     references: REFERENCES.filter(([element]) => element !== 'script'),
+    // the same table as resolution in default mode and the policy (load-kinds.ts, focused review W1)
+    kinds: LOAD_KINDS,
+    linkRelKinds: LINK_REL_KINDS,
     linkRelations: ['stylesheet', 'icon'],
     anchorRelations: ['noopener', 'noreferrer', 'nofollow'],
     referrerElements: ['a', 'area', 'img', 'link'],
@@ -110,7 +118,10 @@ export const RENDER_RULES: RenderRules = {
  *
  *   1. every element named in rules.removed goes, with its subtree, whatever its namespace;
  *   2. an HTML element's file reference (rules.references) that names a registered file, resolved like a
- *      browser would against rules.documentUrl, becomes the view's own blob: URL for it (`fileUrl`);
+ *      browser would against rules.documentUrl, becomes the view's own blob: URL for it (`fileOf`), but only
+ *      when the file's type is admitted for the kind of load the element makes (rules.kinds, the one table of
+ *      load-kinds.ts; a <link> by its rel tokens): an <img> never names a stylesheet, a stylesheet <link> never
+ *      an image (focused review W1);
  *   3. a <link> stays only if all its rel tokens are in rules.linkRelations and its href is a URL the
  *      view minted;
  *   4. any attribute whose value contains "blob:" (after removing the tabs and newlines the URL parser
@@ -126,7 +137,7 @@ export const RENDER_RULES: RenderRules = {
  * `<form><input name="getAttribute">` the form's getAttribute is the input. Should anything still throw, the
  * caller inserts nothing (fail closed).
  */
-export function sanitizeRender(fragment: DocumentFragment, fileUrl: (path: string) => string | null, isMinted: (url: string) => boolean, rules: RenderRules): void {
+export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string) => { url: string; type: string } | null, isMinted: (url: string) => boolean, rules: RenderRules): void {
     const HTML = 'http://www.w3.org/1999/xhtml';
     const call = Reflect.apply;
     const E = Element.prototype;
@@ -143,7 +154,20 @@ export function sanitizeRender(fragment: DocumentFragment, fileUrl: (path: strin
     const isHyperlink = (namespace: unknown, name: string) => (namespace === HTML && (name === 'a' || name === 'area'))
         || (namespace === SVG && name === 'a')
         || namespace === MATHML;
-    const resolve = (value: string): string | null => {
+    const tokens = (value: string | null) => (value || '').toLowerCase().split(/[\t\n\f\r ]+/).filter((token) => token !== '');
+    // admitsAll of load-kinds.ts over the table the rules carry: every kind admits the type, and there is one
+    const admitted = (kinds: string[], type: string) => {
+        if (kinds.length === 0) return false;
+        for (let k = 0; k < kinds.length; k++) {
+            const rule = Object.prototype.hasOwnProperty.call(rules.kinds, kinds[k]!) ? rules.kinds[kinds[k]!]! : null;
+            if (!rule) return false;
+            let ok = rule.types.indexOf(type) >= 0;
+            for (let p = 0; !ok && p < rule.prefixes.length; p++) ok = type.indexOf(rule.prefixes[p]!) === 0;
+            if (!ok) return false;
+        }
+        return true;
+    };
+    const resolve = (value: string, kinds: string[]): string | null => {
         if (/^[\u0000- ]*$/.test(value)) return null;
         let href: string;
         try {
@@ -154,9 +178,18 @@ export function sanitizeRender(fragment: DocumentFragment, fileUrl: (path: strin
         if (href.indexOf(rules.virtualRoot) !== 0) return null;
         const path = href.slice(rules.virtualRoot.length);
         if (path.indexOf('?') >= 0 || path.indexOf('#') >= 0) return null;
-        return fileUrl(path);
+        const file = fileOf(path);
+        return file && admitted(kinds, file.type) ? file.url : null;
     };
-    const tokens = (value: string | null) => (value || '').toLowerCase().split(/[\t\n\f\r ]+/).filter((token) => token !== '');
+    // a <link>'s kinds of load: one per rel token that loads (rules.linkRelKinds)
+    const linkKinds = (element: Element) => {
+        const kinds: string[] = [];
+        const rel = tokens(get(element, 'rel'));
+        for (let t = 0; t < rel.length; t++) {
+            if (Object.prototype.hasOwnProperty.call(rules.linkRelKinds, rel[t]!) && kinds.indexOf(rules.linkRelKinds[rel[t]!]!) < 0) kinds.push(rules.linkRelKinds[rel[t]!]!);
+        }
+        return kinds;
+    };
     const isReference = (element: string, attribute: string) => {
         for (let i = 0; i < rules.references.length; i++) {
             if (rules.references[i]![0] === element && rules.references[i]![1] === attribute) return true;
@@ -175,9 +208,9 @@ export function sanitizeRender(fragment: DocumentFragment, fileUrl: (path: strin
         const html = call(namespaceOf, element, []) === HTML;
         if (html) {
             for (let r = 0; r < rules.references.length; r++) {
-                const [tag, attribute] = rules.references[r]!;
+                const [tag, attribute, kind] = rules.references[r]!;
                 if (tag !== name || !has(element, attribute)) continue;
-                const url = resolve(get(element, attribute) || '');
+                const url = resolve(get(element, attribute) || '', kind === 'link' ? linkKinds(element) : [kind]);
                 if (url) set(element, attribute, url);
             }
         }
@@ -362,9 +395,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     for (let i = 0; i < options.events.types.length; i++) addEventListener(options.events.types[i]!, forward, true);
 
-    let fileUrls = new Map<string, string>();
+    let viewFiles = new Map<string, { url: string; type: string }>();
     let minted = new Set<string>();
-    const fileUrl = (path: string) => fileUrls.get(path) || null;
+    const fileOf = (path: string) => viewFiles.get(path) || null;
     const isMinted = (url: string) => minted.has(url);
 
     // template.innerHTML parses into an inert fragment (no script runs, nothing loads); the renderer cleans
@@ -375,7 +408,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (!target || !body || (target !== body && !call(containsNode, body, [target]))) return;
         const template = call(D.createElement, document, ['template']) as HTMLTemplateElement;
         template.innerHTML = html;
-        sanitize(template.content, fileUrl, isMinted, options.render);
+        sanitize(template.content, fileOf, isMinted, options.render);
         call(E.replaceChildren, target, [template.content]);
     };
 
@@ -472,13 +505,14 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
         // The view's own blob: URLs for the registered files it may show (no JavaScript among them): the
         // only blob: URLs the renderer keeps (A8).
-        const files = installFiles(Array.isArray(data.viewFiles) ? data.viewFiles : []);
-        fileUrls = new Map();
+        const entries = Array.isArray(data.viewFiles) ? data.viewFiles : [];
+        const files = installFiles(entries);
+        viewFiles = new Map();
         minted = new Set();
-        const paths = files.list();
-        for (let i = 0; i < paths.length; i++) {
-            const url = files.url(paths[i]!);
-            fileUrls.set(paths[i]!, url);
+        for (let i = 0; i < entries.length; i++) {
+            const path = entries[i][0];
+            const url = files.url(path);
+            viewFiles.set(path, { url, type: String(entries[i][1]) }); // the type the store gave it, which its blob carries
             minted.add(url);
         }
 

@@ -1,5 +1,5 @@
 import type { CSPDirectives } from "../../csp-directives";
-import { isJavaScriptType } from "../files";
+import { admits, LOAD_KIND_NAMES, LOAD_KINDS } from "../load-kinds";
 import { directiveOf, effectiveDirective, fallbackList, inheritedDefaultSources, type LoadKind } from "./effective-directive";
 import { defineData } from "../utils";
 
@@ -38,13 +38,10 @@ export type FileKind = Extract<LoadKind, 'script-src-elem' | 'style-src-elem' | 
  */
 export function kindsForTypes(types: Iterable<string>, exclude: readonly FileKind[] = []): Set<FileKind> {
     const needed = new Set<FileKind>();
+    // the table reference resolution reads too (load-kinds.ts): a type gets blob: in the directive of exactly the
+    // loads that may name it, so what the policy admits and what a reference resolves to cannot drift apart
     for (const type of types) {
-        needed.add('connect-src');
-        if (isJavaScriptType(type)) needed.add('script-src-elem');
-        if (type === 'text/css') needed.add('style-src-elem');
-        if (type.startsWith('image/')) needed.add('img-src');
-        if (type.startsWith('font/')) needed.add('font-src');
-        if (type.startsWith('audio/') || type.startsWith('video/') || type === 'text/vtt') needed.add('media-src');
+        for (const kind of LOAD_KIND_NAMES) if (admits(kind, type)) needed.add(LOAD_KINDS[kind].directive);
     }
     for (const kind of exclude) needed.delete(kind);
     return needed;

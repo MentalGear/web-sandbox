@@ -2,13 +2,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_REMOVED_ELEMENTS, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, viewBootstrapText } from './in-sandbox-view';
 import { REFERENCES } from './markup-references';
 import { VIOLATION_EVENT_LIMIT } from './violation';
+import { mimeTypeFor } from './files';
 
-/** Parses `html` into an inert fragment the way the view does, and runs the renderer on it. */
+/** Parses `html` into an inert fragment the way the view does, and runs the renderer on it. `files`: path → the URL the view minted, typed by extension. */
 function sanitize(html: string, files: Record<string, string> = {}) {
     const template = document.createElement('template');
     template.innerHTML = html;
     const minted = new Set(Object.values(files));
-    sanitizeRender(template.content, (path) => files[path] ?? null, (url) => minted.has(url), RENDER_RULES);
+    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), RENDER_RULES);
     return template.content;
 }
 const serialise = (fragment: DocumentFragment) => {

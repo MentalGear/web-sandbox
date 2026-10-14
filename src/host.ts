@@ -10,7 +10,7 @@ import { addEvalSource } from "./lib/csp/effective-directive";
 import { fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
-import { inlineScriptsAllowed, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
+import { inlineScriptsAllowed, kindMismatchMessage, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { deepMerge } from "./lib/utils";
 import { inSandboxScript } from "./lib/in-sandbox-script";
@@ -1157,10 +1157,13 @@ export class WebSandbox extends HTMLElement {
         if (!sandboxFlags.split(' ').includes('allow-scripts')) return NO_MARKUP_PLAN;
         if (!inlineScriptsAllowed(directives)) return NO_MARKUP_PLAN;
 
+        // The module graph maps only files a script load admits (load-kinds.ts, through isJavaScriptType): an import
+        // of any other file names nothing in the import map and fails closed, as a <script src> of one does (W1).
         const javascript = files.filter(entry => isJavaScriptType(entry[1])).map(entry => entry[0]);
-        const markup = rewriteGuestMarkup(html, new Set(files.map(entry => entry[0])), {
+        const markup = rewriteGuestMarkup(html, new Map(files.map(entry => [entry[0], entry[1]])), {
             modules: javascript.length > 0,
             onModuleFailure: (index) => this._warnOnce(`[Sandbox] inline module script #${index + 1} in the guest markup could not be lexed, so its relative imports were not rewritten and will fail.`),
+            onKindMismatch: (mismatch) => this._warnOnce(kindMismatchMessage(mismatch)),
         });
         if (javascript.length === 0) return { parts: markup.parts, importMap: null };
         const guest = mergeGuestImportMaps(markup.importMaps, (message) => this._warnOnce(message));
