@@ -15,6 +15,9 @@
 - [**ADR-004 — Files are guest-realm blob URLs**](ADR-004-files-as-blob-urls.md) — why the
   virtual-files Service Worker was removed, how registered files reach the guest, and the
   alternatives rejected.
+- [**ADR-005 — Strict mode**](ADR-005-strict-mode.md) — guest logic in a worker, a view that runs only
+  the library's hash-admitted bootstrap: the guarantees, the renderer, flow control, the probe findings that
+  shaped it, and the residuals.
 - [**ADR-006 — A host-mediated fetch bridge**](ADR-006-fetch-bridge.md) — `sandboxFetch()`: why a
   reserved broker method, the bridge discipline (no credentials, no redirects, exact origins, caps), the
   `fetch` log and what the bridge cannot hide.
@@ -28,8 +31,8 @@
 
 ## Security research
 
-- [research/](research/README.md) — fourteen documented attack vectors with reproductions, plus the
-  CSP and virtual-files architecture analyses.
+- [research/](research/README.md) — fourteen documented attack vectors with reproductions, design probes
+  (blob delivery, strict mode), plus the CSP and virtual-files architecture analyses.
 - [CSP_CONFIG_RATIONALE.md](CSP_CONFIG_RATIONALE.md) — why `'unsafe-inline'`, why not nonces.
 - [CSP-Content-Security-Policy-settings.md](CSP-Content-Security-Policy-settings.md) — directive
   reference.

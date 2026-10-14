@@ -640,3 +640,42 @@ linked stylesheet's image and font, a two-level `@import` chain, an `@import` cy
 self-import failing closed while every other rule applies, inline `<style>` and `style=""`, `srcset`
 on `img` and `picture`, misses failing closed with no request (T5: violations with positive
 controls, load outcomes, the recorder silent), and no egress from a rewritten stylesheet.
+
+## Amendment: strict mode (2026-10-13)
+
+**When**: strict mode ([ADR-005](ADR-005-strict-mode.md)). Its view runs no guest script and its worker is a
+classic script admitted by `worker-src blob:` alone, so files reach the two realms differently.
+
+### Decision
+
+- **The worker gets every file**, through `sandboxFiles` (`list`, `url`, `read`, `text`), from the same snapshot
+  literal as worker mode. `url()` serves the worker's own `fetch()` (with `blob:` in `connect-src`).
+- **The view gets the files that are not JavaScript.** Its bootstrap mints its own `blob:` URLs from them (the
+  same `inSandboxFiles`, so stylesheet `url()` and `@import` slots are filled with the view's URLs). No
+  JavaScript file is ever given to the view, and `blob:` is never added to `script-src` in strict mode
+  (`addFileSources` takes an `exclude` option): nothing executable can come from a file.
+- **Rendered markup names files by path.** The renderer resolves the reference attributes of default mode
+  (`markup-references.ts`, the table itself, minus `<script src>`: `link[href]`, `img`, `source`, `video`,
+  `audio`, `track` `src`, `video[poster]`) against `https://vfs.invalid/index.html`, by the same rules, and
+  writes the view's URL in. A `<link>` survives only as a stylesheet or icon naming such a URL.
+- **Only the view's own `blob:` URLs are kept** (A8). The renderer removes every attribute that holds any other
+  `blob:` URL, however it is spelled (after removing the tabs and newlines the URL parser ignores). The worker
+  cannot mint new ones: its prelude removes `URL.createObjectURL` after the file URLs exist, so the only
+  `blob:` URLs in the origin are the library's, for registered files — which also bounds what CSS could name.
+- **Classic only.** No module graph, no import map, no `importScripts` (refused by the hash-only
+  `script-src`); the entry is a registered JavaScript file appended to the worker's source on the host.
+
+### Not supported (fail closed)
+
+`srcset`, `style=""` and `<style>` references (use a registered stylesheet, whose references are resolved),
+references in `<template>` (removed), `<script src>` and modules (no script in the view), a `blob:` URL from
+the worker's `sandboxFiles.url()` rendered into the view (removed).
+
+### Tests
+
+`test/e2e/strict.spec.ts` ("files"), on all three engines: an image and a stylesheet named by path load with
+view-minted URLs and the stylesheet's own `url()` resolves; the view lists no JavaScript file; the worker
+lists and reads every file; a worker-minted `blob:` URL, also obfuscated, is removed; the policy has `blob:`
+for images and styles and never in `script-src`. Unit: `src/lib/in-sandbox-view.test.ts` (resolution, link
+rules, `blob:` filtering), `src/lib/csp/file-sources.test.ts` (`exclude`), `test/unit/strict.test.ts`.
+

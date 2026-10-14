@@ -9,7 +9,11 @@ import { test, expect } from './fixture';
  *      parsed is reported, and a guest listener registered later cannot keep ours from seeing one;
  *   3. a report is a guest claim, never a host fact: synthetic events are not forwarded, a frame forged on
  *      the port is validated and clamped, and the number of events per environment is capped;
- *   4. worker mode forwards what the engine raises in the worker (measured per engine below).
+ *   4. worker mode forwards what the engine raises in the worker (measured per engine below);
+ *   5. strict mode (ADR-005, A6): the host labels each report by the port it arrived on, never by what the
+ *      frame says. 'view' reports come from the view document, which runs no guest code, so they are the
+ *      library's own and complete up to the cap, which is per port: a worker flooding its own (logic)
+ *      port cannot use up the view's. 'logic' reports are the worker's, per engine as in 4.
  */
 
 const ATTACKER = 'https://attacker.test';
@@ -144,3 +148,39 @@ test.describe('4. worker mode', () => {
     });
 });
 
+
+test.describe('5. strict mode', () => {
+    test('view reports are labelled view, worker reports logic (per engine); forged frames on the logic port are logic and use up only the logic cap', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount({ mode: 'strict' })).toBe('ready');
+        // the worker's own refusals: Chromium raises both in the worker; Firefox raises the importScripts
+        // refusal in the VIEW (research 15, P3); WebKit raises none in workers
+        const outcome = await sandbox.inGuest(`
+            const fetched = await fetch('${ATTACKER}/worker-fetch').then(() => 'reached', () => 'refused');
+            let imported;
+            try { importScripts('${ATTACKER}/worker-import.js'); imported = 'reached'; } catch (e) { imported = 'refused'; }
+            return { fetched, imported };
+        `);
+        expect(outcome).toEqual({ fetched: 'refused', imported: 'refused' });
+        await page.waitForTimeout(800);
+        // then a flood of forged reports on the worker's own port, past the cap
+        await sandbox.run(`const o = MessagePort.prototype.postMessage; MessagePort.prototype.postMessage = function (m, ...r) { MessagePort.prototype.postMessage = o; for (let i = 0; i < 150; i++) this.postMessage({ type: 'VIOLATION', directive: 'img-src', blockedURI: 'forged-' + i, source: 'view' }); return o.call(this, m, ...r); }; console.log('forged')`);
+        await sandbox.waitForLog('forged');
+        await page.waitForTimeout(500);
+        // the view's own refusal still arrives, labelled view
+        await sandbox.run(`sandboxView.render('<img src="${ATTACKER}/view.svg">')`);
+        expect((await sandbox.waitForViolation('img-src', `${ATTACKER}/view.svg`)).source).toBe('view');
+
+        const all = await sandbox.violations();
+        const worker = all.filter(v => v.blockedURI.startsWith(`${ATTACKER}/worker`)).map(v => `${v.source} ${v.directive}`).sort();
+        expect(worker).toEqual({
+            chromium: ['logic connect-src', 'logic script-src-elem'],
+            firefox: ['logic connect-src', 'view script-src-elem'],
+            webkit: [],
+        }[browserName]);
+        // the logic port's cap: its real reports first, then forged ones up to 100, every one labelled logic
+        // whatever the frame claimed
+        const forged = all.filter(v => v.blockedURI.startsWith('forged-'));
+        expect(all.filter(v => v.source === 'logic')).toHaveLength(100);
+        expect(new Set(forged.map(v => v.source))).toEqual(new Set(['logic']));
+    });
+});

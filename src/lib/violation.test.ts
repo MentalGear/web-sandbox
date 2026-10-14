@@ -43,6 +43,13 @@ describe('toViolationDetail (backlog S5): a guest report is validated and clampe
         }
     });
 
+    it("strict mode: the source is the host's argument (the port a report arrived on), never the frame's claim", () => {
+        expect(toViolationDetail({ directive: 'img-src', blockedURI: 'x', source: 'view' })).toEqual({ directive: 'img-src', blockedURI: 'x' });
+        expect(toViolationDetail({ directive: 'img-src', blockedURI: 'x', source: 'view' }, 'logic')).toEqual({ directive: 'img-src', blockedURI: 'x', source: 'logic' });
+        expect(toViolationDetail({ directive: 'img-src', blockedURI: 'x' }, 'view')).toEqual({ directive: 'img-src', blockedURI: 'x', source: 'view' });
+        expect(toViolationDetail({ directive: 'img-src', blockedURI: 'x' }, 'other' as any)).toEqual({ directive: 'img-src', blockedURI: 'x' });
+    });
+
     it('pins the per-environment cap', () => {
         expect(VIOLATION_EVENT_LIMIT).toBe(100);
     });

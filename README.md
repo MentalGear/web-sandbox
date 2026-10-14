@@ -62,6 +62,7 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 *   **`src/lib/module-specifiers.ts`**, **`src/lib/import-map.ts`**: The module graph: relative imports in registered modules rewritten to virtual URLs (with the bundled es-module-lexer), and the guest's own import maps merged into the one the bootstrap registers.
 *   **`src/lib/auto-resize.ts`**: Auto-sizing on the host: validates, clamps and rate-limits the guest's height reports.
 *   **`src/lib/fetch-bridge.ts`**: The fetch bridge on the host: the allowlist, the request discipline, and the `fetch` log.
+*   **`src/lib/in-sandbox-view.ts`**, **`src/lib/csp/strict-policy.ts`**, **`src/lib/csp/script-hash.ts`**: Strict mode: the view's hashed bootstrap and renderer, the worker's prelude (`sandboxView`), the view policy, and the synchronous SHA-256 that admits the bootstrap.
 *   **`src/lib/presets.ts`**: The scenarios both the Playground and the regression specs run: one definition per attack (payload, rules, research folder).
 *   **`vite.config.ts`**: The dev server for the playground and the e2e harness.
 *   **`test/e2e`**: Playwright e2e specs, plus the shared harness page and fixture every suite runs on.
@@ -111,7 +112,8 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     the guest and guest code can suppress its own reports, so an event is evidence that the guest tried
     something; no event proves nothing. A frame the guest creates reports to itself, not here, and in
     worker mode it depends on the engine (WebKit raises none in workers; Firefox none for
-    `importScripts`). At most 100 per environment (`VIOLATION_EVENT_LIMIT`); type `SandboxViolation`.
+    `importScripts`). At most 100 per environment (`VIOLATION_EVENT_LIMIT`); type `SandboxViolation`. In
+    strict mode each report also carries `source`, `'view'` or `'logic'` (see [Strict mode](#strict-mode)).
 *   **`state === 'terminated'` is a second, authoritative signal** next to a call's `TERMINATED`
     code: the element sets both from its own state, so the guest can produce neither.
 
@@ -123,7 +125,8 @@ often does, but not in every environment, and Safari does not. Where the frame s
 page's thread, a guest stuck in a loop freezes the host page too, and no watchdog can run until it
 stops; the watchdog then only guarantees that the host's own stall is never blamed on the guest. It is off by default because a guest doing long synchronous work on
 purpose would be stopped as well. It checks liveness only; `terminate()` is how the host stops a
-guest at will.
+guest at will. In [strict mode](#strict-mode) guest code runs only in a worker, so the watchdog's bound holds
+on every browser.
 
 ```js
 sandbox.setConfig({ capabilities: ['allow-scripts'], watchdogTimeout: 2000 });
@@ -365,6 +368,46 @@ sandbox.load(`
 
 Why it is built this way: [ADR-004](docs/ADR-004-files-as-blob-urls.md).
 
+## Strict mode
+
+`mode: 'strict'` takes guest script out of every document. Guest code runs only in a worker; the visible frame
+(the *view*) runs one script, the library's own, admitted by its hash, and shows what the worker renders.
+
+```js
+sandbox.registerFiles({
+    'main.js': `sandboxView.render('<button id="go">Go</button><p id="out"></p>');
+                sandboxView.on('click', 'go', () => sandboxView.render('clicked', 'out'));`,
+    'logo.svg': svgText,
+});
+sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
+```
+
+*   **Guest API (in the worker)**: `sandboxView.render(html, into?)` replaces the view's body, or the children of
+    the element with id `into` (at most 256 Ki characters; the latest render per target wins);
+    `sandboxView.on(type, id | null, handler)` returns `off` and receives `click`, `input`, `change`, `submit`
+    and `keydown` as `{ type, ids, target: { tag, id, name, value, checked }, key?, form? }`. `bridge`,
+    `sandboxFiles` and `sandboxFetch` work as in worker mode.
+*   **Host API**: `entry` names a registered JavaScript file the worker runs first (a classic script); `html` and
+    `load()` set the initial view; `execute()` runs in the worker (needs `scriptUnsafe`); `call()`/`expose()`
+    talk to the worker. An entry that fails to start ends the sandbox (`the guest entry failed to start`).
+*   **What it guarantees**, on Chromium, Firefox and WebKit: no guest script runs in any document — rendered
+    scripts, handlers and `javascript:` URLs never run, and frames, `object`/`embed`, `meta`, `base`,
+    `noscript` and `template` are removed before insertion, so no nested frame exists; guest code has no
+    `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
+    `Referer`); links and form submissions navigate nowhere; the watchdog stops a looping guest on every
+    browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap and cannot be forged.
+*   **What it does not**: rendering is host-thread work in Firefox and WebKit (one render at a time, but one
+    render of heavy markup can take hundreds of milliseconds there); CSS within what the policy allows;
+    memory; worker `violation` reports (`source: 'logic'`) are per engine and forgeable; a worker that closes
+    itself is noticed only by the watchdog.
+*   **Limits**: no inline `<script>` and no nested frames in rendered markup; files are named by path in
+    `src`/`href`/`poster` (not `srcset` or inline styles; a registered stylesheet's own `url()` works), and
+    JavaScript files reach only the worker; no modules or `importScripts`; `unsafeCapabilities` and the policy
+    directives that decide what runs (`script-src`, `worker-src`, `frame-src`, `object-src`, `base-uri`,
+    `form-action`) are fixed, with a warning if configured. `autoResize` and `fetchBridge` work.
+
+Why it is built this way: [ADR-005](docs/ADR-005-strict-mode.md).
+
 ## Backlog
 
 Open work — broken scaffolding, security follow-ups, planned capabilities — is tracked in
@@ -383,6 +426,7 @@ The sandbox implements several layers of defense:
 7.  **Capability Tiers**: Flags that reach outside the frame require the explicit `unsafeCapabilities` opt-in.
 8.  **Allowlisted Calls**: Each side can call only the methods the other side exposed, and an answer reaches only the frame that made the request, never a frame that replaced it.
 9.  **Realm-Bound Files**: Registered files reach the guest as `blob:` URLs created in its own realm, which no other sandbox and not the host page can load. Lookups are exact, and `blob:` is allowed only for the registered types.
-10. **No WebRTC in the Guest**: The bootstrap removes `RTCPeerConnection` from the guest's global scope before guest code runs (workers never have it), since no CSP directive governs ICE traffic. A frame the guest creates is a realm of its own and keeps it, and in Chromium and WebKit its ICE traffic leaves the sandbox ([backlog S13](docs/BACKLOG.md)).
-11. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer; WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)).
+10. **No WebRTC in the Guest**: The bootstrap removes `RTCPeerConnection` from the guest's global scope before guest code runs (workers never have it), since no CSP directive governs ICE traffic. A frame the guest creates is a realm of its own and keeps it, and in Chromium and WebKit its ICE traffic leaves the sandbox ([backlog S13](docs/BACKLOG.md)); strict mode closes this.
+11. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer, and WebKit sends the full host URL to a same-site origin ([backlog S18](docs/BACKLOG.md)); WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)). Strict mode closes S17 and S18.
 12. **Mediated Network, Opt-In**: With `fetchBridge`, the host makes the guest's requests itself, to exact listed origins only, without credentials, referrer or redirects, with capped bodies, time and concurrency, and logs each one. The guest policy stays as strict as configured ([ADR-006](docs/ADR-006-fetch-bridge.md)).
+13. **Strict Mode, Opt-In**: Guest code only in a worker; a view whose one script is the library's, admitted by its hash, with rendered markup cleaned before it is inserted and moved, never cloned ([ADR-005](docs/ADR-005-strict-mode.md)).

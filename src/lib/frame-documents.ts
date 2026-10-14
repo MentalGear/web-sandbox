@@ -40,10 +40,10 @@ export const WRAPPER_BASE = 'about:blank';
  * when the host page's own policy allows that. Set as the wrapper's <meta name="referrer">, it is the
  * policy the guest inherits, so the guest's requests carry no Referer by default (Firefox and WebKit
  * otherwise send the host origin on image requests). The guest can choose another policy for its own
- * requests — no document can prevent that — but in every engine measured the Referer it can produce
- * carries at most the host origin, never its path (see the S15 platform limits in docs/BACKLOG.md).
- * One exception no attribute here can close: WebKit gives a frame the GUEST creates the host page URL as
- * its document.referrer, because it takes it from the first non-srcdoc document up the tree (S17).
+ * requests — no document can prevent that. To a cross-site target the Referer it can produce carries at
+ * most the host origin (S15 platform limits in docs/BACKLOG.md); to a same-site target WebKit sends the full
+ * host URL (S18). And WebKit gives a frame the GUEST creates the host page URL as its document.referrer,
+ * because it takes it from the first non-srcdoc document up the tree (S17). Strict mode closes both (ADR-005).
  */
 export const FRAME_REFERRER_POLICY = 'no-referrer';
 
