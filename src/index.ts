@@ -5,6 +5,9 @@
 export { WebSandbox, defineWebSandbox } from "./host";
 export type { SandboxConfig, SandboxState } from "./host";
 export type { RpcError, RpcErrorCode } from "./lib/rpc";
+export { MAX_INBOUND_IN_FLIGHT } from "./lib/rpc";
+export type { SandboxLog, SandboxLogLevel } from "./lib/sandbox-log";
+export { LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_STRING } from "./lib/sandbox-log";
 export type { SandboxViolation } from "./lib/violation";
 export { VIOLATION_EVENT_LIMIT } from "./lib/violation";
 export { AUTO_RESIZE_MAX_HEIGHT, AUTO_RESIZE_MAX_UPDATES_PER_SECOND } from "./lib/auto-resize";

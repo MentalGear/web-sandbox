@@ -20,7 +20,7 @@
  *   Request:  { type: 'RPC_REQ', id, method, args }
  *   Response: { type: 'RPC_RES', id, ok, value?, error?, code? }
  *   `code` rides only on a failure and names what failed on the responding side (UNKNOWN_METHOD,
- *   HANDLER_ERROR or RESULT_NOT_TRANSFERABLE). Both sides run this same function, so the two ends of
+ *   HANDLER_ERROR, RESULT_NOT_TRANSFERABLE or BUSY). Both sides run this same function, so the two ends of
  *   the wire cannot disagree on its meaning.
  *
  * Refusals (backlog B7). Every rejection this broker produces is a plain Error with a string `code`
@@ -28,7 +28,7 @@
  *   - LOCAL codes (TIMEOUT, TERMINATED, ARGS_NOT_TRANSFERABLE, SEND_FAILED, INVALID_CALL) are minted
  *     only by the side whose call is refused, from its own state: its timer, its teardown, its clone
  *     check, its transport, its argument check;
- *   - codes REPORTED BY THE OTHER SIDE (UNKNOWN_METHOD, HANDLER_ERROR, RESULT_NOT_TRANSFERABLE) are
+ *   - codes REPORTED BY THE OTHER SIDE (UNKNOWN_METHOD, HANDLER_ERROR, RESULT_NOT_TRANSFERABLE, BUSY) are
  *     the only ones a response can produce: the wire `code` is clamped into this group on receipt.
  * Because the groups are disjoint and the clamp never leaves the second one, nothing the other side
  * sends can make a rejection look like one of the local side's own: a response that claims
@@ -75,10 +75,19 @@ export type RpcSend = (frame: unknown) => void;
  *   UNKNOWN_METHOD          no method of that name is exposed there
  *   HANDLER_ERROR           the handler threw or rejected
  *   RESULT_NOT_TRANSFERABLE the handler's return value cannot be structured-cloned
+ *   BUSY                    the other side already has MAX_INBOUND_IN_FLIGHT of your calls in flight on this
+ *                           channel; nothing ran (retryable once earlier calls settle)
  */
 export type RpcErrorCode =
     | 'TIMEOUT' | 'TERMINATED' | 'ARGS_NOT_TRANSFERABLE' | 'SEND_FAILED' | 'INVALID_CALL'
-    | 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE';
+    | 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE' | 'BUSY';
+
+/**
+ * Most inbound calls a broker runs at once per channel (review B7): a further request is answered at once with
+ * BUSY and its method is not called. Bounds the work and memory the other side can hold open on this side
+ * with calls to a method that is slow or never settles. Mirrored inside createBroker (a test keeps them equal).
+ */
+export const MAX_INBOUND_IN_FLIGHT = 256;
 
 /**
  * Codes a library-reserved method (a `sandbox:` name) reports, from one closed set, disjoint from
@@ -149,6 +158,8 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const acceptLibraryCodes = options.acceptLibraryCodes === true;
     // Mirrors the exported RESERVED_METHOD_PREFIX (a test keeps them equal): declared here to survive stringification.
     const RESERVED_PREFIX = 'sandbox:';
+    // Mirrors the exported MAX_INBOUND_IN_FLIGHT, for the same reason.
+    const MAX_IN_FLIGHT = 256;
 
     // The one source of truth for the code strings (see RpcErrorCode for meanings). Inside the function
     // for the same reason as everything else; the type makes it exhaustive and exact.
@@ -161,6 +172,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         UNKNOWN_METHOD: 'UNKNOWN_METHOD',
         HANDLER_ERROR: 'HANDLER_ERROR',
         RESULT_NOT_TRANSFERABLE: 'RESULT_NOT_TRANSFERABLE',
+        BUSY: 'BUSY',
     };
 
     // The library codes (RpcLibraryCode), closed: what a reserved method may report.
@@ -183,6 +195,11 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const pending = new Map<number, Pending>();
     let nextId = 0;
 
+    // Inbound calls running now, per reply channel (review B7). Keyed by the channel an answer goes back on: the
+    // host passes one per port, so the count belongs to one environment and a channel that is gone takes its
+    // count with it once its calls settle. An entry is removed when its count returns to 0.
+    const inFlight = new Map<RpcSend, number>();
+
     // Normalizes anything thrown/rejected into a plain string for the wire. Wrapped in try/catch so a
     // value with a throwing toString can never take the message handler down with it.
     function errorMessage(error: unknown): string {
@@ -198,15 +215,15 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // clone check, send, argument check) — never with anything taken from an inbound frame. That is what
     // makes a local code trustworthy: the other side has no path into this function. Its parameter type
     // admits only the local codes.
-    function localRefusal(code: Exclude<RpcErrorCode, 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE'>, message: string): RpcError {
+    function localRefusal(code: Exclude<RpcErrorCode, 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE' | 'BUSY'>, message: string): RpcError {
         const error = new Error(message) as RpcError;
         error.code = code;
         return error;
     }
 
     // Turns a failure the other side reported into a rejection. The inbound frame is untrusted, so its
-    // `code` is clamped into the codes the other side may report: exactly UNKNOWN_METHOD or
-    // RESULT_NOT_TRANSFERABLE pass through, and anything else (a local code, an unknown string, a
+    // `code` is clamped into the codes the other side may report: exactly UNKNOWN_METHOD,
+    // RESULT_NOT_TRANSFERABLE or BUSY pass through, and anything else (a local code, an unknown string, a
     // non-string, nothing) becomes HANDLER_ERROR. So a response can never yield a local code. The
     // message is the other side's text verbatim, or a fixed fallback when it sent none. Each field is
     // read once, and `code` is always one of our own constants rather than the inbound value.
@@ -219,6 +236,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         const libraryCode = reserved && acceptLibraryCodes ? LIBRARY_CODES.find(code => code === reportedCode) : undefined;
         error.code = reportedCode === CODE.UNKNOWN_METHOD ? CODE.UNKNOWN_METHOD
             : reportedCode === CODE.RESULT_NOT_TRANSFERABLE ? CODE.RESULT_NOT_TRANSFERABLE
+            : reportedCode === CODE.BUSY ? CODE.BUSY
             : libraryCode !== undefined ? libraryCode as unknown as RpcErrorCode
             : CODE.HANDLER_ERROR;
         return error;
@@ -278,6 +296,20 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             return;
         }
 
+        // At most MAX_IN_FLIGHT calls run at once per channel (review B7): beyond that the call is refused at
+        // once, before its method runs, so a flood of calls to a method that never settles holds a bounded amount.
+        const running = inFlight.get(respond) ?? 0;
+        if (running >= MAX_IN_FLIGHT) {
+            respond({ type: 'RPC_RES', id, ok: false, error: `too many calls in flight (${MAX_IN_FLIGHT})`, code: CODE.BUSY });
+            return;
+        }
+        inFlight.set(respond, running + 1);
+        const release = () => {
+            const left = (inFlight.get(respond) ?? 1) - 1;
+            if (left > 0) inFlight.set(respond, left);
+            else inFlight.delete(respond);
+        };
+
         // We CALL a pre-registered function reference with the cloned args — we never eval / new Function
         // the method name or the args, and the args arrived as inert structured-clone data, so nothing
         // the other side sends is ever interpreted as code. Funnelling through Promise.resolve().then(...) makes
@@ -286,8 +318,14 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // the caller would clamp it anyway — see refusalFromResponse). The one exception is a library code
         // from a reserved method (handlerErrorCode).
         Promise.resolve().then(() => method(...data.args)).then(
-            value => sendResult(respond, id, value),
-            error => respond({ type: 'RPC_RES', id, ok: false, error: errorMessage(error), code: handlerErrorCode(error, reserved) }),
+            value => {
+                release();
+                sendResult(respond, id, value);
+            },
+            error => {
+                release();
+                respond({ type: 'RPC_RES', id, ok: false, error: errorMessage(error), code: handlerErrorCode(error, reserved) });
+            },
         );
     }
 

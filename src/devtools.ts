@@ -39,17 +39,27 @@ export class SandboxDevTools {
         this._active = false;
     }
 
+    // Robust against any detail (review B3): the element normalises every line (src/lib/sandbox-log.ts), but this
+    // class may be pointed at anything that dispatches 'sandbox-log', so it checks again and never throws. The
+    // logged values go after a fixed first argument, so a guest string is never read as a console format string
+    // (no %c styling of host console lines).
     private log(data: any) {
-        if (data.type === 'LOG') {
-            const { level, args } = data;
+        try {
+            if (!data || data.type !== 'LOG') {
+                console.log("%c[Sandbox Event]", "color: #bd93f9", data);
+                return;
+            }
+            const level = typeof data.level === 'string' ? data.level : 'log';
+            const args = Array.isArray(data.args) ? data.args : [];
+            const source = data.source === 'host' ? 'host' : 'guest';
             const style = level === 'error' ? 'color: #ff5555' :
                           level === 'warn' ? 'color: #ffb74d' : 'color: #8be9fd';
 
-            console.groupCollapsed(`%c[Sandbox] ${level.toUpperCase()}`, style);
-            console.log(...args); // Safe: Browser console handles objects/strings safely
+            console.groupCollapsed(`%c[Sandbox] ${level.slice(0, 16).toUpperCase()} (${source})`, style);
+            console.log('', ...args); // Safe: Browser console handles objects/strings safely
             console.groupEnd();
-        } else {
-            console.log("%c[Sandbox Event]", "color: #bd93f9", data);
+        } catch {
+            // a detail that cannot even be read is not worth breaking the page for
         }
     }
 }

@@ -290,8 +290,8 @@ test.describe('G2 the worker', () => {
         await render(sandbox, browserName, '<p>honest</p>', 'honest');
         const tried = await sandbox.inGuest('return tryAllPorts()');
         await page.waitForTimeout(800);
-        // the guest saw exactly one port, the logic port (reachable as in worker mode); nothing it holds reaches the view
-        expect(tried).toBe(1);
+        // the guest saw no port at all: since review B2 the logic port is as far out of reach as the render port
+        expect(tried).toBe(0);
         expect(await inView(page, browserName, `!!document.getElementById('bypass')`)).toBe(false);
         await render(sandbox, browserName, '<p>still honest</p>', 'honest-2'); // positive control: the library's path still works
     });
@@ -438,15 +438,16 @@ test.describe('configuration', () => {
         expect(recorder.paths('blocked')).toEqual([]);
     });
 
-    test('autoResize: the view reports its height (B6); a RESIZE forged on the logic port is ignored', async ({ sandbox, page, browserName }) => {
+    test('autoResize: the view reports its height (B6); the worker cannot post a RESIZE on the logic port', async ({ sandbox, page, browserName }) => {
         await page.addStyleTag({ content: 'web-sandbox { height: 50px }' });
         expect(await sandbox.mount(strict({ autoResize: true }))).toBe('ready');
         await render(sandbox, browserName, '<div style="height: 420px"></div>', 'tall');
         await expect.poll(() => page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).getBoundingClientRect().height), { timeout: 5000 }).toBeGreaterThan(420);
         const before = await page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).style.height);
-        // the worker can reach its own (logic) port and post anything; only the view's reports count
-        await sandbox.run(`const o = MessagePort.prototype.postMessage; MessagePort.prototype.postMessage = function (m, ...r) { MessagePort.prototype.postMessage = o; this.postMessage({ type: 'RESIZE', height: 5 }); return o.call(this, m, ...r); }; console.log('forge')`);
+        // only the view's reports count; the worker cannot even reach its own (logic) port to post one (review B2)
+        await sandbox.run(`globalThis.__port = null; const o = MessagePort.prototype.postMessage; MessagePort.prototype.postMessage = function (m, ...r) { globalThis.__port = this; this.postMessage = o; return o.call(this, m, ...r); }; console.log('forge')`);
         await sandbox.waitForLog('forge');
+        expect(await sandbox.inGuest('return globalThis.__port')).toBeNull();
         await page.waitForTimeout(400);
         expect(await page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).style.height)).toBe(before);
     });

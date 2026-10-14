@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createBroker, RESERVED_METHOD_PREFIX, type RpcErrorCode, type RpcLibraryCode } from './rpc';
+import { createBroker, MAX_INBOUND_IN_FLIGHT, RESERVED_METHOD_PREFIX, type RpcErrorCode, type RpcLibraryCode } from './rpc';
 
 // A pair of brokers wired straight into each other: a call on one is served by the other.
 // Timeouts are disabled here so no real timer lingers; timeout behaviour has its own suite.
@@ -96,7 +96,7 @@ describe('refusal codes are wire protocol (guarantee: the set of code strings is
     // Changing any of these strings breaks callers that branch on them, and the wire between two
     // differently built sides. The pins are checked against the exported type at compile time too.
     const LOCAL_CODES = ['TIMEOUT', 'TERMINATED', 'ARGS_NOT_TRANSFERABLE', 'SEND_FAILED', 'INVALID_CALL'] as const;
-    const REPORTED_CODES = ['UNKNOWN_METHOD', 'HANDLER_ERROR', 'RESULT_NOT_TRANSFERABLE'] as const;
+    const REPORTED_CODES = ['UNKNOWN_METHOD', 'HANDLER_ERROR', 'RESULT_NOT_TRANSFERABLE', 'BUSY'] as const;
     type Local = typeof LOCAL_CODES[number];
     type Reported = typeof REPORTED_CODES[number];
     // Fails to type-check unless the pins and the exported RpcErrorCode union are exactly the same set...
@@ -107,7 +107,7 @@ describe('refusal codes are wire protocol (guarantee: the set of code strings is
     it('the local codes and the codes the other side reports are disjoint and together form the whole set', () => {
         expect(exact && disjoint).toBe(true);
         expect(LOCAL_CODES.filter(code => (REPORTED_CODES as readonly string[]).includes(code))).toEqual([]);
-        expect(new Set([...LOCAL_CODES, ...REPORTED_CODES]).size).toBe(8);
+        expect(new Set([...LOCAL_CODES, ...REPORTED_CODES]).size).toBe(9);
     });
 
     it('every refusal path yields exactly the pinned code strings, as the only own enumerable property of a plain Error', async () => {
@@ -130,10 +130,13 @@ describe('refusal codes are wire protocol (guarantee: the set of code strings is
         await collect(a.call('ghost'));                                                  // UNKNOWN_METHOD
         await collect(a.call('throws'));                                                 // HANDLER_ERROR
         await collect(a.call('giveFn'));                                                 // RESULT_NOT_TRANSFERABLE
+        b.expose('never', () => new Promise(() => {}));
+        for (let i = 0; i < MAX_INBOUND_IN_FLIGHT; i++) a.call('never').catch(() => {});
+        await collect(a.call('never'));                                                  // BUSY
 
         expect(errors.map(e => e.code)).toEqual([
             'TIMEOUT', 'TERMINATED', 'TERMINATED', 'ARGS_NOT_TRANSFERABLE', 'SEND_FAILED', 'INVALID_CALL',
-            'UNKNOWN_METHOD', 'HANDLER_ERROR', 'RESULT_NOT_TRANSFERABLE',
+            'UNKNOWN_METHOD', 'HANDLER_ERROR', 'RESULT_NOT_TRANSFERABLE', 'BUSY',
         ]);
         expect(new Set(errors.map(e => e.code))).toEqual(new Set([...LOCAL_CODES, ...REPORTED_CODES]));
         for (const error of errors) {
@@ -241,7 +244,7 @@ describe('forged refusals (guarantee: nothing the other side sends can produce a
             .toEqual({ isError: true, code: 'HANDLER_ERROR', message: 'plain' });
     });
 
-    it.each(['UNKNOWN_METHOD', 'HANDLER_ERROR', 'RESULT_NOT_TRANSFERABLE'])('a response with the reportable code %s keeps it', async (reported) => {
+    it.each(['UNKNOWN_METHOD', 'HANDLER_ERROR', 'RESULT_NOT_TRANSFERABLE', 'BUSY'])('a response with the reportable code %s keeps it', async (reported) => {
         const { callAnsweredWith } = capturedBroker();
         expect(await refusal(callAnsweredWith({ ok: false, error: 'reported', code: reported })))
             .toEqual({ isError: true, code: reported, message: 'reported' });
@@ -664,5 +667,57 @@ describe('reserved methods and library codes (backlog B5; guarantee: the library
         };
         expect((await answer('sandbox:fetch')).code).toBe('FETCH_BUSY');
         expect((await answer('ordinary')).code).toBe('HANDLER_ERROR');
+    });
+});
+
+describe('inbound calls in flight are capped per channel (review B7)', () => {
+    const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
+    it('the stringified cap equals the exported one', () => {
+        expect(MAX_INBOUND_IN_FLIGHT).toBe(256);
+        expect(createBroker.toString()).toContain(`MAX_IN_FLIGHT = ${MAX_INBOUND_IN_FLIGHT}`);
+    });
+
+    it('beyond the cap a call is refused at once with BUSY and its method never runs; settling frees a slot', async () => {
+        const replies: any[] = [];
+        const reply = (frame: unknown) => { replies.push(frame); };
+        const responder = createBroker(() => {}, { timeoutMs: 0 });
+        const resolvers: (() => void)[] = [];
+        let runs = 0;
+        responder.expose('slow', () => { runs++; return new Promise<void>(resolve => resolvers.push(resolve)); });
+
+        for (let id = 1; id <= MAX_INBOUND_IN_FLIGHT + 44; id++) responder.handleMessage({ type: 'RPC_REQ', id, method: 'slow', args: [] }, reply);
+        await settle();
+        expect(runs).toBe(MAX_INBOUND_IN_FLIGHT);
+        expect(replies).toHaveLength(44);
+        expect(replies.every(frame => frame.ok === false && frame.code === 'BUSY')).toBe(true);
+        expect(replies.map(frame => frame.id)).toEqual(Array.from({ length: 44 }, (_, i) => MAX_INBOUND_IN_FLIGHT + 1 + i));
+
+        resolvers[0]!();
+        await settle();
+        responder.handleMessage({ type: 'RPC_REQ', id: 'after', method: 'slow', args: [] }, reply);
+        await settle();
+        expect(runs).toBe(MAX_INBOUND_IN_FLIGHT + 1);
+        expect(replies.filter(frame => frame.id === 'after')).toEqual([]); // running, not refused
+    });
+
+    it('the count belongs to the channel: another reply channel (the next environment) is not starved by calls that never settle', async () => {
+        const responder = createBroker(() => {}, { timeoutMs: 0 });
+        responder.expose('never', () => new Promise(() => {}));
+        responder.expose('quick', () => 'ok');
+        const old: any[] = [];
+        const current: any[] = [];
+        for (let id = 1; id <= MAX_INBOUND_IN_FLIGHT; id++) responder.handleMessage({ type: 'RPC_REQ', id, method: 'never', args: [] }, (f) => old.push(f));
+        responder.handleMessage({ type: 'RPC_REQ', id: 1, method: 'quick', args: [] }, (f) => current.push(f));
+        await settle();
+        expect(current).toEqual([{ type: 'RPC_RES', id: 1, ok: true, value: 'ok' }]);
+    });
+
+    it('the calling side sees BUSY as a code the other side reports, retryable, with nothing pending left behind', async () => {
+        const { a, b } = wireClonedPair(0);
+        b.expose('never', () => new Promise(() => {}));
+        b.expose('quick', () => 'ok');
+        for (let i = 0; i < MAX_INBOUND_IN_FLIGHT; i++) a.call('never').catch(() => {});
+        expect(await refusal(a.call('quick'))).toEqual({ isError: true, code: 'BUSY', message: `too many calls in flight (${MAX_INBOUND_IN_FLIGHT})` });
     });
 });

@@ -21,17 +21,41 @@ export function inSandboxScript(
     // worker prelude takes the ports from the one trusted INIT message and hands the logic port to attach().
     features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean },
 ): { attach(port: MessagePort): void } {
+    // The port never reaches guest code (review B2). Every operation on it, and on the events that carry it,
+    // goes through a primitive captured here, before any guest code runs, and is called through the captured
+    // Reflect.apply: patching MessagePort.prototype (postMessage, onmessage), MessageEvent.prototype (data,
+    // ports, source), Event.prototype or Function.prototype afterwards changes nothing this script does, and
+    // never hands a patched function the port as `this` or as an argument. (A guest that held the port could
+    // hand it to a nested worker that answers the watchdog's pings while the guest loops.) The internal lists
+    // are written with a captured defineProperty and read by index, so inherited setters or iterators on
+    // Array.prototype see none of it either (review C3).
+    const g = globalThis as any;
+    const apply = Reflect.apply;
+    const defineOwn = Reflect.defineProperty;
+    const accessor = (proto: object, name: string) => Object.getOwnPropertyDescriptor(proto, name)!;
+    const postOnPort = MessagePort.prototype.postMessage;
+    const setOnMessage = accessor(MessagePort.prototype, 'onmessage').set!;
+    const dataOf = accessor(MessageEvent.prototype, 'data').get!;
+    const portsOf = accessor(MessageEvent.prototype, 'ports').get!;
+    const sourceOf = accessor(MessageEvent.prototype, 'source').get!;
+    const stopImmediate = Event.prototype.stopImmediatePropagation;
+    const append = (list: unknown[], value: unknown) => defineOwn(list, list.length, { value, writable: true, enumerable: true, configurable: true });
+    // Iframe mode: the host page, the only sender of INIT_PORT (review B1). The guest frame's parent is the
+    // wrapper; the wrapper's parent is the host. Read now, before guest code could replace `parent`.
+    const host = mode === 'iframe' ? parent.parent : null;
+
     // The port does not exist until INIT_PORT, but guest content scripts parse BEFORE that and may
     // call bridge.expose()/bridge.call() straight away. So the bridge is created now with a send that
     // buffers frames until the port arrives — mirroring how the host queues calls made before ready.
-    let port: any = null;
-    const outbox: any[] = [];
+    let port: MessagePort | null = null;
+    const outbox: unknown[] = [];
+    const post = (frame: unknown) => apply(postOnPort, port, [frame]);
     const send = (frame: any) => {
         if (port) {
-            port.postMessage(frame);
+            post(frame);
             return;
         }
-        outbox.push(frame);
+        append(outbox, frame);
     };
     // No WebRTC in the guest's realm (backlog S13). ICE traffic to STUN/TURN servers is governed by no CSP
     // directive (connect-src does not apply; `webrtc 'block'` and the local-network-access permission
@@ -142,14 +166,14 @@ export function inSandboxScript(
         if (port) return;
         port = handedPort;
 
-        port.onmessage = (ev: any) => {
-            const data = ev.data;
+        apply(setOnMessage, port, [(ev: MessageEvent) => {
+            const data = apply(dataOf, ev, []);
             // The host's liveness watchdog (backlog S6, src/lib/watchdog.ts). Answered here, before the
             // broker, so it is not a callable method: it can never collide with a name the guest exposes,
             // and guest code cannot unexpose or replace it. Answering at all is the signal — a blocked
             // event loop cannot run this handler.
             if (data?.type === 'PING') {
-                if (typeof data.n === 'number') port.postMessage({ type: 'PONG', n: data.n });
+                if (typeof data.n === 'number') post({ type: 'PONG', n: data.n });
                 return;
             }
             if (data?.type === 'EXECUTE') {
@@ -159,33 +183,35 @@ export function inSandboxScript(
                     const func = new Function(data.code);
                     func();
                 } catch (e: any) {
-                    port.postMessage({ type: 'LOG', level: 'error', args: [e.message] });
+                    post({ type: 'LOG', level: 'error', args: [e.message] });
                 }
                 return;
             }
             // RPC frames (RPC_REQ / RPC_RES) and anything else go to the broker, which validates every
             // frame defensively and never throws back out at the message handler.
             if (bridge) bridge.handleMessage(data);
-        };
+        }]);
 
-        (['log', 'error', 'warn'] as const).forEach(level => {
+        const levels = ['log', 'error', 'warn'] as const;
+        for (let i = 0; i < levels.length; i++) {
+            const level = levels[i]!;
             const original = sandboxConsole[level];
             sandboxConsole[level] = (...args: any[]) => {
-                port.postMessage({ type: 'LOG', level, args });
+                post({ type: 'LOG', level, args });
                 // Log to the actual browser console for easier debugging
                 if (original) {
-                    original.apply(sandboxConsole, args);
+                    apply(original, sandboxConsole, args);
                 }
             };
-        });
+        }
 
         // Flush anything the guest queued before the port existed, then announce readiness. A frame that
         // cannot be posted is skipped rather than thrown: a throw would escape this listener and take the
         // frames behind it and the ready message down with it.
         let skipped = 0;
-        for (const frame of outbox) {
+        for (let i = 0; i < outbox.length; i++) {
             try {
-                port.postMessage(frame);
+                post(outbox[i]);
             } catch {
                 skipped++;
             }
@@ -193,14 +219,33 @@ export function inSandboxScript(
         outbox.length = 0;
         if (skipped > 0) sandboxConsole.warn(`[bridge] skipped ${skipped} queued bridge frame(s) that could not be posted (not transferable).`);
 
-        port.postMessage({ type: 'LOG', level: 'info', args: [`${mode} Ready`] });
+        post({ type: 'LOG', level: 'info', args: [`${mode} Ready`] });
     };
 
-    if (!features?.externalPort) {
-        globalThis.addEventListener('message', (event: any) => {
-            if (event.data?.type !== 'INIT_PORT') return;
-            attach(event.ports[0]);
-        }, { once: true });
-    }
+    // The one INIT_PORT (review B1): a trusted message with exactly one port and, in iframe mode, from the host
+    // page — so neither another frame on the host page nor guest code can hand the bridge a port of its own, or
+    // a portless message that would leave the bridge dead. Anything else is ignored and the listener stays, so a
+    // forgery cannot use up the one the host sends. A capture listener registered before guest code, which
+    // stops the event there: no guest listener ever sees the host's port. It never throws.
+    const onInit = (event: MessageEvent) => {
+        if (port || event.isTrusted !== true) return; // isTrusted is an own, unforgeable property
+        let data, ports, source;
+        try {
+            data = apply(dataOf, event, []);
+            ports = apply(portsOf, event, []);
+            source = apply(sourceOf, event, []);
+        } catch {
+            return;
+        }
+        if (!data || data.type !== 'INIT_PORT' || !ports || ports.length !== 1) return;
+        if (mode === 'iframe' && source !== host) return;
+        apply(stopImmediate, event, []);
+        try {
+            attach(ports[0]);
+        } catch {
+            port = null; // not a port after all: keep listening for the host's
+        }
+    };
+    if (!features?.externalPort) g.addEventListener('message', onInit, true);
     return { attach };
 }

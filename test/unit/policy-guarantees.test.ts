@@ -91,7 +91,7 @@ describe('A1: no configured key or value adds a directive to a guest policy', ()
                 for (const token of tokens) expect(isSourceExpression(token), `${token} in ${context}`).toBe(true);
             }
         }
-    });
+    }, 60000); // 400 environment builds in jsdom
 });
 
 describe("A2: the S14 'self' drop cannot be bypassed by punctuation", () => {

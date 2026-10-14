@@ -17,6 +17,7 @@ import { workerBootstrap } from "./lib/worker-bootstrap";
 import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { toViolationDetail, VIOLATION_EVENT_LIMIT } from "./lib/violation";
+import { createLogLimiter, LOG_EVENTS_PER_SECOND, toLogDetail, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
@@ -139,6 +140,12 @@ export class WebSandbox extends HTMLElement {
     private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
     private _warnedFetchBridge = new Set<string>();  // fetchBridge config warnings, once each per instance
     private _violationCounts = new Map<string, number>(); // 'violation' events dispatched per source for the current environment (capped, violation.ts)
+    private _logLimiter = createLogLimiter(); // guest 'sandbox-log' events per second for the current environment (sandbox-log.ts)
+    private _warnedLogLimit = false;          // the log rate limit warned for the current environment
+    // Counts environments: every teardown increments it. A host action that dispatches an event and then acts
+    // on the environment compares it before acting, so a listener that reset or terminated the sandbox in
+    // between is never undone (review B5).
+    private _generation = 0;
     private _config: SandboxConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
     private _port: MessagePort | null = null;     // the guest's port: the iframe's bootstrap, or the worker (logic port)
     private _viewPort: MessagePort | null = null; // strict mode: the view's port (violations, resize, entry errors, liveness)
@@ -399,7 +406,9 @@ export class WebSandbox extends HTMLElement {
         if ((this._config.mode === 'worker' || this._config.mode === 'strict') && this._config.workerExecutionTimeout && this._config.workerExecutionTimeout > 0) {
             this._timeoutId = setTimeout(() => {
                 console.warn("[Sandbox] Execution Timeout - Terminating Worker");
-                this._dispatchLog({ type: 'LOG', level: 'error', args: ['Execution Timeout'] });
+                const generation = this._generation;
+                this._dispatchHostLog('error', 'Execution Timeout');
+                if (generation !== this._generation) return; // a listener already reset or terminated it (review B5)
 
                 // the worker lives inside the frame: recreating the frame terminates it
                 this.initialize();
@@ -412,7 +421,10 @@ export class WebSandbox extends HTMLElement {
         const channel = new MessageChannel();
         const port = channel.port1;
         this._port = port;
-        port.onmessage = (e) => this._onGuestMessage(port, e.data, null);
+        // One reply channel per port: answers go back where their request came from, and the broker counts the
+        // calls it runs per channel (review B7), so the count belongs to this environment.
+        const reply = (frame: unknown) => port.postMessage(frame);
+        port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, null);
 
         // An opaque origin cannot be named as targetOrigin, hence '*'.
         // What keeps the port from reaching a foreign document is that this runs exactly once per frame (see _onFrameLoad).
@@ -422,13 +434,16 @@ export class WebSandbox extends HTMLElement {
 
     // One frame from the guest's port: the iframe bootstrap's, or (worker and strict mode) the worker's.
     // `source` labels its violation reports in strict mode ('logic'); null elsewhere.
-    private _onGuestMessage(port: MessagePort, data: any, source: 'logic' | null) {
+    // Only the current environment's port is heard (review B4): teardown closes a port, and a closed port
+    // delivers nothing more, but this does not rely on it — a frame from any other port changes nothing.
+    private _onGuestMessage(port: MessagePort, reply: (frame: unknown) => void, data: any, source: 'logic' | null) {
+        if (!port || port !== this._port) return;
         if (data?.type === 'PONG') {
             this._watchdog?.handlePong(data.n); // validated there; only this generation's watchdog is live
             return;
         }
         if (data?.type === 'LOG') {
-            this._dispatchLog(data);
+            this._dispatchGuestLog(data);
             return;
         }
         if (data?.type === 'VIOLATION') {
@@ -449,7 +464,7 @@ export class WebSandbox extends HTMLElement {
         // a response only ever reaches the generation that asked for it. (An answer that cannot be
         // cloned may still throw while being posted; sendResult turns that into an error frame,
         // which is discarded the same way.)
-        this._broker.handleMessage(data, (frame) => port.postMessage(frame));
+        this._broker.handleMessage(data, reply);
     }
 
     /**
@@ -467,8 +482,9 @@ export class WebSandbox extends HTMLElement {
         const viewPort = view.port1;
         this._port = port;
         this._viewPort = viewPort;
-        port.onmessage = (e) => this._onGuestMessage(port, e.data, 'logic');
-        viewPort.onmessage = (e) => this._onViewMessage(e.data);
+        const reply = (frame: unknown) => port.postMessage(frame);
+        port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, 'logic');
+        viewPort.onmessage = (e) => this._onViewMessage(viewPort, e.data);
 
         const init = this._strictInit;
         this._strictInit = null;
@@ -476,7 +492,8 @@ export class WebSandbox extends HTMLElement {
         this._flushQueues(port);
     }
 
-    private _onViewMessage(data: any) {
+    private _onViewMessage(viewPort: MessagePort, data: any) {
+        if (!viewPort || viewPort !== this._viewPort) return; // only the current environment's view (review B4)
         if (data?.type === 'VIEW_PONG') {
             this._viewWatchdog?.handlePong(data.n);
             return;
@@ -492,7 +509,9 @@ export class WebSandbox extends HTMLElement {
         if (data?.type === 'GUEST_ERROR') {
             // the worker's own error text (guest-influenced): logged, clamped, never the reason
             const message = typeof data.message === 'string' ? data.message.slice(0, 2048) : '';
-            this._dispatchLog({ type: 'LOG', level: 'error', args: [`[Sandbox] ${ENTRY_FAILED_REASON}: ${message}`] });
+            const generation = this._generation;
+            this._dispatchHostLog('error', `[Sandbox] ${ENTRY_FAILED_REASON}: ${message}`);
+            if (generation !== this._generation) return; // a listener already reset or terminated it (review B5)
             this._terminate(ENTRY_FAILED_REASON);
         }
     }
@@ -536,8 +555,26 @@ export class WebSandbox extends HTMLElement {
     // hears every sandbox and tells them apart by event.target. Not composed: the element sits in the
     // embedding page's DOM, and an event of ours has no business crossing a consumer's shadow boundary.
     // The name stays namespaced because it bubbles: a generic 'log' would collide with other code on window.
+    // Every detail is normalised and labelled with where it came from (sandbox-log.ts, review B3).
     private _dispatchLog(detail: unknown) {
         this.dispatchEvent(new CustomEvent('sandbox-log', { detail, bubbles: true }));
+    }
+
+    // A LOG frame from the guest's port: normalised, labelled 'guest', and at most LOG_EVENTS_PER_SECOND per
+    // environment, so a guest cannot make the host run embedder listeners without bound (one warning).
+    private _dispatchGuestLog(frame: unknown) {
+        if (!this._logLimiter.admit()) {
+            if (this._warnedLogLimit) return;
+            this._warnedLogLimit = true;
+            console.warn(`[Sandbox] the guest logged more than ${LOG_EVENTS_PER_SECOND} lines in one second; lines past that rate are not dispatched as 'sandbox-log' events.`);
+            return;
+        }
+        this._dispatchLog(toLogDetail(frame, 'guest'));
+    }
+
+    // A line the element writes itself: labelled 'host', never rate-limited.
+    private _dispatchHostLog(level: SandboxLogLevel, text: string) {
+        this._dispatchLog(toLogDetail({ level, args: [text] }, 'host'));
     }
 
     // A CSP violation reported by the guest (backlog S5): dispatched on the element and bubbling, like
@@ -639,6 +676,9 @@ export class WebSandbox extends HTMLElement {
     }
 
     private _teardown() {
+        this._generation++;
+        this._logLimiter = createLogLimiter(); // the log rate limit is per environment
+        this._warnedLogLimit = false;
         this._queuedMessages = []; // Clear queue for the old environment
         this._rpcQueue = [];       // same for the host's RPC requests queued for the old environment
         this._violationCounts.clear(); // the violation cap is per environment

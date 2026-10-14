@@ -1,20 +1,60 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { inSandboxScript } from "./in-sandbox-script";
 import { createBroker } from "./rpc";
+
+// The bootstrap captures MessagePort.prototype.postMessage and its onmessage setter, and the MessageEvent
+// getters, before any guest code runs, and only ever calls those (review B2). The tests run it against
+// stand-ins installed as the platform's: a port records what was posted through its prototype method in
+// `posted`, and its handler is reached through `onmessage`; an event exposes data, ports and source through
+// prototype getters, with an own isTrusted, as a browser's MessageEvent does.
+class FakeEvent {
+    stopped = false;
+    stopImmediatePropagation() { this.stopped = true; }
+}
+class FakeMessageEvent extends FakeEvent {
+    readonly isTrusted: boolean;
+    constructor(private readonly init: { data?: unknown; ports?: unknown[]; source?: unknown; isTrusted?: boolean }) {
+        super();
+        this.isTrusted = init.isTrusted ?? true;
+    }
+    get data() { return this.init.data; }
+    get ports() { return this.init.ports ?? []; }
+    get source() { return this.init.source ?? null; }
+}
+class FakePort {
+    posted = vi.fn();
+    private handler: ((event: unknown) => void) | null = null;
+    postMessage(frame: unknown) { this.posted(frame); }
+    get onmessage() { return this.handler; }
+    set onmessage(handler) { this.handler = handler; }
+    /** Delivers `data` to the handler the bootstrap set, as a MessageEvent would. */
+    deliver(data: unknown) { this.handler!(new FakeMessageEvent({ data })); }
+}
+const PLATFORM = { MessagePort: FakePort, MessageEvent: FakeMessageEvent, Event: FakeEvent };
+const originals: Record<string, unknown> = {};
+
+/** The host's INIT_PORT as the guest frame receives it: trusted, from parent.parent (jsdom: the window), one port. */
+const initPort = (port: unknown, overrides: Record<string, unknown> = {}) =>
+    new FakeMessageEvent({ data: { type: 'INIT_PORT' }, ports: [port], source: window, ...overrides });
 
 describe("inSandboxScript", () => {
     const originalAddEventListener = globalThis.addEventListener;
 
+    beforeEach(() => {
+        for (const [name, value] of Object.entries(PLATFORM)) {
+            originals[name] = (globalThis as any)[name];
+            (globalThis as any)[name] = value;
+        }
+    });
+
     afterEach(() => {
         globalThis.addEventListener = originalAddEventListener;
+        for (const name of Object.keys(PLATFORM)) (globalThis as any)[name] = originals[name];
         delete (globalThis as any).bridge;
         vi.restoreAllMocks();
     });
 
-    const createMockPort = () => ({
-        postMessage: vi.fn(),
-        onmessage: null as any,
-    });
+    const createMockPort = () => new FakePort();
 
     const createMockConsole = () => {
         const log = vi.fn();
@@ -36,17 +76,14 @@ describe("inSandboxScript", () => {
         inSandboxScript(true, 'iframe', sandboxConsole);
 
         // Trigger handshake
-        listeners['message']?.({
-            data: { type: 'INIT_PORT' },
-            ports: [port]
-        });
+        listeners['message']?.(initPort(port));
 
-        expect(port.postMessage).toHaveBeenCalledWith({
+        expect(port.posted).toHaveBeenCalledWith({
             type: 'LOG',
             level: 'info',
             args: ['iframe Ready']
         });
-        expect(port.onmessage).toBeDefined();
+        expect(typeof port.onmessage).toBe('function');
     });
 
     it("externalPort (strict mode): adds no message listener of its own and takes the logic port through attach(), once", () => {
@@ -59,10 +96,10 @@ describe("inSandboxScript", () => {
         const other = createMockPort();
         comms.attach(port as any);
         comms.attach(other as any);
-        expect(port.postMessage).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['strict Ready'] });
-        expect(other.postMessage).not.toHaveBeenCalled();
-        port.onmessage({ data: { type: 'PING', n: 1 } });
-        expect(port.postMessage).toHaveBeenCalledWith({ type: 'PONG', n: 1 });
+        expect(port.posted).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['strict Ready'] });
+        expect(other.posted).not.toHaveBeenCalled();
+        port.deliver({ type: 'PING', n: 1 });
+        expect(port.posted).toHaveBeenCalledWith({ type: 'PONG', n: 1 });
     });
 
     it("should block execution when scriptUnsafe is false", () => {
@@ -76,12 +113,12 @@ describe("inSandboxScript", () => {
         inSandboxScript(false, 'worker', sandboxConsole);
 
         // Handshake
-        listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] });
+        listeners['message']?.(initPort(port));
 
         // Attempt execution
-        port.onmessage({ data: { type: 'EXECUTE', code: '1 + 1' } });
+        port.deliver({ type: 'EXECUTE', code: '1 + 1' });
 
-        expect(port.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+        expect(port.posted).toHaveBeenCalledWith(expect.objectContaining({
             type: 'LOG',
             level: 'error',
             args: ['Execution blocked: scriptUnsafe is false']
@@ -97,11 +134,11 @@ describe("inSandboxScript", () => {
         };
 
         inSandboxScript(true, 'iframe', sandboxConsole);
-        listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] });
+        listeners['message']?.(initPort(port));
 
         sandboxConsole.log("hello", { a: 1 });
 
-        expect(port.postMessage).toHaveBeenCalledWith({
+        expect(port.posted).toHaveBeenCalledWith({
             type: 'LOG',
             level: 'log',
             args: ["hello", { a: 1 }]
@@ -120,17 +157,12 @@ describe("inSandboxScript", () => {
         };
 
         inSandboxScript(true, 'worker', sandboxConsole);
-        listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] });
+        listeners['message']?.(initPort(port));
 
         // Execute code that throws
-        port.onmessage({ 
-            data: { 
-                type: 'EXECUTE', 
-                code: 'throw new Error("Boom")' 
-            } 
-        });
+        port.deliver({ type: 'EXECUTE', code: 'throw new Error("Boom")' });
 
-        expect(port.postMessage).toHaveBeenCalledWith({
+        expect(port.posted).toHaveBeenCalledWith({
             type: 'LOG',
             level: 'error',
             args: ["Boom"]
@@ -139,14 +171,12 @@ describe("inSandboxScript", () => {
 
     it("skips a queued bridge frame that cannot be posted, still posting later frames and the ready message", () => {
         const posted: any[] = [];
-        const port = {
-            postMessage: vi.fn((frame: any) => {
-                // stands in for a DataCloneError: just this one frame cannot be posted
-                if (frame?.method === 'unpostable') throw new Error('could not be cloned');
-                posted.push(frame);
-            }),
-            onmessage: null as any,
-        };
+        const port = createMockPort();
+        port.posted.mockImplementation((frame: any) => {
+            // stands in for a DataCloneError: just this one frame cannot be posted
+            if (frame?.method === 'unpostable') throw new Error('could not be cloned');
+            posted.push(frame);
+        });
         const sandboxConsole = createMockConsole();
         const listeners: Record<string, Function> = {};
         (globalThis as any).addEventListener = (type: string, cb: Function) => {
@@ -159,7 +189,7 @@ describe("inSandboxScript", () => {
         bridge.call('unpostable'); // queued before the port exists...
         bridge.call('later');      // ...and so is this one, behind it
 
-        expect(() => listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] })).not.toThrow();
+        expect(() => listeners['message']?.(initPort(port))).not.toThrow();
 
         const calls = posted.filter(frame => frame.type === 'RPC_REQ');
         expect(calls.map(frame => frame.method)).toEqual(['later']);
@@ -181,13 +211,13 @@ describe("inSandboxScript", () => {
         const bridge = (globalThis as any).bridge;
         const guestPing = vi.fn(() => 'guest method');
         bridge.expose('PING', guestPing); // a guest method of the same name is never reached by the watchdog
-        listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] });
-        port.postMessage.mockClear();
+        listeners['message']?.(initPort(port));
+        port.posted.mockClear();
 
-        port.onmessage({ data: { type: 'PING', n: 7 } });
+        port.deliver({ type: 'PING', n: 7 });
 
-        expect(port.postMessage).toHaveBeenCalledTimes(1);
-        expect(port.postMessage).toHaveBeenCalledWith({ type: 'PONG', n: 7 });
+        expect(port.posted).toHaveBeenCalledTimes(1);
+        expect(port.posted).toHaveBeenCalledWith({ type: 'PONG', n: 7 });
         expect(guestPing).not.toHaveBeenCalled();
     });
 
@@ -200,13 +230,103 @@ describe("inSandboxScript", () => {
         };
 
         inSandboxScript(true, 'worker', sandboxConsole, createBroker);
-        listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] });
-        port.postMessage.mockClear();
+        listeners['message']?.(initPort(port));
+        port.posted.mockClear();
 
         for (const n of [undefined, '1', null, {}]) {
-            expect(() => port.onmessage({ data: { type: 'PING', n } })).not.toThrow();
+            expect(() => port.deliver({ type: 'PING', n })).not.toThrow();
         }
-        expect(port.postMessage).not.toHaveBeenCalled();
+        expect(port.posted).not.toHaveBeenCalled();
+    });
+
+    describe("the one INIT_PORT (review B1)", () => {
+        const start = (mode: 'iframe' | 'worker') => {
+            const registered: { type: string; cb: Function; options: unknown }[] = [];
+            (globalThis as any).addEventListener = (type: string, cb: Function, options?: unknown) => { registered.push({ type, cb, options }); };
+            inSandboxScript(false, mode, createMockConsole(), createBroker);
+            return registered.find(r => r.type === 'message')!;
+        };
+
+        it("is a capture listener; ignores, without throwing, a message from another sender, an untrusted one, one without exactly one port, and any other type; then accepts the host's", () => {
+            const listener = start('iframe');
+            expect(listener.options).toBe(true);
+            const port = createMockPort();
+            const stranger = { postMessage() {} }; // another frame on the host page
+            const forgeries = [
+                initPort(createMockPort(), { source: stranger }),
+                initPort(createMockPort(), { source: null }),
+                initPort(createMockPort(), { isTrusted: false }),
+                new FakeMessageEvent({ data: { type: 'INIT_PORT' }, ports: [], source: window }),
+                new FakeMessageEvent({ data: { type: 'INIT_PORT' }, ports: [createMockPort(), createMockPort()], source: window }),
+                new FakeMessageEvent({ data: { type: 'OTHER' }, ports: [createMockPort()], source: window }),
+                new FakeMessageEvent({ data: null, ports: [createMockPort()], source: window }),
+            ];
+            for (const forged of forgeries) {
+                expect(() => listener.cb(forged)).not.toThrow();
+                expect(forged.stopped).toBe(false);
+            }
+            // something that is not a port at all (a browser never delivers one): no throw, and still listening
+            expect(() => listener.cb(initPort({ notAPort: true }))).not.toThrow();
+            const genuine = initPort(port);
+            listener.cb(genuine);
+            expect(genuine.stopped).toBe(true); // no guest listener sees the host's port
+            expect(port.posted).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['iframe Ready'] });
+            // and only once: a later INIT_PORT, even a valid-looking one, changes nothing
+            const late = createMockPort();
+            listener.cb(initPort(late));
+            expect(late.posted).not.toHaveBeenCalled();
+        });
+
+        it("in a worker (no parent, source null) a trusted message with one port is the owner's", () => {
+            const listener = start('worker');
+            const port = createMockPort();
+            listener.cb(initPort(createMockPort(), { isTrusted: false, source: null }));
+            listener.cb(initPort(port, { source: null }));
+            expect(port.posted).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['worker Ready'] });
+        });
+    });
+
+    describe("the port never reaches guest code (review B2)", () => {
+        it("patched MessagePort and MessageEvent prototypes and Reflect.apply, installed after the bootstrap, never see the port; frames still flow", () => {
+            const listeners: Record<string, Function> = {};
+            (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
+            const sandboxConsole = createMockConsole();
+            inSandboxScript(true, 'iframe', sandboxConsole, createBroker);
+
+            // guest code, after the bootstrap and before INIT_PORT
+            const seen: unknown[] = [];
+            const keep = (value: unknown) => { if (value instanceof FakePort) seen.push(value); };
+            const originalPost = FakePort.prototype.postMessage;
+            const onmessage = Object.getOwnPropertyDescriptor(FakePort.prototype, 'onmessage')!;
+            const getters = ['data', 'ports', 'source'].map(name => [name, Object.getOwnPropertyDescriptor(FakeMessageEvent.prototype, name)!] as const);
+            const originalStop = FakeEvent.prototype.stopImmediatePropagation;
+            const reflectApply = Reflect.apply;
+            try {
+                FakePort.prototype.postMessage = function (this: FakePort, frame: unknown) { keep(this); return originalPost.call(this, frame); };
+                Object.defineProperty(FakePort.prototype, 'onmessage', { configurable: true, get() { keep(this); return onmessage.get!.call(this); }, set(v) { keep(this); onmessage.set!.call(this, v); } });
+                for (const [name, descriptor] of getters) {
+                    Object.defineProperty(FakeMessageEvent.prototype, name, { configurable: true, get() { const value = descriptor.get!.call(this); keep(value); if (Array.isArray(value)) value.forEach(keep); return value; } });
+                }
+                FakeEvent.prototype.stopImmediatePropagation = function (this: FakeEvent) { keep((this as any).ports?.[0]); return originalStop.call(this); };
+                Reflect.apply = function (f: Function, self: unknown, args: ArrayLike<unknown>) { keep(self); for (let i = 0; i < args.length; i++) keep(args[i]); return reflectApply(f, self, args); } as typeof Reflect.apply;
+
+                const port = createMockPort();
+                listeners['message']!(initPort(port));
+                sandboxConsole.log('a line');
+                onmessage.get!.call(port)(new FakeMessageEvent({ data: { type: 'PING', n: 1 } }));
+                (globalThis as any).bridge.call('hostMethod').catch(() => {});
+
+                expect(seen).toEqual([]);
+                const types = port.posted.mock.calls.map(c => (c[0] as any).type);
+                expect(types).toEqual(['LOG', 'LOG', 'PONG', 'RPC_REQ']); // Ready, the line, the answer, the call
+            } finally {
+                FakePort.prototype.postMessage = originalPost;
+                Object.defineProperty(FakePort.prototype, 'onmessage', onmessage);
+                for (const [name, descriptor] of getters) Object.defineProperty(FakeMessageEvent.prototype, name, descriptor);
+                FakeEvent.prototype.stopImmediatePropagation = originalStop;
+                Reflect.apply = reflectApply;
+            }
+        });
     });
 
     describe("CSP violation forwarding (backlog S5)", () => {
@@ -224,8 +344,7 @@ describe("inSandboxScript", () => {
             isTrusted: true, effectiveDirective: 'img-src', violatedDirective: 'img-src', blockedURI: 'https://attacker.test/x',
             sourceFile: 'about:srcdoc', lineNumber: 3, columnNumber: 7, ...overrides,
         });
-        const violationFrames = (port: { postMessage: { mock: { calls: unknown[][] } } }) =>
-            port.postMessage.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'VIOLATION');
+        const violationFrames = (port: FakePort) => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'VIOLATION');
 
         it("is a capture listener on the global object, registered while the bootstrap runs (before any guest code)", () => {
             const { registered } = install();
@@ -240,7 +359,7 @@ describe("inSandboxScript", () => {
             const { listener } = install();
             listener('securitypolicyviolation').cb(violation());
             const port = createMockPort();
-            listener('message').cb({ data: { type: 'INIT_PORT' }, ports: [port] });
+            listener('message').cb(initPort(port));
             listener('securitypolicyviolation').cb(violation({ effectiveDirective: '', violatedDirective: 'connect-src', blockedURI: 'wss://a.test/' }));
 
             expect(violationFrames(port)).toEqual([
@@ -252,7 +371,7 @@ describe("inSandboxScript", () => {
         it("ignores synthetic events (dispatched by script, isTrusted false)", () => {
             const { listener } = install();
             const port = createMockPort();
-            listener('message').cb({ data: { type: 'INIT_PORT' }, ports: [port] });
+            listener('message').cb(initPort(port));
             listener('securitypolicyviolation').cb(violation({ isTrusted: false }));
             expect(violationFrames(port)).toEqual([]);
         });
@@ -260,7 +379,7 @@ describe("inSandboxScript", () => {
         it("forwards at most 100 reports per environment", () => {
             const { listener } = install();
             const port = createMockPort();
-            listener('message').cb({ data: { type: 'INIT_PORT' }, ports: [port] });
+            listener('message').cb(initPort(port));
             for (let i = 0; i < 250; i++) listener('securitypolicyviolation').cb(violation({ lineNumber: i + 1 }));
             expect(violationFrames(port)).toHaveLength(100);
         });
@@ -284,10 +403,10 @@ describe("inSandboxScript", () => {
             (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
             inSandboxScript(false, mode, createMockConsole(), createBroker, autoResize === undefined ? undefined : { autoResize: autoResize as any });
             const port = createMockPort();
-            listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] });
+            listeners['message']?.(initPort(port));
             return port;
         };
-        const resizeFrames = (port: ReturnType<typeof createMockPort>) => port.postMessage.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RESIZE');
+        const resizeFrames = (port: FakePort) => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RESIZE');
 
         it("observes the root element and reports a changed height as a RESIZE frame, outside the broker", () => {
             const observers = installObserver();
@@ -330,9 +449,9 @@ describe("inSandboxScript", () => {
             (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
             inSandboxScript(false, 'iframe', createMockConsole(), createBroker, features);
             const port = createMockPort();
-            listeners['message']?.({ data: { type: 'INIT_PORT' }, ports: [port] });
-            const requests = () => port.postMessage.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RPC_REQ');
-            const answer = (frame: Record<string, unknown>) => port.onmessage({ data: { type: 'RPC_RES', id: requests().at(-1).id, ...frame } });
+            listeners['message']?.(initPort(port));
+            const requests = () => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RPC_REQ');
+            const answer = (frame: Record<string, unknown>) => port.deliver({ type: 'RPC_RES', id: requests().at(-1).id, ...frame });
             return { requests, answer };
         };
 
