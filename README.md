@@ -8,7 +8,10 @@ Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the 
 
 **Key Features:**
 *   **Local-First:** No server round-trips for code execution.
-*   **Secure:** Blocks access to `localStorage`, `Service Workers`, and the parent window.
+*   **Secure:** The guest runs in an opaque origin: no storage or Service Workers shared with the host, no access to
+    the host page's DOM or scripts. It can still post messages to the host window, as any frame can (check
+    `event.source` in your `message` listeners), and default mode has the residuals listed under
+    [Security Mitigations](#security-mitigations); strict mode closes most of them.
 *   **Unified:** Use the same "Preset" definitions for both manual testing (Playground) and automated regression testing.
 
 ## Getting Started
@@ -108,7 +111,11 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 *   **`reset()`** builds a fresh environment with the current config, from any state. Guest methods
     are gone, host methods stay; pending calls reject with `TERMINATED`.
 *   **Removing the element** tears the sandbox down the same way, without a `terminated` event, and
-    leaves it `idle`. Inserting it again builds a fresh one.
+    leaves it `idle`. Inserting it again builds a fresh one. Moved into another window's document, it builds
+    nothing there (one warning) until it is back.
+*   **`loading` is bounded:** a build that has not loaded within `LOAD_TIMEOUT_MS` (5 s of host time, the guest
+    document's own subresources included) ends with `the sandbox did not finish loading`. A guest that reloads or
+    rewrites its own document ends its environment (`the guest frame announced itself again …`).
 *   **Events** are dispatched on the element. `sandbox-log` (guest `console` output and errors) bubbles,
     so a listener on `window` hears every sandbox on the page and `event.target` says which one. Its detail
     is `{ type: 'LOG', level, args, source }` (type `SandboxLog`): `level` is `log`, `info`, `warn` or
@@ -230,7 +237,8 @@ const total = await sandbox.call('sum', 1, 2);              // 3, once the sandb
     chose them: validate before use, and copy objects with spread (`{ ...arg }`) rather than
     `Object.assign`, which turns an own `__proto__` key into a prototype change.
 *   **Every call times out** after 30 seconds by default. `callWithTimeout(ms, method, ...args)`
-    sets a different limit for one call; `0` turns it off.
+    sets a different limit for one call; `0` turns it off. A call made while loading that times out
+    before the guest is ready never runs.
 *   **Host methods belong to the element**, so they survive `reset()`, `load()` and `setConfig()`. Guest
     methods belong to one frame: a new frame starts with none until its own code exposes them.
 *   **A reset settles every pending call.** When `reset()`, `load()` or `setConfig()` recreates the
@@ -479,7 +487,7 @@ The sandbox implements several layers of defense:
 2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`). Only known directive names and values that are single CSP source expressions reach the policy, so no configured value or key can add a directive (a `;` in a value is dropped with a warning); `'unsafe-eval'` comes only from `scriptUnsafe`. An empty array means `'none'` for every directive; leave a directive out to fall back to `default-src`. The guest policy never contains `'self'`: for the guest's opaque origin, browsers disagree on what it matches (WebKit admits any https origin), so a configured `'self'` is dropped with a warning. List the origins you need explicitly. `frame-ancestors`, `report-uri`, `report-to` and `sandbox` are dropped with a warning too: browsers ignore them in a `<meta>` policy, which the guest's always is.
 3.  **CSP First**: The CSP `<meta>` is prepended before any user markup, so it is always the first element of the parsed `<head>`; user content cannot precede or swallow it.
 4.  **Wrapper Frame**: The guest frame is nested in a library-owned frame whose policy is `frame-src 'none'`. That blocks the guest from navigating itself to carry data out in a URL ([research 14](docs/research/14_self_navigation/README.md)).
-5.  **One-Shot Channel**: The private `MessagePort` is handed over exactly once per frame, and the guest bootstrap accepts it only from the host page; no other frame can hand it a port or leave it without one. Guest code can never reach the port (the bootstrap uses only primitives captured before guest code runs), so it cannot answer the watchdog for a looping guest. The host hears only the current environment's port. If the frame ever loads a second document, the sandbox is torn down and fires `terminated`.
+5.  **One Channel, Announced by the Bootstrap**: The guest bootstrap's first statement makes the private `MessageChannel`, keeps one end in its closure and posts the other to the host page; the host accepts exactly one such announcement per environment, from the guest frame's own window, and ends the environment on a second (a guest that reloads or rewrites itself). No listener in the guest realm ever carries a port of the library's, and guest code can never reach the bootstrap's end (it uses only primitives captured before guest code runs), so it cannot answer the watchdog for a looping guest. The host hears only the current environment's port. If the wrapper frame ever loads a second document, the sandbox is torn down and fires `terminated`.
 6.  **Worker Inside the Frame**: Worker mode spawns its worker from inside the sandbox frame, so it shares the opaque origin and CSP.
 7.  **Capability Tiers**: Flags that reach outside the frame require the explicit `unsafeCapabilities` opt-in.
 8.  **Allowlisted Calls**: Each side can call only the methods the other side exposed, and an answer reaches only the frame that made the request, never a frame that replaced it.
@@ -489,5 +497,6 @@ The sandbox implements several layers of defense:
 12. **Mediated Network, Opt-In**: With `fetchBridge`, the host makes the guest's requests itself, to exact listed origins only, without credentials, referrer or redirects, with capped bodies, time and concurrency, and logs each one. The guest policy stays as strict as configured ([ADR-006](docs/ADR-006-fetch-bridge.md)).
 13. **Strict Mode, Opt-In**: Guest code only in a worker; a view whose one script is the library's, admitted by its hash, with rendered markup cleaned before it is inserted and moved, never cloned ([ADR-005](docs/ADR-005-strict-mode.md)).
 14. **Fail Closed on Configuration**: A `mode` the element does not know starts no environment (the sandbox terminates with a reason) rather than falling back to iframe mode.
+15. **Guest-Realm Hardening (default modes)**: Gaps no CSP directive covers are closed in the guest's realm before guest code runs: `fetch()` with `keepalive` is refused (Firefox sends it past `connect-src`); `history.back()`, `forward()`, `go()` and the Navigation API's traversal do nothing (Firefox and WebKit let them move the host page); `window.name` is inert (a named guest frame received the host's named navigations and `window.open()` handles); DNS prefetching is off; no worker loads from `data:` (WebKit runs a `data:` SharedWorker outside the policy). **Residuals in default mode**, measured: a frame the guest creates is a realm of its own and keeps the platform's `fetch`, history and naming (do not use named targets on a host page that embeds sandboxes); WebKit opens a connection for `<link rel=preconnect>` to any origin; guest code can take focus from the host page (Chromium, Firefox) and, after a user's click in the guest, write the clipboard (Firefox `writeText()`, Chromium and Firefox `execCommand('copy')`). Strict mode runs no guest script in a document. [Broad review](docs/security/BROAD-REVIEW-2026-10-14.md).
 
-The guarantees above were tested adversarially on 2026-10-14, with every finding fixed, asserted or stated as a residual: [adversarial review report](docs/security/ADVERSARIAL-REVIEW-2026-10.md).
+The guarantees above were tested adversarially on 2026-10-14, with every finding fixed, asserted or stated as a residual: [adversarial review report](docs/security/ADVERSARIAL-REVIEW-2026-10.md), [focused review](docs/security/FOCUSED-REVIEW-2026-10-14.md), [broad review](docs/security/BROAD-REVIEW-2026-10-14.md).

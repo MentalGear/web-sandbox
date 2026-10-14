@@ -1,6 +1,6 @@
 # ADR-003: How does the host observe and control a sandbox's lifecycle?
 
-**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)), 2026-10-14 ([one rule per budget, build and missing environment](#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)), 2026-10-14 ([the execution budget is a free event loop at the deadline](#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline))
+**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)), 2026-10-14 ([one rule per budget, build and missing environment](#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)), 2026-10-14 ([the execution budget is a free event loop at the deadline](#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline)), 2026-10-14 ([loading is bounded; one answer per build; one document](#amendment-2026-10-14-loading-is-bounded-one-answer-per-build-one-document))
 
 ## Why this ADR exists
 
@@ -227,3 +227,32 @@ and `the environment could not be built (Error)`.
 
 Proof: `test/e2e/focused-review.spec.ts` ("F2"), `test/unit/followup-guarantees.test.ts` ("B8, focused review F2"),
 `src/lib/in-sandbox-script.test.ts`, `test/unit/focused-review.test.ts` ("F3").
+
+## Amendment (2026-10-14): loading is bounded; one answer per build; one document
+
+**When**: the broad review of 2026-10-14 ([report](security/BROAD-REVIEW-2026-10-14.md), CB3, CB5, CB7).
+
+- **`loading` is bounded (CB3).** A guest that called `document.open()` and never closed the document held Chromium
+  and WebKit in `loading` indefinitely (measured past 30 s; Firefox completes the load). Decision: a build that has
+  not completed within `LOAD_TIMEOUT_MS`, the liveness budget (5000 ms), counted in host ticks like every budget here
+  (a host stall never counts), terminates with `the sandbox did not finish loading`. The wrapper's load waits for the
+  guest document's subresources, so a guest page that needs longer than that for its images must load them after
+  it loaded; that is the stated limit. Rejected: firing `ready` on the announcement alone (guest methods exposed by
+  markup scripts would not exist yet at `ready`, which callers rely on); the embedder's `watchdogTimeout` (off by
+  default, so `loading` would stay unbounded by default).
+- **The queue holds only calls still waiting (CB3).** A call made while loading that timed out stayed queued and ran
+  at the next flush; a caller that retried ran it twice. A queued request now leaves the queue when its call settles.
+- **One answer per build (CB5).** A `terminated` listener that called `reset()` on a refused config re-entered the
+  build, which refused again and dispatched again, until the stack ran out (about 590 dispatches). Decision, at the
+  build chokepoint: while a build termination is being dispatched, a nested build from the same inputs (no
+  `setConfig()`, `load()` or file change in between) returns at once: same inputs, same answer, nothing dispatched
+  again. Changing the inputs first builds normally.
+- **One document (CB7).** An element moved into another document built an environment there that never connected
+  (Chromium, WebKit), or, in Firefox, lost its prototype (Firefox gives an adopted element the new document's
+  `HTMLElement` prototype), so its callbacks threw and its guest kept running. Decision: the lifecycle callbacks call
+  module functions that use the element's own fields and `WebSandbox.prototype`, never the element's prototype
+  chain; `adoptedCallback` tears down like a removal; `connectedCallback` builds only in the document of the realm
+  that defined the element, and otherwise stays `idle` with one warning. Back in its own document, an element whose
+  prototype Firefox replaced gets the class's prototype back and builds again.
+
+Proof: `test/e2e/broad-review.spec.ts` ("CB3", "CB7"), `test/unit/broad-review.test.ts` ("CB3", "CB5").

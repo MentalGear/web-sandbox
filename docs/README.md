@@ -43,6 +43,10 @@
 - [**security/FOCUSED-REVIEW-2026-10-14.md**](security/FOCUSED-REVIEW-2026-10-14.md) — two focused rounds after it,
   on guest writes and the follow-up's fixes: load kinds for file references, the strict view's SVG animation, the
   execution budget, rate windows and config hygiene, each reproduced as a failing test first.
+- [**security/BROAD-REVIEW-2026-10-14.md**](security/BROAD-REVIEW-2026-10-14.md) — a broad review by four reviewers:
+  the guest announces its own port (no listener in the guest realm carries one), bounded loading, no `data:` workers,
+  guest-realm hardening against platform gaps (keepalive, history, `window.name`), residuals measured per engine, and
+  paste-ready upstream reports for WebKit and Firefox.
 
 - [research/](research/README.md) — fourteen documented attack vectors with reproductions, design probes
   (blob delivery, strict mode), plus the CSP and virtual-files architecture analyses.

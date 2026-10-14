@@ -1,6 +1,6 @@
 # ADR-004: Files are guest-realm blob URLs
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-13 (markup references, module graph, CSS references, strict mode), 2026-10-14 ([`blob:` by governing directive](#amendment-2026-10-14-blob-goes-to-the-directive-that-governs-the-load), [guest writes](#amendment-guest-writes-2026-10-14), [load kinds](#amendment-2026-10-14-a-reference-names-a-file-only-for-the-kind-of-load-its-type-is-for))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-13 (markup references, module graph, CSS references, strict mode), 2026-10-14 ([`blob:` by governing directive](#amendment-2026-10-14-blob-goes-to-the-directive-that-governs-the-load), [guest writes](#amendment-guest-writes-2026-10-14), [load kinds](#amendment-2026-10-14-a-reference-names-a-file-only-for-the-kind-of-load-its-type-is-for)), 2026-10-14 ([broad review: answers from the build; file sources widen only their kinds](#amendment-2026-10-14-broad-review-answers-from-the-build-file-sources-widen-only-their-kinds))
 
 ## Why this ADR exists
 
@@ -825,3 +825,25 @@ removal mark whose path the host unregistered after the mark is forgotten before
 
 Tests: `src/lib/load-kinds.test.ts` (every kind × every type, for the table, markup, stylesheets and the renderer),
 `test/unit/focused-review.test.ts` ("W1"–"W4"), `test/e2e/focused-review.spec.ts` ("W1", three engines).
+
+## Amendment (2026-10-14): broad review: answers from the build; file sources widen only their kinds
+
+**When**: the broad review of 2026-10-14 ([report](security/BROAD-REVIEW-2026-10-14.md), CB4, PA1).
+
+- **Guest writes are answered from the build (CB4).** `sandbox:write` answered removals and the write-time quota from
+  the live store, so a guest learned of files the host registered after its build (which it never otherwise sees).
+  Decision: each build takes one copy of the store (`FileStore.copy()`); its snapshot is what the guest gets, and the
+  overlay decides every answer against that copy plus the overlay. The commit still applies to the live store with
+  its full check, so the host's side is unchanged.
+- **File sources widen only the kinds they are for (PA1).** `blob:` added to `script-src` for registered scripts
+  (or a `script-src` created from `default-src`) also reached `worker-src` through its fallback when the policy set
+  neither `worker-src` nor `child-src`. Decision, the class: every policy step ends with one postcondition
+  (`assertWidensOnly`, `effective-directive.ts`): for every kind of check outside those the step names, the sources
+  that decide it after the step are a subset of those before; a step that would widen another kind throws and the
+  build fails closed. File sources pin such a kind to what it admitted before, in a directive of its own, before the
+  check. A property test over random policies and file types holds it with an oracle written out independently.
+- **No worker loads from `data:` (PD1)**: a policy step of its own (`drop-data-workers.ts`), under the same
+  postcondition; the default `worker-src` is `blob:` alone.
+
+Proof: `test/unit/broad-review.test.ts` ("CB4", "PA1", "PD1"), `src/lib/csp/drop-data-workers.test.ts`,
+`src/lib/csp/file-sources.test.ts`, `test/e2e/broad-review.spec.ts` ("PD1").

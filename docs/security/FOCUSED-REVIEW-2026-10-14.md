@@ -4,7 +4,7 @@
 hardening — 10 fixed (F4 was latent: the grammar dropped the injected prototype before it mattered), 1 documented
 by design (W5), the hardening done; no residual left open; two limits of W1 stated
 · **Backlog**: [S27–S31](../BACKLOG.md#s27--a-committed-inert-file-could-run-as-a-script-of-the-next-build---done)
-· **Earlier review**: [adversarial review 2026-10](ADVERSARIAL-REVIEW-2026-10.md)
+· **Earlier review**: [adversarial review 2026-10](ADVERSARIAL-REVIEW-2026-10.md) · **Next**: [broad review 2026-10-14](BROAD-REVIEW-2026-10-14.md)
 
 ## Scope and method
 
