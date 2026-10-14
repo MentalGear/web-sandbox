@@ -1,6 +1,6 @@
 # ADR-005: Strict mode — guest logic in a worker, a view that runs no guest script
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view); [independent verification](#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view); [independent verification](#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist); [typed origins](#amendment-2026-10-14-typed-origins-the-view-policy-is-a-template))
 
 ## Why this ADR exists
 
@@ -422,3 +422,21 @@ the bootstrap runs and buffers up to 1000 lines (in order with bridge frames) un
 Tests: `test/e2e/verification.spec.ts` ("V1": every worker global on the list, every network API of every engine
 aimed at a blocked listener, the four kept ones reaching an allowed one; "V2"), `src/lib/worker-globals.test.ts`,
 `src/lib/in-sandbox-script.test.ts`.
+
+## Amendment (2026-10-14): typed origins: the view policy is a template
+
+**When**: [ADR-007](ADR-007-typed-origins.md). The view's policy is no longer the config's subset passed through and
+fixed afterwards (`strict-policy.ts`, `strictPolicyOverrides`, both deleted): it is the generator's strict template,
+with every directive explicit, and the embedder's `origins` fill `style-src`, `img-src`, `font-src`, `media-src` and
+`connect-src` only:
+
+```
+default-src 'none'; script-src 'sha256-<B>' ['unsafe-eval']; script-src-attr 'none'; style-src 'unsafe-inline' …;
+img-src …; font-src …; media-src …; connect-src …; worker-src blob:; frame-src 'none'; object-src 'none';
+base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests
+```
+
+`origins.scripts` does not type-check in strict mode (`StrictSandboxConfig`) and is dropped with one warning at run
+time. `data:` is not an origin, so it reaches no image (ST1) and no font or media either. Tests:
+`src/lib/csp/csp-generator.test.ts`, `test/unit/strict.test.ts`, `test/unit/policy-guarantees.test.ts` ("A1"),
+`test/e2e/review-policy.spec.ts`, `test/e2e/broad-strict.spec.ts` ("ST1").

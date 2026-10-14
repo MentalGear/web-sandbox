@@ -1,6 +1,6 @@
 # ADR-004: Files are guest-realm blob URLs
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-13 (markup references, module graph, CSS references, strict mode), 2026-10-14 ([`blob:` by governing directive](#amendment-2026-10-14-blob-goes-to-the-directive-that-governs-the-load), [guest writes](#amendment-guest-writes-2026-10-14), [load kinds](#amendment-2026-10-14-a-reference-names-a-file-only-for-the-kind-of-load-its-type-is-for)), 2026-10-14 ([broad review: answers from the build; file sources widen only their kinds](#amendment-2026-10-14-broad-review-answers-from-the-build-file-sources-widen-only-their-kinds))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-13 (markup references, module graph, CSS references, strict mode), 2026-10-14 ([`blob:` by governing directive](#amendment-2026-10-14-blob-goes-to-the-directive-that-governs-the-load), [guest writes](#amendment-guest-writes-2026-10-14), [load kinds](#amendment-2026-10-14-a-reference-names-a-file-only-for-the-kind-of-load-its-type-is-for)), 2026-10-14 ([broad review: answers from the build; file sources widen only their kinds](#amendment-2026-10-14-broad-review-answers-from-the-build-file-sources-widen-only-their-kinds)), 2026-10-14 ([typed origins: file sources are the generator's](#amendment-2026-10-14-typed-origins-file-sources-are-the-generators))
 
 ## Why this ADR exists
 
@@ -63,7 +63,8 @@ which realms a `blob:` URL resolves in.
    registered, and only in the directives their types need: JavaScript → `script-src`, `text/css` →
    `style-src`, `image/*` → `img-src`, `font/*` → `font-src`, `audio/*`, `video/*` and `text/vtt` →
    `media-src`, and any file → `connect-src` (amended 2026-10-14: the directive that *governs* each kind of
-   load, so `script-src-elem` / `style-src-elem` when configured; see the amendment below). An empty directive falls back to `default-src`, so
+   load, so `script-src-elem` / `style-src-elem` when configured; see the amendment below; since ADR-007 the template's
+   directive of each kind, see the last amendment). An empty directive falls back to `default-src`, so
    adding only `blob:` would narrow it; the `default-src` sources (minus `'none'` and `'self'`) are
    copied in first. An embedder's explicit `'none'` is kept, with one warning that those files will
    not load. This runs before `'unsafe-eval'` and before the `'self'` drop, which stays the last step
@@ -92,7 +93,7 @@ and the Chromium host-resolver flag are deleted.
 
 The mechanism lives in [`src/lib/files.ts`](../src/lib/files.ts) (store, paths, MIME),
 [`src/lib/in-sandbox-files.ts`](../src/lib/in-sandbox-files.ts) (the guest side) and
-[`src/lib/csp/file-sources.ts`](../src/lib/csp/file-sources.ts) (the policy). The proof is their unit
+[`src/lib/csp/csp-generator.ts`](../src/lib/csp/csp-generator.ts) (the policy; `file-sources.ts` until ADR-007). The proof is their unit
 tests, [`test/unit/files.test.ts`](../test/unit/files.test.ts) (the host's output, including the
 no-files policy and document) and [`test/e2e/files.spec.ts`](../test/e2e/files.spec.ts) (every
 load type, containment, isolation between sandboxes, no egress, lifecycle, worker mode and the cap,
@@ -847,3 +848,16 @@ Tests: `src/lib/load-kinds.test.ts` (every kind × every type, for the table, ma
 
 Proof: `test/unit/broad-review.test.ts` ("CB4", "PA1", "PD1"), `src/lib/csp/drop-data-workers.test.ts`,
 `src/lib/csp/file-sources.test.ts`, `test/e2e/broad-review.spec.ts` ("PD1").
+
+## Amendment (2026-10-14): typed origins: file sources are the generator's
+
+**When**: [ADR-007](ADR-007-typed-origins.md). **What changed**: the guest policy is a fixed template per mode, and
+`file-sources.ts`, the fallback table it read (`effective-directive.ts`) and the postcondition after it
+(`assertWidensOnly`) are deleted. The generator (`src/lib/csp/csp-generator.ts`, `fileKinds()`) adds `blob:` to the
+directive of each kind of load the build's registered types are for, read from the same load-kind table
+(`load-kinds.ts`, whose rows now carry their `origins` key; `track` is `media`): JavaScript `script-src`, `text/css`
+`style-src`, `image/*` `img-src`, `font/*` `font-src`, `audio/*`, `video/*` and `text/vtt` `media-src`, every file
+`connect-src`. Every directive is explicit, so nothing falls back and `blob:` for one kind can reach no other (PA1 holds
+by construction, and a property test over random origins and file types says so). Strict mode never adds it to
+`script-src`. An embedder can no longer set a directive to `'none'` to keep a registered type from loading: an empty
+kind admits no origin, and the files registered are what the embedder chose to give the guest.

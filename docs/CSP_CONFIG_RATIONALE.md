@@ -1,5 +1,9 @@
 # CSP Design Rationale & Security Findings
 
+> **Superseded** by [ADR-007](ADR-007-typed-origins.md) (2026-10-14): the guest policy is a fixed template per mode,
+> the embedder lists exact origins per kind (`origins`), and every directive is explicit. The reasoning on
+> `'unsafe-inline'` and nonces below still holds; the table of directives does not. Kept as a record.
+
 This document outlines the security architecture of the `WebSandbox` and explains the trade-offs made regarding the Content Security Policy (CSP), specifically the use of `'unsafe-inline'`.
 
 ## 1. The Role of `'unsafe-inline'`

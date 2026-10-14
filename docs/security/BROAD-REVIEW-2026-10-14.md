@@ -164,6 +164,8 @@ engine) failed there; of the 18 new unit tests that run against `12d7924`, 14 fa
 
 ### PD1 · WebKit ran a `data:` SharedWorker outside the guest policy
 
+> Since 2026-10-14 the policy steps described here are replaced by typed `origins` and one policy template per mode ([ADR-007](../ADR-007-typed-origins.md)); their guarantees hold by construction there.
+
 - **Found**: with the default `worker-src blob: data:`, a guest's `new SharedWorker('data:…')` in WebKit fetched,
   opened a WebSocket and ran `importScripts` against a listener the policy blocks, with no violation. Re-measured on a
   plain page with a header policy: the same (appendix). Chromium and Firefox refuse shared workers in an opaque origin.

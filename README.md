@@ -54,12 +54,13 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 
 *   **Presets:** Select a scenario from the dropdown to load pre-configured code and security rules. The regression specs run the very same presets (`fromPreset()` in `test/e2e/presets.ts`), and a unit test fails if a security preset has no spec. A preset says whether to use "Run Code" or "Run as HTML".
 *   **Code Editor:** Modify the JavaScript code to test different behaviors.
-*   **Rules Editor:** Configure the Content Security Policy (CSP) and execution mode (iframe/worker).
+*   **Rules Editor:** The configuration as JSON: execution mode, capabilities, the `origins` the guest may load from.
 *   **Logs:** View `console.log` output and security events from within the sandbox.
 
 ## Architecture
 
-*   **`src/host.ts`**: The core implementation of the `<web-sandbox>` custom element. It handles frame creation, CSP generation, and communication.
+*   **`src/host.ts`**: The core implementation of the `<web-sandbox>` custom element. It handles frame creation, configuration, and communication.
+*   **`src/lib/origin.ts`**, **`src/lib/csp/origins.ts`**, **`src/lib/csp/csp-generator.ts`**: The guest policy: the one origin parser (shared with `fetchBridge.allow`), `origins` parsed at the boundary, and one policy template per mode.
 *   **`src/lib/frame-documents.ts`**: Builds the wrapper and guest documents (see Security Mitigations).
 *   **`src/lib/rpc.ts`**: The broker behind `expose()` and `call()`; the host and the guest run the same code.
 *   **`src/lib/files.ts`**, **`src/lib/in-sandbox-files.ts`**: Registered files: the host's store, and the guest's `sandboxFiles`.
@@ -67,7 +68,7 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 *   **`src/lib/module-specifiers.ts`**, **`src/lib/import-map.ts`**: The module graph: relative imports in registered modules rewritten to virtual URLs (with the bundled es-module-lexer), and the guest's own import maps merged into the one the bootstrap registers.
 *   **`src/lib/auto-resize.ts`**: Auto-sizing on the host: validates, clamps and rate-limits the guest's height reports.
 *   **`src/lib/fetch-bridge.ts`**: The fetch bridge on the host: the allowlist, the request discipline, and the `fetch` log.
-*   **`src/lib/in-sandbox-view.ts`**, **`src/lib/csp/strict-policy.ts`**, **`src/lib/csp/script-hash.ts`**: Strict mode: the view's hashed bootstrap and renderer, the worker's prelude (`sandboxView`), the view policy, and the synchronous SHA-256 that admits the bootstrap.
+*   **`src/lib/in-sandbox-view.ts`**, **`src/lib/csp/script-hash.ts`**: Strict mode: the view's hashed bootstrap and renderer, the worker's prelude (`sandboxView`), and the synchronous SHA-256 that admits the bootstrap.
 *   **`src/lib/presets.ts`**: The scenarios both the Playground and the regression specs run: one definition per attack (payload, rules, research folder).
 *   **`vite.config.ts`**: The dev server for the playground and the e2e harness.
 *   **`test/e2e`**: Playwright e2e specs, plus the shared harness page and fixture every suite runs on.
@@ -85,6 +86,20 @@ sandbox.load('<h1>Hello</h1>');
 ```
 
 Importing the module registers nothing, so you choose the tag name.
+
+**The guest reaches nothing by default.** List the exact origins it may load each kind from in `origins`
+(`connect`, `images`, `styles`, `fonts`, `media`, `scripts`); everything else in its policy is fixed:
+
+```js
+sandbox.setConfig({
+    capabilities: ['allow-scripts'],
+    origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] },
+});
+```
+
+An entry is one origin (`https://host[:port]`, `wss://` for `connect`, plain `http://` only for `localhost` and
+`127.0.0.1`); a scheme, wildcard, keyword, `data:` or path is dropped with a warning. Strict mode takes no `scripts`
+([API](docs/API.md#origins), [ADR-007](docs/ADR-007-typed-origins.md)).
 
 **API reference**: [`docs/API.md`](docs/API.md) lists every option, method, event, refusal code, guest global
 and limit. The sections below walk through each feature.
@@ -269,7 +284,7 @@ Why it is built this way: [ADR-002](docs/ADR-002-host-guest-broker.md).
 
 By default the guest reaches no network at all (`connect-src 'none'`). With `fetchBridge`, the guest gets
 `sandboxFetch(url, init)`, and the **host** makes each request under a fixed discipline and logs it. The
-guest policy does not change: direct `fetch` and `WebSocket` stay refused unless you also allow them.
+guest policy does not change: direct `fetch` and `WebSocket` stay refused unless `origins.connect` lists them.
 
 ```js
 sandbox.setConfig({
@@ -355,10 +370,9 @@ sandbox.load(`
 *   **Refusals** throw an `Error` with a `code` and change nothing: `INVALID_PATH`, `INVALID_FILE`, or
     `FILES_QUOTA_EXCEEDED` past 8 MiB in total or 1000 files.
 *   **Types** come from the extension (`.js` is `text/javascript`, `.css` is `text/css`, …; unknown is
-    `application/octet-stream`). The policy gains `blob:` only for the registered types' directives, and
-    a directive you set to `'none'` (or `[]`) stays `'none'`, with a warning.
-*   **Markup references just work** (iframe mode, when the bootstrap runs: `allow-scripts` and the
-    default inline `script-src`): `<script src>` (classic or
+    `application/octet-stream`). The policy gains `blob:` only for the kinds of load the registered types are for
+    (`.js` scripts, `.css` styles, `image/*` images, …; every file for `connect`).
+*   **Markup references just work** (iframe mode, when the bootstrap runs: with `allow-scripts`): `<script src>` (classic or
     module), stylesheet, icon and preload `<link href>`, and `src` of `img`, `source`, `video`,
     `audio`, `track` plus `video[poster]`, when the URL resolves to a registered path — `app.js`,
     `./app.js`, `/app.js`, `img/logo.svg`. Scripts keep their order (`defer`, `async`, modules and
@@ -479,9 +493,8 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
 *   **Limits**: no inline `<script>`, nested frames or the elements listed in API.md as unavailable (popovers,
     invoker commands, `canvas`, SVG `use`/filters/`image`) in rendered markup; files are named by path in
     `src`/`href`/`poster` (not `srcset` or inline styles; a registered stylesheet's own `url()` works), and
-    JavaScript files reach only the worker; no modules or `importScripts`; `unsafeCapabilities` and the policy
-    directives that decide what runs (`script-src`, `worker-src`, `frame-src`, `object-src`, `base-uri`,
-    `form-action`) are fixed, with a warning if configured. `autoResize` and `fetchBridge` work.
+    JavaScript files reach only the worker; no modules or `importScripts`; `unsafeCapabilities` and
+    `origins.scripts` are dropped, with a warning if configured. `autoResize` and `fetchBridge` work.
 
 Why it is built this way: [ADR-005](docs/ADR-005-strict-mode.md).
 
@@ -495,7 +508,7 @@ existing solution is argued in [`docs/ADR-001-continue-or-adopt.md`](docs/ADR-00
 
 The sandbox implements several layers of defense:
 1.  **Opaque Origin**: Runs in `about:srcdoc`, creating a unique null origin that isolates storage.
-2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and frames that load a URL (`frame-src 'none'`; frames the guest makes from markup, `srcdoc` or `about:blank`, still exist and are realms of their own: see the residuals below). Only known directive names and values that are single CSP source expressions reach the policy, so no configured value or key can add a directive (a `;` in a value is dropped with a warning); `'unsafe-eval'` comes only from `scriptUnsafe`. An empty array means `'none'` for every directive; leave a directive out to fall back to `default-src`. The guest policy never contains `'self'`: for the guest's opaque origin, browsers disagree on what it matches (WebKit admits any https origin), so a configured `'self'` is dropped with a warning. List the origins you need explicitly. `frame-ancestors`, `report-uri`, `report-to` and `sandbox` are dropped with a warning too: browsers ignore them in a `<meta>` policy, which the guest's always is.
+2.  **Strict CSP, from a typed config**: One fixed template per mode, every directive emitted (`'none'` when it admits nothing), so no browser falls back to `default-src`. The embedder adds only exact origins, per kind of load (`origins`), parsed by the same origin parser as `fetchBridge.allow`; everything else is dropped with a warning, so no value can add a directive or a source expression: no `'self'` (browsers disagree on what it matches for the guest's opaque origin; WebKit admitted any https origin), no `data:`, no wildcard or scheme. Frames that load a URL are refused (`frame-src 'none'`; frames the guest makes from markup, `srcdoc` or `about:blank`, still exist and are realms of their own: see the residuals below); `base-uri`, `form-action`, `object-src` and `manifest-src` are `'none'`; `'unsafe-eval'` comes only from `scriptUnsafe`. ([ADR-007](docs/ADR-007-typed-origins.md))
 3.  **CSP First**: The CSP `<meta>` is prepended before any user markup, so it is always the first element of the parsed `<head>`; user content cannot precede or swallow it.
 4.  **Wrapper Frame**: The guest frame is nested in a library-owned frame whose policy is `frame-src 'none'`. That blocks the guest from navigating itself to carry data out in a URL ([research 14](docs/research/14_self_navigation/README.md)).
 5.  **One Channel, Announced by the Bootstrap**: The guest bootstrap's first statement makes the private `MessageChannel`, keeps one end in its closure and posts the other to the host page; the host accepts exactly one such announcement per environment, from the guest frame's own window, and ends the environment on a second (a guest that reloads or rewrites itself). No listener in the guest realm ever carries a port of the library's, and guest code can never reach the bootstrap's end (it uses only primitives captured before guest code runs), so it cannot answer the watchdog for a looping guest. The host hears only the current environment's port. If the wrapper frame ever loads a second document, the sandbox is torn down and fires `terminated`.

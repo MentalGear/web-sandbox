@@ -21,7 +21,7 @@ conditional "continue".
 | Area | State |
 | :--- | :--- |
 | Core isolation (`srcdoc` + opaque origin + immutable CSP) | ✅ implemented, `src/host.ts` |
-| CSP generation from typed config | ✅ implemented; `[]` means `'none'` for every directive, never broader than leaving it out (S16), unit-tested per directive; only known directive names and single CSP source expressions reach a policy, so no value or key can add a directive (S19) |
+| CSP generation from typed config | ✅ one fixed template per mode, every directive explicit (`'none'` when empty), filled with the exact origins of `origins` per kind of load, parsed once by the one origin parser shared with `fetchBridge.allow`; no value can add a directive or a source expression (S47, [ADR-007](ADR-007-typed-origins.md)) |
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker; taken only from the host's INIT_PORT, never reachable by guest code, only the current environment's port heard (S21) |
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7); at most 256 inbound calls in flight per environment, then `BUSY` (S22) |
 | Host-mediated network | ✅ opt-in `fetchBridge`: `sandboxFetch()` under the bridge discipline, every request logged as a `fetch` event, refusals coded (B5, [ADR-006](ADR-006-fetch-bridge.md)) |
@@ -36,7 +36,7 @@ conditional "continue".
 | Type check | ✅ `bun run typecheck` is clean and gates CI (H3) |
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2), and the strict-mode design probes (research 15) on all three (S45) |
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
-| Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); an empty directive is `'none'`, and the defaults leave unset fetch directives to `default-src` (S16); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
+| Default policy | ✅ the template: `base-uri`, `form-action`, `frame-src`, `object-src`, `manifest-src` always `'none'` (S9), every fetch directive `'none'` unless `origins` lists an origin (S16); no `'self'`, `data:`, wildcard or scheme can be configured (S14, S47); `blob:` only with registered files, only for their types' kinds ([ADR-004](ADR-004-files-as-blob-urls.md)) |
 | Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`), each only for a load its type is for (S27); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); guest writes opt-in (`guestWrites`): checked by the store's own rules into a per-environment overlay, never given a URL, kept only by an explicit `commitGuestWrites(paths)`, code only with `{ code: true }` (C5) |
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18). ✅ in strict mode: guest code sees only its worker's `blob:` URL and no request carries a `Referer` |
 | API reference | ✅ [`API.md`](API.md): the whole public surface, checked against the code by a unit test (D3); framework adapters out of scope |
@@ -61,6 +61,9 @@ Two focused review rounds the same day ([report](security/FOCUSED-REVIEW-2026-10
 The broad review the same day ([report](security/BROAD-REVIEW-2026-10-14.md)) added S32–S37: S32–S35 and S37 done, S35's and S36's residuals stated.
 Its strict-mode reviewer added S38–S42 (S42 open). The independent verification the same day ([report](security/VERIFICATION-2026-10-14.md))
 added S43–S45: S43 and S45 done, S44 the one list of default-mode residuals. Its decision 1 added and closed S46.
+S47 replaced the raw-CSP `connectionsAllowed` with typed `origins` and one policy template per mode the same day
+([ADR-007](ADR-007-typed-origins.md)): the policy guard rails of S7, S14, S16, S19, S20 (A3, A5) and S34 became
+unrepresentable states.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1257,6 +1260,37 @@ engine and its calls time out, where Chromium and WebKit terminated it. Not cove
 `async` scripts, after an `await` or in a `load` handler. `watchdogTimeout` now covers the guest's startup scripts;
 `autoResize` may report while the document loads. Tests: `test/e2e/ready.spec.ts`, `broad-review.spec.ts` ("CB3"),
 `src/lib/in-sandbox-script.test.ts` ("the startup gate").
+
+### S47 · The guest policy is a template; the embedder lists origins — ✅ **done**
+
+*[ADR-007](ADR-007-typed-origins.md); owner-approved design.*
+
+**Why**: `connectionsAllowed` took raw CSP, and every review found something dangerous to say through it (S7, S14,
+S16, S19, A3, A5, PD1, PA1, ST1). Each fix was a guard rail that removed it again: a grammar, five drop steps, a fallback
+table with a postcondition after every step, a strict pass-through list, a bootstrap warning. Bad states were still
+representable, and the pipeline's order mattered.
+
+**Done**, by construction:
+- `origins: SandboxOrigins` (`connect`, `images`, `styles`, `fonts`, `media`, `scripts`) replaces `connectionsAllowed`,
+  which is removed (ignored with one warning; fails closed). Exact origins only, parsed once at the boundary by one
+  parser shared with `fetchBridge.allow` (`src/lib/origin.ts`): `https://host[:port]`, `wss://` for `connect`, plain
+  `http://` for `localhost` and `127.0.0.1` only; anything else dropped with one warning; a non-object `origins` or a
+  kind that is not a list refuses the config. The parsed policy is frozen and its entries branded `Origin`.
+- One generator, one template per mode (`src/lib/csp/csp-generator.ts`), every directive emitted, so no fallback is
+  consulted; `blob:` per kind from the load-kind table; strict never has `blob:` or origins in `script-src`;
+  `'unsafe-eval'` only with `scriptUnsafe`; `manifest-src` `'none'`; `data:` unrepresentable for every kind.
+- `SandboxConfig` is a union keyed by `mode`: `scripts` in strict mode is a compile error, and dropped at run time.
+- Deleted: `drop-meta-ignored`, `drop-eval`, `drop-data-workers`, `drop-self`, `policy-grammar`,
+  `effective-directive`, `file-sources`, `strict-policy`, `inlineScriptsAllowed`, `CSPDirectives`, `_getCSPDirectives`,
+  the drop steps' warning sets.
+- `fetchBridge.allow` now refuses entries the URL parser would rewrite (IPv4 shorthand, percent-encoding, non-ASCII,
+  trailing dot, whitespace) and IPv6 literals ([ADR-006 amendment](ADR-006-fetch-bridge.md#amendment-2026-10-14-one-origin-parser)).
+
+Tests: `src/lib/origin.test.ts` (the grammar, a 5000-input property), `src/lib/csp/origins.test.ts` (parsing, strict,
+the types with `@ts-expect-error`), `src/lib/csp/csp-generator.test.ts` (golden policies, a 3000-config property:
+directives exactly the template's, fixed ones byte-identical, every other token an origin; cooperative `script-src`
+always admits the bootstrap), `test/unit/host.test.ts` (removal warning), and the e2e specs migrated on all engines.
+Dropped specs, now unrepresentable: the `-elem` directive cases of the A3 class (`review-policy.spec.ts`).
 
 ## B · API Surface & DX
 
