@@ -17,6 +17,7 @@ import { deepMerge } from "./lib/utils";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
 import { createBroker, RESERVED_METHOD_PREFIX } from "./lib/rpc";
 import { workerBootstrap } from "./lib/worker-bootstrap";
+import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
 import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { toViolationDetail, VIOLATION_EVENT_LIMIT } from "./lib/violation";
@@ -186,6 +187,13 @@ function errorName(error: unknown): string {
     }
     return 'Error';
 }
+
+// The first statement of every guest worker's source, worker mode and strict mode (independent verification
+// 2026-10-14, V1): the worker keeps only the allowlisted globals (worker-globals.ts) before any other script of the
+// library or the guest runs there, so every request guest code can make goes through an API the policy governs on
+// every engine. `global` is the expression for the global object in that source.
+const workerGlobalsStatement = (global: string) =>
+    `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(WORKER_GLOBALS)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)});`;
 
 // A worker's uncaught error as a guest line, prefixed once: Chromium's ErrorEvent message already starts with
 // "Uncaught", Firefox's and WebKit's do not.
@@ -1239,9 +1247,9 @@ export class WebSandbox extends HTMLElement {
     }
 
     private _getWorkerBootstrapScript(files: FileSnapshotEntry[]) {
-        // the worker runs the comms script and builds its own blobs and sandboxFiles from the same
-        // literal; the frame only spawns it and forwards the port
-        const workerSource = this._getSandboxCommsScript('worker', files);
+        // the worker keeps only the allowlisted globals (worker-globals.ts), then runs the comms script and builds its
+        // own blobs and sandboxFiles from the same literal; the frame only spawns it and forwards the port
+        const workerSource = `${workerGlobalsStatement('this')}${this._getSandboxCommsScript('worker', files)}`;
         return `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)});`;
     }
 
@@ -1466,7 +1474,7 @@ export class WebSandbox extends HTMLElement {
         this.shadowRoot!.appendChild(this._iframe);
     }
 
-    // The worker's source in strict mode: the scope check, the comms script (bridge, logs, violations, execute,
+    // The worker's source in strict mode: the scope check, the globals allowlist, the comms script (bridge, logs, violations, execute,
     // the fetch bridge), sandboxFiles with every registered file, the strict prelude (hardening, sandboxView, the
     // ports), then the guest's entry in a function scope of its own, then the line that marks the entry as having
     // run to its end. The entry's own scope (review C2): its top-level declarations are local to it, so none can
@@ -1481,6 +1489,7 @@ export class WebSandbox extends HTMLElement {
         const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
         const prelude = '(function (g) {'
             + `(${assertEntryScoped.toString()})(g);`
+            + workerGlobalsStatement('g')
             + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}${this._config.guestWrites === true ? ', comms.writeFiles' : ''});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)});`

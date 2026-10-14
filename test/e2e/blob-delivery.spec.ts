@@ -196,7 +196,7 @@ test.describe('1. default CSP: guest-created blob: subresources are refused', ()
         });
     });
 
-    test('worker mode: importScripts, import() and fetch of a blob are refused; nested workers follow worker-src', async ({ sandbox, browserName }) => {
+    test('worker mode: importScripts, import() and fetch of a blob are refused; there are no nested workers (independent verification V1)', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ mode: 'worker' })).toBe('ready');
         // Every engine refuses; which violations reach the worker's own securitypolicyviolation
         // listener differs: Chromium delivers all three, Firefox only fetch's, WebKit none.
@@ -205,8 +205,10 @@ test.describe('1. default CSP: guest-created blob: subresources are refused', ()
             'importScripts()': 'error:NetworkError' + csp('script-src-elem', ['chromium']),
             'import()': 'error:TypeError' + csp('script-src-elem', ['chromium']),
             'fetch()': 'error:TypeError' + csp('connect-src', ['chromium', 'firefox']),
-            'nested Worker classic': 'ok',
-            'nested Worker module': moduleWorker(browserName),
+            // the worker keeps only the allowlisted globals (src/lib/worker-globals.ts): a nested worker would be a realm
+            // the library's prelude never reaches
+            'nested Worker classic': 'error:ReferenceError',
+            'nested Worker module': 'error:ReferenceError',
         });
     });
 });
@@ -227,14 +229,14 @@ test.describe('2. with blob: added, guest-created blob: subresources load', () =
         });
     });
 
-    test('worker mode (a classic worker): importScripts, import() and fetch of a blob all load', async ({ sandbox, browserName }) => {
+    test('worker mode (a classic worker): importScripts, import() and fetch of a blob all load; no nested worker, whatever the policy (independent verification V1)', async ({ sandbox }) => {
         expect(await sandbox.mount({ mode: 'worker', ...WITH_BLOB })).toBe('ready');
         expect(await runProbes(sandbox, WORKER_LOADS)).toEqual({
             'importScripts()': 'ok',
             'import()': 'ok',
             'fetch()': 'ok:hello',
-            'nested Worker classic': 'ok',
-            'nested Worker module': moduleWorker(browserName),
+            'nested Worker classic': 'error:ReferenceError',
+            'nested Worker module': 'error:ReferenceError',
         });
     });
 

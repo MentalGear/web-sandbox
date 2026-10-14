@@ -923,8 +923,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * The worker's prelude in strict mode, after the comms script and sandboxFiles, before the guest's entry.
  * Stringified; self-contained.
  *
- * Hardening before any guest code (A7): no Worker or SharedWorker (a nested worker would be admitted by
- * worker-src blob:, research 15 P3), no WebAssembly unless scriptUnsafe (WebKit compiles it without
+ * Hardening before any guest code (A7), beyond the globals allowlist the worker's source applies first
+ * (worker-globals.ts: no Worker or SharedWorker, whose nested worker worker-src blob: would admit, research 15 P3; no
+ * EventSource; nothing else that requests): no WebAssembly unless scriptUnsafe (WebKit compiles it without
  * 'unsafe-eval', P3), and no URL.createObjectURL — the files' URLs are minted before this runs, and a URL
  * guest code minted could otherwise name unregistered media to the view through CSS (A8). RTCPeerConnection
  * is never there in a worker, and the comms script deletes it anyway.
@@ -965,8 +966,6 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
         if (owner && name in owner) Reflect.deleteProperty(owner, name);
         if (owner && name in owner) throw new Error('[Sandbox] the strict worker could not remove ' + name);
     };
-    remove(g, 'Worker');
-    remove(g, 'SharedWorker');
     if (!options.scriptUnsafe) remove(g, 'WebAssembly');
     remove(g.URL, 'createObjectURL');
     remove(g.webkitURL, 'createObjectURL');

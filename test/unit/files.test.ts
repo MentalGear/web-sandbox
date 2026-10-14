@@ -6,6 +6,7 @@ import { rewriteMarkupReferences } from '@src/lib/markup-references';
 import { mimeTypeFor } from '@src/lib/files';
 import { createBroker } from '@src/lib/rpc';
 import { workerBootstrap } from '@src/lib/worker-bootstrap';
+import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 
 // The files a build can name, typed by extension as the store types them.
 const typesOf = (paths: string[]) => new Map(paths.map(path => [path, mimeTypeFor(path)]));
@@ -68,7 +69,9 @@ describe('with no files: the policy is unchanged, and the document differs only 
     it('worker mode: the empty bootstrap goes into the worker source', async () => {
         const el = await mount({ mode: 'worker', scriptUnsafe: true });
         expect(policyOf(el)).toBe(UNSAFE_POLICY);
-        const bootstrap = `(${workerBootstrap.toString()})(${JSON.stringify(comms(true, 'worker') + EMPTY_FILES).replaceAll('<', '\\u003c')});`;
+        // the worker keeps only the allowlisted globals first (independent verification V1), then the comms script and files
+        const globals = `(${keepOnlyWorkerGlobals.toString()})(this, ${toInlineScriptLiteral(WORKER_GLOBALS)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)});`;
+        const bootstrap = `(${workerBootstrap.toString()})(${JSON.stringify(globals + comms(true, 'worker') + EMPTY_FILES).replaceAll('<', '\\u003c')});`;
         expect(wrapperOf(el)).toBe(buildWrapperDocument(buildGuestDocument({ csp: UNSAFE_POLICY, bootstrapScript: bootstrap, content: '' }), 'allow-scripts'));
     });
 

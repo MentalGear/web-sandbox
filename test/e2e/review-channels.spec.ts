@@ -123,10 +123,13 @@ test.describe('B2: the port never reaches guest code', () => {
             await sandbox.page.waitForTimeout(BUDGET); // a few watchdog PINGs answered meanwhile
             expect(await sandbox.inGuest('return __ports.length')).toBe(0);
 
-            // positive control: a port the guest does hold (its own channel) is answered by the delegate
+            // positive control: a port the guest does hold (its own channel) is answered by the delegate. Worker mode has
+            // no nested Worker since the independent verification (V1, worker-globals.ts), so there the delegate is a
+            // listener of the guest's own on the other end: what a captured port would let it do in the worker itself.
             const answered = await sandbox.inGuest(`
                 const channel = new MessageChannel();
-                const delegate = ${DELEGATE};
+                const delegate = typeof Worker === 'function' ? ${DELEGATE} : { postMessage: (_, [port]) => { port.onmessage = (m) => { if (m.data && m.data.type === 'PING') port.postMessage({ type: 'PONG', n: m.data.n }); }; port.postMessage({ type: 'DELEGATE_UP' }); } };
+                ${mode === 'worker' ? "if (typeof Worker !== 'undefined') return 'worker mode has a Worker';" : ''}
                 delegate.postMessage(null, [channel.port2]);
                 return await new Promise((resolve) => {
                     channel.port1.onmessage = (e) => { if (e.data.type === 'PONG') resolve(e.data.n); else channel.port1.postMessage({ type: 'PING', n: 7 }); };

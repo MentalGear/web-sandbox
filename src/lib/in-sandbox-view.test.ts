@@ -252,7 +252,7 @@ describe('the view bootstrap', () => {
 });
 
 describe('the strict worker prelude (unit; the e2e specs cover it in real workers)', () => {
-    it('removes Worker, SharedWorker, URL.createObjectURL and (without scriptUnsafe) WebAssembly; render() validates; an untrusted INIT is ignored', () => {
+    it('removes URL.createObjectURL and (without scriptUnsafe) WebAssembly (Worker and SharedWorker: worker-globals.ts, first); render() validates; an untrusted INIT is ignored', () => {
         // run as stringified, with globalThis bound to a stand-in global (a real EventTarget), so the test realm is untouched
         const w = new EventTarget() as any;
         const fakeUrl = { createObjectURL: () => 'blob:x' };
@@ -260,7 +260,7 @@ describe('the strict worker prelude (unit; the e2e specs cover it in real worker
         const attached: unknown[] = [];
         const run = new Function('globalThis', `return (${inStrictWorker.toString()})`)(w);
         run({ attach: (port: unknown) => attached.push(port) }, { scriptUnsafe: false, maxRender: 10, maxTarget: 5, maxElements: 100, maxDepth: 10, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
-        expect(['Worker', 'SharedWorker', 'WebAssembly'].filter(name => name in w)).toEqual([]);
+        expect(['WebAssembly'].filter(name => name in w)).toEqual([]);
         expect('createObjectURL' in fakeUrl).toBe(false);
 
         const view = w.sandboxView;
@@ -307,9 +307,9 @@ describe('review C2 and C3: the strict worker prelude against hostile globals', 
 
     it('a name the prelude must remove but cannot is an error, not a silent pass (C2)', () => {
         const w = new EventTarget() as any;
-        Object.defineProperty(w, 'Worker', { value: function Worker() {}, writable: true, enumerable: true, configurable: false });
+        Object.defineProperty(w, 'WebAssembly', { value: {}, writable: true, enumerable: true, configurable: false });
         Object.assign(w, { URL: {} });
-        expect(() => start(w)).toThrowError(/could not remove Worker/);
+        expect(() => start(w)).toThrowError(/could not remove WebAssembly/);
     });
 
     it("writes to the prelude's lists never reach a setter on Array.prototype (C3)", () => {
