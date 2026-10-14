@@ -230,8 +230,9 @@ test('strict mode: a worker that renders 256 Ki characters and then loops is ter
     // the bound: 1.25 budgets after the last answer, plus slack, plus the host-thread stall the one render caused
     expect(termination.elapsed).toBeLessThan(DEADLINE + stall);
     // one render in flight bounds the host's stall to one apply: measured ≤ 10 ms (Chromium, out of process),
-    // 30–60 ms (Firefox), 0.36–0.47 s (WebKit) for this render; the bounds leave room for a loaded machine
-    const bound = { chromium: 250, firefox: 600, webkit: 1500 }[browserName]!;
+    // 30–60 ms (Firefox), 0.36–0.47 s (WebKit) for this render; the bounds leave room for a loaded machine. Chromium
+    // can keep the view in the host's process too (broad review 2026-10-14), so its bound is Firefox's
+    const bound = { chromium: 600, firefox: 600, webkit: 1500 }[browserName]!;
     expect(stall).toBeLessThan(bound);
     expect(Math.max(...roundTrips)).toBeLessThan(bound + 500);
 });
