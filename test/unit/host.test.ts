@@ -85,7 +85,7 @@ describe('the guest policy and frames built by the element (S15, S16)', () => {
 
   it('the default guest policy is exactly what it was before S16: empty fetch directives are left to default-src', async () => {
     const el = await mount();
-    expect(frames(el).policy).toBe("default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob: data:;");
+    expect(frames(el).policy).toBe("default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob:;");
     el.remove();
   });
 

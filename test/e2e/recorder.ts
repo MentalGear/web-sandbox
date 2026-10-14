@@ -65,6 +65,11 @@ const WEBSOCKET_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 export class Recorder {
     readonly hits: Hit[] = [];
+    /**
+     * TCP connections each listener accepted, request or not: a preconnect opens one and sends nothing (broad
+     * review PD3), so it is visible only here.
+     */
+    readonly connections = { allowed: 0, blocked: 0 };
     allowed = '';
     blocked = '';
     private servers: https.Server[] = [];
@@ -94,6 +99,8 @@ export class Recorder {
 
     clear() {
         this.hits.length = 0;
+        this.connections.allowed = 0;
+        this.connections.blocked = 0;
     }
 
     /** Paths that reached one listener, in order. */
@@ -126,6 +133,7 @@ export class Recorder {
             socket.on('error', () => this.sockets.delete(socket));
             socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
         });
+        httpsServer.on('connection', () => { this.connections[server]++; }); // TCP, before TLS
         this.servers.push(httpsServer);
         await new Promise<void>(resolve => httpsServer.listen(0, '127.0.0.1', resolve));
         return `https://127.0.0.1:${(httpsServer.address() as AddressInfo).port}`;

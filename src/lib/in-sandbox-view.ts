@@ -2,7 +2,7 @@ import { inSandboxFiles } from './in-sandbox-files';
 import { assertHashableScript, scriptHashSource } from './csp/script-hash';
 import { escapeAttribute } from './frame-documents';
 import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './markup-references';
-import { LINK_REL_KINDS, LOAD_KINDS, type KindRule } from './load-kinds';
+import { admits, LINK_REL_KINDS, LOAD_KINDS, type KindRule } from './load-kinds';
 
 /**
  * Strict mode (backlog S6, S13, S17; ADR-005): guest logic runs only in a worker, and the DOM frame — the
@@ -32,36 +32,206 @@ export const VIEW_RENDER_MAX_LENGTH = 262144;
 /** The longest element id a render may target. */
 export const VIEW_TARGET_MAX_LENGTH = 1024;
 
+/**
+ * The most elements the view's body may hold, and how deep they may nest below it (broad review 2026-10-14, ST2).
+ * A render that would leave the body with more, counted over the resulting document (the elements outside the target
+ * stay, the target's own are replaced), or nest deeper, counting the target's own depth, is refused before anything is
+ * inserted: dropped, and still acknowledged, so the next render applies. Renders accumulate across targets, so a
+ * per-render bound alone would not bound the document. Measured: one render of 45 000 elements stalls the host page
+ * 0.2–0.3 s on all three engines.
+ */
+export const VIEW_MAX_ELEMENTS = 50000;
+export const VIEW_MAX_DEPTH = 256;
+
 /** The events sandboxView.on() can subscribe to (ADR-005). */
 export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'] as const;
 
-/** Limits of one event's detail: every string, the ids of the target and its ancestors, the form fields. */
-export const VIEW_EVENT_LIMITS = { maxString: 65536, maxIds: 32, maxFields: 1000 } as const;
+/**
+ * Limits of one event's detail: every string, the ids of the target and its ancestors, the form fields, and all its
+ * strings together (broad review ST3: each bound alone let 1000 fields of 64 Ki characters through). A detail that was
+ * cut by any of them says so: `truncated: true`.
+ */
+export const VIEW_EVENT_LIMITS = { maxString: 65536, maxIds: 32, maxFields: 1000, maxTotal: VIEW_RENDER_MAX_LENGTH } as const;
 
-/** The name of the worker's one-time "the entry ran to its end" marker, called by the line after the entry. */
-export const ENTRY_DONE_NAME = '__sandboxEntryRan';
+/** The prefix of the worker's one-time "the entry ran to its end" marker; each build appends 128 random bits (entryDoneName). */
+export const ENTRY_DONE_PREFIX = '__sandboxEntryRan_';
 
 /**
- * Elements the renderer removes, with everything inside them, before any rendered markup is inserted
- * (amendment A1): every nested browsing context and every document-level control. So strict mode renders
- * no nested frame at all, no script of any namespace, no <meta> (refresh, referrer, CSP), no <base>, and
- * no inert subtree (<template>, <noscript>) that could later become live. <link> is handled separately:
- * it stays only as a stylesheet or icon that names a file the view minted.
+ * The marker's name for one build (broad review ST4). The line after the entry calls it; the prelude defines it on the
+ * global object. An entry that closes its own function scope could declare a top-level `let` or `const` of the marker's
+ * name, which the trailer's call would then resolve to; with a name drawn at build time, after the entry's text was
+ * fixed, it cannot name it.
+ */
+export function entryDoneName(): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    let hex = '';
+    for (const byte of bytes) hex += byte.toString(16).padStart(2, '0');
+    return ENTRY_DONE_PREFIX + hex;
+}
+
+/**
+ * The only file types the view mints a URL for (broad review ST1). A user can open whatever a rendered element
+ * shows in a new tab ("open image in new tab", "open video in new tab"): a browser-initiated navigation the view
+ * cannot cancel, to a top-level document outside the sandbox and its policy. A registered SVG shown as an image
+ * opened there as an SVG document and ran its script (Chromium, Firefox), and so would any type an engine renders as
+ * a document: HTML, XML, and every `+xml` type, which the default mode's prefixes (`image/`, `audio/`, `video/`,
+ * `font/`) admit. So strict mode lists, per kind of load the view makes, the types that are never a document; a
+ * file of any other type gets no URL in the view, wherever it is named (markup, a stylesheet's url()), and its
+ * references stay as written, failing closed. Inline <svg> is the way to show vector graphics.
+ */
+export const VIEW_FILE_TYPES = [
+    'text/css',
+    'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'image/apng', 'image/bmp', 'image/x-icon', 'image/vnd.microsoft.icon',
+    'font/woff', 'font/woff2', 'font/ttf', 'font/otf', 'font/collection', 'font/sfnt',
+    'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/flac', 'audio/webm', 'audio/aac',
+    'video/mp4', 'video/webm', 'video/ogg',
+    'text/vtt',
+] as const;
+
+/** Whether the view mints a URL for a file of `type` (VIEW_FILE_TYPES). */
+export function isViewFileType(type: string): boolean {
+    return (VIEW_FILE_TYPES as readonly string[]).includes(type);
+}
+
+/**
+ * The view's own table of load kinds: derived from the one table (load-kinds.ts) for the kinds of load the view makes
+ * (no script, no fetch), each admitting exactly the VIEW_FILE_TYPES the table admits for it, and no prefix.
+ */
+export const VIEW_LOAD_KINDS: Readonly<Record<string, KindRule>> = Object.fromEntries((['style', 'image', 'font', 'media', 'track'] as const)
+    .map(kind => [kind, { directive: LOAD_KINDS[kind].directive, types: VIEW_FILE_TYPES.filter(type => admits(kind, type)), prefixes: [] }]));
+
+/**
+ * The renderer is an allowlist (broad review 2026-10-14): an element or attribute it does not list is gone before
+ * insertion. A list of what to remove had to know every mechanism a document has (F1, SMIL, and ST2, SVG <use>, came
+ * from what such a list left open); this one has to know only what a guest's UI needs.
  *
- * And every SVG animation element (focused review 2026-10-14, F1): the renderer checks attributes once, before
- * insertion, so it holds only if no attribute can change afterwards. Nothing runs in the view and CSS cannot set
- * an attribute, but SMIL can: a <set> or <animate> inside a rendered link animated its href back to the guest's
- * URL after the renderer had made it INERT_HREF (getAttribute and baseVal kept the constant, animVal and
- * Chromium's accessibility tree had the guest URL, in all three engines), and one inside an <image> loaded a URL
- * the renderer never saw. Removing the elements closes every such attribute at once, the ones the renderer checks
- * (href, xlink:href, src, the blob: rule) and any it may check later: the SVG 2 animation elements (animate, set,
- * animateMotion, animateTransform, discard), SVG 1.1's animateColor, and SVG Tiny's animation; mpath only names
- * a path for animateMotion and goes with it. Compared case-insensitively (an SVG element keeps its camelCase).
+ *   HTML    the elements below; any other HTML element is UNWRAPPED (its children take its place and are checked in
+ *           turn), except RENDER_REMOVED_ELEMENTS, which go with everything inside them: nested browsing contexts,
+ *           scripts, document-level controls, and the elements whose content is raw text or a template. Unwrapping
+ *           keeps the text of an unknown or obsolete element (center, font, marquee …) and loses nothing a guest could
+ *           not render with listed elements; it never reparses (no serialisation happens), so it cannot change what
+ *           the children are. A valid custom element name (with a hyphen) is kept as the inert unknown element it is:
+ *           no script can define it in the view.
+ *   SVG     shapes, text, structure, gradients, clip paths, masks and patterns. Any other SVG element is REMOVED with its
+ *           content: nothing in an unknown SVG element renders anyway, and the ones left out instance or load content
+ *           (use, marker, image, feImage, foreignObject), animate attributes (F1), or cost what their parameters say
+ *           rather than what the markup weighs (filter primitives: one feMorphology of 150 characters stalled WebKit's
+ *           host thread for 6 s, measured). use and marker instance referenced content per reference and nest: 1–1.5 KB
+ *           of either stalled the host page for 3–17 s on all three engines (ST2).
+ *   MathML  the MathML Core presentation elements; others are removed with their content (annotation-xml can hold
+ *           HTML).
+ *
+ * Attributes: the global ones of each namespace, data-* and aria-*, and per HTML element the ones it needs. Never an
+ * event handler, a form target (action, formaction, method, target), popover or command invokers, autofocus, or a
+ * URL attribute other than the ones below; SVG paint and clip references (fill, stroke, clip-path, mask) name only
+ * fragments of this document (no ':' and no CSS escape). The URL attributes the view loads (RENDER_URL_ATTRIBUTES) keep
+ * only an http(s) URL, a URL the view minted, or a relative one (which resolves against the view's about:blank base to
+ * nothing): never data:, javascript: or another scheme.
+ */
+export const RENDER_ELEMENTS = {
+    html: [
+        'address', 'article', 'aside', 'footer', 'header', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hgroup', 'main', 'nav', 'section', 'search',
+        'blockquote', 'dd', 'div', 'dl', 'dt', 'figcaption', 'figure', 'hr', 'li', 'menu', 'ol', 'p', 'pre', 'ul',
+        'a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'dfn', 'em', 'i', 'kbd', 'mark', 'q', 'rp', 'rt', 'ruby',
+        's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var', 'wbr', 'del', 'ins',
+        'img', 'picture', 'source', 'video', 'audio', 'track', 'map', 'area',
+        'table', 'caption', 'colgroup', 'col', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th',
+        'form', 'label', 'input', 'button', 'select', 'datalist', 'optgroup', 'option', 'textarea', 'output', 'progress', 'meter',
+        'fieldset', 'legend', 'details', 'summary', 'dialog',
+        'style', 'link',
+    ],
+    svg: [
+        'svg', 'g', 'defs', 'symbol', 'title', 'desc', 'style', 'a',
+        'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'path', 'text', 'tspan',
+        'linearGradient', 'radialGradient', 'stop', 'clipPath', 'mask', 'pattern',
+    ],
+    mathml: [
+        'math', 'semantics', 'annotation', 'merror', 'mfrac', 'mi', 'mmultiscripts', 'mn', 'mo', 'mover', 'mpadded', 'mphantom', 'mprescripts',
+        'mroot', 'mrow', 'ms', 'mspace', 'msqrt', 'mstyle', 'msub', 'msubsup', 'msup', 'mtable', 'mtd', 'mtext', 'mtr', 'munder', 'munderover', 'none',
+    ],
+} as const;
+
+/**
+ * HTML elements removed with everything inside them (A1): every nested browsing context and plugin, every script,
+ * every document-level control (meta, base, title) and every element whose content is raw text or inert markup that
+ * could later become live (noscript, noembed, noframes, template). Every other HTML element outside RENDER_ELEMENTS is
+ * unwrapped; every SVG or MathML element outside it is removed with its content.
  */
 export const RENDER_REMOVED_ELEMENTS = [
-    'iframe', 'frame', 'frameset', 'object', 'embed', 'portal', 'fencedframe',
-    'script', 'meta', 'base', 'noscript', 'template',
-    'animate', 'set', 'animateMotion', 'animateTransform', 'animateColor', 'discard', 'animation',
+    'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'portal', 'fencedframe',
+    'script', 'noscript', 'noembed', 'noframes', 'template', 'meta', 'base', 'title',
+] as const;
+
+export const RENDER_ATTRIBUTES = {
+    /** On every HTML element, besides data-* and aria-*. */
+    html: ['id', 'class', 'style', 'title', 'lang', 'dir', 'hidden', 'tabindex', 'role', 'translate', 'inert', 'spellcheck', 'inputmode', 'enterkeyhint', 'autocapitalize'],
+    /** Per HTML element. */
+    htmlElements: {
+        a: ['href', 'rel', 'referrerpolicy', 'hreflang', 'type'],
+        area: ['href', 'rel', 'referrerpolicy', 'alt', 'shape', 'coords'],
+        img: ['src', 'srcset', 'sizes', 'alt', 'width', 'height', 'loading', 'decoding', 'fetchpriority', 'usemap', 'ismap', 'referrerpolicy'],
+        source: ['src', 'srcset', 'sizes', 'media', 'type', 'width', 'height'],
+        video: ['src', 'poster', 'controls', 'autoplay', 'loop', 'muted', 'playsinline', 'preload', 'width', 'height', 'controlslist', 'disablepictureinpicture', 'disableremoteplayback'],
+        audio: ['src', 'controls', 'autoplay', 'loop', 'muted', 'preload', 'controlslist', 'disableremoteplayback'],
+        track: ['src', 'kind', 'srclang', 'label', 'default'],
+        map: ['name'],
+        link: ['rel', 'href', 'type', 'media', 'sizes', 'referrerpolicy'],
+        style: ['media'],
+        ol: ['reversed', 'start', 'type'],
+        li: ['value'],
+        td: ['colspan', 'rowspan', 'headers'],
+        th: ['colspan', 'rowspan', 'headers', 'scope', 'abbr'],
+        col: ['span'],
+        colgroup: ['span'],
+        time: ['datetime'],
+        data: ['value'],
+        del: ['datetime'],
+        ins: ['datetime'],
+        form: ['name', 'autocomplete', 'novalidate'],
+        label: ['for'],
+        input: ['type', 'name', 'value', 'checked', 'disabled', 'readonly', 'required', 'placeholder', 'min', 'max', 'step', 'minlength', 'maxlength', 'pattern', 'size', 'multiple', 'accept', 'autocomplete', 'list', 'form', 'dirname', 'alt'],
+        button: ['type', 'name', 'value', 'disabled', 'form'],
+        select: ['name', 'multiple', 'size', 'disabled', 'required', 'form', 'autocomplete'],
+        option: ['value', 'selected', 'disabled', 'label'],
+        optgroup: ['label', 'disabled'],
+        textarea: ['name', 'rows', 'cols', 'placeholder', 'disabled', 'readonly', 'required', 'maxlength', 'minlength', 'wrap', 'form', 'autocomplete', 'dirname'],
+        fieldset: ['name', 'disabled', 'form'],
+        output: ['for', 'name', 'form'],
+        progress: ['value', 'max'],
+        meter: ['value', 'min', 'max', 'low', 'high', 'optimum'],
+        details: ['open', 'name'],
+        dialog: ['open'],
+    } as Readonly<Record<string, readonly string[]>>,
+    /** On every SVG element, besides data-* and aria-*: structure, geometry and presentation. */
+    svg: [
+        'id', 'class', 'style', 'lang', 'tabindex', 'role', 'xml:lang', 'xml:space', 'xmlns', 'xmlns:xlink', 'transform', 'transform-origin',
+        'x', 'y', 'width', 'height', 'cx', 'cy', 'r', 'rx', 'ry', 'x1', 'y1', 'x2', 'y2', 'd', 'points', 'pathLength', 'viewBox', 'preserveAspectRatio',
+        'dx', 'dy', 'rotate', 'textLength', 'lengthAdjust',
+        'fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-linecap', 'stroke-linejoin', 'stroke-miterlimit',
+        'stroke-dasharray', 'stroke-dashoffset', 'opacity', 'color', 'display', 'visibility', 'overflow',
+        'font-family', 'font-size', 'font-size-adjust', 'font-weight', 'font-style', 'font-variant', 'font-stretch', 'text-anchor', 'dominant-baseline',
+        'alignment-baseline', 'baseline-shift', 'letter-spacing', 'word-spacing', 'text-decoration', 'writing-mode', 'direction', 'unicode-bidi',
+        'clip-path', 'clip-rule', 'mask', 'stop-color', 'stop-opacity', 'color-interpolation', 'shape-rendering', 'text-rendering', 'vector-effect',
+        'paint-order', 'pointer-events', 'mix-blend-mode', 'isolation',
+        'gradientUnits', 'gradientTransform', 'spreadMethod', 'fx', 'fy', 'fr', 'offset',
+        'clipPathUnits', 'maskUnits', 'maskContentUnits', 'patternUnits', 'patternContentUnits', 'patternTransform', 'media', 'type',
+    ],
+    /** Only on SVG <a>: the link (its href becomes INERT_HREF) and its referrer and rel rules. */
+    svgLink: ['href', 'xlink:href', 'rel', 'referrerpolicy'],
+    /** SVG attributes that may reference a paint server, clip path or mask: only a fragment of this document. */
+    svgLocalReferences: ['fill', 'stroke', 'clip-path', 'mask'],
+    /** On every MathML element, besides data-* and aria-*. An href makes any MathML element a link (it becomes INERT_HREF). */
+    mathml: [
+        'id', 'class', 'style', 'dir', 'tabindex', 'href', 'xmlns', 'displaystyle', 'mathbackground', 'mathcolor', 'mathsize', 'mathvariant', 'scriptlevel',
+        'display', 'alttext', 'fence', 'form', 'largeop', 'lspace', 'maxsize', 'minsize', 'movablelimits', 'rspace', 'separator', 'stretchy',
+        'symmetric', 'accent', 'accentunder', 'linethickness', 'depth', 'height', 'width', 'voffset', 'columnspan', 'rowspan', 'encoding',
+    ],
+} as const;
+
+/** [element, attribute] pairs (HTML) that hold a URL the view loads: http(s), a URL the view minted, or relative only. srcset is a list. */
+export const RENDER_URL_ATTRIBUTES = [
+    ['img', 'src'], ['img', 'srcset'], ['source', 'src'], ['source', 'srcset'], ['video', 'src'], ['video', 'poster'],
+    ['audio', 'src'], ['track', 'src'], ['link', 'href'],
 ] as const;
 
 /**
@@ -83,14 +253,23 @@ export const RENDER_REMOVED_ELEMENTS = [
  */
 export const INERT_HREF = 'about:blank#';
 
+/** The only rel tokens a kept <link> may have. */
+const LINK_RELATIONS = ['stylesheet', 'icon'] as const;
+
 export interface RenderRules {
-    /** Local names removed with their subtree (RENDER_REMOVED_ELEMENTS). */
+    /** The elements kept, per namespace (RENDER_ELEMENTS). */
+    elements: { readonly html: readonly string[]; readonly svg: readonly string[]; readonly mathml: readonly string[] };
+    /** HTML elements removed with their subtree (RENDER_REMOVED_ELEMENTS); other unlisted HTML elements are unwrapped. */
     removed: readonly string[];
+    /** The attributes kept (RENDER_ATTRIBUTES). */
+    attributes: typeof RENDER_ATTRIBUTES;
+    /** [element, attribute] pairs that hold a URL the view loads (RENDER_URL_ATTRIBUTES). */
+    urls: readonly (readonly [string, string])[];
     /** [element, attribute, kind] triples that may name a registered file (markup-references.ts, minus <script src>). */
     references: readonly (readonly [string, string, string])[];
-    /** Which file types each kind of load admits: the one table (load-kinds.ts), as data. */
+    /** Which file types each kind of load admits in the view (VIEW_LOAD_KINDS, derived from load-kinds.ts). */
     kinds: Readonly<Record<string, KindRule>>;
-    /** The kind of load of each <link> rel token (load-kinds.ts). */
+    /** The kind of load of each rel token a kept <link> may have (load-kinds.ts's LINK_REL_KINDS for linkRelations). */
     linkRelKinds: Readonly<Record<string, string>>;
     /** The only rel tokens a kept <link> may have. */
     linkRelations: readonly string[];
@@ -103,75 +282,114 @@ export interface RenderRules {
     /** The URL references resolve against, and the root of the files' URL space (markup-references.ts). */
     documentUrl: string;
     virtualRoot: string;
+    /** VIEW_MAX_ELEMENTS and VIEW_MAX_DEPTH: the view's body never holds more, nor nests deeper. */
+    maxElements: number;
+    maxDepth: number;
 }
 
 export const RENDER_RULES: RenderRules = {
+    elements: RENDER_ELEMENTS,
     removed: RENDER_REMOVED_ELEMENTS,
+    attributes: RENDER_ATTRIBUTES,
+    urls: RENDER_URL_ATTRIBUTES,
     // derived, not copied: the table markup-references.ts resolves in default mode. Scripts never survive
     // the renderer, so <script src> names nothing here.
     references: REFERENCES.filter(([element]) => element !== 'script'),
-    // the same table as resolution in default mode and the policy (load-kinds.ts, focused review W1)
-    kinds: LOAD_KINDS,
-    linkRelKinds: LINK_REL_KINDS,
-    linkRelations: ['stylesheet', 'icon'],
+    // the view's kinds, derived from the one table (load-kinds.ts, focused review W1; broad review ST1)
+    kinds: VIEW_LOAD_KINDS,
+    // derived from load-kinds.ts's LINK_REL_KINDS (broad review I1): a kept <link> has only these rel tokens
+    linkRelKinds: Object.fromEntries(LINK_RELATIONS.map(rel => [rel, LINK_REL_KINDS[rel]!])),
+    linkRelations: LINK_RELATIONS,
     anchorRelations: ['noopener', 'noreferrer', 'nofollow'],
     referrerElements: ['a', 'area', 'img', 'link'],
     inertHref: INERT_HREF,
     documentUrl: VIRTUAL_DOCUMENT_URL,
     virtualRoot: VIRTUAL_ROOT,
+    maxElements: VIEW_MAX_ELEMENTS,
+    maxDepth: VIEW_MAX_DEPTH,
 };
 
 /**
- * The renderer (A1, A8), run by the view on a freshly parsed template fragment BEFORE any of it is
- * inserted. Stringified into the view bootstrap; self-contained. It never clones or imports a node (A2):
- * the caller moves the fragment's own nodes into the document, which never runs or even prepares a
- * script (research 15, P6) — and there are none left anyway.
+ * The renderer (A1, A8; broad review 2026-10-14: an allowlist), run by the view on a freshly parsed template fragment
+ * BEFORE any of it is inserted. Stringified into the view bootstrap; self-contained. It never clones or imports a node
+ * (A2): it moves the fragment's own nodes when it unwraps an element, and the caller moves the fragment into the
+ * document, which never runs or even prepares a script (research 15, P6) — and there are none left anyway.
  *
- *   1. every element named in rules.removed goes, with its subtree, whatever its namespace and case (SVG animation
- *      elements among them: nothing can change an attribute after this function checked it, F1);
- *   2. an HTML element's file reference (rules.references) that names a registered file, resolved like a
- *      browser would against rules.documentUrl, becomes the view's own blob: URL for it (`fileOf`), but only
- *      when the file's type is admitted for the kind of load the element makes (rules.kinds, the one table of
- *      load-kinds.ts; a <link> by its rel tokens): an <img> never names a stylesheet, a stylesheet <link> never
- *      an image (focused review W1);
- *   3. a <link> stays only if all its rel tokens are in rules.linkRelations and its href is a URL the
- *      view minted;
- *   4. any attribute whose value contains "blob:" (after removing the tabs and newlines the URL parser
- *      ignores) goes, unless it is a file-reference attribute holding exactly a URL the view minted (A8);
- *   5. ping goes; referrerpolicy, where present, becomes no-referrer, and is set on rules.referrerElements;
- *      rel on <a>/<area> keeps only rules.anchorRelations (A1);
- *   6. every href that makes a hyperlink becomes rules.inertHref (S24): HTML <a> and <area>, SVG <a> (href and
- *      xlink:href) and any MathML element (MathML Core makes an href on any element a link). Other hrefs are
- *      resources, not links (an SVG <use href="#icon">), and keep their value under the steps above.
+ * One walk, in document order, decides each element once:
+ *   1. an element outside rules.elements goes: an HTML one is unwrapped (its children take its place and are walked
+ *      next), unless it is in rules.removed or is not HTML at all, which go with their subtree; a valid custom
+ *      element name is kept;
+ *   2. a kept <link> must have rel tokens, all in rules.linkRelations (else it goes);
+ *   3. an HTML element's file reference (rules.references) that names a registered file, resolved like a browser
+ *      would against rules.documentUrl, becomes the view's own blob: URL for it (`fileOf`), but only when the file's
+ *      type is admitted for the kind of load the element makes (rules.kinds; a <link> by its rel tokens);
+ *   4. a <link> stays only if its href is a URL the view minted;
+ *   5. every href that makes a hyperlink becomes rules.inertHref (S24): HTML <a> and <area>, SVG <a> (href and
+ *      xlink:href) and any MathML element;
+ *   6. every attribute outside rules.attributes goes; so does any attribute whose value contains "blob:" (after
+ *      removing the tabs and newlines the URL parser ignores) unless it is a file-reference attribute holding exactly
+ *      a URL the view minted (A8), a URL attribute (rules.urls) whose URL is not http(s), minted or relative, and an
+ *      SVG paint or clip reference that is not a fragment; referrerpolicy becomes no-referrer, and is set on
+ *      rules.referrerElements; rel on <a>/<area> keeps only rules.anchorRelations (A1).
+ * Kept elements are counted against `room` (what is left of VIEW_MAX_ELEMENTS and VIEW_MAX_DEPTH once the elements
+ * outside the target and the target's own depth are accounted for): past either it throws, before anything was
+ * inserted, a RangeError whose message names the limit (VIEW_MAX_ELEMENTS or VIEW_MAX_DEPTH). Returns the number of
+ * elements kept.
  *
- * Every element is read and changed through Element.prototype's own methods and getters, never through the
- * element: a <form> exposes its controls as named properties that override built-ins, so in
- * `<form><input name="getAttribute">` the form's getAttribute is the input. Should anything still throw, the
- * caller inserts nothing (fail closed).
+ * Every node is read and changed through the prototypes' own methods and getters, never through the node: a <form>
+ * exposes its controls as named properties that override built-ins, so in `<form><input name="getAttribute">` the
+ * form's getAttribute is the input. Should anything still throw, the caller inserts nothing (fail closed).
  */
-export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string) => { url: string; type: string } | null, isMinted: (url: string) => boolean, rules: RenderRules): void {
+export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string) => { url: string; type: string } | null, isMinted: (url: string) => boolean, rules: RenderRules, room?: { elements: number; depth: number }): number {
     const HTML = 'http://www.w3.org/1999/xhtml';
+    const SVG = 'http://www.w3.org/2000/svg';
+    const MATHML = 'http://www.w3.org/1998/Math/MathML';
+    const XLINK = 'http://www.w3.org/1999/xlink';
     const call = Reflect.apply;
     const E = Element.prototype;
-    const localNameOf = Object.getOwnPropertyDescriptor(E, 'localName')!.get!;
-    const namespaceOf = Object.getOwnPropertyDescriptor(E, 'namespaceURI')!.get!;
+    const N = Node.prototype;
+    const getter = (proto: object, name: string) => Object.getOwnPropertyDescriptor(proto, name)!.get!;
+    const localNameOf = getter(E, 'localName');
+    const namespaceOf = getter(E, 'namespaceURI');
+    const firstElementOf = getter(E, 'firstElementChild');
+    const firstElementOfFragment = getter(DocumentFragment.prototype, 'firstElementChild');
+    const nextElementOf = getter(E, 'nextElementSibling');
+    const parentOf = getter(N, 'parentNode');
+    const firstChildOf = getter(N, 'firstChild');
     const has = (element: Element, name: string): boolean => call(E.hasAttribute, element, [name]);
     const get = (element: Element, name: string): string | null => call(E.getAttribute, element, [name]);
     const set = (element: Element, name: string, value: string) => call(E.setAttribute, element, [name, value]);
     const drop = (element: Element, name: string) => call(E.removeAttribute, element, [name]);
-    const remove = (element: Element) => call(E.remove, element, []);
-    const SVG = 'http://www.w3.org/2000/svg';
-    const MATHML = 'http://www.w3.org/1998/Math/MathML';
-    const XLINK = 'http://www.w3.org/1999/xlink';
-    const isHyperlink = (namespace: unknown, name: string) => (namespace === HTML && (name === 'a' || name === 'area'))
-        || (namespace === SVG && name === 'a')
-        || namespace === MATHML;
+    const own = Object.prototype.hasOwnProperty;
+    const limit = room || { elements: rules.maxElements, depth: rules.maxDepth };
+    // lookups without a prototype: an element or attribute name is never an inherited key
+    const setOf = (names: readonly string[]) => {
+        const out: Record<string, true> = Object.create(null);
+        for (let i = 0; i < names.length; i++) out[names[i]!] = true;
+        return out;
+    };
+    const htmlElements = setOf(rules.elements.html);
+    const svgElements = setOf(rules.elements.svg);
+    const mathElements = setOf(rules.elements.mathml);
+    const removedElements = setOf(rules.removed);
+    const htmlAttributes = setOf(rules.attributes.html);
+    const svgAttributes = setOf(rules.attributes.svg);
+    const svgLinkAttributes = setOf(rules.attributes.svgLink);
+    const svgLocal = setOf(rules.attributes.svgLocalReferences);
+    const mathAttributes = setOf(rules.attributes.mathml);
+    const perElement: Record<string, Record<string, true>> = Object.create(null);
+    for (const name in rules.attributes.htmlElements) {
+        if (call(own, rules.attributes.htmlElements, [name])) perElement[name] = setOf(rules.attributes.htmlElements[name]!);
+    }
+    const customReserved = setOf(['annotation-xml', 'color-profile', 'font-face', 'font-face-src', 'font-face-uri', 'font-face-format', 'font-face-name', 'missing-glyph']);
+    const isCustom = (name: string) => /^[a-z][a-z0-9._-]*-[a-z0-9._-]*$/.test(name) && !customReserved[name];
+
     const tokens = (value: string | null) => (value || '').toLowerCase().split(/[\t\n\f\r ]+/).filter((token) => token !== '');
     // admitsAll of load-kinds.ts over the table the rules carry: every kind admits the type, and there is one
     const admitted = (kinds: string[], type: string) => {
         if (kinds.length === 0) return false;
         for (let k = 0; k < kinds.length; k++) {
-            const rule = Object.prototype.hasOwnProperty.call(rules.kinds, kinds[k]!) ? rules.kinds[kinds[k]!]! : null;
+            const rule = call(own, rules.kinds, [kinds[k]!]) ? rules.kinds[kinds[k]!]! : null;
             if (!rule) return false;
             let ok = rule.types.indexOf(type) >= 0;
             for (let p = 0; !ok && p < rule.prefixes.length; p++) ok = type.indexOf(rule.prefixes[p]!) === 0;
@@ -193,75 +411,143 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         const file = fileOf(path);
         return file && admitted(kinds, file.type) ? file.url : null;
     };
-    // a <link>'s kinds of load: one per rel token that loads (rules.linkRelKinds)
-    const linkKinds = (element: Element) => {
-        const kinds: string[] = [];
-        const rel = tokens(get(element, 'rel'));
-        for (let t = 0; t < rel.length; t++) {
-            if (Object.prototype.hasOwnProperty.call(rules.linkRelKinds, rel[t]!) && kinds.indexOf(rules.linkRelKinds[rel[t]!]!) < 0) kinds.push(rules.linkRelKinds[rel[t]!]!);
-        }
-        return kinds;
-    };
-    const isReference = (element: string, attribute: string) => {
-        for (let i = 0; i < rules.references.length; i++) {
-            if (rules.references[i]![0] === element && rules.references[i]![1] === attribute) return true;
+    const isPair = (list: readonly (readonly string[])[], element: string, attribute: string) => {
+        for (let i = 0; i < list.length; i++) {
+            if (list[i]![0] === element && list[i]![1] === attribute) return true;
         }
         return false;
     };
-
-    const removed: string[] = [];
-    for (let i = 0; i < rules.removed.length; i++) removed.push(rules.removed[i]!.toLowerCase());
-    const elements = fragment.querySelectorAll('*');
-    for (let i = 0; i < elements.length; i++) {
-        const element = elements[i]!;
-        const name = String(call(localNameOf, element, [])).toLowerCase();
-        if (removed.indexOf(name) >= 0) {
-            remove(element);
-            continue;
+    // A URL the view would load: http(s), one it minted, or relative (against the view's about:blank base it resolves
+    // to nothing). The scheme is read the way the URL parser reads it: outer C0 controls and spaces stripped, tabs and
+    // newlines removed.
+    const urlAllowed = (value: string) => {
+        const url = value.replace(/^[\u0000- ]+|[\u0000- ]+$/g, '').replace(/[\t\n\r]/g, '');
+        const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(url);
+        if (!scheme) return true;
+        const name = scheme[1]!.toLowerCase();
+        return name === 'https' || name === 'http' || (name === 'blob' && isMinted(value));
+    };
+    // srcset: every candidate's URL starts at the start or after a comma, and its scheme holds neither, so checking the
+    // first token after every comma checks every candidate (a URL that itself holds a comma is only checked more)
+    const srcsetAllowed = (value: string) => {
+        const pieces = value.split(',');
+        for (let i = 0; i < pieces.length; i++) {
+            const url = pieces[i]!.replace(/^[\t\n\f\r ]+/, '').split(/[\t\n\f\r ]/)[0]!;
+            if (url !== '' && !urlAllowed(url)) return false;
         }
-        const html = call(namespaceOf, element, []) === HTML;
+        return true;
+    };
+    const attributeAllowed = (namespace: unknown, element: string, attribute: string) => {
+        if (attribute.indexOf('data-') === 0 || attribute.indexOf('aria-') === 0) return true;
+        if (namespace === HTML) return htmlAttributes[attribute] === true || (perElement[element] !== undefined && perElement[element]![attribute] === true);
+        if (namespace === SVG) return svgAttributes[attribute] === true || (element === 'a' && svgLinkAttributes[attribute] === true);
+        return namespace === MATHML && mathAttributes[attribute] === true;
+    };
+    const KEEP = 0, REMOVE = 1, UNWRAP = 2;
+    const verdict = (namespace: unknown, name: string) => {
+        if (namespace === HTML) {
+            if (removedElements[name]) return REMOVE;
+            return htmlElements[name] || isCustom(name) ? KEEP : UNWRAP;
+        }
+        if (namespace === SVG) return svgElements[name] ? KEEP : REMOVE;
+        if (namespace === MATHML) return mathElements[name] ? KEEP : REMOVE;
+        return REMOVE;
+    };
+
+    // Cleans a kept element; false when it must go after all (a <link> that names no minted file).
+    const clean = (element: Element, namespace: unknown, name: string): boolean => {
+        const html = namespace === HTML;
+        let linkKinds: string[] = [];
+        if (html && name === 'link') {
+            const rel = tokens(get(element, 'rel'));
+            for (let t = 0; t < rel.length; t++) {
+                if (rules.linkRelations.indexOf(rel[t]!) < 0) return false;
+                const kind = rules.linkRelKinds[rel[t]!]!;
+                if (linkKinds.indexOf(kind) < 0) linkKinds.push(kind);
+            }
+            if (rel.length === 0) return false;
+        }
         if (html) {
             for (let r = 0; r < rules.references.length; r++) {
                 const [tag, attribute, kind] = rules.references[r]!;
                 if (tag !== name || !has(element, attribute)) continue;
-                const url = resolve(get(element, attribute) || '', kind === 'link' ? linkKinds(element) : [kind]);
+                const url = resolve(get(element, attribute) || '', kind === 'link' ? linkKinds : [kind]);
                 if (url) set(element, attribute, url);
             }
+            if (name === 'link' && !isMinted(get(element, 'href') || '')) return false;
         }
-        if (name === 'link') {
-            const rel = tokens(get(element, 'rel'));
-            const kept = html && rel.length > 0 && rel.every((token) => rules.linkRelations.indexOf(token) >= 0) && isMinted(get(element, 'href') || '');
-            if (!kept) {
-                remove(element);
-                continue;
-            }
-        }
-        // step 6: a hyperlink keeps being a link, but its href is the constant, never the guest's URL (S24)
-        const namespace = call(namespaceOf, element, []);
-        if (isHyperlink(namespace, name)) {
+        // a hyperlink keeps being a link, but its href is the constant, never the guest's URL (S24)
+        if ((html && (name === 'a' || name === 'area')) || (namespace === SVG && name === 'a') || namespace === MATHML) {
             if (has(element, 'href')) set(element, 'href', rules.inertHref);
             if (namespace === SVG && call(E.hasAttributeNS, element, [XLINK, 'href'])) call(E.setAttributeNS, element, [XLINK, 'xlink:href', rules.inertHref]);
         }
         const names: string[] = call(E.getAttributeNames, element, []);
         for (let a = 0; a < names.length; a++) {
             const attribute = names[a]!;
-            const lower = attribute.toLowerCase();
             const value = get(element, attribute) || '';
-            if (lower === 'ping') {
-                drop(element, attribute);
-                continue;
-            }
-            if (/blob:/i.test(value.replace(/[\t\n\r]/g, '')) && !(html && isReference(name, lower) && isMinted(value))) {
-                drop(element, attribute);
-                continue;
-            }
-            if (lower === 'referrerpolicy') set(element, attribute, 'no-referrer');
+            const keep = attributeAllowed(namespace, name, attribute)
+                && !(/blob:/i.test(value.replace(/[\t\n\r]/g, '')) && !(html && isPair(rules.references, name, attribute) && isMinted(value)))
+                && !(html && isPair(rules.urls, name, attribute) && !(attribute === 'srcset' ? srcsetAllowed(value) : urlAllowed(value)))
+                && !(namespace === SVG && svgLocal[attribute] && /[:\\]/.test(value));
+            if (!keep) drop(element, attribute);
+            else if (attribute === 'referrerpolicy') set(element, attribute, 'no-referrer');
         }
         if (rules.referrerElements.indexOf(name) >= 0) set(element, 'referrerpolicy', 'no-referrer');
         if ((name === 'a' || name === 'area') && has(element, 'rel')) {
             set(element, 'rel', tokens(get(element, 'rel')).filter((token) => rules.anchorRelations.indexOf(token) >= 0).join(' '));
         }
+        return true;
+    };
+
+    // The walk: depth first, in document order, through element children only (text needs no decision). `depth` is
+    // the current element's depth below the fragment.
+    let kept = 0;
+    let depth = 1;
+    let node: Element | null = call(firstElementOfFragment, fragment, []);
+    // the next element after `from` and its subtree, climbing out of finished parents
+    const after = (from: Element): Element | null => {
+        for (let n: Element = from; ;) {
+            const next = call(nextElementOf, n, []);
+            if (next) return next;
+            const parent = call(parentOf, n, []);
+            if (!parent || parent === fragment) return null;
+            n = parent;
+            depth--;
+        }
+    };
+    while (node) {
+        const element: Element = node;
+        const namespace = call(namespaceOf, element, []);
+        const name = String(call(localNameOf, element, []));
+        let decision = verdict(namespace, name);
+        if (decision === KEEP && !clean(element, namespace, name)) decision = REMOVE;
+        if (decision === KEEP) {
+            kept++;
+            if (kept > limit.elements) throw new RangeError('VIEW_MAX_ELEMENTS');
+            if (depth > limit.depth) throw new RangeError('VIEW_MAX_DEPTH');
+            const child = call(firstElementOf, element, []);
+            if (child) {
+                node = child;
+                depth++;
+            } else {
+                node = after(element);
+            }
+            continue;
+        }
+        if (decision === REMOVE) {
+            node = after(element);
+            call(E.remove, element, []);
+            continue;
+        }
+        // UNWRAP: the children take the element's place (moved, never cloned) and are walked next, at its depth
+        const first = call(firstElementOf, element, []);
+        const next = first ? null : after(element);
+        const parent = call(parentOf, element, []);
+        for (let child = call(firstChildOf, element, []); child; child = call(firstChildOf, element, [])) call(N.insertBefore, parent, [child, element]);
+        call(E.remove, element, []);
+        node = first || next;
     }
+    return kept;
 }
 
 /** What the view bootstrap is given, as one literal in its (constant) text. */
@@ -270,7 +556,7 @@ export interface ViewOptions {
     maxRender: number;
     maxTarget: number;
     violationLimit: number;
-    events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number };
+    events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
 }
 
 /**
@@ -305,6 +591,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const E = Element.prototype;
     const D = Document.prototype;
     const containsNode = Node.prototype.contains;
+    const lengthOf = getter(HTMLCollection.prototype, 'length');
 
     let viewPort: MessagePort | null = null;
     let renderPort: MessagePort | null = null;
@@ -364,25 +651,32 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // Events for the worker's sandboxView.on() handlers: only the types it subscribed to (VIEW_LISTEN), only
     // trusted ones (no guest code runs here, but the rule is stated, not assumed), capture-delegated on the
     // window. The detail describes the target and its ancestors' ids, the key, the form's fields — never a
-    // URL: no href, src or action is read. Every string is clamped. Link and submit defaults are cancelled
-    // above whether or not anyone listens.
+    // URL: no href, src or action is read. Every string is clamped, and all of them together share one budget
+    // (broad review ST3): a detail that was cut anywhere carries `truncated: true`. Link and submit defaults are
+    // cancelled above whether or not anyone listens.
     let subscribed: string[] = [];
-    const clamp = (value: unknown) => String(value).slice(0, options.events.maxString);
     const forward = (event: any) => {
         if (!event.isTrusted || !renderPort || subscribed.indexOf(event.type) < 0) return;
         let target = event.target;
         if (!target || !(target instanceof Element)) target = call(bodyOf, document, []);
         if (!target) return;
-        const ids: string[] = [];
-        for (let n = target; n && call(nodeTypeOf, n, []) === 1 && ids.length < options.events.maxIds; n = call(parentOf, n, [])) {
-            const id = call(idOf, n, []);
-            if (id) ids.push(clamp(id));
-        }
-        const tag = String(call(localNameOf, target, []));
+        let budget = options.events.maxTotal;
+        let truncated = false;
+        const clamp = (input: unknown) => {
+            let text = String(input);
+            const most = Math.min(options.events.maxString, budget);
+            if (text.length > most) {
+                text = text.slice(0, most);
+                truncated = true;
+            }
+            budget -= text.length;
+            return text;
+        };
+        const tag = clamp(call(localNameOf, target, []));
         const value = tag === 'form' ? undefined : target.value; // a form's "value" could be a named control
         const detail: any = {
             type: event.type,
-            ids,
+            ids: [] as string[],
             target: {
                 tag,
                 id: clamp(call(idOf, target, [])),
@@ -392,6 +686,15 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             },
         };
         if (event.type === 'keydown') detail.key = clamp(event.key || '');
+        for (let n = target; n && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) {
+            const id = call(idOf, n, []);
+            if (!id) continue;
+            if (detail.ids.length === options.events.maxIds) {
+                truncated = true;
+                break;
+            }
+            detail.ids.push(clamp(id));
+        }
         if (event.type === 'submit' && tag === 'form') {
             const fields: [string, string][] = [];
             let data: FormData;
@@ -401,10 +704,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 data = new FormData(target);
             }
             data.forEach((value, name) => {
-                if (typeof value === 'string' && fields.length < options.events.maxFields) fields.push([clamp(name), clamp(value)]);
+                if (typeof value !== 'string') return;
+                if (fields.length === options.events.maxFields || budget === 0) {
+                    truncated = true;
+                    return;
+                }
+                fields.push([clamp(name), clamp(value)]);
             });
             detail.form = fields;
         }
+        if (truncated) detail.truncated = true;
         renderPort.postMessage({ type: 'VIEW_EVENT', detail });
     };
     for (let i = 0; i < options.events.types.length; i++) addEventListener(options.events.types[i]!, forward, true);
@@ -415,14 +724,21 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const isMinted = (url: string) => minted.has(url);
 
     // template.innerHTML parses into an inert fragment (no script runs, nothing loads); the renderer cleans
-    // it; replaceChildren MOVES its nodes into the document (A2) — never a clone or an import.
+    // it; replaceChildren MOVES its nodes into the document (A2) — never a clone or an import. The renderer gets the
+    // room the view's budget leaves (broad review ST2): the body's elements outside the target stay, the target's own
+    // are replaced, and the target's depth below the body counts; past it the renderer throws before insertion.
+    const countOf = (root: Element) => call(lengthOf, call(E.getElementsByTagName, root, ['*']), []) as number;
     const apply = (html: string, into: string | null) => {
         const body = call(bodyOf, document, []);
         const target = into === null ? body : call(D.getElementById, document, [into]);
         if (!target || !body || (target !== body && !call(containsNode, body, [target]))) return;
         const template = call(D.createElement, document, ['template']) as HTMLTemplateElement;
         template.innerHTML = html;
-        sanitize(template.content, fileOf, isMinted, options.render);
+        const inBody = countOf(body);
+        const outside = target === body ? 0 : inBody - countOf(target);
+        let depth = 0;
+        for (let n = target; n !== body; n = call(parentOf, n, [])) depth++;
+        sanitize(template.content, fileOf, isMinted, options.render, { elements: options.render.maxElements - outside, depth: options.render.maxDepth - depth });
         call(E.replaceChildren, target, [template.content]);
     };
 
@@ -434,15 +750,18 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const jobs = pending;
         pending = [];
         scheduled = false;
+        const refused: string[] = [];
         for (let i = 0; i < jobs.length; i++) {
             try {
                 apply(jobs[i]![1], jobs[i]![0]);
-            } catch {
+            } catch (error: any) {
                 // the renderer threw before anything was inserted: this render is dropped, and the ack below
-                // still releases the next one
+                // still releases the next one; one past the view's budget is named to the worker, which says so
+                const message = error && error.message;
+                if (message === 'VIEW_MAX_ELEMENTS' || message === 'VIEW_MAX_DEPTH') refused.push(message);
             }
         }
-        if (renderPort) renderPort.postMessage({ type: 'VIEW_ACK' });
+        if (renderPort) renderPort.postMessage(refused.length > 0 ? { type: 'VIEW_ACK', refused } : { type: 'VIEW_ACK' });
     };
     const schedule = () => {
         if (scheduled) return;
@@ -589,7 +908,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         };
         worker.postMessage({ type: 'INIT_WORKER' }, [logicPort, channel.port2]);
 
-        if (typeof data.html === 'string' && data.html !== '') apply(data.html, null);
+        if (typeof data.html === 'string' && data.html !== '') {
+            try {
+                apply(data.html, null);
+            } catch {
+                // past the budget, or anything else the renderer refused: the initial view stays empty
+            }
+        }
         if (data.autoResize === true) startAutoResize();
     }, true);
 }
@@ -613,7 +938,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * the next only after the view's VIEW_ACK, and `sandboxView.on`, which registers handlers for the events
  * the view forwards (the port itself is never handed to a handler).
  */
-export function inStrictWorker(comms: { attach(port: MessagePort): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; entryDoneName: string; eventTypes: readonly string[] }) {
+export function inStrictWorker(comms: { attach(port: MessagePort): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; entryDoneName: string; eventTypes: readonly string[] }) {
     const g = globalThis as any;
     const apply = Reflect.apply;
     // The prelude's own lists have no prototype (review C3): an index written to them never reaches an inherited
@@ -754,6 +1079,13 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
         const data = apply(dataOf, event, []);
         if (!data || typeof data !== 'object') return;
         if (data.type === 'VIEW_ACK') {
+            // a render past the view's budget (broad review ST2) was dropped: said here, to the guest's own log
+            const refused = data.refused;
+            for (let i = 0; refused && i < refused.length; i++) {
+                sandboxConsole.warn('[Sandbox] sandboxView.render: the view refused a render: ' + (refused[i] === 'VIEW_MAX_DEPTH'
+                    ? 'it would nest elements more than ' + options.maxDepth + ' deep'
+                    : 'the view would hold more than ' + options.maxElements + ' elements') + '; nothing of it was applied.');
+            }
             inFlight = false;
             sendNext();
             return;
@@ -821,8 +1153,11 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
  * undefined are non-configurable). So any such property means the entry escaped its scope, and the worker
  * refuses to start: the error ends the sandbox with "the guest entry failed to start". `g` is the script's
  * `this`, the global object, and Object is reached through an object literal: neither depends on a global
- * name a declaration could have replaced. (A top-level let, const or class would shadow a global the prelude
- * reads while it runs, and fail it with a ReferenceError, which ends the sandbox the same way.)
+ * name a declaration could have replaced. This catches escaped functions only. A top-level let, const or class is in
+ * its temporal dead zone while the prelude runs, so one that shadows a global the prelude reads fails it with a
+ * ReferenceError, which ends the sandbox the same way; once the entry ran, such a binding would shadow the global
+ * marker the line after the entry calls, which is why the marker's name is drawn per build (entryDoneName, broad
+ * review ST4): the entry's text, fixed before the build, cannot name it.
  */
 export function assertEntryScoped(g: object) {
     const O = ({}).constructor as ObjectConstructor;

@@ -39,7 +39,7 @@
     "base-uri": [], // 'none'
     "style-src": ["'unsafe-inline'"], // might be required to dynamically change colors
     "form-action": [], // 'none'
-    "worker-src": ["blob:", "data:"]
+    "worker-src": ["blob:"]
     // connect-src, img-src, … are left out: they fall back to default-src. Listed as [] they would be 'none'.
 },
 ```
@@ -47,7 +47,7 @@
 **Output**
 
 ```js
-const csp_string = `default-src 'none'; script-src 'unsafe-inline'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob: data:;`;
+const csp_string = `default-src 'none'; script-src 'unsafe-inline'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob:;`;
 ```
 
 ## Why not an external csp lib?

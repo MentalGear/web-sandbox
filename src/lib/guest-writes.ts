@@ -11,14 +11,14 @@
  * What holds by construction:
  *   - One set of rules. A write is checked by CheckedFile.from(), the same path and entry validation as
  *     registerFiles(), so its type is the type the store assigns (override or extension table), and the
- *     write-time quota is FileStore.check() of the store with the overlay and this write applied: the count and
+ *     write-time quota is FileStore.check() of the build's store with the overlay and this write applied: the count and
  *     the registered bytes, exactly apply()'s first step, without lexing. The commit is FileStore.apply(), the
  *     full check including what module and stylesheet rewrites add. So a write the host could never register is
  *     refused at once with registerFiles()'s own code, and a commit can still be refused (FILES_QUOTA_EXCEEDED)
  *     if the host registered more in between; a refused commit changes neither the store nor the overlay.
  *   - The host is the single source of truth. A refused request changes nothing here; the guest's own view
  *     (in-sandbox-files.ts) changes only after this module's answer.
- *   - Removal marks are bounded by the store: a removal is recorded only for a path the store holds (or one the
+ *   - Removal marks are bounded by the build: a removal is recorded only for a path the build delivered (or one the
  *     overlay wrote, which is then simply forgotten); a path in neither is answered `change: 'none'` (the guest
  *     rejects NOT_FOUND) and records nothing. A mark whose path the host unregistered later is forgotten before
  *     the marks are listed or committed, so a listed mark always names a stored file.
@@ -75,7 +75,15 @@ export type GuestWriteAnswer =
     | { path: string; change: 'none' };
 
 export interface GuestWritesOptions {
+    /** The element's store: commits are applied to it, and listed marks are checked against it. */
     store: FileStore;
+    /**
+     * The store as this environment's build delivered it (FileStore.copy()); `store` when left out. Every answer to the
+     * guest is decided against it plus the overlay (broad review 2026-10-14, CB4): which removals name a file, and the
+     * write-time quota. Answered from the live store, a removal or the quota told the guest about files the host
+     * registered after the build, which the guest otherwise never sees.
+     */
+    built?: FileStore;
     now?: () => number;
 }
 
@@ -99,7 +107,7 @@ const REMOVE_CALLER = 'sandboxFiles.remove()';
 const COMMIT_CALLER = 'commitGuestWrites()';
 
 /** One overlay per environment, created by the build when guestWrites is on. */
-export function createGuestWrites({ store, now = () => performance.now() }: GuestWritesOptions): GuestWrites {
+export function createGuestWrites({ store, built = store, now = () => performance.now() }: GuestWritesOptions): GuestWrites {
     // path → the write (a CheckedFile) or a removal mark (null). Never holds a refused request.
     const overlay = new Map<string, CheckedFile | null>();
     let closed = false;
@@ -138,7 +146,7 @@ export function createGuestWrites({ store, now = () => performance.now() }: Gues
         if (change === 'remove') {
             if (!isValidPath(path)) throw fileError('INVALID_PATH', `${REMOVE_CALLER} refused the path ${describePath(path)}.`);
             const pending = overlay.get(path);
-            const inStore = store.has(path);
+            const inStore = built.has(path);
             if (pending === null || (pending === undefined && !inStore)) return { path, change: 'none' };
             // A file the overlay wrote over nothing is forgotten, not marked: a mark only ever names a stored path.
             if (inStore) overlay.set(path, null);
@@ -149,7 +157,7 @@ export function createGuestWrites({ store, now = () => performance.now() }: Gues
 
         const file = CheckedFile.from(path, source.entry, WRITE_CALLER);
         const valid = path as string; // CheckedFile.from() checked it
-        store.check(overlaid(valid, file), WRITE_CALLER);
+        built.check(overlaid(valid, file), WRITE_CALLER);
         // After the quota, so a write past the cap is FILES_QUOTA_EXCEEDED whatever the rate.
         if (!bytes.admit(time, file.bytes.length)) throw busy(`${WRITE_CALLER} refused`);
         overlay.set(valid, file);

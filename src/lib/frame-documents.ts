@@ -88,6 +88,10 @@ export function buildGuestDocument(parts: GuestDocumentParts): string {
     assertParserSafeScript(parts.bootstrapScript);
     const securityBlock = [
         `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(parts.csp)}">`,
+        // No CSP directive governs <link rel=dns-prefetch> or rel=preconnect: they resolve a host name, or open a
+        // connection, to any origin (broad review 2026-10-14, PD3). This turns DNS prefetching off for the guest
+        // document where an engine honours it (Firefox); what remains is a residual (README), closed by strict mode.
+        `<meta http-equiv="x-dns-prefetch-control" content="off">`,
         `<script>${parts.bootstrapScript}</script>`,
     ].join('');
 

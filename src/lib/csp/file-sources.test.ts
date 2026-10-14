@@ -37,7 +37,7 @@ describe('addFileSources', () => {
         'style-src': ["'unsafe-inline'"],
         'base-uri': [],
         'form-action': [],
-        'worker-src': ['blob:', 'data:'],
+        'worker-src': ['blob:'],
     };
 
     it('changes nothing without files', () => {
@@ -161,6 +161,24 @@ function legacyAddFileSources(directives: CSPDirectives, types: Iterable<string>
     return output as CSPDirectives;
 }
 
+// What the implementation before the table produced, with the one change of the broad review (PA1): where the blob:
+// it added to (or the script-src it created for) registered scripts reached worker-src through its fallback, worker-src
+// is pinned to what governed it before, as a directive of its own appended last. Written out here, independently.
+const WORKER_FALLBACK = ['worker-src', 'child-src', 'script-src', 'default-src'];
+function withWorkersPinned(input: CSPDirectives, legacy: CSPDirectives): CSPDirectives {
+    const governing = (policy: CSPDirectives) => WORKER_FALLBACK.find(name => Object.hasOwn(policy, name));
+    const tokens = (policy: CSPDirectives) => {
+        const name = governing(policy);
+        const values = name ? (policy as Record<string, unknown>)[name] : [];
+        return new Set((Array.isArray(values) ? values : []).flatMap(v => String(v).trim().split(/\s+/)).filter(t => t && t.toLowerCase() !== "'none'").map(t => t.toLowerCase()));
+    };
+    const was = tokens(input);
+    if ([...tokens(legacy)].every(token => was.has(token))) return legacy;
+    const name = governing(input);
+    const values = name ? (input as Record<string, unknown>)[name] : [];
+    return { ...legacy, 'worker-src': Array.isArray(values) ? [...values] : [] } as CSPDirectives;
+}
+
 describe('addFileSources over the one fallback table (follow-up audit 2026-10-14, the A3 class)', () => {
     afterEach(() => { vi.restoreAllMocks(); });
 
@@ -200,7 +218,7 @@ describe('addFileSources over the one fallback table (follow-up audit 2026-10-14
 
     it('-attr directives govern no load a file can be: a config with them adds blob: where it did before', () => {
         const directives: CSPDirectives = { 'script-src': ["'unsafe-inline'"], 'script-src-attr': ["'none'"], 'style-src-attr': ["'unsafe-inline'"] };
-        expect(addFileSources(directives, ['text/javascript', 'text/css'], new Set())).toEqual(legacyAddFileSources(directives, ['text/javascript', 'text/css']));
+        expect(addFileSources(directives, ['text/javascript', 'text/css'], new Set())).toEqual(withWorkersPinned(directives, legacyAddFileSources(directives, ['text/javascript', 'text/css'])));
     });
 
     it('the table: the first directive of a kind\'s fallback list that the policy holds governs it; null means default-src', () => {
@@ -215,7 +233,7 @@ describe('addFileSources over the one fallback table (follow-up audit 2026-10-14
         expect(fallbackList('frame-src')).toEqual(['frame-src', 'child-src', 'default-src']);
     });
 
-    it('property: 500 random configs without -elem / -attr directives come out byte-identical to the implementation before the table', () => {
+    it('property: 500 random configs without -elem / -attr directives come out byte-identical to the implementation before the table, but for worker-src pinned where blob: reached it (broad review PA1)', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const random = prng(0xa3);
         const NAMES = ['default-src', 'script-src', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'base-uri', 'form-action', 'frame-src', 'object-src', 'manifest-src', 'child-src'];
@@ -233,7 +251,7 @@ describe('addFileSources over the one fallback table (follow-up audit 2026-10-14
             const types: string[] = [];
             for (let i = Math.floor(random() * 4); i > 0; i--) types.push(pick(TYPES));
             const now = addFileSources(directives as CSPDirectives, types, new Set());
-            const before = legacyAddFileSources(directives as CSPDirectives, types);
+            const before = withWorkersPinned(directives as CSPDirectives, legacyAddFileSources(directives as CSPDirectives, types));
             expect(generateCSP(now), JSON.stringify({ directives, types })).toBe(generateCSP(before));
             expect(now).toEqual(before);
         }

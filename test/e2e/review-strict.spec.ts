@@ -148,7 +148,7 @@ test('C3: guest code watching every array write (a Proxy in Array.prototype\'s c
     expect(await sandbox.inGuest('return { control: __control, afterCalls: __afterCalls, total: __writes }')).toEqual({ control: 1, afterCalls: 0, total: 0 });
 });
 
-test('C4: the view counts violations per directive: 150 refused images in rendered markup use up the img-src count (100 reported), and a later handler attribute is still reported as script-src-attr', async ({ sandbox, page, browserName }) => {
+test('C4: the view counts violations per directive: 150 refused images in rendered markup use up the img-src count (100 reported), and a later refused load of another kind is still reported (media-src)', async ({ sandbox, page, browserName }) => {
     const warnings: string[] = [];
     page.on('console', m => { if (m.type() === 'warning' && m.text().includes('CSP violations')) warnings.push(m.text()); });
     expect(await sandbox.mount(strict())).toBe('ready');
@@ -156,14 +156,15 @@ test('C4: the view counts violations per directive: 150 refused images in render
     for (let i = 0; i < 150; i++) markup += `<img src="https://attacker.test/flood-${i}.svg">`;
     await render(sandbox, browserName, markup);
     await expect.poll(async () => (await sandbox.violations()).filter(v => v.source === 'view' && v.directive === 'img-src').length, { timeout: 8000 }).toBe(100);
-    // the image is refused (img-src, past its count now), and its error event meets the refused handler attribute
-    await render(sandbox, browserName, '<img id="h" src="https://attacker.test/after-cap.svg" onerror="void 0">', 'done-2');
-    const handler = await sandbox.waitForViolation('script-src-attr', 'inline', 8000);
-    expect(handler.source).toBe('view');
+    // the image is refused (img-src, past its count now), and so is the audio, under media-src, which has its own count
+    // (a handler attribute was the other kind before the renderer became an allowlist: none reaches the view now)
+    await render(sandbox, browserName, '<img id="h" src="https://attacker.test/after-cap.svg"><audio src="https://attacker.test/after-cap.mp3"></audio>', 'done-2');
+    const other = await sandbox.waitForViolation('media-src', 'https://attacker.test/after-cap.mp3', 8000);
+    expect(other.source).toBe('view');
     await page.waitForTimeout(500);
     const view = (await sandbox.violations()).filter(v => v.source === 'view');
     expect(view.filter(v => v.directive === 'img-src')).toHaveLength(100);
-    expect(view.some(v => v.blockedURI.includes('after-cap'))).toBe(false); // img-src's own count is used up
+    expect(view.some(v => v.directive === 'img-src' && v.blockedURI.includes('after-cap'))).toBe(false); // img-src's own count is used up
     expect(warnings.length).toBeLessThanOrEqual(1); // the view stops forwarding at each count itself; the host warns only past it
 });
 

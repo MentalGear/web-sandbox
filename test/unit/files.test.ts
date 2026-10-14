@@ -17,6 +17,15 @@ const typesOf = (paths: string[]) => new Map(paths.map(path => [path, mimeTypeFo
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
 
+// The guest document's security block as the element writes it: the policy, the DNS-prefetch switch (broad review
+// PD3), then the bootstrap. Returns the head's children without the switch, after checking it is the second one.
+const DNS_PREFETCH_OFF = '<meta http-equiv="x-dns-prefetch-control" content="off">';
+const securityChildren = (doc: Document): Element[] => {
+    const children = [...doc.head.children];
+    expect(children[1]?.outerHTML).toBe(DNS_PREFETCH_OFF);
+    return [children[0]!, ...children.slice(2)];
+};
+
 // The wrapper's srcdoc holds the guest frame, whose srcdoc is the guest document.
 const wrapperOf = (el: HTMLElement) => el.shadowRoot!.querySelector('iframe')!.srcdoc;
 const guestDocumentOf = (el: HTMLElement) => parse(wrapperOf(el)).querySelector('iframe')!.getAttribute('srcdoc')!;
@@ -39,8 +48,8 @@ afterEach(() => {
 });
 
 // The guest policy for the shipped default, and with scriptUnsafe, before files existed. Pinned literally.
-const DEFAULT_POLICY = "default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob: data:;";
-const UNSAFE_POLICY = "default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline' 'unsafe-eval'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob: data:;";
+const DEFAULT_POLICY = "default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob:;";
+const UNSAFE_POLICY = "default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline' 'unsafe-eval'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob:;";
 
 describe('with no files: the policy is unchanged, and the document differs only by the empty files bootstrap', () => {
     // How 98f9c81 composed the bootstrap, before files existed, and the one thing added since.
@@ -51,7 +60,7 @@ describe('with no files: the policy is unchanged, and the document differs only 
         const el = await mount();
         expect(policyOf(el)).toBe(DEFAULT_POLICY);
         // blob: only where 98f9c81 had it: worker-src
-        expect(policyOf(el).split(';').map(d => d.trim()).filter(d => d.includes('blob:'))).toEqual(['worker-src blob: data:']);
+        expect(policyOf(el).split(';').map(d => d.trim()).filter(d => d.includes('blob:'))).toEqual(['worker-src blob:']);
         const guest = buildGuestDocument({ csp: DEFAULT_POLICY, bootstrapScript: comms(false, 'iframe') + EMPTY_FILES, content: '<div id="root"></div>' });
         expect(wrapperOf(el)).toBe(buildWrapperDocument(guest, ''));
     });
@@ -77,7 +86,7 @@ describe('with no files: the policy is unchanged, and the document differs only 
 describe('with files, the policy admits blob: only for the registered types', () => {
     it('one JavaScript file: script-src and connect-src gain blob:, nothing else changes', async () => {
         const el = await mount(undefined, { 'main.js': 'void 0' });
-        expect(policyOf(el)).toBe("default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline' blob:; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob: data:; connect-src blob:;");
+        expect(policyOf(el)).toBe("default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline' blob:; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob:; connect-src blob:;");
     });
 
     it('every type family maps to its own directive; base-uri and form-action stay none', async () => {
@@ -134,7 +143,7 @@ describe('the guest document', () => {
         const files = which === 'with files' ? { 'x.js': '</script><script>alert(1)</script>', 'y.css': '<!--' } : undefined;
         const el = await mount({ capabilities: ['allow-scripts'], html }, files);
         const doc = parse(guestDocumentOf(el));
-        const [meta, script] = [...doc.head.children];
+        const [meta, script] = securityChildren(doc);
         expect(meta?.getAttribute('http-equiv')).toBe('Content-Security-Policy');
         expect(meta?.getAttribute('content')).toContain('script-src');
         expect(script?.tagName).toBe('SCRIPT');
@@ -266,7 +275,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
         const parts = rewriteMarkupReferences(html, typesOf(Object.keys(FILES)), NONCE)!;
         expect(parts.filter((_, i) => i % 2 === 1)).toEqual(['logo.svg', 'app.js', 'img/x.svg']);
         const bootstrap = comms() + `(${inSandboxMarkup.toString()})(${filesStep(el)}, ${toInlineScriptLiteral(parts)});`;
-        expect(guestDocumentOf(el)).toBe(`<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policyOf(el))}"><script>${bootstrap}</script>`);
+        expect(guestDocumentOf(el)).toBe(`<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policyOf(el))}">${DNS_PREFETCH_OFF}<script>${bootstrap}</script>`);
         expect(wrapperOf(el)).toBe(buildWrapperDocument(guestDocumentOf(el), 'allow-scripts'));
     });
 
@@ -325,7 +334,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
         const el = await mount({ ...SCRIPTS, html }, FILES);
         const guest = guestDocumentOf(el);
         const doc = parse(guest);
-        const [meta, script, ...rest] = [...doc.head.children];
+        const [meta, script, ...rest] = securityChildren(doc);
         expect(meta?.getAttribute('http-equiv')).toBe('Content-Security-Policy');
         expect(meta?.getAttribute('content')).toBe(policyOf(el));
         expect(script?.textContent).toContain(inSandboxMarkup.toString());
@@ -340,7 +349,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
         const parts = rewriteMarkupReferences(html, typesOf(Object.keys(FILES)), 'f'.repeat(32))!;
         expect(script!.textContent!.endsWith(`, ${toInlineScriptLiteral(parts)});`)).toBe(true);
         const written = parse(guest + parts.map((part, i) => (i % 2 === 0 ? part : `blob:null/${i}`)).join(''));
-        const [writtenMeta, writtenScript] = [...written.head.children];
+        const [writtenMeta, writtenScript] = securityChildren(written);
         expect(writtenMeta?.getAttribute('content')).toBe(policyOf(el));
         expect(writtenScript?.textContent).toBe(script!.textContent);
         expect(written.querySelectorAll('meta[http-equiv="Content-Security-Policy"]')[0]).toBe(writtenMeta);
@@ -454,7 +463,7 @@ describe('module graph (PR3): one import map, registered by the bootstrap, only 
         const el = await mount({ ...SCRIPTS, html }, { 'app.js': "import './<script>.js'; export {}", 'logo.svg': '<svg/>' });
         const guest = guestDocumentOf(el);
         const doc = parse(guest);
-        const [meta, script, ...rest] = [...doc.head.children];
+        const [meta, script, ...rest] = securityChildren(doc);
         expect(meta?.getAttribute('http-equiv')).toBe('Content-Security-Policy');
         expect(meta?.getAttribute('content')).toBe(policyOf(el));
         expect(script?.textContent).toContain(inSandboxImportMap.toString());
@@ -526,7 +535,7 @@ describe('CSS references and srcset (PR4)', () => {
         const el = await mount({ ...SCRIPTS, html }, { ...FILES, 'evil.css': '</script><script>alert(1)</script><!-- a { b: url(logo.svg) }' });
         const guest = guestDocumentOf(el);
         const doc = parse(guest);
-        const [meta, script, ...rest] = [...doc.head.children];
+        const [meta, script, ...rest] = securityChildren(doc);
         expect(meta?.getAttribute('http-equiv')).toBe('Content-Security-Policy');
         expect(meta?.getAttribute('content')).toBe(policyOf(el));
         expect(script?.textContent).toContain(inSandboxMarkup.toString());
@@ -540,7 +549,7 @@ describe('CSS references and srcset (PR4)', () => {
         expect(script!.textContent!.endsWith(`, ${toInlineScriptLiteral(parts)});`)).toBe(true);
         const filled = parts.map((part, i) => (i % 2 === 0 ? part : `blob:null/${i}`)).join('');
         const written = parse(guest + filled);
-        const [writtenMeta, writtenScript] = [...written.head.children];
+        const [writtenMeta, writtenScript] = securityChildren(written);
         expect(writtenMeta?.getAttribute('content')).toBe(policyOf(el));
         expect(writtenScript?.textContent).toBe(script!.textContent);
         expect(written.querySelectorAll('meta[http-equiv="Content-Security-Policy"]')[0]).toBe(writtenMeta);

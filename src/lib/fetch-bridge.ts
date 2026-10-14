@@ -71,6 +71,13 @@ export interface FetchPolicy {
     maxConcurrent: number;
 }
 
+/**
+ * A refusal minted by the bridge: an Error with a library code. `reason`, when set, is the host's own account of a
+ * refusal whose guest text says less; it goes to the record, never to the guest (the broker sends only the message
+ * and the code).
+ */
+export type FetchRefusal = Error & { code: FetchErrorCode; reason?: string };
+
 /** The detail of a 'fetch' event: one request through the bridge, reported once when it settled. */
 export interface FetchRecord {
     /** The method, upper case ('' when the guest sent no valid one). */
@@ -90,6 +97,11 @@ export interface FetchRecord {
     status?: number;
     /** Why the request was refused, failed or aborted; absent when outcome is 'ok'. */
     code?: FetchErrorCode;
+    /**
+     * For a refusal whose text to the guest is deliberately the same for every unlisted origin: what the host knows
+     * beyond it (the host page's own origin; a loopback, private or link-local host). Never sent to the guest.
+     */
+    reason?: string;
     /** Response body bytes read. */
     bytes: number;
     durationMs: number;
@@ -123,8 +135,8 @@ const MAX_URL = 8192;
 const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
 
 /** An Error with a library code, the only kind of refusal this module produces. */
-export function fetchRefusal(code: FetchErrorCode, message: string): Error & { code: FetchErrorCode } {
-    const error = new Error(`[sandboxFetch] ${code}: ${message}`) as Error & { code: FetchErrorCode };
+export function fetchRefusal(code: FetchErrorCode, message: string): FetchRefusal {
+    const error = new Error(`[sandboxFetch] ${code}: ${message}`) as FetchRefusal;
     error.code = code;
     return error;
 }
@@ -323,7 +335,7 @@ const toHeaders = (value: unknown, allowed: readonly string[]): [string, string]
  * request is made then). `hostOrigin` is the host page's origin, refused unless listed. Only `url`,
  * `method`, `headers` and `body` are read from the guest's object.
  */
-export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigin: string): ValidRequest | Error & { code: FetchErrorCode } {
+export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigin: string): ValidRequest | FetchRefusal {
     if (!request || typeof request !== 'object') return fetchRefusal('FETCH_NOT_ALLOWED', 'not a request');
     const source = request as Record<string, unknown>;
 
@@ -340,9 +352,13 @@ export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigi
     url.hash = '';
 
     if (!policy.allow.includes(url.origin)) {
-        if (url.origin === hostOrigin) return fetchRefusal('FETCH_NOT_ALLOWED', "the host page's own origin is not in fetchBridge.allow");
-        if (isPrivateHost(url.hostname)) return fetchRefusal('FETCH_NOT_ALLOWED', `${url.origin} is a loopback, private or link-local host and not in fetchBridge.allow`);
-        return fetchRefusal('FETCH_NOT_ALLOWED', `${url.origin} is not in fetchBridge.allow`);
+        // One text to the guest for every origin that is not listed (broad review 2026-10-14, CB6): a refusal that
+        // said "the host page's own origin" told the guest which origin embeds it, by probing. Why it is not listed
+        // stays on the host, in the record's `reason`.
+        const refusal = fetchRefusal('FETCH_NOT_ALLOWED', `${url.origin} is not in fetchBridge.allow`);
+        if (url.origin === hostOrigin) refusal.reason = "the host page's own origin, which is not in fetchBridge.allow";
+        else if (isPrivateHost(url.hostname)) refusal.reason = 'a loopback, private or link-local host, which is not in fetchBridge.allow';
+        return refusal;
     }
 
     const method = source.method === undefined ? 'GET' : reportedMethod(source.method);
@@ -426,8 +442,8 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
         const source = request && typeof request === 'object' ? request as Record<string, unknown> : {};
         const base = { method: reportedMethod(source.method ?? 'GET'), url: reportedUrl(source.url), started: now() };
 
-        const refuse = (error: Error & { code: FetchErrorCode }): never => {
-            record(base, 'refused', { code: error.code });
+        const refuse = (error: FetchRefusal): never => {
+            record(base, 'refused', error.reason === undefined ? { code: error.code } : { code: error.code, reason: error.reason });
             throw error;
         };
         if (closed) refuse(fetchRefusal('FETCH_FAILED', 'the sandbox was torn down'));

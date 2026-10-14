@@ -1,6 +1,6 @@
 # ADR-002: How should host and guest call each other?
 
-**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes)), 2026-10-13 ([strict mode renders bypass the host](#amendment-2026-10-13-strict-mode-renders-bypass-the-host)), 2026-10-14 ([adversarial review: the channel](#amendment-2026-10-14-adversarial-review-the-channel))
+**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes)), 2026-10-13 ([strict mode renders bypass the host](#amendment-2026-10-13-strict-mode-renders-bypass-the-host)), 2026-10-14 ([adversarial review: the channel](#amendment-2026-10-14-adversarial-review-the-channel)), 2026-10-14 ([broad review: the guest announces its port](#amendment-2026-10-14-broad-review-the-guest-announces-its-port))
 
 ## Why this ADR exists
 
@@ -229,3 +229,39 @@ calls a side would run at once.
 
 Proof: `test/e2e/review-channels.spec.ts` (all engines), `src/lib/in-sandbox-script.test.ts` (B1, B2),
 `src/lib/rpc.test.ts` (B7, pinned codes), `test/unit/channel-guarantees.test.ts` (B3, B4).
+
+## Amendment (2026-10-14): broad review: the guest announces its port
+
+**When**: the broad review of 2026-10-14 ([report](security/BROAD-REVIEW-2026-10-14.md), CB1, PD8). **Why**: the B1
+fix accepted one INIT_PORT, from the host page, in a capture listener of the guest's window, installed before guest
+code. `document.open()` erases every listener of the window: guest code that called it before the wrapper's load
+(an image held the load open) installed a listener of its own, and the host's INIT_PORT, posted after the load,
+reached it, on all three engines. Guest code then held the host's port (and could answer the watchdog from a nested
+worker). The class is "a listener in the guest realm that carries the port"; validating its messages more cannot
+close it, since the guest can remove the listener.
+
+**Decision**: the handshake is reversed. In iframe mode the bootstrap's first statement makes the `MessageChannel`,
+keeps `port1` in its closure (used only through primitives captured before guest code, as before) and posts `port2`
+to `parent.parent`, the host page, as `{ type: 'SANDBOX_PORT' }`; worker mode's frame does the same and hands `port1`
+to its worker as the worker's one INIT_PORT (a worker has no document to open). Nothing in the guest realm ever
+listens for a port. The host installs one `message` listener on its window before it inserts the frame, and accepts
+exactly one announcement per environment: a trusted message whose `source` is the guest frame's window (identity,
+the wrapper's `frames[0]`) carrying exactly one port. The port stays unstarted until the build completes (the wrapper
+loaded and the port arrived, in either order), so the guest's early frames are delivered after `ready`, as before.
+
+- **A second announcement ends the environment** (PD8): a guest that reloads itself (`location.reload()`, a `<meta
+  refresh>` without a URL), or rewrites its document so a bootstrap runs again, announces again from the same window;
+  the host terminates with `the guest frame announced itself again (it reloaded or rewrote its document)`. A forged
+  announcement can only end the guest's own environment. One where no bootstrap runs (no `allow-scripts`, or a
+  policy that refuses the inline bootstrap) is refused the same way. Measured: Firefox refreshes a guest's `<meta
+  refresh>` to a document without the bootstrap, so nothing announces there; the old port goes silent, which the
+  watchdog bounds where it is on.
+- **What other listeners see**: the host's listener stops the accepted announcement, so no other listener on the
+  host window sees the port. The guest's other messages to the host window are not the library's and reach the
+  embedder's listeners, which must check `event.source` (PD7).
+- **Rejected**: keeping the host-to-guest INIT_PORT and re-installing the guest's listener (guest code can always
+  remove it again); a port per message (the same listener problem); identifying the guest by message content
+  (anything in the guest realm can post any content; only the window identity is the browser's).
+
+Proof: `test/e2e/broad-review.spec.ts` ("CB1", "PD8"), `test/e2e/review-channels.spec.ts` (B1, B2 re-run),
+`src/lib/in-sandbox-script.test.ts`.

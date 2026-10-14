@@ -1,5 +1,6 @@
 import type { CSPDirectives } from "../../csp-directives";
 import { defineData } from "../utils";
+import { assertWidensOnly } from "./effective-directive";
 
 /**
  * Why the guest policy never contains 'self':
@@ -47,5 +48,5 @@ export function dropSelfSources(directives: CSPDirectives, warned: Set<string>):
         }
     }
 
-    return output as CSPDirectives;
+    return assertWidensOnly(directives, output as CSPDirectives, [], 'dropSelfSources');
 }

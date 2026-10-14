@@ -4,8 +4,9 @@ import { useRecorder } from './recorder';
 
 /**
  * Adversarial review 2026-10, channels and lifecycle (docs/security/ADVERSARIAL-REVIEW-2026-10.md), in the browser:
- *   B1  the guest's bridge takes its port only from the host's INIT_PORT: another frame on the host page that
- *       races it, with or without a port of its own, neither captures the bridge nor leaves it dead;
+ *   B1  another frame on the host page that posts INIT_PORT to the guest, with or without a port of its own, neither
+ *       captures the bridge nor leaves it dead (since the broad review, CB1, the guest takes no port from any message:
+ *       its bootstrap makes the channel and announces it to the host, test/e2e/broad-review.spec.ts);
  *   B2  the port never reaches guest code, whatever prototypes it patches, so the watchdog cannot be answered
  *       by a delegate while the guest loops;
  *   B4  frames already on their way from an environment that a listener reset are not dispatched;

@@ -42,6 +42,7 @@ conditional "continue".
 | API reference | ✅ [`API.md`](API.md): the whole public surface, checked against the code by a unit test (D3); framework adapters out of scope |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 | Adversarial review 2026-10 | ✅ 21 candidates: 19 fixed (S19–S24), 1 held and is now asserted (A8, S20), 1 documented by design (S25), no residual open; the follow-up by-construction audit moved C1, C4 and C5 to done (S24), found two gaps (S26) and hardened A3, A6, A7, B5, B6; [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
+| Broad review 2026-10-14 | ✅ reviewers A, B, D (S32–S37): the guest announces its port (CB1, PD8), bounded loading (CB3), no `data:` workers (PD1), guest-realm hardening for keepalive, history, `window.name`, DNS prefetch (PD2–PD4, PD6) with residuals stated (S35, S36); reviewer C's strict-mode findings (ST1–ST4) are reported separately; [report](security/BROAD-REVIEW-2026-10-14.md) |
 | Focused review 2026-10-14 | ✅ 11 findings and one hardening, all closed (S27–S31): a reference names a file only for the kind of load its type is for (W1), rates hold in any one-second window (W2), the strict renderer removes SVG animation (F1), `workerExecutionTimeout` is a free event loop at the deadline (F2), no error text in reasons (F3), no assigned config keys (F4), one eval writer (F5), refused configs never stored (F6); [report](security/FOCUSED-REVIEW-2026-10-14.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
@@ -56,6 +57,7 @@ by option B (inert link hrefs), approved by the owner.
 D3 was done on 2026-10-14 as an API reference only; its framework adapters moved to Rejected. C5 (guest writes) was done the same day
 as a reserved broker method, `sandbox:write` ([ADR-004 amendment](ADR-004-files-as-blob-urls.md#amendment-guest-writes-2026-10-14)).
 Two focused review rounds the same day ([report](security/FOCUSED-REVIEW-2026-10-14.md)) added and closed S27–S31.
+The broad review the same day ([report](security/BROAD-REVIEW-2026-10-14.md)) added S32–S37: S32–S35 and S37 done, S35's and S36's residuals stated.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1071,6 +1073,105 @@ it in `default-src` (F5). `setConfig()` checks and warns on the candidate and st
 that is not an object is refused (F6). `sandbox:fetch` is registered per build, closed over that build's bridge
 ([ADR-006 amendment](ADR-006-fetch-bridge.md#amendment-2026-10-14-the-method-is-bound-to-its-build)).
 Tests: `test/unit/focused-review.test.ts`.
+
+### S32 · The guest announces its port; a second announcement ends the environment — ✅ **done**
+
+*From the [broad review 2026-10-14](security/BROAD-REVIEW-2026-10-14.md), CB1 (medium/low) and PD8 (low);
+[ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-14-broad-review-the-guest-announces-its-port).*
+
+**Verified** (all three engines): guest code that called `document.open()` before the wrapper's load erased the
+bootstrap's capture listener, installed its own and received the host's INIT_PORT; it then posted on the host's port
+(and could hand it to a nested worker that answers the watchdog). A guest that reloaded itself left a dead channel
+in `ready`. **Done**: the bootstrap's first statement makes the channel and posts one end to the host page; the host
+accepts exactly one announcement per environment, from the guest frame's window, and terminates on a second one.
+Worker mode's frame does the same. Tests: `test/e2e/broad-review.spec.ts` ("CB1", "PD8"), `review-channels.spec.ts`.
+
+### S33 · Lifecycle: calls queued while loading, a bounded load, one answer per build, one document — ✅ **done**
+
+*From the broad review, CB3, CB5, CB7 (low, info); [ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-loading-is-bounded-one-answer-per-build-one-document).*
+
+**Done**: a queued call that timed out leaves the queue (it ran at the next flush before); `loading` ends after
+`LOAD_TIMEOUT_MS` with a reason (Chromium and WebKit stayed `loading` while a guest kept its document open); a
+`terminated` listener that rebuilds from the same inputs gets one answer, not a recursion of about 590; an element
+moved into another document stops its guest and builds nothing there (Firefox had lost its methods and left the
+guest running). Tests: `test/e2e/broad-review.spec.ts`, `test/unit/broad-review.test.ts`.
+
+### S34 · Policy: no `data:` workers; every policy step widens only its own kinds — ✅ **done**
+
+*From the broad review, PD1 (high, WebKit) and PA1 (info, latent); [ADR-004 amendment](ADR-004-files-as-blob-urls.md#amendment-2026-10-14-broad-review-answers-from-the-build-file-sources-widen-only-their-kinds).*
+
+**Verified**: WebKit ran a `data:` SharedWorker outside the guest policy (fetch, WebSocket, `importScripts` reached a
+blocked listener, no violation). File sources' `blob:` reached `worker-src` through its fallback to `script-src`.
+**Done**: the default `worker-src` is `blob:`; a policy step removes `data:` from what governs worker loads; every
+step ends with `assertWidensOnly`. Upstream report text: [report appendix](security/BROAD-REVIEW-2026-10-14.md#appendix-upstream-reports).
+
+### S35 · Guest-realm hardening: keepalive, history traversal, `window.name`, DNS prefetch — ✅ **done in the guest realm**; residuals stated
+
+*From the broad review, PD2 (high, Firefox platform bug), PD3, PD4 (medium), PD6 (low).*
+
+**Done** before guest code, with captured primitives: `fetch()` refuses `keepalive` (Firefox sent it past
+`connect-src`); `history.back/forward/go` and the Navigation API's traversal do nothing (Firefox and WebKit moved the
+host page); `window.name` is inert (host named targets reached the guest frame); `x-dns-prefetch-control: off`.
+**Residuals** (default mode, asserted per engine): frames the guest creates keep the platform's behaviour (Firefox
+keepalive; history traversal in Firefox and WebKit; named targets); WebKit opens a connection for
+`<link rel=preconnect>`. Strict mode runs no guest script in a document.
+
+### S36 · Focus, clipboard and messages to the host window — **documented** (residual)
+
+*From the broad review, PD5 (medium) and PD7 (low).*
+
+Guest code can take focus from the host page (Chromium, Firefox) and, after a user's click in the guest, write the
+clipboard (Firefox `writeText()`, Chromium and Firefox `execCommand('copy')`): measured and asserted per engine. The
+guest can post messages to the host window; the playground now checks `event.source`, and README and API.md say so.
+
+### S37 · No global lookups on EXECUTE; answers from the build; one fetch refusal text; packaging; presets; parse properties — ✅ **done**
+
+*From the broad review, CB2, CB4, CB6, PD9, I1, I2, PA2, PA3 (low, info).*
+
+**Done**: the EXECUTE path requires a string and converts nothing (a replaced `String` chose the code before);
+guest writes are answered from the build's copy of the store, not the live store; the guest gets one refusal text
+for every unlisted origin (the host's reason is in the record); `build:lib` cleans `dist/`, `build.ts` is gone, the
+package lists its files and the smoke test asserts the tarball exactly, no source map; markup presets leave
+`scriptUnsafe` off; property tests for the host's and the guest's parse of rewritten markup and for inline-module
+rewrites; a test keeps the strict renderer's link kinds equal to `load-kinds.ts`.
+
+### S38 · The strict renderer was a list of what to remove — ✅ **done**
+
+*From the broad review, reviewer C (strict mode).*
+
+**Done**: the renderer keeps only allowlisted elements per namespace and allowlisted attributes; unknown HTML
+elements are unwrapped, unknown SVG and MathML elements removed with their content; `use`, markers, SVG filters,
+SVG `image`, `foreignObject`, handlers, form targets, popovers and invoker commands are gone
+([ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view)).
+Tests: `test/e2e/broad-strict.spec.ts`, `src/lib/in-sandbox-view.test.ts`.
+
+### S39 · A file the strict view showed could open as a script-running document — ✅ **done**
+
+*ST1, medium.* The view mints URLs only for `VIEW_FILE_TYPES` (never a document), and `data:` is dropped from the
+directive that governs images. Tests: `test/e2e/broad-strict.spec.ts` ("ST1"), `test/unit/strict.test.ts`.
+
+### S40 · One render could stall the host by fan-out; the view's document was unbounded — ✅ **done**
+
+*ST2, medium.* No instancing elements; at most `VIEW_MAX_ELEMENTS` elements and `VIEW_MAX_DEPTH` levels in the
+view, counted over the resulting document; a refused render is dropped, acknowledged and logged. Tests:
+`test/e2e/broad-strict.spec.ts` ("ST2"), `src/lib/in-sandbox-view.test.ts`.
+
+### S41 · An event detail was bounded per string, not in total — ✅ **done**
+
+*ST3, low.* One character budget per detail, `truncated: true` when cut. *ST4, info*: the entry marker is named per
+build. *I1*: the renderer's link kinds come from load-kinds.ts. Tests: as S40, plus `test/unit/strict.test.ts`,
+`src/lib/load-kinds.test.ts`.
+
+### S42 · CSS paint cost in the strict view can stall the host page — ⏳ **open**
+
+*Found while measuring ST2.* The renderer does not read CSS, and the view runs on the host page's thread (Firefox,
+WebKit, and Chromium in the measured configuration). A filter list on many elements costs their product: in WebKit,
+10 `blur()` functions on 1 000 elements (88 KB) stalled the host 3.7 s, 100 on 1 000 more than 180 s; Chromium and
+Firefox stayed under 0.2 s. Options: (a) a stylesheet of the view's own, in a first anonymous cascade layer with
+`!important`, that sets `filter` and `backdrop-filter` to `none`, together with removing the `style` attribute (inline
+declarations outrank layers); (b) parse guest CSS with the browser's own parser (a constructed stylesheet) and keep
+only allowlisted properties; (c) a view out of the host's process where the platform offers one. (a) is a list of
+expensive properties, so not by construction; (b) is the allowlist answer and costs every guest some CSS.
 
 ## B · API Surface & DX
 

@@ -1,6 +1,6 @@
 # ADR-006: A host-mediated fetch bridge
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([the platform validates](#amendment-2026-10-14-the-platform-validates-the-request), [bound per build](#amendment-2026-10-14-the-method-is-bound-to-its-build))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([the platform validates](#amendment-2026-10-14-the-platform-validates-the-request), [bound per build](#amendment-2026-10-14-the-method-is-bound-to-its-build), [one refusal text](#amendment-2026-10-14-one-refusal-text-for-every-unlisted-origin))
 
 ## Why this ADR exists
 
@@ -166,3 +166,11 @@ correctness relied on no rebuild happening in between. Now every build registers
 that build's bridge, as `sandbox:write` is over its overlay: a request is always handled by the bridge of the
 environment it arrived in, which teardown closed, so a request that runs after a rebuild is refused there
 (`FETCH_FAILED`) and never made by the next environment. Test: `test/unit/focused-review.test.ts` ("Hardening").
+
+## Amendment (2026-10-14): one refusal text for every unlisted origin
+
+**When**: the broad review of 2026-10-14 (CB6). **Why**: the refusal of an unlisted origin said "the host page's own
+origin" for that one origin, so a guest could find the origin that embeds it by probing. **Decision**: the guest is
+told `<origin> is not in fetchBridge.allow` for every unlisted origin; what the host knows beyond that (the host
+page's own origin; a loopback, private or link-local host) is the `fetch` record's new `reason` field, never sent to
+the guest. Proof: `test/unit/broad-review.test.ts` ("CB6"), `test/e2e/fetch-bridge.spec.ts`.
