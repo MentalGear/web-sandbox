@@ -3,8 +3,9 @@ import type { CSPDirectives } from "../../csp-directives";
 /**
  * The policy of the strict-mode view (ADR-005), which its worker inherits exactly.
  *
- * The embedder's config goes through the same pipeline as every guest policy (drop-meta-ignored, file
- * sources without script-src, drop-self), and this is the last step. It is built from an allowlist: only
+ * The embedder's config goes through the same pipeline as every guest policy (drop-meta-ignored, the
+ * grammar, drop-eval, then the passed-through subset (strictPassedThrough), file sources without scripts,
+ * drop-self), and this is the last step. It is built from an allowlist: only
  * the directives in PASSED_THROUGH come from the config; every directive that decides what can run or
  * navigate is fixed here, and anything else the config names is not emitted at all. So no configuration can
  * add a script source, a worker source, a frame, a plugin, a base URL or a form target to the view:
@@ -25,6 +26,21 @@ export const STRICT_PASSED_THROUGH = ['default-src', 'style-src', 'connect-src',
 
 /** Directives strict mode sets itself, whatever the config says. */
 export const STRICT_FIXED = ['script-src', 'script-src-attr', 'base-uri', 'form-action', 'worker-src', 'frame-src', 'object-src'] as const;
+
+/**
+ * Only the directives the view takes from the config (STRICT_PASSED_THROUGH). The host keeps this subset before
+ * it adds file sources, so every step that asks which directive governs a load (effective-directive.ts) sees
+ * the directives the view policy will hold: a configured style-src-elem, which the view never emits, cannot
+ * take the `blob:` a registered stylesheet needs away from the view's style-src.
+ */
+export function strictPassedThrough(configured: CSPDirectives): CSPDirectives {
+    const source = configured as Record<string, unknown>;
+    const kept: Record<string, unknown> = {};
+    for (const name of STRICT_PASSED_THROUGH) {
+        if (source[name] !== undefined) kept[name] = source[name];
+    }
+    return kept as CSPDirectives;
+}
 
 /** The view policy's directives, in emission order (generateCSP keeps it, with default-src first). */
 export function strictViewDirectives(configured: CSPDirectives, bootstrapHash: string, scriptUnsafe: boolean): CSPDirectives {

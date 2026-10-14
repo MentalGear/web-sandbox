@@ -2,6 +2,7 @@ import type { CSPDirectives } from "../csp-directives";
 import { rewriteInlineModule } from "./module-specifiers";
 import { cssUrlReferences, replaceRanges } from "./css-references";
 import { srcsetCandidates } from "./srcset";
+import { effectiveDirective } from "./csp/effective-directive";
 
 /**
  * Markup references to registered files (ADR-004, PR2). Host-only: nothing here is stringified into
@@ -305,14 +306,15 @@ const tokensOf = (values: readonly unknown[]): string[] => {
 
 /**
  * Whether the guest's inline bootstrap can run under these (final) directives. An inline <script> element is
- * checked against script-src-elem, falling back to script-src and then default-src (CSP Level 3); the first of
- * those present must allow 'unsafe-inline', and must carry no nonce, hash or 'strict-dynamic' (each makes the
- * browser ignore 'unsafe-inline'). The markup is written by the bootstrap only when it can run; otherwise it
- * stays in the document as written. (Review A3: script-src-elem used to be ignored here, so a policy that
- * refused the bootstrap through it went unwarned.)
+ * checked against the directive that governs 'script-src-elem' (the one fallback table, effective-directive.ts:
+ * script-src-elem, then script-src, then default-src); it must allow 'unsafe-inline', and must carry no nonce,
+ * hash or 'strict-dynamic' (each makes the browser ignore 'unsafe-inline'). The markup is written by the
+ * bootstrap only when it can run; otherwise it stays in the document as written. (Review A3: script-src-elem
+ * used to be ignored here, so a policy that refused the bootstrap through it went unwarned.)
  */
 export function inlineScriptsAllowed(directives: CSPDirectives): boolean {
-    const values = directives['script-src-elem'] ?? directives['script-src'] ?? directives['default-src'];
+    const governing = effectiveDirective(directives, 'script-src-elem');
+    const values = governing === null ? undefined : directives[governing];
     if (!Array.isArray(values)) return false;
     const tokens = tokensOf(values);
     if (!tokens.includes("'unsafe-inline'")) return false;

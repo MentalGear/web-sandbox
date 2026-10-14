@@ -2,7 +2,7 @@
  * Public entry point of the package.
  * Importing it registers nothing: call defineWebSandbox() (optionally with your own tag name).
  */
-export { WebSandbox, defineWebSandbox } from "./host";
+export { WebSandbox, defineWebSandbox, VIEW_LIVENESS_TIMEOUT_MS } from "./host";
 export type { SandboxConfig, SandboxState } from "./host";
 export type { RpcError, RpcErrorCode } from "./lib/rpc";
 export { MAX_INBOUND_IN_FLIGHT } from "./lib/rpc";

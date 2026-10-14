@@ -1,17 +1,19 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { addFileSources, directivesForTypes } from './file-sources';
+import { addFileSources, kindsForTypes } from './file-sources';
+import { effectiveDirective, fallbackList } from './effective-directive';
+import { prng } from '../../../test/unit/policy-helpers';
 import { generateCSP } from './csp-generator';
 import type { CSPDirectives } from '@src/csp-directives';
 
-describe('directivesForTypes: blob: goes only where a registered type loads', () => {
+describe('kindsForTypes: blob: goes only where a registered type loads', () => {
     it('no files: no directive', () => {
-        expect([...directivesForTypes([])]).toEqual([]);
+        expect([...kindsForTypes([])]).toEqual([]);
     });
 
     it.each([
-        ['text/javascript', ['connect-src', 'script-src']],
-        ['application/javascript', ['connect-src', 'script-src']],
-        ['text/css', ['connect-src', 'style-src']],
+        ['text/javascript', ['connect-src', 'script-src-elem']],
+        ['application/javascript', ['connect-src', 'script-src-elem']],
+        ['text/css', ['connect-src', 'style-src-elem']],
         ['image/svg+xml', ['connect-src', 'img-src']],
         ['font/woff2', ['connect-src', 'font-src']],
         ['audio/mpeg', ['connect-src', 'media-src']],
@@ -21,7 +23,7 @@ describe('directivesForTypes: blob: goes only where a registered type loads', ()
         ['text/html', ['connect-src']],
         ['application/octet-stream', ['connect-src']],
     ])('%s → %j', (type, directives) => {
-        expect([...directivesForTypes([type])].sort()).toEqual(directives);
+        expect([...kindsForTypes([type])].sort()).toEqual(directives);
     });
 });
 
@@ -118,8 +120,8 @@ describe('addFileSources', () => {
     });
 
     it('exclude (strict mode): an excluded directive never gets blob:, even with files of its type and no config for it', () => {
-        expect([...directivesForTypes(['text/javascript', 'image/png'], ['script-src'])].sort()).toEqual(['connect-src', 'img-src']);
-        const out = addFileSources({ 'default-src': ['https://d.example'] }, ['text/javascript', 'image/png'], new Set(), { exclude: ['script-src'] });
+        expect([...kindsForTypes(['text/javascript', 'image/png'], ['script-src-elem'])].sort()).toEqual(['connect-src', 'img-src']);
+        const out = addFileSources({ 'default-src': ['https://d.example'] }, ['text/javascript', 'image/png'], new Set(), { exclude: ['script-src-elem'] });
         expect(out['script-src']).toBeUndefined();
         expect(out['img-src']).toEqual(['https://d.example', 'blob:']);
     });
@@ -127,5 +129,113 @@ describe('addFileSources', () => {
     it('leaves a malformed directive for generateCSP to reject', () => {
         const directives = { ...BASE, 'img-src': 'blob:' } as unknown as CSPDirectives;
         expect(addFileSources(directives, ['image/png'], new Set())['img-src']).toBe('blob:');
+    });
+});
+
+// addFileSources as it was before the fallback table (448f750), for the byte-identity property below.
+function legacyAddFileSources(directives: CSPDirectives, types: Iterable<string>): CSPDirectives {
+    const tokensOf = (values: readonly unknown[]) => values.flatMap(value => typeof value === 'string' ? value.trim().split(/\s+/).filter(Boolean) : []);
+    const isKeyword = (token: string, keyword: string) => token.toLowerCase() === keyword;
+    const needed = new Set<string>();
+    for (const type of types) {
+        needed.add('connect-src');
+        if (type === 'text/javascript') needed.add('script-src');
+        if (type === 'text/css') needed.add('style-src');
+        if (type.startsWith('image/')) needed.add('img-src');
+        if (type.startsWith('font/')) needed.add('font-src');
+        if (type.startsWith('audio/') || type.startsWith('video/') || type === 'text/vtt') needed.add('media-src');
+    }
+    const output: Record<string, unknown> = { ...directives };
+    const defaultSrc = Array.isArray(directives['default-src']) ? tokensOf(directives['default-src']) : [];
+    const inherited = defaultSrc.filter(token => !isKeyword(token, "'none'") && !isKeyword(token, "'self'"));
+    for (const name of needed) {
+        const values = (directives as Record<string, unknown>)[name];
+        if (values !== undefined && !Array.isArray(values)) continue;
+        if (values === undefined) {
+            output[name] = [...inherited, 'blob:'];
+            continue;
+        }
+        if (tokensOf(values).every(token => isKeyword(token, "'none'"))) continue;
+        output[name] = [...(values as string[]), 'blob:'];
+    }
+    return output as CSPDirectives;
+}
+
+describe('addFileSources over the one fallback table (follow-up audit 2026-10-14, the A3 class)', () => {
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    it('script-src-elem and style-src-elem, when set, govern scripts and stylesheets: blob: goes there, and script-src / style-src are left as they were', () => {
+        const directives: CSPDirectives = {
+            'default-src': ["'none'"],
+            'script-src': ["'unsafe-inline'"],
+            'script-src-elem': ["'unsafe-inline'"],
+            'style-src': ["'unsafe-inline'"],
+            'style-src-elem': ["'unsafe-inline'"],
+        };
+        const out = addFileSources(directives, ['text/javascript', 'text/css'], new Set());
+        expect(out).toEqual({
+            ...directives,
+            'script-src-elem': ["'unsafe-inline'", 'blob:'],
+            'style-src-elem': ["'unsafe-inline'", 'blob:'],
+            'connect-src': ['blob:'],
+        });
+        // the policy grants blob: exactly where the browser checks these loads, and nowhere else
+        expect(generateCSP(out)).toBe("default-src 'none'; script-src 'unsafe-inline'; script-src-elem 'unsafe-inline' blob:; style-src 'unsafe-inline'; style-src-elem 'unsafe-inline' blob:; connect-src blob:;");
+    });
+
+    it("an -elem directive that is 'none' keeps the files out, with the warning naming it, even when the base directive would admit them", () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const directives: CSPDirectives = { 'script-src': ["'unsafe-inline'"], 'script-src-elem': [] };
+        const out = addFileSources(directives, ['text/javascript'], new Set());
+        expect([out['script-src'], out['script-src-elem']]).toEqual([["'unsafe-inline'"], []]);
+        expect(warn.mock.calls.map(c => String(c[0]))).toEqual([expect.stringContaining('connectionsAllowed.script-src-elem')]);
+    });
+
+    it("a base directive that is 'none' does not keep files out when the -elem directive governs and admits them", () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const out = addFileSources({ 'style-src': ["'none'"], 'style-src-elem': ["'unsafe-inline'"] }, ['text/css'], new Set());
+        expect([out['style-src'], out['style-src-elem']]).toEqual([["'none'"], ["'unsafe-inline'", 'blob:']]);
+        expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('-attr directives govern no load a file can be: a config with them adds blob: where it did before', () => {
+        const directives: CSPDirectives = { 'script-src': ["'unsafe-inline'"], 'script-src-attr': ["'none'"], 'style-src-attr': ["'unsafe-inline'"] };
+        expect(addFileSources(directives, ['text/javascript', 'text/css'], new Set())).toEqual(legacyAddFileSources(directives, ['text/javascript', 'text/css']));
+    });
+
+    it('the table: the first directive of a kind\'s fallback list that the policy holds governs it; null means default-src', () => {
+        expect(effectiveDirective({ 'script-src-elem': ["'unsafe-inline'"], 'script-src': ['blob:'] }, 'script-src-elem')).toBe('script-src-elem');
+        expect(effectiveDirective({ 'script-src': ['x'] }, 'script-src-elem')).toBe('script-src');
+        expect(effectiveDirective({ 'script-src': ['x'] }, 'script-src-attr')).toBe('script-src');
+        expect(effectiveDirective({ 'default-src': ['x'] }, 'style-src-elem')).toBe('default-src');
+        expect(effectiveDirective({ 'child-src': [] }, 'worker-src')).toBe('child-src');
+        expect(effectiveDirective({ 'script-src-elem': [] }, 'eval')).toBeNull();
+        expect(effectiveDirective({}, 'img-src')).toBeNull();
+        expect(fallbackList('worker-src')).toEqual(['worker-src', 'child-src', 'script-src', 'default-src']);
+        expect(fallbackList('frame-src')).toEqual(['frame-src', 'child-src', 'default-src']);
+    });
+
+    it('property: 500 random configs without -elem / -attr directives come out byte-identical to the implementation before the table', () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const random = prng(0xa3);
+        const NAMES = ['default-src', 'script-src', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'base-uri', 'form-action', 'frame-src', 'object-src', 'manifest-src', 'child-src'];
+        const SOURCES = ["'none'", "'NONE'", "'self'", "'unsafe-inline'", 'https://a.example', 'blob:', 'data:', '', ' ', "'none' https://b.example", '*'];
+        const TYPES = ['text/javascript', 'text/css', 'image/png', 'font/woff2', 'audio/ogg', 'video/mp4', 'text/vtt', 'application/json'];
+        const pick = <T,>(list: readonly T[]) => list[Math.floor(random() * list.length)]!;
+        for (let run = 0; run < 500; run++) {
+            const directives: Record<string, string[]> = {};
+            for (const name of NAMES) {
+                if (random() < 0.5) continue;
+                const values: string[] = [];
+                for (let i = Math.floor(random() * 3); i > 0; i--) values.push(pick(SOURCES));
+                directives[name] = values;
+            }
+            const types: string[] = [];
+            for (let i = Math.floor(random() * 4); i > 0; i--) types.push(pick(TYPES));
+            const now = addFileSources(directives as CSPDirectives, types, new Set());
+            const before = legacyAddFileSources(directives as CSPDirectives, types);
+            expect(generateCSP(now), JSON.stringify({ directives, types })).toBe(generateCSP(before));
+            expect(now).toEqual(before);
+        }
     });
 });

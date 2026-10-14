@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_STRING, toLogDetail } from '@src/lib/sandbox-log';
 import { SandboxDevTools } from '@src/devtools';
-import { createFetchBridge, toFetchPolicy, validateRequest } from '@src/lib/fetch-bridge';
+import { createFetchBridge, toFetchPolicy } from '@src/lib/fetch-bridge';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Adversarial review 2026-10, channels and lifecycle (docs/security/ADVERSARIAL-REVIEW-2026-10.md), host side:
@@ -60,7 +63,7 @@ describe('B3: every sandbox-log detail is normalised and labelled', () => {
         el._port = port1;
         el._onGuestMessage(port1, () => {}, { type: 'LOG', level: 'error', args: ['Execution Timeout'], source: 'host' }, null);
         vi.useFakeTimers();
-        el._startTimeout();
+        el.execute('for (;;) {}'); // never reports EXECUTED here: its budget expires
         vi.advanceTimersByTime(20);
         expect(heard.map(d => [d.source, d.args[0]])).toEqual([['guest', 'Execution Timeout'], ['host', 'Execution Timeout']]);
         port1.close();
@@ -132,61 +135,112 @@ describe('B4: only the current environment\'s ports are heard', () => {
 });
 
 describe('B5: a listener that resets or terminates the sandbox is never undone', () => {
-    it('the execution timeout: a sandbox-log listener that terminates leaves it terminated (no rebuild)', async () => {
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'worker', scriptUnsafe: true, workerExecutionTimeout: 10 });
-        el.addEventListener('sandbox-log', (e: CustomEvent) => { if (e.detail.source === 'host') el.terminate('stopped by a listener'); });
-        vi.useFakeTimers();
-        el._startTimeout();
-        vi.advanceTimersByTime(20);
-        expect(el.state).toBe('terminated');
-        expect(el.shadowRoot.querySelector('iframe')).toBeNull();
+    // Every host path that dispatches an event and then acts on the environment, each forced here. They all go
+    // through one helper (_notifyThenAct); the source check below fails when a path is added without it, or
+    // without a row here.
+    const PATHS: { name: string; reason: string; start: () => Promise<{ el: any; force: () => void; done: () => void }> }[] = [
+        {
+            name: 'the execution timeout (worker mode)',
+            reason: 'the executed code ran longer than workerExecutionTimeout',
+            start: async () => {
+                const el = await mount({ mode: 'worker', scriptUnsafe: true, workerExecutionTimeout: 10 });
+                const { port1 } = new MessageChannel();
+                el._port = port1;
+                vi.useFakeTimers();
+                return { el, force: () => { el.execute('for (;;) {}'); vi.advanceTimersByTime(20); }, done: () => port1.close() };
+            },
+        },
+        {
+            name: 'an entry that failed to start (strict mode)',
+            reason: 'the guest entry failed to start',
+            start: async () => {
+                const el = await mount({ mode: 'strict' });
+                const { port1: view } = new MessageChannel();
+                el._viewPort = view;
+                return { el, force: () => el._onViewMessage(view, { type: 'GUEST_ERROR', message: 'SyntaxError' }), done: () => view.close() };
+            },
+        },
+    ];
+
+    describe.each(PATHS)('$name', ({ reason, start }) => {
+        const run = async (listener: ((el: any) => void) | null) => {
+            vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const { el, force, done } = await start();
+            const terminations: string[] = [];
+            el.addEventListener('terminated', (e: CustomEvent) => terminations.push(e.detail.reason));
+            if (listener) el.addEventListener('sandbox-log', (e: CustomEvent) => { if (e.detail.source === 'host') listener(el); }, { once: true });
+            force();
+            const result = { state: el.state, terminations, frame: el.shadowRoot.querySelector('iframe') !== null };
+            done();
+            return result;
+        };
+
+        it('without a listener, the host acts: terminated with its reason (positive control)', async () => {
+            expect(await run(null)).toEqual({ state: 'terminated', terminations: [reason], frame: false });
+        });
+
+        it("a listener's terminate() stands: one termination, the listener's", async () => {
+            expect(await run(el => el.terminate('stopped by a listener'))).toEqual({ state: 'terminated', terminations: ['stopped by a listener'], frame: false });
+        });
+
+        it("a listener's reset() stands: the new environment is not torn down", async () => {
+            expect(await run(el => el.reset())).toEqual({ state: 'loading', terminations: [], frame: true });
+        });
     });
 
-    it('an entry that failed to start: a sandbox-log listener that resets gets the new environment, not a termination', async () => {
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'strict' });
-        const { port1: view } = new MessageChannel();
-        el._viewPort = view;
-        const terminations: string[] = [];
-        el.addEventListener('terminated', (e: CustomEvent) => terminations.push(e.detail.reason));
-        el.addEventListener('sandbox-log', (e: CustomEvent) => { if (e.detail.source === 'host') el.reset(); }, { once: true });
-        el._onViewMessage(view, { type: 'GUEST_ERROR', message: 'SyntaxError' });
-        expect([el.state, terminations]).toEqual(['loading', []]);
-        expect(el.shadowRoot.querySelector('iframe')).not.toBeNull();
-        view.close();
-    });
-
-    it('without a listener both still end as before (positive control)', async () => {
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'strict' });
-        const { port1: view } = new MessageChannel();
-        el._viewPort = view;
-        el._onViewMessage(view, { type: 'GUEST_ERROR', message: 'SyntaxError' });
-        expect(el.state).toBe('terminated');
-        view.close();
+    it('the source: _generation is compared only inside _notifyThenAct, and every call of it is a row of PATHS', () => {
+        const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/host.ts'), 'utf8');
+        const start = source.indexOf('private _notifyThenAct(');
+        const end = source.indexOf('\n    }\n', start);
+        const reads = [...source.matchAll(/this\._generation(?!\+\+)/g)].map(match => match.index!);
+        expect(reads).toHaveLength(2); // `const generation = this._generation` and the comparison after notify()
+        for (const index of reads) expect(index > start && index < end, source.slice(index - 80, index + 40)).toBe(true);
+        expect([...source.matchAll(/this\._notifyThenAct\(/g)]).toHaveLength(PATHS.length);
     });
 });
 
-describe('B6: a fetch header value must be a ByteString without CR, LF or NUL', () => {
+describe('B6: the platform validates a request before the bridge records it (follow-up audit 2026-10-14)', () => {
     const policy = toFetchPolicy({ allow: ['https://api.example'] }, () => {})!;
-
-    it.each(['Ā', '😀', 'a b', 'a\rb', 'a\nb', 'a\u0000b'])('%j is refused before any request (FETCH_NOT_ALLOWED)', (value) => {
-        const result = validateRequest({ url: 'https://api.example/x', headers: [['accept', value]] }, policy, 'https://host.example');
-        expect(result).toBeInstanceOf(Error);
-        expect((result as any).code).toBe('FETCH_NOT_ALLOWED');
-    });
-
-    it.each(['text/html', 'é', 'a\tb', 'ÿ'])('%j is accepted', (value) => {
-        expect(validateRequest({ url: 'https://api.example/x', headers: [['accept', value]] }, policy, 'https://host.example')).not.toBeInstanceOf(Error);
-    });
-
-    it("the record says 'refused', not 'failed', and fetch is never called", async () => {
+    const bridgeWith = () => {
         const records: any[] = [];
-        const fetchImpl = vi.fn(async () => new Response('x'));
+        const fetchImpl = vi.fn(async (_request: Request) => new Response('x'));
         const bridge = createFetchBridge({ policy, hostOrigin: 'https://host.example', onRecord: (r) => records.push(r), fetchImpl: fetchImpl as any });
-        await expect(bridge.handle({ url: 'https://api.example/x', headers: [['accept', 'Ā']] })).rejects.toMatchObject({ code: 'FETCH_NOT_ALLOWED' });
+        return { bridge, records, fetchImpl };
+    };
+
+    // A header value the Fetch standard refuses (not a ByteString, or NUL, CR or LF inside): refused before any
+    // request, never reported as made. A regex of the bridge's own used to decide this; now the Request
+    // constructor does, so the bridge cannot disagree with the browser.
+    it.each(['Ā', '\u{1F600}', 'a b', 'a\rb', 'a\nb', 'a\u0000b'])("%j: the record says 'refused' (FETCH_NOT_ALLOWED), and fetch is never called", async (value) => {
+        const { bridge, records, fetchImpl } = bridgeWith();
+        await expect(bridge.handle({ url: 'https://api.example/x', headers: [['accept', value]] })).rejects.toMatchObject({ code: 'FETCH_NOT_ALLOWED' });
         expect(fetchImpl).not.toHaveBeenCalled();
         expect(records.map(r => [r.outcome, r.code])).toEqual([['refused', 'FETCH_NOT_ALLOWED']]);
+    });
+
+    it.each(['text/html', 'é', 'a\tb', 'ÿ'])('%j is accepted and sent as given', async (value) => {
+        const { bridge, fetchImpl } = bridgeWith();
+        await bridge.handle({ url: 'https://api.example/x', headers: [['accept', value]] });
+        expect(fetchImpl.mock.calls[0]![0].headers.get('accept')).toBe(value);
+    });
+
+    it("a body the Request constructor refuses (a view of a SharedArrayBuffer) is 'refused', not reported as 'failed'", async () => {
+        const { bridge, records, fetchImpl } = bridgeWith();
+        const shared = new Uint8Array(new SharedArrayBuffer(4));
+        await expect(bridge.handle({ url: 'https://api.example/x', method: 'POST', body: shared })).rejects.toMatchObject({ code: 'FETCH_NOT_ALLOWED' });
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(records.map(r => [r.outcome, r.code])).toEqual([['refused', 'FETCH_NOT_ALLOWED']]);
+    });
+
+    it('fetch() is given the one Request the bridge built and checked, pinned to the bridge discipline: what was validated is what is sent', async () => {
+        const { bridge, fetchImpl } = bridgeWith();
+        await bridge.handle({ url: 'https://api.example/x#f', method: 'POST', headers: [['content-type', 'text/plain']], body: 'hi', credentials: 'include', mode: 'no-cors' });
+        expect(fetchImpl.mock.calls).toHaveLength(1);
+        const request = fetchImpl.mock.calls[0]![0];
+        // beside it the same pinned init, whole (a partial one would reset the referrer policy)
+        expect((fetchImpl.mock.calls[0] as unknown[])[1]).toMatchObject({ credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'manual', mode: 'cors', cache: 'no-store', keepalive: false });
+        expect(request).toBeInstanceOf(Request);
+        expect([request.url, request.method, request.credentials, request.redirect, request.mode, request.cache]).toEqual(['https://api.example/x', 'POST', 'omit', 'manual', 'cors', 'no-store']);
+        expect(await request.text()).toBe('hi');
     });
 });

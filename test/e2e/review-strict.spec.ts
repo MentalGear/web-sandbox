@@ -1,17 +1,21 @@
 import { test, expect, type SandboxDriver } from './fixture';
-import { inView, waitInView } from './strict-view';
+import { clickInSandbox, inView, waitInView } from './strict-view';
+import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import type { SandboxConfig } from '@src/host';
 
 /**
  * Adversarial review 2026-10, strict mode and files (docs/security/ADVERSARIAL-REVIEW-2026-10.md):
  *   C1  every blob: URL that resolves in the view names a registered file: the worker's own source URL is revoked
- *       once the worker exists, and a worker's copy of a JavaScript file is inert as a stylesheet;
+ *       once the worker has run its script (follow-up audit 2026-10-14), and the worker keeps working after it in
+ *       every engine; a worker's copy of a JavaScript file is inert as a stylesheet;
  *   C2  the entry runs in its own scope: its top-level declarations cannot replace the globals the prelude
  *       captures and deletes, and an entry that escapes its scope does not start;
  *   C3  the prelude's lists reach no inherited setter: guest code watching every array write sees none of them,
  *       and flow control holds;
- *   C4  (measured) the view's violation cap is shared with the guest's own refused loads;
- *   C5  (measured, residual) a rendered link keeps its href: user-agent actions on it are outside the page.
+ *   C4  the view's violations are counted per directive (follow-up audit 2026-10-14): the guest's own refused loads
+ *       of one kind cannot hide a report of another;
+ *   C5  a rendered link stays a link with one inert href (backlog S24, option B): the user agent's own actions on
+ *       it (copy, open in a new tab, drag) carry nothing of the guest's, and clicks are still cancelled and delivered.
  * Evidence (T5): the view's state read from outside (strict-view.ts), the host's events, and the guest's own view
  * through execute(); a positive control beside each negative.
  */
@@ -25,7 +29,7 @@ async function render(sandbox: SandboxDriver, browserName: string, html: string,
 }
 
 test.describe('C1: the view renders no blob: content but registered files', () => {
-    test("the worker's own source URL resolves in the view but renders nothing: referenced from <style> text and a CSS-escaped style attribute (which the renderer does not inspect), it applies no rule and decodes as no image", async ({ sandbox, page, browserName }) => {
+    test("the worker's own source URL is revoked once the worker has run its script: the view can no longer fetch it, and referenced from <style> text and a CSS-escaped style attribute (which the renderer does not inspect) it applies no rule and decodes as no image", async ({ sandbox, page, browserName }) => {
         // the entry carries a CSS rule inside a JS comment: lenient CSS parsing of the worker source would apply it
         await sandbox.registerFiles({ 'main.js': '/*\n}#c1 { width: 66px }\n*/ void 0;', 'img/logo.svg': SVG, 'a.css': 'p {}' });
         expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
@@ -37,13 +41,13 @@ test.describe('C1: the view renders no blob: content but registered files', () =
             const text = await fetch(${JSON.stringify(workerUrl)}).then((r) => r.text(), (e) => e.name);
             const image = await new Promise((resolve) => { const i = new Image(); i.onload = () => resolve('decoded'); i.onerror = () => resolve('error'); i.src = ${JSON.stringify(workerUrl)}; });
             return {
-                startsWithPrelude: typeof text === 'string' && text.startsWith('(function (g) {'),
+                fetched: text,
                 image,
                 ruleApplied: getComputedStyle(document.getElementById('c1')).width === '66px',
                 escapedKept: document.getElementById('bg').getAttribute('style').includes('6f b:'),
             };
         })()`);
-        expect(r).toEqual({ startsWithPrelude: true, image: 'error', ruleApplied: false, escapedKept: true });
+        expect(r).toEqual({ fetched: 'TypeError', image: 'error', ruleApplied: false, escapedKept: true });
     });
 
     test("a worker's copies of registered files resolve in the view: a copy of a JavaScript file is refused as a stylesheet (its type), a copy of a stylesheet applies (positive control): neither shows more than the registered content", async ({ sandbox, page, browserName }) => {
@@ -53,6 +57,37 @@ test.describe('C1: the view renders no blob: content but registered files', () =
         await render(sandbox, browserName, `<style>@import url("${urls.js}"); @import url("${urls.css}");</style><i id="viaJs" style="display:block"></i><i id="viaCss" style="display:block"></i>`);
         await waitInView(page, browserName, `getComputedStyle(document.getElementById('viaCss')).width === '55px'`, 8000);
         expect(await inView(page, browserName, `getComputedStyle(document.getElementById('viaJs')).width`)).not.toBe('77px');
+    });
+
+    test("after the revocation the worker keeps working, in WebKit too: sandboxFiles url/read/text, fetches of its own blob: URLs, Blob reads, execute(), and error text from execute() and from later uncaught errors of the entry's code and of executed code", async ({ sandbox, page, browserName }) => {
+        const bytes = Buffer.from([0, 1, 2, 250, 255]).toString('base64');
+        // lateThrow is code of the revoked script: in WebKit its uncaught errors read "Script error." inside the
+        // worker after the revocation, so the view logs them with the text it still has (in-sandbox-view.ts)
+        await sandbox.registerFiles({ 'main.js': 'globalThis.entryRan = true; globalThis.lateThrow = () => setTimeout(() => { throw new Error("entry-late"); }, 0);', 'note.txt': 'héllo', 'data.bin': { base64: bytes } });
+        expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
+        const workerUrl: string = await sandbox.inGuest('return location.href');
+        // the evidence that the revocation happened: the view, read from outside, can no longer fetch the source
+        await waitInView(page, browserName, `fetch(${JSON.stringify(workerUrl)}).then(() => false, () => true)`, 8000);
+        const r = await sandbox.inGuest(`
+            const url = sandboxFiles.url('note.txt');
+            return {
+                entryRan: globalThis.entryRan === true,
+                viaUrl: await (await fetch(url)).text(),
+                text: await sandboxFiles.text('note.txt'),
+                read: Array.from(await sandboxFiles.read('data.bin')),
+                blob: await new Blob(['abc']).text(),
+                again: await (await fetch(sandboxFiles.url('data.bin'))).arrayBuffer().then(b => b.byteLength),
+            };
+        `);
+        expect(r).toEqual({ entryRan: true, viaUrl: 'héllo', text: 'héllo', read: [0, 1, 2, 250, 255], blob: 'abc', again: 5 });
+        await sandbox.run('throw new Error("after-revoke-sync")');
+        expect(await sandbox.waitForLog('after-revoke-sync')).toContain('after-revoke-sync');
+        await sandbox.run('lateThrow()');
+        expect(await sandbox.waitForLog(/Uncaught.*entry-late/)).toMatch(/Error: entry-late/);
+        await sandbox.run('setTimeout(() => { throw new Error("after-revoke-late"); }, 0)');
+        expect(await sandbox.waitForLog(/Uncaught.*after-revoke-late/)).toMatch(/Error: after-revoke-late/);
+        expect((await sandbox.logs()).filter(line => line.includes('Script error.'))).toEqual([]);
+        expect(await sandbox.state()).toBe('ready');
     });
 });
 
@@ -111,25 +146,85 @@ test('C3: guest code watching every array write (a Proxy in Array.prototype\'s c
     expect(await sandbox.inGuest('return { control: __control, afterCalls: __afterCalls, total: __writes }')).toEqual({ control: 1, afterCalls: 0, total: 0 });
 });
 
-test('C4 (measured): the view\'s violation cap is shared with the guest\'s own refused loads: 150 refused images in rendered markup use it up, one warning, and a later refusal in the view goes unreported', async ({ sandbox, page, browserName }) => {
+test('C4: the view counts violations per directive: 150 refused images in rendered markup use up the img-src count (100 reported), and a later handler attribute is still reported as script-src-attr', async ({ sandbox, page, browserName }) => {
     const warnings: string[] = [];
     page.on('console', m => { if (m.type() === 'warning' && m.text().includes('CSP violations')) warnings.push(m.text()); });
     expect(await sandbox.mount(strict())).toBe('ready');
     let markup = '';
     for (let i = 0; i < 150; i++) markup += `<img src="https://attacker.test/flood-${i}.svg">`;
     await render(sandbox, browserName, markup);
-    await expect.poll(async () => (await sandbox.violations()).filter(v => v.source === 'view').length, { timeout: 8000 }).toBe(100);
-    await render(sandbox, browserName, '<img src="https://attacker.test/after-cap.svg">', 'done-2');
-    await page.waitForTimeout(800);
+    await expect.poll(async () => (await sandbox.violations()).filter(v => v.source === 'view' && v.directive === 'img-src').length, { timeout: 8000 }).toBe(100);
+    // the image is refused (img-src, past its count now), and its error event meets the refused handler attribute
+    await render(sandbox, browserName, '<img id="h" src="https://attacker.test/after-cap.svg" onerror="void 0">', 'done-2');
+    const handler = await sandbox.waitForViolation('script-src-attr', 'inline', 8000);
+    expect(handler.source).toBe('view');
+    await page.waitForTimeout(500);
     const view = (await sandbox.violations()).filter(v => v.source === 'view');
-    expect(view).toHaveLength(100);
-    expect(view.some(v => v.blockedURI.includes('after-cap'))).toBe(false);
-    expect(warnings.length).toBeLessThanOrEqual(1); // the view stops forwarding at the cap itself; the host warns only past it
+    expect(view.filter(v => v.directive === 'img-src')).toHaveLength(100);
+    expect(view.some(v => v.blockedURI.includes('after-cap'))).toBe(false); // img-src's own count is used up
+    expect(warnings.length).toBeLessThanOrEqual(1); // the view stops forwarding at each count itself; the host warns only past it
 });
 
-test('C5 (measured, residual): a rendered link keeps its href, so the user agent\'s own actions on it (open in a new tab, drag) are outside what the view can cancel; clicks are cancelled (G4)', async ({ sandbox, page, browserName }) => {
-    expect(await sandbox.mount(strict())).toBe('ready');
-    await render(sandbox, browserName, '<a id="l" href="https://attacker.test/ua-action">link</a>');
-    expect(await inView(page, browserName, `document.getElementById('l').getAttribute('href')`)).toBe('https://attacker.test/ua-action');
+test.describe('C5: a rendered link stays a link, but its href is one inert constant (backlog S24, option B)', () => {
+    const MARK = 'MARKER-c5';
+    const LINKS = `<a id="l" href="https://attacker.test/ua-action?m=${MARK}" style="display:block;position:absolute;left:0;top:0;width:120px;height:30px">link</a>`
+        + `<svg width="40" height="40" style="position:absolute;left:0;top:200px"><a id="s" href="https://attacker.test/svg?m=${MARK}" xlink:href="https://attacker.test/xlink?m=${MARK}"><rect width="40" height="40"/></a></svg>`
+        + `<map name="m"><area id="ar" href="https://attacker.test/area?m=${MARK}" shape="rect" coords="0,0,10,10"></map>`;
+
+    test("the view, read from outside: every link's href is the constant, the guest's URL is nowhere in the document; the link matches :link and :any-link, is focusable and has the role link; a drag carries only the constant", async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount(strict())).toBe('ready');
+        await render(sandbox, browserName, LINKS);
+        const r = await inView<any>(page, browserName, `(() => {
+            const a = document.getElementById('l');
+            const s = document.getElementById('s');
+            a.focus();
+            return {
+                attr: a.getAttribute('href'), href: a.href, area: document.getElementById('ar').getAttribute('href'),
+                svg: s.getAttribute('href'), xlink: s.getAttributeNS('http://www.w3.org/1999/xlink', 'href'),
+                marked: document.documentElement.outerHTML.includes(${JSON.stringify(MARK)}),
+                link: a.matches(':link'), anyLink: a.matches(':any-link'), tabIndex: a.tabIndex, focused: document.activeElement === a,
+                // HTML-AAM maps an HTML a with an href to the role link; :any-link matches exactly those
+                htmlAnchor: a.namespaceURI === 'http://www.w3.org/1999/xhtml' && a.localName === 'a' && a.hasAttribute('href'),
+            };
+        })()`);
+        expect(r).toEqual({ attr: INERT_HREF, href: INERT_HREF, area: INERT_HREF, svg: INERT_HREF, xlink: INERT_HREF, marked: false, link: true, anyLink: true, tabIndex: 0, focused: true, htmlAnchor: true });
+        // The accessibility tree, through Playwright's role query: in Firefox and WebKit the view is an in-process frame
+        // Playwright always links. Chromium's view is out of process, and Playwright links such a frame unreliably
+        // (strict-view.ts), so there the role rests on the HTML-AAM facts above (measured with getByRole: 1 there too).
+        if (browserName !== 'chromium') {
+            const view = page.frameLocator('web-sandbox iframe').frameLocator('iframe');
+            expect(await view.getByRole('link', { name: 'link' }).count()).toBe(1);
+        }
+
+        // a real drag from the page's mouse, the drag data read in the view by a listener added from outside
+        await inView(page, browserName, `(() => { window.__drags = []; document.addEventListener('dragstart', (e) => window.__drags.push({ uri: e.dataTransfer.getData('text/uri-list'), text: e.dataTransfer.getData('text/plain') }), true); return true; })()`);
+        await page.mouse.move((await page.locator('web-sandbox').boundingBox())!.x + 20, (await page.locator('web-sandbox').boundingBox())!.y + 15);
+        await page.mouse.down();
+        await page.mouse.move((await page.locator('web-sandbox').boundingBox())!.x + 80, (await page.locator('web-sandbox').boundingBox())!.y + 140, { steps: 8 });
+        await page.mouse.up();
+        const drags = await waitInView<any[]>(page, browserName, `window.__drags.length > 0 && window.__drags`, 5000);
+        for (const drag of drags) {
+            expect(drag.uri).toBe(INERT_HREF);
+            expect([INERT_HREF, '']).toContain(drag.text); // WebKit puts no text/plain on a link drag
+        }
+    });
+
+    test('positive control: a real click and Enter on the focused link are still cancelled and still delivered to the worker by id; nothing navigates', async ({ sandbox, page, browserName }) => {
+        await page.evaluate(() => { (window as any).viewClicks = []; });
+        await sandbox.exposeHost('clicked', '(ids) => { window.viewClicks.push(ids); return true; }');
+        await sandbox.registerFiles({ 'main.js': `sandboxView.render(${JSON.stringify(LINKS + '<p id="done">done</p>')}); sandboxView.on('click', 'l', (e) => bridge.call('clicked', e.ids));` });
+        expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
+        await waitInView(page, browserName, `!!document.getElementById('done')`, 8000);
+        await clickInSandbox(page, 20, 15);
+        await expect.poll(() => page.evaluate(() => (window as any).viewClicks.length), { timeout: 5000 }).toBe(1);
+        await inView(page, browserName, `document.getElementById('l').focus()`);
+        await waitInView(page, browserName, `document.activeElement && document.activeElement.id === 'l'`); // keys go to the focused frame
+        await page.keyboard.press('Enter');
+        await expect.poll(() => page.evaluate(() => (window as any).viewClicks), { timeout: 5000 }).toEqual([['l'], ['l']]);
+        await page.waitForTimeout(500);
+        expect(await inView(page, browserName, `location.href + ' ' + !!document.getElementById('l')`)).toBe('about:srcdoc true');
+        expect(await sandbox.state()).toBe('ready');
+        expect(page.url()).toMatch(/harness\.html$/);
+    });
 });
 

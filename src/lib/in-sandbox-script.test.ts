@@ -169,6 +169,40 @@ describe("inSandboxScript", () => {
         });
     });
 
+    it("reports EXECUTED with the host's number once executed code returned or threw, after what it logged (backlog B8)", () => {
+        const port = createMockPort();
+        const sandboxConsole = createMockConsole();
+        const listeners: Record<string, Function> = {};
+        (globalThis as any).addEventListener = (type: string, cb: Function) => {
+            listeners[type] = cb;
+        };
+        inSandboxScript(true, 'worker', sandboxConsole);
+        listeners['message']?.(initPort(port));
+        port.posted.mockClear();
+
+        port.deliver({ type: 'EXECUTE', code: 'console.log("ran")', n: 1 });
+        port.deliver({ type: 'EXECUTE', code: 'throw new Error("Boom")', n: 2 });
+        port.deliver({ type: 'EXECUTE', code: 'throw { get message() { return () => {}; } }', n: 3 }); // a message that cannot be cloned
+        port.deliver({ type: 'EXECUTE', code: 'void 0' }); // no number: nothing to report
+        const frames = port.posted.mock.calls.map(call => call[0]);
+        expect(frames.filter((f: any) => f.type === 'EXECUTED')).toEqual([{ type: 'EXECUTED', n: 1 }, { type: 'EXECUTED', n: 2 }, { type: 'EXECUTED', n: 3 }]);
+        expect(frames.findIndex((f: any) => f.type === 'LOG' && f.args[0] === 'ran')).toBeLessThan(frames.findIndex((f: any) => f.type === 'EXECUTED'));
+    });
+
+    it("relays console.info as level 'info', like log, warn and error (backlog B8)", () => {
+        const port = createMockPort();
+        const sandboxConsole = { ...createMockConsole(), info: vi.fn() };
+        const listeners: Record<string, Function> = {};
+        (globalThis as any).addEventListener = (type: string, cb: Function) => {
+            listeners[type] = cb;
+        };
+        inSandboxScript(true, 'iframe', sandboxConsole);
+        listeners['message']?.(initPort(port));
+        for (const level of ['log', 'info', 'warn', 'error'] as const) sandboxConsole[level](`via ${level}`);
+        const relayed = port.posted.mock.calls.map(call => call[0]).filter((f: any) => f.type === 'LOG' && String(f.args[0]).startsWith('via '));
+        expect(relayed.map((f: any) => [f.level, f.args[0]])).toEqual([['log', 'via log'], ['info', 'via info'], ['warn', 'via warn'], ['error', 'via error']]);
+    });
+
     it("skips a queued bridge frame that cannot be posted, still posting later frames and the ready message", () => {
         const posted: any[] = [];
         const port = createMockPort();

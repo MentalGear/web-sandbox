@@ -75,7 +75,8 @@ is the only way out unless the embedder also allows direct connections.
      `maxConcurrent × maxBytes`.
 5. **Every request is logged.** The element dispatches a `fetch` event, bubbling like `violation`, once
    per request when it settles: `{ method, url, outcome, status?, code?, bytes, durationMs }`, with
-   `outcome` one of `ok`, `refused` (no request made), `failed` (made, no response handed over) and
+   `outcome` one of `ok`, `refused` (no request made), `failed` (`fetch()` was called, no response handed over;
+   amended 2026-10-14, below) and
    `aborted` (torn down). No path to the network skips the record, refusals included. The record is
    built by the host from validated fields, and guest-supplied strings are clamped (the URL to 2048
    characters, a method that is not a method reported as `''`).
@@ -140,3 +141,19 @@ Costs and limits:
 ([`dialog-did-web/src/fetch.rs`](https://github.com/dialog-db/dialog-db/blob/facd672/rust/dialog-did-web/src/fetch.rs));
 the one-port-per-request stream shape follows Lunet
 ([`docs/lunet/data.js.flow`](https://github.com/Gozala/lunet/blob/master/docs/lunet/data.js.flow)).
+
+## Amendment (2026-10-14): the platform validates the request
+
+**When**: the follow-up audit of the adversarial review (B6). **Why**: the bridge checked header values with a
+ByteString regex of its own (review B6), a copy of a rule the browser applies anyway, which could drift from it.
+**Decision**: the bridge builds the `Request` itself, from the validated fields and the pinned options, before it
+records anything; whatever the constructor throws is `refused` (`FETCH_NOT_ALLOWED`) and `fetch()` is never called;
+`fetch()` is given that `Request` and the same init, so what was checked is what is sent. (The init again, whole:
+measured in WebKit, an abort that reached the fetch only through the `Request`'s own signal no longer stopped a
+response whose headers had arrived, so the timeout and teardown left the upstream connection open; and a partial
+init would make the `Request` constructor reset the referrer policy, which brought the `Referer` back on all three
+engines. Both were caught by `test/e2e/fetch-bridge.spec.ts`.) `validateRequest()` keeps only policy:
+origins, private hosts, methods, header names and sizes. `failed` means that the browser's `fetch()` rejected or
+no whole response arrived, not that a request left the page: `fetch()` also rejects before sending (the host
+page's own `connect-src`, mixed content, local-network blocking). Proof: `test/unit/channel-guarantees.test.ts`
+("B6").

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { assertEntryScoped, inSandboxView, inStrictWorker, RENDER_REMOVED_ELEMENTS, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, viewBootstrapText } from './in-sandbox-view';
+import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_REMOVED_ELEMENTS, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, viewBootstrapText } from './in-sandbox-view';
 import { REFERENCES } from './markup-references';
 import { VIOLATION_EVENT_LIMIT } from './violation';
 
@@ -86,7 +86,8 @@ describe('the renderer: file references, blob: URLs (A8), referrer and ping (A1)
         ].join(''), files);
         const has = (id: string, attribute: string) => fragment.getElementById(id)!.hasAttribute(attribute);
         expect(fragment.getElementById('minted')!.getAttribute('src')).toBe('blob:null/logo');
-        expect([has('foreign', 'src'), has('spaced', 'src'), has('upper', 'src'), has('anchor', 'href'), has('styled', 'style'), has('srcset', 'srcset'), has('data', 'data-x')]).toEqual(Array(7).fill(false));
+        expect([has('foreign', 'src'), has('spaced', 'src'), has('upper', 'src'), has('styled', 'style'), has('srcset', 'srcset'), has('data', 'data-x')]).toEqual(Array(6).fill(false));
+        expect(fragment.getElementById('anchor')!.getAttribute('href')).toBe(INERT_HREF); // a link's href is the constant (S24)
     });
 
     it('forces referrerpolicy="no-referrer" on a, area, img and link and wherever it is set; drops ping; keeps only noopener, noreferrer, nofollow in rel', () => {
@@ -103,9 +104,44 @@ describe('the renderer: file references, blob: URLs (A8), referrer and ping (A1)
     });
 });
 
+describe('the renderer: every hyperlink href is one inert constant (backlog S24, option B)', () => {
+    const MARK = 'MARKER-s24';
+    const XLINK = 'http://www.w3.org/1999/xlink';
+
+    it('HTML a and area, SVG a (href and xlink:href) and MathML links get INERT_HREF; the guest URL is gone from the fragment', () => {
+        const fragment = sanitize([
+            `<a id="a" href="https://x.example/?m=${MARK}">a</a>`,
+            `<a id="rel" href="relative/${MARK}">r</a><a id="frag" href="#${MARK}">f</a><a id="js" href="javascript:alert('${MARK}')">j</a>`,
+            `<map><area id="area" href="https://x.example/${MARK}"></map>`,
+            `<svg><a id="svga" href="https://x.example/${MARK}"><rect/></a><a id="svgx" xlink:href="https://x.example/${MARK}"><rect/></a></svg>`,
+            `<math><mi id="mi" href="https://x.example/${MARK}">x</mi></math>`,
+        ].join(''));
+        const attribute = (id: string) => fragment.getElementById(id)!.getAttribute('href');
+        expect(['a', 'rel', 'frag', 'js', 'area', 'svga', 'mi'].map(attribute)).toEqual(Array(7).fill(INERT_HREF));
+        expect(fragment.getElementById('svgx')!.getAttributeNS(XLINK, 'href')).toBe(INERT_HREF);
+        expect(serialise(fragment)).not.toContain(MARK);
+        expect(INERT_HREF).toBe('about:blank#');
+        expect(RENDER_RULES.inertHref).toBe(INERT_HREF);
+    });
+
+    it('positive control: links stay links, an <a> without href gets none, and hrefs that are resources (SVG use, image) keep their value', () => {
+        const fragment = sanitize(`<a id="named" name="x">no href</a><svg><use id="use" href="#icon"/><image id="img" href="https://x.example/i.png"/></svg>`);
+        expect(fragment.getElementById('named')!.hasAttribute('href')).toBe(false);
+        expect(fragment.getElementById('use')!.getAttribute('href')).toBe('#icon');
+        expect(fragment.getElementById('img')!.getAttribute('href')).toBe('https://x.example/i.png');
+        const link = sanitize('<a id="l" href="https://x.example/">l</a>');
+        const holder = document.createElement('div');
+        holder.append(link);
+        document.body.append(holder);
+        const anchor = holder.querySelector('#l') as HTMLAnchorElement;
+        expect([anchor.matches(':link'), anchor.matches(':any-link'), anchor.tabIndex, anchor.href]).toEqual([true, true, 0, INERT_HREF]);
+        holder.remove();
+    });
+});
+
 describe('the renderer reads elements through the prototypes, not the instance (DOM clobbering)', () => {
     it('a form whose controls shadow the methods it uses is still cleaned', () => {
-        const names = ['getAttributeNames', 'getAttribute', 'localName', 'namespaceURI', 'remove', 'hasAttribute', 'setAttribute', 'removeAttribute'];
+        const names = ['getAttributeNames', 'getAttribute', 'localName', 'namespaceURI', 'remove', 'hasAttribute', 'setAttribute', 'removeAttribute', 'hasAttributeNS', 'setAttributeNS'];
         const fragment = sanitize(`<form id="f">${names.map(n => `<input name="${n}">`).join('')}<iframe></iframe><script>x</script><img ping="https://evil.example/" src="https://x.example/i.png"></form>`);
         expect(Array.from(fragment.querySelectorAll('iframe, script'))).toEqual([]);
         expect(fragment.querySelector('img')!.hasAttribute('ping')).toBe(false);
@@ -174,6 +210,35 @@ describe('the view bootstrap', () => {
         expect(constructed[0]!.posted).toEqual([[{ type: 'INIT_WORKER' }, 2]]);
         expect(document.getElementById('initial')).not.toBeNull();
         document.body.replaceChildren();
+    });
+
+    it("revokes the worker's source URL on the first message the worker sends on the render port, and not before (review C1)", async () => {
+        const workers: { url: string; transfer: MessagePort[] }[] = [];
+        (globalThis as any).Worker = class {
+            onerror: unknown = null;
+            constructor(url: string) { workers.push({ url, transfer: [] }); }
+            postMessage(_message: unknown, transfer: MessagePort[]) { workers[workers.length - 1]!.transfer = transfer; }
+        };
+        const revoked: string[] = [];
+        const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation((url: string) => { revoked.push(url); });
+        try {
+            new Function(viewBootstrapText())();
+            const a = new MessageChannel(), b = new MessageChannel();
+            window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '' }, source: window, ports: [a.port1, b.port1] }));
+            expect(workers).toHaveLength(1);
+            await new Promise(resolve => setTimeout(resolve, 20));
+            expect(revoked).toEqual([]); // the worker exists, but has not run its script to the end yet
+
+            const render = workers[0]!.transfer[1]!; // the worker's end of the render port
+            render.postMessage({ type: 'VIEW_STARTED' });
+            render.postMessage({ type: 'VIEW_LISTEN', types: [] });
+            await new Promise(resolve => setTimeout(resolve, 20));
+            expect(revoked).toEqual([workers[0]!.url]);
+            expect(workers[0]!.url).toMatch(/^blob:/);
+            for (const port of [a.port1, a.port2, b.port1, b.port2, ...workers[0]!.transfer]) port.close();
+        } finally {
+            revoke.mockRestore();
+        }
     });
 });
 
@@ -252,5 +317,24 @@ describe('review C2 and C3: the strict worker prelude against hostile globals', 
             delete (Array.prototype as any)['0'];
         }
         expect(seen).toEqual([]);
+    });
+
+    it("the prelude's error texts use a join captured before guest code: a patched Array.prototype.join never receives the prelude's own list (C3)", () => {
+        const w = new EventTarget() as any;
+        Object.assign(w, { URL: {} });
+        start(w);
+        const receivers: unknown[] = [];
+        const join = Array.prototype.join;
+        Array.prototype.join = function (this: unknown[], ...args: [string?]) { receivers.push(this); return join.apply(this, args); };
+        let message = '';
+        try {
+            w.sandboxView.on('scroll', null, () => {});
+        } catch (error) {
+            message = (error as Error).message;
+        } finally {
+            Array.prototype.join = join;
+        }
+        expect(message).toBe('sandboxView.on: type must be one of click, keydown');
+        expect(receivers).toEqual([]);
     });
 });

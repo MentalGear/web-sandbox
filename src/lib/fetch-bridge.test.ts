@@ -72,7 +72,8 @@ describe('validateRequest (backlog B5)', () => {
             [{ url: 'https://api.example/', method: 7 }, 'FETCH_NOT_ALLOWED'],
             [{ url: 'https://api.example/', headers: [['cookie', 'a=b']] }, 'FETCH_NOT_ALLOWED'],
             [{ url: 'https://api.example/', headers: [['authorization', 'x']] }, 'FETCH_NOT_ALLOWED'],
-            [{ url: 'https://api.example/', headers: [['accept', 'a\r\nb']] }, 'FETCH_NOT_ALLOWED'],
+            [{ url: 'https://api.example/', headers: [['accept', 'x'.repeat(8193)]] }, 'FETCH_NOT_ALLOWED'],
+            // a value's syntax (CR, LF, NUL, above U+00FF) is the Request constructor's: test/unit/channel-guarantees.test.ts, B6
             [{ url: 'https://api.example/', headers: { accept: 'x' } }, 'FETCH_NOT_ALLOWED'],
             [{ url: 'https://api.example/', headers: [['accept']] }, 'FETCH_NOT_ALLOWED'],
             [{ url: 'https://api.example/', body: 'x' }, 'FETCH_NOT_ALLOWED'], // GET with a body
@@ -108,12 +109,17 @@ describe('createFetchBridge (backlog B5)', () => {
         return { response: new Response(body, init), state };
     }
 
-    function bridgeWith(fetchImpl: (url: string, init: RequestInit) => Promise<Response>, overrides: Record<string, unknown> = {}) {
+    // fetch() is given the Request the bridge built (review B6): the calls record what it carries.
+    function bridgeWith(fetchImpl: (request: Request) => Promise<Response>, overrides: Record<string, unknown> = {}) {
         const records: FetchRecord[] = [];
-        const calls: { url: string; init: RequestInit }[] = [];
+        const calls: { url: string; init: RequestInit; request: Request }[] = [];
         const bridge = createFetchBridge({
             policy: policy(overrides), hostOrigin: HOST, onRecord: (r) => records.push(r),
-            fetchImpl: ((url: string, init: RequestInit) => { calls.push({ url, init }); return fetchImpl(url, init); }) as any,
+            fetchImpl: ((request: Request) => {
+                const { method, credentials, referrerPolicy, redirect, mode, cache, keepalive, signal } = request;
+                calls.push({ url: request.url, init: { method, credentials, referrerPolicy, redirect, mode, cache, keepalive, signal }, request });
+                return fetchImpl(request);
+            }) as any,
         });
         return { bridge, records, calls };
     }
@@ -172,7 +178,7 @@ describe('createFetchBridge (backlog B5)', () => {
         await expect(failing.bridge.handle({ url: 'https://api.example/' })).rejects.toMatchObject({ code: 'FETCH_FAILED' });
 
         vi.useFakeTimers();
-        const hanging = bridgeWith((_url, init) => new Promise((_, reject) => init.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))), { timeoutMs: 1000 });
+        const hanging = bridgeWith((request) => new Promise((_, reject) => request.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))), { timeoutMs: 1000 });
         const pending = hanging.bridge.handle({ url: 'https://api.example/slow' });
         const settled = expect(pending).rejects.toMatchObject({ code: 'FETCH_TIMEOUT' });
         await vi.advanceTimersByTimeAsync(1000);
@@ -181,7 +187,7 @@ describe('createFetchBridge (backlog B5)', () => {
     });
 
     it('caps concurrent requests with FETCH_BUSY, and abortAll() aborts every one in flight and refuses later ones', async () => {
-        const { bridge, records, calls } = bridgeWith((_url, init) => new Promise((_, reject) => init.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))), { maxConcurrent: 2 });
+        const { bridge, records, calls } = bridgeWith((request) => new Promise((_, reject) => request.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))), { maxConcurrent: 2 });
         const first = bridge.handle({ url: 'https://api.example/1' });
         const second = bridge.handle({ url: 'https://api.example/2' });
         await expect(bridge.handle({ url: 'https://api.example/3' })).rejects.toMatchObject({ code: 'FETCH_BUSY' });

@@ -67,8 +67,14 @@ With [`autoResize`](#configuration) the element sets its own `style.height`; it 
 - Each call is applied **over the defaults, not over the previous configuration**: an option left out returns
   to its default. That includes `html`, so a `setConfig()` after `load(html)` starts with an empty document
   unless it passes `html` again.
+- The argument is copied (structured clone) before anything reads it: changing your objects or arrays afterwards
+  changes nothing, not even at the next `reset()`.
 - Values are validated before they are applied; what cannot be used is dropped with one `console.warn` per
   element, never applied half-way.
+- A config that cannot be used at all (not an object, or not cloneable: a `Proxy`, a function value) applies
+  nothing, and the sandbox terminates with the reason `the configuration could not be used: …`, as for an unknown
+  mode, until a usable config is set. A build that fails (for example a directive given a string instead of a
+  list) terminates with `the environment could not be built: …`. `setConfig()` never throws.
 
 | Option | Type | Default | Modes | What it does |
 | :--- | :--- | :--- | :--- | :--- |
@@ -80,7 +86,7 @@ With [`autoResize`](#configuration) the element sets its own `style.height`; it 
 | `connectionsAllowed` | `CSPDirectives` | see [below](#connectionsallowed) | all (strict: a subset) | The guest's Content Security Policy, merged per directive over the defaults. |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in worker and strict mode on every browser, and in iframe mode only where the browser runs the frame in its own process. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
-| `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | Each `execute()` (re)starts a timer; when it fires the element logs `Execution Timeout` (a `sandbox-log` with `source: 'host'`) and rebuilds the environment. Nothing reports that code finished, so the rebuild happens even after code that completed. |
+| `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A budget for each `execute()`, from when the element posts the code until the guest reports that it returned or threw. Code still running at the deadline ends the sandbox: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. Work the code scheduled for later is not counted (use `watchdogTimeout`). Anything but a finite number `> 0` is off. |
 | `autoResize` | `boolean` | `false` | iframe, strict | Only a literal `true` enables it. The element's height follows the guest's content height; see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Gives the guest [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off. [ADR-006](ADR-006-fetch-bridge.md) |
 
@@ -116,10 +122,12 @@ A directive you pass replaces that directive's default; the others keep theirs. 
 - **Keep `'unsafe-inline'` in `script-src`** (without nonces or hashes) in iframe and worker mode: the
   library's bootstrap is an inline script, and without it there is no `bridge`, no `sandboxFiles`, no
   violation reports (one warning). [CSP_CONFIG_RATIONALE.md](CSP_CONFIG_RATIONALE.md)
-- **Registered files add `blob:`** only to the directives their types need: `connect-src` for every file,
-  `script-src` for JavaScript, `style-src` for CSS, `img-src` for `image/*`, `font-src` for `font/*`,
-  `media-src` for `audio/*`, `video/*` and `text/vtt`. A directive you set to `'none'` stays `'none'`, with a
-  warning.
+- **Registered files add `blob:`** only to the directive that governs each kind of load their types need, as
+  the browser picks it (CSP Level 3 fallback): scripts `script-src-elem`, else `script-src`; stylesheets
+  `style-src-elem`, else `style-src`; `img-src` for `image/*`; `font-src` for `font/*`; `media-src` for
+  `audio/*`, `video/*` and `text/vtt`; `connect-src` for every file. Where only `default-src` governs, the kind's
+  own directive is created from `default-src`'s sources plus `blob:`. A governing directive you set to `'none'`
+  stays `'none'`, with a warning.
 - **Strict mode** takes only `default-src`, `style-src`, `connect-src`, `img-src`, `font-src`, `media-src`,
   `manifest-src` and `prefetch-src` from the config. `script-src`, `script-src-attr`, `base-uri`,
   `form-action`, `worker-src`, `frame-src` and `object-src` are fixed; every other directive is dropped; each
@@ -175,15 +183,15 @@ terminated until `reset()`, `load()` or `setConfig()`.
 ### `execute(code)`
 
 `execute(code: string): void` — runs `code` in the guest's global scope as the body of a function (the guest
-document in iframe mode, the worker in worker and strict mode). Fire-and-forget: nothing reports completion or
-a return value.
+document in iframe mode, the worker in worker and strict mode). No return value reaches the host; the guest
+reports only that the code returned, which ends its `workerExecutionTimeout` budget.
 
-- Needs `scriptUnsafe: true`; otherwise it warns and does nothing.
-- While `terminated` it warns and does nothing.
-- While `loading` the code is queued and runs when the guest is ready. While `idle` (not in the document) it
-  is dropped when the element is inserted.
+- Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
+- While `idle` (not in the document) or `terminated` there is no environment: it warns and does nothing, as
+  `call()` rejects then.
+- While `loading` the code is queued and runs when the guest is ready.
 - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
-- Arms `workerExecutionTimeout` in worker and strict mode.
+- In worker and strict mode each call has its own `workerExecutionTimeout` budget.
 
 ### `expose(name, fn)`
 
@@ -204,9 +212,8 @@ rejection reaches the guest as `HANDLER_ERROR` with the error's message.
 
 - Arguments and results are copied by structured clone (no functions, DOM nodes or symbols).
 - Default timeout: 30 s.
-- Calls made while `loading` are queued and sent when the guest is ready. Calls made while `idle` reject
-  with `TERMINATED` when the element is inserted. Calls made while `terminated` reject at once with
-  `TERMINATED`.
+- Calls made while `loading` are queued and sent when the guest is ready. Calls made while `idle` (not in the
+  document) or `terminated` reject at once with `TERMINATED`, as `execute()` does nothing then.
 - Rejects with an `RpcError` (an `Error` with a `code`); see [Refusal codes](#refusal-codes).
 
 ### `callWithTimeout(timeoutMs, method, ...args)`
@@ -272,7 +279,7 @@ guest's data: read them, don't merge them into your objects.
 | `args` | `readonly unknown[]` | What was logged, structured-cloned; at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING`. |
 | `source` | `'guest' \| 'host'` | Set by the element from where the line came from, never from the line. |
 
-Lines with `source: 'guest'`: the guest's `console.log`, `console.warn` and `console.error`; a throw from
+Lines with `source: 'guest'`: the guest's `console.log`, `console.info`, `console.warn` and `console.error`; a throw from
 `execute()`; one `info` line `<mode> Ready` per environment; in strict mode, `Uncaught …` for an uncaught error
 after the entry ran. Guest code can post anything here. Guest lines are limited to `LOG_EVENTS_PER_SECOND` per
 environment (one warning, then dropped until the next second).
@@ -291,7 +298,8 @@ Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerEx
 | `columnNumber` | `number?` | Positive integer, when given. |
 | `source` | `'view' \| 'logic'?` | Strict mode only, set by the element: `'view'` for the view document's reports (complete and unforgeable up to the cap), `'logic'` for the worker's. |
 
-At most `VIOLATION_EVENT_LIMIT` per environment (per source in strict mode). Outside the view, a report is
+At most `VIOLATION_EVENT_LIMIT` per environment; in strict mode per source, and for the view per directive, so
+refused loads of one kind never hide a report of another. Outside the view, a report is
 evidence that the guest tried something; guest code can suppress its own reports, so no event proves nothing.
 A frame the guest creates reports to itself, and worker reports depend on the engine (WebKit raises none in
 workers). [ADR-005](ADR-005-strict-mode.md)
@@ -302,7 +310,7 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | :--- | :--- | :--- |
 | `method` | `string` | Upper case; `''` when the guest sent no valid method. |
 | `url` | `string` | Without fragment; the guest's string cut to 2048 characters when it is not a URL. |
-| `outcome` | `'ok' \| 'refused' \| 'failed' \| 'aborted'` | `ok`: a response was handed over (any HTTP status). `refused`: no request was made. `failed`: a request was made but no response handed over. `aborted`: the environment was torn down meanwhile. |
+| `outcome` | `'ok' \| 'refused' \| 'failed' \| 'aborted'` | `ok`: a response was handed over (any HTTP status). `refused`: no request was made (the bridge's rules, or the browser's `Request` refused it). `failed`: the browser's `fetch` rejected or no whole response was handed over; not proof that a request left the page, since `fetch` also rejects before sending (the host page's own `connect-src`, mixed content, local-network blocking). `aborted`: the environment was torn down meanwhile. |
 | `status` | `number?` | The HTTP status, when a response arrived. |
 | `code` | `FetchErrorCode?` | Why it was refused, failed or aborted. |
 | `bytes` | `number` | Response body bytes read. |
@@ -318,6 +326,9 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
 | `unknown mode …` | `mode` is not `iframe`, `worker` or `strict`. |
+| `the configuration could not be used: …` | `setConfig()` got something that is not an object or cannot be cloned. |
+| `the environment could not be built: …` | Building the frame failed, e.g. a directive given a string instead of a list. |
+| `the executed code ran longer than workerExecutionTimeout` | Code from `execute()` was still running at its budget. |
 | `the sandbox frame loaded a second time` | Something navigated or reloaded the library's frame. |
 | `the guest frame is missing` | The library's frame has no guest frame. |
 
@@ -332,16 +343,15 @@ Branch on `state` and the event, not on these texts.
 | `idle` | Not in the document (constructed, or removed): no frame. |
 | `loading` | A frame was built and is loading. |
 | `ready` | The guest can be reached; `ready` was dispatched. |
-| `terminated` | Torn down by `terminate()`, the watchdog or an integrity check; `terminated` was dispatched. |
+| `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`), an integrity check or a failed build; `terminated` was dispatched. |
 
-There is no `running` state: nothing reports when guest code finishes.
+There is no `running` state: only code from `execute()` reports that it returned, never guest code as a whole.
 
 | From | Action | To |
 | :--- | :--- | :--- |
-| any | inserted into the document; `setConfig()`, `load()` or `reset()` while in it | `loading`, then `ready` (or `terminated` if the build is refused) |
+| any | inserted into the document; `setConfig()`, `load()` or `reset()` while in it | `loading`, then `ready` (or `terminated` if the build is refused or fails, once per attempt) |
 | any | removed from the document | `idle`, no event |
-| any but `terminated` | `terminate()`, watchdog, integrity check | `terminated` |
-| `ready` | `workerExecutionTimeout` expires | `loading`, then `ready` (no `terminated` event) |
+| any but `terminated` | `terminate()`, watchdog, `workerExecutionTimeout`, integrity check | `terminated` |
 
 Every rebuild and teardown rejects pending calls with `TERMINATED`, aborts in-flight `sandboxFetch()` requests,
 and resets the per-environment caps (log rate, violations). Listeners run synchronously; a listener that calls
@@ -418,7 +428,7 @@ runs; in iframe mode that needs `allow-scripts` and inline scripts allowed by `s
 | `sandboxFiles` | ✓ | ✓ | ✓ |
 | `sandboxFetch` | with `fetchBridge` | with `fetchBridge` | with `fetchBridge` |
 | `sandboxView` | — | — | ✓ |
-| `console` relayed | `log`, `warn`, `error` | `log`, `warn`, `error` | `log`, `warn`, `error` |
+| `console` relayed | `log`, `info`, `warn`, `error` | `log`, `info`, `warn`, `error` | `log`, `info`, `warn`, `error` |
 
 Removed before guest code runs: `RTCPeerConnection` (and prefixed variants) in every mode. In strict mode also
 `Worker`, `SharedWorker`, `URL.createObjectURL`, and `WebAssembly` unless `scriptUnsafe`. In strict mode the view
@@ -467,6 +477,16 @@ The renderer removes `iframe`, `frame`, `frameset`, `object`, `embed`, `portal`,
 `base`, `noscript` and `template` with their content; handler attributes and `javascript:` URLs never run; link
 clicks and form submissions navigate nowhere. Registered files are named by path in `src`, `href` and `poster`.
 
+Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
+`about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and
+Enter still reach `sandboxView.on`, and the browser's own actions on it (copy link address, open in a new tab,
+drag) carry no URL of the guest's. To open external URLs, expose a host method and call it from a click handler:
+
+```js
+sandbox.expose('openExternal', (url) => { if (allowed(url)) window.open(url, '_blank', 'noopener'); });
+// in the worker: sandboxView.on('click', 'docs', () => bridge.call('openExternal', 'https://example.com/docs'));
+```
+
 An event handler receives:
 
 ```ts
@@ -510,12 +530,12 @@ Choose strict mode for content you do not trust at all. [ADR-005](ADR-005-strict
 | Guest log lines per second, per environment | 1000 | `LOG_EVENTS_PER_SECOND` |
 | Arguments kept per log line | 64 | `LOG_MAX_ARGS` |
 | Characters kept per string log argument | 65536 | `LOG_MAX_STRING` |
-| `violation` events per environment (per source in strict mode) | 100 | `VIOLATION_EVENT_LIMIT` |
+| `violation` events per environment (strict mode: per source, and per directive for the view) | 100 | `VIOLATION_EVENT_LIMIT` |
 | Auto-size: tallest height (px) | 100000 | `AUTO_RESIZE_MAX_HEIGHT` |
 | Auto-size: height changes per second (and at most one per frame) | 30 | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` |
 | Strict: characters per `sandboxView.render()` | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
-| Strict: view liveness budget (ms) | 5000 | — |
+| Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
 | Files: total bytes | 8388608 (8 MiB) | — |
 | Files: count | 1000 | — |
 | Files: path length | 256 | — |
@@ -539,7 +559,7 @@ Values:
 | `SandboxDevTools` | `new SandboxDevTools(element)`, then `activate()`, `deactivate()` or `toggle()`: prints the element's `sandbox-log` lines to the host console. |
 | `SAFE_CAPABILITIES`, `UNSAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS`, `UNSAFE_PERMISSIONS` | The capability lists accepted by `capabilities` and `unsafeCapabilities`. |
 | `FETCH_ERROR_CODES` | Every `FetchErrorCode`. |
-| `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH` | See [Limits](#limits). |
+| `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS` | See [Limits](#limits). |
 
 Types: `SandboxConfig`, `SandboxState`, `RpcError`, `RpcErrorCode`, `SandboxLog`, `SandboxLogLevel`,
 `SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,

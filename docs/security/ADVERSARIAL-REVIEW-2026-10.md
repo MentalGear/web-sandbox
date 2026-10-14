@@ -1,7 +1,8 @@
 # Adversarial review, 2026-10
 
-**Date**: 2026-10-14 · **Code reviewed**: `main` at `ca2110c` · **Result**: 21 candidates — 16 fixed, 1 held (now
-asserted), 1 documented by design, 3 residuals stated · **Backlog**: [S19–S25](../BACKLOG.md#s19--a-configured-value-or-key-could-add-csp-directives---done)
+**Date**: 2026-10-14 · **Code reviewed**: `main` at `ca2110c` · **Result**: 21 candidates — 19 fixed (16 in the review,
+C1, C4 and C5 in the [follow-up](#follow-up-2026-10-14-by-construction-audit)), 1 held (now asserted), 1 documented by
+design, no residual left open; the follow-up found 2 more gaps, both fixed · **Backlog**: [S19–S26](../BACKLOG.md#s19--a-configured-value-or-key-could-add-csp-directives---done)
 
 ## Scope and method
 
@@ -32,25 +33,25 @@ WebKit on Linux is not Safari.
 | :--- | :--- | :--- | :--- | :--- |
 | A1 | policy | medium/high | **fixed** | `test/e2e/review-policy.spec.ts`: "A1: an injected default-src value gives the strict view no handler attributes…"; `test/unit/policy-guarantees.test.ts`: "A1: … property, strict and iframe mode"; `src/lib/csp/policy-grammar.test.ts` |
 | A2 | policy | low/medium | **fixed** (by A1) | `test/unit/policy-guarantees.test.ts`: "A2: the S14 'self' drop cannot be bypassed by punctuation" |
-| A3 | policy | low/medium | **fixed** | `test/unit/policy-guarantees.test.ts`: "A3: … warns once when script-src-elem refuses inline scripts"; `src/lib/markup-references.test.ts` (inlineScriptsAllowed rows) |
+| A3 | policy | low/medium | **fixed**; class closed in the follow-up | `test/unit/policy-guarantees.test.ts`: "A3: … warns once when script-src-elem refuses inline scripts"; `src/lib/markup-references.test.ts` (inlineScriptsAllowed rows); `src/lib/csp/file-sources.test.ts` ("over the one fallback table"); `test/e2e/review-policy.spec.ts`: "A3 class" (3 tests) |
 | A4 | config | low | **fixed** | `test/unit/policy-guarantees.test.ts`: "A4: an unknown mode fails closed" |
 | A5 | policy | low | **fixed** | `test/unit/policy-guarantees.test.ts`: "A5: 'unsafe-eval' and 'wasm-unsafe-eval' come only from scriptUnsafe" |
-| A6 | config | info | **fixed** | `test/unit/policy-guarantees.test.ts`: "A6: … a config whose scriptUnsafe changes between reads" |
-| A7 | config | info | **fixed** | `test/unit/policy-guarantees.test.ts`: "A7: a merge never writes prototypes" |
+| A6 | config | info | **fixed**; by construction in the follow-up | `test/unit/policy-guarantees.test.ts`: "A6: the values interpolated into the bootstrap come from one copy of the config" |
+| A7 | config | info | **fixed**; by construction in the follow-up | `test/unit/policy-guarantees.test.ts`: "A7: a merge never writes prototypes, with no list of keys" (property) |
 | A8 | documents | info | **held**, now asserted | `test/unit/policy-guarantees.test.ts`: "A8: the default bootstrap is parser-safe"; `test/e2e/package.spec.ts`: "… parser-safety assertion for every default bootstrap variant" |
 | B1 | channel | medium/low | **fixed** | `test/e2e/review-channels.spec.ts`: "B1: another frame on the host page racing the host with INIT_PORT…"; `src/lib/in-sandbox-script.test.ts`: "the one INIT_PORT (review B1)" |
 | B2 | channel | medium/low | **fixed** | `test/e2e/review-channels.spec.ts`: "B2: the port never reaches guest code" (3 tests); `src/lib/in-sandbox-script.test.ts`: "the port never reaches guest code (review B2)" |
 | B3 | events | medium/low | **fixed** | `test/unit/channel-guarantees.test.ts`: "B3: every sandbox-log detail is normalised and labelled" |
 | B4 | lifecycle | low/medium | **fixed** (real in Firefox) | `test/e2e/review-channels.spec.ts`: "B4: a listener that resets the sandbox mid-flood…"; `test/unit/channel-guarantees.test.ts`: "B4" |
-| B5 | lifecycle | low | **fixed** | `test/unit/channel-guarantees.test.ts`: "B5: a listener that resets or terminates the sandbox is never undone" |
-| B6 | fetch bridge | low | **fixed** | `test/unit/channel-guarantees.test.ts`: "B6: a fetch header value must be a ByteString…" |
+| B5 | lifecycle | low | **fixed**; one helper in the follow-up | `test/unit/channel-guarantees.test.ts`: "B5: a listener that resets or terminates the sandbox is never undone" (every path forced, and a source check) |
+| B6 | fetch bridge | low | **fixed**; the platform validates in the follow-up | `test/unit/channel-guarantees.test.ts`: "B6: the platform validates a request before the bridge records it" |
 | B7 | broker | low | **fixed** | `test/e2e/review-channels.spec.ts`: "B7: 300 calls to a host method that never settles…"; `src/lib/rpc.test.ts`: "inbound calls in flight are capped per channel (review B7)" |
 | B8 | broker, events | info | **documented** (by design) | `test/e2e/review-channels.spec.ts`: "B8 (documented): an own "__proto__" key survives structured clone…" |
-| C1 | strict, files | medium/low | **residual**, claim narrowed | `test/e2e/review-strict.spec.ts`: "C1: the view renders no blob: content but registered files" (2 tests) |
+| C1 | strict, files | medium/low | claim narrowed; **fixed** by construction in the follow-up | `test/e2e/review-strict.spec.ts`: "C1: the view renders no blob: content but registered files" (3 tests); `src/lib/in-sandbox-view.test.ts` ("revokes the worker's source URL…") |
 | C2 | strict | low/medium | **fixed** | `test/e2e/review-strict.spec.ts`: "C2: the entry runs in its own scope" (3 tests); `src/lib/in-sandbox-view.test.ts`, `test/unit/strict.test.ts` ("review C2") |
 | C3 | strict | low | **fixed** | `test/e2e/review-strict.spec.ts`: "C3: guest code watching every array write…"; `src/lib/in-sandbox-view.test.ts` ("C3") |
-| C4 | strict | low | **residual**, measured | `test/e2e/review-strict.spec.ts`: "C4 (measured): the view's violation cap is shared…" |
-| C5 | strict | low | **residual**, measured | `test/e2e/review-strict.spec.ts`: "C5 (measured, residual): a rendered link keeps its href…" |
+| C4 | strict | low | measured; **fixed** in the follow-up | `test/e2e/review-strict.spec.ts`: "C4: the view counts violations per directive…"; `test/unit/followup-guarantees.test.ts` ("C4") |
+| C5 | strict | low | measured; **fixed** in the follow-up (S24 option B) | `test/e2e/review-strict.spec.ts`: "C5: a rendered link stays a link, but its href is one inert constant" (2 tests); `src/lib/in-sandbox-view.test.ts` |
 
 "Fixed" means the test failed against `ca2110c` and passes now; the engines it failed on are given below.
 
@@ -277,9 +278,9 @@ WebKit on Linux is not Safari.
 
 | Id | What remains | Why it is not fixed in-page | Asserted by |
 | :--- | :--- | :--- | :--- |
-| C1 | The renderer does not read CSS; rendered CSS can name the worker's source URL and its file copies | They render no content but registered files (above); revocation breaks WebKit; a CSS-reading renderer would patch a grammar | `review-strict.spec.ts` "C1" |
-| C4 | The view's violation cap (100 per environment) is shared with refusals of the guest's own rendered markup, so a guest can use it up | Counting "guest-caused" refusals apart is not possible from the report; G6 is stated as complete up to the cap | `review-strict.spec.ts` "C4" |
-| C5 | A user's own browser actions on a rendered link ("open in new tab", dragging it) are not cancellable | They are not page events; they need the user. Dropping `href` from rendered links would close it at the cost of links not looking like links (backlog S24) | `review-strict.spec.ts` "C5" |
+| C1 | ~~The renderer does not read CSS; rendered CSS can name the worker's source URL and its file copies~~ **Closed in the follow-up**: the source URL is revoked once the worker ran; rendered CSS can name only the file copies, registered content | — | `review-strict.spec.ts` "C1" |
+| C4 | ~~The view's violation cap (100 per environment) is shared with refusals of the guest's own rendered markup~~ **Closed in the follow-up**: counted per directive, bounded | — | `review-strict.spec.ts` "C4" |
+| C5 | ~~A user's own browser actions on a rendered link ("open in new tab", dragging it) are not cancellable~~ **Closed in the follow-up**: they are still not cancellable, but every rendered link's href is `about:blank#`, so they carry nothing of the guest's | — | `review-strict.spec.ts` "C5" |
 | B8 | Guest data can carry own `__proto__` keys | Structured clone keeps them; a library cannot change what embedder code does with data | `review-channels.spec.ts` "B8" |
 
 The residuals stated before this review (S8, S13 and S17 in default mode, S15's platform limits, S18) are unchanged.
@@ -311,9 +312,9 @@ From the reviewers' phase-1 notes, confirmed by their experiments or by the exis
 1. **Keep the grammar and the captured primitives as the chokepoints.** New policy steps should run after
    `sanitizeDirectives()`; new bootstrap code that touches a port or an event should use the captured primitives.
    Both are covered by property-style tests that fail if a new path bypasses them.
-2. **Decide C5** (backlog S24): whether strict mode should drop `href` from rendered links.
-3. **File sources and `script-src-elem`**: registered JavaScript files add `blob:` to `script-src` only; an embedder
-   who sets `script-src-elem` must add `blob:` there too (fails closed, no warning yet).
+2. **Decide C5** (backlog S24): done in the follow-up, option B (inert link hrefs).
+3. **File sources and `script-src-elem`**: done in the follow-up (one fallback table; `blob:` goes to the governing
+   directive).
 4. **The `fetch` event** reports every request, refused ones included, so its rate is bounded only by the RPC rate
    (now at most 256 in flight). That is by design (an audit log); an embedder that renders each record should
    throttle on its side.
@@ -357,3 +358,100 @@ before typing. Without that wait the strict "no navigation" test could pass with
 
 Changed or new spec files: `review-policy`, `review-channels`, `review-strict`, `package`, `auto-resize`,
 `violations`, `strict`, `strict-events`, `strict-render-flood` (repeat and load runs), `events`.
+
+## Follow-up (2026-10-14): by-construction audit
+
+An audit graded every fix of this review by what makes it hold: **construction** (one chokepoint every path passes,
+or the bad state cannot be represented), **validation** (an input is checked at a boundary, so the check has to be
+right about every input), **discipline** (it holds while code keeps following a convention) or **residual** (a stated
+limit). The follow-up moved every fix it could to construction, on `main` at `448f750`; owner's rules: defense not
+offense, a test that fails before each change, evidence read from outside the sandbox (T5).
+
+### Grading
+
+| Id | After the review | After the follow-up | What makes it hold now |
+| :--- | :--- | :--- | :--- |
+| A1, A2 | construction | construction | the policy grammar at the start of the pipeline and in `generateCSP()` |
+| A3 | discipline (two copies of the fallback order, one of them missing: file sources) | **construction** | one CSP3 fallback table (`src/lib/csp/effective-directive.ts`) read by every consumer |
+| A4 | construction | construction, wider | `initialize()` refuses an unknown mode, an unusable config, and ends any build that throws |
+| A5 | validation | validation | eval keywords dropped from the config (`drop-eval.ts`) |
+| A6 | validation (normalised twice) | **construction** | one `structuredClone` of the `setConfig()` argument; `=== true` at every bootstrap interpolation |
+| A7 | validation (a key denylist) | **construction** | merged keys are defined as own data properties: no key is special, none needs listing |
+| A8 | validation | validation | parser-safety assertion on every bootstrap |
+| B1 | validation | validation | one trusted INIT_PORT from `parent.parent` |
+| B2, C3 | construction | construction | primitives captured before guest code (the prelude's error texts now use a captured `join` too) |
+| B3 | validation, with a caller convention | **construction** | `_dispatchLog(line, source)` makes every detail itself |
+| B4, B7 | construction | construction | port identity; the broker's in-flight cap |
+| B5 | discipline (hand-written re-checks) | **construction, test-enforced** | `_notifyThenAct`, the only reader of the environment count; a test forces every path and fails on a hand-written check |
+| B6 | validation (a copy of the platform's rule) | **validation by the platform** | the bridge builds the `Request` before recording; what it throws is `refused` |
+| B8 | residual, documented | residual, documented | structured clone keeps own `__proto__` keys |
+| C1 | residual (claim narrowed) | **construction** | the worker's source URL is revoked on its first render-port message |
+| C2 | construction | construction | the entry's own scope and the scope check |
+| C4 | residual | **validation, bounded** | the view's reports counted per directive (known names + one bucket) |
+| C5 | residual | **construction** | every rendered hyperlink href is `about:blank#` (backlog S24, option B) |
+
+### What changed
+
+- **A3 class.** `effectiveDirective(policy, kind)` follows CSP Level 3's fallback lists; the bootstrap check reads it,
+  file sources add `blob:` to the directive that governs each load (so to `script-src-elem` / `style-src-elem` when
+  configured; before, those policies refused every registered script and stylesheet), and strict mode asks only
+  the directives its view will hold. Byte-identical for policies without `-elem` directives (500-config property
+  test against the previous code). End to end: the -elem config failed on all three engines before (script and
+  stylesheet refused); now both load with no violation and nothing else widened.
+- **C1 by construction.** The view revokes the worker's source URL on `VIEW_STARTED`, the prelude's first
+  render-port message, posted only after the whole worker script ran. Measured on all three engines after the
+  revocation: `sandboxFiles` (`url`, `read`, `text`), the worker's own `blob:` URLs, Blob reads, `execute()` and its
+  error text work. **New finding**: in WebKit a later uncaught error thrown by code from the revoked script reads
+  `Script error.` inside the worker (the audit had measured the Worker object in the view, where the text stays).
+  The prelude now leaves such a muted error to the view, which logs it with its text; which errors are the entry's
+  is decided from the count `VIEW_STARTED` carries, not from the order of two channels. Executed code's late
+  errors, muted in WebKit's worker before this change too, now keep their text.
+- **C4.** Per-directive counts on the view port, in the view and on the host; the logic port and the default modes
+  keep one count (guest code names the directive there). 150 refused images no longer hide a `script-src-attr`
+  report (failed on all three engines before).
+- **C5 (S24 option B).** The renderer sets every hyperlink href to `about:blank#`; links stay focusable, keep the role
+  `link` and `:link`, and clicks and Enter are still cancelled and delivered by id. The constant was measured
+  against `#`, `""`, `about:blank`, `about:invalid`, `javascript:void(0)` and `data:,` (reasoning in `INERT_HREF`).
+- **B6.** The bridge builds the `Request` before recording; what the constructor throws is `refused`, and the
+  ByteString regex is gone. `fetch()` gets that `Request` with the same init, whole: the first attempt passed the
+  `Request` alone, and in WebKit an abort through the `Request`'s own signal then no longer closed a response
+  whose headers had arrived (the timeout and teardown specs failed); passing only the signal beside it reset the
+  referrer policy and sent a `Referer` on all three engines (the credentials spec failed). `failed` is now
+  documented as "the browser's `fetch()` rejected", not "a request was sent".
+- **Backlog B8.** `workerExecutionTimeout` is a per-`execute()` budget for code still running and terminates
+  (the guest reports `EXECUTED`); `execute()` and `call()` refuse at once while idle; `console.info` is relayed;
+  `VIEW_LIVENESS_TIMEOUT_MS` is exported ([ADR-003 amendment](../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)).
+
+### Two new gaps (backlog S26, fixed)
+
+1. **A build failure was not a termination.** A string directive value (`'img-src': "x; script-src *"`) or a `Proxy`
+   array made `setConfig()` throw from the build: the old environment torn down, state `loading`, no frame, no
+   `terminated` event. Now every build failure, and every config that cannot be copied, ends in `terminated` with a
+   reason, and `setConfig()` never throws.
+2. **The config shared the caller's arrays.** An array changed after `setConfig()` changed the policy the next
+   `reset()` built. The argument is now copied once, first.
+
+### Refuted alternatives
+
+- **A `data:` URL for the worker** instead of revoking a `blob:` URL: in WebKit the worker then cannot read its own
+  `blob:` URLs (`NotReadableError`), and Chromium mutes the errors of a large `data:` worker.
+- **The entry as a separate script** (`importScripts(blob:)` from the prelude, to keep its error text away from the
+  revoked URL): `importScripts` is checked against `script-src-elem`, and admitting `blob:` there would admit
+  `<script src=blob:>` in the view.
+- **For C5, removing `href` or rewriting links to `span`**: the element would leave the tab order, lose the role
+  `link` and stop matching `:link`.
+
+### Results
+
+Each new or changed test failed before its change (run against `448f750`) and passes after. End to end, the new and
+changed tests in `review-policy`, `review-strict`, `review-followup` and `worker-timeout` failed before on every
+engine (13 of 22, plus the C5 guarantee; the rest are positive controls that pass before and after); unit: 39
+failed before.
+
+| | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- |
+| Full e2e at `448f750` | 350 passed, 8 skipped | 349 passed, 9 skipped | 348 passed, 10 skipped |
+| Full e2e after | 363 passed, 8 skipped | 362 passed, 9 skipped | 361 passed, 10 skipped |
+| Changed and new specs, `--repeat-each 3` | 189 passed (63 tests × 3) | 189 passed | 189 passed |
+
+Unit (`bunx vitest run`): 1225 passed in 30 files (1181 in 29 before). `bun run typecheck`, `bun run build` and `scripts/smoke-package.sh` pass.

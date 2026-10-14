@@ -53,7 +53,8 @@ export function isSourceExpression(token: string): boolean {
     return SCHEME.test(token) || HOST.test(token);
 }
 
-const isKnownDirective = (name: string): boolean => (KNOWN_DIRECTIVES as readonly string[]).includes(name);
+/** Whether `name` is one of KNOWN_DIRECTIVES, exactly. */
+export const isKnownDirective = (name: string): boolean => (KNOWN_DIRECTIVES as readonly string[]).includes(name);
 
 // ASCII whitespace, the separator inside a directive (CSP Level 3, §2.2.1).
 const ASCII_WHITESPACE = /[\t\n\f\r ]+/;
