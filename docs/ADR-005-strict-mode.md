@@ -1,6 +1,6 @@
 # ADR-005: Strict mode — guest logic in a worker, a view that runs no guest script
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view))
 
 ## Why this ADR exists
 
@@ -196,17 +196,21 @@ SVG script, `javascript:` link, frames at any depth and namespace, the hashed co
 links, noscript, templates — asserted absent; G4 navigation; G2 worker; the entry; A5; files and A8;
 configuration, fetch bridge, auto-sizing), `strict-render-flood.spec.ts` (A4),
 `webrtc.spec.ts`, `watchdog.spec.ts`, `host-url.spec.ts`, `violations.spec.ts` (section 5),
-`strict-events.spec.ts`, and the strict cases of `broker`, `lifecycle` and `events.spec.ts`; unit tests in
+`strict-events.spec.ts`, `broad-strict.spec.ts`, and the strict cases of `broker`, `lifecycle` and `events.spec.ts`; unit tests in
 `src/lib/in-sandbox-view.test.ts`, `src/lib/csp/script-hash.test.ts`, `test/unit/strict.test.ts`.
 
 **What it does not guarantee (residuals):**
 
-- **Rendering cost on the host's thread.** Firefox and WebKit run the view on the host page's thread, so each
-  apply is host-thread work. Flow control bounds it to one apply at a time, but what one apply costs depends
-  on the markup. Measured (Playwright 1.58 builds, 256 Ki characters per render, flood as fast as allowed):
-  host lag ≤ 10 ms in Chromium (out of process), 50–150 ms in Firefox, 90–470 ms in WebKit; pathological
-  markup (20 000 nested elements) about 0.7 s per apply in Firefox and WebKit. The watchdog does not count
-  host stalls against the guest; the bound on termination is the budget plus one apply.
+- **Rendering cost on the host's thread.** Firefox and WebKit run the view on the host page's thread, and Chromium
+  may too: in the broad review's runs it kept the wrapper and the view in the host page's process (no iframe
+  target; both frames local), and the host stalled as in the other engines. So each apply is host-thread work.
+  Flow control bounds it to one apply at a time; since the broad review the DOM one apply builds is linear in its
+  markup and the document is bounded (amendment below), but what painting it costs is not: CSS is not read by the
+  renderer, and a filter list on many elements costs their product (measured in WebKit: 10 `blur()` functions on
+  1 000 elements, 88 KB, stalled the host 3.7 s; 100 on 1 000, over 180 s; backlog S44). Measured for markup
+  (Playwright 1.58 builds, 256 Ki characters per render, flood as fast as allowed): host lag ≤ 10 ms in Chromium,
+  50–150 ms in Firefox, 90–470 ms in WebKit; 45 000 elements in one render 0.2–0.3 s on all three. The watchdog
+  does not count host stalls against the guest; the bound on termination is the budget plus one apply.
 - **CSS exfiltration** within the policy (style-based probing of the view's own content, requests to allowed
   origins); the policy governs it.
 - **Worker reports** are per engine: WebKit raises no violations in workers, Firefox raises the worker's
@@ -327,3 +331,58 @@ link hrefs, file references, the `blob:` rule — and any it may check later, ra
 Tests: `test/e2e/focused-review.spec.ts` ("F1": `animVal` and Chromium's accessibility URLs read from outside, the
 recorder for an animated image), `src/lib/in-sandbox-view.test.ts`, `src/lib/load-kinds.test.ts` (the renderer reads
 the load-kind table, ADR-004).
+
+## Amendment (2026-10-14): broad review, an allowlist renderer and a bounded view
+
+**When**: the broad review of 2026-10-14, reviewer C ([report](security/BROAD-REVIEW-2026-10-14.md), ST1–ST4, I1).
+**Why**: the renderer was a list of what to remove, so every mechanism a document has that the list did not name
+was open: F1 (SMIL) and ST2 (SVG `<use>`) both came from there. And three bounds held per item but not for the whole:
+the files the view shows (ST1), the size of what one render builds (ST2), and the size of one event (ST3).
+
+- **The renderer is an allowlist** (`RENDER_ELEMENTS`, `RENDER_ATTRIBUTES`, `src/lib/in-sandbox-view.ts`; the lists
+  and what guests lose are in [API.md](API.md#sandboxview-strict-mode)). Per namespace: HTML flow, phrasing,
+  sectioning, lists, tables, forms and their controls, details, dialog, media, `style` and the minted `link`; SVG
+  shapes, text, structure, gradients, clip paths, masks, patterns; MathML Core presentation elements. Attributes: the
+  global ones, `data-*`, `aria-*`, and per element what it needs; never a handler, a form target, an invoker, or a
+  URL attribute other than `src`, `srcset`, `poster` and the minted `link` `href`, which keep only `https:`, `http:`,
+  a URL the view minted or a relative one (no `data:`, no `javascript:`). **Unknown HTML elements are unwrapped**:
+  their children take their place and are checked in turn, so obsolete or unknown wrappers (`center`, `font`,
+  `marquee`) keep their text; nothing is serialised or reparsed, so unwrapping cannot change what a child is. The
+  elements that hold raw text, a template or a browsing context (`script`, `noscript`, `template`, `iframe`, …)
+  and **every SVG or MathML element outside the list are removed with their content** (an unknown SVG element
+  renders nothing anyway; `annotation-xml` can hold HTML). A hyphenated custom element name is kept: no script can
+  define it in the view, so it is an inert element. Move-not-clone (A2) and the captured primitives hold: the walk
+  reads and changes nodes only through prototype getters and methods captured when it starts.
+  *Beyond the review's list, by measurement*: `marker` is out like `use` (markers instance their content per
+  vertex and nest: 1.4 KB stalled the host 2.9–16.6 s), SVG filter primitives are out (their cost is what their
+  parameters say, not what the markup weighs: one 150-character `feMorphology` stalled WebKit 6.4 s), and SVG
+  `image` is out (the HTML `img` covers it, under the same rules). Masks, clip paths and patterns nested the same way
+  were measured flat (≤ 0.3 s at 10^5 references) and stay, without `href` templates.
+- **ST1: nothing the view shows opens as a document.** A user can open a shown image or video in a new tab, a
+  navigation the view cannot cancel; a registered SVG opened that way ran its script top-level, outside the policy
+  (Chromium, Firefox). The view now mints URLs only for `VIEW_FILE_TYPES`, types that are never a document (CSS,
+  raster images, fonts, audio, video, WebVTT), through its own load-kind table derived from load-kinds.ts
+  (`VIEW_LOAD_KINDS`, no prefixes: `+xml` types fall under `image/` and `video/` too). Every other file stays the
+  worker's (`sandboxFiles`), and the policy adds `blob:` for it only to `connect-src`. And `data:` is dropped from the
+  directive that governs images (one warning): no documented use needed it, and the renderer keeps no `data:` URL in
+  markup either. What remains: an image from an origin the embedder allowed opens as that origin's document.
+- **ST2: the corrected bound.** No element instances referenced content any more, and the view's body holds at most
+  `VIEW_MAX_ELEMENTS` (50 000) elements nested at most `VIEW_MAX_DEPTH` (256) deep, counted over the document a
+  render would leave (renders accumulate across targets): past either, the render is refused before insertion,
+  still acknowledged, and the worker logs why. So **the DOM an apply builds is linear in its markup and the document
+  is bounded**; measured after: the 1–1.4 KB fan-outs stall the host ≤ 41 ms (before: 6.1–11.9 s for `use`,
+  2.9–16.6 s for markers), 45 000 elements 0.2–0.3 s. Paint cost set by CSS is not bounded (residual above, S44).
+- **ST3**: one event detail carries at most `VIEW_EVENT_LIMITS.maxTotal` (256 Ki) characters in all, and
+  `truncated: true` when anything was cut (before: 30 fields carried 1.8 M characters).
+- **ST4**: the trailer's marker is named per build (`entryDoneName()`, 128 random bits); an entry that closes its
+  scope and declares a `let` of the old fixed name had taken it over. C2's check catches escaped functions only;
+  escaped lexical declarations are in their dead zone while the prelude runs and cannot name the marker.
+- **I1**: the renderer's `<link>` kinds are load-kinds.ts's, as data (`linkRelKinds`), and a unit test holds them
+  equal to `linkKinds()` for every `rel`/`as` combination.
+
+Tests: `test/e2e/broad-strict.spec.ts` (all three engines: the allowlist corpus and its positive control, ST1 opened
+URLs and `data:`, ST2 fan-out with host lag and the budgets, ST3, ST4); `src/lib/in-sandbox-view.test.ts`
+(allowlist property over 300 random corpora, unwrap, URLs, budgets, event budget); `src/lib/load-kinds.test.ts`;
+`test/unit/strict.test.ts`. Existing specs that relied on what is gone now probe the same guarantee another way:
+the policy's `script-src-attr` with a handler set from outside (`review-policy.spec.ts`, A1), C4's second
+directive with a refused audio load, F1's positive control with an HTML image, and the files specs with PNG.
