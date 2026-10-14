@@ -443,6 +443,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         renderPort.onmessage = onRender;
         let worker: Worker;
         try {
+            // The worker's source URL is never revoked (review C1): in WebKit, revoking it makes every blob: URL
+            // the worker minted unreadable there (sandboxFiles fails with NotReadableError) and mutes its error
+            // messages ("Script error."). It resolves in the view too, but renders nothing there: it is typed
+            // text/javascript and begins with the library's prelude, so it is neither a stylesheet (MIME) nor an
+            // image or font (no signature at its start). So what the view can render from a blob: URL is registered content.
             worker = new Worker(URL.createObjectURL(new Blob([data.workerSource], { type: 'text/javascript' })));
         } catch (error: any) {
             viewPort.postMessage({ type: 'GUEST_ERROR', message: String((error && error.message) || error) });
@@ -482,6 +487,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 export function inStrictWorker(comms: { attach(port: MessagePort): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; entryDoneName: string; eventTypes: readonly string[] }) {
     const g = globalThis as any;
     const apply = Reflect.apply;
+    // The prelude's own lists have no prototype (review C3): an index written to them never reaches an inherited
+    // setter, so guest code that defines one on Array.prototype (or puts a Proxy in its chain) sees none of the
+    // render queue, the handlers or the subscribed types. They are only ever read by index and length.
+    const setPrototype = Object.setPrototypeOf;
+    const list = <T>(): T[] => setPrototype([], null);
     const addListener = EventTarget.prototype.addEventListener;
     const dataOf = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'data')!.get!;
     const portsOf = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'ports')!.get!;
@@ -492,8 +502,11 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
     const sandboxConsole = console;
     const reportError = typeof g.reportError === 'function' ? g.reportError : null;
 
+    // A name that stays after its deletion is a failure, not something to carry on with (review C2): a top-level
+    // declaration of the entry could once make a global non-configurable before this ran.
     const remove = (owner: any, name: string) => {
         if (owner && name in owner) Reflect.deleteProperty(owner, name);
+        if (owner && name in owner) throw new Error('[Sandbox] the strict worker could not remove ' + name);
     };
     remove(g, 'Worker');
     remove(g, 'SharedWorker');
@@ -504,8 +517,8 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
     // ---- render flow control ----
     let renderPort: MessagePort | null = null;
     let inFlight = false;
-    const targets: (string | null)[] = [];
-    const htmls: string[] = [];
+    const targets = list<string | null>();
+    const htmls = list<string>();
     const sendNext = () => {
         if (!renderPort || inFlight || targets.length === 0) return;
         const into = targets[0];
@@ -544,11 +557,11 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
         return false;
     };
     type Handler = { type: string; id: string | null; handler: (detail: unknown) => void; active: boolean };
-    const handlers: Handler[] = [];
+    const handlers = list<Handler>();
     let listened = '';
     const syncListen = () => {
         if (!renderPort) return;
-        const types: string[] = [];
+        const types = list<string>();
         let key = '';
         for (let t = 0; t < options.eventTypes.length; t++) {
             for (let h = 0; h < handlers.length; h++) {
@@ -585,7 +598,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
     const dispatch = (detail: any) => {
         if (!detail || typeof detail !== 'object' || !isEventType(detail.type)) return;
         const ids = detail.ids;
-        const current: Handler[] = [];
+        const current = list<Handler>();
         for (let i = 0; i < handlers.length; i++) current[i] = handlers[i]!;
         for (let i = 0; i < current.length; i++) {
             const entry = current[i]!;
@@ -647,6 +660,32 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
         sandboxConsole.error('Uncaught ' + String(event.message));
     }, true]);
     Object.defineProperty(g, options.entryDoneName, { value: () => { entryRan = true; } });
+}
+
+/**
+ * The first thing the strict worker runs (review C2). Stringified; self-contained.
+ *
+ * The worker's source is one classic script: the prelude, then the entry. The host evaluates the entry in its
+ * own function scope, so its top-level declarations are local and cannot touch the globals the prelude
+ * captures and deletes. But the entry's text could close that function early and declare at the top level of
+ * the script, and a script's declarations are instantiated before any of it runs, so before the prelude. A
+ * top-level function declaration always leaves an own, non-configurable property whose value is a function;
+ * no global of the platform is one (measured in Chromium, Firefox and WebKit workers: only Infinity, NaN and
+ * undefined are non-configurable). So any such property means the entry escaped its scope, and the worker
+ * refuses to start: the error ends the sandbox with "the guest entry failed to start". `g` is the script's
+ * `this`, the global object, and Object is reached through an object literal: neither depends on a global
+ * name a declaration could have replaced. (A top-level let, const or class would shadow a global the prelude
+ * reads while it runs, and fail it with a ReferenceError, which ends the sandbox the same way.)
+ */
+export function assertEntryScoped(g: object) {
+    const O = ({}).constructor as ObjectConstructor;
+    const names = O.getOwnPropertyNames(g);
+    for (let i = 0; i < names.length; i++) {
+        const descriptor = O.getOwnPropertyDescriptor(g, names[i]!);
+        if (descriptor && descriptor.configurable === false && typeof descriptor.value === 'function') {
+            throw new Error('[Sandbox] the entry declares "' + String(names[i]).slice(0, 64) + '" at the top level of the worker script, outside its own scope; the worker did not start');
+        }
+    }
 }
 
 // ---- host side ---------------------------------------------------------------------------------

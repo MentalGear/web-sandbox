@@ -124,3 +124,14 @@ describe('the strict documents', () => {
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('"entry"'))).toHaveLength(1);
     });
 });
+
+describe('review C2: the worker source runs the entry in its own scope, after the scope check', () => {
+    it('scope check first, then the prelude, then the entry inside (function () { … }).call(this), then the marker', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount({ mode: 'strict', entry: 'main.js' }, { 'main.js': 'function Worker() {} var x = 1;' });
+        const source: string = el._strictInit?.workerSource ?? el._getStrictWorkerSource([], 'function Worker() {} var x = 1;');
+        expect(source.startsWith('(function (g) {(function assertEntryScoped(')).toBe(true);
+        expect(source).toContain('})(this);\n(function () {\nfunction Worker() {} var x = 1;\n}).call(this);\n__sandboxEntryRan();\n');
+        expect(source.endsWith('}).call(this);\n__sandboxEntryRan();\n')).toBe(true);
+    });
+});

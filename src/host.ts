@@ -21,7 +21,7 @@ import { createLogLimiter, LOG_EVENTS_PER_SECOND, toLogDetail, type SandboxLogLe
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
-import { buildViewDocument, ENTRY_DONE_NAME, inStrictWorker, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, ENTRY_DONE_NAME, inStrictWorker, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
 import { strictPolicyOverrides, strictViewDirectives } from "./lib/csp/strict-policy";
 
 export interface SandboxConfig {
@@ -959,19 +959,24 @@ export class WebSandbox extends HTMLElement {
         this.shadowRoot!.appendChild(this._iframe);
     }
 
-    // The worker's source in strict mode: the comms script (bridge, logs, violations, execute, the fetch
-    // bridge), sandboxFiles with every registered file, the strict prelude (hardening, sandboxView, the
-    // ports), then the guest's entry as written, then the line that marks the entry as having run to its end.
+    // The worker's source in strict mode: the scope check, the comms script (bridge, logs, violations, execute,
+    // the fetch bridge), sandboxFiles with every registered file, the strict prelude (hardening, sandboxView, the
+    // ports), then the guest's entry in a function scope of its own, then the line that marks the entry as having
+    // run to its end. The entry's own scope (review C2): its top-level declarations are local to it, so none can
+    // replace a global before the prelude has captured or deleted it; an entry that wants a global assigns it
+    // (globalThis.x = …). `this` inside is the global object, as at a script's top level. The scope check
+    // (assertEntryScoped) refuses to start a worker whose entry escaped that scope.
     private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string): string {
         const features: { fetchBridge?: { timeoutMs: number }; externalPort: true } = { externalPort: true };
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, entryDoneName: ENTRY_DONE_NAME, eventTypes: VIEW_EVENT_TYPES };
-        const prelude = '(function () {'
+        const prelude = '(function (g) {'
+            + `(${assertEntryScoped.toString()})(g);`
             + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)});`
-            + '})();';
-        return `${prelude}\n${entrySource}\n;${ENTRY_DONE_NAME}();\n`;
+            + '})(this);';
+        return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${ENTRY_DONE_NAME}();\n`;
     }
 
     // Strict-mode configuration the element will not honour, said once per instance each.

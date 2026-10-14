@@ -300,13 +300,13 @@ test.describe('G2 the worker', () => {
 // ---- the entry ----------------------------------------------------------------------------------------------
 
 test.describe('the entry', () => {
-    test('the entry runs first, as a classic script at the worker top level', async ({ sandbox, page, browserName }) => {
-        await sandbox.registerFiles({ 'app.js': `var declared = 'global'; function greet() { return 'hi'; }
+    test('the entry runs first, as a classic script in a function scope of its own: its top-level declarations are local (review C2), `this` is the global object', async ({ sandbox, page, browserName }) => {
+        await sandbox.registerFiles({ 'app.js': `var declared = 'local'; function greet() { return 'hi'; } globalThis.shared = 'global';
             sandboxView.render('<h1 id="title">' + greet() + '</h1>');
-            bridge.expose('declared', () => [typeof declared, self.declared, typeof greet]);` });
+            bridge.expose('declared', () => [typeof declared, self.declared, typeof greet, self.shared, this === self]);` });
         expect(await sandbox.mount(strict({ entry: 'app.js' }))).toBe('ready');
         await waitInView(page, browserName, `document.getElementById('title') && document.getElementById('title').textContent === 'hi'`);
-        expect(await sandbox.call('declared')).toEqual(['string', 'global', 'function']);
+        expect(await sandbox.call('declared')).toEqual(['string', undefined, 'function', 'global', true]);
     });
 
     for (const [label, source] of [['a syntax error', 'let = ;'], ['a throw at its top level', 'throw new Error("entry broke")']] as const) {
