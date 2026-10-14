@@ -95,9 +95,23 @@ export const RENDER_RULES: RenderRules = {
  *      ignores) goes, unless it is a file-reference attribute holding exactly a URL the view minted (A8);
  *   5. ping goes; referrerpolicy, where present, becomes no-referrer, and is set on rules.referrerElements;
  *      rel on <a>/<area> keeps only rules.anchorRelations (A1).
+ *
+ * Every element is read and changed through Element.prototype's own methods and getters, never through the
+ * element: a <form> exposes its controls as named properties that override built-ins, so in
+ * `<form><input name="getAttribute">` the form's getAttribute is the input. Should anything still throw, the
+ * caller inserts nothing (fail closed).
  */
 export function sanitizeRender(fragment: DocumentFragment, fileUrl: (path: string) => string | null, isMinted: (url: string) => boolean, rules: RenderRules): void {
     const HTML = 'http://www.w3.org/1999/xhtml';
+    const call = Reflect.apply;
+    const E = Element.prototype;
+    const localNameOf = Object.getOwnPropertyDescriptor(E, 'localName')!.get!;
+    const namespaceOf = Object.getOwnPropertyDescriptor(E, 'namespaceURI')!.get!;
+    const has = (element: Element, name: string): boolean => call(E.hasAttribute, element, [name]);
+    const get = (element: Element, name: string): string | null => call(E.getAttribute, element, [name]);
+    const set = (element: Element, name: string, value: string) => call(E.setAttribute, element, [name, value]);
+    const drop = (element: Element, name: string) => call(E.removeAttribute, element, [name]);
+    const remove = (element: Element) => call(E.remove, element, []);
     const resolve = (value: string): string | null => {
         if (/^[\u0000- ]*$/.test(value)) return null;
         let href: string;
@@ -122,46 +136,46 @@ export function sanitizeRender(fragment: DocumentFragment, fileUrl: (path: strin
     const elements = fragment.querySelectorAll('*');
     for (let i = 0; i < elements.length; i++) {
         const element = elements[i]!;
-        const name = element.localName.toLowerCase();
+        const name = String(call(localNameOf, element, [])).toLowerCase();
         if (rules.removed.indexOf(name) >= 0) {
-            element.remove();
+            remove(element);
             continue;
         }
-        const html = element.namespaceURI === HTML;
+        const html = call(namespaceOf, element, []) === HTML;
         if (html) {
             for (let r = 0; r < rules.references.length; r++) {
                 const [tag, attribute] = rules.references[r]!;
-                if (tag !== name || !element.hasAttribute(attribute)) continue;
-                const url = resolve(element.getAttribute(attribute) || '');
-                if (url) element.setAttribute(attribute, url);
+                if (tag !== name || !has(element, attribute)) continue;
+                const url = resolve(get(element, attribute) || '');
+                if (url) set(element, attribute, url);
             }
         }
         if (name === 'link') {
-            const rel = tokens(element.getAttribute('rel'));
-            const kept = html && rel.length > 0 && rel.every((token) => rules.linkRelations.indexOf(token) >= 0) && isMinted(element.getAttribute('href') || '');
+            const rel = tokens(get(element, 'rel'));
+            const kept = html && rel.length > 0 && rel.every((token) => rules.linkRelations.indexOf(token) >= 0) && isMinted(get(element, 'href') || '');
             if (!kept) {
-                element.remove();
+                remove(element);
                 continue;
             }
         }
-        const names = element.getAttributeNames();
+        const names: string[] = call(E.getAttributeNames, element, []);
         for (let a = 0; a < names.length; a++) {
             const attribute = names[a]!;
             const lower = attribute.toLowerCase();
-            const value = element.getAttribute(attribute) || '';
+            const value = get(element, attribute) || '';
             if (lower === 'ping') {
-                element.removeAttribute(attribute);
+                drop(element, attribute);
                 continue;
             }
             if (/blob:/i.test(value.replace(/[\t\n\r]/g, '')) && !(html && isReference(name, lower) && isMinted(value))) {
-                element.removeAttribute(attribute);
+                drop(element, attribute);
                 continue;
             }
-            if (lower === 'referrerpolicy') element.setAttribute(attribute, 'no-referrer');
+            if (lower === 'referrerpolicy') set(element, attribute, 'no-referrer');
         }
-        if (rules.referrerElements.indexOf(name) >= 0) element.setAttribute('referrerpolicy', 'no-referrer');
-        if ((name === 'a' || name === 'area') && element.hasAttribute('rel')) {
-            element.setAttribute('rel', tokens(element.getAttribute('rel')).filter((token) => rules.anchorRelations.indexOf(token) >= 0).join(' '));
+        if (rules.referrerElements.indexOf(name) >= 0) set(element, 'referrerpolicy', 'no-referrer');
+        if ((name === 'a' || name === 'area') && has(element, 'rel')) {
+            set(element, 'rel', tokens(get(element, 'rel')).filter((token) => rules.anchorRelations.indexOf(token) >= 0).join(' '));
         }
     }
 }
@@ -190,6 +204,23 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const runs = (g.__sandboxViewRuns || 0) + 1;
     g.__sandboxViewRuns = runs;
     if (runs > 1) return;
+
+    // DOM access through the prototypes' own methods and getters, captured now, before any rendered markup
+    // exists: Document and HTMLFormElement expose named elements as properties that override built-ins
+    // (`<img name="body">` is document.body, `<form><input name="hasAttribute">` is form.hasAttribute), so
+    // reading through the instance would let rendered markup change what this script sees. No guest script
+    // runs here, so the prototypes themselves are the browser's.
+    const call = Reflect.apply;
+    const getter = (proto: object, name: string) => Object.getOwnPropertyDescriptor(proto, name)!.get!;
+    const nodeTypeOf = getter(Node.prototype, 'nodeType');
+    const parentOf = getter(Node.prototype, 'parentNode');
+    const localNameOf = getter(Element.prototype, 'localName');
+    const idOf = getter(Element.prototype, 'id');
+    const bodyOf = getter(Document.prototype, 'body');
+    const rootOf = getter(Document.prototype, 'documentElement');
+    const E = Element.prototype;
+    const D = Document.prototype;
+    const containsNode = Node.prototype.contains;
 
     let viewPort: MessagePort | null = null;
     let renderPort: MessagePort | null = null;
@@ -222,13 +253,18 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // no exception: the view inherits the wrapper's about:blank base, so "#x" names about:blank#x, a navigation.
     const XLINK = 'http://www.w3.org/1999/xlink';
     const insideLink = (node: any) => {
-        for (let n = node; n && n.nodeType === 1; n = n.parentNode) {
-            if (n.localName === 'a' || n.localName === 'area' || n.hasAttribute('href') || n.hasAttributeNS(XLINK, 'href')) return true;
+        for (let n = node; n && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) {
+            const name = call(localNameOf, n, []);
+            if (name === 'a' || name === 'area' || call(E.hasAttribute, n, ['href']) || call(E.hasAttributeNS, n, [XLINK, 'href'])) return true;
         }
         return false;
     };
     const cancelLink = (event: Event) => {
-        if (insideLink(event.target)) event.preventDefault();
+        let link = true; // anything unexpected cancels: fail closed
+        try {
+            link = insideLink(event.target);
+        } catch {}
+        if (link) event.preventDefault();
     };
     addEventListener('click', cancelLink, true);
     addEventListener('auxclick', cancelLink, true);
@@ -244,25 +280,28 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const forward = (event: any) => {
         if (!event.isTrusted || !renderPort || subscribed.indexOf(event.type) < 0) return;
         let target = event.target;
-        if (!target || target.nodeType !== 1) target = document.body;
+        if (!target || !(target instanceof Element)) target = call(bodyOf, document, []);
         if (!target) return;
         const ids: string[] = [];
-        for (let n = target; n && n.nodeType === 1 && ids.length < options.events.maxIds; n = n.parentNode) {
-            if (n.id) ids.push(clamp(n.id));
+        for (let n = target; n && call(nodeTypeOf, n, []) === 1 && ids.length < options.events.maxIds; n = call(parentOf, n, [])) {
+            const id = call(idOf, n, []);
+            if (id) ids.push(clamp(id));
         }
+        const tag = String(call(localNameOf, target, []));
+        const value = tag === 'form' ? undefined : target.value; // a form's "value" could be a named control
         const detail: any = {
             type: event.type,
             ids,
             target: {
-                tag: String(target.localName),
-                id: clamp(target.id || ''),
-                name: clamp(target.getAttribute('name') || ''),
-                value: typeof target.value === 'string' ? clamp(target.value) : '',
-                checked: target.checked === true,
+                tag,
+                id: clamp(call(idOf, target, [])),
+                name: clamp(call(E.getAttribute, target, ['name']) || ''),
+                value: typeof value === 'string' ? clamp(value) : '',
+                checked: tag !== 'form' && target.checked === true,
             },
         };
         if (event.type === 'keydown') detail.key = clamp(event.key || '');
-        if (event.type === 'submit' && target.localName === 'form') {
+        if (event.type === 'submit' && tag === 'form') {
             const fields: [string, string][] = [];
             let data: FormData;
             try {
@@ -287,13 +326,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // template.innerHTML parses into an inert fragment (no script runs, nothing loads); the renderer cleans
     // it; replaceChildren MOVES its nodes into the document (A2) — never a clone or an import.
     const apply = (html: string, into: string | null) => {
-        const body = document.body;
-        const target = into === null ? body : document.getElementById(into);
-        if (!target || !body || (target !== body && !body.contains(target))) return;
-        const template = document.createElement('template');
+        const body = call(bodyOf, document, []);
+        const target = into === null ? body : call(D.getElementById, document, [into]);
+        if (!target || !body || (target !== body && !call(containsNode, body, [target]))) return;
+        const template = call(D.createElement, document, ['template']) as HTMLTemplateElement;
         template.innerHTML = html;
         sanitize(template.content, fileUrl, isMinted, options.render);
-        target.replaceChildren(template.content);
+        call(E.replaceChildren, target, [template.content]);
     };
 
     // At most one render applied per animation frame (a timer stands in where frames are throttled), the
@@ -304,7 +343,14 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const jobs = pending;
         pending = [];
         scheduled = false;
-        for (let i = 0; i < jobs.length; i++) apply(jobs[i]![1], jobs[i]![0]);
+        for (let i = 0; i < jobs.length; i++) {
+            try {
+                apply(jobs[i]![1], jobs[i]![0]);
+            } catch {
+                // the renderer threw before anything was inserted: this render is dropped, and the ack below
+                // still releases the next one
+            }
+        }
         if (renderPort) renderPort.postMessage({ type: 'VIEW_ACK' });
     };
     const schedule = () => {
@@ -351,7 +397,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (typeof ResizeObserver !== 'function') return;
         let lastHeight = -1;
         const measure = () => {
-            const root = document.documentElement;
+            const root = call(rootOf, document, []);
             if (!root) return;
             const box = Math.ceil(root.getBoundingClientRect().height);
             const height = root.scrollHeight > root.clientHeight ? Math.max(box, root.scrollHeight) : box;
@@ -360,8 +406,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             toHost({ type: 'RESIZE', height });
         };
         const observer = new ResizeObserver(measure);
-        observer.observe(document.documentElement);
-        if (document.body) observer.observe(document.body);
+        observer.observe(call(rootOf, document, []));
+        const body = call(bodyOf, document, []);
+        if (body) observer.observe(body);
     };
 
     addEventListener('message', (event: MessageEvent) => {

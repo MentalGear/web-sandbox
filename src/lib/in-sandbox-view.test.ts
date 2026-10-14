@@ -103,6 +103,16 @@ describe('the renderer: file references, blob: URLs (A8), referrer and ping (A1)
     });
 });
 
+describe('the renderer reads elements through the prototypes, not the instance (DOM clobbering)', () => {
+    it('a form whose controls shadow the methods it uses is still cleaned', () => {
+        const names = ['getAttributeNames', 'getAttribute', 'localName', 'namespaceURI', 'remove', 'hasAttribute', 'setAttribute', 'removeAttribute'];
+        const fragment = sanitize(`<form id="f">${names.map(n => `<input name="${n}">`).join('')}<iframe></iframe><script>x</script><img ping="https://evil.example/" src="https://x.example/i.png"></form>`);
+        expect(Array.from(fragment.querySelectorAll('iframe, script'))).toEqual([]);
+        expect(fragment.querySelector('img')!.hasAttribute('ping')).toBe(false);
+        expect(fragment.querySelector('img')!.getAttribute('referrerpolicy')).toBe('no-referrer');
+    });
+});
+
 describe('A2: the fragment is moved, never cloned or imported', () => {
     afterEach(() => vi.restoreAllMocks());
 
@@ -118,7 +128,7 @@ describe('A2: the fragment is moved, never cloned or imported', () => {
 
     it('neither the bootstrap nor the renderer source names cloneNode, importNode or adoptNode; the bootstrap moves template.content', () => {
         for (const source of [inSandboxView.toString(), sanitizeRender.toString()]) expect(source).not.toMatch(/cloneNode|importNode|adoptNode/);
-        expect(inSandboxView.toString()).toContain('replaceChildren(template.content)');
+        expect(inSandboxView.toString()).toMatch(/E\.replaceChildren, target, \[template\.content\]/);
     });
 });
 

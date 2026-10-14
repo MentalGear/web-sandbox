@@ -34,7 +34,8 @@ const strict = (config: Partial<SandboxConfig> = {}): Partial<SandboxConfig> => 
 /** Renders from the worker (execute() runs there) and waits until the view shows `doneId`. */
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done', into: string | null = null) {
     await sandbox.run(`sandboxView.render(${JSON.stringify(html + `<p id="${doneId}">done</p>`)}, ${JSON.stringify(into)})`);
-    await waitInView(sandbox.page, browserName, `!!document.getElementById(${JSON.stringify(doneId)})`, 8000);
+    // through the prototype: rendered markup may clobber document.getElementById (see the clobbering test)
+    await waitInView(sandbox.page, browserName, `!!Document.prototype.getElementById.call(document, ${JSON.stringify(doneId)})`, 8000);
 }
 
 /** Every script-run marker on the page, as "path:marker", read from outside. */
@@ -114,6 +115,25 @@ test.describe('G1 rendered markup', () => {
         // nothing reached the blocked listener; the allowed image did (positive control)
         expect(recorder.paths('blocked')).toEqual([]);
         expect(recorder.paths('allowed')).toEqual(['/rendered.svg']);
+    });
+
+    test('DOM clobbering by rendered markup changes nothing the view does: forms and named elements shadowing the methods it uses are still cleaned, links inside them still cancelled, later renders still applied', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount(strict())).toBe('ready');
+        // Document and HTMLFormElement let named elements override built-ins: document.body, form.hasAttribute …
+        const shadow = (names: string[]) => names.map(n => `<input name="${n}">`).join('');
+        await render(sandbox, browserName, [
+            '<img name="body"><img name="getElementById"><img name="createElement"><img name="documentElement">',
+            `<form id="f">${shadow(['getAttributeNames', 'getAttribute', 'localName', 'namespaceURI', 'remove', 'replaceChildren', 'hasAttribute', 'setAttribute', 'removeAttribute', 'id', 'parentNode', 'nodeType', 'contains'])}<iframe></iframe><script>${M('clobber')}</script></form>`,
+            `<a href="${recorder.blocked}/clobbered"><form>${shadow(['hasAttribute', 'hasAttributeNS', 'localName', 'parentNode', 'nodeType'])}<span style="${at(0, 0)}">x</span></form></a>`,
+        ].join(''));
+        expect(await inView(page, browserName, `[Document.prototype.querySelectorAll.call(document, 'body iframe, body script').length, !!Document.prototype.getElementById.call(document, 'f')]`)).toEqual([0, true]);
+        await clickInSandbox(page, 20, 20);
+        await page.waitForTimeout(1500);
+        expect(recorder.paths('blocked')).toEqual([]);
+        expect(await inView(page, browserName, 'location.href + " " + globalThis.__sandboxViewRuns')).toBe('about:srcdoc 1');
+        await render(sandbox, browserName, '<b>inside the clobbering form</b>', 'into-form', 'f');
+        await render(sandbox, browserName, '<p>after</p>', 'after');
+        expect(await markers(sandbox, browserName)).toEqual([]);
     });
 
     test('positive control for the marker channel: the same inline script in a default iframe-mode sandbox runs and is read from outside', async ({ sandbox, page, browserName }) => {

@@ -137,6 +137,12 @@ or re-enter the script element (A3).
   default mode's reference attributes (minus `<script src>`) against `https://vfs.invalid/index.html`, and
   removes every attribute that holds a `blob:` URL the view did not mint. The worker gets every file through
   `sandboxFiles`. No `blob:` in `script-src`, ever; strict mode is classic only.
+- **DOM clobbering.** `Document` and `HTMLFormElement` let named elements override built-ins
+  (`<img name="body">` is `document.body`; in `<form><input name="hasAttribute">` the form's `hasAttribute` is
+  the input). The bootstrap and the renderer therefore read and change the DOM only through prototype methods
+  and getters captured before any markup exists; the link check cancels if anything unexpected throws; and a
+  render the renderer refuses is dropped but still acknowledged, so it can neither be half-inserted nor jam the
+  flow control. Found in review after the first commit, asserted by a test that fails without it.
 - **Liveness (A5).** The host pings the view on the view port, always (5 s budget, host stalls not counted).
   A view that stops answering — Chromium replaces a view whose navigation the wrapper refuses with an error
   page, which ends the worker with it (P4) — ends the sandbox with `the sandbox view stopped responding`.
