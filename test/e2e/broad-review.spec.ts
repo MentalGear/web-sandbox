@@ -312,7 +312,7 @@ test.describe('PD5: focus and the clipboard (residuals, measured)', () => {
         expect([active, guestKeys, hostValue]).toEqual(measured);
     });
 
-    test('the clipboard: navigator.clipboard.writeText() and execCommand("copy") from guest code, without and with a user\'s click in the guest', async ({ sandbox, page, browserName }) => {
+    test('the clipboard: navigator.clipboard.writeText() and execCommand("copy") from guest code, without and with a user\'s click in the guest, and writeText() in the click\'s own handler', async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ html: '<textarea id="t">x</textarea>' })).toBe('ready');
         const attempt = () => sandbox.inGuest(`
             const written = await navigator.clipboard.writeText('PD5').then(() => 'written', (e) => e.name);
@@ -323,13 +323,18 @@ test.describe('PD5: focus and the clipboard (residuals, measured)', () => {
         const without = await attempt();
         await page.frameLocator('web-sandbox >>> iframe').frameLocator('iframe').locator('#t').click();
         const withClick = await attempt();
-        console.log('PD5 clipboard', browserName, JSON.stringify({ without, withClick }));
+        // writeText() called in the click's own handler (independent verification 2026-10-14): WebKit's activation does
+        // not last until the call above, which runs a moment later through execute(); in the handler WebKit writes too
+        await sandbox.run(`document.getElementById('t').addEventListener('click', () => navigator.clipboard.writeText('PD5').then(() => console.log('PD5-HANDLER written'), (e) => console.log('PD5-HANDLER ' + e.name)), { once: true });`);
+        await page.frameLocator('web-sandbox >>> iframe').frameLocator('iframe').locator('#t').click();
+        const inHandler = (await sandbox.waitForLog('PD5-HANDLER')).slice('PD5-HANDLER '.length);
+        console.log('PD5 clipboard', browserName, JSON.stringify({ without, withClick, inHandler }));
         const measured = {
-            chromium: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'NotAllowedError', copied: true } },
-            firefox: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'written', copied: true } },
-            webkit: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'NotAllowedError', copied: false } },
+            chromium: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'NotAllowedError', copied: true }, inHandler: 'NotAllowedError' },
+            firefox: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'written', copied: true }, inHandler: 'written' },
+            webkit: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'NotAllowedError', copied: false }, inHandler: 'written' },
         }[browserName as 'chromium'];
-        expect({ without, withClick }).toEqual(measured);
+        expect({ without, withClick, inHandler }).toEqual(measured);
     });
 });
 

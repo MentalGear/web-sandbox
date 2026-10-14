@@ -8,9 +8,12 @@ import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-global
  *       EventSource (and loaded a worker's FontFace) past the policy; every other network API of a worker is gone or
  *       governed. A worker the guest creates in iframe mode is a realm of its own (residual, measured).
  *   V2  a strict entry's synchronous console lines arrive (they were lost before the logic port was attached);
+ *   V3  the user's modifier clicks and Ctrl/Shift+Enter on a guest link open a new top-level tab in Chromium and
+ *       Firefox (default mode, platform behaviour: residual, measured); strict mode opens none;
  *   L1  a guest's timers, promise loops and nested workers stop at terminate() and reset();
  *   L2  an announcement a frame the guest creates posts to top is never accepted;
  *   PD7 the playground acts only on messages from its own window;
+ *   H1  the guest's fragment navigations add entries to the tab's session history (residual, measured).
  * Evidence (T5): the recorder's listeners outside the browser, with a positive control beside each negative.
  */
 
@@ -107,6 +110,90 @@ test('V2: a strict entry\'s synchronous console lines arrive as sandbox-log, in 
     expect((await sandbox.logs()).filter(line => line.startsWith('V2 '))).toEqual(['V2 sync 1', 'V2 sync 2', 'V2 sync 3', 'V2 async']);
 });
 
+// ---- V3: modifier clicks and Enter on a guest link (default-mode residual, measured) ----------------------------
+
+const LINKS = (origin: string) => `<style>body{margin:0}</style><a id="l" href="${origin}/v3-html" style="display:block;width:300px;height:40px">link</a>`
+    + `<svg width="300" height="40" style="display:block"><a id="s" href="${origin}/v3-svg"><rect width="300" height="40" fill="#ccc"/></a></svg>`;
+
+// The user's own actions on a guest link that open a new top-level browsing context: modifier clicks and the middle
+// button on an HTML and an SVG link, and Ctrl/Shift+Enter on a focused one. For each: the pages opened, and the paths
+// the recorder heard (outside the browser).
+async function userLinkActions(sandbox: SandboxDriver, focusLink: () => Promise<void>) {
+    const page = sandbox.page;
+    const context = page.context();
+    let opened = 0;
+    context.on('page', () => { opened++; });
+    const box = (await page.locator('web-sandbox').boundingBox())!;
+    const html = { x: box.x + 50, y: box.y + 20 };
+    const svg = { x: box.x + 50, y: box.y + 60 };
+    const withKey = async (key: string, at: { x: number; y: number }) => { await page.keyboard.down(key); await page.mouse.click(at.x, at.y); await page.keyboard.up(key); };
+    const actions: [string, () => Promise<void>][] = [
+        ['Ctrl+click (HTML)', () => withKey('Control', html)],
+        ['Shift+click (HTML)', () => withKey('Shift', html)],
+        ['middle click (HTML)', () => page.mouse.click(html.x, html.y, { button: 'middle' })],
+        ['Ctrl+click (SVG)', () => withKey('Control', svg)],
+        ['middle click (SVG)', () => page.mouse.click(svg.x, svg.y, { button: 'middle' })],
+        ['Ctrl+Enter (HTML)', async () => { await focusLink(); await page.keyboard.press('Control+Enter'); }],
+        ['Shift+Enter (HTML)', async () => { await focusLink(); await page.keyboard.press('Shift+Enter'); }],
+    ];
+    const results: Record<string, { pages: number; heard: string[] }> = {};
+    for (const [name, act] of actions) {
+        recorder.clear();
+        opened = 0;
+        await act();
+        await page.waitForTimeout(1500);
+        results[name] = { pages: opened, heard: recorder.paths('blocked').filter(path => path.startsWith('/v3-')) };
+        for (const other of context.pages()) if (other !== page) await other.close();
+    }
+    return results;
+}
+
+const linkActionsOpen = (opens: boolean) => {
+    const one = (path: string) => ({ pages: opens ? 1 : 0, heard: opens ? [path] : [] });
+    return {
+        'Ctrl+click (HTML)': one('/v3-html'), 'Shift+click (HTML)': one('/v3-html'), 'middle click (HTML)': one('/v3-html'),
+        'Ctrl+click (SVG)': one('/v3-svg'), 'middle click (SVG)': one('/v3-svg'),
+        'Ctrl+Enter (HTML)': one('/v3-html'), 'Shift+Enter (HTML)': one('/v3-html'),
+    };
+};
+
+test.describe('V3: the user\'s modifier clicks and Enter on a guest link (default mode: a platform residual, measured; strict mode: nothing opens)', () => {
+    test('iframe mode without allow-popups: Chromium and Firefox open a new tab at the guest\'s URL, which no policy governs; WebKit opens none (see the control below: a measurement limit)', async ({ sandbox, browserName }) => {
+        expect(await sandbox.mount({ html: LINKS(recorder.blocked) })).toBe('ready');
+        const results = await userLinkActions(sandbox, () => sandbox.run(`document.getElementById('l').focus()`));
+        expect(results).toEqual(linkActionsOpen(browserName !== 'webkit'));
+    });
+
+    test('positive control of the method, with allow-popups: a click on a target=_blank link opens a tab that reaches the listener on every engine; a Ctrl+click opens one in Chromium and Firefox, and none in Playwright\'s WebKit even here (so WebKit\'s "none" above is a limit of the measurement, not a refusal)', async ({ sandbox, browserName }) => {
+        const html = LINKS(recorder.blocked) + `<a id="t" target="_blank" href="${recorder.blocked}/v3-target" style="display:block;width:300px;height:40px">t</a>`;
+        expect(await sandbox.mount({ html, unsafeCapabilities: ['allow-popups'] })).toBe('ready');
+        const page = sandbox.page;
+        const box = (await page.locator('web-sandbox').boundingBox())!;
+        const popup = page.context().waitForEvent('page');
+        await page.mouse.click(box.x + 50, box.y + 100);
+        await (await popup).close();
+        await recorder.waitFor('blocked', '/v3-target');
+
+        let opened = 0;
+        page.context().on('page', () => { opened++; });
+        await page.keyboard.down('Control');
+        await page.mouse.click(box.x + 50, box.y + 20);
+        await page.keyboard.up('Control');
+        await page.waitForTimeout(1500);
+        expect([opened, recorder.paths('blocked').includes('/v3-html')]).toEqual(browserName === 'webkit' ? [0, false] : [1, true]);
+    });
+
+    test('strict mode: every rendered link is inert (about:blank#): no action opens a tab or reaches the guest\'s URL, on any engine', async ({ sandbox }) => {
+        expect(await sandbox.mount({ mode: 'strict' })).toBe('ready');
+        await sandbox.run(`sandboxView.render(${JSON.stringify(LINKS(recorder.blocked))})`);
+        await sandbox.page.waitForTimeout(500);
+        const page = sandbox.page;
+        const box = (await page.locator('web-sandbox').boundingBox())!;
+        const results = await userLinkActions(sandbox, async () => { await page.mouse.click(box.x + 350, box.y + 150); await page.keyboard.press('Tab'); });
+        expect(results).toEqual(linkActionsOpen(false));
+    });
+});
+
 // ---- L1: a guest cannot outlive terminate() or reset() ------------------------------------------------------------
 
 // A guest that tries to keep running: an interval, a chain of timeouts, a promise loop over a slow fetch, and (where
@@ -183,4 +270,28 @@ test('PD7: the playground ignores a RESET_COMPLETE posted by the guest (it reloa
     // positive control: the page's own message reloads it
     await Promise.all([page.waitForEvent('load'), page.evaluate(() => window.postMessage({ type: 'RESET_COMPLETE' }, '*'))]);
     expect(await page.evaluate(() => (window as any).__pd7NotReloaded)).toBeUndefined();
+});
+
+// ---- H1: session history (default-mode residual, measured) ---------------------------------------------------------
+
+test.describe('H1 (residual, measured): the guest adds entries to the tab\'s session history; the host URL itself never changes', () => {
+    test('fragment navigations: one entry each, on every engine, so the host page\'s back button first walks the guest\'s', async ({ sandbox, page }) => {
+        expect(await sandbox.mount({ html: '<p>guest</p>' })).toBe('ready');
+        const before = await page.evaluate(() => history.length);
+        const url = page.url();
+        await sandbox.run(`location.hash = 'h1'; setTimeout(() => { location.hash = 'h2'; }, 50);`);
+        await page.waitForTimeout(500);
+        expect(page.url()).toBe(url);
+        expect(await page.evaluate(() => history.length) - before).toBe(2);
+    });
+
+    test('a navigation the wrapper refuses: one entry in Chromium (it commits an error page), none in Firefox and WebKit', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount({ html: '<p>guest</p>' })).toBe('ready');
+        const before = await page.evaluate(() => history.length);
+        const url = page.url();
+        await sandbox.run(`location.href = 'https://example.invalid/h1-refused';`);
+        await page.waitForTimeout(1500);
+        expect(page.url()).toBe(url);
+        expect(await page.evaluate(() => history.length) - before).toBe(browserName === 'chromium' ? 1 : 0);
+    });
 });
