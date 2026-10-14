@@ -86,7 +86,7 @@ With [`autoResize`](#configuration) the element sets its own `style.height`; it 
 | `connectionsAllowed` | `CSPDirectives` | see [below](#connectionsallowed) | all (strict: a subset) | The guest's Content Security Policy, merged per directive over the defaults. |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in worker and strict mode on every browser, and in iframe mode only where the browser runs the frame in its own process. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
-| `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A budget for each `execute()`, from when the element posts the code until the guest reports that it returned or threw. Code still running at the deadline ends the sandbox: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. Work the code scheduled for later is not counted (use `watchdogTimeout`). Anything but a finite number `> 0` is off. |
+| `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
 | `autoResize` | `boolean` | `false` | iframe, strict | Only a literal `true` enables it. The element's height follows the guest's content height; see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Gives the guest [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off. [ADR-006](ADR-006-fetch-bridge.md) |
 | `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
@@ -184,15 +184,25 @@ terminated until `reset()`, `load()` or `setConfig()`.
 ### `execute(code)`
 
 `execute(code: string): void` — runs `code` in the guest's global scope as the body of a function (the guest
-document in iframe mode, the worker in worker and strict mode). No return value reaches the host; the guest
-reports only that the code returned, which ends its `workerExecutionTimeout` budget.
+document in iframe mode, the worker in worker and strict mode), compiled with the `Function` the bootstrap captured
+before any guest code ran. Nothing reaches the host: no return value, no report that it returned.
 
 - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
 - While `idle` (not in the document) or `terminated` there is no environment: it warns and does nothing, as
   `call()` rejects then.
 - While `loading` the code is queued and runs when the guest is ready.
 - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
-- In worker and strict mode each call has its own `workerExecutionTimeout` budget.
+- In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
+  **the guest's event loop is free at the deadline.** The element pings the guest there; the bootstrap answers from
+  a handler guest code cannot reach, and only a free event loop can run it. No answer within
+  `EXECUTION_TIMEOUT_GRACE_MS` (counted so that a stall of the host page never counts) terminates the sandbox.
+  - Code that is still running at the deadline, or that returned but left work running then (a loop in a
+    `setTimeout`), is terminated. Code that ran to its end and left the loop free stays ready, whatever it scheduled
+    for later.
+  - Several calls each have their own deadline, and every deadline checks the one event loop: a loop started by
+    any code ends the sandbox at the first deadline it blocks.
+  - A loop that starts after the last deadline is not bounded by it: `watchdogTimeout` checks the event loop
+    continuously and covers that case.
 
 ### `expose(name, fn)`
 
@@ -353,7 +363,7 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | `unknown mode …` | `mode` is not `iframe`, `worker` or `strict`. |
 | `the configuration could not be used: …` | `setConfig()` got something that is not an object or cannot be cloned. |
 | `the environment could not be built: …` | Building the frame failed, e.g. a directive given a string instead of a list. |
-| `the executed code ran longer than workerExecutionTimeout` | Code from `execute()` was still running at its budget. |
+| `the executed code ran longer than workerExecutionTimeout` | The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline. |
 | `the sandbox frame loaded a second time` | Something navigated or reloaded the library's frame. |
 | `the guest frame is missing` | The library's frame has no guest frame. |
 
@@ -370,7 +380,7 @@ Branch on `state` and the event, not on these texts.
 | `ready` | The guest can be reached; `ready` was dispatched. |
 | `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`), an integrity check or a failed build; `terminated` was dispatched. |
 
-There is no `running` state: only code from `execute()` reports that it returned, never guest code as a whole.
+There is no `running` state: nothing reports that guest code is running or that it stopped.
 
 | From | Action | To |
 | :--- | :--- | :--- |
@@ -586,6 +596,7 @@ Choose strict mode for content you do not trust at all. [ADR-005](ADR-005-strict
 | Strict: characters per `sandboxView.render()` | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
+| `workerExecutionTimeout`: how long the event loop may stay busy past a deadline (ms) | 1000 | `EXECUTION_TIMEOUT_GRACE_MS` |
 | Files: total bytes | 8388608 (8 MiB) | — |
 | Files: count | 1000 | — |
 | Files: path length | 256 | — |
@@ -611,7 +622,7 @@ Values:
 | `SandboxDevTools` | `new SandboxDevTools(element)`, then `activate()`, `deactivate()` or `toggle()`: prints the element's `sandbox-log` lines to the host console. |
 | `SAFE_CAPABILITIES`, `UNSAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS`, `UNSAFE_PERMISSIONS` | The capability lists accepted by `capabilities` and `unsafeCapabilities`. |
 | `FETCH_ERROR_CODES` | Every `FetchErrorCode`. |
-| `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS`, `GUEST_WRITES_PER_SECOND`, `GUEST_WRITE_BYTES_PER_SECOND` | See [Limits](#limits). |
+| `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS`, `EXECUTION_TIMEOUT_GRACE_MS`, `GUEST_WRITES_PER_SECOND`, `GUEST_WRITE_BYTES_PER_SECOND` | See [Limits](#limits). |
 
 Types: `SandboxConfig`, `SandboxState`, `RpcError`, `RpcErrorCode`, `SandboxLog`, `SandboxLogLevel`,
 `SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,

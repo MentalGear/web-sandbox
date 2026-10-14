@@ -14,7 +14,7 @@ import { LINK_REL_KINDS, LOAD_KINDS, type KindRule } from './load-kinds';
  *         └─ worker  new Worker(blob:) spawned by the view: the guest's logic, the bridge, sandboxView
  *
  * Three ports, all MessageChannels created per environment:
- *   logic   host ↔ worker   RPC, LOG, PING/PONG, VIOLATION (source 'logic'), EXECUTE/EXECUTED — as in worker mode
+ *   logic   host ↔ worker   RPC, LOG, PING/PONG, VIOLATION (source 'logic'), EXECUTE — as in worker mode
  *   view    host ↔ view     VIOLATION (source 'view'), RESIZE, GUEST_ERROR, GUEST_UNCAUGHT, VIEW_PING/VIEW_PONG
  *   render  view ↔ worker   VIEW_STARTED, VIEW_RENDER, VIEW_ACK, VIEW_LISTEN, VIEW_EVENT — the host is not on this path
  * The render port is created by the view and handed to the library's worker prelude, which keeps it in a

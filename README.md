@@ -87,8 +87,9 @@ and limit. The sections below walk through each feature.
 ## Lifecycle
 
 `sandbox.state` tells where the sandbox is: `idle` (not in the document), `loading` (a frame is
-being built), `ready` (the guest can be reached) or `terminated`. There is no "running" state: only code
-from `execute()` reports that it returned (which ends its `workerExecutionTimeout`), never guest code as a whole.
+being built), `ready` (the guest can be reached) or `terminated`. There is no "running" state: nothing the
+guest reports could make it truthful. `workerExecutionTimeout` checks that the event loop is free at each
+`execute()`'s deadline ([API](docs/API.md#executecode)).
 A config or build the element cannot use ends in `terminated` with a reason; `setConfig()` never throws.
 
 ```js

@@ -2,10 +2,11 @@ import { test, expect } from './fixture';
 import { fromPreset } from './presets';
 
 /**
- * workerExecutionTimeout is a budget for code still running (backlog B8, ADR-003 amendment 2026-10-14): each
- * execute() gets its own, the guest reports when the code returned, and code still running at the deadline ends
- * the sandbox with a 'terminated' event, like the watchdog. Evidence: the element's state and events, and the
- * guest's own globals (an environment that was rebuilt has lost them).
+ * workerExecutionTimeout (backlog B8; ADR-003 amendments 2026-10-14): each execute() gets its own deadline, at which
+ * the guest's event loop must be free (focused review F2: the host pings, only a free loop answers), and a loop still
+ * busy then ends the sandbox with a 'terminated' event, like the watchdog. Evidence: the element's state and
+ * events, and the guest's own globals (an environment that was rebuilt has lost them). The evasions (a scheduled
+ * loop, a replaced Function) are in focused-review.spec.ts.
  */
 
 const preset = fromPreset('worker-timeout');
@@ -37,12 +38,12 @@ for (const mode of ['worker', 'strict'] as const) {
             expect(await sandbox.inGuest('return "alive after reset"')).toBe('alive after reset');
         });
 
-        test('code that returned within the budget ends its timer: no line, no termination, no rebuild, the guest keeps its state past the deadline (positive control)', async ({ sandbox, page }) => {
+        test('code that returned within the budget leaves the event loop free at the deadline: no line, no termination, no rebuild, the guest keeps its state past the deadline and its grace (positive control)', async ({ sandbox, page }) => {
             expect(await sandbox.mount({ mode, scriptUnsafe: true, workerExecutionTimeout: 300 })).toBe('ready');
             await watch(page);
             await sandbox.run('globalThis.kept = 42; console.log("returned")');
             await sandbox.waitForLog('returned');
-            await page.waitForTimeout(900);
+            await page.waitForTimeout(300 + 1500); // the deadline and the grace (EXECUTION_TIMEOUT_GRACE_MS)
             expect(await sandbox.state()).toBe('ready');
             expect(await page.evaluate(() => [(window as any).terminations, (window as any).readies])).toEqual([[], 0]);
             expect(await sandbox.inGuest('return globalThis.kept')).toBe(42);

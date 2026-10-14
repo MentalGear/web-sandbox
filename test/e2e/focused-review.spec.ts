@@ -178,3 +178,77 @@ test.describe('F1: rendered markup cannot re-animate an attribute the renderer c
         expect(read).toEqual([`${recorder.allowed}/f1-static.svg`, '', '#static']);
     });
 });
+
+test.describe('F2: workerExecutionTimeout cannot be evaded: at the deadline the event loop must be free', () => {
+    const REASON = 'the executed code ran longer than workerExecutionTimeout';
+    const BUDGET = 400;
+
+    // Records every 'terminated' reason, with the time since `watch` ran, on the host page.
+    const watch = (sandbox: SandboxDriver) => sandbox.page.evaluate(() => {
+        const s = document.querySelector('web-sandbox') as any;
+        const start = performance.now();
+        (window as any).terminations = [];
+        s.addEventListener('terminated', (e: CustomEvent) => (window as any).terminations.push({ reason: e.detail.reason, at: performance.now() - start }));
+    });
+    const terminations = (sandbox: SandboxDriver) => sandbox.page.evaluate(() => (window as any).terminations as { reason: string; at: number }[]);
+
+    for (const mode of ['worker', 'strict'] as const) {
+        test.describe(`${mode} mode`, () => {
+            test('control: code still looping at the deadline terminates', async ({ sandbox }) => {
+                expect(await sandbox.mount({ mode, workerExecutionTimeout: BUDGET })).toBe('ready');
+                await watch(sandbox);
+                await sandbox.run('for (;;) {}');
+                await expect.poll(() => sandbox.state(), { timeout: 8000 }).toBe('terminated');
+                const [only] = await terminations(sandbox);
+                expect(only!.reason).toBe(REASON);
+                expect(only!.at).toBeGreaterThanOrEqual(BUDGET);
+            });
+
+            test('A1: code that returns at once but leaves a loop scheduled (setTimeout) terminates: returning is not the budget, a free event loop is', async ({ sandbox }) => {
+                expect(await sandbox.mount({ mode, workerExecutionTimeout: BUDGET })).toBe('ready');
+                await watch(sandbox);
+                await sandbox.run('setTimeout(() => { for (;;) {} }, 0)');
+                await expect.poll(() => sandbox.state(), { timeout: 8000 }).toBe('terminated');
+                expect((await terminations(sandbox)).map(t => t.reason)).toEqual([REASON]);
+            });
+
+            test('A2: guest code that replaces Function cannot run the embedder\'s code later (or not at all): the captured constructor runs it, and the loop is terminated', async ({ sandbox }) => {
+                expect(await sandbox.mount({ mode, workerExecutionTimeout: BUDGET })).toBe('ready');
+                // the replacement defers every function it makes, and counts its use
+                await sandbox.run(`const F = Function; globalThis.Function = function (code) { globalThis.__replaced = (globalThis.__replaced || 0) + 1; const f = F(code); return function () { setTimeout(f, 0); }; };`);
+                expect(await sandbox.inGuest('return globalThis.__replaced === undefined ? "never used" : globalThis.__replaced')).toBe('never used');
+                await watch(sandbox);
+                await sandbox.run('for (;;) {}');
+                await expect.poll(() => sandbox.state(), { timeout: 8000 }).toBe('terminated');
+                expect((await terminations(sandbox)).map(t => t.reason)).toEqual([REASON]);
+            });
+
+            test('positive control: code that finished and left the event loop free stays ready past its deadline, and keeps its state', async ({ sandbox }) => {
+                expect(await sandbox.mount({ mode, workerExecutionTimeout: BUDGET })).toBe('ready');
+                await watch(sandbox);
+                await sandbox.run('globalThis.kept = 42; setTimeout(() => { globalThis.later = true; }, 50)');
+                await sandbox.page.waitForTimeout(BUDGET + 2000);
+                expect(await sandbox.state()).toBe('ready');
+                expect(await terminations(sandbox)).toEqual([]);
+                expect(await sandbox.inGuest('return [globalThis.kept, globalThis.later]')).toEqual([42, true]);
+            });
+
+            test('concurrent execute(): each deadline checks the one event loop, so a loop started by a later call ends the sandbox at the first deadline it blocks; calls that all finish stay ready', async ({ sandbox }) => {
+                expect(await sandbox.mount({ mode, workerExecutionTimeout: BUDGET })).toBe('ready');
+                await watch(sandbox);
+                await sandbox.run('globalThis.a = 1');
+                await sandbox.run('globalThis.b = 2');
+                await sandbox.page.waitForTimeout(BUDGET + 2000);
+                expect(await sandbox.state()).toBe('ready'); // both finished
+                await sandbox.run('globalThis.c = 3'); // finishes at once
+                await sandbox.page.waitForTimeout(100);
+                await sandbox.run('setTimeout(() => { for (;;) {} }, 50)'); // returns, then blocks before c's deadline
+                await expect.poll(() => sandbox.state(), { timeout: 8000 }).toBe('terminated');
+                const [first] = await terminations(sandbox);
+                expect(first!.reason).toBe(REASON);
+                // c's deadline caught it: within its budget plus the grace, well before the later call's own deadline would add one
+                expect(first!.at).toBeLessThan(2000 + BUDGET + 1250 + 1000);
+            });
+        });
+    }
+});

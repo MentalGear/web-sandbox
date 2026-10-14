@@ -39,7 +39,7 @@ Three ports per environment, all `MessageChannel`s:
 
 | Port | Ends | Carries |
 | :--- | :--- | :--- |
-| logic | host ↔ worker | RPC (`call`/`expose`), `LOG`, `PING`/`PONG`, `VIOLATION` (labelled `logic`), `EXECUTE`/`EXECUTED` — as in worker mode |
+| logic | host ↔ worker | RPC (`call`/`expose`), `LOG`, `PING`/`PONG`, `VIOLATION` (labelled `logic`), `EXECUTE` — as in worker mode |
 | view | host ↔ view | `VIOLATION` (labelled `view`), `RESIZE`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `VIEW_PING`/`VIEW_PONG` |
 | render | view ↔ worker | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_ACK`, `VIEW_LISTEN`, `VIEW_EVENT` — the host is not on this path ([ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-13-strict-mode-renders-bypass-the-host)) |
 

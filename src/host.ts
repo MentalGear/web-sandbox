@@ -66,9 +66,9 @@ export interface SandboxConfig {
      */
     entry?: string;
     /**
-     * Max execution time in ms of each execute() (worker and strict mode); 0 (the default) is off. The guest
-     * reports when the code returned; code still running at the deadline ends the sandbox ('Execution Timeout',
-     * then 'terminated'). See _armExecutionBudget.
+     * A budget in ms for each execute() (worker and strict mode); 0 (the default) is off. At the deadline the guest's
+     * event loop must be free: the host pings it, and a guest that does not answer within
+     * EXECUTION_TIMEOUT_GRACE_MS ends the sandbox ('Execution Timeout', then 'terminated'). See _armExecutionBudget.
      */
     workerExecutionTimeout?: number;
     /**
@@ -104,8 +104,8 @@ export interface SandboxConfig {
  *   ready       the port was handed over and 'ready' dispatched
  *   terminated  torn down by terminate(), a budget (watchdog, workerExecutionTimeout), a frame-integrity check
  *               or a build that failed; stays so until reset(), load() or setConfig() builds a new environment
- * There is deliberately no 'running' state: only code from execute() reports that it returned, never guest code
- * as a whole, so the element could never say truthfully that the guest is running (or that it stopped).
+ * There is deliberately no 'running' state: nothing the guest reports could make it truthful (execute() reports
+ * nothing back, and guest code as a whole never says it is running or that it stopped).
  */
 export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 
@@ -189,6 +189,13 @@ function errorName(error: unknown): string {
 const uncaughtLine = (message: string) => (message.startsWith('Uncaught ') ? message : `Uncaught ${message}`);
 
 /**
+ * workerExecutionTimeout's grace (focused review 2026-10-14, F2): at an execute()'s deadline the host pings the
+ * guest, and a guest that has not answered within this long is terminated. Only a free event loop can answer, so
+ * this is how long the loop may still be busy at the deadline; counted in ticks, so a host stall never counts.
+ */
+export const EXECUTION_TIMEOUT_GRACE_MS = 1000;
+
+/**
  * Strict mode's view liveness check (A5): always on, independent of watchdogTimeout. The view runs no guest
  * script, so it answers within this budget unless it is gone (Chromium replaces a view whose navigation the
  * wrapper refuses with an error page, research 15 P4) or rendering guest markup keeps its thread busy for
@@ -237,8 +244,11 @@ export class WebSandbox extends HTMLElement {
     private _viewPort: MessagePort | null = null; // strict mode: the view's port (violations, resize, entry errors, liveness)
     private _viewWatchdog: Watchdog | null = null; // strict mode: the view liveness check (A5)
     private _strictInit: StrictInit | null = null; // strict mode: what the next frame load hands the view
-    private _executions = new Map<number, ReturnType<typeof setTimeout>>(); // execute() calls still running → their workerExecutionTimeout timers
-    private _executeCount = 0; // numbers EXECUTE frames, so an EXECUTED report names its own
+    private _executionTimers = new Set<ReturnType<typeof setTimeout>>(); // workerExecutionTimeout deadlines of this environment
+    // Liveness probes started at a deadline (F2): each PING number they sent (negative, so never the watchdog's)
+    // → that probe's end. A PONG to any of a probe's pings passes it.
+    private _executionProbes = new Map<number, () => void>();
+    private _probePings = 0; // numbers the probes' pings: -1, -2, …
     private _queuedMessages: { code: string }[] = [];
     private _rpcQueue: unknown[] = []; // the host's own RPC requests waiting for a port (cloned at call time)
     private _warnedUnsafeCapabilities = new Set<string>();
@@ -505,8 +515,8 @@ export class WebSandbox extends HTMLElement {
 
     /**
      * Runs `code` in the guest's global scope as a function body (the guest document, or the worker in worker
-     * and strict mode). Returns nothing: the guest reports only that the code returned, which ends its
-     * workerExecutionTimeout budget. Needs scriptUnsafe and a string; ignored with a warning otherwise, and
+     * and strict mode), compiled with the Function the bootstrap captured. Returns nothing, and nothing is reported
+     * back; workerExecutionTimeout checks the event loop at its deadline. Needs scriptUnsafe and a string; ignored with a warning otherwise, and
      * while there is no environment (idle or terminated), like call(), which rejects then. Queued while loading;
      * a synchronous throw becomes a 'sandbox-log' error.
      */
@@ -534,11 +544,10 @@ export class WebSandbox extends HTMLElement {
         }
     }
 
-    // One EXECUTE frame, numbered so the guest's EXECUTED report names it, with its budget armed first.
+    // One EXECUTE frame, with its budget armed first.
     private _postExecute(port: MessagePort, code: string) {
-        const n = ++this._executeCount;
-        this._armExecutionBudget(n);
-        port.postMessage({ type: 'EXECUTE', code, n });
+        this._armExecutionBudget();
+        port.postMessage({ type: 'EXECUTE', code });
     }
 
     /**
@@ -628,33 +637,73 @@ export class WebSandbox extends HTMLElement {
         console.warn("[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content.");
     }
 
-    // workerExecutionTimeout is a budget for code still running (backlog B8): each execute() gets its own timer,
-    // and the guest's EXECUTED report for it (posted through the bootstrap's captured port primitives once the
-    // code returned or threw) stops it. Code still running at the deadline means a guest that does not give
-    // its thread back, and that ends the sandbox the way the watchdog does (ADR-003: a guest over a budget is
-    // terminated; reset() is the embedder's choice): a 'terminated' event with the reason. The worker lives
-    // inside the frame, so tearing the frame down stops it. Measured from the moment the host posts the code, the
-    // only moment it can see. Before, one timer per element was restarted by every execute() and, with nothing
-    // reporting completion, rebuilt the environment after code that had long finished, with no 'terminated' event.
-    // Iframe mode has none: the guest document can share the host's thread, so no timer could fire meanwhile.
-    private _armExecutionBudget(n: number) {
+    // workerExecutionTimeout (focused review 2026-10-14, F2; ADR-003 amendment): what it bounds is "the guest's
+    // event loop is free at the deadline". Each execute() arms a deadline `budget` ms after the host posts the code
+    // (the only moment the host can see). At the deadline the host pings the guest through the bootstrap's own PING
+    // handler, which guest code cannot reach (review B2), and only a free event loop can run it: no answer within
+    // EXECUTION_TIMEOUT_GRACE_MS means the loop is still busy, and that ends the sandbox the way the watchdog does
+    // (ADR-003: a guest over a budget is terminated; reset() is the embedder's choice).
+    //
+    // Before, the guest reported EXECUTED once the code returned, and that report stopped the timer. Neither part
+    // was a bound: code that returned at once but left a loop scheduled (setTimeout(() => { for (;;) {} })) stopped
+    // its own timer and then looped (A1), and guest code that replaced globalThis.Function had the bootstrap's
+    // `new Function(code)` return a function of its choosing, so EXECUTED was posted before the embedder's code had
+    // run at all (A2). Now nothing the guest says ends a budget, only an answer from a free loop at the deadline,
+    // and the bootstrap compiles with the Function it captured before guest code ran (in-sandbox-script.ts).
+    //
+    // Several execute() calls each have their own deadline, and each deadline checks the one event loop: a loop
+    // started by any code ends the sandbox at the first deadline it blocks. Code that ran to its end and left the
+    // loop free stays, whatever it scheduled for later; a loop that starts after the last deadline is the
+    // watchdog's to bound (watchdogTimeout checks the loop continuously). The worker lives inside the frame, so
+    // tearing the frame down stops it. Iframe mode has no such budget: the guest document can share the host's
+    // thread, so no timer could fire meanwhile.
+    private _armExecutionBudget() {
         if (this._config.mode !== 'worker' && this._config.mode !== 'strict') return;
         const budget = watchdogBudget(this._config.workerExecutionTimeout); // a finite number > 0, else off
         if (budget === 0) return;
-        this._executions.set(n, setTimeout(() => this._onExecutionTimeout(n), budget));
+        const timer = setTimeout(() => {
+            this._executionTimers.delete(timer);
+            this._probeExecution();
+        }, budget);
+        this._executionTimers.add(timer);
     }
 
-    // The guest's EXECUTED report: its code returned. Unknown numbers (another environment's, or none armed) change nothing.
-    private _onExecuted(n: unknown) {
-        if (typeof n !== 'number') return;
-        const timer = this._executions.get(n);
-        if (timer === undefined) return;
-        clearTimeout(timer);
-        this._executions.delete(n);
+    // The check at a deadline: a one-off watchdog over EXECUTION_TIMEOUT_GRACE_MS (watchdog.ts: pings each tick until
+    // an answer, expires after a whole grace of silent ticks, so a host stall is never counted against the guest).
+    // Its pings carry negative numbers of their own, so a PONG names the probe it answers and never the watchdog's.
+    private _probeExecution() {
+        const port = this._port;
+        if (!port) return;
+        const pings: number[] = [];
+        let probe: Watchdog | null = null;
+        const end = () => {
+            probe?.stop();
+            for (const n of pings) this._executionProbes.delete(n);
+        };
+        probe = startWatchdog({
+            timeoutMs: EXECUTION_TIMEOUT_GRACE_MS,
+            ping: () => {
+                const n = -(++this._probePings);
+                pings.push(n);
+                this._executionProbes.set(n, end);
+                port.postMessage({ type: 'PING', n });
+            },
+            onExpire: () => {
+                end();
+                this._onExecutionTimeout();
+            },
+        });
     }
 
-    private _onExecutionTimeout(n: number) {
-        this._executions.delete(n);
+    // A PONG to a probe's ping: the event loop was free, the probe passes. False when it answers no probe.
+    private _passExecutionProbe(n: unknown): boolean {
+        const end = typeof n === 'number' ? this._executionProbes.get(n) : undefined;
+        if (!end) return false;
+        end();
+        return true;
+    }
+
+    private _onExecutionTimeout() {
         this._notifyThenAct(() => this._dispatchHostLog('error', 'Execution Timeout'), () => this._terminate(EXECUTION_TIMEOUT_REASON));
     }
 
@@ -696,15 +745,12 @@ export class WebSandbox extends HTMLElement {
     private _onGuestMessage(port: MessagePort, reply: (frame: unknown) => void, data: any, source: 'logic' | null) {
         if (!port || port !== this._port) return;
         if (data?.type === 'PONG') {
-            this._watchdog?.handlePong(data.n); // validated there; only this generation's watchdog is live
+            // an execution probe's (negative numbers), else the watchdog's: validated there; only this generation's are live
+            if (!this._passExecutionProbe(data.n)) this._watchdog?.handlePong(data.n);
             return;
         }
         if (data?.type === 'LOG') {
             this._dispatchGuestLog(data);
-            return;
-        }
-        if (data?.type === 'EXECUTED') {
-            this._onExecuted(data.n);
             return;
         }
         if (data?.type === 'VIOLATION') {
@@ -978,8 +1024,9 @@ export class WebSandbox extends HTMLElement {
         if (this._iframe) { this._iframe.onload = null; this._iframe.remove(); this._iframe = null; }
         if (this._port) { this._port.close(); this._port = null; }
         if (this._viewPort) { this._viewPort.close(); this._viewPort = null; }
-        for (const timer of this._executions.values()) clearTimeout(timer);
-        this._executions.clear();
+        for (const timer of this._executionTimers) clearTimeout(timer);
+        this._executionTimers.clear();
+        for (const end of new Set(this._executionProbes.values())) end(); // stops every probe; empties the map
         if (this._watchdog) { this._watchdog.stop(); this._watchdog = null; }
         if (this._viewWatchdog) { this._viewWatchdog.stop(); this._viewWatchdog = null; }
         if (this._resizer) { this._resizer.stop(); this._resizer = null; } // the height it wrote stays until the next report
