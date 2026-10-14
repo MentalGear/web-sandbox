@@ -1,5 +1,6 @@
-import { test, expect, HARNESS, ORIGIN } from './fixture';
-import type { CSPDirectives } from '@src/csp-directives';
+import { test, expect, HARNESS, ORIGIN, type SandboxDriver } from './fixture';
+import type { SandboxConfig } from '@src/host';
+import type { OriginKind } from '@src/lib/csp/origins';
 import { useRecorder, wss } from './recorder';
 
 /**
@@ -19,17 +20,27 @@ import { useRecorder, wss } from './recorder';
  * Tests describe the GUARANTEE each case proves.
  */
 
-// The policy δ needs: blob: added to five directives of the default (worker-src already lists it,
-// DEFAULT_SANDBOX_CONFIG). connectionsAllowed is deep-merged per directive and each array replaces
-// the default's.
-const DELTA_CSP: CSPDirectives = {
-    'script-src': ["'unsafe-inline'", 'blob:'],
-    'style-src': ["'unsafe-inline'", 'blob:'],
-    'img-src': ['blob:'],
-    'font-src': ['blob:'],
-    'connect-src': ['blob:'],
-};
-const WITH_BLOB = { connectionsAllowed: DELTA_CSP };
+// The policy δ needs: blob: for five kinds of load (worker-src always lists it). It is the library's own template
+// (src/lib/csp/csp-generator.ts) with blob: for those kinds, exactly as registered files of those types make it; no
+// config can add blob: (ADR-007). The probes set it on the page's element class without registering files, so that
+// no import map of the library's joins the probes' own (section 3), and a probe's blob: URLs are its own.
+const DELTA_KINDS: OriginKind[] = ['scripts', 'styles', 'images', 'fonts', 'connect'];
+
+async function withBlob(sandbox: SandboxDriver, kinds: OriginKind[] = DELTA_KINDS) {
+    await sandbox.page.evaluate(async (kinds) => {
+        const { cooperativePolicy } = await import('/src/lib/csp/csp-generator.ts' as string);
+        const element = customElements.get('web-sandbox')!.prototype as any;
+        element._guestPolicy = function (this: any) {
+            return cooperativePolicy({ origins: this._origins, fileKinds: new Set(kinds), scriptUnsafe: this._config.scriptUnsafe === true });
+        };
+    }, kinds);
+}
+
+/** Mounts with the δ policy: blob: for `kinds` (default: all five). */
+async function mountWithBlob(sandbox: SandboxDriver, config: SandboxConfig = {}, kinds: OriginKind[] = DELTA_KINDS) {
+    await withBlob(sandbox, kinds);
+    return sandbox.mount(config);
+}
 
 // An origin no config allowlists; upgrade-insecure-requests is always on, so match any scheme.
 
@@ -215,7 +226,7 @@ test.describe('1. default CSP: guest-created blob: subresources are refused', ()
 
 test.describe('2. with blob: added, guest-created blob: subresources load', () => {
     test('iframe mode: script, module, import(), stylesheet, image, font, fetch and classic worker all load', async ({ sandbox, browserName }) => {
-        expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
+        expect(await mountWithBlob(sandbox)).toBe('ready');
         expect(await runProbes(sandbox, IFRAME_LOADS)).toEqual({
             'classic <script src>': 'ok',
             '<script type=module src>': 'ok',
@@ -230,7 +241,7 @@ test.describe('2. with blob: added, guest-created blob: subresources load', () =
     });
 
     test('worker mode (a classic worker): importScripts, import() and fetch of a blob all load; no nested worker, whatever the policy (independent verification V1)', async ({ sandbox }) => {
-        expect(await sandbox.mount({ mode: 'worker', ...WITH_BLOB })).toBe('ready');
+        expect(await mountWithBlob(sandbox, { mode: 'worker' })).toBe('ready');
         expect(await runProbes(sandbox, WORKER_LOADS)).toEqual({
             'importScripts()': 'ok',
             'import()': 'ok',
@@ -241,7 +252,7 @@ test.describe('2. with blob: added, guest-created blob: subresources load', () =
     });
 
     test('each directive admits only its own load type: blob: in script-src alone leaves styles, images, fonts and fetch refused', async ({ sandbox }) => {
-        expect(await sandbox.mount({ connectionsAllowed: { 'script-src': ["'unsafe-inline'", 'blob:'] } })).toBe('ready');
+        expect(await mountWithBlob(sandbox, {}, ['scripts'])).toBe('ready');
         expect(await runProbes(sandbox, IFRAME_LOADS.slice(0, 7))).toEqual({
             'classic <script src>': 'ok',
             '<script type=module src>': 'ok',
@@ -282,7 +293,7 @@ function resolutionScenario(body: string, before = '') {
 }
 
 async function runScenario(sandbox: any, body: string, before = ''): Promise<Record<string, string>> {
-    expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
+    expect(await mountWithBlob(sandbox)).toBe('ready');
     expect(await sandbox.load(resolutionScenario(body, before))).toBe('ready');
     await sandbox.run(`__done.then(() => console.log('SCENARIO ' + JSON.stringify(__r)))`);
     const line: string = await sandbox.waitForLog('SCENARIO ', 10000);
@@ -380,7 +391,7 @@ test.describe('3. module resolution between blob: modules', () => {
 
     test('a bootstrap placed before guest markup can register the map ahead of the guest\'s own module scripts', async ({ sandbox }) => {
         // the bootstrap is the scenario's inline classic script; the guest's module script follows it in markup
-        expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
+        expect(await mountWithBlob(sandbox)).toBe('ready');
         expect(await sandbox.load(`<script>
             const mk = (s) => URL.createObjectURL(new Blob([s], { type: 'text/javascript' }));
             const s = document.createElement('script');
@@ -457,7 +468,7 @@ test.describe('4. blob: URLs do not cross realms', () => {
 
     test('iframe mode: a blob: URL created by the host page loads as nothing in the guest, and not because of CSP', async ({ sandbox, page, browserName }) => {
         // blob: is allowed in every directive here, so a refusal is the blob store's origin check, not the policy
-        expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
+        expect(await mountWithBlob(sandbox)).toBe('ready');
         const u = await page.evaluate(hostBlobs);
         const results = await runProbes(sandbox, [
             ['classic <script src>', 'script', { url: u.classic }],
@@ -484,7 +495,7 @@ test.describe('4. blob: URLs do not cross realms', () => {
     });
 
     test('worker mode: a host-created blob: URL cannot be imported or fetched by the guest worker', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount({ mode: 'worker', ...WITH_BLOB })).toBe('ready');
+        expect(await mountWithBlob(sandbox, { mode: 'worker' })).toBe('ready');
         const u = await page.evaluate(hostBlobs);
         expect(await runProbes(sandbox, [
             ['importScripts()', 'importScripts', { url: u.classic }],
@@ -500,7 +511,7 @@ test.describe('4. blob: URLs do not cross realms', () => {
     });
 
     test('a guest-created blob: URL resolves for neither the host page nor a second sandbox', async ({ sandbox, page }) => {
-        expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
+        expect(await mountWithBlob(sandbox)).toBe('ready');
         await sandbox.run(`console.log('GUEST_URLS ' + JSON.stringify({
             text: URL.createObjectURL(new Blob(['guest-only'], { type: 'text/plain' })),
             svg: URL.createObjectURL(new Blob(['<svg xmlns="http://www.w3.org/2000/svg" width="7" height="9"></svg>'], { type: 'image/svg+xml' })),
@@ -516,7 +527,7 @@ test.describe('4. blob: URLs do not cross realms', () => {
         }, urls);
         expect(host).toEqual({ fetch: 'error:TypeError', img: 'error' });
 
-        expect(await sandbox.mountSecond(WITH_BLOB)).toBe('ready');
+        expect(await sandbox.mountSecond()).toBe('ready'); // the element class has the δ policy (withBlob)
         await page.evaluate((url) => (document.querySelector('#second') as any).execute(`
             fetch(${JSON.stringify(url)}).then(r => r.text()).then(
                 t => console.log('SECOND_SANDBOX ok:' + t), e => console.log('SECOND_SANDBOX error:' + e.name))`), urls.text);
@@ -569,10 +580,10 @@ async function reportedViolations(sandbox: any): Promise<string[]> {
 // Measured 2026-10-13 with the old default script-src 'self' 'unsafe-inline': in this opaque-origin
 // guest, WebKit let 'self' admit ANY https origin (the request left the machine and the script ran),
 // Chromium resolved it to the host page's origin, Firefox matched nothing. So the guest policy never
-// contains 'self' (src/lib/csp/drop-self.ts): not by default, and dropped with a warning when
+// contains 'self' (ADR-007: it is not an origin): not by default, and dropped with a warning when
 // configured. These tests run identically on every engine.
 
-const SELF_WARNING = `[Sandbox] "'self'" is not allowed in "connectionsAllowed.script-src"`;
+const SELF_WARNING = `[Sandbox] origins.scripts entry "'self'" was dropped`;
 const HOST_SCRIPT = `${ORIGIN}/playground/test-assets/script.js`;
 
 // Guest markup that reads its own policy, loads scripts from a non-allowlisted origin three ways (and,
@@ -605,9 +616,9 @@ function collectWarnings(page: any): string[] {
     return warnings;
 }
 
-async function scriptSourceOutcome(sandbox: any, withHost: boolean, connectionsAllowed?: CSPDirectives) {
+async function scriptSourceOutcome(sandbox: any, withHost: boolean, origins?: SandboxConfig['origins']) {
     // the shipping configuration: no scriptUnsafe, guest markup only
-    expect(await sandbox.mount({ scriptUnsafe: false, html: scriptSourceProbe(recorder.blocked, withHost), ...(connectionsAllowed ? { connectionsAllowed } : {}) })).toBe('ready');
+    expect(await sandbox.mount({ scriptUnsafe: false, html: scriptSourceProbe(recorder.blocked, withHost), ...(origins ? { origins } : {}) })).toBe('ready');
     const line: string = await sandbox.waitForLog('SCRIPT_SOURCES ', 8000);
     return { reached: recorder.paths('blocked'), ...JSON.parse(line.slice('SCRIPT_SOURCES '.length)) };
 }
@@ -629,7 +640,7 @@ test.describe("5a. the guest policy never contains 'self'", () => {
         // No host-origin load here: whether the allowlisted http://localhost loads is engine-specific
         // (WebKit upgrades it under upgrade-insecure-requests, research 01), and not what this asserts.
         const warnings = collectWarnings(page);
-        const { policy, violations, ...outcome } = await scriptSourceOutcome(sandbox, false, { 'script-src': ["'self'", "'unsafe-inline'", ORIGIN] });
+        const { policy, violations, ...outcome } = await scriptSourceOutcome(sandbox, false, { scripts: ["'self'", ORIGIN] });
         expect(policy).toContain(`script-src 'unsafe-inline' ${ORIGIN};`);
         expect(policy.toLowerCase()).not.toContain("'self'");
         expect(outcome).toEqual({ reached: [], ...REFUSED_ATTACKER });
@@ -637,15 +648,15 @@ test.describe("5a. the guest policy never contains 'self'", () => {
         expect(warnings.filter(w => w.includes(SELF_WARNING))).toHaveLength(1);
     });
 
-    const workerCases: [string, CSPDirectives | undefined][] = [
+    const workerCases: [string, SandboxConfig['origins'] | undefined][] = [
         ['default policy', undefined],
-        ["'self' configured", { 'script-src': ["'SELF'", "'unsafe-inline'"] }],
+        ["'self' configured", { scripts: ["'self'"] }],
     ];
-    for (const [label, connectionsAllowed] of workerCases) {
+    for (const [label, origins] of workerCases) {
         test(`worker mode, ${label}: importScripts and import() from another origin are refused, nothing reaches the network`, async ({ sandbox, page }) => {
             const warnings = collectWarnings(page);
             // worker mode has no markup: guest code arrives through execute(), hence scriptUnsafe (the fixture's)
-            expect(await sandbox.mount({ mode: 'worker', ...(connectionsAllowed ? { connectionsAllowed } : {}) })).toBe('ready');
+            expect(await sandbox.mount({ mode: 'worker', ...(origins ? { origins } : {}) })).toBe('ready');
             await sandbox.run(`(async () => {
                 const r = {};
                 try { importScripts('${recorder.blocked}/imported.js'); r.importScripts = 'load'; } catch (e) { r.importScripts = 'refused'; }
@@ -657,7 +668,7 @@ test.describe("5a. the guest policy never contains 'self'", () => {
             const line = await sandbox.waitForLog('WORKER_SOURCES ', 8000);
             expect(JSON.parse(line.slice('WORKER_SOURCES '.length))).toEqual({ importScripts: 'refused', hostOrigin: 'refused', dynamicImport: 'refused', ran: 0 });
             expect(recorder.paths('blocked')).toEqual([]);
-            expect(warnings.filter(w => w.includes(SELF_WARNING))).toHaveLength(connectionsAllowed ? 1 : 0);
+            expect(warnings.filter(w => w.includes(SELF_WARNING))).toHaveLength(origins ? 1 : 0);
         });
     }
 });
@@ -668,7 +679,7 @@ test.describe('5. blob: in the policy adds no egress', () => {
         ['blob: module', (src: string) => `import(URL.createObjectURL(new Blob([${JSON.stringify(src)}], { type: 'text/javascript' })));`],
     ] as const) {
         test(`a ${name} runs under the guest's CSP: every outbound channel is refused`, async ({ sandbox, browserName }) => {
-            expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
+            expect(await mountWithBlob(sandbox)).toBe('ready');
             await sandbox.run(wrap(outboundAttempts(recorder.blocked)));
             for (const channel of ['fetch', 'import', 'img', 'websocket']) {
                 expect(await sandbox.waitForLog(`OUTBOUND ${channel} `)).toBe(`OUTBOUND ${channel} refused`);
@@ -679,7 +690,7 @@ test.describe('5. blob: in the policy adds no egress', () => {
     }
 
     test('a blob: stylesheet runs under the guest\'s CSP: its url() to another origin is refused', async ({ sandbox }) => {
-        expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
+        expect(await mountWithBlob(sandbox)).toBe('ready');
         await sandbox.run(`
             const l = document.createElement('link'); l.rel = 'stylesheet';
             l.href = URL.createObjectURL(new Blob(['@import url("${recorder.blocked}/import.css"); body { background-image: url("${recorder.blocked}/bg.svg"); }'], { type: 'text/css' }));
@@ -690,7 +701,7 @@ test.describe('5. blob: in the policy adds no egress', () => {
     });
 
     test('worker mode: a blob: script pulled in with importScripts runs under the guest\'s CSP', async ({ sandbox, browserName }) => {
-        expect(await sandbox.mount({ mode: 'worker', ...WITH_BLOB })).toBe('ready');
+        expect(await mountWithBlob(sandbox, { mode: 'worker' })).toBe('ready');
         await sandbox.run(`importScripts(URL.createObjectURL(new Blob([${JSON.stringify(outboundAttempts(recorder.blocked))}], { type: 'text/javascript' })));`);
         for (const channel of ['importScripts', 'fetch', 'import', 'websocket']) {
             expect(await sandbox.waitForLog(`OUTBOUND ${channel} `)).toBe(`OUTBOUND ${channel} refused`);
@@ -701,19 +712,14 @@ test.describe('5. blob: in the policy adds no egress', () => {
 
     test('positive control: the same attempts to an allowlisted origin all succeed and reach the listener, in iframe and worker mode, with no violation', async ({ sandbox }) => {
         const allowed = recorder.allowed;
-        const connectionsAllowed: CSPDirectives = {
-            ...DELTA_CSP,
-            'script-src': ["'unsafe-inline'", 'blob:', allowed],
-            'style-src': ["'unsafe-inline'", 'blob:', allowed],
-            'img-src': ['blob:', allowed],
-            'connect-src': ['blob:', allowed, wss(allowed)],
-        };
+        await withBlob(sandbox);
+        const origins = { scripts: [allowed], styles: [allowed], images: [allowed], connect: [allowed, wss(allowed)] };
         const expectedPaths = { iframe: ['/fetch', '/img.svg', '/module.js', '/ws'], worker: ['/fetch', '/module.js', '/script.js', '/ws'] };
         for (const mode of ['iframe', 'worker'] as const) {
             recorder.clear();
             await sandbox.clearLogs();
             await sandbox.clearViolations();
-            expect(await sandbox.mount({ mode, connectionsAllowed })).toBe('ready');
+            expect(await sandbox.mount({ mode, origins })).toBe('ready');
             const attempts = JSON.stringify(outboundAttempts(allowed));
             await sandbox.run(mode === 'iframe'
                 ? `import(URL.createObjectURL(new Blob([${attempts}], { type: 'text/javascript' })));`
@@ -741,7 +747,7 @@ test.describe('5. blob: in the policy adds no egress', () => {
 
     for (const [name, code] of Object.entries(SELF_NAVIGATIONS)) {
         test(`a blob: document cannot replace the guest frame (${name})`, async ({ sandbox, page, browserName }) => {
-            expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
+            expect(await mountWithBlob(sandbox)).toBe('ready');
             await sandbox.run(`globalThis.__original = 'still-here'; setTimeout(() => { ${code} }, 0);`);
             await page.waitForTimeout(1500);
 
@@ -766,7 +772,7 @@ test.describe('5. blob: in the policy adds no egress', () => {
     }
 
     test('a blob: document cannot be loaded into a nested frame', async ({ sandbox, page }) => {
-        expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
+        expect(await mountWithBlob(sandbox)).toBe('ready');
         await sandbox.run(`const f = document.createElement('iframe'); f.src = ${BLOB_DOC}; document.body.appendChild(f);`);
         await page.waitForTimeout(1500);
         expect(page.frames().map(f => f.url()).filter(u => u.startsWith('blob:'))).toEqual([]);
@@ -775,7 +781,7 @@ test.describe('5. blob: in the policy adds no egress', () => {
     test('a blob: document cannot open a new browsing context', async ({ sandbox, context, page }) => {
         let opened = 0;
         context.on('page', () => opened++);
-        expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
+        expect(await mountWithBlob(sandbox)).toBe('ready');
         // Chromium and WebKit return null without allow-popups, Firefox throws
         await sandbox.run(`
             try { console.log('OPEN ' + (window.open(${BLOB_DOC}) ? 'opened' : 'refused')); }
@@ -793,7 +799,7 @@ test.describe('5. blob: in the policy adds no egress', () => {
 
 test.describe('6. blob: MIME types', () => {
     test('iframe mode: modules and stylesheets need the right type; classic scripts, fonts and images are lenient as measured', async ({ sandbox, browserName }) => {
-        expect(await sandbox.mount(WITH_BLOB)).toBe('ready');
+        expect(await mountWithBlob(sandbox)).toBe('ready');
         expect(await runProbes(sandbox, [
             ['module text/javascript', 'script', { module: true, type: 'text/javascript' }],
             ['module application/javascript', 'script', { module: true, type: 'application/javascript' }],
@@ -836,7 +842,7 @@ test.describe('6. blob: MIME types', () => {
     });
 
     test('worker mode: importScripts MIME checking differs by engine; import() is strict everywhere', async ({ sandbox, browserName }) => {
-        expect(await sandbox.mount({ mode: 'worker', ...WITH_BLOB })).toBe('ready');
+        expect(await mountWithBlob(sandbox, { mode: 'worker' })).toBe('ready');
         // Firefox and WebKit refuse a non-JavaScript type for importScripts (as the HTML spec requires); Chromium runs it
         const strict = browserName === 'chromium' ? 'ok' : 'error:NetworkError';
         expect(await runProbes(sandbox, [

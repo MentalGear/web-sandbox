@@ -49,7 +49,7 @@ test.describe('Worker mode isolation', () => {
 });
 
 test('positive control: worker fetch and importScripts from an allowlisted origin succeed and reach the listener', async ({ sandbox }) => {
-    expect(await sandbox.mount({ mode: 'worker', connectionsAllowed: { 'connect-src': [recorder.allowed], 'script-src': ["'unsafe-inline'", recorder.allowed] } })).toBe('ready');
+    expect(await sandbox.mount({ mode: 'worker', origins: { connect: [recorder.allowed], scripts: [recorder.allowed] } })).toBe('ready');
     const outcome = await sandbox.inGuest(`
         const fetched = await fetch('${recorder.allowed}/fetch').then(r => r.text(), e => 'refused ' + e.message);
         let imported;

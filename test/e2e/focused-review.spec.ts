@@ -53,10 +53,10 @@ test.describe('W1: a committed inert file is never a script of the next build', 
 
             // The next build, in iframe mode with host markup naming both. Classic scripts run in order, so once the
             // inline script after them has reported, app.js would have run before ok.js if it ran at all.
-            const config: Partial<SandboxConfig> = {
+            const config: SandboxConfig = {
                 mode: 'iframe',
                 html: '<script src="app.js"></script><script src="ok.js"></script><script>bridge.call("mark", "after")</script>',
-                connectionsAllowed: { 'img-src': [recorder.allowed] },
+                origins: { images: [recorder.allowed] },
             };
             expect(await sandbox.mount(config)).toBe('ready');
             await expect.poll(() => marks(sandbox), { timeout: 8000 }).toContain('after');
@@ -161,7 +161,7 @@ test.describe('F1: rendered markup cannot re-animate an attribute the renderer c
     });
 
     test('an animated <image href> loads nothing: the static image of the same policy reaches the listener (positive control), the animated target never does, and an animated blob: URL the view did not mint is gone too', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount({ ...strictView, connectionsAllowed: { 'img-src': [recorder.allowed] } })).toBe('ready');
+        expect(await sandbox.mount({ ...strictView, origins: { images: [recorder.allowed] } })).toBe('ready');
         const workerCopy: string = await sandbox.inGuest(`return location.href`); // a blob: URL the view never minted
         // SVG <image> and <use> are not on the renderer's allowlist either (broad review 2026-10-14): they go with their
         // animations; the static image is an HTML <img> of the same policy

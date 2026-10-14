@@ -47,20 +47,20 @@ test.describe('S4: scriptUnsafe', () => {
 test.describe('S7: directives a <meta> policy discards', () => {
     const IGNORED = ['frame-ancestors', 'report-uri', 'report-to', 'sandbox'];
 
-    test('are left out of the guest policy in iframe and worker mode, with one warning per directive per instance; the browser has nothing to discard', async ({ sandbox, page, browserName }) => {
+    test('cannot be configured: named as origins they are dropped, with one warning per name per instance, in iframe and worker mode; the browser has nothing to discard', async ({ sandbox, page, browserName }) => {
         const dropped: string[] = [];
         const discardedByBrowser: string[] = [];
         page.on('console', m => {
-            const match = /"connectionsAllowed\.([a-z-]+)" was dropped/.exec(m.text());
+            const match = /origins\."([a-z-]+)" was dropped/.exec(m.text());
             if (m.type() === 'warning' && match) dropped.push(match[1]!);
             if (/ignored when delivered via a <meta> element/i.test(m.text())) discardedByBrowser.push(m.text());
         });
-        const connectionsAllowed = { 'frame-ancestors': ["'none'"], 'report-uri': ['https://r.example/'], 'report-to': ['g'], 'sandbox': ['allow-scripts'] } as any;
+        const origins = { 'frame-ancestors': ["'none'"], 'report-uri': ['https://r.example/'], 'report-to': ['g'], 'sandbox': ['allow-scripts'] } as any;
 
-        expect(await sandbox.mount({ connectionsAllowed })).toBe('ready');
+        expect(await sandbox.mount({ origins })).toBe('ready');
         const policy: string = await sandbox.inGuest(`return document.querySelector('meta[http-equiv="Content-Security-Policy"]').content`);
         expect(await sandbox.reset()).toBe('ready');
-        expect(await sandbox.mount({ mode: 'worker', connectionsAllowed })).toBe('ready');
+        expect(await sandbox.mount({ mode: 'worker', origins })).toBe('ready');
 
         for (const directive of IGNORED) expect(policy).not.toMatch(new RegExp(`(^|; )${directive}( |;)`));
         expect(dropped.sort()).toEqual([...IGNORED].sort());

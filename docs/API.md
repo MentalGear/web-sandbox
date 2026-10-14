@@ -70,8 +70,8 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 ## Configuration
 
-**`setConfig(config: Partial<SandboxConfig>): void`** replaces the configuration and rebuilds the environment
-(see [Lifecycle](#lifecycle)).
+**`setConfig(config: SandboxConfig): void`** replaces the configuration and rebuilds the environment
+(see [Lifecycle](#lifecycle)). `SandboxConfig` is a union keyed by `mode`: strict mode's `origins` has no `scripts`.
 
 - Each call is applied **over the defaults, not over the previous configuration**: an option left out returns
   to its default. That includes `html`, so a `setConfig()` after `load(html)` starts with an empty document
@@ -80,11 +80,11 @@ name (the guest's own frame cannot; its `window.name` is inert).
   changes nothing, not even at the next `reset()`.
 - Values are validated before they are applied; what cannot be used is dropped with one `console.warn` per
   element, never applied half-way.
-- A config that cannot be used at all (not an object, not cloneable: a `Proxy`, a function value, or a
-  `connectionsAllowed` that is not an object) applies nothing, and the sandbox terminates with the reason
+- A config that cannot be used at all (not an object, not cloneable: a `Proxy`, a function value; an `origins` that
+  is not an object, or a kind of it that is not a list) applies nothing, and the sandbox terminates with the reason
   `the configuration could not be used (…)`, as for an unknown mode, until a usable config is set; the previous
-  config stays. A build that fails (for example a directive given a string instead of a list) terminates with
-  `the environment could not be built (…)`. `setConfig()` never throws.
+  config stays. A build that fails terminates with `the environment could not be built (…)`. `setConfig()` never
+  throws.
 
 | Option | Type | Default | Modes | What it does |
 | :--- | :--- | :--- | :--- | :--- |
@@ -93,7 +93,7 @@ name (the guest's own frame cannot; its `window.name` is inert).
 | `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-scripts`, `allow-forms`, `allow-pointer-lock`, `allow-orientation-lock`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms`. |
 | `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | iframe, worker | Capabilities that act outside the frame: `allow-popups`, `allow-modals`, `allow-downloads`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in iframe mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see the README's default-mode residuals). |
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
-| `connectionsAllowed` | `CSPDirectives` | see [below](#connectionsallowed) | all (strict: a subset) | The guest's Content Security Policy, merged per directive over the defaults. |
+| `origins` | `SandboxOrigins` | none | all (strict: no `scripts`) | The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. See [below](#origins). |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in worker and strict mode on every browser, and in iframe mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
@@ -101,49 +101,60 @@ name (the guest's own frame cannot; its `window.name` is inert).
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Gives the guest [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off. [ADR-006](ADR-006-fetch-bridge.md) |
 | `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
 
-### `connectionsAllowed`
+### `origins`
 
-The default guest policy:
+The guest's policy is one fixed template per mode. `origins` adds exact origins to six of its directives, one list per
+kind of load, and can change nothing else:
 
 ```js
-{
-    "upgrade-insecure-requests": true,
-    "default-src": ["'none'"],
-    "script-src":  ["'unsafe-inline'"],
-    "style-src":   ["'unsafe-inline'"],
-    "base-uri":    [],            // 'none'
-    "form-action": [],            // 'none'
-    "worker-src":  ["blob:"],
-}
+sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.example.com'], images: ['https://cdn.example.com'] } });
 ```
 
-A directive you pass replaces that directive's default; the others keep theirs. Rules:
+| Kind | Directive | What loads from it |
+| :--- | :--- | :--- |
+| `connect` | `connect-src` | `fetch()`, `XMLHttpRequest`, `WebSocket` (`wss:` origins too), `EventSource`, `sendBeacon()`. |
+| `images` | `img-src` | Images, CSS backgrounds, icons. |
+| `styles` | `style-src` | Stylesheets: `<link rel=stylesheet>`, `@import`. Inline styles are always allowed. |
+| `fonts` | `font-src` | `@font-face` fonts. |
+| `media` | `media-src` | Audio, video, text tracks. |
+| `scripts` | `script-src` | `<script src>`, modules, `importScripts()`. Not in strict mode. |
 
-- **Names**: `default-src`, `script-src`, `script-src-elem`, `script-src-attr`, `style-src`, `style-src-elem`,
-  `style-src-attr`, `img-src`, `font-src`, `connect-src`, `media-src`, `object-src`, `frame-src`, `child-src`,
-  `worker-src`, `manifest-src`, `prefetch-src`, `base-uri`, `form-action`, `upgrade-insecure-requests`
-  (always on). Any other key is dropped with a warning; so are `frame-ancestors`, `report-uri`, `report-to`
-  and `sandbox`, which browsers ignore in the `<meta>` policy the guest always gets.
-- **Values**: each entry must be one CSP source expression (`https://api.example`, `data:`, `'none'`, …);
-  anything else (including a `;`) is dropped with a warning.
-- **`[]` means `'none'`** for every directive. Leave a directive out to fall back to `default-src`.
-- **`'self'` is dropped** with a warning: browsers disagree on what it matches for the guest's opaque origin.
-  List origins explicitly.
-- **`'unsafe-eval'` and `'wasm-unsafe-eval'` are dropped**: only `scriptUnsafe` grants them.
-- **Keep `'unsafe-inline'` in `script-src`** (without nonces or hashes) in iframe and worker mode: the
-  library's bootstrap is an inline script, and without it there is no `bridge`, no `sandboxFiles`, no
-  violation reports (one warning). [CSP_CONFIG_RATIONALE.md](CSP_CONFIG_RATIONALE.md)
-- **Registered files add `blob:`** only to the directive that governs each kind of load their types need, as
-  the browser picks it (CSP Level 3 fallback): scripts `script-src-elem`, else `script-src`; stylesheets
-  `style-src-elem`, else `style-src`; `img-src` for `image/*`; `font-src` for `font/*`; `media-src` for
-  `audio/*`, `video/*` and `text/vtt`; `connect-src` for every file. Where only `default-src` governs, the kind's
-  own directive is created from `default-src`'s sources plus `blob:`. A governing directive you set to `'none'`
-  stays `'none'`, with a warning.
-- **Strict mode** takes only `default-src`, `style-src`, `connect-src`, `img-src`, `font-src`, `media-src`,
-  `manifest-src` and `prefetch-src` from the config. `script-src`, `script-src-attr`, `base-uri`,
-  `form-action`, `worker-src`, `frame-src` and `object-src` are fixed; every other directive is dropped; each
-  difference warns once. Images never load from `data:` there: it is dropped from `img-src` (or from the
-  `default-src` that governs images), with one warning. [ADR-005](ADR-005-strict-mode.md)
+- **An entry is one exact origin**, `https://host[:port]`; in `connect` also `wss://host[:port]`; plain `http://` only
+  for `localhost` and `127.0.0.1` (local development: an engine that upgrades insecure requests, as WebKit does, asks
+  over https). Case is folded and a default port dropped. The host must be written as it is meant: no IPv6 literal (a
+  policy cannot name one), IPv4 shorthand, percent-encoding, non-ASCII name (write its `xn--` form) or trailing dot.
+- **Anything else is dropped** with one warning per entry: `https:` and other schemes, `*` and `*.example.com`,
+  `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
+  narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
+- **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used.
+- **Strict mode has no `scripts`**: a type error in TypeScript (`SandboxConfig` is a union keyed by `mode`), and dropped
+  with one warning at run time, for a config from JSON. With a mode chosen at run time, type `origins` as
+  `StrictSandboxOrigins`.
+- **Registered files** add `blob:` to the directive of each kind of load their types are for (JavaScript: `scripts`;
+  `text/css`: `styles`; `image/*`: `images`; `font/*`: `fonts`; `audio/*`, `video/*`, `text/vtt`: `media`; every
+  file: `connect`), whatever `origins` lists. Strict mode never adds it to `script-src`.
+- **`'unsafe-eval'`** is added to `script-src` by `scriptUnsafe` only.
+- A `connectionsAllowed` key is ignored, with one warning: the policy is built from `origins` alone.
+
+Every directive is always emitted (`'none'` when it admits nothing), so no browser falls back to `default-src`. With no
+origins and no files, iframe and worker mode get:
+
+```
+default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none';
+media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none';
+form-action 'none'; manifest-src 'none'; upgrade-insecure-requests
+```
+
+`'unsafe-inline'` in `script-src` admits inline scripts: the library's bootstrap is one, and it always runs. Strict
+mode's view (its worker inherits it), where `<bootstrap>` is the hash of the library's one view script:
+
+```
+default-src 'none'; script-src 'sha256-<bootstrap>'; script-src-attr 'none'; style-src 'unsafe-inline';
+img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none';
+object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests
+```
+
+[ADR-007](ADR-007-typed-origins.md)
 
 ### `fetchBridge`
 
@@ -172,7 +183,7 @@ the document; otherwise they take effect when it is inserted.
 
 ### `setConfig(config)`
 
-`setConfig(config: Partial<SandboxConfig>): void` — see [Configuration](#configuration). Rebuilds now.
+`setConfig(config: SandboxConfig): void` — see [Configuration](#configuration). Rebuilds now.
 
 ### `load(html)`
 
@@ -390,8 +401,8 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
 | `unknown mode …` | `mode` is not `iframe`, `worker` or `strict`. |
-| `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned, or `connectionsAllowed` is not an object. |
-| `the environment could not be built (…)` | Building the frame failed, e.g. a directive given a string instead of a list. |
+| `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned, an `origins` that is not an object, or a kind of it that is not a list. |
+| `the environment could not be built (…)` | Building the frame failed. |
 | `the executed code ran longer than workerExecutionTimeout` | The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline. |
 | `the sandbox frame loaded a second time` | Something navigated or reloaded the library's frame (also before its first load, once the guest had checked in). |
 | `the guest frame announced itself again (it reloaded or rewrote its document)` | Iframe and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. |
@@ -512,7 +523,7 @@ In the guest, the codes other than `NOT_FOUND` come from the element through the
 ## Guest globals
 
 What guest code can use, by mode. Everything here is installed by the library's bootstrap before any guest code
-runs; in iframe mode that needs `allow-scripts` and inline scripts allowed by `script-src`.
+runs; in iframe mode that needs `allow-scripts` (the policy always admits it).
 
 | Global | iframe | worker | strict (worker) |
 | :--- | :--- | :--- | :--- |
@@ -739,11 +750,11 @@ Values:
 
 Types: `SandboxConfig`, `SandboxState`, `RpcError`, `RpcErrorCode`, `SandboxLog`, `SandboxLogLevel`,
 `SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,
-`FileInfo`, `FileError`, `FileErrorCode`, `SandboxFiles`, `GuestWrite`, `CSPDirectives`, `SafeCapability`,
-`UnsafeCapability`, `UnsafePermission`, `SandboxCapability`.
+`FileInfo`, `FileError`, `FileErrorCode`, `SandboxFiles`, `GuestWrite`, `SandboxOrigins`, `StrictSandboxOrigins`,
+`SafeCapability`, `UnsafeCapability`, `UnsafePermission`, `SandboxCapability`.
 
 The playground's scenarios (`src/lib/presets.ts`) are not part of the package: each preset is a `code` payload
-with the `rules` (a `Partial<SandboxConfig>`) and optional `files` it runs with, shared with the regression
+with the `rules` (a config every mode can run) and optional `files` it runs with, shared with the regression
 specs.
 
 ---

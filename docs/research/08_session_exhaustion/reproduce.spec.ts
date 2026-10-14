@@ -28,7 +28,7 @@ test('Session ID Exhaustion / DoS - Not Reachable', async ({ sandbox }) => {
 });
 
 test('positive control: the absolute form reaches an allowlisted origin, and the listener sees it', async ({ sandbox }) => {
-    await sandbox.mount({ ...preset.rules, connectionsAllowed: { 'connect-src': [recorder.allowed] } });
+    await sandbox.mount({ ...preset.rules, origins: { connect: [recorder.allowed] } });
     // the preset posts in a loop for 5 s; the first request arriving is enough
     await sandbox.run(absolute(recorder.allowed));
     await recorder.waitFor('allowed', '/api/session');

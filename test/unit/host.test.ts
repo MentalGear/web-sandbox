@@ -22,95 +22,83 @@ describe('WebSandbox Security Configuration', () => {
     });
   });
 });
-describe('the guest policy never contains \'self\' (backlog S14)', () => {
-  // The guest CSP sits in the guest srcdoc, which sits (attribute-escaped) in the wrapper's srcdoc.
-  const guestPolicy = (el: HTMLElement): string => {
-    const wrapper = el.shadowRoot!.querySelector('iframe')!.srcdoc;
-    const guest = new DOMParser().parseFromString(wrapper, 'text/html').querySelector('iframe')!.getAttribute('srcdoc')!;
-    return new DOMParser().parseFromString(guest, 'text/html').querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
-  };
+const COOPERATIVE_DEFAULT = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests";
 
-  const mount = async (config?: Record<string, unknown>) => {
-    const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
-    const el = document.createElement('web-sandbox') as any;
-    document.body.appendChild(el);
-    if (config) el.setConfig(config);
-    return el;
-  };
+// The guest CSP sits in the guest srcdoc, which sits (attribute-escaped) in the wrapper's srcdoc.
+const frames = (el: HTMLElement) => {
+  const outer = el.shadowRoot!.querySelector('iframe')!;
+  const wrapper = new DOMParser().parseFromString(outer.srcdoc, 'text/html');
+  const inner = wrapper.querySelector('iframe')!;
+  const guest = new DOMParser().parseFromString(inner.getAttribute('srcdoc')!, 'text/html');
+  const policy = guest.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
+  return { outer, wrapper, inner, policy };
+};
 
-  it("the default policy has no 'self'", async () => {
-    const el = await mount();
-    expect(guestPolicy(el)).toMatch(/script-src 'unsafe-inline'(;| )/);
-    expect(guestPolicy(el).toLowerCase()).not.toContain("'self'");
-    el.remove();
+const mount = async (config?: Record<string, unknown>) => {
+  const { defineWebSandbox } = await import('@src/host');
+  defineWebSandbox();
+  const el = document.createElement('web-sandbox') as any;
+  document.body.appendChild(el);
+  if (config) el.setConfig(config);
+  return el;
+};
+
+describe('the guest policy built by the element: `origins` (ADR-007)', () => {
+  it('the default guest policy, in iframe and worker mode: the cooperative template, every directive explicit', async () => {
+    for (const mode of ['iframe', 'worker']) {
+      const el = await mount({ mode });
+      expect(frames(el).policy, mode).toBe(COOPERATIVE_DEFAULT);
+      el.remove();
+    }
   });
 
-  it("drops a configured 'self' in iframe and worker mode, warning once per directive across resets", async () => {
+  it('each kind fills its directive and no other, in iframe and worker mode, across reset()', async () => {
+    for (const mode of ['iframe', 'worker']) {
+      const el = await mount({ mode, origins: { scripts: ['https://cdn.example'], images: ['https://img.example'], connect: ['https://api.example', 'wss://ws.example'] } });
+      el.reset();
+      expect(frames(el).policy, mode).toBe(COOPERATIVE_DEFAULT
+        .replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' https://cdn.example")
+        .replace("img-src 'none'", 'img-src https://img.example')
+        .replace("connect-src 'none'", 'connect-src https://api.example wss://ws.example'));
+      el.remove();
+    }
+  });
+
+  it("backlog S14, S16: 'self', a scheme, a wildcard or data: is dropped with one warning each across resets; a kind left with nothing is 'none'", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     for (const mode of ['iframe', 'worker']) {
       warn.mockClear();
-      const el = await mount({ mode, connectionsAllowed: { 'script-src': ["'SELF'", "'unsafe-inline'", 'https://a.example'], 'connect-src': ["'self'"] } });
+      const el = await mount({ mode, origins: { scripts: ["'SELF'", 'https://a.example'], connect: ["'self'", 'https:', '*'], images: ['data:'] } });
       el.reset();
-      const policy = guestPolicy(el);
-      expect(policy.toLowerCase()).not.toContain("'self'");
-      expect(policy).toContain("script-src 'unsafe-inline' https://a.example");
-      expect(policy).toContain("connect-src 'none'");
-      const selfWarnings = warn.mock.calls.map(c => String(c[0])).filter(m => m.includes("'self'"));
-      expect(selfWarnings).toHaveLength(2);
+      el.setConfig({ mode, origins: { scripts: ["'SELF'", 'https://a.example'], connect: ["'self'", 'https:', '*'], images: ['data:'] } });
+      const { policy } = frames(el);
+      expect(policy.toLowerCase()).not.toMatch(/'self'|data:|\*|https: /);
+      expect(policy).toContain("script-src 'unsafe-inline' https://a.example;");
+      expect(policy).toContain("connect-src 'none';");
+      expect(policy).toContain("img-src 'none';");
+      expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('was dropped: list exact origins'))).toHaveLength(5);
       el.remove();
     }
     warn.mockRestore();
   });
-});
 
-describe('the guest policy and frames built by the element (S15, S16)', () => {
-  const frames = (el: HTMLElement) => {
-    const outer = el.shadowRoot!.querySelector('iframe')!;
-    const wrapper = new DOMParser().parseFromString(outer.srcdoc, 'text/html');
-    const inner = wrapper.querySelector('iframe')!;
-    const guest = new DOMParser().parseFromString(inner.getAttribute('srcdoc')!, 'text/html');
-    const policy = guest.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
-    return { outer, wrapper, inner, policy };
-  };
-
-  const mount = async (config?: Record<string, unknown>) => {
-    const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
-    const el = document.createElement('web-sandbox') as any;
-    document.body.appendChild(el);
-    if (config) el.setConfig(config);
-    return el;
-  };
-
-  it('the default guest policy is exactly what it was before S16: empty fetch directives are left to default-src', async () => {
-    const el = await mount();
-    expect(frames(el).policy).toBe("default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob:;");
+  it('connectionsAllowed was removed: one warning per instance, ignored (no origin from it), the rest of the config applied', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const el = await mount({ connectionsAllowed: { 'img-src': ['https://img.example'], 'default-src': ['*'] }, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
+    el.reset();
+    el.setConfig({ connectionsAllowed: null, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
+    expect(el.state).toBe('loading');
+    expect(frames(el).policy).toBe(COOPERATIVE_DEFAULT.replace("connect-src 'none'", 'connect-src https://api.example'));
+    expect(el._config.html).toBe('<p id="kept">');
+    expect(Object.hasOwn(el._config, 'connectionsAllowed')).toBe(false);
+    expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('connectionsAllowed was removed; use origins'))).toHaveLength(1);
     el.remove();
-  });
-
-  it("connectionsAllowed { 'default-src': [] } keeps default-src 'none' in the guest policy, in iframe and worker mode", async () => {
-    for (const mode of ['iframe', 'worker']) {
-      const el = await mount({ mode, connectionsAllowed: { 'default-src': [] } });
-      expect(frames(el).policy).toMatch(/^default-src 'none';/);
-      el.remove();
-    }
-  });
-
-  it("an embedder's default-src reaches every fetch directive it does not set (the defaults do not pin them to 'none')", async () => {
-    const el = await mount({ connectionsAllowed: { 'default-src': ['https://cdn.example'] } });
-    const { policy } = frames(el);
-    expect(policy).toMatch(/^default-src https:\/\/cdn\.example;/);
-    for (const directive of ['connect-src', 'img-src', 'font-src', 'media-src', 'object-src', 'frame-src', 'manifest-src']) {
-      expect(policy).not.toContain(directive);
-    }
-    el.remove();
+    warn.mockRestore();
   });
 
   it('in iframe and worker mode, both frames are no-referrer, the guest inherits an inert base, and base-uri stays none', async () => {
     for (const mode of ['iframe', 'worker']) {
-      // even a config that asks for a base: the guest policy never allows one
-      const el = await mount({ mode, connectionsAllowed: { 'base-uri': [] } });
+      const el = await mount({ mode });
       el.reset();
       const { outer, wrapper, inner, policy } = frames(el);
       expect(outer.getAttribute('referrerpolicy')).toBe('no-referrer');
@@ -175,31 +163,21 @@ describe('the scriptUnsafe guard rail (backlog S4)', () => {
   });
 });
 
-describe('directives a <meta> policy discards are dropped from the guest policy (backlog S7)', () => {
-  const guestPolicy = (el: HTMLElement): string => {
-    const wrapper = new DOMParser().parseFromString(el.shadowRoot!.querySelector('iframe')!.srcdoc, 'text/html');
-    const guest = new DOMParser().parseFromString(wrapper.querySelector('iframe')!.getAttribute('srcdoc')!, 'text/html');
-    return guest.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
-  };
-
-  it('in iframe and worker mode, none of the four is emitted, with one warning per directive per instance across resets', async () => {
-    const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
+describe('no directive a <meta> policy discards is ever emitted (backlog S7)', () => {
+  it('a config cannot name one: as a key of origins it is an unknown kind, dropped with one warning per instance; the policy is the template', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     for (const mode of ['iframe', 'worker']) {
       warn.mockClear();
-      const el = document.createElement('web-sandbox') as any;
-      document.body.appendChild(el);
-      const connectionsAllowed = { 'frame-ancestors': ["'none'"], 'report-uri': ['https://r.example/'], 'report-to': ['group'], 'sandbox': ['allow-scripts'], 'frame-src': [] };
-      el.setConfig({ mode, connectionsAllowed });
+      const origins = { 'frame-ancestors': ["'none'"], 'report-uri': ['https://r.example/'], 'report-to': ['group'], 'sandbox': ['allow-scripts'] };
+      const el = await mount({ mode, origins });
       el.reset();
-      el.setConfig({ mode, connectionsAllowed });
-      const policy = guestPolicy(el);
+      el.setConfig({ mode, origins });
+      const { policy } = frames(el);
+      expect(policy).toBe(COOPERATIVE_DEFAULT);
       for (const directive of ['frame-ancestors', 'report-uri', 'report-to', 'sandbox']) {
         expect(policy).not.toMatch(new RegExp(`(^|; )${directive} `));
-        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes(`connectionsAllowed.${directive}"`))).toHaveLength(1);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes(`origins."${directive}" was dropped`))).toHaveLength(1);
       }
-      expect(policy).toContain("frame-src 'none';"); // S16 still holds for every other directive
       el.remove();
     }
     warn.mockRestore();
@@ -235,25 +213,17 @@ describe("the element's 'violation' event (backlog S5)", () => {
   });
 });
 
-describe('the guest bootstrap must be able to run (backlog S13, S5)', () => {
-  it('warns once per instance when scripts are allowed but the policy refuses the inline bootstrap, and never otherwise', async () => {
-    const { defineWebSandbox } = await import('@src/host');
-    defineWebSandbox();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const refused = () => warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('cannot run'));
-    const el = document.createElement('web-sandbox') as any;
-    document.body.appendChild(el);
-
-    el.setConfig({ capabilities: ['allow-scripts'] });
-    el.setConfig({ capabilities: [] , connectionsAllowed: { 'script-src': ['https://cdn.example'] } }); // no scripts at all: nothing to warn about
-    expect(refused()).toEqual([]);
-
-    for (const mode of ['iframe', 'worker']) el.setConfig({ mode, capabilities: ['allow-scripts'], connectionsAllowed: { 'script-src': ['https://cdn.example'] } });
-    el.reset();
-    expect(refused()).toHaveLength(1);
-    expect(refused()[0]).toContain('WebRTC');
-    el.remove();
-    warn.mockRestore();
+describe('the guest bootstrap always runs where scripts are allowed (backlog S13, S5)', () => {
+  it("the cooperative policy always admits the inline bootstrap, so the element always expects its announcement with allow-scripts, and only then", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const mode of ['iframe', 'worker']) {
+      const el = await mount({ mode, capabilities: ['allow-scripts'], origins: { scripts: ['https://cdn.example'] } });
+      expect(frames(el).policy, mode).toMatch(/script-src 'unsafe-inline'[ ;]/);
+      expect(el._expectAnnouncement, mode).toBe(true);
+      el.setConfig({ mode, capabilities: [] });
+      expect(el._expectAnnouncement, mode).toBe(mode === 'worker'); // worker mode always adds allow-scripts
+      el.remove();
+    }
   });
 });
 

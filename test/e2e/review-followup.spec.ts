@@ -10,18 +10,18 @@ import { test, expect } from './fixture';
  * state and events and its 'sandbox-log' details, read on the host page.
  */
 
-test('a directive given a string instead of a list: setConfig() does not throw, the sandbox terminates with the reason and no frame; a usable config starts it again', async ({ sandbox, page }) => {
+test('an origins kind given a string instead of a list: setConfig() does not throw, the sandbox terminates with the reason and no frame; a usable config starts it again', async ({ sandbox, page }) => {
     const outcome = await page.evaluate(() => new Promise<unknown>(resolve => {
         const s = document.querySelector('web-sandbox') as any;
         let thrown: unknown = null;
         s.addEventListener('terminated', (e: CustomEvent) => resolve({ reason: e.detail.reason, state: s.state, frames: s.shadowRoot.querySelectorAll('iframe').length, thrown }), { once: true });
         try {
-            s.setConfig({ capabilities: ['allow-scripts'], connectionsAllowed: { 'img-src': "x; script-src *" } });
+            s.setConfig({ capabilities: ['allow-scripts'], origins: { images: "x; script-src *" } });
         } catch (error) {
             thrown = String(error);
         }
     }));
-    expect(outcome).toEqual({ reason: 'the environment could not be built (Error)', state: 'terminated', frames: 0, thrown: null });
+    expect(outcome).toEqual({ reason: 'the configuration could not be used (TypeError)', state: 'terminated', frames: 0, thrown: null });
     expect(await sandbox.mount()).toBe('ready');
 });
 

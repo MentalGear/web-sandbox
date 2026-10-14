@@ -5,9 +5,9 @@
 // "prototype" are kept as the plain data they are, and change no prototype at any depth. (The earlier fix skipped
 // a list of keys, which had to be right about every key that is special to [[Set]].)
 //
-// The one helper for every write of a key that came from a config, in the merge and in every CSP step
-// (focused review 2026-10-14, F4: drop-meta-ignored.ts assigned `output[name] = values`, so a configured
-// "__proto__" directive became the prototype of its output, before the policy grammar ran).
+// The one helper for every write of a key that came from a config, in the merge and in parseOrigins
+// (focused review 2026-10-14, F4: a policy step of the time assigned `output[name] = values`, so a configured
+// "__proto__" directive became the prototype of its output).
 export const defineData = (target: object, key: string, value: unknown) =>
     Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
 

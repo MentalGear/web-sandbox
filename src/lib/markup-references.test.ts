@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mimeTypeFor } from './files';
-import { createSlotNonce, inlineScriptsAllowed, resolveReference, rewriteGuestMarkup, rewriteMarkupReferences, VIRTUAL_DOCUMENT_URL, type MarkupParts } from './markup-references';
+import { createSlotNonce, resolveReference, rewriteGuestMarkup, rewriteMarkupReferences, VIRTUAL_DOCUMENT_URL, type MarkupParts } from './markup-references';
 
 // The files a build can name, typed by extension as the store types them; ANY: a load that admits every type.
 const typesOf = (paths: string[]) => new Map(paths.map(path => [path, mimeTypeFor(path)]));
@@ -222,29 +222,6 @@ describe('rewriteMarkupReferences: re-serialisation', () => {
         expect(parts).not.toBeNull();
         expect((globalThis as any).__ranInHost).toBe(0);
         delete (globalThis as any).__ranInHost;
-    });
-});
-
-describe('inlineScriptsAllowed: whether the inline bootstrap can run under the final directives', () => {
-    it.each([
-        [{ 'script-src': ["'unsafe-inline'"] }, true],
-        [{ 'script-src': ["'UNSAFE-INLINE'", 'blob:'] }, true],
-        [{ 'script-src': ["'unsafe-inline' blob:"] }, true],
-        [{ 'default-src': ["'unsafe-inline'"] }, true], // script-src left out: default-src applies
-        [{ 'default-src': ["'unsafe-inline'"], 'script-src': ['blob:'] }, false],
-        [{ 'script-src': [] }, false],
-        [{ 'script-src': ['blob:'] }, false],
-        [{}, false],
-        [{ 'script-src': ["'unsafe-inline'", "'nonce-abc'"] }, false], // a nonce or hash disables 'unsafe-inline'
-        [{ 'script-src': ["'unsafe-inline'", "'sha256-abc='"] }, false],
-        [{ 'script-src': ["'unsafe-inline'", "'strict-dynamic'"] }, false],
-        // review A3: an inline <script> is checked against script-src-elem first, then script-src, then default-src
-        [{ 'script-src': ["'unsafe-inline'"], 'script-src-elem': ['https://cdn.example'] }, false],
-        [{ 'script-src': ["'unsafe-inline'"], 'script-src-elem': [] }, false],
-        [{ 'script-src': ['blob:'], 'script-src-elem': ["'unsafe-inline'"] }, true],
-        [{ 'default-src': ["'unsafe-inline'"], 'script-src-elem': ["'unsafe-inline'", "'nonce-abc'"] }, false],
-    ])('%j → %s', (directives, allowed) => {
-        expect(inlineScriptsAllowed(directives as any)).toBe(allowed);
     });
 });
 

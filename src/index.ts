@@ -4,6 +4,7 @@
  */
 export { WebSandbox, defineWebSandbox, EXECUTION_TIMEOUT_GRACE_MS, LOAD_TIMEOUT_MS, VIEW_LIVENESS_TIMEOUT_MS } from "./host";
 export type { SandboxConfig, SandboxState } from "./host";
+export type { SandboxOrigins, StrictSandboxOrigins } from "./lib/csp/origins";
 export type { RpcError, RpcErrorCode } from "./lib/rpc";
 export { MAX_INBOUND_IN_FLIGHT } from "./lib/rpc";
 export type { SandboxLog, SandboxLogLevel } from "./lib/sandbox-log";
@@ -25,7 +26,6 @@ export {
     UNSAFE_PERMISSIONS,
 } from "./csp-directives";
 export type {
-    CSPDirectives,
     SafeCapability,
     UnsafeCapability,
     UnsafePermission,

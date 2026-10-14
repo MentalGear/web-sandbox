@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { VIOLATION_EVENT_LIMIT } from '@src/lib/violation';
-import { KNOWN_DIRECTIVES } from '@src/lib/csp/policy-grammar';
+import { VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT } from '@src/lib/violation';
 
 /**
  * Follow-up audit 2026-10-14 (docs/security/ADVERSARIAL-REVIEW-2026-10.md, "Follow-up"), host side: the execution
@@ -215,9 +214,9 @@ describe('C4: the view port counts violations per directive; the logic port and 
         el._viewPort = view;
         let events = 0;
         el.addEventListener('violation', () => events++);
-        for (const directive of KNOWN_DIRECTIVES) flood(el, view, directive, VIOLATION_EVENT_LIMIT + 1, true);
+        for (const directive of VIOLATION_DIRECTIVES) flood(el, view, directive, VIOLATION_EVENT_LIMIT + 1, true);
         for (let i = 0; i < 300; i++) flood(el, view, `x-made-up-${String.fromCharCode(97 + (i % 26))}${i}`.replace(/\d/g, 'z'), 2, true);
-        expect(events).toBe((KNOWN_DIRECTIVES.length + 1) * VIOLATION_EVENT_LIMIT);
+        expect(events).toBe((VIOLATION_DIRECTIVES.length + 1) * VIOLATION_EVENT_LIMIT);
     });
 
     it.each([['strict', 'logic'], ['iframe', 'guest'], ['worker', 'guest']])('%s mode, %s port: one count for every directive (guest code names them there)', async (mode, _port) => {

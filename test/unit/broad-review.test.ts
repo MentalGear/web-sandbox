@@ -1,17 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { addFileSources, kindsForTypes } from '@src/lib/csp/file-sources';
 import { createFetchBridge, toFetchPolicy, validateRequest, type FetchRecord } from '@src/lib/fetch-bridge';
-import { generateCSP } from '@src/lib/csp/csp-generator';
-import type { CSPDirectives } from '@src/csp-directives';
+import { cooperativePolicy, fileKinds, strictViewPolicy } from '@src/lib/csp/csp-generator';
+import { parseOrigins } from '@src/lib/csp/origins';
 import { prng } from './policy-helpers';
 import { rewriteGuestMarkup, VIRTUAL_DOCUMENT_URL } from '@src/lib/markup-references';
 import { rewriteInlineModule } from '@src/lib/module-specifiers';
 import { admitsAll, linkKinds } from '@src/lib/load-kinds';
 import { isViewFileType, RENDER_RULES, sanitizeRender } from '@src/lib/in-sandbox-view';
-import { policyTokens } from '@src/lib/csp/policy-grammar';
-
-// the policy steps take only the grammar's output (PolicyTokens, A1): test policies are checked into it
-const tokens = (directives: CSPDirectives) => policyTokens(directives, 'test');
 
 /**
  * Broad review 2026-10-14 (docs/security/BROAD-REVIEW-2026-10-14.md), host and library side: the guarantees that
@@ -117,11 +112,13 @@ describe('CB4: a guest write is answered from the build the guest has, never fro
 
 describe('CB5: a terminated listener that builds again from the same inputs is answered once', () => {
     it.each([
-        ['an unknown mode (a refusal)', { mode: 'Strict' }],
-        ['a directive that is a string (a build failure)', { connectionsAllowed: { 'img-src': 'x; script-src *' } }],
-    ])('%s: one termination, one warning, no recursion; the state stays terminated', async (_, config) => {
+        ['an unknown mode (a refusal)', { mode: 'Strict' }, false],
+        ['origins that cannot be read (a refusal)', { origins: { images: 'x; script-src *' } }, false],
+        ['a build that throws (a build failure)', { capabilities: ['allow-scripts'] }, true],
+    ])('%s: one termination, one warning, no recursion; the state stays terminated', async (_, config, breakBuild) => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount({ capabilities: ['allow-scripts'] });
+        if (breakBuild) el._guestPolicy = () => { throw new Error('no policy'); };
         let heard = 0;
         el.addEventListener('terminated', () => {
             heard++;
@@ -195,13 +192,15 @@ describe('PD1: no worker loads from data: in the guest policy', () => {
         expect(policyOf(el)).not.toContain('data:');
     });
 
-    it('a configured data: is dropped from worker-src, with one warning across builds (other governing directives: drop-data-workers.test.ts)', async () => {
+    it('a config cannot reach worker-src at all (no kind names it), and data: is not an origin for any kind: one warning each across builds', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'], connectionsAllowed: { 'worker-src': ['blob:', 'data:', 'https://w.example'], 'img-src': ['data:'] } });
+        const el = await mount({ capabilities: ['allow-scripts'], origins: { 'worker-src': ['data:'], scripts: ['data:'], images: ['data:'] } });
         el.reset();
-        expect(policyOf(el)).toContain('worker-src blob: https://w.example;');
-        expect(policyOf(el)).toContain('img-src data:;'); // data: images are not workers: untouched
-        expect(warn.mock.calls.filter(call => String(call[0]).includes('"data:" is not allowed for workers'))).toHaveLength(1);
+        expect(policyOf(el)).toContain('worker-src blob:;');
+        expect(policyOf(el)).not.toContain('data:');
+        const messages = warn.mock.calls.map(call => String(call[0]));
+        expect(messages.filter(m => m.includes('origins."worker-src" was dropped'))).toHaveLength(1);
+        expect(messages.filter(m => m.includes('entry "data:" was dropped'))).toHaveLength(2);
     });
 });
 
@@ -234,39 +233,46 @@ function urlSources(policy: string, kind: string): Set<string> {
     return new Set();
 }
 
-describe('PA1: a policy step widens only the kinds of load it is for', () => {
-    it('a JavaScript file under a policy with script-src and no worker-src or child-src: blob: reaches scripts, not workers', () => {
-        const before: CSPDirectives = { 'default-src': ["'none'"], 'script-src': ["'unsafe-inline'", 'https://cdn.example'] };
-        const after = addFileSources(tokens(before), ['text/javascript'], new Set());
-        const [b, a] = [generateCSP(before), generateCSP(after)];
-        expect(urlSources(a, 'script-src-elem')).toContain('blob:'); // what the step is for
-        expect([...urlSources(a, 'worker-src')].sort()).toEqual([...urlSources(b, 'worker-src')].sort());
+describe('PA1: blob: for files widens only the kinds of load they are for', () => {
+    it('a JavaScript file: blob: reaches scripts, not workers', () => {
+        const origins = parseOrigins({ scripts: ['https://cdn.example'] }, 'iframe', () => {});
+        const before = cooperativePolicy({ origins, fileKinds: new Set(), scriptUnsafe: false });
+        const after = cooperativePolicy({ origins, fileKinds: fileKinds(['text/javascript']), scriptUnsafe: false });
+        expect(urlSources(after, 'script-src-elem')).toContain('blob:'); // what the files are for
+        expect([...urlSources(after, 'worker-src')]).toEqual([...urlSources(before, 'worker-src')]);
     });
 
-    it('property: over random policies × file types, every kind the types do not need keeps exactly its sources', () => {
+    it('property: over random origins × file types, in both templates, every kind the types do not need keeps exactly its sources', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const random = prng(0x5eed);
-        const NAMES = ['default-src', 'script-src', 'script-src-elem', 'style-src', 'style-src-elem', 'child-src', 'worker-src', 'img-src', 'connect-src', 'font-src', 'media-src', 'frame-src'];
-        const TOKENS = ["'none'", "'unsafe-inline'", 'https://a.example', 'https:', 'blob:', 'data:', "'self'", '*'];
+        const KINDS = ['scripts', 'styles', 'images', 'fonts', 'media', 'connect'];
+        const ENTRIES = ['https://a.example', 'https://b.example:8443', 'http://localhost:3000', 'wss://w.example'];
         const TYPES = ['text/javascript', 'text/css', 'image/png', 'font/woff2', 'audio/mpeg', 'text/vtt', 'application/json'];
+        // the CSP Level 3 kinds each registered type is for, written out independently of the library's table
+        const NEEDED: Record<string, string[]> = {
+            'text/javascript': ['script-src-elem', 'connect-src'], 'text/css': ['style-src-elem', 'connect-src'], 'image/png': ['img-src', 'connect-src'],
+            'font/woff2': ['font-src', 'connect-src'], 'audio/mpeg': ['media-src', 'connect-src'], 'text/vtt': ['media-src', 'connect-src'], 'application/json': ['connect-src'],
+        };
+        const hash = `'sha256-${'A'.repeat(43)}='`;
         for (let run = 0; run < 400; run++) {
-            const policy: Record<string, string[]> = {};
-            for (const name of NAMES) {
-                if (random() < 0.55) continue;
-                const tokens: string[] = [];
-                const count = Math.floor(random() * 3);
-                for (let i = 0; i < count; i++) tokens.push(TOKENS[Math.floor(random() * TOKENS.length)]!);
-                policy[name] = tokens;
-            }
+            const config: Record<string, string[]> = {};
+            for (const kind of KINDS) if (random() < 0.5) config[kind] = ENTRIES.filter(() => random() < 0.4);
             const types = TYPES.filter(() => random() < 0.35);
-            const needed = kindsForTypes(types) as Set<string>;
-            const before = generateCSP(policy as CSPDirectives);
-            const after = generateCSP(addFileSources(tokens(policy as CSPDirectives), types, new Set()));
-            for (const kind of Object.keys(FALLBACKS)) {
-                if (needed.has(kind)) continue;
-                const was = urlSources(before, kind);
-                const now = urlSources(after, kind);
-                expect([...now].filter(source => !was.has(source)), `${kind} in ${JSON.stringify(policy)} with ${types.join(', ')}`).toEqual([]);
+            const needed = new Set(types.flatMap(type => NEEDED[type]!));
+            for (const mode of ['iframe', 'strict']) {
+                const origins = parseOrigins(config, mode, () => {});
+                const make = (kinds: Set<never> | ReturnType<typeof fileKinds>) => (mode === 'strict'
+                    ? strictViewPolicy({ origins, fileKinds: kinds, scriptUnsafe: false, bootstrapHash: hash })
+                    : cooperativePolicy({ origins, fileKinds: kinds, scriptUnsafe: false }));
+                const [before, after] = [make(new Set()), make(fileKinds(types))];
+                for (const kind of Object.keys(FALLBACKS)) {
+                    const was = urlSources(before, kind);
+                    const now = urlSources(after, kind);
+                    const added = [...now].filter(source => !was.has(source));
+                    const context = `${kind} in ${mode} ${JSON.stringify(config)} with ${types.join(', ')}`;
+                    if (!needed.has(kind) || (mode === 'strict' && kind === 'script-src-elem')) expect(added, context).toEqual([]);
+                    else expect(added, context).toEqual(['blob:']);
+                }
             }
         }
     });

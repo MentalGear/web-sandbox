@@ -303,12 +303,12 @@ test.describe('4. files add no egress', () => {
     test('positive control: the same files, with the listener allowlisted, load and reach it with no violation', async ({ sandbox }) => {
         const allowed = recorder.allowed;
         expect(await sandbox.registerFiles(egressFiles(allowed))).toBe('ok');
-        // the file types' own blob: sources are added to these directives (file-sources.ts)
-        expect(await sandbox.mount({ connectionsAllowed: {
-            'script-src': ["'unsafe-inline'", allowed],
-            'style-src': ["'unsafe-inline'", allowed],
-            'img-src': [allowed],
-            'connect-src': [allowed, wss(allowed)],
+        // the file types' own blob: sources are added to these kinds' directives (csp-generator.ts)
+        expect(await sandbox.mount({ origins: {
+            scripts: [allowed],
+            styles: [allowed],
+            images: [allowed],
+            connect: [allowed, wss(allowed)],
         } })).toBe('ready');
         const r = await inGuest(sandbox, loadEgressFiles);
 
@@ -330,7 +330,7 @@ test.describe('5. lifecycle: files belong to the element, a guest sees the snaps
         expect(await list()).toEqual(['a.js', 'b.txt']);
         expect(await sandbox.load('<p>new markup</p>')).toBe('ready');
         expect(await list()).toEqual(['a.js', 'b.txt']);
-        expect(await sandbox.mount({ connectionsAllowed: { 'connect-src': [] } })).toBe('ready');
+        expect(await sandbox.mount({ origins: { connect: [] } })).toBe('ready');
         expect(await list()).toEqual(['a.js', 'b.txt']);
 
         // while ready: the running guest keeps its snapshot

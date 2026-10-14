@@ -58,11 +58,14 @@ test.describe('CB1: no listener in the guest realm ever holds a port of ours', (
                 document.close();
             }, 0);
         </script><img src="${recorder.allowed}/delay?ms=1500">`;
-        expect(await sandbox.mount({ html, connectionsAllowed: { 'img-src': [recorder.allowed] } })).toBe('ready');
-        await page.evaluate((expr) => (0, eval)(expr).postMessage({ type: 'hello' }, '*'), guestWindowOf); // positive control
+        expect(await sandbox.mount({ html, origins: { images: [recorder.allowed] } })).toBe('ready');
         await sandbox.exposeGuest('twice', '(x) => x * 2');
         expect(await sandbox.call('twice', 21)).toBe(42); // the bridge works both ways
-        expect(await sandbox.inGuest('return { messages: __messages > 0, ports: __portsSeen, rewritten: !!document.getElementById("rewritten") }')).toEqual({ messages: true, ports: 0, rewritten: true });
+        // 'ready' is the guest's check-in (S46), before its setTimeout has replaced the document and added the guest's
+        // listener: the positive control is posted once the listener is there, or it can arrive first and prove nothing
+        expect(await sandbox.inGuest('for (let i = 0; i < 100 && !document.getElementById("rewritten"); i++) await new Promise(r => setTimeout(r, 20)); return !!document.getElementById("rewritten");')).toBe(true);
+        await page.evaluate((expr) => (0, eval)(expr).postMessage({ type: 'hello' }, '*'), guestWindowOf); // positive control
+        expect(await sandbox.inGuest('for (let i = 0; i < 100 && __messages === 0; i++) await new Promise(r => setTimeout(r, 20)); return { messages: __messages > 0, ports: __portsSeen, rewritten: !!document.getElementById("rewritten") }')).toEqual({ messages: true, ports: 0, rewritten: true });
         await page.waitForTimeout(300);
         expect((await sandbox.logs()).filter(line => line.includes('CB1-CAPTURED'))).toEqual([]);
     });
@@ -175,7 +178,7 @@ test.describe('CB3: calls while loading, and the load deadline', () => {
 test('CB7: moved into another document, the element stops its guest and builds nothing there (one warning); moved back, it builds again', async ({ sandbox, page }) => {
     const warnings: string[] = [];
     page.on('console', (message) => { if (message.type() === 'warning') warnings.push(message.text()); });
-    expect(await sandbox.mount({ html: `<script>setInterval(() => fetch('${recorder.allowed}/tick').catch(() => {}), 50)</script>`, connectionsAllowed: { 'connect-src': [recorder.allowed] } })).toBe('ready');
+    expect(await sandbox.mount({ html: `<script>setInterval(() => fetch('${recorder.allowed}/tick').catch(() => {}), 50)</script>`, origins: { connect: [recorder.allowed] } })).toBe('ready');
     await recorder.waitFor('allowed', '/tick'); // positive control: the guest runs
     const away = await page.evaluate(async () => {
         const el = document.querySelector('web-sandbox') as any;
@@ -208,7 +211,7 @@ test('CB7: moved into another document, the element stops its guest and builds n
 
 test.describe('PD1: no worker loads from data:', () => {
     test('a data: SharedWorker and a data: Worker reach nothing (WebKit ran the SharedWorker outside the policy); a blob: worker under the same policy reaches the allowed listener (positive control)', async ({ sandbox }) => {
-        expect(await sandbox.mount({ connectionsAllowed: { 'connect-src': [recorder.allowed] } })).toBe('ready');
+        expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         const body = (prefix: string, origin: string) => `fetch('${origin}/${prefix}-fetch').catch(() => {}); try { importScripts('${origin}/${prefix}-import.js'); } catch (e) {} try { new WebSocket('${wss(origin)}/${prefix}-ws'); } catch (e) {}`;
         const constructed = await sandbox.inGuest(`
             const source = 'data:text/javascript,' + encodeURIComponent(${JSON.stringify(body('pd1', recorder.blocked))});
@@ -232,7 +235,7 @@ test.describe('PD1: no worker loads from data:', () => {
 test.describe('PD2: fetch() with keepalive is refused in the guest realm', () => {
     for (const mode of ['iframe', 'worker'] as const) {
         test(`${mode} mode: keepalive to a listener the policy blocks is refused (Firefox sent it before); an ordinary fetch to the allowed one arrives (positive control)`, async ({ sandbox, browserName }) => {
-            expect(await sandbox.mount({ mode, connectionsAllowed: { 'connect-src': [recorder.allowed] } })).toBe('ready');
+            expect(await sandbox.mount({ mode, origins: { connect: [recorder.allowed] } })).toBe('ready');
             const outcome = await sandbox.inGuest(`
                 const tryFetch = (url, init) => fetch(url, init).then(() => 'sent', (e) => e.name + ': ' + e.message);
                 return {
@@ -255,7 +258,7 @@ test.describe('PD2: fetch() with keepalive is refused in the guest realm', () =>
     }
 
     test('residual (measured): a frame the guest creates has the platform\'s fetch; Firefox still sends its keepalive request past connect-src', async ({ sandbox, browserName }) => {
-        expect(await sandbox.mount({ connectionsAllowed: { 'connect-src': [recorder.allowed] } })).toBe('ready');
+        expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         await sandbox.run(`const f = document.createElement('iframe'); f.srcdoc = ${JSON.stringify(`<script>fetch('${recorder.blocked}/pd2-nested', { keepalive: true, method: 'POST', body: 'x' }).catch(() => {}); fetch('${recorder.allowed}/pd2-nested-control').catch(() => {});</script>`)}; document.body.append(f);`);
         await recorder.waitFor('allowed', '/pd2-nested-control'); // the nested frame's scripts run (positive control)
         await sandbox.page.waitForTimeout(800);
@@ -273,7 +276,7 @@ test.describe('PD3: DNS prefetching and preconnect', () => {
 
     test('residual (measured): <link rel=preconnect> opens a connection to an origin the policy blocks in WebKit only; an allowed fetch connects (positive control of the counter)', async ({ sandbox, browserName }) => {
         const html = `<link rel="preconnect" href="${recorder.blocked}"><link rel="dns-prefetch" href="${recorder.blocked}"><script>fetch('${recorder.allowed}/pd3-control').catch(() => {})</script>`;
-        expect(await sandbox.mount({ html, connectionsAllowed: { 'connect-src': [recorder.allowed] } })).toBe('ready');
+        expect(await sandbox.mount({ html, origins: { connect: [recorder.allowed] } })).toBe('ready');
         await recorder.waitFor('allowed', '/pd3-control');
         await sandbox.page.waitForTimeout(1500);
         expect(recorder.connections.allowed).toBeGreaterThan(0);
@@ -434,7 +437,7 @@ test('PA2: every file reference the host placed lands on the same (namespace, el
             }
             return placed.sort();
         }, html);
-        expect(await sandbox.mount({ html, connectionsAllowed: { 'img-src': ['blob:'] } }), html).toBe('ready');
+        expect(await sandbox.mount({ html }), html).toBe('ready'); // the registered SVGs bring blob: to img-src
         const guest = await sandbox.inGuest(`
             const urls = { [sandboxFiles.url('f0.svg')]: 'f0.svg', [sandboxFiles.url('f1.svg')]: 'f1.svg' };
             const placed = [];

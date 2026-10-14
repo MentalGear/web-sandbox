@@ -1,6 +1,7 @@
 import { test, expect } from '../../../test/e2e/fixture';
 import { useRecorder } from '../../../test/e2e/recorder';
-import { generateCSP } from '@src/lib/csp/csp-generator';
+import { cooperativePolicy, strictViewPolicy } from '@src/lib/csp/csp-generator';
+import { parseOrigins } from '@src/lib/csp/origins';
 import { fromPreset } from '../../../test/e2e/presets';
 
 /**
@@ -15,22 +16,16 @@ import { fromPreset } from '../../../test/e2e/presets';
 const recorder = useRecorder();
 const preset = fromPreset('form-action-exfil');
 
-test('12.1 the default policy restricts base-uri and form-action, which have no fallback', () => {
-    const policy = generateCSP({
-        'upgrade-insecure-requests': true,
-        'default-src': ["'none'"],
-        'script-src': ["'self'", "'unsafe-inline'"],
-        'connect-src': [], 'base-uri': [], 'img-src': [], 'style-src': ["'unsafe-inline'"],
-        'font-src': [], 'media-src': [], 'manifest-src': [], 'prefetch-src': [],
-        'form-action': [], 'object-src': [], 'frame-src': [], 'frame-ancestors': [],
-        'worker-src': ['blob:', 'data:'],
-    } as any);
-
-    // frame-src and object-src are covered by the default-src fallback - fine that they are absent.
-    // base-uri and form-action are NOT, so their absence means "unrestricted".
-    // Fixed (backlog S9): an empty non-fallback directive is emitted as 'none'.
-    expect(policy, 'base-uri has no default-src fallback').toContain("base-uri 'none'");
-    expect(policy, 'form-action has no default-src fallback').toContain("form-action 'none'");
+test('12.1 every policy restricts base-uri and form-action, which have no fallback, whatever the config', () => {
+    // base-uri and form-action do not fall back to default-src, so their absence would mean "unrestricted".
+    // Fixed (backlog S9), and since ADR-007 by construction: both templates always emit them as 'none', and no
+    // `origins` kind can reach them.
+    const origins = parseOrigins({ connect: ['https://a.example'], 'base-uri': ['https://a.example'], 'form-action': ['*'] }, 'iframe', () => {});
+    const input = { origins, fileKinds: new Set<never>(), scriptUnsafe: true };
+    for (const policy of [cooperativePolicy(input), strictViewPolicy({ ...input, bootstrapHash: `'sha256-${'A'.repeat(43)}='` })]) {
+        expect(policy, 'base-uri has no default-src fallback').toContain("base-uri 'none'");
+        expect(policy, 'form-action has no default-src fallback').toContain("form-action 'none'");
+    }
 });
 
 test('12.2 form-action: a GET form cannot exfiltrate to a non-allowlisted target', async ({ sandbox, page, browserName }) => {

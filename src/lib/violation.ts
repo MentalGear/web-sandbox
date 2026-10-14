@@ -41,6 +41,17 @@ export interface SandboxViolation {
  */
 export const VIOLATION_EVENT_LIMIT = 100;
 
+/**
+ * The directive names a browser's report can carry as the effective directive (CSP Level 3 fetch, document and
+ * navigation directives): the strict view counts its reports per name in this list, plus one count for every other
+ * name (host.ts, _dispatchViolation), so its events are bounded whatever names arrive.
+ */
+export const VIOLATION_DIRECTIVES: readonly string[] = [
+    'default-src', 'script-src', 'script-src-elem', 'script-src-attr', 'style-src', 'style-src-elem', 'style-src-attr',
+    'img-src', 'font-src', 'connect-src', 'media-src', 'object-src', 'frame-src', 'child-src', 'worker-src',
+    'manifest-src', 'base-uri', 'form-action', 'frame-ancestors',
+];
+
 const MAX_STRING = 2048;
 const DIRECTIVE = /^[a-z][a-z-]{0,63}$/;
 

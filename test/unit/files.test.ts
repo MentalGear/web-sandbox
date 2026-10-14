@@ -48,9 +48,9 @@ afterEach(() => {
     document.body.replaceChildren();
 });
 
-// The guest policy for the shipped default, and with scriptUnsafe, before files existed. Pinned literally.
-const DEFAULT_POLICY = "default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob:;";
-const UNSAFE_POLICY = "default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline' 'unsafe-eval'; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob:;";
+// The guest policy for the shipped default, and with scriptUnsafe, with no files (the cooperative template, ADR-007). Pinned literally.
+const DEFAULT_POLICY = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests";
+const UNSAFE_POLICY = DEFAULT_POLICY.replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' 'unsafe-eval'");
 
 describe('with no files: the policy is unchanged, and the document differs only by the empty files bootstrap', () => {
     // How 98f9c81 composed the bootstrap, before files existed, and the one thing added since.
@@ -89,7 +89,7 @@ describe('with no files: the policy is unchanged, and the document differs only 
 describe('with files, the policy admits blob: only for the registered types', () => {
     it('one JavaScript file: script-src and connect-src gain blob:, nothing else changes', async () => {
         const el = await mount(undefined, { 'main.js': 'void 0' });
-        expect(policyOf(el)).toBe("default-src 'none'; upgrade-insecure-requests; script-src 'unsafe-inline' blob:; base-uri 'none'; style-src 'unsafe-inline'; form-action 'none'; worker-src blob:; connect-src blob:;");
+        expect(policyOf(el)).toBe(DEFAULT_POLICY.replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' blob:").replace("connect-src 'none'", 'connect-src blob:'));
     });
 
     it('every type family maps to its own directive; base-uri and form-action stay none', async () => {
@@ -108,24 +108,15 @@ describe('with files, the policy admits blob: only for the registered types', ()
         expect(directive(policy, 'default-src')).toBe("default-src 'none'");
     });
 
-    it("never contains 'self', even when default-src carries it into a file directive; the S14 drop still runs last", async () => {
+    it("the configured origins and blob: share a kind's directive: origins first, blob: last; no 'self' ever", async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ scriptUnsafe: true, connectionsAllowed: { 'default-src': ["'self'", 'https://cdn.example'], 'script-src': ["'self'"] } }, { 'a.js': '', 'b.png': new Uint8Array(1) });
+        const el = await mount({ scriptUnsafe: true, origins: { scripts: ["'self'", 'https://cdn.example'], images: ['https://img.example'] } }, { 'a.js': '', 'b.png': new Uint8Array(1) });
         const policy = policyOf(el);
         expect(policy.toLowerCase()).not.toContain("'self'");
-        expect(directive(policy, 'script-src')).toBe("script-src blob: 'unsafe-eval'");
-        expect(directive(policy, 'img-src')).toBe('img-src https://cdn.example blob:');
-        expect(directive(policy, 'default-src')).toBe('default-src https://cdn.example');
-        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes("'self'"))).toHaveLength(2); // default-src and script-src
-    });
-
-    it.each([["'none'", ["'none'"]], ['[] (S16)', []]])("keeps an explicit %s and warns once per directive across rebuilds", async (_, imgSrc) => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ connectionsAllowed: { 'default-src': ['https://cdn.example'], 'img-src': imgSrc } }, { 'a.png': new Uint8Array(1) });
-        el.reset();
-        el.reset();
-        expect(directive(policyOf(el), 'img-src')).toBe("img-src 'none'");
-        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('img-src') && m.includes('will not load'))).toHaveLength(1);
+        expect(directive(policy, 'script-src')).toBe("script-src 'unsafe-inline' https://cdn.example blob: 'unsafe-eval'");
+        expect(directive(policy, 'img-src')).toBe('img-src https://img.example blob:');
+        expect(directive(policy, 'default-src')).toBe("default-src 'none'");
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes("'self'"))).toHaveLength(1);
     });
 });
 
@@ -294,8 +285,6 @@ describe('markup references (PR2): guest markup that names a registered file is 
 
     it.each([
         ['scripts are not allowed (no allow-scripts)', { capabilities: [] }],
-        ['the policy refuses inline scripts', { ...SCRIPTS, connectionsAllowed: { 'script-src': ['blob:'] } }],
-        ["a nonce disables 'unsafe-inline'", { ...SCRIPTS, connectionsAllowed: { 'script-src': ["'unsafe-inline'", "'nonce-abc'"] } }],
     ])('the markup stays as written when the bootstrap cannot run: %s', async (_, config) => {
         const html = '<img src="logo.svg">';
         const el = await mount({ ...config, html }, FILES);
@@ -432,8 +421,6 @@ describe('module graph (PR3): one import map, registered by the bootstrap, only 
 
     it.each([
         ['scripts are not allowed (no allow-scripts)', { capabilities: [] }],
-        ['the policy refuses inline scripts (an import map is an inline script)', { ...SCRIPTS, connectionsAllowed: { 'script-src': ['blob:'] } }],
-        ["a nonce disables 'unsafe-inline'", { ...SCRIPTS, connectionsAllowed: { 'script-src': ["'unsafe-inline'", "'nonce-abc'"] } }],
     ])('no import map and no change to the markup when the bootstrap cannot run: %s (modules then fail closed)', async (_, config) => {
         const html = `${GUEST_MAP}<script type="module">import './app.js';</script>`;
         const el = await mount({ ...config, html }, { 'app.js': '' });

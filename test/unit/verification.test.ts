@@ -1,9 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import type { CSPDirectives } from '@src/csp-directives';
-import { addEvalSource, directiveOf } from '@src/lib/csp/effective-directive';
-import { policyTokens, sanitizeDirectives } from '@src/lib/csp/policy-grammar';
 import { viewBootstrapHash } from '@src/lib/in-sandbox-view';
-import { parseLikeABrowser, prng } from './policy-helpers';
+import { parseLikeABrowser } from './policy-helpers';
 
 /**
  * Independent verification 2026-10-14 (docs/security/VERIFICATION-2026-10-14.md), host and library side: the gaps
@@ -33,60 +30,37 @@ afterEach(() => {
 
 const EVAL = ["'unsafe-eval'", "'wasm-unsafe-eval'"];
 
-describe('A1: the policy steps see the grammar\'s tokens, never a configured element holding several sources', () => {
-    // Several sources in ONE array element: the host's grammar splits them before any step (drop-eval, drop-data-workers,
-    // file sources, drop-self, the strict view) reads the lists one element at a time. Without that first split, each
-    // of these went through: eval in iframe and worker mode, data: workers, wasm-unsafe-eval in the strict view.
-    const MULTI: CSPDirectives = {
-        'script-src': ["'unsafe-inline' 'unsafe-eval'"],
-        'default-src': ["https://a.example 'wasm-unsafe-eval'"],
-        'worker-src': ['blob: data:'],
-        'img-src': ["'self' https://i.example"],
+describe('A1: a configured entry holding several sources never reaches the policy, in part or whole', () => {
+    // Several sources in ONE entry: not an origin, so the whole entry is dropped (origin.ts). Before ADR-007 a grammar
+    // had to split such an element before every later policy step, or eval, data: workers and 'self' went through.
+    const MULTI = {
+        scripts: ["https://s.example 'unsafe-eval'"],
+        connect: ["https://a.example 'wasm-unsafe-eval'"],
+        images: ["'self' https://i.example", 'https://i.example'],
+        media: ['blob: data:'],
     };
 
     for (const mode of ['iframe', 'worker', 'strict'] as const) {
-        it(`${mode} mode: no eval keyword, no data: worker, no 'self' reaches the final policy; the other sources do`, async () => {
-            vi.spyOn(console, 'warn').mockImplementation(() => {});
-            const el = await mount({ mode, capabilities: ['allow-scripts'], connectionsAllowed: MULTI });
+        it(`${mode} mode: no eval keyword, no data:, no 'self' and no part of such an entry reaches the policy; a whole origin does`, async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const el = await mount({ mode, capabilities: ['allow-scripts'], origins: MULTI });
             expect(el.state).toBe('loading');
             const { directives } = parseLikeABrowser(policyOf(el));
             for (const [name, tokens] of directives) {
                 for (const token of EVAL) expect(tokens.map(t => t.toLowerCase()), `${name} in ${mode}`).not.toContain(token);
                 expect(tokens.map(t => t.toLowerCase()), `${name} in ${mode}`).not.toContain("'self'");
+                expect(tokens, `${name} in ${mode}`).not.toContain('data:');
+                expect(tokens, `${name} in ${mode}`).not.toContain('https://s.example');
+                expect(tokens, `${name} in ${mode}`).not.toContain('https://a.example');
             }
-            expect(directives.get('default-src')).toEqual(['https://a.example']);
             expect(directives.get('img-src')).toEqual(['https://i.example']);
-            if (mode === 'strict') {
-                expect(directives.get('script-src')).toEqual([viewBootstrapHash()]);
-                expect(directives.get('worker-src')).toEqual(['blob:']);
-            } else {
-                expect(directives.get('script-src')).toEqual(["'unsafe-inline'"]);
-                expect(directives.get('worker-src')).toEqual(['blob:']);
-            }
+            expect(directives.get('connect-src')).toEqual(["'none'"]);
+            expect(directives.get('media-src')).toEqual(["'none'"]);
+            expect(directives.get('worker-src')).toEqual(['blob:']);
+            expect(directives.get('script-src')).toEqual(mode === 'strict' ? [viewBootstrapHash()] : ["'unsafe-inline'"]);
+            expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('was dropped: list exact origins') || m.includes('origins.scripts is not used'))).toHaveLength(4);
         });
     }
-
-    it('by construction: every step refuses a list element that is not one token (a caller that skipped the grammar fails closed)', async () => {
-        const { dropEvalSources } = await import('@src/lib/csp/drop-eval');
-        const { dropDataWorkerSources } = await import('@src/lib/csp/drop-data-workers');
-        const { dropSelfSources } = await import('@src/lib/csp/drop-self');
-        const { addFileSources } = await import('@src/lib/csp/file-sources');
-        const { strictPassedThrough, strictViewDirectives } = await import('@src/lib/csp/strict-policy');
-        const raw = MULTI as never;
-        const steps: [string, () => unknown][] = [
-            ['dropEvalSources', () => dropEvalSources(raw, false, new Set())],
-            ['dropDataWorkerSources', () => dropDataWorkerSources(raw, new Set())],
-            ['dropSelfSources', () => dropSelfSources(raw, new Set())],
-            ['addFileSources', () => addFileSources(raw, ['image/png'], new Set())],
-            ['addEvalSource', () => addEvalSource(raw)],
-            ['strictPassedThrough', () => strictPassedThrough(raw)],
-            ['strictViewDirectives', () => strictViewDirectives(raw, "'sha256-x'", false)],
-        ];
-        for (const [name, step] of steps) expect(step, name).toThrowError(new RegExp(`the policy step ${name} was given`));
-        // the grammar's output is accepted by all of them
-        const grammatical = sanitizeDirectives(MULTI);
-        expect(() => dropEvalSources(grammatical, false, new Set())).not.toThrow();
-    });
 });
 
 describe('CB7: the lifecycle callbacks reach the element through the class, so they work on an element whose prototype Firefox replaced', () => {
@@ -137,37 +111,14 @@ describe('CB7: the lifecycle callbacks reach the element through the class, so t
 });
 
 describe("F5: 'unsafe-eval' is never written into default-src", () => {
-    it('where default-src governs string compilation, addEvalSource creates script-src from its sources and leaves default-src as it was', () => {
-        const policy = policyTokens({ 'default-src': ['https://a.example', "'unsafe-inline'"], 'img-src': ['data:'] }, 'test');
-        const out = addEvalSource(policy);
-        expect(out['default-src']).toEqual(['https://a.example', "'unsafe-inline'"]);
-        expect(out['script-src']).toEqual(['https://a.example', "'unsafe-inline'", "'unsafe-eval'"]);
-    });
-
-    it('property: over 300 random policies, default-src after addEvalSource is the one before, and the eval keyword is in script-src', () => {
-        const random = prng(20261014);
-        const NAMES = ['default-src', 'script-src', 'style-src', 'img-src', 'connect-src', 'worker-src', 'child-src', 'script-src-elem'];
-        const TOKENS = ["'none'", "'unsafe-inline'", 'https://a.example', 'blob:', 'data:', '*', "'sha256-AAAA'"];
-        for (let run = 0; run < 300; run++) {
-            const policy: Record<string, string[]> = {};
-            for (const name of NAMES) {
-                if (random() < 0.5) continue;
-                policy[name] = Array.from({ length: Math.floor(random() * 3) }, () => TOKENS[Math.floor(random() * TOKENS.length)]!);
-            }
-            const out = addEvalSource(policyTokens(policy as CSPDirectives, 'test'));
-            const context = JSON.stringify(policy);
-            expect(directiveOf(out, 'default-src'), context).toEqual(directiveOf(policy as CSPDirectives, 'default-src'));
-            expect(directiveOf(out, 'script-src'), context).toContain("'unsafe-eval'");
-        }
-    });
-
     for (const mode of ['iframe', 'worker', 'strict'] as const) {
-        it(`${mode} mode with scriptUnsafe and a configured default-src: the policy grants eval in script-src only`, async () => {
+        it(`${mode} mode with scriptUnsafe and origins: default-src stays 'none', the policy grants eval in script-src only`, async () => {
             vi.spyOn(console, 'warn').mockImplementation(() => {});
-            const el = await mount({ mode, scriptUnsafe: true, capabilities: ['allow-scripts'], connectionsAllowed: { 'default-src': ['https://a.example'] } });
+            const el = await mount({ mode, scriptUnsafe: true, capabilities: ['allow-scripts'], origins: { connect: ['https://a.example'], images: ['https://a.example'] } });
             const { directives } = parseLikeABrowser(policyOf(el));
-            expect(directives.get('default-src')).toEqual(['https://a.example']);
+            expect(directives.get('default-src')).toEqual(["'none'"]);
             expect(directives.get('script-src')).toContain("'unsafe-eval'");
+            for (const [name, tokens] of directives) if (name !== 'script-src') expect(tokens, name).not.toContain("'unsafe-eval'");
         });
     }
 });

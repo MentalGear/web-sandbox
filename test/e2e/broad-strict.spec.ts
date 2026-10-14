@@ -2,7 +2,7 @@ import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS } from '@src/lib/in-sandbox-view';
-import type { SandboxConfig } from '@src/host';
+import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
 
 /**
  * Broad review 2026-10-14, strict mode (docs/security/BROAD-REVIEW-2026-10-14.md, reviewer C), where browser
@@ -27,7 +27,7 @@ const MAX_ELEMENTS = VIEW_MAX_ELEMENTS; // 50 000
 const MAX_DEPTH = VIEW_MAX_DEPTH; // 256
 const MAX_DETAIL = VIEW_EVENT_LIMITS.maxTotal; // 262 144
 
-const strict = (config: Partial<SandboxConfig> = {}): Partial<SandboxConfig> => ({ mode: 'strict', ...config });
+const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): SandboxConfig => ({ mode: 'strict', ...config });
 
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done', into: string | null = null, timeout = 8000) {
     await sandbox.run(`sandboxView.render(${JSON.stringify(html + `<p id="${doneId}">done</p>`)}, ${JSON.stringify(into)})`);
@@ -195,10 +195,10 @@ test.describe('ST1: nothing the strict view shows opens in a new tab as a docume
         await expect.poll(() => inView(page, browserName, `document.getElementById('ok').naturalWidth`)).toBe(1);
     });
 
-    test('a data: URL never reaches an image load: rendered data: sources are removed, the view policy drops data: from img-src (one warning), and opening what the image holds runs nothing; an allowed remote image loads (positive control)', async ({ sandbox, page, browserName }) => {
+    test('a data: URL never reaches an image load: rendered data: sources are removed, data: is not an origin (dropped from origins.images, one warning), and opening what the image holds runs nothing; an allowed remote image loads (positive control)', async ({ sandbox, page, browserName }) => {
         const warnings: string[] = [];
         page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
-        expect(await sandbox.mount(strict({ connectionsAllowed: { 'img-src': ['data:', recorder.allowed] } }))).toBe('ready');
+        expect(await sandbox.mount(strict({ origins: { images: ['data:', recorder.allowed] } }))).toBe('ready');
         const svg = `data:image/svg+xml,${encodeURIComponent(DOCUMENT(recorder.blocked))}`;
         const png = `data:image/png;base64,${PNG_1X1}`;
         await render(sandbox, browserName, `<img id="d" src="${svg}"><img id="p" src="${png}"><div id="bg" style="width:4px;height:4px;background-image:url('${png}')"></div><img id="ok" src="${recorder.allowed}/st1-ok.svg">`);
@@ -211,7 +211,7 @@ test.describe('ST1: nothing the strict view shows opens in a new tab as a docume
         const imgSrc = /img-src ([^;]*);/.exec(read.policy)?.[1] ?? '';
         expect(imgSrc.split(' ')).not.toContain('data:');
         expect(imgSrc.split(' ')).toContain(recorder.allowed);
-        expect(warnings.filter(w => w.includes('data:') && w.includes('img-src'))).toHaveLength(1);
+        expect(warnings.filter(w => w.includes('origins.images entry "data:" was dropped'))).toHaveLength(1);
         for (const held of [read.d, read.p]) if (held) expect(await openInNewTab(page, held)).not.toBe('ran');
         expect([read.d, read.p]).toEqual([null, null]);
         // the CSS background, which the renderer does not read, is refused by the policy

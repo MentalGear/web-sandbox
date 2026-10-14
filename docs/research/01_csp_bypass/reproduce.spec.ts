@@ -21,7 +21,7 @@ test('CSP Bypass via Nested Iframe - Mitigated', async ({ sandbox }) => {
 });
 
 test('positive control: the same nested frame reaches an allowlisted origin, and the listener sees it', async ({ sandbox }) => {
-    await sandbox.mount({ ...preset.rules, connectionsAllowed: { 'connect-src': [recorder.allowed] } });
+    await sandbox.mount({ ...preset.rules, origins: { connect: [recorder.allowed] } });
 
     const logs = await sandbox.runUntilDone(payload(recorder.allowed));
 

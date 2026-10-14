@@ -25,7 +25,7 @@ test('loads an image from an allowlisted origin', async ({ sandbox, page, browse
             await route.fulfill({ response });
         });
     }
-    await sandbox.mount({ connectionsAllowed: { 'upgrade-insecure-requests': true, 'img-src': [origin] } as any });
+    await sandbox.mount({ origins: { images: [origin] } }); // plain http is an origin only for loopback, as here (ADR-007)
 
     await sandbox.run(checkImage(origin));
 

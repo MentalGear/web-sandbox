@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import { admits, admitsAll, linkKinds, LOAD_KIND_NAMES, LOAD_KINDS, type LoadKindName } from './load-kinds';
-import { kindsForTypes } from './csp/file-sources';
+import { fileKinds } from './csp/csp-generator';
 import { rewriteGuestMarkup, rewriteMarkupReferences, type KindMismatch } from './markup-references';
 import { FileStore, isJavaScriptType, isStylesheetType, mimeTypeFor } from './files';
 import { isViewFileType, RENDER_RULES, sanitizeRender, VIEW_FILE_TYPES, VIEW_LOAD_KINDS } from './in-sandbox-view';
 
 /**
  * Focused review 2026-10-14, W1: one table decides which file types each kind of load may name, and the policy
- * (kindsForTypes), markup and CSS resolution (markup-references.ts, files.ts) and the strict view's renderer
+ * (fileKinds), markup and CSS resolution (markup-references.ts, files.ts) and the strict view's renderer
  * all read it. The expectations below are written out independently of the table, so a change to it shows here.
  */
 
@@ -42,11 +42,13 @@ describe('the table: every kind × every type', () => {
         }
     });
 
-    it('the policy reads the same table: a type gets blob: in the directive of exactly the loads that may name it', () => {
+    it('the policy reads the same table: a type gets blob: for exactly the kinds of the loads that may name it', () => {
+        const KEYS: Record<LoadKindName, string> = { script: 'scripts', style: 'styles', image: 'images', font: 'fonts', media: 'media', track: 'media', fetch: 'connect' };
         for (const type of TYPES) {
-            const directives = new Set(LOAD_KIND_NAMES.filter(kind => EXPECTED[kind](type)).map(kind => LOAD_KINDS[kind].directive));
-            expect(kindsForTypes([type]), type).toEqual(directives);
+            const kinds = new Set(LOAD_KIND_NAMES.filter(kind => EXPECTED[kind](type)).map(kind => KEYS[kind]));
+            expect(fileKinds([type]), type).toEqual(kinds);
         }
+        for (const kind of LOAD_KIND_NAMES) expect(LOAD_KINDS[kind].key, kind).toBe(KEYS[kind]);
     });
 
     it('admitsAll: every kind, and at least one', () => {
@@ -186,7 +188,7 @@ describe('the strict view renderer reads a table derived from the same one', () 
     it("VIEW_LOAD_KINDS is the table's style, image, font, media and track rows restricted to VIEW_FILE_TYPES, with no prefix; every view type is admitted by some row", () => {
         expect(Object.keys(VIEW_LOAD_KINDS)).toEqual(['style', 'image', 'font', 'media', 'track']);
         for (const [kind, rule] of Object.entries(VIEW_LOAD_KINDS)) {
-            expect(rule.directive).toBe(LOAD_KINDS[kind as LoadKindName].directive);
+            expect(rule.key).toBe(LOAD_KINDS[kind as LoadKindName].key);
             expect(rule.prefixes).toEqual([]);
             expect([...rule.types]).toEqual(VIEW_FILE_TYPES.filter(type => admits(kind as LoadKindName, type)));
         }

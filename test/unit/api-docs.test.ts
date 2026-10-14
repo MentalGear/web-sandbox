@@ -9,9 +9,8 @@ import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES } from '@src/lib/files';
 import { toFetchPolicy } from '@src/lib/fetch-bridge';
 import { INERT_TYPES } from '@src/lib/guest-writes';
-import { KNOWN_DIRECTIVES } from '@src/lib/csp/policy-grammar';
-import { META_IGNORED_DIRECTIVES } from '@src/lib/csp/drop-meta-ignored';
-import { STRICT_FIXED, STRICT_PASSED_THROUGH } from '@src/lib/csp/strict-policy';
+import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
+import { cooperativePolicy, KIND_DIRECTIVES, strictViewPolicy } from '@src/lib/csp/csp-generator';
 import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_TARGET_MAX_LENGTH } from '@src/lib/in-sandbox-view';
 import { WORKER_GLOBALS } from '@src/lib/worker-globals';
 
@@ -66,7 +65,7 @@ const spans = (text: string) => new Set([...text.replace(/^```[\s\S]*?^```/gm, '
 /** The top-level member names of an exported interface, read from its source. */
 function interfaceKeys(file: string, name: string): string[] {
     const source = read(file);
-    const start = source.indexOf(`export interface ${name} {`);
+    const start = source.search(new RegExp(`export interface ${name}(?: extends \\w+)? \\{`));
     if (start < 0) throw new Error(`${file} has no interface ${name}`);
     const body = source.slice(start, source.indexOf('\n}', start));
     const keys: string[] = [];
@@ -137,7 +136,8 @@ describe('docs/API.md lists the public surface', () => {
 
     it('every config option, and no other', () => {
         const options = section('## Configuration', true);
-        expect(sorted(rowKeys(options))).toEqual(sorted(interfaceKeys('src/host.ts', 'SandboxConfig')));
+        const keys = ['SandboxConfigOptions', 'CooperativeSandboxConfig', 'StrictSandboxConfig'].flatMap(name => interfaceKeys('src/host.ts', name));
+        expect(sorted(rowKeys(options))).toEqual(sorted(keys));
     });
 
     it('every fetchBridge field, and no other, with the defaults and bounds the code applies', () => {
@@ -156,10 +156,15 @@ describe('docs/API.md lists the public surface', () => {
         for (const header of defaults.headers) expect(headers).toContain(`\`${header}\``);
     });
 
-    it('every CSP directive name, the strict subset and the ignored ones', () => {
-        const policy = spans(section('### `connectionsAllowed`'));
-        const names = [...KNOWN_DIRECTIVES, ...META_IGNORED_DIRECTIVES, ...STRICT_FIXED, ...STRICT_PASSED_THROUGH];
-        for (const name of names) expect(policy.has(name), name).toBe(true);
+    it('every origins kind with its directive, and the policy of each mode as the generator makes it', () => {
+        const text = section('### `origins`');
+        expect(sorted(rowKeys(text))).toEqual(sorted(ORIGIN_KINDS));
+        for (const kind of ORIGIN_KINDS) expect(row(text, `\`${kind}\``), kind).toContain(`\`${KIND_DIRECTIVES[kind]}\``);
+        const blocks = [...text.matchAll(/^```\n([^`]+?)\n```/gm)].map(match => match[1]!.replace(/\n/g, ' ').replace(/ +/g, ' '));
+        const input = { origins: NO_ORIGINS, fileKinds: new Set<never>(), scriptUnsafe: false };
+        expect(blocks).toContain(cooperativePolicy(input));
+        const hash = `'sha256-${'A'.repeat(43)}='`;
+        expect(blocks).toContain(strictViewPolicy({ ...input, bootstrapHash: hash }).replace(hash, "'sha256-<bootstrap>'"));
     });
 
     it('every capability', () => {
