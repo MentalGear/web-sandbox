@@ -477,6 +477,16 @@ The renderer removes `iframe`, `frame`, `frameset`, `object`, `embed`, `portal`,
 `base`, `noscript` and `template` with their content; handler attributes and `javascript:` URLs never run; link
 clicks and form submissions navigate nowhere. Registered files are named by path in `src`, `href` and `poster`.
 
+Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
+`about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and
+Enter still reach `sandboxView.on`, and the browser's own actions on it (copy link address, open in a new tab,
+drag) carry no URL of the guest's. To open external URLs, expose a host method and call it from a click handler:
+
+```js
+sandbox.expose('openExternal', (url) => { if (allowed(url)) window.open(url, '_blank', 'noopener'); });
+// in the worker: sandboxView.on('click', 'docs', () => bridge.call('openExternal', 'https://example.com/docs'));
+```
+
 An event handler receives:
 
 ```ts

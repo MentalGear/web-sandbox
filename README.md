@@ -410,14 +410,15 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     scripts, handlers and `javascript:` URLs never run, and frames, `object`/`embed`, `meta`, `base`,
     `noscript` and `template` are removed before insertion, so no nested frame exists; guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
-    `Referer`); links and form submissions navigate nowhere; the watchdog stops a looping guest on every
+    `Referer`); links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
+    the browser's own link actions (copy, open in a new tab, drag) carry no guest URL (open external URLs through
+    a method you `expose()`); the watchdog stops a looping guest on every
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
     directive apart, and cannot be forged; the view renders no `blob:` content but registered files (the worker's
     own source URL is revoked once its script ran).
 *   **What it does not**: rendering is host-thread work in Firefox and WebKit (one render at a time, but one
     render of heavy markup can take hundreds of milliseconds there); CSS within what the policy allows;
-    memory; worker `violation` reports (`source: 'logic'`) are per engine and guest-influenced; a user's own browser actions
-    on a rendered link ("open in new tab", dragging it) are outside what the view can cancel; a worker that
+    memory; worker `violation` reports (`source: 'logic'`) are per engine and guest-influenced; a worker that
     closes itself is noticed only by the watchdog.
 *   **Limits**: no inline `<script>` and no nested frames in rendered markup; files are named by path in
     `src`/`href`/`poster` (not `srcset` or inline styles; a registered stylesheet's own `url()` works), and

@@ -1,6 +1,6 @@
 # ADR-005: Strict mode — guest logic in a worker, a view that runs no guest script
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-and-c4-by-construction))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction))
 
 ## Why this ADR exists
 
@@ -258,12 +258,13 @@ configuration, fetch bridge, auto-sizing), `strict-render-flood.spec.ts` (A4),
   environment; later view refusals are not reported. Measured in all three engines.
 - **G4 covers the page, not the browser's own UI (C5).** Rendered links keep their `href`, and the view cancels
   every click and submit, but a user's own actions through the browser — "open in new tab", dragging a link —
-  are not events the page can cancel. That needs the user's action; it is a residual (backlog S24).
+  are not events the page can cancel. That needs the user's action; it is a residual (backlog S24). *Closed by
+  the follow-up amendment below: rendered links now carry one inert href.*
 
 Proof: `test/e2e/review-policy.spec.ts`, `test/e2e/review-strict.spec.ts`, the strict cases of
 `test/unit/policy-guarantees.test.ts`, `src/lib/in-sandbox-view.test.ts`, `test/unit/strict.test.ts`.
 
-## Amendment (2026-10-14): follow-up audit, C1 and C4 by construction
+## Amendment (2026-10-14): follow-up audit, C1, C4 and C5 by construction
 
 **When**: the by-construction audit of the review's fixes ([report](security/ADVERSARIAL-REVIEW-2026-10.md#follow-up-2026-10-14-by-construction-audit)).
 
@@ -286,6 +287,23 @@ Proof: `test/e2e/review-policy.spec.ts`, `test/e2e/review-strict.spec.ts`, the s
   before this change too, now keep their text as well.
 - **C4: the view's violations are counted per directive.** G6 above. The logic port and the default modes keep
   one count, since guest code writes the directive name there.
+- **C5: rendered links are inert (backlog S24, option B, approved by the owner).** G4 covered the page, not the
+  browser's own UI: "copy link address", "open in new tab", hover and dragging a link need no page event, so the
+  view could not cancel them, and they carried the guest's URL. The renderer now replaces the value of every
+  href that makes a hyperlink (HTML `a` and `area`, SVG `a` with `href` and `xlink:href`, any MathML element)
+  with one constant, `INERT_HREF = 'about:blank#'`, before insertion; no option turns it off. The guest's URL is
+  discarded; the worker never had it (event details carry ids), so routing is unchanged, and an embedder who wants
+  links that leave the sandbox exposes a host method (`openExternal(url)`) that the worker calls on click.
+  The constant was measured on all three engines against `#`, `""`, `about:blank`, `about:invalid`,
+  `javascript:void(0)` and `data:,` (href property as copied, drag data, what a new top-level navigation loads):
+  `about:blank#` is absolute, so it means the same in any document; every engine reports it unchanged as the
+  link's URL and its drag data; and opening it loads the empty `about:blank`, no request. `#` resolves to the same
+  only through the view's inherited `about:blank` base; `""` fails to resolve only because that base has an opaque
+  path, and then differs per engine (no drag in Chromium, an empty one in Firefox and WebKit); `about:invalid`
+  and `javascript:` differ per engine; `data:,` opens a document. **Why not remove `href` or rewrite the element
+  to a `span`**: an `a` without `href` is not a hyperlink, so it would leave the tab order, lose the role `link`
+  for assistive technology and stop matching `:link`/`:any-link`, which the guest's own styles select on; with
+  the constant all three hold (asserted), and clicks and Enter are still cancelled and delivered by id.
 
 Refuted alternatives, kept here so they are not tried again: a `data:` URL for the worker (WebKit then cannot
 read the worker's own `blob:` URLs, `NotReadableError`, and Chromium mutes the errors of a large `data:` worker);

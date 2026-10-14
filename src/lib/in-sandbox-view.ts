@@ -52,6 +52,25 @@ export const RENDER_REMOVED_ELEMENTS = [
     'script', 'meta', 'base', 'noscript', 'template',
 ] as const;
 
+/**
+ * The value of every hyperlink href in the strict view (backlog S24, option B): the guest's URL is discarded before
+ * insertion, so a user's own browser actions on a rendered link ("copy link address", "open in new tab", hover,
+ * dragging it) can carry nothing of the guest's. The view already cancels clicks, auxclicks and Enter (G4), and the
+ * worker never had the URL (events carry ids), so routing is unchanged.
+ *
+ * Why 'about:blank#', measured on Chromium, Firefox and WebKit against '#', '' , 'about:blank', 'about:invalid',
+ * 'javascript:void(0)' and 'data:,': it is absolute, so it means the same in every document whatever its base
+ * ('#' resolves to the same 'about:blank#' only because the view inherits an about:blank base; '' fails to resolve
+ * only because that base has an opaque path, and then behaves differently per engine: no drag in Chromium, an empty
+ * one in Firefox and WebKit); every engine reports it unchanged as the link's href and its drag data, so the only
+ * string the user agent can show, copy or drop is this constant; and opening it loads the empty about:blank document:
+ * no request, nothing of the guest's. 'about:invalid' and 'javascript:' differ per engine, and 'data:,' opens a
+ * document. The link stays a link: an <a href> matches :link and :any-link, is focusable by Tab and has the role
+ * link, which removing the href or rewriting the element would lose. The fragment keeps it from naming a resource
+ * and makes it what a guest's own href="#" already resolves to.
+ */
+export const INERT_HREF = 'about:blank#';
+
 export interface RenderRules {
     /** Local names removed with their subtree (RENDER_REMOVED_ELEMENTS). */
     removed: readonly string[];
@@ -63,6 +82,8 @@ export interface RenderRules {
     anchorRelations: readonly string[];
     /** Elements that always get referrerpolicy="no-referrer" (A1). */
     referrerElements: readonly string[];
+    /** The one value every hyperlink's href becomes (INERT_HREF). */
+    inertHref: string;
     /** The URL references resolve against, and the root of the files' URL space (markup-references.ts). */
     documentUrl: string;
     virtualRoot: string;
@@ -76,6 +97,7 @@ export const RENDER_RULES: RenderRules = {
     linkRelations: ['stylesheet', 'icon'],
     anchorRelations: ['noopener', 'noreferrer', 'nofollow'],
     referrerElements: ['a', 'area', 'img', 'link'],
+    inertHref: INERT_HREF,
     documentUrl: VIRTUAL_DOCUMENT_URL,
     virtualRoot: VIRTUAL_ROOT,
 };
@@ -94,7 +116,10 @@ export const RENDER_RULES: RenderRules = {
  *   4. any attribute whose value contains "blob:" (after removing the tabs and newlines the URL parser
  *      ignores) goes, unless it is a file-reference attribute holding exactly a URL the view minted (A8);
  *   5. ping goes; referrerpolicy, where present, becomes no-referrer, and is set on rules.referrerElements;
- *      rel on <a>/<area> keeps only rules.anchorRelations (A1).
+ *      rel on <a>/<area> keeps only rules.anchorRelations (A1);
+ *   6. every href that makes a hyperlink becomes rules.inertHref (S24): HTML <a> and <area>, SVG <a> (href and
+ *      xlink:href) and any MathML element (MathML Core makes an href on any element a link). Other hrefs are
+ *      resources, not links (an SVG <use href="#icon">), and keep their value under the steps above.
  *
  * Every element is read and changed through Element.prototype's own methods and getters, never through the
  * element: a <form> exposes its controls as named properties that override built-ins, so in
@@ -112,6 +137,12 @@ export function sanitizeRender(fragment: DocumentFragment, fileUrl: (path: strin
     const set = (element: Element, name: string, value: string) => call(E.setAttribute, element, [name, value]);
     const drop = (element: Element, name: string) => call(E.removeAttribute, element, [name]);
     const remove = (element: Element) => call(E.remove, element, []);
+    const SVG = 'http://www.w3.org/2000/svg';
+    const MATHML = 'http://www.w3.org/1998/Math/MathML';
+    const XLINK = 'http://www.w3.org/1999/xlink';
+    const isHyperlink = (namespace: unknown, name: string) => (namespace === HTML && (name === 'a' || name === 'area'))
+        || (namespace === SVG && name === 'a')
+        || namespace === MATHML;
     const resolve = (value: string): string | null => {
         if (/^[\u0000- ]*$/.test(value)) return null;
         let href: string;
@@ -157,6 +188,12 @@ export function sanitizeRender(fragment: DocumentFragment, fileUrl: (path: strin
                 remove(element);
                 continue;
             }
+        }
+        // step 6: a hyperlink keeps being a link, but its href is the constant, never the guest's URL (S24)
+        const namespace = call(namespaceOf, element, []);
+        if (isHyperlink(namespace, name)) {
+            if (has(element, 'href')) set(element, 'href', rules.inertHref);
+            if (namespace === SVG && call(E.hasAttributeNS, element, [XLINK, 'href'])) call(E.setAttributeNS, element, [XLINK, 'xlink:href', rules.inertHref]);
         }
         const names: string[] = call(E.getAttributeNames, element, []);
         for (let a = 0; a < names.length; a++) {

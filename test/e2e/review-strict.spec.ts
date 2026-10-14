@@ -1,5 +1,6 @@
 import { test, expect, type SandboxDriver } from './fixture';
-import { inView, waitInView } from './strict-view';
+import { clickInSandbox, inView, waitInView } from './strict-view';
+import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import type { SandboxConfig } from '@src/host';
 
 /**
@@ -13,7 +14,8 @@ import type { SandboxConfig } from '@src/host';
  *       and flow control holds;
  *   C4  the view's violations are counted per directive (follow-up audit 2026-10-14): the guest's own refused loads
  *       of one kind cannot hide a report of another;
- *   C5  (measured, residual) a rendered link keeps its href: user-agent actions on it are outside the page.
+ *   C5  a rendered link stays a link with one inert href (backlog S24, option B): the user agent's own actions on
+ *       it (copy, open in a new tab, drag) carry nothing of the guest's, and clicks are still cancelled and delivered.
  * Evidence (T5): the view's state read from outside (strict-view.ts), the host's events, and the guest's own view
  * through execute(); a positive control beside each negative.
  */
@@ -163,9 +165,59 @@ test('C4: the view counts violations per directive: 150 refused images in render
     expect(warnings.length).toBeLessThanOrEqual(1); // the view stops forwarding at each count itself; the host warns only past it
 });
 
-test('C5 (measured, residual): a rendered link keeps its href, so the user agent\'s own actions on it (open in a new tab, drag) are outside what the view can cancel; clicks are cancelled (G4)', async ({ sandbox, page, browserName }) => {
-    expect(await sandbox.mount(strict())).toBe('ready');
-    await render(sandbox, browserName, '<a id="l" href="https://attacker.test/ua-action">link</a>');
-    expect(await inView(page, browserName, `document.getElementById('l').getAttribute('href')`)).toBe('https://attacker.test/ua-action');
+test.describe('C5: a rendered link stays a link, but its href is one inert constant (backlog S24, option B)', () => {
+    const MARK = 'MARKER-c5';
+    const LINKS = `<a id="l" href="https://attacker.test/ua-action?m=${MARK}" style="display:block;position:absolute;left:0;top:0;width:120px;height:30px">link</a>`
+        + `<svg width="40" height="40" style="position:absolute;left:0;top:200px"><a id="s" href="https://attacker.test/svg?m=${MARK}" xlink:href="https://attacker.test/xlink?m=${MARK}"><rect width="40" height="40"/></a></svg>`
+        + `<map name="m"><area id="ar" href="https://attacker.test/area?m=${MARK}" shape="rect" coords="0,0,10,10"></map>`;
+
+    test("the view, read from outside: every link's href is the constant, the guest's URL is nowhere in the document; the link matches :link and :any-link, is focusable and has the role link; a drag carries only the constant", async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount(strict())).toBe('ready');
+        await render(sandbox, browserName, LINKS);
+        const r = await inView<any>(page, browserName, `(() => {
+            const a = document.getElementById('l');
+            const s = document.getElementById('s');
+            a.focus();
+            return {
+                attr: a.getAttribute('href'), href: a.href, area: document.getElementById('ar').getAttribute('href'),
+                svg: s.getAttribute('href'), xlink: s.getAttributeNS('http://www.w3.org/1999/xlink', 'href'),
+                marked: document.documentElement.outerHTML.includes(${JSON.stringify(MARK)}),
+                link: a.matches(':link'), anyLink: a.matches(':any-link'), tabIndex: a.tabIndex, focused: document.activeElement === a,
+            };
+        })()`);
+        expect(r).toEqual({ attr: INERT_HREF, href: INERT_HREF, area: INERT_HREF, svg: INERT_HREF, xlink: INERT_HREF, marked: false, link: true, anyLink: true, tabIndex: 0, focused: true });
+        const view = page.frameLocator('web-sandbox iframe').frameLocator('iframe');
+        expect(await view.getByRole('link', { name: 'link' }).count()).toBe(1);
+
+        // a real drag from the page's mouse, the drag data read in the view by a listener added from outside
+        await inView(page, browserName, `(() => { window.__drags = []; document.addEventListener('dragstart', (e) => window.__drags.push({ uri: e.dataTransfer.getData('text/uri-list'), text: e.dataTransfer.getData('text/plain') }), true); return true; })()`);
+        await page.mouse.move((await page.locator('web-sandbox').boundingBox())!.x + 20, (await page.locator('web-sandbox').boundingBox())!.y + 15);
+        await page.mouse.down();
+        await page.mouse.move((await page.locator('web-sandbox').boundingBox())!.x + 80, (await page.locator('web-sandbox').boundingBox())!.y + 140, { steps: 8 });
+        await page.mouse.up();
+        const drags = await waitInView<any[]>(page, browserName, `window.__drags.length > 0 && window.__drags`, 5000);
+        for (const drag of drags) {
+            expect(drag.uri).toBe(INERT_HREF);
+            expect([INERT_HREF, '']).toContain(drag.text); // WebKit puts no text/plain on a link drag
+        }
+    });
+
+    test('positive control: a real click and Enter on the focused link are still cancelled and still delivered to the worker by id; nothing navigates', async ({ sandbox, page, browserName }) => {
+        await page.evaluate(() => { (window as any).viewClicks = []; });
+        await sandbox.exposeHost('clicked', '(ids) => { window.viewClicks.push(ids); return true; }');
+        await sandbox.registerFiles({ 'main.js': `sandboxView.render(${JSON.stringify(LINKS + '<p id="done">done</p>')}); sandboxView.on('click', 'l', (e) => bridge.call('clicked', e.ids));` });
+        expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
+        await waitInView(page, browserName, `!!document.getElementById('done')`, 8000);
+        await clickInSandbox(page, 20, 15);
+        await expect.poll(() => page.evaluate(() => (window as any).viewClicks.length), { timeout: 5000 }).toBe(1);
+        await inView(page, browserName, `document.getElementById('l').focus()`);
+        await waitInView(page, browserName, `document.activeElement && document.activeElement.id === 'l'`); // keys go to the focused frame
+        await page.keyboard.press('Enter');
+        await expect.poll(() => page.evaluate(() => (window as any).viewClicks), { timeout: 5000 }).toEqual([['l'], ['l']]);
+        await page.waitForTimeout(500);
+        expect(await inView(page, browserName, `location.href + ' ' + !!document.getElementById('l')`)).toBe('about:srcdoc true');
+        expect(await sandbox.state()).toBe('ready');
+        expect(page.url()).toMatch(/harness\.html$/);
+    });
 });
 

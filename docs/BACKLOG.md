@@ -29,7 +29,7 @@ conditional "continue".
 | Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5; per directive for the strict view, S24); a listener's `reset()`/`terminate()` is never undone, through one helper (S22); every build failure, and every config that cannot be used, is a termination with a reason, and the config is a copy (S26); `workerExecutionTimeout` is a budget for code still running, which terminates (B8) |
 | Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
 | Execution budget | ✅ strict mode bounds guest logic on every engine: it runs only in a worker the watchdog stops (S6, [ADR-005](ADR-005-strict-mode.md)); default mode: opt-in watchdog, bounded in worker mode and out-of-process frames, not where the frame shares the host's thread |
-| Strict mode | ✅ opt-in `mode: 'strict'`: guest code only in a worker, a view running only the hash-admitted library bootstrap, rendered markup cleaned (no nested frames, scripts, `meta`, `base`) and moved, one render in flight, delegated events, view liveness check (S6, S13, S17, S18; [ADR-005](ADR-005-strict-mode.md)) |
+| Strict mode | ✅ opt-in `mode: 'strict'`: guest code only in a worker, a view running only the hash-admitted library bootstrap, rendered markup cleaned (no nested frames, scripts, `meta`, `base`) and moved, links inert (one constant href), one render in flight, delegated events, view liveness check, the worker's source URL revoked once it ran (S6, S13, S17, S18, S24; [ADR-005](ADR-005-strict-mode.md)) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C); the specs run the playground's presets, and a security preset without a spec fails the unit suite (T4) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
@@ -41,7 +41,7 @@ conditional "continue".
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18). ✅ in strict mode: guest code sees only its worker's `blob:` URL and no request carries a `Referer` |
 | API reference | ✅ [`API.md`](API.md): the whole public surface, checked against the code by a unit test (D3); framework adapters out of scope |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
-| Adversarial review 2026-10 | ✅ 21 candidates: 16 fixed (S19–S23), 1 held and is now asserted (A8, S20), 1 documented by design (S25), 3 residuals stated (S24); the follow-up by-construction audit moved C1 and C4 to done, found two gaps (S26) and hardened A3, A6, A7, B5, B6; [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
+| Adversarial review 2026-10 | ✅ 21 candidates: 16 fixed (S19–S23), 1 held and is now asserted (A8, S20), 1 documented by design (S25), 3 residuals stated (S24); the follow-up by-construction audit moved C1, C4 and C5 to done (S24), found two gaps (S26) and hardened A3, A6, A7, B5, B6; [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -50,7 +50,8 @@ S3, C2 and C3 done, C1 partly, C4 rejected, C5 added; C1's markup references, mo
 S15 and S16 were done on 2026-10-13, and S17 added. Strict mode landed on 2026-10-13 ([ADR-005](ADR-005-strict-mode.md), measured first in
 [research 15](research/15_strict_mode/README.md)): S6 done, S13 and S17 done in strict mode with their default-mode residuals stated, S18 added.
 The adversarial review of 2026-10-14 ([report](security/ADVERSARIAL-REVIEW-2026-10.md)) added S19–S25: S19–S23 done, S24 open (residuals), S25 documented.
-Its follow-up audit the same day made C1 and C4 (S24) hold by construction, added and closed S26, and closed B8.
+Its follow-up audit the same day made C1 and C4 (S24) hold by construction, added and closed S26, and closed B8; S24's C5 was closed
+by option B (inert link hrefs), approved by the owner.
 D3 was done on 2026-10-14 as an API reference only; its framework adapters moved to Rejected.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
@@ -948,7 +949,7 @@ holds a non-configurable function, which only a top-level declaration of an entr
 a name the prelude cannot delete is an error. The prelude's lists have no prototype. Tests:
 `test/e2e/review-strict.spec.ts`, `src/lib/in-sandbox-view.test.ts`, `test/unit/strict.test.ts`.
 
-### S24 · Strict view residuals: CSS references, the shared violation cap, browser link actions — C1 and C4 ✅ **done**; C5 **P3 · residual**
+### S24 · Strict view residuals: CSS references, the shared violation cap, browser link actions — ✅ **done**
 
 *From the review, C1, C4 and C5.*
 
@@ -960,17 +961,24 @@ a name the prelude cannot delete is an error. The prelude's lists have no protot
   nowhere. Revoking earlier had broken WebKit's `sandboxFiles`; at this point `sandboxFiles`, the worker's own
   `blob:` URLs, Blob reads and `execute()` work on all three engines, and WebKit's in-worker muting of later error
   text from the revoked script is routed around (the view logs those errors, with their text).
-  [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-follow-up-audit-c1-and-c4-by-construction).
+  [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction).
   Asserted: `test/e2e/review-strict.spec.ts` ("C1", 3 tests), `src/lib/in-sandbox-view.test.ts`.
 - **C4, the view's violation cap was shared** with the guest's own refused loads — ✅ done (follow-up audit): the
   view and the host count the view's reports per directive (the browser names the directive there; the logic port
   keeps one count, since guest code names it), bounded at (known directives + 1) × 100. 150 refused images no
   longer hide a later `script-src-attr` report. Asserted: `review-strict.spec.ts` ("C4"),
   `test/unit/followup-guarantees.test.ts`.
-- **C5, browser link actions.** Rendered links keep their `href`; the view cancels clicks and submits, but "open in
-  new tab" or dragging a link are the browser's own actions, outside any page's control, and they need the user.
-  Asserted that the `href` stays ("C5"). Option if it matters: the renderer could drop `href` from rendered links
-  (links would then not look like links). Not done: it changes the programming model for a user-driven channel.
+- **C5, browser link actions** — ✅ done (option B, approved by the owner on 2026-10-14). Rendered links kept their
+  `href`; the view cancels clicks and submits, but "copy link address", "open in new tab", hover and dragging a link
+  are the browser's own actions, outside any page's control, and they carried the guest's URL. Now the renderer
+  replaces every hyperlink href (HTML `a`/`area`, SVG `a` with `href` and `xlink:href`, MathML) with one constant,
+  `about:blank#`, before insertion; no option. The link stays a link (focusable, role `link`, `:link`), clicks and
+  Enter are still cancelled and delivered by id; external links go through a host method the embedder exposes
+  (`openExternal(url)`). The constant was measured against `#`, `""`, `about:blank`, `about:invalid`,
+  `javascript:void(0)` and `data:,` on all three engines (reasoning in `INERT_HREF`,
+  `src/lib/in-sandbox-view.ts`). Asserted: `review-strict.spec.ts` ("C5": the href, the document without the
+  guest's marker, `:link`, focus, role and a real drag's data read from outside; a real click and Enter delivered,
+  nothing navigated), `src/lib/in-sandbox-view.test.ts`.
 
 ### S25 · Guest data can carry own `__proto__` keys — **documented** (by design)
 
