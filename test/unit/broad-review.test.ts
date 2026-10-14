@@ -8,6 +8,10 @@ import { rewriteGuestMarkup, VIRTUAL_DOCUMENT_URL } from '@src/lib/markup-refere
 import { rewriteInlineModule } from '@src/lib/module-specifiers';
 import { admitsAll, linkKinds } from '@src/lib/load-kinds';
 import { isViewFileType, RENDER_RULES, sanitizeRender } from '@src/lib/in-sandbox-view';
+import { policyTokens } from '@src/lib/csp/policy-grammar';
+
+// the policy steps take only the grammar's output (PolicyTokens, A1): test policies are checked into it
+const tokens = (directives: CSPDirectives) => policyTokens(directives, 'test');
 
 /**
  * Broad review 2026-10-14 (docs/security/BROAD-REVIEW-2026-10-14.md), host and library side: the guarantees that
@@ -233,7 +237,7 @@ function urlSources(policy: string, kind: string): Set<string> {
 describe('PA1: a policy step widens only the kinds of load it is for', () => {
     it('a JavaScript file under a policy with script-src and no worker-src or child-src: blob: reaches scripts, not workers', () => {
         const before: CSPDirectives = { 'default-src': ["'none'"], 'script-src': ["'unsafe-inline'", 'https://cdn.example'] };
-        const after = addFileSources(before, ['text/javascript'], new Set());
+        const after = addFileSources(tokens(before), ['text/javascript'], new Set());
         const [b, a] = [generateCSP(before), generateCSP(after)];
         expect(urlSources(a, 'script-src-elem')).toContain('blob:'); // what the step is for
         expect([...urlSources(a, 'worker-src')].sort()).toEqual([...urlSources(b, 'worker-src')].sort());
@@ -257,7 +261,7 @@ describe('PA1: a policy step widens only the kinds of load it is for', () => {
             const types = TYPES.filter(() => random() < 0.35);
             const needed = kindsForTypes(types) as Set<string>;
             const before = generateCSP(policy as CSPDirectives);
-            const after = generateCSP(addFileSources(policy as CSPDirectives, types, new Set()));
+            const after = generateCSP(addFileSources(tokens(policy as CSPDirectives), types, new Set()));
             for (const kind of Object.keys(FALLBACKS)) {
                 if (needed.has(kind)) continue;
                 const was = urlSources(before, kind);

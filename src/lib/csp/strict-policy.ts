@@ -1,6 +1,7 @@
 import type { CSPDirectives } from "../../csp-directives";
 import { defineData } from "../utils";
 import { addEvalSource, directiveOf as own } from "./effective-directive";
+import { policyTokens, type PolicyTokens } from "./policy-grammar";
 
 /**
  * The policy of the strict-mode view (ADR-005), which its worker inherits exactly.
@@ -40,13 +41,13 @@ export const STRICT_FIXED = ['script-src', 'script-src-attr', 'base-uri', 'form-
  * the directives the view policy will hold: a configured style-src-elem, which the view never emits, cannot
  * take the `blob:` a registered stylesheet needs away from the view's style-src.
  */
-export function strictPassedThrough(configured: CSPDirectives): CSPDirectives {
-    const source = configured;
+export function strictPassedThrough(configured: PolicyTokens): PolicyTokens {
+    const source = policyTokens(configured, 'strictPassedThrough');
     const kept: Record<string, unknown> = {};
     for (const name of STRICT_PASSED_THROUGH) {
         if (own(source, name) !== undefined) defineData(kept, name, own(source, name));
     }
-    return kept as CSPDirectives;
+    return policyTokens(kept as CSPDirectives, 'strictPassedThrough');
 }
 
 const isData = (token: unknown) => typeof token === 'string' && token.toLowerCase() === 'data:';
@@ -69,8 +70,8 @@ function imageSourcesWithoutData(source: CSPDirectives): { from: 'img-src' | 'de
 }
 
 /** The view policy's directives, in emission order (generateCSP keeps it, with default-src first). */
-export function strictViewDirectives(configured: CSPDirectives, bootstrapHash: string, scriptUnsafe: boolean): CSPDirectives {
-    const source = configured;
+export function strictViewDirectives(configured: PolicyTokens, bootstrapHash: string, scriptUnsafe: boolean): PolicyTokens {
+    const source = policyTokens(configured, 'strictViewDirectives');
     const directives: Record<string, unknown> = {};
     if (own(source, 'default-src') !== undefined) defineData(directives, 'default-src', own(source, 'default-src'));
     directives['script-src'] = [bootstrapHash];
@@ -90,7 +91,8 @@ export function strictViewDirectives(configured: CSPDirectives, bootstrapHash: s
     const images = imageSourcesWithoutData(source);
     if (images) defineData(directives, 'img-src', images.sources);
     // 'unsafe-eval' only with scriptUnsafe, through the one helper that writes it (effective-directive.ts, F5)
-    return scriptUnsafe ? addEvalSource(directives as CSPDirectives) : directives as CSPDirectives;
+    const view = policyTokens(directives as CSPDirectives, 'strictViewDirectives');
+    return scriptUnsafe ? addEvalSource(view) : view;
 }
 
 /**

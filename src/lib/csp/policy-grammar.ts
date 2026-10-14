@@ -20,6 +20,12 @@ import { defineData } from "../utils";
  * Everything else is dropped, with a warning through `onDrop`. A directive left with no token is emitted as
  * 'none' (S16), never omitted, so dropping can only narrow.
  *
+ * Every later step of the host's pipeline takes only what this grammar returns (PolicyTokens, independent
+ * verification 2026-10-14, A1): a step reads a list one element at a time, so a configured element holding several
+ * sources ("'unsafe-inline' 'unsafe-eval'", "blob: data:") would carry the source it removes past it, and
+ * generateCSP's own split would emit it. The type keeps a raw config out at compile time, and each step checks its
+ * input again at run time (policyTokens), so a caller that casts fails the build closed instead.
+ *
  * Self-contained module scope is fine: host-side only, never stringified into a guest.
  */
 
@@ -52,6 +58,34 @@ const HOST = /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/)?(?:\*|(?:\*\.)?[A-Za-z0-9-]+(?:\
 export function isSourceExpression(token: string): boolean {
     if (token.startsWith("'")) return KEYWORDS.includes(token.toLowerCase()) || NONCE_OR_HASH.test(token);
     return SCHEME.test(token) || HOST.test(token);
+}
+
+declare const POLICY_TOKENS: unique symbol;
+
+/**
+ * A policy whose every list holds one source per element (the grammar's output, and every later step's): the only
+ * input the policy steps accept. Made by sanitizeDirectives, or checked by policyTokens.
+ */
+export type PolicyTokens = CSPDirectives & { readonly [POLICY_TOKENS]: true };
+
+// a list element that is not one token: empty, or holding ASCII whitespace
+const UNSPLIT = /^$|[\t\n\f\r ]/;
+
+/**
+ * `directives` as PolicyTokens, after checking that every string in every list is one token; throws otherwise, naming
+ * `step`, so the build fails closed ('the environment could not be built'). Non-strings are left for generateCSP to
+ * refuse. Every policy step calls it on what it is given.
+ */
+export function policyTokens(directives: CSPDirectives, step: string): PolicyTokens {
+    for (const [name, values] of Object.entries(directives)) {
+        if (!Array.isArray(values)) continue;
+        for (const value of values) {
+            if (typeof value === 'string' && UNSPLIT.test(value)) {
+                throw new Error(`[Sandbox] the policy step ${step} was given ${JSON.stringify(value.slice(0, 64))} in "${name}", which is not one source: only the policy grammar's output may reach it; refused.`);
+            }
+        }
+    }
+    return directives as PolicyTokens;
 }
 
 /** Whether `name` is one of KNOWN_DIRECTIVES, exactly. */
@@ -89,7 +123,7 @@ function sourcesOf(name: string, values: unknown[], onDrop: (message: string) =>
  * message per name or token. A value that is not an array is passed on unchanged for generateCSP to refuse,
  * except for upgrade-insecure-requests, which has no value.
  */
-export function sanitizeDirectives(directives: CSPDirectives, onDrop: (message: string) => void = () => {}): CSPDirectives {
+export function sanitizeDirectives(directives: CSPDirectives, onDrop: (message: string) => void = () => {}): PolicyTokens {
     const output: Record<string, unknown> = {};
     for (const [name, values] of Object.entries(directives)) {
         if (!isKnownDirective(name)) {
@@ -103,5 +137,5 @@ export function sanitizeDirectives(directives: CSPDirectives, onDrop: (message: 
         }
         defineData(output, name, sourcesOf(name, values, onDrop));
     }
-    return output as CSPDirectives;
+    return policyTokens(output as CSPDirectives, 'sanitizeDirectives');
 }

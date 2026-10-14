@@ -2,6 +2,11 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { viewBootstrapHash, viewBootstrapText } from '@src/lib/in-sandbox-view';
 import { strictPolicyOverrides, strictViewDirectives, STRICT_FIXED, STRICT_PASSED_THROUGH } from '@src/lib/csp/strict-policy';
 import { generateCSP } from '@src/lib/csp/csp-generator';
+import { policyTokens } from '@src/lib/csp/policy-grammar';
+import type { CSPDirectives } from '@src/csp-directives';
+
+// the policy steps take only the grammar's output (PolicyTokens, A1): test policies are checked into it
+const tokens = (directives: CSPDirectives) => policyTokens(directives, 'test');
 
 /**
  * Strict mode on the host (ADR-005): the documents the element builds, read back from the wrapper's srcdoc.
@@ -71,7 +76,7 @@ describe('the strict view policy: exact strings', () => {
             expect.stringContaining('"connectionsAllowed.default-src" admits data:'),
             expect.stringContaining('"connectionsAllowed.img-src" admits data:'),
         ]);
-        expect(generateCSP(strictViewDirectives({ 'img-src': ['https://x.example'] }, "'sha256-x'", false))).toContain('img-src https://x.example;');
+        expect(generateCSP(strictViewDirectives(tokens({ 'img-src': ['https://x.example'] }), "'sha256-x'", false))).toContain('img-src https://x.example;');
     });
 
     it('fixed directives are replaced and unknown ones dropped, each with one warning per instance (across reset); the policy never shows them', async () => {
@@ -106,7 +111,7 @@ describe('the strict view policy: exact strings', () => {
 
     it('strictViewDirectives / strictPolicyOverrides: every key of a config is passed through, fixed, or dropped', () => {
         const all = { 'default-src': ['https://d.example'], 'script-src': ['*'], 'unknown-src': ['*'], 'img-src': ['https://i.example'] } as any;
-        const policy = generateCSP(strictViewDirectives(all, "'sha256-x'", false));
+        const policy = generateCSP(strictViewDirectives(tokens(all), "'sha256-x'", false));
         expect(policy).toBe("default-src https://d.example; script-src 'sha256-x'; script-src-attr 'none'; base-uri 'none'; form-action 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; upgrade-insecure-requests; img-src https://i.example;");
         expect(strictPolicyOverrides(all, { 'script-src': ["'unsafe-inline'"] })).toHaveLength(2);
         expect(new Set([...STRICT_FIXED, ...STRICT_PASSED_THROUGH]).size).toBe(STRICT_FIXED.length + STRICT_PASSED_THROUGH.length);
