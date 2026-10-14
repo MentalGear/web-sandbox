@@ -8,6 +8,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Frame, Page } from '@playwright/test';
+import { walkChromiumFrames } from '../../../test/e2e/strict-view';
 
 /**
  * Harness for the strict-mode probes (research 15). No library code: the frame topology of the
@@ -245,7 +246,6 @@ function framePath(frame: Frame): string {
     return chain.map((f, depth) => (depth === 0 ? 'main' : f.name() || `d${depth}`)).join('/');
 }
 
-type CdpFrameTree = { frame: { id: string; name?: string; url: string; urlFragment?: string }; childFrames?: CdpFrameTree[] };
 
 /**
  * Evaluates `expression` (a JS expression string, JSON-serialisable result) in every frame.
@@ -266,34 +266,17 @@ export async function inFrames<T = unknown>(page: Page, expression: string, brow
         }
         return results;
     }
-    const main = page.mainFrame();
-    results.push({ path: 'main', url: main.url(), value: await withTimeout<T | 'no-context'>(main.evaluate(expression) as Promise<T>, 2000, 'no-context') });
-    const outer = main.childFrames()[0];
-    if (!outer) return results;
-    const session = await page.context().newCDPSession(outer);
-    try {
-        const contexts = new Map<string, number>();
-        session.on('Runtime.executionContextCreated' as any, (event: any) => {
-            const aux = event.context.auxData ?? {};
-            if (aux.isDefault) contexts.set(aux.frameId, event.context.id);
-        });
-        await session.send('Runtime.enable' as any);
-        const { frameTree } = await session.send('Page.getFrameTree' as any) as { frameTree: CdpFrameTree };
-        const walk = async (tree: CdpFrameTree, parentPath: string, depth: number) => {
-            const path = `${parentPath}/${tree.frame.name || `d${depth}`}`;
-            const contextId = contexts.get(tree.frame.id);
-            let value: T | 'no-context' = 'no-context';
-            if (contextId !== undefined) {
-                const reply = await withTimeout(session.send('Runtime.evaluate' as any, { expression, contextId, returnByValue: true, awaitPromise: true }) as Promise<any>, 2000, null);
-                if (reply && !reply.exceptionDetails) value = reply.result.value as T;
-            }
-            results.push({ path, url: tree.frame.url + (tree.frame.urlFragment ?? ''), value });
-            for (const child of tree.childFrames ?? []) await walk(child, path, depth + 1);
-        };
-        await walk(frameTree, 'main', 1);
-    } finally {
-        await session.detach().catch(() => {});
-    }
+    // CDP only, through the page's own session (test/e2e/strict-view.ts): independent of whether Chromium runs the
+    // wrapper out of process, which varies by environment (in-process on CI runners), and of Playwright linking it.
+    // Paths keep this harness's scheme: main, then each frame's name or d<depth> (main/outer/d2 is the view).
+    await walkChromiumFrames(page, async (cdp, frame, path, contextId) => {
+        let value: T | 'no-context' = 'no-context';
+        if (contextId !== undefined) {
+            const reply = await withTimeout(cdp.send('Runtime.evaluate', { expression, contextId, returnByValue: true, awaitPromise: true }) as Promise<any>, 2000, null);
+            if (reply && !reply.exceptionDetails) value = reply.result.value as T;
+        }
+        results.push({ path, url: frame.url + (frame.urlFragment ?? ''), value });
+    }, (depth, name) => (depth === 0 ? 'main' : name || `d${depth}`));
     return results;
 }
 

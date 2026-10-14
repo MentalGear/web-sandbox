@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { chromiumOutOfProcessFrames } from '../../../test/e2e/strict-view';
 import {
     BOOTSTRAP, INLINE_SCRIPT_POLICY, Listener, UdpListener, clickInView, escapeAttribute, frameStates, hashSource,
     iceProbe, inFrames, inView, inbox, init, markers, mount, viewPolicy, workerResults,
@@ -507,6 +508,9 @@ test('P7 render flood: host responsiveness while the worker renders as fast as i
         const { wrapped } = await mount(page);
         await init(page, wrapped, `async function main() { const big = '<p>' + 'x'.repeat(262144) + '</p>'; for (;;) post(big); }`);
         await page.waitForTimeout(1500);
+        // The process model varies by Chromium build and environment (the full browser keeps sandboxed frames out
+        // of process here; the headless shell on CI runners keeps them in the host's), so it is measured, not assumed.
+        if (browserName === 'chromium') m.outOfProcess = (await chromiumOutOfProcessFrames(page)) > 0;
         const t = Date.now();
         await page.evaluate(() => document.getElementById('outer')!.remove());
         const removeMs = Date.now() - t;
@@ -525,15 +529,21 @@ test('P7 render flood: host responsiveness while the worker renders as fast as i
     // took ≤ ~20 ms in Chromium and Firefox, but 0.17–2.7 s of blocked host thread in WebKit.
     expect(m.burst.stats.received).toBe(200);
     expect(m.burst.stats.applied).toBeLessThanOrEqual(20);
-    expect(m.endless.removeMs).toBeLessThan(browserName === 'webkit' ? 5000 : 1000);
+    const sharedThread = browserName !== 'chromium' || !m.outOfProcess;
+    expect(m.endless.removeMs).toBeLessThan(browserName === 'webkit' || (browserName === 'chromium' && sharedThread) ? 5000 : 1000);
     expect(m.endless.hostLagAfterMs).toBeLessThan(250);
 
-    if (browserName === 'chromium') {
+    if (browserName === 'chromium' && !sharedThread) {
         // measured: the sandboxed frames run out of process — host lag ≤ ~30 ms in every case
         for (const k of ['burst', 'ackedOneWord1MiB', 'ackedMarkup1MiB', 'ackedOneWord64KiB']) {
             expect(m[k].hostLagMaxMs, k).toBeLessThan(150);
             expect(m[k].workerPingMaxMs, k).toBeLessThan(500);
         }
+    } else if (browserName === 'chromium') {
+        // measured (headless shell, view in the host's process): the view shares the host's thread like Firefox's;
+        // a 1 MiB apply ≈ 0.25–0.5 s of host lag, removal of a flooding frame ≈ 1 s; flow control still bounds it
+        for (const k of ['ackedOneWord1MiB', 'ackedMarkup1MiB']) expect(m[k].hostLagMaxMs, k).toBeLessThan(1500);
+        expect(m.ackedOneWord64KiB.hostLagMaxMs).toBeLessThan(150);
     } else if (browserName === 'firefox') {
         // measured: the view shares the host's thread; one 1 MiB apply ≈ 150–265 ms of host lag; the
         // unacknowledged burst holds the worker round trip at 0.85–1.1 s; 64 KiB renders ≈ 15–55 ms
