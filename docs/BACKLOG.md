@@ -686,6 +686,12 @@ warning and changes nothing, identically on Chromium, Firefox and WebKit.
 - e2e: section 5a of `test/e2e/blob-delivery.spec.ts` (iframe, plus worker-mode `importScripts` and
   `import()`).
 
+**Upstream** (2026-10-14): WebKit main matches nothing for `'self'` in an opaque origin since `314912@main`
+(the `!scheme.isEmpty()` guard in `ContentSecurityPolicySource::schemeMatches`). Minimal conditions measured:
+any opaque-origin document (`sandbox` without `allow-same-origin`, or a `data:` frame) with `'self'` in its
+policy; every fetch directive; with `upgrade-insecure-requests`, http origins too. The drop stays: it does not
+depend on the engine.
+
 ### S15 · The guest can read the host page's URL — ✅ **done** (platform limits below; WebKit residual in S17)
 
 **Guarantee**: nothing in the guest's own document or location reveals the host page's URL or origin.
@@ -1178,6 +1184,25 @@ in the guest. The strings are pinned in `src/lib/files.test.ts` and `test/e2e/fi
 ([`dialog-capability/src/access.rs`](https://github.com/dialog-db/dialog-db/blob/facd672/rust/dialog-capability/src/access.rs),
 [`.claude/rules/authority-tests.md`](https://github.com/dialog-db/dialog-db/blob/facd672/.claude/rules/authority-tests.md)).
 Their separate retry/stop field is not adopted: here it follows from the code.
+
+---
+
+### B8 · Behaviour the API reference surfaced — **P2 · S**
+
+*Found while writing [`API.md`](API.md) (D3), where the code and its comments or the README disagreed.*
+
+- `workerExecutionTimeout` rebuilds the environment N ms after the last `execute()` even when that code has
+  finished; the warning says it terminates, yet no `terminated` event fires and the state returns to `loading`
+  (`src/host.ts`, `execute()`). Decide: a budget for code still running, or a documented idle reset.
+- `execute()` on an element not yet in the document is dropped silently on insertion, while `call()` in the same
+  state rejects with `TERMINATED`. One rule for both.
+- The guest's `console.info` is not relayed (`log`, `warn`, `error` are), and uncaught guest errors reach the host
+  only in strict mode.
+- `VIEW_LIVENESS_TIMEOUT_MS` is exported from `host.ts` but not from the package entry.
+- `setConfig()` applies over the defaults, not the previous config, so it also clears `html` from `load()`:
+  documented as is; kept.
+
+**Acceptance**: each behaviour is one rule, documented in `API.md`, with a test.
 
 ---
 
