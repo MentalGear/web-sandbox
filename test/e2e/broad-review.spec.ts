@@ -8,7 +8,8 @@ import { useRecorder, wss } from './recorder';
  *        wrapper's load leaves no listener of the guest's holding a port of ours;
  *   PD8  a second announcement from the guest's window (it reloaded itself, rewrote its document so a bootstrap ran
  *        again, or forged one) ends the environment with a reason;
- *   CB3  a call made while loading that timed out never runs later; `loading` is bounded;
+ *   CB3  a call made while loading that timed out never runs later; a guest that never finishes its document is
+ *        ready and alive (S46), not held `loading`;
  *   CB7  an element moved into another document stops its guest and builds nothing there;
  *   PD1  no worker loads from data: (WebKit ran a data: SharedWorker outside the guest policy);
  *   PD2  fetch() with keepalive is refused in the guest realm (Firefox sent it past connect-src);
@@ -37,7 +38,7 @@ async function recordTerminations(page: Page) {
 const terminations = (page: Page) => page.evaluate(() => [...(window as any).terminations] as string[]);
 
 const SECOND_ANNOUNCEMENT = 'the guest frame announced itself again (it reloaded or rewrote its document)';
-const LOAD_TIMEOUT = 'the sandbox did not finish loading';
+const LOAD_TIMEOUT_MS = 5000; // src/host.ts
 
 // ---- CB1 ------------------------------------------------------------------------------------------------
 
@@ -134,25 +135,38 @@ test.describe('PD8: a second announcement from the guest window ends the environ
 
 test.describe('CB3: calls while loading, and the load deadline', () => {
     test('a call made while loading that timed out never runs when the port arrives; a call still waiting does (positive control)', async ({ sandbox, page }) => {
-        const html = `<script>globalThis.__counted = 0; bridge.expose('count', () => ++__counted); bridge.expose('counted', () => __counted);</script><img src="${recorder.allowed}/delay?ms=1500">`;
+        const html = `<script>globalThis.__counted = 0; bridge.expose('count', () => ++__counted); bridge.expose('counted', () => __counted);</script>`;
         const outcome = await page.evaluate(({ html, config }) => new Promise<any>((resolve) => {
             const el = document.querySelector('web-sandbox') as any;
             el.setConfig({ ...config, html });
-            const timedOut = el.callWithTimeout(300, 'count').then(() => 'resolved', (e: any) => e.code);
+            const settled = (outcome: string) => ({ outcome, state: el.state });
+            const timedOut = el.callWithTimeout(50, 'count').then(() => settled('resolved'), (e: any) => settled(e.code));
             const waiting = el.call('counted');
+            // `loading` lasts only until the guest checks in (S46), tens of ms: the host's thread is held past the
+            // call's timeout instead, so the timeout is due before the frame (on this thread) can even start loading.
+            // The state when it settled is asserted: 'loading' is the precondition of this test.
+            const until = performance.now() + 300;
+            while (performance.now() < until) { /* hold the host's thread */ }
             el.addEventListener('ready', async () => resolve({ timedOut: await timedOut, waiting: await waiting }), { once: true });
-        }), { html, config: { capabilities: ['allow-scripts'], scriptUnsafe: true, connectionsAllowed: { 'img-src': [recorder.allowed] } } });
-        expect(outcome).toEqual({ timedOut: 'TIMEOUT', waiting: 0 });
+        }), { html, config: { capabilities: ['allow-scripts'], scriptUnsafe: true } });
+        expect(outcome).toEqual({ timedOut: { outcome: 'TIMEOUT', state: 'loading' }, waiting: 0 });
         await page.waitForTimeout(200);
         expect(await sandbox.call('counted')).toBe(0);
     });
 
-    test(`a guest document that never finishes loading (document.open() without close) is terminated within the budget, never left loading; one that loads in 1.5 s is ready (positive control)`, async ({ sandbox, page, browserName }) => {
+    // Since S46 `ready` is the guest's check-in, so a guest that never finishes its document is ready like any other.
+    // Before, Chromium and WebKit kept it `loading` until LOAD_TIMEOUT_MS ended it, and Firefox completed the load.
+    test(`a guest document that never finishes parsing (document.open() without close) is ready and stays alive past LOAD_TIMEOUT_MS: calls it is sent wait and time out, the watchdog keeps hearing it; one that closes its document answers (positive control)`, async ({ sandbox, page }) => {
         await recordTerminations(page);
-        const result = await sandbox.mount({ html: `<script>setTimeout(() => { document.open(); document.write('<p>never closed</p>'); }, 0)</script><img src="${recorder.allowed}/delay?ms=500">`, connectionsAllowed: { 'img-src': [recorder.allowed] } });
-        // measured: Firefox completes the load; Chromium and WebKit keep the document loading until it is closed
-        expect([result, await terminations(page)]).toEqual(browserName === 'firefox' ? ['ready', []] : ['terminated', [LOAD_TIMEOUT]]);
-        expect(await sandbox.mount({ html: `<img src="${recorder.allowed}/delay?ms=1500">`, connectionsAllowed: { 'img-src': [recorder.allowed] } })).toBe('ready');
+        const reopening = (close: boolean) => `<script>bridge.expose('alive', () => 'alive'); setTimeout(() => { document.open(); document.write('<p>reopened</p>');${close ? ' document.close();' : ''} }, 0)</script>`;
+        expect(await sandbox.mount({ html: reopening(false), watchdogTimeout: 1000 })).toBe('ready');
+        await page.waitForTimeout(300); // the guest has reopened its document
+        expect(await sandbox.callWithTimeoutOutcome(500, 'alive')).toMatchObject({ status: 'rejected', code: 'TIMEOUT' });
+        await page.waitForTimeout(LOAD_TIMEOUT_MS); // past the load deadline, and five watchdog budgets
+        expect([await sandbox.state(), await terminations(page)]).toEqual(['ready', []]);
+        expect(await sandbox.mount({ html: reopening(true) })).toBe('ready');
+        await page.waitForTimeout(300);
+        expect(await sandbox.call('alive')).toBe('alive');
     });
 });
 

@@ -34,6 +34,7 @@ import { expect, test } from './fixture';
  *   /declared?bytes=N  a Content-Length of N, then the same stream
  *   /slow              a 200 with a first chunk, then nothing: the response never ends
  *   /delay?ms=N        an SVG image, sent after N ms (at most 10 000): holds a document's load event open
+ *   /delay.js?ms=N     the counting script, sent after N ms: a classic script that holds the parser
  *   OPTIONS anything   a CORS preflight that allows every method and header
  * For the streamed and slow paths the hit records `bytesSent` and whether the connection closed before
  * the response ended (`closedEarly`): the evidence that an aborted request was really torn down upstream.
@@ -172,11 +173,12 @@ function respondSpecially(req: IncomingMessage, res: ServerResponse, url: URL, h
         streamBytes(res, total, hit);
         return true;
     }
-    if (url.pathname === '/delay') {
+    if (url.pathname === '/delay' || url.pathname === '/delay.js') {
         const ms = Math.min(Number(url.searchParams.get('ms') ?? '0') || 0, 10000);
+        const extension = url.pathname === '/delay.js' ? '.js' : '.svg';
         setTimeout(() => {
-            res.writeHead(200, { ...CORS, 'content-type': CONTENT_TYPES['.svg']! });
-            res.end(BODIES['.svg']);
+            res.writeHead(200, { ...CORS, 'content-type': CONTENT_TYPES[extension]! });
+            res.end(BODIES[extension]);
         }, ms);
         return true;
     }
