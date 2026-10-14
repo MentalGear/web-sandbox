@@ -86,3 +86,14 @@ describe('presets drive the regression specs (backlog T4)', () => {
         }
     });
 });
+
+describe('scriptUnsafe only where a preset needs it (broad review I2)', () => {
+    // scriptUnsafe grants 'unsafe-eval' to the guest; a preset is copied into playgrounds and specs, so it asks only for
+    // what it uses: 'script' presets run through execute(), which needs it; markup presets need it only to evaluate strings.
+    const EVALUATES = /\beval\s*\(|new\s+Function\b|\bFunction\s*\(|set(Timeout|Interval)\s*\(\s*['"`]/;
+    it.each(Object.values(PRESETS as Record<string, Preset>).map(preset => [preset.id, preset] as const))('%s', (_, preset) => {
+        const code = [preset.code, ...Object.values(preset.variants ?? {})].join('\n');
+        const needed = preset.run === 'script' || EVALUATES.test(code);
+        expect(preset.rules.scriptUnsafe === true, `${preset.id}: scriptUnsafe`).toBe(needed);
+    });
+});

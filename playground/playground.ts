@@ -376,8 +376,11 @@ window.resetSandbox = async () => {
     sandbox.setConfig({});
 }
 
-// Listen for reset completion from sandbox
+// Listen for reset completion, from this page only. Every guest frame can post to this window (broad review PD7: its
+// messages reach the embedder's listeners), so a listener acts only on a sender it knows: event.source is checked,
+// never the message's shape. The guest's own window is `sandbox.shadowRoot.querySelector('iframe').contentWindow.frames[0]`.
 window.addEventListener('message', (event) => {
+    if (event.source !== window) return;
     if (event.data?.type === 'RESET_COMPLETE') {
         window.location.reload();
     }
