@@ -42,6 +42,14 @@ describe('the renderer (A1): every listed element type is removed, with its subt
         expect(left).toEqual(['svg', 'foreignObject', 'math', 'annotation-xml']);
     });
 
+    it('removes every SVG animation element in its own namespace and case (focused review F1): nothing can change a checked attribute after the renderer ran', () => {
+        const fragment = sanitize('<svg><a href="https://guest.example/a"><set attributeName="href" to="https://guest.example/b"/><animate attributeName="href" values="x"/><text>t</text></a>'
+            + '<image href="x.png"><animateMotion dur="1s"><mpath href="#p"/></animateMotion><animateTransform attributeName="transform"/><animateColor/><discard/><animation/></image></svg>');
+        const left = Array.from(fragment.querySelectorAll('*')).map(e => e.localName);
+        expect(left).toEqual(['svg', 'a', 'text', 'image']);
+        expect(fragment.querySelector('a')!.getAttribute('href')).toBe(INERT_HREF);
+    });
+
     it('keeps a <link> only as a stylesheet or icon whose href is a URL the view minted', () => {
         const files = { 'site.css': 'blob:null/css', 'icon.svg': 'blob:null/icon' };
         const fragment = sanitize([

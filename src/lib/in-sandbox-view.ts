@@ -47,10 +47,21 @@ export const ENTRY_DONE_NAME = '__sandboxEntryRan';
  * no nested frame at all, no script of any namespace, no <meta> (refresh, referrer, CSP), no <base>, and
  * no inert subtree (<template>, <noscript>) that could later become live. <link> is handled separately:
  * it stays only as a stylesheet or icon that names a file the view minted.
+ *
+ * And every SVG animation element (focused review 2026-10-14, F1): the renderer checks attributes once, before
+ * insertion, so it holds only if no attribute can change afterwards. Nothing runs in the view and CSS cannot set
+ * an attribute, but SMIL can: a <set> or <animate> inside a rendered link animated its href back to the guest's
+ * URL after the renderer had made it INERT_HREF (getAttribute and baseVal kept the constant, animVal and
+ * Chromium's accessibility tree had the guest URL, in all three engines), and one inside an <image> loaded a URL
+ * the renderer never saw. Removing the elements closes every such attribute at once, the ones the renderer checks
+ * (href, xlink:href, src, the blob: rule) and any it may check later: the SVG 2 animation elements (animate, set,
+ * animateMotion, animateTransform, discard), SVG 1.1's animateColor, and SVG Tiny's animation; mpath only names
+ * a path for animateMotion and goes with it. Compared case-insensitively (an SVG element keeps its camelCase).
  */
 export const RENDER_REMOVED_ELEMENTS = [
     'iframe', 'frame', 'frameset', 'object', 'embed', 'portal', 'fencedframe',
     'script', 'meta', 'base', 'noscript', 'template',
+    'animate', 'set', 'animateMotion', 'animateTransform', 'animateColor', 'discard', 'animation',
 ] as const;
 
 /**
@@ -116,7 +127,8 @@ export const RENDER_RULES: RenderRules = {
  * the caller moves the fragment's own nodes into the document, which never runs or even prepares a
  * script (research 15, P6) — and there are none left anyway.
  *
- *   1. every element named in rules.removed goes, with its subtree, whatever its namespace;
+ *   1. every element named in rules.removed goes, with its subtree, whatever its namespace and case (SVG animation
+ *      elements among them: nothing can change an attribute after this function checked it, F1);
  *   2. an HTML element's file reference (rules.references) that names a registered file, resolved like a
  *      browser would against rules.documentUrl, becomes the view's own blob: URL for it (`fileOf`), but only
  *      when the file's type is admitted for the kind of load the element makes (rules.kinds, the one table of
@@ -197,11 +209,13 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         return false;
     };
 
+    const removed: string[] = [];
+    for (let i = 0; i < rules.removed.length; i++) removed.push(rules.removed[i]!.toLowerCase());
     const elements = fragment.querySelectorAll('*');
     for (let i = 0; i < elements.length; i++) {
         const element = elements[i]!;
         const name = String(call(localNameOf, element, [])).toLowerCase();
-        if (rules.removed.indexOf(name) >= 0) {
+        if (removed.indexOf(name) >= 0) {
             remove(element);
             continue;
         }

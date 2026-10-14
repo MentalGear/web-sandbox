@@ -522,8 +522,10 @@ assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](
 | `on` | `(type, id: string \| null, handler: (detail) => void) => () => void` | Subscribes to `click`, `input`, `change`, `submit` or `keydown` on the element with that id (or inside it), or anywhere with `null`. Returns `off`. |
 
 The renderer removes `iframe`, `frame`, `frameset`, `object`, `embed`, `portal`, `fencedframe`, `script`, `meta`,
-`base`, `noscript` and `template` with their content; handler attributes and `javascript:` URLs never run; link
-clicks and form submissions navigate nowhere. Registered files are named by path in `src`, `href` and `poster`.
+`base`, `noscript` and `template` with their content, and the SVG animation elements `animate`, `set`,
+`animateMotion`, `animateTransform`, `animateColor`, `discard` and `animation`, so no attribute it checked can change
+afterwards; handler attributes and `javascript:` URLs never run; link clicks and form submissions navigate nowhere.
+Registered files are named by path in `src`, `href` and `poster`.
 
 Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
 `about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and

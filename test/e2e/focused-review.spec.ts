@@ -1,5 +1,7 @@
 import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
+import { chromiumViewLinkUrls, inView, waitInView } from './strict-view';
+import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import type { SandboxConfig } from '@src/host';
 
 /**
@@ -7,7 +9,9 @@ import type { SandboxConfig } from '@src/host';
  *   W1  a guest-written file committed with an inert type (no { code: true }) is never loaded as a script by the
  *       next build's markup: resolution admits a file only for the kind of load its type is for, in every engine,
  *       whatever the engine does with a mistyped classic blob: script;
- *   F1  (strict-view half in focused-review-strict.spec.ts)
+ *   F1  strict view: no attribute the renderer checked can change after it ran: SMIL animation elements are removed,
+ *       so a link's animVal (and Chromium's accessibility URL) stays the inert constant and an animated <image href>
+ *       loads nothing;
  *   F2  workerExecutionTimeout cannot be evaded by scheduling the loop or by replacing Function.
  * Evidence (T5): read from outside the sandbox — a host method the guest's scripts call, recorded on the host page,
  * the recorder's listener — with a positive control beside each negative.
@@ -114,5 +118,63 @@ test.describe('W1: a committed inert file is never a script of the next build', 
         expect(await sandbox.mount()).toBe('ready');
         const element = await sandbox.inGuest(`await new Promise(r => { const s = document.createElement('script'); s.src = sandboxFiles.url('p.js'); s.onload = s.onerror = r; document.head.appendChild(s); }); return globalThis.__p === 1 ? 'ran' : 'did not run';`);
         expect({ worker, element }).toEqual({ worker: browserName === 'chromium' ? 'ran' : 'NetworkError', element: 'ran' });
+    });
+});
+
+test.describe('F1: rendered markup cannot re-animate an attribute the renderer checked (SVG SMIL)', () => {
+    const strictView = { mode: 'strict' as const };
+    const XLINK = 'http://www.w3.org/1999/xlink';
+
+    test("a link's href animated by <set>, <animate> and on xlink:href: getAttribute, baseVal and animVal all stay the inert constant, no animation element is left, and Chromium's accessibility tree exposes no guest URL", async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount(strictView)).toBe('ready');
+        const html = `<svg xmlns:xlink="${XLINK}" width="300" height="80">`
+            + '<a id="l1" href="https://guest.example/static"><set attributeName="href" to="https://guest.example/set" begin="0s" fill="freeze"/><text y="15">set</text></a>'
+            + '<a id="l2" href="https://guest.example/static"><animate attributeName="href" values="https://guest.example/animate" begin="0s" dur="60s" fill="freeze"/><text y="35">animate</text></a>'
+            + '<a id="l3" xlink:href="https://guest.example/static"><set attributeName="xlink:href" to="https://guest.example/xlink" begin="0s" fill="freeze"/><text y="55">xlink</text></a>'
+            + '<a id="l4" href="https://guest.example/static"><animateMotion dur="1s"/><animateTransform attributeName="transform" type="scale" to="2" dur="1s"/><discard begin="0s"/><text y="75">control</text></a>'
+            + '</svg><p id="done">done</p>';
+        await sandbox.run(`sandboxView.render(${JSON.stringify(html)})`);
+        await waitInView(page, browserName, `!!document.getElementById('done')`, 8000);
+        await page.waitForTimeout(300); // SMIL applies on the next animation frames
+        const read = await inView<any>(page, browserName, `(() => {
+            const links = ['l1', 'l2', 'l3', 'l4'].map((id) => {
+                const a = document.getElementById(id);
+                return [a.getAttribute('href'), a.getAttributeNS(${JSON.stringify(XLINK)}, 'href'), a.href.baseVal, a.href.animVal];
+            });
+            return { links, animations: document.querySelectorAll('animate, set, animateMotion, animateTransform, animateColor, discard, mpath').length };
+        })()`);
+        expect(read).toEqual({
+            links: [
+                [INERT_HREF, null, INERT_HREF, INERT_HREF],
+                [INERT_HREF, null, INERT_HREF, INERT_HREF],
+                [null, INERT_HREF, INERT_HREF, INERT_HREF],
+                [INERT_HREF, null, INERT_HREF, INERT_HREF],
+            ],
+            animations: 0,
+        });
+        if (browserName === 'chromium') {
+            const urls = await chromiumViewLinkUrls(page);
+            expect(urls).not.toBeNull();
+            expect(urls!.length).toBeGreaterThanOrEqual(1); // positive control: the tree has the links
+            for (const url of urls!) expect(url).not.toContain('guest.example');
+        }
+    });
+
+    test('an animated <image href> loads nothing: the static image of the same policy reaches the listener (positive control), the animated target never does, and an animated blob: URL the view did not mint is gone too', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount({ ...strictView, connectionsAllowed: { 'img-src': [recorder.allowed] } })).toBe('ready');
+        const workerCopy: string = await sandbox.inGuest(`return location.href`); // a blob: URL the view never minted
+        const html = '<svg width="30" height="30">'
+            + `<image id="static" width="3" height="5" href="${recorder.allowed}/f1-static.svg"/>`
+            + `<image id="animated" width="3" height="5" href="${recorder.allowed}/f1-static.svg"><set attributeName="href" to="${recorder.allowed}/f1-animated.svg" begin="0s" fill="freeze"/></image>`
+            + `<image id="blobbed" width="3" height="5"><set attributeName="href" to="${workerCopy}" begin="0s" fill="freeze"/></image>`
+            + `<use id="used" href="#static"><set attributeName="href" to="${recorder.allowed}/f1-use.svg#x" begin="0s" fill="freeze"/></use>`
+            + '</svg><p id="done">done</p>';
+        await sandbox.run(`sandboxView.render(${JSON.stringify(html)})`);
+        await waitInView(page, browserName, `!!document.getElementById('done')`, 8000);
+        await recorder.waitFor('allowed', '/f1-static.svg');
+        await page.waitForTimeout(800);
+        expect(recorder.paths('allowed').filter(p => p.startsWith('/f1-'))).toEqual(['/f1-static.svg']);
+        const read = await inView<any>(page, browserName, `['animated', 'blobbed', 'used'].map((id) => document.getElementById(id).href.animVal)`);
+        expect(read).toEqual([`${recorder.allowed}/f1-static.svg`, '', '#static']);
     });
 });
