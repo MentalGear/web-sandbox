@@ -105,7 +105,13 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 *   **Removing the element** tears the sandbox down the same way, without a `terminated` event, and
     leaves it `idle`. Inserting it again builds a fresh one.
 *   **Events** are dispatched on the element. `sandbox-log` (guest `console` output and errors) bubbles,
-    so a listener on `window` hears every sandbox on the page and `event.target` says which one.
+    so a listener on `window` hears every sandbox on the page and `event.target` says which one. Its detail
+    is `{ type: 'LOG', level, args, source }` (type `SandboxLog`): `level` is `log`, `info`, `warn` or
+    `error`; `args` holds at most 64 values, strings cut at 64 Ki characters; `source` is `'host'` for the
+    element's own lines (an execution timeout, an entry that failed) and `'guest'` for everything from the
+    guest, whatever it claims. Guest lines are limited to 1000 per second per environment
+    (`LOG_EVENTS_PER_SECOND`, one warning). `args` are the guest's data: read them, don't merge them into
+    your objects with `Object.assign` (an own `__proto__` key survives the copy).
 *   **`violation`** reports a load the guest policy refused: `{ directive, blockedURI }`, plus
     `sourceFile`, `lineNumber` and `columnNumber` when the browser gives them. It bubbles like
     `sandbox-log`. The guest's bootstrap listens before any guest code runs, but every field comes from
@@ -149,12 +155,12 @@ sandbox.setConfig({ capabilities: ['allow-scripts'], autoResize: true });
 *   **What is measured**: the root element's box, which follows content in normal flow, plus the scroll
     height when content overflows the frame. A guest that pins its root to the viewport
     (`html { height: 100% }`) still grows the frame but never shrinks it.
-*   **Reports are untrusted.** Guest code can reach the port and post any height, as often as it likes. The
+*   **Reports are untrusted.** Guest code cannot post on the private port, but it can make the bootstrap
+    measure any height (it can replace what the bootstrap reads), at most once per rendering update. The
     host accepts only a finite number `>= 0`, rounds it up to whole pixels, clamps it to 100 000 px
     (`AUTO_RESIZE_MAX_HEIGHT`), and writes at most once per animation frame and at most 30 times a second
     (`AUTO_RESIZE_MAX_UPDATES_PER_SECOND`), always ending at the newest report. So a guest whose height
-    oscillates, or that floods the port, costs the host page a bounded number of relayouts; it still
-    costs the time to receive its messages. Off, nothing a guest posts changes the element.
+    oscillates costs the host page a bounded number of relayouts. Off, nothing a guest does changes the element.
 *   **Lifecycle**: the height stays across `reset()`, `load()` and `setConfig()` until the new guest
     reports; a config without `autoResize` gives the height back to your CSS. Like the bridge, it needs the
     bootstrap to run (`allow-scripts`, inline `script-src`). In worker mode it does nothing, with one warning.
@@ -226,9 +232,12 @@ const total = await sandbox.call('sum', 1, 2);              // 3, once the sandb
     after termination reject at once.
 *   **Every rejection has a `code`; branch on it, not on the message.** `TIMEOUT`, `TERMINATED`,
     `ARGS_NOT_TRANSFERABLE`, `SEND_FAILED` and `INVALID_CALL` are set only by the side that made the
-    call, so the other side can never produce them. `UNKNOWN_METHOD`, `HANDLER_ERROR` and
-    `RESULT_NOT_TRANSFERABLE` come from the other side, and their message is its text. Only `TIMEOUT`
-    is worth retrying, and `TERMINATED` only after the next `ready` event (types: `RpcErrorCode`, `RpcError`).
+    call, so the other side can never produce them. `UNKNOWN_METHOD`, `HANDLER_ERROR`,
+    `RESULT_NOT_TRANSFERABLE` and `BUSY` come from the other side, and their message is its text. Only `TIMEOUT`
+    and `BUSY` are worth retrying, and `TERMINATED` only after the next `ready` event (types: `RpcErrorCode`, `RpcError`).
+*   **At most 256 calls run at once** on each side for one environment (`MAX_INBOUND_IN_FLIGHT`): a further
+    call is refused at once with `BUSY`, before its method runs, so calls to a slow method cannot pile up
+    without bound.
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never
     evaluates code. A worker-mode guest has no markup, though, so it can only expose methods
     through `execute()`, which does need `scriptUnsafe`.
@@ -387,19 +396,24 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     `sandboxView.on(type, id | null, handler)` returns `off` and receives `click`, `input`, `change`, `submit`
     and `keydown` as `{ type, ids, target: { tag, id, name, value, checked }, key?, form? }`. `bridge`,
     `sandboxFiles` and `sandboxFetch` work as in worker mode.
-*   **Host API**: `entry` names a registered JavaScript file the worker runs first (a classic script); `html` and
-    `load()` set the initial view; `execute()` runs in the worker (needs `scriptUnsafe`); `call()`/`expose()`
-    talk to the worker. An entry that fails to start ends the sandbox (`the guest entry failed to start`).
+*   **Host API**: `entry` names a registered JavaScript file the worker runs first (a classic script, in a
+    function scope of its own: its top-level declarations stay local, so assign `globalThis.x` to share; `this`
+    is the global object); `html` and `load()` set the initial view; `execute()` runs in the worker (needs
+    `scriptUnsafe`); `call()`/`expose()` talk to the worker. An entry that fails to start ends the sandbox
+    (`the guest entry failed to start`).
 *   **What it guarantees**, on Chromium, Firefox and WebKit: no guest script runs in any document — rendered
     scripts, handlers and `javascript:` URLs never run, and frames, `object`/`embed`, `meta`, `base`,
     `noscript` and `template` are removed before insertion, so no nested frame exists; guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
     `Referer`); links and form submissions navigate nowhere; the watchdog stops a looping guest on every
-    browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap and cannot be forged.
+    browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap and cannot be forged; the
+    view renders no `blob:` content but registered files.
 *   **What it does not**: rendering is host-thread work in Firefox and WebKit (one render at a time, but one
     render of heavy markup can take hundreds of milliseconds there); CSS within what the policy allows;
-    memory; worker `violation` reports (`source: 'logic'`) are per engine and forgeable; a worker that closes
-    itself is noticed only by the watchdog.
+    memory; worker `violation` reports (`source: 'logic'`) are per engine and guest-influenced; the view's cap
+    is shared with the guest's own refused loads, so rendered markup can use it up; a user's own browser actions
+    on a rendered link ("open in new tab", dragging it) are outside what the view can cancel; a worker that
+    closes itself is noticed only by the watchdog.
 *   **Limits**: no inline `<script>` and no nested frames in rendered markup; files are named by path in
     `src`/`href`/`poster` (not `srcset` or inline styles; a registered stylesheet's own `url()` works), and
     JavaScript files reach only the worker; no modules or `importScripts`; `unsafeCapabilities` and the policy
@@ -418,10 +432,10 @@ existing solution is argued in [`docs/ADR-001-continue-or-adopt.md`](docs/ADR-00
 
 The sandbox implements several layers of defense:
 1.  **Opaque Origin**: Runs in `about:srcdoc`, creating a unique null origin that isolates storage.
-2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`). An empty array means `'none'` for every directive; leave a directive out to fall back to `default-src`. The guest policy never contains `'self'`: for the guest's opaque origin, browsers disagree on what it matches (WebKit admits any https origin), so a configured `'self'` is dropped with a warning. List the origins you need explicitly. `frame-ancestors`, `report-uri`, `report-to` and `sandbox` are dropped with a warning too: browsers ignore them in a `<meta>` policy, which the guest's always is.
+2.  **Strict CSP**: Generated per-session, blocking all external connections (except allowed) and nested iframes (`frame-src 'none'`). Only known directive names and values that are single CSP source expressions reach the policy, so no configured value or key can add a directive (a `;` in a value is dropped with a warning); `'unsafe-eval'` comes only from `scriptUnsafe`. An empty array means `'none'` for every directive; leave a directive out to fall back to `default-src`. The guest policy never contains `'self'`: for the guest's opaque origin, browsers disagree on what it matches (WebKit admits any https origin), so a configured `'self'` is dropped with a warning. List the origins you need explicitly. `frame-ancestors`, `report-uri`, `report-to` and `sandbox` are dropped with a warning too: browsers ignore them in a `<meta>` policy, which the guest's always is.
 3.  **CSP First**: The CSP `<meta>` is prepended before any user markup, so it is always the first element of the parsed `<head>`; user content cannot precede or swallow it.
 4.  **Wrapper Frame**: The guest frame is nested in a library-owned frame whose policy is `frame-src 'none'`. That blocks the guest from navigating itself to carry data out in a URL ([research 14](docs/research/14_self_navigation/README.md)).
-5.  **One-Shot Channel**: The private `MessagePort` is handed over exactly once per frame. If the frame ever loads a second document, the sandbox is torn down and fires `terminated`.
+5.  **One-Shot Channel**: The private `MessagePort` is handed over exactly once per frame, and the guest bootstrap accepts it only from the host page; no other frame can hand it a port or leave it without one. Guest code can never reach the port (the bootstrap uses only primitives captured before guest code runs), so it cannot answer the watchdog for a looping guest. The host hears only the current environment's port. If the frame ever loads a second document, the sandbox is torn down and fires `terminated`.
 6.  **Worker Inside the Frame**: Worker mode spawns its worker from inside the sandbox frame, so it shares the opaque origin and CSP.
 7.  **Capability Tiers**: Flags that reach outside the frame require the explicit `unsafeCapabilities` opt-in.
 8.  **Allowlisted Calls**: Each side can call only the methods the other side exposed, and an answer reaches only the frame that made the request, never a frame that replaced it.
@@ -430,3 +444,6 @@ The sandbox implements several layers of defense:
 11. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer, and WebKit sends the full host URL to a same-site origin ([backlog S18](docs/BACKLOG.md)); WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)). Strict mode closes S17 and S18.
 12. **Mediated Network, Opt-In**: With `fetchBridge`, the host makes the guest's requests itself, to exact listed origins only, without credentials, referrer or redirects, with capped bodies, time and concurrency, and logs each one. The guest policy stays as strict as configured ([ADR-006](docs/ADR-006-fetch-bridge.md)).
 13. **Strict Mode, Opt-In**: Guest code only in a worker; a view whose one script is the library's, admitted by its hash, with rendered markup cleaned before it is inserted and moved, never cloned ([ADR-005](docs/ADR-005-strict-mode.md)).
+14. **Fail Closed on Configuration**: A `mode` the element does not know starts no environment (the sandbox terminates with a reason) rather than falling back to iframe mode.
+
+The guarantees above were tested adversarially on 2026-10-14, with every finding fixed, asserted or stated as a residual: [adversarial review report](docs/security/ADVERSARIAL-REVIEW-2026-10.md).

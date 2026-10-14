@@ -1,6 +1,6 @@
 # ADR-002: How should host and guest call each other?
 
-**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes)), 2026-10-13 ([strict mode renders bypass the host](#amendment-2026-10-13-strict-mode-renders-bypass-the-host))
+**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes)), 2026-10-13 ([strict mode renders bypass the host](#amendment-2026-10-13-strict-mode-renders-bypass-the-host)), 2026-10-14 ([adversarial review: the channel](#amendment-2026-10-14-adversarial-review-the-channel))
 
 ## Why this ADR exists
 
@@ -185,3 +185,44 @@ travel on a third port, the *render port*, directly from the worker to the view;
 Proof: `test/e2e/strict.spec.ts` ("the render port is out of guest reach"), `strict-render-flood.spec.ts`,
 and the strict cases of `test/e2e/broker.spec.ts`, which runs the whole broker suite in strict mode too.
 
+
+## Amendment (2026-10-14): adversarial review: the channel
+
+**When**: the adversarial review of 2026-10 ([report](security/ADVERSARIAL-REVIEW-2026-10.md), B1–B4, B7).
+**Why**: the transport under the broker trusted more than it checked. The bootstrap took the first INIT_PORT
+from anyone; it called the port through prototypes guest code could patch, so guest code could take the port
+(and answer the watchdog from a nested worker while it looped); the host dispatched log frames as they came and
+handled frames from a port it had already closed (Firefox delivers those); and nothing bounded how many inbound
+calls a side would run at once.
+
+**Decision**:
+
+- **One trusted INIT_PORT.** The default bootstrap and the worker-mode frame accept exactly one: trusted, with
+  one port, and in iframe mode from `parent.parent`, the host page, read before guest code runs. Anything else
+  is ignored without throwing and does not use up the listener, which is a capture listener that stops the
+  accepted event. Strict mode's view already worked this way.
+- **The port never reaches guest code.** Every operation on the port and on the events that carry it uses
+  primitives captured before guest code runs (`MessagePort.prototype.postMessage`, its `onmessage` setter, the
+  `MessageEvent` getters, `stopImmediatePropagation`), called through a captured `Reflect.apply`; internal
+  lists are written with a captured `defineProperty`. Patching any prototype afterwards changes nothing the
+  bootstrap does. This makes the watchdog's guarantee hold by construction and means guest code can no longer
+  post frames of its own; it can still bend what the bootstrap reads (event getters, the measured box), so
+  violation reports and heights remain claims, validated on the host. Worker mode keeps `Worker`: nothing in
+  this guarantee depends on removing it.
+- **Only the current port is heard.** The host handles a frame only if it arrived on the current
+  environment's port (the logic or the view port), so a frame already queued from an environment a listener
+  just reset changes nothing, whether or not the engine still delivers it.
+- **Logs are normalised and labelled.** `sandbox-log` carries `{ type: 'LOG', level, args, source }`: `level`
+  from `log`, `info`, `warn`, `error`; `args` an array of at most 64 with strings cut at 64 Ki characters;
+  `source` set by the host, `'guest'` for frames from the port and `'host'` for the element's own lines. Guest
+  lines are limited to 1000 per second per environment, with one warning; host lines never are. A rate, not
+  a cap like `violation`'s, because log lines are a continuous channel of a running guest.
+- **At most 256 inbound calls run at once per channel.** A further request is answered at once with the new
+  code `BUSY`, before its method runs. It belongs to the group of codes the other side reports (now four:
+  `UNKNOWN_METHOD`, `HANDLER_ERROR`, `RESULT_NOT_TRANSFERABLE`, `BUSY`), since it says the responder refused;
+  the local group is unchanged, so the B7 disjointness argument stands. The count is kept per reply channel,
+  and the host passes one per port, so calls that never settle in one environment do not starve the next.
+  Both sides run the same broker, so the host's calls into the guest are capped the same way.
+
+Proof: `test/e2e/review-channels.spec.ts` (all engines), `src/lib/in-sandbox-script.test.ts` (B1, B2),
+`src/lib/rpc.test.ts` (B7, pinned codes), `test/unit/channel-guarantees.test.ts` (B3, B4).

@@ -1,6 +1,6 @@
 # ADR-003: How does the host observe and control a sandbox's lifecycle?
 
-**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine))
+**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone))
 
 ## Why this ADR exists
 
@@ -137,3 +137,15 @@ worker, so a guest loop never blocks the host's timers, on any engine and whatev
 What strict mode does not change: the watchdog is still opt-in for guest logic; a worker that ends itself is
 noticed only through it; memory and inbound traffic remain unbounded (S6's open notes).
 
+
+## Amendment (2026-10-14): a listener's reset or terminate is never undone
+
+**When**: the adversarial review of 2026-10 ([report](security/ADVERSARIAL-REVIEW-2026-10.md), B5). **Why**: two
+host paths dispatched a log line and then acted on the environment: the execution timeout (log, then rebuild)
+and an entry that failed to start (log, then terminate). A `sandbox-log` listener that called `terminate()` had
+it undone by the rebuild; one that called `reset()` had its new environment torn down.
+
+**Decision**: the element counts environments (every teardown increments the count). A host path that dispatches
+an event and then acts compares the count first and does nothing if a listener has torn the environment down
+meanwhile. The lifecycle events keep their rule from decision 2 (dispatched after the state is set, last in
+their path), so they needed no change. Proof: `test/unit/channel-guarantees.test.ts` ("B5").

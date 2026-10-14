@@ -21,12 +21,12 @@ conditional "continue".
 | Area | State |
 | :--- | :--- |
 | Core isolation (`srcdoc` + opaque origin + immutable CSP) | ✅ implemented, `src/host.ts` |
-| CSP generation from typed config | ✅ implemented; `[]` means `'none'` for every directive, never broader than leaving it out (S16), unit-tested per directive |
-| Private `MessageChannel` transport | ✅ implemented, iframe + worker |
-| Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7) |
+| CSP generation from typed config | ✅ implemented; `[]` means `'none'` for every directive, never broader than leaving it out (S16), unit-tested per directive; only known directive names and single CSP source expressions reach a policy, so no value or key can add a directive (S19) |
+| Private `MessageChannel` transport | ✅ implemented, iframe + worker; taken only from the host's INIT_PORT, never reachable by guest code, only the current environment's port heard (S21) |
+| Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7); at most 256 inbound calls in flight per environment, then `BUSY` (S22) |
 | Host-mediated network | ✅ opt-in `fetchBridge`: `sandboxFetch()` under the bridge discipline, every request logged as a `fetch` event, refusals coded (B5, [ADR-006](ADR-006-fetch-bridge.md)) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
-| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3); `violation` for refused loads, capped per environment (S5) |
+| Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5); a listener's `reset()`/`terminate()` is never undone (S22) |
 | Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
 | Execution budget | ✅ strict mode bounds guest logic on every engine: it runs only in a worker the watchdog stops (S6, [ADR-005](ADR-005-strict-mode.md)); default mode: opt-in watchdog, bounded in worker mode and out-of-process frames, not where the frame shares the host's thread |
 | Strict mode | ✅ opt-in `mode: 'strict'`: guest code only in a worker, a view running only the hash-admitted library bootstrap, rendered markup cleaned (no nested frames, scripts, `meta`, `base`) and moved, one render in flight, delegated events, view liveness check (S6, S13, S17, S18; [ADR-005](ADR-005-strict-mode.md)) |
@@ -40,6 +40,7 @@ conditional "continue".
 | Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); writes open (C5) |
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18). ✅ in strict mode: guest code sees only its worker's `blob:` URL and no request carries a `Referer` |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
+| Adversarial review 2026-10 | ✅ 21 candidates: 16 fixed (S19–S23), 1 held and is now asserted (A8, S20), 1 documented by design (S25), 3 residuals stated (S24); [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -47,6 +48,7 @@ the virtual-files Service Worker was replaced by guest-realm blob URLs ([ADR-004
 S3, C2 and C3 done, C1 partly, C4 rejected, C5 added; C1's markup references, module graph and CSS references followed the same day, completing C1.
 S15 and S16 were done on 2026-10-13, and S17 added. Strict mode landed on 2026-10-13 ([ADR-005](ADR-005-strict-mode.md), measured first in
 [research 15](research/15_strict_mode/README.md)): S6 done, S13 and S17 done in strict mode with their default-mode residuals stated, S18 added.
+The adversarial review of 2026-10-14 ([report](security/ADVERSARIAL-REVIEW-2026-10.md)) added S19–S25: S19–S23 done, S24 open (residuals), S25 documented.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -836,6 +838,116 @@ element of rendered markup. `test/e2e/host-url.spec.ts` (strict case): requests 
 rendered markup asking for `unsafe-url` every way it can (attribute, `<meta>`, CSS, a nested frame, `ping`),
 cross-site and same-site, carry no `Referer` and no host `Origin` in all three engines, while the host page's
 own control shows what each engine would send (WebKit: the full URL same-site).
+
+### S19 · A configured value or key could add CSP directives — ✅ **done**
+
+*From the [adversarial review 2026-10](security/ADVERSARIAL-REVIEW-2026-10.md), A1 and A2.*
+
+**Verified** (2026-10-14): `generateCSP()` only trimmed and joined values, and a browser keeps the first
+occurrence of a directive. A `;` inside a value (`default-src: ["'none'; script-src-attr 'unsafe-inline'"]`), or
+a space or `;` inside a key (`"img-src https://a; script-src-elem"`), emitted directives ahead of the fixed ones.
+In strict mode that gave the view handler attributes: a rendered `onerror` ran and reached a listener in
+Chromium, Firefox and WebKit. In iframe mode an injected key bypassed the S7, S14 and bootstrap checks, and
+`"'self';"` bypassed the S14 drop.
+
+**Done**: a policy grammar (`src/lib/csp/policy-grammar.ts`), applied at the start of the host's pipeline and
+again inside `generateCSP()`: a directive name is kept only if it is one of the known names (the keys of
+`CSPDirectives`, which gains `script-src-elem`, `script-src-attr`, `style-src-elem`, `style-src-attr` and
+`child-src`); each value is split on whitespace and a token is kept only if it is one CSP source expression.
+Everything dropped is warned about once. Tests: `src/lib/csp/policy-grammar.test.ts` (grammar tables, a
+500-config property over the generator), `test/unit/policy-guarantees.test.ts` (a 200-config property over the
+element in strict and iframe mode: fixed directives keep their values, the directive set is what the config may
+name, each once), `test/e2e/review-policy.spec.ts` (the strict view, all engines).
+
+### S20 · Bootstrap check and config hygiene — ✅ **done**
+
+*From the review, A3–A8.*
+
+**Done**: `inlineScriptsAllowed()` follows CSP3's `script-src-elem` → `script-src` → `default-src` order (A3; a
+policy refusing the bootstrap through `script-src-elem` went unwarned). An unknown `mode` (`'Strict'`, `' strict'`)
+no longer means iframe mode: every build terminates with `unknown mode …` until a config names a valid one (A4).
+`'unsafe-eval'` and `'wasm-unsafe-eval'` are dropped from configured directives, with a warning while
+`scriptUnsafe` is off: `scriptUnsafe` is the one switch (A5, `src/lib/csp/drop-eval.ts`). `scriptUnsafe`,
+`autoResize` and `entry` are normalised on the merged config, which `deepMerge` reads from the input exactly once
+(A6), and `deepMerge` skips `__proto__`, `constructor` and `prototype` and reads own keys only (A7). The default
+bootstrap is asserted parser-safe when the guest document is built (A8). Tests: `test/unit/policy-guarantees.test.ts`,
+`src/lib/markup-references.test.ts`, `test/e2e/package.spec.ts` (A8 on the bundle).
+
+### S21 · The channel: one trusted INIT_PORT, a port guest code cannot reach — ✅ **done**
+
+*From the review, B1, B2 and B4; [ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-14-adversarial-review-the-channel).*
+
+**Verified** (2026-10-14, all three engines): another frame on the host page that posted INIT_PORT before the
+host captured the guest's bridge or, without a port, left it dead (B1). Guest code that patched
+`MessagePort.prototype.postMessage` received the port from the bootstrap's next post and handed it to a nested
+worker that answered the watchdog's pings while the guest looped: never terminated (B2). In Firefox, frames
+already queued on a port the host had closed were still dispatched: 574 stale log lines after a `reset()` from a
+listener (B4).
+
+**Done**: the bootstrap and the worker-mode frame accept exactly one INIT_PORT (trusted, one port, from
+`parent.parent` in iframe mode) in a capture listener, ignoring anything else without throwing. Every operation
+on the port goes through primitives captured before guest code runs, called through a captured `Reflect.apply`;
+guest code can no longer post frames of its own. The host handles frames only from the current environment's
+ports. Worker mode keeps `Worker`/`SharedWorker`: the watchdog no longer depends on their absence. Tests:
+`test/e2e/review-channels.spec.ts`, `src/lib/in-sandbox-script.test.ts`, `test/unit/channel-guarantees.test.ts`.
+The specs that used to forge frames on the port now forge through what the bootstrap reads.
+
+### S22 · Logs, re-entrancy, fetch headers, calls in flight — ✅ **done**
+
+*From the review, B3, B5, B6 and B7.*
+
+**Done**: `sandbox-log` details are normalised (`level` from a closed set, `args` at most 64 with strings cut at
+64 Ki), labelled `source: 'guest' | 'host'` by the host, and guest lines are limited to 1000 per second per
+environment with one warning; `SandboxDevTools` never throws and never lets a guest string be a console format
+string (B3). The execution timeout and the entry-failure path re-check the environment after dispatching their
+log line, so a listener's `reset()`/`terminate()` is not undone ([ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone), B5).
+A fetch header value must be a ByteString without CR, LF or NUL, so a refused request is recorded as `refused`,
+not `failed` (B6). At most 256 inbound calls run at once per channel; beyond that a call is refused at once with
+the new reported code `BUSY` (B7). Tests: `test/unit/channel-guarantees.test.ts`, `src/lib/rpc.test.ts`,
+`test/e2e/review-channels.spec.ts` (B7).
+
+### S23 · Strict mode: the entry's scope and the prelude's lists — ✅ **done**
+
+*From the review, C2 and C3; [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-adversarial-review).*
+
+**Verified** (2026-10-14, all three engines): the entry was appended to the prelude in one classic script, whose
+declarations are instantiated before any of it runs; a top-level `function Worker() {}` in the entry made the
+prelude's deletion fail silently (Worker stayed, as the guest's function), and `function Reflect() {}` replaced a
+global the prelude captures. The prelude's lists were written through inherited index setters, which guest code
+can observe.
+
+**Done**: the entry runs inside `(function () { … }).call(this)` (**top-level declarations of a strict-mode entry
+are now local**; assign `globalThis.x` to share); the prelude's first step refuses to start if the global object
+holds a non-configurable function, which only a top-level declaration of an entry that escaped its scope leaves;
+a name the prelude cannot delete is an error. The prelude's lists have no prototype. Tests:
+`test/e2e/review-strict.spec.ts`, `src/lib/in-sandbox-view.test.ts`, `test/unit/strict.test.ts`.
+
+### S24 · Strict view residuals: CSS references, the shared violation cap, browser link actions — **P3 · residual**
+
+*From the review, C1, C4 and C5.*
+
+- **C1, A8 on attributes only.** The renderer does not read `<style>` text or CSS escapes in `style` attributes,
+  so rendered CSS can name the worker's copies of registered files and the worker's own source URL. The
+  guarantee that holds, and that ADR-005 now states, is about content: the view renders no `blob:` content but
+  registered files (the source URL renders nothing: `text/javascript`, it starts with the prelude). Revoking the
+  source URL was rejected: in WebKit it breaks the worker's own `blob:` URLs. Asserted:
+  `test/e2e/review-strict.spec.ts` ("C1").
+- **C4, the view's violation cap is shared** with the guest's own refused loads: 100 refused loads in rendered
+  markup use it up for the environment. G6 is complete up to the cap. Asserted ("C4").
+- **C5, browser link actions.** Rendered links keep their `href`; the view cancels clicks and submits, but "open in
+  new tab" or dragging a link are the browser's own actions, outside any page's control, and they need the user.
+  Asserted that the `href` stays ("C5"). Option if it matters: the renderer could drop `href` from rendered links
+  (links would then not look like links). Not done: it changes the programming model for a user-driven channel.
+
+### S25 · Guest data can carry own `__proto__` keys — **documented** (by design)
+
+*From the review, B8.*
+
+Structured clone keeps an own `__proto__` key (measured in all three engines), so call arguments, results and
+`sandbox-log` args from the guest can hold one. Reading such an object is safe, and it never changes
+`Object.prototype`; merging it with `Object.assign` sets the target's prototype. Documented next to `expose()` and
+`sandbox-log` in the README; `deepMerge` (the element's own config merge) skips the key (S20). Asserted:
+`test/e2e/review-channels.spec.ts` ("B8").
 
 ## B · API Surface & DX
 
