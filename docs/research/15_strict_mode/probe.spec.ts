@@ -15,8 +15,8 @@ import {
  * view's securitypolicyviolation events, and for network a loopback HTTPS / UDP listener with a
  * positive control that observes the same action when it is allowed.
  *
- * Run: PLAYWRIGHT_BROWSERS_PATH=<dir> bunx playwright test -c docs/research/15_strict_mode
- * (skipped under the repository's root config, which has no server on 4466).
+ * Run: bun run test:probes (bunx playwright test -c docs/research/15_strict_mode); CI runs it on every engine.
+ * Skipped under the repository's root config, which has no server for them.
  */
 
 /** Prints a measured value (the README's findings table is made from these lines). */
@@ -35,7 +35,7 @@ test.afterAll(async () => {
     if (udp.port) udp.stop();
 });
 test.beforeEach(({}, testInfo) => {
-    test.skip(!testInfo.config.metadata?.strictProbes, 'run with -c docs/research/15_strict_mode (own server on 4466)');
+    test.skip(!testInfo.config.metadata?.strictProbes, 'design probe: run with bun run test:probes (its own config and server)');
     listener.clear();
 });
 
@@ -557,7 +557,7 @@ test('P7 render flood: host responsiveness while the worker renders as fast as i
 // ---- P8 ----------------------------------------------------------------------------------------
 
 test('P8 Referer from rendered markup and a rendered nested frame asking for unsafe-url', async ({ page, browserName }) => {
-    // cross: https://127.0.0.1:<port> (cross-site to the host page http://localhost:4466)
+    // cross: https://127.0.0.1:<port> (cross-site to the host page http://localhost:4466, or STRICT_PROBE_PORT)
     // local: https://localhost:<port> (same host name as the host page)
     const targets = { cross: listener.origin, local: listener.localOrigin };
     const imgSrc = `${listener.origin} ${listener.localOrigin}`;
@@ -600,9 +600,10 @@ test('P8 Referer from rendered markup and a rendered nested frame asking for uns
     r.hostControl = referers();
     log(browserName, 'P8', r);
 
-    // the host page URL, path and query included (mount=<n> differs per mount)
-    const hostUrl = expect.stringMatching(/^http:\/\/localhost:4466\/host\.html\?secret=HOST-SECRET-PATH&mount=\d+$/);
-    const origin = 'http://localhost:4466/';
+    // the host page URL, path and query included (mount=<n> differs per mount); the server's port is the config's
+    const port = Number(process.env.STRICT_PROBE_PORT || 4466);
+    const hostUrl = expect.stringMatching(new RegExp(`^http://localhost:${port}/host\\.html\\?secret=HOST-SECRET-PATH&mount=\\d+$`));
+    const origin = `http://localhost:${port}/`;
     // the control: Chromium sends the full host URL to both; Firefox and WebKit trim cross-site to the origin
     expect(r.hostControl).toEqual({ 'host-control-cross': browserName === 'chromium' ? hostUrl : origin, 'host-control-local': hostUrl });
 

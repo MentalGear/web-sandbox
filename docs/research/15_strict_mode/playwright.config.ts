@@ -2,13 +2,16 @@ import { existsSync } from 'node:fs';
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Research 15 (strict-mode probes) runs on its own: its own static server on port 4466 and no
- * dependency on the e2e harness or the 4444 vite server. Run from the repository root:
+ * Research 15 (strict-mode probes) runs on its own: its own static server (port 4466, or STRICT_PROBE_PORT) and no
+ * dependency on the e2e harness or the 4444 vite server. Under the repository's root config these tests are
+ * skipped; CI runs them with this config (`bun run test:probes`, .github/workflows/ci.yml), since ADR-005 rests on
+ * what they measure. Run from the repository root:
  *
- *   PLAYWRIGHT_BROWSERS_PATH=<dir with firefox/webkit> bunx playwright test -c docs/research/15_strict_mode
+ *   bun run test:probes                      # all three engines; add --project=chromium for one
  *
  * Chromium: CHROMIUM_EXECUTABLE, else /opt/pw-browsers/chromium when present, else Playwright's own.
  */
+const PORT = Number(process.env.STRICT_PROBE_PORT || 4466);
 const chromiumExecutable = process.env.CHROMIUM_EXECUTABLE
     ?? (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined);
 
@@ -21,7 +24,7 @@ export default defineConfig({
     reporter: 'list',
     metadata: { strictProbes: true },
     use: {
-        baseURL: 'http://localhost:4466',
+        baseURL: `http://localhost:${PORT}`,
         headless: true,
         ignoreHTTPSErrors: true, // the loopback listener's certificate is made per run
     },
@@ -34,8 +37,8 @@ export default defineConfig({
         { name: 'webkit', use: { ...devices['Desktop Safari'] } },
     ],
     webServer: {
-        command: 'node server.mjs',
-        url: 'http://localhost:4466/host.html',
+        command: 'bun server.mjs', // STRICT_PROBE_PORT reaches it through the environment
+        url: `http://localhost:${PORT}/host.html`,
         reuseExistingServer: false,
         stdout: 'pipe',
         stderr: 'pipe',
