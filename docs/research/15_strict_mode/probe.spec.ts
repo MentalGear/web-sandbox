@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { chromiumOutOfProcessFrames } from '../../../test/e2e/strict-view';
 import {
     BOOTSTRAP, INLINE_SCRIPT_POLICY, Listener, UdpListener, clickInView, escapeAttribute, frameStates, hashSource,
     iceProbe, inFrames, inView, inbox, init, markers, mount, viewPolicy, workerResults,
@@ -15,8 +16,8 @@ import {
  * view's securitypolicyviolation events, and for network a loopback HTTPS / UDP listener with a
  * positive control that observes the same action when it is allowed.
  *
- * Run: PLAYWRIGHT_BROWSERS_PATH=<dir> bunx playwright test -c docs/research/15_strict_mode
- * (skipped under the repository's root config, which has no server on 4466).
+ * Run: bun run test:probes (bunx playwright test -c docs/research/15_strict_mode); CI runs it on every engine.
+ * Skipped under the repository's root config, which has no server for them.
  */
 
 /** Prints a measured value (the README's findings table is made from these lines). */
@@ -35,7 +36,7 @@ test.afterAll(async () => {
     if (udp.port) udp.stop();
 });
 test.beforeEach(({}, testInfo) => {
-    test.skip(!testInfo.config.metadata?.strictProbes, 'run with -c docs/research/15_strict_mode (own server on 4466)');
+    test.skip(!testInfo.config.metadata?.strictProbes, 'design probe: run with bun run test:probes (its own config and server)');
     listener.clear();
 });
 
@@ -507,6 +508,9 @@ test('P7 render flood: host responsiveness while the worker renders as fast as i
         const { wrapped } = await mount(page);
         await init(page, wrapped, `async function main() { const big = '<p>' + 'x'.repeat(262144) + '</p>'; for (;;) post(big); }`);
         await page.waitForTimeout(1500);
+        // The process model varies by Chromium build and environment (the full browser keeps sandboxed frames out
+        // of process here; the headless shell on CI runners keeps them in the host's), so it is measured, not assumed.
+        if (browserName === 'chromium') m.outOfProcess = (await chromiumOutOfProcessFrames(page)) > 0;
         const t = Date.now();
         await page.evaluate(() => document.getElementById('outer')!.remove());
         const removeMs = Date.now() - t;
@@ -525,15 +529,21 @@ test('P7 render flood: host responsiveness while the worker renders as fast as i
     // took ≤ ~20 ms in Chromium and Firefox, but 0.17–2.7 s of blocked host thread in WebKit.
     expect(m.burst.stats.received).toBe(200);
     expect(m.burst.stats.applied).toBeLessThanOrEqual(20);
-    expect(m.endless.removeMs).toBeLessThan(browserName === 'webkit' ? 5000 : 1000);
+    const sharedThread = browserName !== 'chromium' || !m.outOfProcess;
+    expect(m.endless.removeMs).toBeLessThan(browserName === 'webkit' || (browserName === 'chromium' && sharedThread) ? 5000 : 1000);
     expect(m.endless.hostLagAfterMs).toBeLessThan(250);
 
-    if (browserName === 'chromium') {
+    if (browserName === 'chromium' && !sharedThread) {
         // measured: the sandboxed frames run out of process — host lag ≤ ~30 ms in every case
         for (const k of ['burst', 'ackedOneWord1MiB', 'ackedMarkup1MiB', 'ackedOneWord64KiB']) {
             expect(m[k].hostLagMaxMs, k).toBeLessThan(150);
             expect(m[k].workerPingMaxMs, k).toBeLessThan(500);
         }
+    } else if (browserName === 'chromium') {
+        // measured (headless shell, view in the host's process): the view shares the host's thread like Firefox's;
+        // a 1 MiB apply ≈ 0.25–0.5 s of host lag, removal of a flooding frame ≈ 1 s; flow control still bounds it
+        for (const k of ['ackedOneWord1MiB', 'ackedMarkup1MiB']) expect(m[k].hostLagMaxMs, k).toBeLessThan(1500);
+        expect(m.ackedOneWord64KiB.hostLagMaxMs).toBeLessThan(150);
     } else if (browserName === 'firefox') {
         // measured: the view shares the host's thread; one 1 MiB apply ≈ 150–265 ms of host lag; the
         // unacknowledged burst holds the worker round trip at 0.85–1.1 s; 64 KiB renders ≈ 15–55 ms
@@ -547,17 +557,19 @@ test('P7 render flood: host responsiveness while the worker renders as fast as i
         // measured: the view shares the host's thread; ONE 1 MiB single-word apply blocks the host for
         // ≈ 1.2–1.6 s even with one render in flight; 1 MiB of ordinary markup ≈ 0.3–0.43 s; a 64 KiB
         // single word ≈ 0.12–0.2 s
-        expect(m.burst.hostLagMaxMs).toBeGreaterThan(500);
-        expect(m.ackedOneWord1MiB.hostLagMaxMs).toBeGreaterThan(500);
-        expect(m.ackedMarkup1MiB.hostLagMaxMs).toBeGreaterThan(150);
-        expect(m.ackedOneWord64KiB.hostLagMaxMs).toBeGreaterThan(50);
+        // Asserted machine-independently: what the design rests on is that the view shares the host's thread (a
+        // 1 MiB apply visibly delays the host) and that flow control still bounds the delay. The absolute figures above
+        // are this container's; a CI runner measured 0.26–0.28 s for the same renders, so lower bounds in milliseconds
+        // would assert the machine, not the engine. The raw numbers are logged (MEASURED) on every run.
+        expect(Math.max(m.burst.hostLagMaxMs, m.ackedOneWord1MiB.hostLagMaxMs)).toBeGreaterThan(100);
+        for (const k of ['burst', 'ackedOneWord1MiB', 'ackedMarkup1MiB', 'ackedOneWord64KiB']) expect(m[k].hostLagMaxMs, k).toBeLessThan(3000);
     }
 });
 
 // ---- P8 ----------------------------------------------------------------------------------------
 
 test('P8 Referer from rendered markup and a rendered nested frame asking for unsafe-url', async ({ page, browserName }) => {
-    // cross: https://127.0.0.1:<port> (cross-site to the host page http://localhost:4466)
+    // cross: https://127.0.0.1:<port> (cross-site to the host page http://localhost:4466, or STRICT_PROBE_PORT)
     // local: https://localhost:<port> (same host name as the host page)
     const targets = { cross: listener.origin, local: listener.localOrigin };
     const imgSrc = `${listener.origin} ${listener.localOrigin}`;
@@ -600,9 +612,10 @@ test('P8 Referer from rendered markup and a rendered nested frame asking for uns
     r.hostControl = referers();
     log(browserName, 'P8', r);
 
-    // the host page URL, path and query included (mount=<n> differs per mount)
-    const hostUrl = expect.stringMatching(/^http:\/\/localhost:4466\/host\.html\?secret=HOST-SECRET-PATH&mount=\d+$/);
-    const origin = 'http://localhost:4466/';
+    // the host page URL, path and query included (mount=<n> differs per mount); the server's port is the config's
+    const port = Number(process.env.STRICT_PROBE_PORT || 4466);
+    const hostUrl = expect.stringMatching(new RegExp(`^http://localhost:${port}/host\\.html\\?secret=HOST-SECRET-PATH&mount=\\d+$`));
+    const origin = `http://localhost:${port}/`;
     // the control: Chromium sends the full host URL to both; Firefox and WebKit trim cross-site to the origin
     expect(r.hostControl).toEqual({ 'host-control-cross': browserName === 'chromium' ? hostUrl : origin, 'host-control-local': hostUrl });
 

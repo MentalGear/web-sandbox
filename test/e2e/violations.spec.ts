@@ -140,8 +140,12 @@ test.describe('3. a report is a guest claim', () => {
     });
 });
 
+// Worker reports are per engine, a documented limit (ADR-005, "Worker reports"; API.md, `violation`): WebKit raises
+// no securitypolicyviolation event in a worker at all, so violation reporting from workers cannot be tested on WebKit,
+// and these tests assert that absence there. The evidence that a worker's load was refused is its outcome (below) and,
+// for egress, the recorder (test/e2e/verification.spec.ts, V1), on every engine.
 test.describe('4. worker mode', () => {
-    test('reports what the engine raises in the worker: measured per engine', async ({ sandbox, browserName }) => {
+    test('reports what the engine raises in the worker: measured per engine (WebKit raises none in workers: a documented limit, asserted as such)', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ mode: 'worker' })).toBe('ready');
         const outcome = await sandbox.inGuest(`
             const fetched = await fetch('${ATTACKER}/worker-fetch', { mode: 'no-cors' }).then(() => 'reached', () => 'refused');
@@ -167,7 +171,7 @@ test.describe('4. worker mode', () => {
 
 
 test.describe('5. strict mode', () => {
-    test('view reports are labelled view, worker reports logic (per engine); a flood on the logic port is logic and uses up only the logic cap', async ({ sandbox, page, browserName }) => {
+    test('view reports are labelled view, worker reports logic (per engine; WebKit raises none in workers, a documented limit); a flood on the logic port is logic and uses up only the logic cap', async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ mode: 'strict' })).toBe('ready');
         // the worker's own refusals: Chromium raises both in the worker; Firefox raises the importScripts
         // refusal in the VIEW (research 15, P3); WebKit raises none in workers

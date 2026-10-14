@@ -7,11 +7,12 @@ bun install
 bun run dev          # playground at http://localhost:4444/playground/index.html
 bun run typecheck    # tsc over src, tests, playground and research specs
 bun run test         # unit (vitest) then e2e (playwright; builds the package first)
+bun run test:probes  # the strict-mode design probes (research 15) ADR-005 rests on, on their own server
 bun run build:lib    # dist/: bundled ESM + type declarations
 ./scripts/smoke-package.sh   # bun pm pack, install into a scratch project, type-check and bundle
 ```
 
-CI runs all of the above, with the e2e suite on Chromium, Firefox and WebKit.
+CI runs all of the above, with the e2e suite and the probes on Chromium, Firefox and WebKit.
 
 ## Security changes
 

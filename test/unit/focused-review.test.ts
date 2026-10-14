@@ -14,6 +14,11 @@ import { dropSelfSources } from '@src/lib/csp/drop-self';
 import { strictPassedThrough, strictViewDirectives } from '@src/lib/csp/strict-policy';
 import { deepMerge } from '@src/lib/utils';
 import { prng } from './policy-helpers';
+import { policyTokens } from '@src/lib/csp/policy-grammar';
+import type { CSPDirectives } from '@src/csp-directives';
+
+// the policy steps take only the grammar's output (PolicyTokens, A1): test policies are checked into it
+const tokens = (directives: CSPDirectives) => policyTokens(directives, 'test');
 
 /**
  * Focused review 2026-10-14 (docs/security/FOCUSED-REVIEW-2026-10-14.md), host and library side: the guarantees
@@ -263,11 +268,11 @@ describe('F4: no CSP step or config transform writes a config-derived key by ass
     const steps: [string, (input: any) => unknown][] = [
         ['dropMetaIgnoredDirectives', (d) => dropMetaIgnoredDirectives(d, new Set())],
         ['sanitizeDirectives', (d) => sanitizeDirectives(d)],
-        ['dropEvalSources', (d) => dropEvalSources(d, false, new Set())],
-        ['addFileSources', (d) => addFileSources(d, ['image/png', 'text/javascript'], new Set())],
-        ['dropSelfSources', (d) => dropSelfSources(d, new Set())],
-        ['strictPassedThrough', (d) => strictPassedThrough(d)],
-        ['strictViewDirectives', (d) => strictViewDirectives(d, "'sha256-x'", true)],
+        ['dropEvalSources', (d) => dropEvalSources(tokens(d), false, new Set())],
+        ['addFileSources', (d) => addFileSources(tokens(d), ['image/png', 'text/javascript'], new Set())],
+        ['dropSelfSources', (d) => dropSelfSources(tokens(d), new Set())],
+        ['strictPassedThrough', (d) => strictPassedThrough(tokens(d))],
+        ['strictViewDirectives', (d) => strictViewDirectives(tokens(d), "'sha256-x'", true)],
         ['deepMerge', (d) => deepMerge({ 'img-src': [] } as any, d)],
     ];
 

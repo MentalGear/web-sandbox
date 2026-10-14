@@ -32,6 +32,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps ${{ matrix.browser }}
       - run: bunx playwright test --project=${{ matrix.browser }}
+      # the strict-mode design probes (research 15) that ADR-005 rests on; skipped under the root config above
+      - run: bun run test:probes --project=${{ matrix.browser }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

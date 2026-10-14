@@ -4,9 +4,10 @@ import { useRecorder } from './recorder';
 
 /**
  * Adversarial review 2026-10, channels and lifecycle (docs/security/ADVERSARIAL-REVIEW-2026-10.md), in the browser:
- *   B1  another frame on the host page that posts INIT_PORT to the guest, with or without a port of its own, neither
- *       captures the bridge nor leaves it dead (since the broad review, CB1, the guest takes no port from any message:
- *       its bootstrap makes the channel and announces it to the host, test/e2e/broad-review.spec.ts);
+ *   B1  another frame on the host page that announces a port to the host window (SANDBOX_PORT, with or without a
+ *       port of its own), racing the guest's own announcement, neither captures the bridge nor leaves it dead: the
+ *       host hears only the guest frame's window. (Before the broad review's CB1 the race was INIT_PORT posted into the
+ *       guest; since then the guest takes no port from any message, so the race is at the host's listener.);
  *   B2  the port never reaches guest code, whatever prototypes it patches, so the watchdog cannot be answered
  *       by a delegate while the guest loops;
  *   B4  frames already on their way from an environment that a listener reset are not dispatched;
@@ -24,9 +25,11 @@ const DEADLINE = BUDGET * 1.25 + 1000;
 // ---- B1 ------------------------------------------------------------------------------------------------
 
 /**
- * Starts "another frame on the host page": a same-origin iframe whose own script posts INIT_PORT to the guest
- * frame every 10 ms, alternately without a port and with one it listens on. Posted from its own realm, so the
- * guest sees it as the message source. Returns nothing; window.strangerHeard collects what its port received.
+ * Starts "another frame on the host page": a same-origin iframe whose own script announces itself to the host window
+ * every 5 ms the way the guest's bootstrap does (SANDBOX_PORT), alternately without a port and with one it listens on.
+ * Posted from its own realm, so the host sees it as the message source. window.strangerHeard collects what its ports
+ * received; window.strangerDelivered counts its announcements that reached the host window (a listener the page adds
+ * before the element's own, so it sees every one: the positive control that they arrive while the host listens).
  */
 async function startStranger(page: Page) {
     await page.evaluate(() => {
@@ -34,22 +37,19 @@ async function startStranger(page: Page) {
         frame.id = 'stranger';
         document.body.append(frame);
         (window as any).strangerHeard = [];
-        const guestWindow = () => (document.querySelector('web-sandbox') as any)?.shadowRoot?.querySelector('iframe')?.contentWindow?.frames[0] ?? null;
-        const run = (frame.contentWindow as any).Function('guestWindow', 'heard', `
+        (window as any).strangerDelivered = 0;
+        window.addEventListener('message', (e) => { if (e.source === frame.contentWindow && e.data?.type === 'SANDBOX_PORT') (window as any).strangerDelivered++; }, true);
+        const run = (frame.contentWindow as any).Function('heard', `
             let n = 0;
             return setInterval(() => {
-                const target = guestWindow();
-                if (!target) return;
                 n++;
-                try {
-                    if (n % 2) { target.postMessage({ type: 'INIT_PORT' }, '*'); return; }
-                    const channel = new MessageChannel();
-                    channel.port1.onmessage = (e) => heard.push(JSON.stringify(e.data));
-                    target.postMessage({ type: 'INIT_PORT' }, '*', [channel.port2]);
-                } catch (e) {}
-            }, 10);
+                if (n % 2) { parent.postMessage({ type: 'SANDBOX_PORT' }, '*'); return; }
+                const channel = new MessageChannel();
+                channel.port1.onmessage = (e) => heard.push(JSON.stringify(e.data));
+                parent.postMessage({ type: 'SANDBOX_PORT' }, '*', [channel.port2]);
+            }, 5);
         `);
-        (window as any).strangerTimer = run(guestWindow, (window as any).strangerHeard);
+        (window as any).strangerTimer = run((window as any).strangerHeard);
     });
 }
 
@@ -60,21 +60,27 @@ async function stopStranger(page: Page) {
     });
 }
 
-test('B1: another frame on the host page racing the host with INIT_PORT, with and without a port, neither captures the bridge nor leaves it dead', async ({ sandbox, page }) => {
-    // The guest's image holds its load (and so the host's INIT_PORT) open for 1.5 s; its own listener counts the
-    // stranger's messages it sees, the positive control that they arrive while the bootstrap is listening.
-    const html = `<script>globalThis.__strangers = 0; addEventListener('message', (e) => { if (e.data && e.data.type === 'INIT_PORT') globalThis.__strangers++; });</script>`
-        + `<img src="${recorder.allowed}/delay?ms=1500">`;
+test('B1: another frame on the host page announcing ports to the host window, racing the guest\'s own announcement, neither captures the bridge nor leaves it dead; the guest\'s announcement is the one heard', async ({ sandbox, page }) => {
+    // The guest's image holds its load open for 1.5 s, so the stranger's announcements arrive before, around and after
+    // the guest's own, which the host takes from its first statement on.
+    const html = `<p>guest</p><img src="${recorder.allowed}/delay?ms=1500">`;
+    await page.evaluate(() => {
+        (window as any).terminations = [];
+        document.querySelector('web-sandbox')!.addEventListener('terminated', (e) => (window as any).terminations.push((e as CustomEvent).detail.reason));
+    });
     await startStranger(page);
-    expect(await sandbox.mount({ html, connectionsAllowed: { 'img-src': [recorder.allowed] } })).toBe('ready');
+    expect(await sandbox.mount({ html, watchdogTimeout: 2000, connectionsAllowed: { 'img-src': [recorder.allowed] } })).toBe('ready');
+    await page.waitForTimeout(300); // more announcements after ready, with the watchdog pinging the real port
     await stopStranger(page);
 
+    expect(await page.evaluate(() => (window as any).strangerDelivered)).toBeGreaterThan(20); // positive control
     // the host's port is the bridge's: the bootstrap announced itself on it, and calls work both ways
     await sandbox.waitForLog('iframe Ready', 5000);
     await sandbox.exposeGuest('twice', '(x) => x * 2');
     expect(await sandbox.call('twice', 21)).toBe(42);
-    expect(await sandbox.inGuest('return globalThis.__strangers > 2')).toBe(true);
-    // and the stranger's ports never heard a thing
+    // no announcement of the stranger's ended the environment, and its ports never heard a thing (not a PING, not a call)
+    expect(await page.evaluate(() => (window as any).terminations)).toEqual([]);
+    expect(await sandbox.state()).toBe('ready');
     expect(await page.evaluate(() => (window as any).strangerHeard)).toEqual([]);
 });
 
@@ -123,10 +129,13 @@ test.describe('B2: the port never reaches guest code', () => {
             await sandbox.page.waitForTimeout(BUDGET); // a few watchdog PINGs answered meanwhile
             expect(await sandbox.inGuest('return __ports.length')).toBe(0);
 
-            // positive control: a port the guest does hold (its own channel) is answered by the delegate
+            // positive control: a port the guest does hold (its own channel) is answered by the delegate. Worker mode has
+            // no nested Worker since the independent verification (V1, worker-globals.ts), so there the delegate is a
+            // listener of the guest's own on the other end: what a captured port would let it do in the worker itself.
             const answered = await sandbox.inGuest(`
                 const channel = new MessageChannel();
-                const delegate = ${DELEGATE};
+                const delegate = typeof Worker === 'function' ? ${DELEGATE} : { postMessage: (_, [port]) => { port.onmessage = (m) => { if (m.data && m.data.type === 'PING') port.postMessage({ type: 'PONG', n: m.data.n }); }; port.postMessage({ type: 'DELEGATE_UP' }); } };
+                ${mode === 'worker' ? "if (typeof Worker !== 'undefined') return 'worker mode has a Worker';" : ''}
                 delegate.postMessage(null, [channel.port2]);
                 return await new Promise((resolve) => {
                     channel.port1.onmessage = (e) => { if (e.data.type === 'PONG') resolve(e.data.n); else channel.port1.postMessage({ type: 'PING', n: 7 }); };

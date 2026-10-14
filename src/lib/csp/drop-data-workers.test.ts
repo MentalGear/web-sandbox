@@ -6,6 +6,10 @@ import { addFileSources } from './file-sources';
 import { dropSelfSources } from './drop-self';
 import { dropEvalSources } from './drop-eval';
 import { addEvalSource } from './effective-directive';
+import { policyTokens } from './policy-grammar';
+
+// the policy steps take only the grammar's output (PolicyTokens, A1): test policies are checked into it
+const tokens = (directives: CSPDirectives) => policyTokens(directives, 'test');
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -18,8 +22,8 @@ describe('dropDataWorkerSources (broad review PD1): no worker load from data:', 
     ])('%s', (_, policy, expected) => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const warned = new Set<string>();
-        expect(dropDataWorkerSources(policy, warned)).toEqual(expected);
-        expect(dropDataWorkerSources(policy, warned)).toEqual(expected);
+        expect(dropDataWorkerSources(tokens(policy), warned)).toEqual(expected);
+        expect(dropDataWorkerSources(tokens(policy), warned)).toEqual(expected);
         expect(warn).toHaveBeenCalledTimes(1); // once per directive and instance
         expect(effectiveSources(expected as CSPDirectives, 'worker-src').has('data:')).toBe(false);
     });
@@ -27,7 +31,7 @@ describe('dropDataWorkerSources (broad review PD1): no worker load from data:', 
     it('a policy whose workers do not admit data: is returned as it is, silently', () => {
         const warn = vi.spyOn(console, 'warn');
         for (const policy of [{}, { 'worker-src': ['blob:'] }, { 'img-src': ['data:'] }, { 'worker-src': ['blob:'], 'script-src': ['data:'] }] as CSPDirectives[]) {
-            expect(dropDataWorkerSources(policy, new Set())).toEqual(policy);
+            expect(dropDataWorkerSources(tokens(policy), new Set())).toEqual(policy);
         }
         expect(warn).not.toHaveBeenCalled();
     });
@@ -64,11 +68,11 @@ describe('assertWidensOnly (broad review PA1): the postcondition of every policy
             }
             const p = policy as CSPDirectives;
             expect(() => {
-                dropEvalSources(p, random() < 0.5, new Set());
-                dropDataWorkerSources(p, new Set());
-                addFileSources(p, ['text/javascript', 'text/css', 'image/png'].filter(() => random() < 0.5), new Set());
-                addEvalSource(p);
-                dropSelfSources(p, new Set());
+                dropEvalSources(tokens(p), random() < 0.5, new Set());
+                dropDataWorkerSources(tokens(p), new Set());
+                addFileSources(tokens(p), ['text/javascript', 'text/css', 'image/png'].filter(() => random() < 0.5), new Set());
+                addEvalSource(tokens(p));
+                dropSelfSources(tokens(p), new Set());
             }, JSON.stringify(policy)).not.toThrow();
         }
     });

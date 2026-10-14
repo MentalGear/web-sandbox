@@ -5,6 +5,7 @@ by construction or hardened (each failed a test first), 1 hardening done where n
 meta), 3 property tests and one agreement test added for properties that held (PA2, PA3, I1), residuals measured
 and asserted per engine (PD2, PD3, PD4, PD5, PD6, PD7); reviewer C (strict mode): the renderer became an allowlist, 4 findings fixed (ST1–ST4), 1 residual opened (S42, CSS paint cost in WebKit); see the [strict section](#strict-mode-reviewer-c) · **Backlog**: S32–S42
 · **Earlier**: [adversarial review 2026-10](ADVERSARIAL-REVIEW-2026-10.md), [focused review 2026-10-14](FOCUSED-REVIEW-2026-10-14.md)
+· **Then**: [independent verification 2026-10-14](VERIFICATION-2026-10-14.md) (S43–S45; see [below](#independent-verification-2026-10-14))
 
 ## Scope and method
 
@@ -266,20 +267,30 @@ The three markup presets (`csp-swallow`, `form-action-exfil`, `self-navigation`)
 
 ## Residuals, with rationale
 
+The default-mode residuals, one list (the same in [README](../../README.md#default-mode-residuals) and the
+[backlog](../BACKLOG.md#s44--default-mode-residuals-one-list-user-actions-history-guest-workers--documented-residual));
+the last six rows were added by the [independent verification](VERIFICATION-2026-10-14.md).
+
 | Id | What remains | Why it is not closed in default mode | Asserted by |
 | :--- | :--- | :--- | :--- |
 | PD2 | Firefox sends a keepalive `fetch` past `connect-src` from a frame the guest creates | That frame is a realm of its own; the bootstrap runs only in the guest's realm (the S13 class). Upstream bug | `broad-review.spec.ts` "PD2 … residual" |
 | PD3 | WebKit opens a connection for `<link rel=preconnect>` to any origin | No directive governs it; the guest's markup is its own | `broad-review.spec.ts` "PD3 … residual" |
 | PD4 | A frame the guest creates moves the host page with `history.back()` (Firefox, WebKit) | As PD2 | `broad-review.spec.ts` "PD4 … residual" |
-| PD5 | Guest code takes focus (Chromium, Firefox) and, after a user's click, writes the clipboard (Firefox; `execCommand` in Chromium and Firefox) | A page cannot take these from a frame it embeds without breaking ordinary input | `broad-review.spec.ts` "PD5" |
+| PD5 | Guest code takes focus (Chromium, Firefox) and, in a user's click, writes the clipboard (`writeText()` in Firefox and, in the click's own handler, WebKit; `execCommand` in Chromium and Firefox) | A page cannot take these from a frame it embeds without breaking ordinary input | `broad-review.spec.ts` "PD5" |
 | PD6 | A frame the guest creates can take a name the host page targets | As PD2; host pages should not use named targets | `broad-review.spec.ts` "PD6 … residual" |
 | PD7 | The guest can post messages to the host window | Any frame can; embedders check `event.source` | `broad-review.spec.ts` "PD8 … (PD7 …)" |
 | PD8 | Firefox's `<meta refresh>` replaces the guest with a document that announces nothing | Nothing of the guest's runs any more; the watchdog bounds the silent channel where it is on | `broad-review.spec.ts` "PD8 … meta refresh" |
 | CB3 | A guest page whose load (subresources included) takes longer than 5 s of host time terminates | The bound on `loading` (decision above) | `broad-review.spec.ts` "CB3" |
+| S13, S17 | A frame the guest creates keeps WebRTC (its ICE leaves) and, in WebKit, reads the host page URL as its referrer; `frame-src 'none'` refuses frames that load a URL, not frames made from markup | The frame is a realm of its own | `webrtc.spec.ts`, `host-url.spec.ts` |
+| V1 | A worker the guest creates (iframe mode) is a realm the library never reaches: Firefox sends its `EventSource` and loads its `FontFace` past the policy | As PD2; worker and strict mode have no such worker (their worker keeps only allowlisted globals) | `verification.spec.ts` "V1 … residual" |
+| V3 | The user's Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens a new tab at the guest's URL (Chromium, Firefox; Playwright's WebKit opens none, a measurement limit) | Platform behaviour of any sandboxed frame; no policy governs a new top-level context. Strict mode's links are inert | `verification.spec.ts` "V3" |
+| H1 | The guest's fragment navigations add entries to the tab's history (every engine), and a refused navigation adds one in Chromium | Session history is the tab's | `verification.spec.ts` "H1" |
+| — | Firefox and WebKit attach the host site's cookies to a guest request to an allowed origin same-site with the host page (observed by the verification, not re-measured) | The guest's origin is opaque, its requests' site is the browser's call | — |
+| S8, S15, S18 | The pre-policy window of a `<meta>` policy; the host origin in `ancestorOrigins` and image `Referer`; WebKit's full host URL to same-site origins on request | Platform limits stated before this review | backlog S8, S15, S18 |
 
 Strict mode runs no guest script in a document (its guest code runs in a worker, which has no history, frame name or
 focus, and its renderer keeps no `link` but stylesheets and icons); those paths were not re-measured in strict mode
-here. The residuals stated before this review are unchanged.
+here.
 
 ## Areas reviewed and found sound
 
@@ -438,6 +449,9 @@ suite per engine; the changed and new specs with `--repeat-each 3`.
 | :--- | :--- | :--- | :--- |
 | Full e2e at `12d7924` | 419 passed, 8 skipped | 418 passed, 9 skipped | 417 passed, 10 skipped |
 | Full e2e after | 443 passed, 8 skipped | 442 passed, 9 skipped | 441 passed, 10 skipped |
+
+Skipped: 8 per engine are the research 15 design probes (their own config, `bun run test:probes`), plus research 11
+on Firefox and WebKit and research 01's sanity check on WebKit.
 | New `broad-review.spec.ts` at `12d7924` | 14 failed, 10 passed | 13 failed, 11 passed | 15 failed, 9 passed |
 | Changed and new specs, `--repeat-each 3` (81 tests × 3: `broad-review`, `fetch-bridge`, `files`, `review-channels`, `review-policy`) | 243 passed | 243 passed | 243 passed |
 
@@ -457,7 +471,10 @@ and WebKit (a local config on port 4545, two workers); the strict specs with `--
 | `broad-strict.spec.ts` before the fix | 9 of 10 failed per engine (27); the positive control passed |
 | Strict specs × 3 (`broad-strict`, `strict`, `review-strict`, `focused-review`, `strict-events`, `strict-render-flood`, `review-policy`; 675 runs) | 673 passed, 2 failed, root-caused below; after the fix the affected specs × 3 on Chromium: 36 passed |
 
-The skipped tests are per-engine measurements that do not apply to that engine, as before.
+Of the 27 skipped tests, 24 (8 per engine) are the strict-mode design probes of research 15, which run only under their
+own config; since the [independent verification](VERIFICATION-2026-10-14.md) CI runs them (`bun run test:probes`). The
+other 3 are per-engine measurements that do not apply to that engine (research 11 on Firefox and WebKit, research 01's
+sanity check on WebKit).
 
 One failure on the way, root-caused: `strict-render-flood.spec.ts` (markup flood) failed twice of three on Chromium
 under `--repeat-each` with host lag 296 and 364 ms against a 250 ms bound. The bound assumed Chromium runs the view
@@ -468,11 +485,20 @@ renderer. The Chromium bound in that spec and in `watchdog.spec.ts`'s render-the
 (600 ms), with the measurement in the comment.
 
 
+## Independent verification (2026-10-14)
+
+Five verifiers checked this review and the two before it ([full report](VERIFICATION-2026-10-14.md)): 63 of 66
+mutations of the claimed fixes were caught, the reported counts reproduced, 3 of 3 sampled "failed before" claims
+reproduced. They found one new high finding on Firefox, fixed by construction (V1: a guest worker's `EventSource` and
+`FontFace` passed the policy; the worker now keeps only allowlisted globals, S43), a lost-log bug in strict mode (V2),
+a user-action residual now in the list above (V3, modifier clicks), and 9 test gaps, each closed with a test that fails
+under the mutation that had survived (S45).
+
 ## Appendix: upstream reports
 
-Paste-ready texts. **Verify in release browsers before filing**: both were measured in Playwright's builds on Linux
+Paste-ready texts. **Verify in release browsers before filing**: all three were measured in Playwright's builds on Linux
 (Chromium 145.0.7632.6, Firefox 146.0.1, WebKit 26.0), on a plain page served with a header policy, outside the
-sandbox. Chromium refused both.
+sandbox. Chromium refused all of them.
 
 ### PD1 — WebKit (bugs.webkit.org, product: Security)
 
@@ -532,3 +558,40 @@ Also in a sandboxed `srcdoc` iframe with a `<meta>` policy. Not observed from a 
 
 **Impact**: any content restricted by `connect-src` (sandboxes, pages with injected script under a strict policy) can
 send data to any origin.
+
+### V1 — Firefox (Bugzilla, Core :: DOM: Security, security-sensitive)
+
+*Added by the [independent verification](VERIFICATION-2026-10-14.md).*
+
+**Title**: EventSource and FontFace in a dedicated worker are not checked against connect-src and font-src
+
+**Summary**: In a worker whose policy forbids connections (`connect-src 'none'`) and fonts (`font-src 'none'`),
+`new EventSource(url)` and `new FontFace(name, 'url(…)').load()` reach any origin. No violation is reported. `fetch()`,
+`XMLHttpRequest`, `WebSocket` and `importScripts()` from the same worker are refused, and the same `EventSource` and
+`FontFace` in the document are refused.
+
+**Steps to reproduce**: serve this page with the header
+`Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; connect-src 'none'; font-src 'none'; worker-src blob:`,
+and run a listener at `http://127.0.0.1:8081` that logs requests:
+
+```html
+<!DOCTYPE html>
+<script>
+  const body = "new EventSource('http://127.0.0.1:8081/worker-es');"
+    + "new FontFace('x', 'url(http://127.0.0.1:8081/worker-font.woff)').load().catch(() => {});"
+    + "fetch('http://127.0.0.1:8081/worker-fetch').catch(() => {});";
+  new Worker(URL.createObjectURL(new Blob([body], { type: 'text/javascript' })));
+  new EventSource('http://127.0.0.1:8081/page-es');
+  new FontFace('y', 'url(http://127.0.0.1:8081/page-font.woff)').load().catch(() => {});
+</script>
+```
+
+**Expected**: no request reaches the listener; the worker inherits the document's policy (CSP3, a worker created from
+a `blob:` URL), so all three are refused and reported.
+
+**Actual** (Firefox 146.0.1, Playwright build, Linux): the listener receives `GET /worker-es` and `GET /worker-font.woff`;
+`/worker-fetch`, `/page-es` and `/page-font.woff` are refused. Also from a worker started inside an opaque-origin
+sandboxed iframe with a `<meta>` policy. Chromium and WebKit refuse all five.
+
+**Impact**: any worker restricted by `connect-src` can send data to any origin through `EventSource` (the URL carries
+it) and `FontFace`.

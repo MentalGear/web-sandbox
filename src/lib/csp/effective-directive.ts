@@ -1,5 +1,6 @@
 import type { CSPDirectives } from "../../csp-directives";
 import { defineData } from "../utils";
+import { policyTokens, type PolicyTokens } from "./policy-grammar";
 
 /**
  * Which directive of a policy governs a kind of check: the one table every part of the library that reasons
@@ -152,10 +153,11 @@ const UNSAFE_EVAL = "'unsafe-eval'";
  * `directives["script-src"]?.push(...)`, which did nothing at all for a policy without script-src.
  * A script-src that is not a list is left for generateCSP to refuse.
  */
-export function addEvalSource(policy: CSPDirectives): CSPDirectives {
+export function addEvalSource(policy: PolicyTokens): PolicyTokens {
+    policyTokens(policy, 'addEvalSource');
     const output = { ...policy } as CSPDirectives;
     const current = effectiveDirective(policy, 'eval') === 'script-src' ? directiveOf(policy, 'script-src') : inheritedDefaultSources(policy);
-    if (!Array.isArray(current)) return output;
+    if (!Array.isArray(current)) return output as PolicyTokens;
     defineData(output, 'script-src', [...current, UNSAFE_EVAL]);
-    return assertWidensOnly(policy, output, ['eval'], 'addEvalSource');
+    return policyTokens(assertWidensOnly(policy, output, ['eval'], 'addEvalSource'), 'addEvalSource');
 }

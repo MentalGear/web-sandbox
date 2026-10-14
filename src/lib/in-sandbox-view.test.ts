@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, RENDER_RULES, RENDER_URL_ATTRIBUTES, sanitizeRender, VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, viewBootstrapText } from './in-sandbox-view';
 import { REFERENCES } from './markup-references';
+import { inSandboxFiles } from './in-sandbox-files';
 import { VIOLATION_EVENT_LIMIT } from './violation';
 import { mimeTypeFor } from './files';
 
@@ -252,7 +253,7 @@ describe('the view bootstrap', () => {
 });
 
 describe('the strict worker prelude (unit; the e2e specs cover it in real workers)', () => {
-    it('removes Worker, SharedWorker, URL.createObjectURL and (without scriptUnsafe) WebAssembly; render() validates; an untrusted INIT is ignored', () => {
+    it('removes URL.createObjectURL and (without scriptUnsafe) WebAssembly (Worker and SharedWorker: worker-globals.ts, first); render() validates; an untrusted INIT is ignored', () => {
         // run as stringified, with globalThis bound to a stand-in global (a real EventTarget), so the test realm is untouched
         const w = new EventTarget() as any;
         const fakeUrl = { createObjectURL: () => 'blob:x' };
@@ -260,7 +261,7 @@ describe('the strict worker prelude (unit; the e2e specs cover it in real worker
         const attached: unknown[] = [];
         const run = new Function('globalThis', `return (${inStrictWorker.toString()})`)(w);
         run({ attach: (port: unknown) => attached.push(port) }, { scriptUnsafe: false, maxRender: 10, maxTarget: 5, maxElements: 100, maxDepth: 10, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
-        expect(['Worker', 'SharedWorker', 'WebAssembly'].filter(name => name in w)).toEqual([]);
+        expect(['WebAssembly'].filter(name => name in w)).toEqual([]);
         expect('createObjectURL' in fakeUrl).toBe(false);
 
         const view = w.sandboxView;
@@ -307,9 +308,9 @@ describe('review C2 and C3: the strict worker prelude against hostile globals', 
 
     it('a name the prelude must remove but cannot is an error, not a silent pass (C2)', () => {
         const w = new EventTarget() as any;
-        Object.defineProperty(w, 'Worker', { value: function Worker() {}, writable: true, enumerable: true, configurable: false });
+        Object.defineProperty(w, 'WebAssembly', { value: {}, writable: true, enumerable: true, configurable: false });
         Object.assign(w, { URL: {} });
-        expect(() => start(w)).toThrowError(/could not remove Worker/);
+        expect(() => start(w)).toThrowError(/could not remove WebAssembly/);
     });
 
     it("writes to the prelude's lists never reach a setter on Array.prototype (C3)", () => {
@@ -392,20 +393,33 @@ describe('broad review 2026-10-14: the renderer is an allowlist', () => {
         return out;
     };
 
-    it("property: whatever is rendered, every element left is on its namespace's list and every attribute on its list; no handler, no script-capable URL is left (300 random corpora)", () => {
-        for (let seed = 1; seed <= 300; seed++) {
-            const fragment = sanitize(markup(rng(seed), 3));
-            for (const element of Array.from(fragment.querySelectorAll('*'))) {
-                expect(allowedElement(element), `seed ${seed}: <${element.localName}> in ${element.namespaceURI}`).toBe(true);
-                for (const name of element.getAttributeNames()) {
-                    expect(allowedAttribute(element, name), `seed ${seed}: ${element.localName}[${name}]`).toBe(true);
-                    expect(name.toLowerCase().startsWith('on'), name).toBe(false);
-                    const value = element.getAttribute(name)!.replace(/[\t\n\r]/g, '').trim().toLowerCase();
-                    if (['src', 'srcset', 'href', 'xlink:href', 'poster'].includes(name)) expect(/^(javascript|data|vbscript):/.test(value), `${element.localName}[${name}]=${value}`).toBe(false);
-                }
+    // What the renderer left in one corpus that it should not have: one line per element or attribute, empty when sound.
+    const leftovers = (seed: number): string[] => {
+        const found: string[] = [];
+        const fragment = sanitize(markup(rng(seed), 3));
+        for (const element of Array.from(fragment.querySelectorAll('*'))) {
+            if (!allowedElement(element)) found.push(`seed ${seed}: <${element.localName}> in ${element.namespaceURI}`);
+            for (const name of element.getAttributeNames()) {
+                if (!allowedAttribute(element, name) || name.toLowerCase().startsWith('on')) found.push(`seed ${seed}: ${element.localName}[${name}]`);
+                const value = element.getAttribute(name)!.replace(/[\t\n\r]/g, '').trim().toLowerCase();
+                if (['src', 'srcset', 'href', 'xlink:href', 'poster'].includes(name) && /^(javascript|data|vbscript):/.test(value)) found.push(`seed ${seed}: ${element.localName}[${name}]=${value}`);
             }
         }
-    });
+        return found;
+    };
+
+    // The cost is CPU in jsdom (measured on a similar corpus: about two thirds parsing the corpora into templates, a
+    // quarter the renderer's walk; 1.5 s on an idle core for the 300 corpora, about 9 000 elements). It failed vitest's
+    // default 5 s timeout on a loaded machine (9 s with other processes on all four cores; independent verification
+    // 2026-10-14): not a hang, a fixed amount of work run slower. So the checks are collected and asserted once
+    // instead of one expect() per attribute (1.8 s → 1.5 s idle), and the test states its own bound, 30 s: twenty
+    // times its idle cost, three times the worst measured under load. The 300 seeded corpora stay, since what they
+    // cover — every listed and unlisted name, three namespaces, depth 3 — is the property.
+    it("property: whatever is rendered, every element left is on its namespace's list and every attribute on its list; no handler, no script-capable URL is left (300 random corpora)", () => {
+        const found: string[] = [];
+        for (let seed = 1; seed <= 300; seed++) found.push(...leftovers(seed));
+        expect(found).toEqual([]);
+    }, 30000);
 
     it('unknown HTML elements are unwrapped (their checked children take their place, moved, not cloned); unknown SVG and MathML elements go with their content; a custom element name is kept, a reserved one unwrapped', () => {
         const clone = vi.spyOn(Node.prototype, 'cloneNode');
@@ -483,15 +497,20 @@ describe('the view bootstrap: budgets (broad review ST2, ST3)', () => {
         document.body.replaceChildren();
     });
 
-    // Starts the bootstrap in this document with a fake Worker; returns the worker's end of the render port.
-    const startView = () => {
+    // Starts the bootstrap in this document with a fake Worker; returns the worker's end of the render port. `maxElements`
+    // replaces the element budget in the bootstrap's literal: the budget test counts the same way at 500 elements as at
+    // VIEW_MAX_ELEMENTS (50 000), which cost 1.6 s of jsdom DOM work idle and timed out under load (independent
+    // verification 2026-10-14). The shipped literal holds VIEW_MAX_ELEMENTS (asserted below), and the e2e budget tests
+    // (broad-strict.spec.ts, ST2) render the real 50 000 in every engine.
+    const startView = (maxElements = VIEW_MAX_ELEMENTS) => {
         const workers: { transfer: MessagePort[] }[] = [];
         (globalThis as any).Worker = class {
             onerror: unknown = null;
             constructor() { workers.push({ transfer: [] }); }
             postMessage(_message: unknown, transfer: MessagePort[]) { workers[workers.length - 1]!.transfer = transfer; }
         };
-        new Function(viewBootstrapText())();
+        const options = { ...VIEW_OPTIONS, render: { ...VIEW_OPTIONS.render, maxElements } };
+        new Function(maxElements === VIEW_MAX_ELEMENTS ? viewBootstrapText() : `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(options)});`)();
         const a = new MessageChannel(), b = new MessageChannel();
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<div id="a"></div><div id="b"></div>' }, source: window, ports: [a.port1, b.port1] }));
         const render = workers[0]!.transfer[1]!;
@@ -507,10 +526,12 @@ describe('the view bootstrap: budgets (broad review ST2, ST3)', () => {
     const acks = (received: any[]) => received.filter(m => m.type === 'VIEW_ACK');
 
     it('a render past the element budget, counted over the resulting document, is dropped and acknowledged with the reason; the next one applies; replacing a target frees its elements', async () => {
-        const { render, received } = startView();
-        render.postMessage({ type: 'VIEW_RENDER', html: '<p>'.repeat(VIEW_MAX_ELEMENTS - 4), into: 'a' }); // 3 characters each: within VIEW_RENDER_MAX_LENGTH
+        expect(VIEW_OPTIONS.render.maxElements).toBe(VIEW_MAX_ELEMENTS); // the shipped budget; this test runs the same code at 500
+        const BUDGET = 500;
+        const { render, received } = startView(BUDGET);
+        render.postMessage({ type: 'VIEW_RENDER', html: '<p>'.repeat(BUDGET - 4), into: 'a' });
         await until(() => acks(received).length === 1);
-        expect(document.body.getElementsByTagName('*').length).toBe(VIEW_MAX_ELEMENTS - 2);
+        expect(document.body.getElementsByTagName('*').length).toBe(BUDGET - 2);
         render.postMessage({ type: 'VIEW_RENDER', html: '<p></p><p></p><p></p>', into: 'b' }); // one too many
         await until(() => acks(received).length === 2);
         expect(acks(received)[1]).toEqual({ type: 'VIEW_ACK', refused: ['VIEW_MAX_ELEMENTS'] });
@@ -518,7 +539,7 @@ describe('the view bootstrap: budgets (broad review ST2, ST3)', () => {
         render.postMessage({ type: 'VIEW_RENDER', html: '<p></p><p></p>', into: 'b' }); // exactly the budget
         await until(() => acks(received).length === 3);
         expect(acks(received)[2]).toEqual({ type: 'VIEW_ACK' });
-        expect(document.body.getElementsByTagName('*').length).toBe(VIEW_MAX_ELEMENTS);
+        expect(document.body.getElementsByTagName('*').length).toBe(BUDGET);
         render.postMessage({ type: 'VIEW_RENDER', html: '<p></p>', into: 'a' }); // replaces a's elements
         await until(() => acks(received).length === 4);
         render.postMessage({ type: 'VIEW_RENDER', html: '<p></p>'.repeat(100), into: 'b' });

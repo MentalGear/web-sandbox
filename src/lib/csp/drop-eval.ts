@@ -1,6 +1,7 @@
 import type { CSPDirectives } from "../../csp-directives";
 import { defineData } from "../utils";
 import { assertWidensOnly } from "./effective-directive";
+import { policyTokens, type PolicyTokens } from "./policy-grammar";
 
 /**
  * 'unsafe-eval' and 'wasm-unsafe-eval' belong to scriptUnsafe (review A5). scriptUnsafe is the one switch for
@@ -10,14 +11,15 @@ import { assertWidensOnly } from "./effective-directive";
  * with a warning once per directive while scriptUnsafe is off, silently while it is on (the host's own
  * 'unsafe-eval' covers WebAssembly too).
  *
- * Runs on directives that went through the policy grammar (policy-grammar.ts), so every value is one token.
+ * Takes only the policy grammar's output (PolicyTokens, policy-grammar.ts), so every element it reads is one token.
  */
 const EVAL_KEYWORDS = ["'unsafe-eval'", "'wasm-unsafe-eval'"];
 
 const isEvalKeyword = (token: unknown) => typeof token === 'string' && EVAL_KEYWORDS.includes(token.toLowerCase());
 
 /** Returns a copy of `directives` without eval keywords; warns once per directive per instance (`warned`) unless `scriptUnsafe`. */
-export function dropEvalSources(directives: CSPDirectives, scriptUnsafe: boolean, warned: Set<string>): CSPDirectives {
+export function dropEvalSources(directives: PolicyTokens, scriptUnsafe: boolean, warned: Set<string>): PolicyTokens {
+    policyTokens(directives, 'dropEvalSources');
     const output: Record<string, unknown> = { ...directives };
     for (const [name, values] of Object.entries(directives)) {
         if (!Array.isArray(values) || !values.some(isEvalKeyword)) continue;
@@ -26,5 +28,5 @@ export function dropEvalSources(directives: CSPDirectives, scriptUnsafe: boolean
         warned.add(name);
         console.warn(`[Sandbox] 'unsafe-eval' and 'wasm-unsafe-eval' are not allowed in "connectionsAllowed.${name}" and were dropped: evaluating strings as code is enabled only by scriptUnsafe, which warns about what it costs.`);
     }
-    return assertWidensOnly(directives, output as CSPDirectives, [], 'dropEvalSources');
+    return policyTokens(assertWidensOnly(directives, output as CSPDirectives, [], 'dropEvalSources'), 'dropEvalSources');
 }

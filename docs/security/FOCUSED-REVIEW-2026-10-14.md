@@ -211,7 +211,10 @@ suite per engine; the changed and new specs with `--repeat-each 3`.
 | Changed and new specs, `--repeat-each 3` (60 tests × 3) | 180 passed | 180 passed | 180 passed |
 | New `focused-review.spec.ts` before each fix | 12 failed, 6 passed | 12 failed, 6 passed | 12 failed, 6 passed |
 
-The skipped tests are per-engine measurements that do not apply to that engine. The new spec has 18 tests per
+The skipped tests (8, 9 and 10 per engine) are the strict-mode design probes of research 15 (8 per engine), which run
+only under their own config (`bun run test:probes`, in CI since the [independent verification](VERIFICATION-2026-10-14.md)),
+and 3 per-engine measurements that do not apply to that engine (research 11 on Firefox and WebKit, research 01's
+sanity check on WebKit). The new spec has 18 tests per
 engine; the 12 that failed before are W1's four non-guarantee tests (run against `affe25e`), F1's two (against the
 W1 commit) and F2's A1, A2 and concurrent cases in two modes (against the F1 commit). Changed and repeated specs:
 `focused-review`, `worker-timeout`, `strict`, `review-strict`, `review-followup`.

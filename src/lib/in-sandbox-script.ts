@@ -265,6 +265,32 @@ export function inSandboxScript(
         writeFiles = (request: unknown) => callWithTimeout(30000, 'sandbox:write', request);
     }
 
+    // Console output (every level a 'sandbox-log' detail can carry, sandbox-log.ts, info included: backlog B8), relayed
+    // from now on, before any guest code runs. Lines logged before the port is attached wait in the outbox like bridge
+    // frames, in order with them, and are flushed on attach: a strict entry runs its top level before the view hands
+    // the worker its ports, so its synchronous lines were lost when the relay was installed only on attach (independent
+    // verification 2026-10-14). At most LOG_BUFFER_LIMIT lines wait (the host dispatches LOG_EVENTS_PER_SECOND, the
+    // same number, in any second anyway); past that they are counted, and one warning says how many were dropped.
+    const LOG_BUFFER_LIMIT = 1000;
+    let logsBuffered = 0;
+    let logsDropped = 0;
+    const levels = ['log', 'info', 'warn', 'error'] as const;
+    for (let i = 0; i < levels.length; i++) {
+        const level = levels[i]!;
+        const original = sandboxConsole[level];
+        sandboxConsole[level] = (...args: any[]) => {
+            if (port) post({ type: 'LOG', level, args });
+            else if (logsBuffered < LOG_BUFFER_LIMIT) {
+                logsBuffered++;
+                append(outbox, { type: 'LOG', level, args });
+            } else logsDropped++;
+            // Log to the actual browser console for easier debugging
+            if (original) {
+                apply(original, sandboxConsole, args);
+            }
+        };
+    }
+
     const attach = (handedPort: MessagePort) => {
         if (port) return;
         port = handedPort;
@@ -309,20 +335,6 @@ export function inSandboxScript(
             if (handleBridgeMessage) handleBridgeMessage(data);
         }]);
 
-        // Every level a 'sandbox-log' detail can carry (sandbox-log.ts), info included (backlog B8).
-        const levels = ['log', 'info', 'warn', 'error'] as const;
-        for (let i = 0; i < levels.length; i++) {
-            const level = levels[i]!;
-            const original = sandboxConsole[level];
-            sandboxConsole[level] = (...args: any[]) => {
-                post({ type: 'LOG', level, args });
-                // Log to the actual browser console for easier debugging
-                if (original) {
-                    apply(original, sandboxConsole, args);
-                }
-            };
-        }
-
         // Flush anything the guest queued before the port existed, then announce readiness. A frame that
         // cannot be posted is skipped rather than thrown: a throw would escape this listener and take the
         // frames behind it and the ready message down with it.
@@ -336,6 +348,7 @@ export function inSandboxScript(
         }
         outbox.length = 0;
         if (skipped > 0) sandboxConsole.warn(`[bridge] skipped ${skipped} queued bridge frame(s) that could not be posted (not transferable).`);
+        if (logsDropped > 0) post({ type: 'LOG', level: 'warn', args: [`[Sandbox] ${logsDropped} console line(s) logged before the sandbox was connected were dropped: at most ${LOG_BUFFER_LIMIT} are kept until then.`] });
 
         post({ type: 'LOG', level: 'info', args: [`${mode} Ready`] });
     };

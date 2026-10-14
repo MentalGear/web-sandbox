@@ -88,11 +88,24 @@ async function attachedCdp(session: CDPSession, targetId: string): Promise<Cdp> 
     };
 }
 
+/** Chromium only: how many out-of-process iframe targets the page has (0 when every frame shares the host's process). */
+export async function chromiumOutOfProcessFrames(page: Page): Promise<number> {
+    const session = await page.context().newCDPSession(page);
+    try {
+        const { targetInfos } = await session.send('Target.getTargets' as any) as { targetInfos: { type: string; parentFrameId?: string }[] };
+        return targetInfos.filter(t => t.type === 'iframe' && t.parentFrameId).length;
+    } finally {
+        await session.detach().catch(() => {});
+    }
+}
+
 // Visits every Chromium frame of the page (see the top of this file), depth first, with the CDP client that owns
 // it, its frame id, its path and its default execution context (if any).
-type FrameVisitor = (cdp: Cdp, frame: CdpFrameTree['frame'], path: string, contextId: number | undefined) => Promise<void>;
+export type FrameVisitor = (cdp: Cdp, frame: CdpFrameTree['frame'], path: string, contextId: number | undefined) => Promise<void>;
 
-async function walkChromiumFrames(page: Page, visit: FrameVisitor): Promise<void> {
+// `name` gives each frame its path segment by depth (this file's main/wrapper/view, or a caller's own scheme, e.g. the
+// research 15 probes').
+export async function walkChromiumFrames(page: Page, visit: FrameVisitor, name: (depth: number, frameName: string | undefined) => string = frameName): Promise<void> {
     const session = await page.context().newCDPSession(page);
     const clients: Cdp[] = [];
     try {
@@ -109,8 +122,8 @@ async function walkChromiumFrames(page: Page, visit: FrameVisitor): Promise<void
             await cdp.send('Runtime.enable');
             const { frameTree } = await cdp.send('Page.getFrameTree') as { frameTree: CdpFrameTree };
             const walk = async (tree: CdpFrameTree, parentPath: string, depth: number) => {
-                const name = frameName(depth, tree.frame.name);
-                const path = parentPath ? `${parentPath}/${name}` : name;
+                const segment = name(depth, tree.frame.name);
+                const path = parentPath ? `${parentPath}/${segment}` : segment;
                 await visit(cdp, tree.frame, path, contexts.get(tree.frame.id));
                 for (const child of tree.childFrames ?? []) await walk(child, path, depth + 1);
                 for (const target of outOfProcess.filter(t => t.parentFrameId === tree.frame.id)) {

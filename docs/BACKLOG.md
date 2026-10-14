@@ -25,7 +25,7 @@ conditional "continue".
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker; taken only from the host's INIT_PORT, never reachable by guest code, only the current environment's port heard (S21) |
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7); at most 256 inbound calls in flight per environment, then `BUSY` (S22) |
 | Host-mediated network | ✅ opt-in `fetchBridge`: `sandboxFetch()` under the bridge discipline, every request logged as a `fetch` event, refusals coded (B5, [ADR-006](ADR-006-fetch-bridge.md)) |
-| Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1) |
+| Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1); it keeps only allowlisted globals, so every request it can make goes through `fetch`, `XMLHttpRequest`, `WebSocket` or `importScripts`, each governed by the policy on every engine (S43) |
 | Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5; per directive for the strict view, S24); a listener's `reset()`/`terminate()` is never undone, through one helper (S22); every build failure, and every config that cannot be used, is a termination with a reason, and the config is a copy (S26); `workerExecutionTimeout` requires a free event loop at each `execute()` deadline, else terminates (B8, S30) |
 | Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
 | Execution budget | ✅ strict mode bounds guest logic on every engine: it runs only in a worker the watchdog stops (S6, [ADR-005](ADR-005-strict-mode.md)); default mode: opt-in watchdog, bounded in worker mode and out-of-process frames, not where the frame shares the host's thread |
@@ -34,15 +34,16 @@ conditional "continue".
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C); the specs run the playground's presets, and a security preset without a spec fails the unit suite (T4) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
 | Type check | ✅ `bun run typecheck` is clean and gates CI (H3) |
-| CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2) |
+| CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2), and the strict-mode design probes (research 15) on all three (S45) |
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
 | Default policy | ✅ `base-uri` and `form-action` default to `'none'` (S9); an empty directive is `'none'`, and the defaults leave unset fetch directives to `default-src` (S16); no `'self'` in any guest directive, dropped with a warning if configured (S14); `blob:` only with registered files, only for their types' directives ([ADR-004](ADR-004-files-as-blob-urls.md)) |
 | Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`), each only for a load its type is for (S27); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); guest writes opt-in (`guestWrites`): checked by the store's own rules into a per-environment overlay, never given a URL, kept only by an explicit `commitGuestWrites(paths)`, code only with `{ code: true }` (C5) |
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18). ✅ in strict mode: guest code sees only its worker's `blob:` URL and no request carries a `Referer` |
 | API reference | ✅ [`API.md`](API.md): the whole public surface, checked against the code by a unit test (D3); framework adapters out of scope |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
-| Adversarial review 2026-10 | ✅ 21 candidates: 19 fixed (S19–S24), 1 held and is now asserted (A8, S20), 1 documented by design (S25), no residual open; the follow-up by-construction audit moved C1, C4 and C5 to done (S24), found two gaps (S26) and hardened A3, A6, A7, B5, B6; [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
+| Adversarial review 2026-10 | ✅ 21 candidates: 19 fixed (S19–S24), 1 held and is now asserted (A8, S20), 1 documented by design (S25), none of them left as a residual (the default-mode residuals stated elsewhere remain: S44); the follow-up by-construction audit moved C1, C4 and C5 to done (S24), found two gaps (S26) and hardened A3, A6, A7, B5, B6; [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
 | Broad review 2026-10-14 | ✅ reviewers A, B, D (S32–S37): the guest announces its port (CB1, PD8), bounded loading (CB3), no `data:` workers (PD1), guest-realm hardening for keepalive, history, `window.name`, DNS prefetch (PD2–PD4, PD6) with residuals stated (S35, S36); reviewer C's strict-mode findings (ST1–ST4) are reported separately; [report](security/BROAD-REVIEW-2026-10-14.md) |
+| Independent verification 2026-10-14 | ✅ five verifiers (63 of 66 mutations caught): a Firefox worker's `EventSource` and `FontFace` passed the policy, closed by an allowlist of worker globals (S43); a strict entry's synchronous console lines arrive (S45); the default-mode residuals in one list, user actions and history added (S44); 9 test gaps closed and the design probes in CI (S45); [report](security/VERIFICATION-2026-10-14.md) |
 | Focused review 2026-10-14 | ✅ 11 findings and one hardening, all closed (S27–S31): a reference names a file only for the kind of load its type is for (W1), rates hold in any one-second window (W2), the strict renderer removes SVG animation (F1), `workerExecutionTimeout` is a free event loop at the deadline (F2), no error text in reasons (F3), no assigned config keys (F4), one eval writer (F5), refused configs never stored (F6); [report](security/FOCUSED-REVIEW-2026-10-14.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
@@ -58,6 +59,8 @@ D3 was done on 2026-10-14 as an API reference only; its framework adapters moved
 as a reserved broker method, `sandbox:write` ([ADR-004 amendment](ADR-004-files-as-blob-urls.md#amendment-guest-writes-2026-10-14)).
 Two focused review rounds the same day ([report](security/FOCUSED-REVIEW-2026-10-14.md)) added and closed S27–S31.
 The broad review the same day ([report](security/BROAD-REVIEW-2026-10-14.md)) added S32–S37: S32–S35 and S37 done, S35's and S36's residuals stated.
+Its strict-mode reviewer added S38–S42 (S42 open). The independent verification the same day ([report](security/VERIFICATION-2026-10-14.md))
+added S43–S45: S43 and S45 done, S44 the one list of default-mode residuals.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1173,6 +1176,67 @@ declarations outrank layers); (b) parse guest CSS with the browser's own parser 
 only allowlisted properties; (c) a view out of the host's process where the platform offers one. (a) is a list of
 expensive properties, so not by construction; (b) is the allowlist answer and costs every guest some CSS.
 
+### S43 · A guest worker keeps only allowlisted globals — ✅ **done**
+
+*From the [independent verification 2026-10-14](security/VERIFICATION-2026-10-14.md), V1 (high on Firefox);
+[ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist).*
+
+**Verified** (all three engines, and on a plain page with a header policy): in Firefox, `new EventSource(url)` from the
+strict-mode worker and from worker mode's worker reached an origin `connect-src` blocks, and `new FontFace(…, 'url(…)')`
+one `font-src` blocks, with no violation; the document's EventSource, and every other network API of the worker, were
+refused. **Done**, by construction: the worker's first statement (worker and strict mode) keeps only `WORKER_GLOBALS`
+(`src/lib/worker-globals.ts`) and deletes every other name from the global, its scope prototypes and the navigator's
+prototype; four listed globals can request (`fetch`, `XMLHttpRequest`, `WebSocket`, `importScripts`), each measured as
+governed on all three engines; an undeletable name fails the worker closed. Worker mode has no nested `Worker` any
+more. Residual: a worker the guest creates in iframe mode (S44). Upstream report text:
+[broad review appendix](security/BROAD-REVIEW-2026-10-14.md#v1--firefox-bugzilla-core--dom-security-security-sensitive).
+Tests: `test/e2e/verification.spec.ts` ("V1"), `src/lib/worker-globals.test.ts`.
+
+### S44 · Default-mode residuals, one list: user actions, history, guest workers — **documented** (residual)
+
+*From the independent verification, V3 and H1 (measured), with the earlier residuals gathered here.* The one list,
+the same in [README](../README.md#default-mode-residuals) and the
+[broad review](security/BROAD-REVIEW-2026-10-14.md#residuals-with-rationale); strict mode closes every item but S8,
+S15 and the cookies (its rendered markup loads from allowed origins too):
+
+- a frame the guest creates is a realm of its own: WebRTC (S13), WebKit's host URL as referrer (S17), Firefox's
+  keepalive fetch (S35), history traversal (S35), a frame name the host targets (S35); `frame-src 'none'` refuses
+  frames that load a URL, not frames made from markup;
+- a worker the guest creates (iframe mode): Firefox sends its `EventSource` and loads its `FontFace` past the policy
+  (S43);
+- WebKit opens a connection for `<link rel=preconnect>` (S35);
+- focus (Chromium, Firefox) and, in a user's click, the clipboard (`writeText()` in Firefox and, in the click's own
+  handler, WebKit; `execCommand('copy')` in Chromium and Firefox) (S36);
+- messages to the host window; embedders check `event.source` (S36);
+- the user's Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens a new tab at the guest's URL
+  in Chromium and Firefox, without `allow-popups`, as for any sandboxed frame (Playwright's WebKit opens none, a
+  measurement limit);
+- the guest's fragment navigations add entries to the tab's session history (every engine), and a navigation the
+  wrapper refuses adds one in Chromium;
+- Firefox's `<meta refresh>` replaces the guest with a document that announces nothing: a silent channel, ended by
+  the watchdog where it is on (S32);
+- a guest page whose load takes longer than `LOAD_TIMEOUT_MS` (5 s) terminates (S33);
+- Firefox and WebKit attach the host site's cookies to a guest request to an allowed origin same-site with the host
+  page (observed by the verification);
+- the pre-policy window of a `<meta>` policy (S8), the host origin in `ancestorOrigins` and image `Referer` (S15), and
+  WebKit's full host URL to same-site origins when asked (S18).
+
+Tests: `verification.spec.ts` ("V1 … residual", "V3", "H1"), `broad-review.spec.ts` (PD2–PD8, CB3), `webrtc.spec.ts`,
+`host-url.spec.ts`.
+
+### S45 · Verification gaps: the policy steps' input, a strict entry's first log lines, tests that could not fail, CI — ✅ **done**
+
+*From the independent verification: 9 test gaps, V2 and the docs.*
+
+**Done**: the policy steps after the grammar take only its output type (`PolicyTokens`) and check it at run time, so a
+configured element holding several sources can never reach them (A1); a strict entry's synchronous console lines
+are buffered (at most 1 000) and arrive (V2); tests now fail under the mutations that had survived (A1, C3's outbox,
+F5, B1 retargeted at the host's listener, CB7 with Firefox's foreign prototype, PD7 on the playground page); Firefox's
+"no WebRTC" has a positive control (loopback ICE on); the WebKit worker-violation limit is stated in its test; the
+two heavy unit tests are cheaper or state their bound; a guest cannot outlive `terminate()`/`reset()` and a forged
+announcement to `top` is not accepted (new tests); the strict-mode design probes run in CI (`bun run test:probes`).
+Docs: README mitigation 2, B8's "Done", the reports' "skipped" wording, the adversarial review's stale claims.
+
 ## B · API Surface & DX
 
 ### B1 · Promise-based RPC in both directions — ✅ **done**
@@ -1421,11 +1485,13 @@ Their separate retry/stop field is not adopted: here it follows from the code.
 **Acceptance**: each behaviour is one rule, documented in `API.md`, with a test.
 
 **Done** (2026-10-14, [ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)):
-- `workerExecutionTimeout` is a budget for code still running: each `execute()` has its own timer, the guest
-  reports `EXECUTED` through the bootstrap's captured port when the code returned or threw, and code still running
-  at the deadline ends the sandbox (`Execution Timeout` host line, then `terminated` with
-  `the executed code ran longer than workerExecutionTimeout`). Decision: terminate, as the watchdog does; one rule
-  for every budget. Tests: `test/unit/followup-guarantees.test.ts`, `test/e2e/worker-timeout.spec.ts`.
+- `workerExecutionTimeout` is a budget, not an idle reset: each `execute()` has its own deadline, at which the
+  guest's event loop must be free; the host pings the bootstrap's captured handler and, without an answer within
+  `EXECUTION_TIMEOUT_GRACE_MS`, ends the sandbox (`Execution Timeout` host line, then `terminated` with
+  `the executed code ran longer than workerExecutionTimeout`). The guest reports nothing (S30 replaced the first
+  version's `EXECUTED` report, which guest code could send early). Decision: terminate, as the watchdog does; one
+  rule for every budget. Tests: `test/unit/followup-guarantees.test.ts`, `test/e2e/worker-timeout.spec.ts`,
+  `test/e2e/focused-review.spec.ts` ("F2").
 - While `idle` or `terminated`, `call()` rejects at once with `TERMINATED` and `execute()` warns and does nothing.
   Decision: refuse at once, since work belongs to an environment and there is none (a call already rejected on
   insertion; queuing across it would contradict "every build rejects pending work"). Tests: the same unit file,

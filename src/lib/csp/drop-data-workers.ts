@@ -1,6 +1,7 @@
 import type { CSPDirectives } from "../../csp-directives";
 import { defineData } from "../utils";
 import { assertWidensOnly, directiveOf, effectiveDirective } from "./effective-directive";
+import { policyTokens, type PolicyTokens } from "./policy-grammar";
 
 /**
  * Why a guest worker never loads from a data: URL (broad review 2026-10-14, PD1).
@@ -21,12 +22,13 @@ const DATA = 'data:';
 const isData = (token: unknown) => typeof token === 'string' && token.toLowerCase() === DATA; // schemes are case-insensitive
 
 /** Returns a copy of `directives` whose worker loads admit no data: URL; warns once per directive per instance (`warned`). */
-export function dropDataWorkerSources(directives: CSPDirectives, warned: Set<string>): CSPDirectives {
+export function dropDataWorkerSources(directives: PolicyTokens, warned: Set<string>): PolicyTokens {
+    policyTokens(directives, 'dropDataWorkerSources');
     const output: Record<string, unknown> = { ...directives };
     const governing = effectiveDirective(directives, 'worker-src');
     const values = governing === null ? undefined : directiveOf(directives, governing);
-    // runs after the policy grammar (policy-grammar.ts): one token per element; a non-list is generateCSP's to refuse
-    if (!Array.isArray(values) || !values.some(isData)) return output as CSPDirectives;
+    // the policy grammar's output (PolicyTokens): one token per element; a non-list is generateCSP's to refuse
+    if (!Array.isArray(values) || !values.some(isData)) return policyTokens(output as CSPDirectives, 'dropDataWorkerSources');
 
     defineData(output, 'worker-src', values.filter(token => !isData(token))); // defined, never assigned (F4)
     if (!warned.has(governing!)) {
@@ -34,5 +36,5 @@ export function dropDataWorkerSources(directives: CSPDirectives, warned: Set<str
         const where = governing === 'worker-src' ? '' : ` (it governs worker loads here, so the guest's worker-src was made from it without data:)`;
         console.warn(`[Sandbox] "data:" is not allowed for workers and was dropped from what "connectionsAllowed.${governing}" admits for them${where}: WebKit runs a data: SharedWorker outside the guest's policy. Workers load from blob: URLs.`);
     }
-    return assertWidensOnly(directives, output as CSPDirectives, [], 'dropDataWorkerSources');
+    return policyTokens(assertWidensOnly(directives, output as CSPDirectives, [], 'dropDataWorkerSources'), 'dropDataWorkerSources');
 }

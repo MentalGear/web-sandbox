@@ -4,6 +4,10 @@ import { effectiveDirective, fallbackList } from './effective-directive';
 import { prng } from '../../../test/unit/policy-helpers';
 import { generateCSP } from './csp-generator';
 import type { CSPDirectives } from '@src/csp-directives';
+import { sanitizeDirectives } from './policy-grammar';
+
+// the policy steps take only the grammar's output (PolicyTokens, A1): test policies go through it, as the host's do
+const tokens = (directives: CSPDirectives) => sanitizeDirectives(directives);
 
 describe('kindsForTypes: blob: goes only where a registered type loads', () => {
     it('no files: no directive', () => {
@@ -42,12 +46,12 @@ describe('addFileSources', () => {
 
     it('changes nothing without files', () => {
         const warn = vi.spyOn(console, 'warn');
-        expect(addFileSources(BASE, [], new Set())).toEqual(BASE);
+        expect(addFileSources(tokens(BASE), [], new Set())).toEqual(BASE);
         expect(warn).not.toHaveBeenCalled();
     });
 
     it('adds blob: only to the directives of the types present, and never to base-uri, form-action or default-src', () => {
-        const out = addFileSources(BASE, ['text/javascript', 'image/png'], new Set());
+        const out = addFileSources(tokens(BASE), ['text/javascript', 'image/png'], new Set());
         expect(out).toEqual({
             ...BASE,
             'script-src': ["'unsafe-inline'", 'blob:'],
@@ -58,7 +62,7 @@ describe('addFileSources', () => {
 
     it('does not mutate its input', () => {
         const input = structuredClone(BASE);
-        addFileSources(input, ['text/javascript', 'text/css', 'font/woff2', 'audio/ogg', 'image/gif'], new Set());
+        addFileSources(tokens(input), ['text/javascript', 'text/css', 'font/woff2', 'audio/ogg', 'image/gif'], new Set());
         expect(input).toEqual(BASE);
     });
 
@@ -67,12 +71,12 @@ describe('addFileSources', () => {
             'default-src': ['https://cdn.example', "'none'", "'SELF'", "'unsafe-inline' https://two.example"],
             // img-src, font-src and connect-src omitted
         };
-        const out = addFileSources(directives, ['image/png', 'font/woff2'], new Set());
+        const out = addFileSources(tokens(directives), ['image/png', 'font/woff2'], new Set());
         const inherited = ['https://cdn.example', "'unsafe-inline'", 'https://two.example'];
         expect(out['img-src']).toEqual([...inherited, 'blob:']);
         expect(out['font-src']).toEqual([...inherited, 'blob:']);
         expect(out['connect-src']).toEqual([...inherited, 'blob:']);
-        expect(out['default-src']).toEqual(directives['default-src']); // untouched
+        expect(out['default-src']).toEqual(tokens(directives)['default-src']); // untouched
     });
 
     it.each([
@@ -82,7 +86,7 @@ describe('addFileSources', () => {
         ['omitted', undefined],
     ])("with a %s default-src, an omitted directive becomes blob: alone", (_, defaultSrc) => {
         const directives: CSPDirectives = defaultSrc === undefined ? {} : { 'default-src': defaultSrc };
-        const out = addFileSources(directives, ['image/png'], new Set());
+        const out = addFileSources(tokens(directives), ['image/png'], new Set());
         expect(out['img-src']).toEqual(['blob:']);
         expect(out['connect-src']).toEqual(['blob:']);
         // and the emitted policy denies everything else
@@ -92,9 +96,9 @@ describe('addFileSources', () => {
     it("an empty directive is 'none' (S16): kept, with the warning, never widened to default-src's sources", () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const directives: CSPDirectives = { 'default-src': ['https://cdn.example'], 'img-src': [], 'connect-src': [''] };
-        const out = addFileSources(directives, ['image/png'], new Set());
+        const out = addFileSources(tokens(directives), ['image/png'], new Set());
         expect(out['img-src']).toEqual([]);
-        expect(out['connect-src']).toEqual(['']);
+        expect(out['connect-src']).toEqual([]); // [''] is [] in the grammar's tokens
         expect(generateCSP(out)).toBe("default-src https://cdn.example; img-src 'none'; connect-src 'none';");
         expect(warn.mock.calls.map(c => String(c[0]))).toEqual([
             expect.stringContaining('connectionsAllowed.connect-src'),
@@ -108,7 +112,7 @@ describe('addFileSources', () => {
         const directives: CSPDirectives = { ...BASE, 'img-src': ["'NONE'"], 'style-src': ["'none'"] };
 
         for (let build = 0; build < 3; build++) {
-            const out = addFileSources(directives, ['image/png', 'text/css'], warned);
+            const out = addFileSources(tokens(directives), ['image/png', 'text/css'], warned);
             expect(out['img-src']).toEqual(["'NONE'"]);
             expect(out['style-src']).toEqual(["'none'"]);
             expect(out['connect-src']).toEqual(['blob:']);
@@ -121,14 +125,14 @@ describe('addFileSources', () => {
 
     it('exclude (strict mode): an excluded directive never gets blob:, even with files of its type and no config for it', () => {
         expect([...kindsForTypes(['text/javascript', 'image/png'], ['script-src-elem'])].sort()).toEqual(['connect-src', 'img-src']);
-        const out = addFileSources({ 'default-src': ['https://d.example'] }, ['text/javascript', 'image/png'], new Set(), { exclude: ['script-src-elem'] });
+        const out = addFileSources(tokens({ 'default-src': ['https://d.example'] }), ['text/javascript', 'image/png'], new Set(), { exclude: ['script-src-elem'] });
         expect(out['script-src']).toBeUndefined();
         expect(out['img-src']).toEqual(['https://d.example', 'blob:']);
     });
 
     it('leaves a malformed directive for generateCSP to reject', () => {
         const directives = { ...BASE, 'img-src': 'blob:' } as unknown as CSPDirectives;
-        expect(addFileSources(directives, ['image/png'], new Set())['img-src']).toBe('blob:');
+        expect(addFileSources(tokens(directives), ['image/png'], new Set())['img-src']).toBe('blob:');
     });
 });
 
@@ -190,7 +194,7 @@ describe('addFileSources over the one fallback table (follow-up audit 2026-10-14
             'style-src': ["'unsafe-inline'"],
             'style-src-elem': ["'unsafe-inline'"],
         };
-        const out = addFileSources(directives, ['text/javascript', 'text/css'], new Set());
+        const out = addFileSources(tokens(directives), ['text/javascript', 'text/css'], new Set());
         expect(out).toEqual({
             ...directives,
             'script-src-elem': ["'unsafe-inline'", 'blob:'],
@@ -204,21 +208,21 @@ describe('addFileSources over the one fallback table (follow-up audit 2026-10-14
     it("an -elem directive that is 'none' keeps the files out, with the warning naming it, even when the base directive would admit them", () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const directives: CSPDirectives = { 'script-src': ["'unsafe-inline'"], 'script-src-elem': [] };
-        const out = addFileSources(directives, ['text/javascript'], new Set());
+        const out = addFileSources(tokens(directives), ['text/javascript'], new Set());
         expect([out['script-src'], out['script-src-elem']]).toEqual([["'unsafe-inline'"], []]);
         expect(warn.mock.calls.map(c => String(c[0]))).toEqual([expect.stringContaining('connectionsAllowed.script-src-elem')]);
     });
 
     it("a base directive that is 'none' does not keep files out when the -elem directive governs and admits them", () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const out = addFileSources({ 'style-src': ["'none'"], 'style-src-elem': ["'unsafe-inline'"] }, ['text/css'], new Set());
+        const out = addFileSources(tokens({ 'style-src': ["'none'"], 'style-src-elem': ["'unsafe-inline'"] }), ['text/css'], new Set());
         expect([out['style-src'], out['style-src-elem']]).toEqual([["'none'"], ["'unsafe-inline'", 'blob:']]);
         expect(warn).not.toHaveBeenCalled();
     });
 
     it('-attr directives govern no load a file can be: a config with them adds blob: where it did before', () => {
         const directives: CSPDirectives = { 'script-src': ["'unsafe-inline'"], 'script-src-attr': ["'none'"], 'style-src-attr': ["'unsafe-inline'"] };
-        expect(addFileSources(directives, ['text/javascript', 'text/css'], new Set())).toEqual(withWorkersPinned(directives, legacyAddFileSources(directives, ['text/javascript', 'text/css'])));
+        expect(addFileSources(tokens(directives), ['text/javascript', 'text/css'], new Set())).toEqual(withWorkersPinned(directives, legacyAddFileSources(directives, ['text/javascript', 'text/css'])));
     });
 
     it('the table: the first directive of a kind\'s fallback list that the policy holds governs it; null means default-src', () => {
@@ -250,8 +254,9 @@ describe('addFileSources over the one fallback table (follow-up audit 2026-10-14
             }
             const types: string[] = [];
             for (let i = Math.floor(random() * 4); i > 0; i--) types.push(pick(TYPES));
-            const now = addFileSources(directives as CSPDirectives, types, new Set());
-            const before = withWorkersPinned(directives as CSPDirectives, legacyAddFileSources(directives as CSPDirectives, types));
+            const input = tokens(directives as CSPDirectives); // blank and multi-token values arrive split, as from the host
+            const now = addFileSources(input, types, new Set());
+            const before = withWorkersPinned(input, legacyAddFileSources(input, types));
             expect(generateCSP(now), JSON.stringify({ directives, types })).toBe(generateCSP(before));
             expect(now).toEqual(before);
         }

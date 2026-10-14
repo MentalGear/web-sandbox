@@ -1,4 +1,5 @@
 import type { CSPDirectives } from "../../csp-directives";
+import { policyTokens, type PolicyTokens } from "./policy-grammar";
 import { admits, LOAD_KIND_NAMES, LOAD_KINDS } from "../load-kinds";
 import { assertWidensOnly, directiveOf, effectiveDirective, effectiveSources, fallbackList, inheritedDefaultSources, LOAD_KIND_LIST, type LoadKind } from "./effective-directive";
 import { defineData } from "../utils";
@@ -87,7 +88,8 @@ const isKeyword = (token: string, keyword: string) => token.toLowerCase() === ke
  * With no types, the directives come back unchanged (as a shallow copy). `options.exclude` names kinds that
  * never get `blob:` (kindsForTypes).
  */
-export function addFileSources(directives: CSPDirectives, types: Iterable<string>, warned: Set<string>, options: { exclude?: readonly FileKind[] } = {}): CSPDirectives {
+export function addFileSources(directives: PolicyTokens, types: Iterable<string>, warned: Set<string>, options: { exclude?: readonly FileKind[] } = {}): PolicyTokens {
+    policyTokens(directives, 'addFileSources');
     const output: Record<string, unknown> = { ...directives };
     const inherited = inheritedDefaultSources(directives);
 
@@ -128,5 +130,5 @@ export function addFileSources(directives: CSPDirectives, types: Iterable<string
         const values = governing === null ? [] : directiveOf(directives, governing);
         defineData(output, own, Array.isArray(values) ? [...values] : []);
     }
-    return assertWidensOnly(directives, output as CSPDirectives, needed, 'addFileSources');
+    return policyTokens(assertWidensOnly(directives, output as CSPDirectives, needed, 'addFileSources'), 'addFileSources');
 }

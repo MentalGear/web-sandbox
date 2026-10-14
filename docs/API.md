@@ -91,7 +91,7 @@ name (the guest's own frame cannot; its `window.name` is inert).
 | `mode` | `'iframe' \| 'worker' \| 'strict'` | `'iframe'` | — | Where guest code runs; see [Modes](#modes). Any other value starts no environment: the sandbox terminates with the reason `unknown mode …` until a valid mode is configured. |
 | `html` | `string` | `''` | iframe, strict | The guest document (iframe mode) or the initial view (strict mode). Empty means `<div id="root"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml). |
 | `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-scripts`, `allow-forms`, `allow-pointer-lock`, `allow-orientation-lock`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms`. |
-| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | iframe, worker | Capabilities that act outside the frame: `allow-popups`, `allow-modals`, `allow-downloads`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. |
+| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | iframe, worker | Capabilities that act outside the frame: `allow-popups`, `allow-modals`, `allow-downloads`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in iframe mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see the README's default-mode residuals). |
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
 | `connectionsAllowed` | `CSPDirectives` | see [below](#connectionsallowed) | all (strict: a subset) | The guest's Content Security Policy, merged per directive over the defaults. |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
@@ -340,7 +340,9 @@ guest's data: read them, don't merge them into your objects.
 Lines with `source: 'guest'`: the guest's `console.log`, `console.info`, `console.warn` and `console.error`; a throw from
 `execute()`; one `info` line `<mode> Ready` per environment; in strict mode, `Uncaught …` for an uncaught error
 after the entry ran. Guest code can post anything here. Guest lines are limited to `LOG_EVENTS_PER_SECOND` in any
-one-second window per environment (one warning; lines past it are dropped).
+one-second window per environment (one warning; lines past it are dropped). Lines logged before the guest is
+connected (a strict entry's top level runs before the worker has its port) are kept, at most 1000, and arrive in
+order once it is; past that, one `warn` line says how many were dropped.
 
 Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`), and
 `[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
@@ -503,8 +505,18 @@ runs; in iframe mode that needs `allow-scripts` and inline scripts allowed by `s
 | `console` relayed | `log`, `info`, `warn`, `error` | `log`, `info`, `warn`, `error` | `log`, `info`, `warn`, `error` |
 
 Removed before guest code runs: `RTCPeerConnection` (and prefixed variants) in every mode. In strict mode also
-`Worker`, `SharedWorker`, `URL.createObjectURL`, and `WebAssembly` unless `scriptUnsafe`. In strict mode the view
-document runs no guest code at all.
+`URL.createObjectURL`, and `WebAssembly` unless `scriptUnsafe`. In strict mode the view document runs no guest code
+at all.
+
+**The worker's globals are an allowlist** (worker and strict mode): before anything else runs in it, the worker keeps
+only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WORKER_NAVIGATOR_MEMBERS` for
+`navigator`) and deletes every other one, so a platform API that is not listed is absent. Four listed globals can make
+a request, each governed by the policy on every engine: `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`) and
+`importScripts` (`script-src`). Kept: the language's built-ins, timers, events and messages, encoding, streams,
+`crypto`, `Blob`, `File`, `URL`, IndexedDB, `OffscreenCanvas` with 2D and WebGL, WebCodecs, `performance`, `scheduler`,
+`BroadcastChannel`. Absent: `EventSource`, `WebTransport`, `WebSocketStream`, `FontFace` and `fonts`, `caches`,
+`Notification`, `Worker` and `SharedWorker` (no nested workers), the Service Worker, Push, RTC, MediaSource and
+Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`.
 
 ### `bridge`
 
@@ -652,6 +664,8 @@ logged and does not stop the others. [ADR-005](ADR-005-strict-mode.md)
 | Watchdog bounds a loop | where the frame runs in its own process | ✓ | ✓ |
 | `unsafeCapabilities` | ✓ | ✓ | — |
 | Files named from markup | ✓ | — | `src`, `href`, `poster` in rendered markup |
+| Worker globals | — | allowlist | allowlist |
+| Residuals | the README's default-mode list | that list, where it applies | its platform limits only |
 
 Choose strict mode for content you do not trust at all. [ADR-005](ADR-005-strict-mode.md)
 
@@ -664,6 +678,7 @@ Choose strict mode for content you do not trust at all. [ADR-005](ADR-005-strict
 | Inbound calls running at once, per side and environment | 256 | `MAX_INBOUND_IN_FLIGHT` |
 | Default call timeout (ms) | 30000 | — |
 | Guest log lines per second, per environment | 1000 | `LOG_EVENTS_PER_SECOND` |
+| Guest log lines kept until the guest is connected | 1000 | — |
 | Arguments kept per log line | 64 | `LOG_MAX_ARGS` |
 | Characters kept per string log argument | 65536 | `LOG_MAX_STRING` |
 | `violation` events per environment (strict mode: per source, and per directive for the view) | 100 | `VIOLATION_EVENT_LIMIT` |
