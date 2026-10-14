@@ -7,7 +7,7 @@ import { prng } from './policy-helpers';
 import { rewriteGuestMarkup, VIRTUAL_DOCUMENT_URL } from '@src/lib/markup-references';
 import { rewriteInlineModule } from '@src/lib/module-specifiers';
 import { admitsAll, linkKinds } from '@src/lib/load-kinds';
-import { RENDER_RULES, sanitizeRender } from '@src/lib/in-sandbox-view';
+import { isViewFileType, RENDER_RULES, sanitizeRender } from '@src/lib/in-sandbox-view';
 
 /**
  * Broad review 2026-10-14 (docs/security/BROAD-REVIEW-2026-10-14.md), host and library side: the guarantees that
@@ -312,7 +312,9 @@ describe("I1: the strict renderer's own copy of a <link>'s load kinds agrees wit
     // The renderer (src/lib/in-sandbox-view.ts, stringified, so it carries a copy of the logic over the table as data)
     // keeps a <link> only when every rel token is a relation it renders (RENDER_RULES.linkRelations) and its href
     // resolves to a file the view minted. A link it keeps must be one load-kinds.ts resolves for the same file type,
-    // and every such link of those relations must be kept: checked over every combination of rel tokens, `as` and type.
+    // and every such link of those relations must be kept, restricted to the types the view mints URLs for at all
+    // (VIEW_FILE_TYPES: no document-capable type such as SVG, broad review ST1): checked over every combination of
+    // rel tokens, `as` and type.
     const TOKENS = ['stylesheet', 'icon', 'preload', 'modulepreload', 'prefetch', 'alternate', 'STYLESHEET'];
     const AS = [null, 'style', 'image', 'script', 'font', 'fetch', 'bogus'];
     const TYPES = ['text/css', 'image/png', 'image/svg+xml', 'text/javascript', 'font/woff2', 'text/plain'];
@@ -341,7 +343,7 @@ describe("I1: the strict renderer's own copy of a <link>'s load kinds agrees wit
                 const kept = fragment.getElementById(`l${i}`) !== null;
                 const rendered = rel.toLowerCase().split(' ').every(token => RENDER_RULES.linkRelations.includes(token));
                 const kinds = linkKinds(rel, as);
-                expect(kept, `${rel} as=${as} ${type}`).toBe(rendered && kinds !== null && admitsAll(kinds, type));
+                expect(kept, `${rel} as=${as} ${type}`).toBe(rendered && kinds !== null && admitsAll(kinds, type) && isViewFileType(type));
             });
         }
     }, 30000);
