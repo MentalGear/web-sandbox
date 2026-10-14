@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_REMOVED_ELEMENTS, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, viewBootstrapText } from './in-sandbox-view';
+import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, RENDER_RULES, RENDER_URL_ATTRIBUTES, sanitizeRender, VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, viewBootstrapText } from './in-sandbox-view';
 import { REFERENCES } from './markup-references';
 import { VIOLATION_EVENT_LIMIT } from './violation';
 import { mimeTypeFor } from './files';
@@ -39,22 +39,22 @@ describe('the renderer (A1): every listed element type is removed, with its subt
         ].join(''));
         const left = Array.from(fragment.querySelectorAll('*')).map(e => `${e.localName}`);
         expect(left.filter(name => (RENDER_REMOVED_ELEMENTS as readonly string[]).includes(name))).toEqual([]);
-        expect(left).toEqual(['svg', 'foreignObject', 'math', 'annotation-xml']);
+        expect(left).toEqual(['svg', 'math']); // foreignObject and annotation-xml are not on the allowlist: gone with their content
     });
 
     it('removes every SVG animation element in its own namespace and case (focused review F1): nothing can change a checked attribute after the renderer ran', () => {
         const fragment = sanitize('<svg><a href="https://guest.example/a"><set attributeName="href" to="https://guest.example/b"/><animate attributeName="href" values="x"/><text>t</text></a>'
             + '<image href="x.png"><animateMotion dur="1s"><mpath href="#p"/></animateMotion><animateTransform attributeName="transform"/><animateColor/><discard/><animation/></image></svg>');
         const left = Array.from(fragment.querySelectorAll('*')).map(e => e.localName);
-        expect(left).toEqual(['svg', 'a', 'text', 'image']);
+        expect(left).toEqual(['svg', 'a', 'text']); // <image> is not on the allowlist either
         expect(fragment.querySelector('a')!.getAttribute('href')).toBe(INERT_HREF);
     });
 
     it('keeps a <link> only as a stylesheet or icon whose href is a URL the view minted', () => {
-        const files = { 'site.css': 'blob:null/css', 'icon.svg': 'blob:null/icon' };
+        const files = { 'site.css': 'blob:null/css', 'icon.png': 'blob:null/icon' };
         const fragment = sanitize([
             '<link id="sheet" rel="stylesheet" href="site.css">',
-            '<link id="icon" rel="icon" href="./icon.svg">',
+            '<link id="icon" rel="icon" href="./icon.png">',
             '<link id="unminted" rel="stylesheet" href="https://cdn.example/x.css">',
             '<link id="preload" rel="preload" as="style" href="site.css">',
             '<link id="mixed" rel="stylesheet prefetch" href="site.css">',
@@ -66,17 +66,17 @@ describe('the renderer (A1): every listed element type is removed, with its subt
 });
 
 describe('the renderer: file references, blob: URLs (A8), referrer and ping (A1)', () => {
-    const files = { 'img/logo.svg': 'blob:null/logo', 'clip.mp4': 'blob:null/clip', 'subs.vtt': 'blob:null/subs' };
+    const files = { 'img/logo.png': 'blob:null/logo', 'clip.mp4': 'blob:null/clip', 'subs.vtt': 'blob:null/subs' };
 
     it('resolves the reference attributes of markup-references.ts (minus script) like a browser would against vfs.invalid/index.html', () => {
         const fragment = sanitize([
-            '<img id="a" src="img/logo.svg"><img id="b" src="./img/logo.svg"><img id="c" src="/img/logo.svg"><img id="d" src="x/../img/logo.svg">',
-            '<img id="e" src="img/Logo.svg"><img id="f" src="img/logo.svg?v=2"><img id="g" src="https://cdn.example/img/logo.svg">',
-            '<video id="v" src="clip.mp4" poster="img/logo.svg"><source id="s" src="clip.mp4"><track id="t" src="subs.vtt"></video><audio id="au" src="clip.mp4"></audio>',
+            '<img id="a" src="img/logo.png"><img id="b" src="./img/logo.png"><img id="c" src="/img/logo.png"><img id="d" src="x/../img/logo.png">',
+            '<img id="e" src="img/Logo.png"><img id="f" src="img/logo.png?v=2"><img id="g" src="https://cdn.example/img/logo.png">',
+            '<video id="v" src="clip.mp4" poster="img/logo.png"><source id="s" src="clip.mp4"><track id="t" src="subs.vtt"></video><audio id="au" src="clip.mp4"></audio>',
         ].join(''), files);
         const src = (id: string, attribute = 'src') => fragment.getElementById(id)!.getAttribute(attribute);
         expect(['a', 'b', 'c', 'd'].map(id => src(id))).toEqual(Array(4).fill('blob:null/logo'));
-        expect(['e', 'f', 'g'].map(id => src(id))).toEqual(['img/Logo.svg', 'img/logo.svg?v=2', 'https://cdn.example/img/logo.svg']);
+        expect(['e', 'f', 'g'].map(id => src(id))).toEqual(['img/Logo.png', 'img/logo.png?v=2', 'https://cdn.example/img/logo.png']);
         expect([src('v'), src('v', 'poster'), src('s'), src('t'), src('au')]).toEqual(['blob:null/clip', 'blob:null/logo', 'blob:null/clip', 'blob:null/subs', 'blob:null/clip']);
         // derived from the default-mode table, never a copy
         expect(RENDER_RULES.references).toEqual(REFERENCES.filter(([element]) => element !== 'script'));
@@ -84,7 +84,7 @@ describe('the renderer: file references, blob: URLs (A8), referrer and ping (A1)
 
     it('removes every attribute holding a blob: URL the view did not mint, however it is written; keeps a minted one on a reference attribute', () => {
         const fragment = sanitize([
-            '<img id="minted" src="img/logo.svg">',
+            '<img id="minted" src="img/logo.png">',
             '<img id="foreign" src="blob:null/worker-made">',
             '<img id="spaced" src=" b\tl\nob:null/worker-made">',
             '<img id="upper" src="BLOB:null/x">',
@@ -104,10 +104,10 @@ describe('the renderer: file references, blob: URLs (A8), referrer and ping (A1)
             '<a id="a" href="https://x.example/" ping="https://evil.example/ping" rel="opener prefetch noopener nofollow" referrerpolicy="unsafe-url">a</a>',
             '<map><area id="area" href="https://x.example/" referrerpolicy="unsafe-url" rel="noreferrer external"></map>',
             '<img id="img" src="https://x.example/i.png" referrerpolicy="unsafe-url"><img id="plain" src="https://x.example/j.png">',
-            '<svg><a id="svga" href="https://x.example/" referrerpolicy="unsafe-url"><rect/></a><image id="svgimage" href="https://x.example/k.png" referrerpolicy="unsafe-url"/></svg>',
+            '<svg><a id="svga" href="https://x.example/" referrerpolicy="unsafe-url"><rect/></a></svg>',
         ].join(''));
         const attribute = (id: string, name: string) => fragment.getElementById(id)!.getAttribute(name);
-        expect(['a', 'area', 'img', 'plain', 'svga', 'svgimage'].map(id => attribute(id, 'referrerpolicy'))).toEqual(Array(6).fill('no-referrer'));
+        expect(['a', 'area', 'img', 'plain', 'svga'].map(id => attribute(id, 'referrerpolicy'))).toEqual(Array(5).fill('no-referrer'));
         expect(attribute('a', 'ping')).toBeNull();
         expect([attribute('a', 'rel'), attribute('area', 'rel')]).toEqual(['noopener nofollow', 'noreferrer']);
     });
@@ -133,11 +133,11 @@ describe('the renderer: every hyperlink href is one inert constant (backlog S24,
         expect(RENDER_RULES.inertHref).toBe(INERT_HREF);
     });
 
-    it('positive control: links stay links, an <a> without href gets none, and hrefs that are resources (SVG use, image) keep their value', () => {
-        const fragment = sanitize(`<a id="named" name="x">no href</a><svg><use id="use" href="#icon"/><image id="img" href="https://x.example/i.png"/></svg>`);
+    it('positive control: links stay links, an <a> without href gets none; no other SVG element keeps an href (use and image are gone, a gradient or pattern loses its template)', () => {
+        const fragment = sanitize(`<a id="named" name="x">no href</a><svg><use id="use" href="#icon"/><image id="img" href="https://x.example/i.png"/><linearGradient id="lg" href="#other"/><pattern id="pt" xlink:href="#other"/></svg>`);
         expect(fragment.getElementById('named')!.hasAttribute('href')).toBe(false);
-        expect(fragment.getElementById('use')!.getAttribute('href')).toBe('#icon');
-        expect(fragment.getElementById('img')!.getAttribute('href')).toBe('https://x.example/i.png');
+        expect([fragment.getElementById('use'), fragment.getElementById('img')]).toEqual([null, null]);
+        expect(['lg', 'pt'].map(id => fragment.getElementById(id)!.getAttributeNames())).toEqual([['id'], ['id']]);
         const link = sanitize('<a id="l" href="https://x.example/">l</a>');
         const holder = document.createElement('div');
         holder.append(link);
@@ -259,7 +259,7 @@ describe('the strict worker prelude (unit; the e2e specs cover it in real worker
         Object.assign(w, { Worker: function () {}, SharedWorker: function () {}, WebAssembly: {}, URL: fakeUrl });
         const attached: unknown[] = [];
         const run = new Function('globalThis', `return (${inStrictWorker.toString()})`)(w);
-        run({ attach: (port: unknown) => attached.push(port) }, { scriptUnsafe: false, maxRender: 10, maxTarget: 5, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
+        run({ attach: (port: unknown) => attached.push(port) }, { scriptUnsafe: false, maxRender: 10, maxTarget: 5, maxElements: 100, maxDepth: 10, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
         expect(['Worker', 'SharedWorker', 'WebAssembly'].filter(name => name in w)).toEqual([]);
         expect('createObjectURL' in fakeUrl).toBe(false);
 
@@ -291,7 +291,7 @@ describe('the strict worker prelude (unit; the e2e specs cover it in real worker
 describe('review C2 and C3: the strict worker prelude against hostile globals', () => {
     const start = (w: any) => {
         const run = new Function('globalThis', `return (${inStrictWorker.toString()})`)(w);
-        run({ attach: () => {} }, { scriptUnsafe: false, maxRender: 100, maxTarget: 5, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
+        run({ attach: () => {} }, { scriptUnsafe: false, maxRender: 100, maxTarget: 5, maxElements: 100, maxDepth: 10, entryDoneName: '__testEntryDone', eventTypes: ['click', 'keydown'] });
     };
 
     it('assertEntryScoped refuses a global object holding a non-configurable function (what a top-level declaration leaves), whatever happened to the name Object', () => {
@@ -345,5 +345,203 @@ describe('review C2 and C3: the strict worker prelude against hostile globals', 
         }
         expect(message).toBe('sandboxView.on: type must be one of click, keydown');
         expect(receivers).toEqual([]);
+    });
+});
+
+describe('broad review 2026-10-14: the renderer is an allowlist', () => {
+    const HTML = 'http://www.w3.org/1999/xhtml';
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const MATHML = 'http://www.w3.org/1998/Math/MathML';
+    const allowedElement = (e: Element) => (e.namespaceURI === HTML && ((RENDER_ELEMENTS.html as readonly string[]).includes(e.localName) || /^[a-z][a-z0-9._-]*-[a-z0-9._-]*$/.test(e.localName)))
+        || (e.namespaceURI === SVG_NS && (RENDER_ELEMENTS.svg as readonly string[]).includes(e.localName))
+        || (e.namespaceURI === MATHML && (RENDER_ELEMENTS.mathml as readonly string[]).includes(e.localName));
+    const allowedAttribute = (e: Element, name: string) => name.startsWith('data-') || name.startsWith('aria-')
+        || (e.namespaceURI === HTML && ((RENDER_ATTRIBUTES.html as readonly string[]).includes(name) || (RENDER_ATTRIBUTES.htmlElements[e.localName] ?? []).includes(name)))
+        || (e.namespaceURI === SVG_NS && ((RENDER_ATTRIBUTES.svg as readonly string[]).includes(name) || (e.localName === 'a' && (RENDER_ATTRIBUTES.svgLink as readonly string[]).includes(name))))
+        || (e.namespaceURI === MATHML && (RENDER_ATTRIBUTES.mathml as readonly string[]).includes(name));
+
+    // every element name a guest might write, allowed or not, in each namespace, and attributes likewise
+    const ELEMENTS = [...new Set([...RENDER_ELEMENTS.html, ...RENDER_REMOVED_ELEMENTS, 'center', 'font', 'marquee', 'blink', 'canvas', 'slot', 'selectedcontent', 'xmp', 'listing', 'plaintext',
+        'keygen', 'menuitem', 'image', 'param', 'x-widget', 'font-face', 'annotation-xml', 'head', 'body', 'html'])];
+    const SVG_ELEMENTS = [...RENDER_ELEMENTS.svg, 'use', 'marker', 'image', 'feImage', 'filter', 'feGaussianBlur', 'feMorphology', 'foreignObject', 'script', 'animate', 'set', 'textPath', 'switch', 'view', 'cursor', 'mpath'];
+    const MATH_ELEMENTS = [...RENDER_ELEMENTS.mathml, 'annotation-xml', 'maction', 'mglyph', 'malignmark'];
+    const ATTRIBUTES = ['id', 'class', 'style', 'onclick', 'onload', 'onerror', 'onfocus', 'onbegin', 'href', 'xlink:href', 'src', 'srcset', 'action', 'formaction', 'method', 'target',
+        'popover', 'popovertarget', 'commandfor', 'command', 'interestfor', 'autofocus', 'contenteditable', 'is', 'slot', 'nonce', 'ping', 'download', 'background', 'cursor', 'fill', 'mask',
+        'filter', 'marker-mid', 'name', 'value', 'type', 'data-x', 'aria-label', 'attributionsrc', 'poster', 'data', 'codebase', 'xmlns', 'referrerpolicy', 'rel'];
+    const VALUES = ['x', 'https://x.example/a', 'javascript:void 0', 'data:image/svg+xml,<svg/>', 'url(https://x.example/#a)', 'url(#a)', 'blob:null/not-minted', ' java\nscript:x', '#a'];
+
+    // a deterministic generator (mulberry32): markup from every element, nested, with every attribute
+    const rng = (seed: number) => () => {
+        seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const markup = (random: () => number, depth: number): string => {
+        let out = '';
+        const count = 1 + Math.floor(random() * 4);
+        for (let i = 0; i < count; i++) {
+            const space = random();
+            const pool = space < 0.6 ? ELEMENTS : space < 0.85 ? SVG_ELEMENTS : MATH_ELEMENTS;
+            const name = pool[Math.floor(random() * pool.length)]!;
+            const attributes = Array.from({ length: Math.floor(random() * 5) }, () => `${ATTRIBUTES[Math.floor(random() * ATTRIBUTES.length)]}="${VALUES[Math.floor(random() * VALUES.length)]!.replace(/"/g, '&quot;')}"`).join(' ');
+            const inner = depth > 0 ? markup(random, depth - 1) : 'text';
+            const wrap = space < 0.6 ? (s: string) => s : space < 0.85 ? (s: string) => `<svg>${s}</svg>` : (s: string) => `<math>${s}</math>`;
+            out += wrap(`<${name} ${attributes}>${inner}</${name}>`);
+        }
+        return out;
+    };
+
+    it("property: whatever is rendered, every element left is on its namespace's list and every attribute on its list; no handler, no script-capable URL is left (300 random corpora)", () => {
+        for (let seed = 1; seed <= 300; seed++) {
+            const fragment = sanitize(markup(rng(seed), 3));
+            for (const element of Array.from(fragment.querySelectorAll('*'))) {
+                expect(allowedElement(element), `seed ${seed}: <${element.localName}> in ${element.namespaceURI}`).toBe(true);
+                for (const name of element.getAttributeNames()) {
+                    expect(allowedAttribute(element, name), `seed ${seed}: ${element.localName}[${name}]`).toBe(true);
+                    expect(name.toLowerCase().startsWith('on'), name).toBe(false);
+                    const value = element.getAttribute(name)!.replace(/[\t\n\r]/g, '').trim().toLowerCase();
+                    if (['src', 'srcset', 'href', 'xlink:href', 'poster'].includes(name)) expect(/^(javascript|data|vbscript):/.test(value), `${element.localName}[${name}]=${value}`).toBe(false);
+                }
+            }
+        }
+    });
+
+    it('unknown HTML elements are unwrapped (their checked children take their place, moved, not cloned); unknown SVG and MathML elements go with their content; a custom element name is kept, a reserved one unwrapped', () => {
+        const clone = vi.spyOn(Node.prototype, 'cloneNode');
+        try {
+            const fragment = sanitize('<center id="c"><b id="kept">k</b>text<script>x</script><marquee><i id="deep">d</i></marquee></center>'
+                + '<svg><switch><rect id="in-switch"/></switch><rect id="r"/></svg><math><maction><mi id="in-maction">x</mi></maction><mi id="mi">y</mi></math>'
+                + '<x-card id="card"><font-face id="reserved-child">f</font-face></x-card>');
+            expect(clone.mock.calls.length).toBe(0);
+            expect(serialise(fragment)).toBe('<b id="kept">k</b>text<i id="deep">d</i><svg><rect id="r"></rect></svg><math><mi id="mi">y</mi></math><x-card id="card">f</x-card>');
+        } finally {
+            clone.mockRestore();
+        }
+    });
+
+    it('URL attributes keep only http(s), a URL the view minted, or a relative URL; srcset is checked candidate by candidate', () => {
+        const files = { 'a.png': 'blob:null/minted' };
+        const fragment = sanitize([
+            '<img id="https" src="https://x.example/i.png"><img id="http" src="HTTP://x.example/i.png"><img id="relative" src="nope.png"><img id="file" src="a.png">',
+            '<img id="data" src="data:image/png;base64,AA=="><img id="js" src=" \u0001java\tscript:x"><img id="blob" src="blob:null/other"><img id="other" src="ftp://x.example/i.png">',
+            '<video id="poster" poster="data:image/svg+xml,x"></video><audio id="audio" src="javascript:x"></audio><video><source id="source" srcset="https://x.example/a.png 1x,https://x.example/b.png 2x" src="data:,x"></video>',
+            '<img id="set-ok" srcset="https://x.example/a.png 1x, https://x.example/b,c.png 2x"><img id="set-data" srcset="https://x.example/a.png 1x,data:image/svg+xml,x 2x"><img id="set-js" srcset=" javascript:x 1x">',
+        ].join(''), files);
+        const src = (id: string, name = 'src') => fragment.getElementById(id)!.getAttribute(name);
+        expect(['https', 'http', 'relative', 'file'].map(id => src(id))).toEqual(['https://x.example/i.png', 'HTTP://x.example/i.png', 'nope.png', 'blob:null/minted']);
+        expect(['data', 'js', 'blob', 'other', 'audio', 'source'].map(id => src(id))).toEqual(Array(6).fill(null));
+        expect([src('poster', 'poster'), src('source', 'srcset'), src('set-ok', 'srcset'), src('set-data', 'srcset'), src('set-js', 'srcset')])
+            .toEqual([null, 'https://x.example/a.png 1x,https://x.example/b.png 2x', 'https://x.example/a.png 1x, https://x.example/b,c.png 2x', null, null]);
+    });
+
+    it('SVG paint and clip references name only fragments of this document; no form target, invoker or handler survives', () => {
+        const fragment = sanitize('<svg><rect id="r" fill="url(#g)" stroke="url(https://x.example/s.svg#a)" mask="url(\\68ttps//x/#m)" clip-path="url(#c)"/></svg>'
+            + '<form id="f" action="https://x.example/" method="post" target="_top"><button id="b" formaction="https://x.example/" popovertarget="p" commandfor="d" command="show-modal" onclick="x()">b</button></form>');
+        expect(fragment.getElementById('r')!.getAttributeNames()).toEqual(['id', 'fill', 'clip-path']);
+        expect(fragment.getElementById('f')!.getAttributeNames()).toEqual(['id']);
+        expect(fragment.getElementById('b')!.getAttributeNames()).toEqual(['id']);
+    });
+
+    it('the lists themselves: no element that instances, loads or animates content; no handler, and no URL attribute but the governed ones', () => {
+        for (const name of ['use', 'marker', 'image', 'feImage', 'filter', 'foreignObject', 'script', 'animate', 'set', 'textPath']) expect(RENDER_ELEMENTS.svg as readonly string[]).not.toContain(name);
+        expect(RENDER_ELEMENTS.svg.filter(name => name.startsWith('fe'))).toEqual([]);
+        for (const name of ['iframe', 'object', 'embed', 'script', 'template', 'meta', 'base', 'noscript', 'canvas', 'slot', 'selectedcontent']) expect(RENDER_ELEMENTS.html as readonly string[]).not.toContain(name);
+        const every = [...RENDER_ATTRIBUTES.html, ...Object.values(RENDER_ATTRIBUTES.htmlElements).flat(), ...RENDER_ATTRIBUTES.svg, ...RENDER_ATTRIBUTES.svgLink, ...RENDER_ATTRIBUTES.mathml];
+        expect(every.filter(name => name.startsWith('on'))).toEqual([]);
+        for (const name of ['action', 'formaction', 'method', 'target', 'popover', 'popovertarget', 'commandfor', 'command', 'autofocus', 'background', 'cursor', 'filter', 'marker-start', 'marker-mid', 'marker-end']) expect(every).not.toContain(name);
+        // the HTML attributes that hold a URL are exactly the governed ones, and a/area href (which become INERT_HREF)
+        const urlish = ['src', 'srcset', 'poster', 'href', 'cite', 'data', 'action', 'formaction', 'manifest', 'longdesc', 'codebase', 'background', 'ping', 'itemtype'];
+        const holders = Object.entries(RENDER_ATTRIBUTES.htmlElements).flatMap(([element, names]) => names.filter(name => urlish.includes(name)).map(name => `${element} ${name}`)).sort();
+        expect(holders).toEqual([...RENDER_URL_ATTRIBUTES.map(([e, a]) => `${e} ${a}`), 'a href', 'area href'].sort());
+    });
+});
+
+describe('broad review ST2: the renderer counts what it keeps against the room it is given', () => {
+    it('throws VIEW_MAX_ELEMENTS past the element room and VIEW_MAX_DEPTH past the depth room, before the caller inserts anything; unwrapped and removed elements are not counted', () => {
+        const run = (html: string, room: { elements: number; depth: number }) => {
+            const template = document.createElement('template');
+            template.innerHTML = html;
+            return sanitizeRender(template.content, () => null, () => false, RENDER_RULES, room);
+        };
+        expect(run('<p></p>'.repeat(10), { elements: 10, depth: 5 })).toBe(10);
+        expect(() => run('<p></p>'.repeat(11), { elements: 10, depth: 5 })).toThrowError(new RangeError('VIEW_MAX_ELEMENTS'));
+        expect(run('<center><p></p></center>'.repeat(10) + '<svg><use/><use/></svg>', { elements: 11, depth: 5 })).toBe(11);
+        expect(run('<div><div><div><div><div></div></div></div></div></div>', { elements: 10, depth: 5 })).toBe(5);
+        expect(() => run('<div><div><div><div><div><div></div></div></div></div></div></div>', { elements: 10, depth: 5 })).toThrowError(new RangeError('VIEW_MAX_DEPTH'));
+        expect(run('<center><center><div><div><div><div><div></div></div></div></div></div></center></center>', { elements: 10, depth: 5 })).toBe(5);
+        expect([RENDER_RULES.maxElements, RENDER_RULES.maxDepth]).toEqual([VIEW_MAX_ELEMENTS, VIEW_MAX_DEPTH]);
+        expect([VIEW_MAX_ELEMENTS, VIEW_MAX_DEPTH]).toEqual([50000, 256]);
+    });
+});
+
+describe('the view bootstrap: budgets (broad review ST2, ST3)', () => {
+    const originalWorker = (globalThis as any).Worker;
+    afterEach(() => {
+        (globalThis as any).Worker = originalWorker;
+        delete (globalThis as any).__sandboxViewRuns;
+        document.body.replaceChildren();
+    });
+
+    // Starts the bootstrap in this document with a fake Worker; returns the worker's end of the render port.
+    const startView = () => {
+        const workers: { transfer: MessagePort[] }[] = [];
+        (globalThis as any).Worker = class {
+            onerror: unknown = null;
+            constructor() { workers.push({ transfer: [] }); }
+            postMessage(_message: unknown, transfer: MessagePort[]) { workers[workers.length - 1]!.transfer = transfer; }
+        };
+        new Function(viewBootstrapText())();
+        const a = new MessageChannel(), b = new MessageChannel();
+        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<div id="a"></div><div id="b"></div>' }, source: window, ports: [a.port1, b.port1] }));
+        const render = workers[0]!.transfer[1]!;
+        const received: any[] = [];
+        render.onmessage = (event) => received.push(event.data);
+        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        return { render, received };
+    };
+    const until = async (check: () => boolean) => {
+        for (let i = 0; i < 300 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 10));
+        expect(check()).toBe(true);
+    };
+    const acks = (received: any[]) => received.filter(m => m.type === 'VIEW_ACK');
+
+    it('a render past the element budget, counted over the resulting document, is dropped and acknowledged with the reason; the next one applies; replacing a target frees its elements', async () => {
+        const { render, received } = startView();
+        render.postMessage({ type: 'VIEW_RENDER', html: '<p>'.repeat(VIEW_MAX_ELEMENTS - 4), into: 'a' }); // 3 characters each: within VIEW_RENDER_MAX_LENGTH
+        await until(() => acks(received).length === 1);
+        expect(document.body.getElementsByTagName('*').length).toBe(VIEW_MAX_ELEMENTS - 2);
+        render.postMessage({ type: 'VIEW_RENDER', html: '<p></p><p></p><p></p>', into: 'b' }); // one too many
+        await until(() => acks(received).length === 2);
+        expect(acks(received)[1]).toEqual({ type: 'VIEW_ACK', refused: ['VIEW_MAX_ELEMENTS'] });
+        expect(document.getElementById('b')!.children.length).toBe(0);
+        render.postMessage({ type: 'VIEW_RENDER', html: '<p></p><p></p>', into: 'b' }); // exactly the budget
+        await until(() => acks(received).length === 3);
+        expect(acks(received)[2]).toEqual({ type: 'VIEW_ACK' });
+        expect(document.body.getElementsByTagName('*').length).toBe(VIEW_MAX_ELEMENTS);
+        render.postMessage({ type: 'VIEW_RENDER', html: '<p></p>', into: 'a' }); // replaces a's elements
+        await until(() => acks(received).length === 4);
+        render.postMessage({ type: 'VIEW_RENDER', html: '<p></p>'.repeat(100), into: 'b' });
+        await until(() => document.getElementById('b')!.children.length === 100);
+        render.close();
+    });
+
+    it('an event detail shares one character budget across its strings and says when it was cut; a small one is whole', async () => {
+        const { render, received } = startView();
+        render.postMessage({ type: 'VIEW_LISTEN', types: ['submit'] });
+        const value = 'v'.repeat(VIEW_EVENT_LIMITS.maxString + 10);
+        document.body.insertAdjacentHTML('beforeend', `<form id="big">${Array.from({ length: 10 }, (_, i) => `<input name="f${i}" value="${value}">`).join('')}</form><form id="small"><input name="q" value="hello"></form>`);
+        await new Promise(resolve => setTimeout(resolve, 20));
+        (document.getElementById('big') as HTMLFormElement).requestSubmit();
+        (document.getElementById('small') as HTMLFormElement).requestSubmit();
+        await until(() => received.filter(m => m.type === 'VIEW_EVENT').length === 2);
+        const [big, small] = received.filter(m => m.type === 'VIEW_EVENT').map(m => m.detail);
+        const chars = (d: any) => [d.target.tag, d.target.id, d.target.name, d.target.value, ...d.ids, ...d.form.flat()].join('').length;
+        expect(chars(big)).toBe(VIEW_EVENT_LIMITS.maxTotal);
+        expect(big.truncated).toBe(true);
+        expect(big.form.every(([, v]: [string, string]) => v.length <= VIEW_EVENT_LIMITS.maxString)).toBe(true);
+        expect(small).toEqual({ type: 'submit', ids: ['small'], target: { tag: 'form', id: 'small', name: '', value: '', checked: false }, form: [['q', 'hello']] });
+        expect(VIEW_EVENT_LIMITS.maxTotal).toBe(VIEW_RENDER_MAX_LENGTH);
+        render.close();
     });
 });

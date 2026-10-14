@@ -8,6 +8,9 @@ import { inView, waitInView } from './strict-view';
  * cannot add a directive to a guest policy: the policy grammar keeps only known names and single source
  * expressions (src/lib/csp/policy-grammar.ts). Asserted here where it matters most, in strict mode, whose view
  * relies on script-src-attr 'none' (G1): an injected value that once enabled handler attributes in the view.
+ * The renderer keeps no handler attribute (an allowlist since the broad review 2026-10-14), so the policy layer is
+ * probed on its own: the handler is set on the rendered image from outside (DevTools), and the document's policy
+ * decides whether it compiles, whoever set it.
  * Evidence (T5): the view's policy and DOM read from outside; the handler's would-be request on the recorder,
  * with a positive control for the same kind of load in the same test; the view's violation report.
  */
@@ -27,6 +30,10 @@ test("A1: an injected default-src value gives the strict view no handler attribu
     // positive control: the view loads from the allowed origin, and the broken image did load (and fail)
     await recorder.waitFor('allowed', '/control.svg');
     await recorder.waitFor('allowed', '/not-an-image.txt');
+    // the renderer removed the guest's handler; set it from outside and fail the image again: the policy alone decides
+    expect(await inView(page, browserName, `document.getElementById('h').hasAttribute('onerror')`)).toBe(false);
+    await inView(page, browserName, `(() => { const h = document.getElementById('h'); h.setAttribute('onerror', ${JSON.stringify(handler)}); h.src = '${recorder.allowed}/not-an-image-2.txt'; return true; })()`);
+    await recorder.waitFor('allowed', '/not-an-image-2.txt');
     await page.waitForTimeout(1000);
     expect(recorder.paths('allowed')).not.toContain('/handler-ran.svg');
     // and the attempt is on record: the view refused the handler and reported it

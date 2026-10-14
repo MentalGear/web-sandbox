@@ -46,9 +46,32 @@ describe('the strict view policy: exact strings', () => {
 
     it('registered files: blob: for their types\' directives, never in script-src, even with JavaScript files; embedder fetch directives pass through', async () => {
         const el = await mount({ mode: 'strict', connectionsAllowed: { 'connect-src': ['https://api.example'], 'font-src': ['https://fonts.example'] } },
-            { 'app.js': 'void 0', 'lib/mod.mjs': 'export {}', 'img/logo.svg': '<svg/>', 'site.css': 'p{}' });
+            { 'app.js': 'void 0', 'lib/mod.mjs': 'export {}', 'img/logo.png': 'x', 'site.css': 'p{}' });
         expect(policyOf(el)).toBe(`default-src 'none'; script-src ${H()}; script-src-attr 'none'; style-src 'unsafe-inline' blob:; base-uri 'none'; form-action 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; upgrade-insecure-requests; connect-src https://api.example blob:; img-src blob:; font-src https://fonts.example;`);
         expect(policyOf(el)).not.toMatch(/script-src[^;]*blob:/);
+    });
+
+    it('broad review ST1: a file of a type the view mints no URL for (SVG, HTML, XML, any +xml) adds blob: only to connect-src (the worker reads it), and is not given to the view', async () => {
+        const el = await mount({ mode: 'strict' }, { 'img/logo.svg': '<svg/>', 'page.html': '<p>', 'data.xml': '<x/>' });
+        expect(policyOf(el)).toBe(`default-src 'none'; script-src ${H()}; script-src-attr 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; upgrade-insecure-requests; connect-src blob:;`);
+        if (el._strictInit) expect(el._strictInit.viewFiles).toEqual([]);
+    });
+
+    it('broad review ST1: data: is dropped from the directive that governs images (img-src, else default-src), with one warning; other directives keep it', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount({ mode: 'strict', connectionsAllowed: { 'img-src': ['data:', 'https://img.example'], 'font-src': ['data:'], 'media-src': ['DATA:'] } });
+        expect(policyOf(el)).toContain('img-src https://img.example; font-src data:; media-src DATA:;');
+        const byDefault = await mount({ mode: 'strict', connectionsAllowed: { 'default-src': ['data:', 'https://all.example'] } });
+        expect(policyOf(byDefault)).toMatch(/^default-src data: https:\/\/all\.example; .* img-src https:\/\/all\.example;$/);
+        const onlyData = await mount({ mode: 'strict', connectionsAllowed: { 'img-src': ['Data:'] } });
+        expect(policyOf(onlyData)).toContain("img-src 'none';");
+        const messages = warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('admits data:'));
+        expect(messages).toEqual([
+            expect.stringContaining('"connectionsAllowed.img-src" admits data:'),
+            expect.stringContaining('"connectionsAllowed.default-src" admits data:'),
+            expect.stringContaining('"connectionsAllowed.img-src" admits data:'),
+        ]);
+        expect(generateCSP(strictViewDirectives({ 'img-src': ['https://x.example'] }, "'sha256-x'", false))).toContain('img-src https://x.example;');
     });
 
     it('fixed directives are replaced and unknown ones dropped, each with one warning per instance (across reset); the policy never shows them', async () => {
@@ -131,8 +154,20 @@ describe('review C2: the worker source runs the entry in its own scope, after th
         const el = await mount({ mode: 'strict', entry: 'main.js' }, { 'main.js': 'function Worker() {} var x = 1;' });
         const source: string = el._strictInit?.workerSource ?? el._getStrictWorkerSource([], 'function Worker() {} var x = 1;');
         expect(source.startsWith('(function (g) {(function assertEntryScoped(')).toBe(true);
-        expect(source).toContain('})(this);\n(function () {\nfunction Worker() {} var x = 1;\n}).call(this);\n__sandboxEntryRan();\n');
-        expect(source.endsWith('}).call(this);\n__sandboxEntryRan();\n')).toBe(true);
+        expect(source).toMatch(/\}\)\(this\);\n\(function \(\) \{\nfunction Worker\(\) \{\} var x = 1;\n\}\)\.call\(this\);\n__sandboxEntryRan_[0-9a-f]{32}\(\);\n$/);
+    });
+
+    it('broad review ST4: the marker the line after the entry calls has a name drawn per build, which the prelude defines', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount({ mode: 'strict' });
+        const names = new Set<string>();
+        for (let i = 0; i < 20; i++) {
+            const source: string = el._getStrictWorkerSource([], 'void 0');
+            const marker = /\n(__sandboxEntryRan_[0-9a-f]{32})\(\);\n$/.exec(source)![1]!;
+            expect(source).toContain(`"entryDoneName":"${marker}"`);
+            names.add(marker);
+        }
+        expect(names.size).toBe(20);
     });
 });
 

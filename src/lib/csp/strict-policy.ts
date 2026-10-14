@@ -21,6 +21,11 @@ import { addEvalSource, directiveOf as own } from "./effective-directive";
  *   frame-src 'none'; object-src 'none'                                nothing fetched into a frame or plugin
  *   upgrade-insecure-requests
  *   connect-src, img-src, font-src, media-src, manifest-src, prefetch-src <config>
+ *
+ * One exception inside a passed-through directive (broad review 2026-10-14, ST1): images never load from data:. A
+ * user can open an image in a new tab, where a data: SVG is a document that runs its script outside the sandbox, so
+ * `data:` is dropped from the directive that governs images (img-src, else default-src, from which img-src is then
+ * made), with one warning (strictPolicyOverrides). The renderer keeps no data: URL in markup either; this covers CSS.
  */
 
 /** Directives taken from the config as they are. Everything else is fixed or dropped. */
@@ -44,6 +49,25 @@ export function strictPassedThrough(configured: CSPDirectives): CSPDirectives {
     return kept as CSPDirectives;
 }
 
+const isData = (token: unknown) => typeof token === 'string' && token.toLowerCase() === 'data:';
+
+/**
+ * The sources of the directive that governs images in `source` without `data:`, and that directive's name, or null
+ * when it holds no `data:` (or nothing governs images: then they load from nowhere).
+ */
+function imageSourcesWithoutData(source: CSPDirectives): { from: 'img-src' | 'default-src'; sources: unknown[] } | null {
+    const from = own(source, 'img-src') !== undefined ? 'img-src' : own(source, 'default-src') !== undefined ? 'default-src' : null;
+    if (from === null) return null;
+    const values = own(source, from);
+    if (!Array.isArray(values)) return null; // a bad value generateCSP rejects
+    const tokens: unknown[] = [];
+    for (const value of values) {
+        if (typeof value === 'string') tokens.push(...value.trim().split(/\s+/).filter(token => token !== ''));
+        else tokens.push(value);
+    }
+    return tokens.some(isData) ? { from, sources: tokens.filter(token => !isData(token)) } : null;
+}
+
 /** The view policy's directives, in emission order (generateCSP keeps it, with default-src first). */
 export function strictViewDirectives(configured: CSPDirectives, bootstrapHash: string, scriptUnsafe: boolean): CSPDirectives {
     const source = configured;
@@ -62,6 +86,9 @@ export function strictViewDirectives(configured: CSPDirectives, bootstrapHash: s
         if (name === 'default-src' || name === 'style-src') continue;
         if (own(source, name) !== undefined) defineData(directives, name, own(source, name));
     }
+    // no image from data: (ST1): the governing directive's sources without it, as img-src
+    const images = imageSourcesWithoutData(source);
+    if (images) defineData(directives, 'img-src', images.sources);
     // 'unsafe-eval' only with scriptUnsafe, through the one helper that writes it (effective-directive.ts, F5)
     return scriptUnsafe ? addEvalSource(directives as CSPDirectives) : directives as CSPDirectives;
 }
@@ -84,5 +111,7 @@ export function strictPolicyOverrides(configured: CSPDirectives, defaults: CSPDi
         }
         messages.push(`[Sandbox] "connectionsAllowed.${name}" is not used in strict mode and was dropped: the view policy takes only ${STRICT_PASSED_THROUGH.join(', ')} from the config (see docs/ADR-005).`);
     }
+    const images = imageSourcesWithoutData(configured);
+    if (images) messages.push(`[Sandbox] "connectionsAllowed.${images.from}" admits data:, which strict mode drops for images (img-src): a user can open an image in a new tab, where a data: document would run outside the sandbox (see docs/ADR-005).`);
     return messages;
 }

@@ -12,7 +12,7 @@ import { INERT_TYPES } from '@src/lib/guest-writes';
 import { KNOWN_DIRECTIVES } from '@src/lib/csp/policy-grammar';
 import { META_IGNORED_DIRECTIVES } from '@src/lib/csp/drop-meta-ignored';
 import { STRICT_FIXED, STRICT_PASSED_THROUGH } from '@src/lib/csp/strict-policy';
-import { RENDER_REMOVED_ELEMENTS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_TARGET_MAX_LENGTH } from '@src/lib/in-sandbox-view';
+import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_TARGET_MAX_LENGTH } from '@src/lib/in-sandbox-view';
 
 /**
  * docs/API.md is the consumer's reference (backlog D3): this test fails when the public surface and the
@@ -113,6 +113,9 @@ describe('docs/API.md lists the public surface', () => {
         const expected: [string, number][] = [
             ['Default call timeout', rpcDefault],
             ['Strict: characters of a render or event target id', VIEW_TARGET_MAX_LENGTH],
+            ['Strict: elements in the view', VIEW_MAX_ELEMENTS],
+            ['Strict: nesting depth below the view', VIEW_MAX_DEPTH],
+            ['Strict: characters of one event detail', VIEW_EVENT_LIMITS.maxTotal],
             ['Strict: view liveness budget', VIEW_LIVENESS_TIMEOUT_MS],
             ['Files: total bytes', MAX_TOTAL_BYTES],
             ['Files: count', MAX_FILES],
@@ -256,7 +259,11 @@ describe('docs/API.md lists the public surface', () => {
         const viewSpans = spans(viewSection);
         for (const type of VIEW_EVENT_TYPES) expect(viewSpans.has(type), type).toBe(true);
         for (const element of RENDER_REMOVED_ELEMENTS) expect(viewSpans.has(element), element).toBe(true);
-        expect(viewSection).toContain(`Strings are cut at ${VIEW_EVENT_LIMITS.maxString} characters, \`ids\` at ${VIEW_EVENT_LIMITS.maxIds} entries, \`form\` at ${VIEW_EVENT_LIMITS.maxFields} fields`);
+        // the renderer's allowlist, every element of every namespace
+        for (const element of [...RENDER_ELEMENTS.html, ...RENDER_ELEMENTS.svg, ...RENDER_ELEMENTS.mathml]) expect(viewSpans.has(element), element).toBe(true);
+        expect(viewSection).toContain(`at most ${VIEW_MAX_ELEMENTS} elements, nested at most ${VIEW_MAX_DEPTH} deep`);
+        expect(VIEW_FILE_TYPES.length).toBe(27); // a new type is a new line of prose in the section, too
+        expect(viewSection.replace(/\s+/g, ' ')).toContain(`Strings are cut at ${VIEW_EVENT_LIMITS.maxString} characters, \`ids\` at ${VIEW_EVENT_LIMITS.maxIds} entries, \`form\` at ${VIEW_EVENT_LIMITS.maxFields} fields, and all strings of one detail together at ${VIEW_EVENT_LIMITS.maxTotal} characters`);
     });
 
     it('describes the current design only: no backlog ids or history', () => {
