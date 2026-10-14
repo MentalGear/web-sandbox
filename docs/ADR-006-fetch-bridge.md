@@ -148,7 +148,11 @@ the one-port-per-request stream shape follows Lunet
 ByteString regex of its own (review B6), a copy of a rule the browser applies anyway, which could drift from it.
 **Decision**: the bridge builds the `Request` itself, from the validated fields and the pinned options, before it
 records anything; whatever the constructor throws is `refused` (`FETCH_NOT_ALLOWED`) and `fetch()` is never called;
-`fetch()` is given that `Request`, so what was checked is what is sent. `validateRequest()` keeps only policy:
+`fetch()` is given that `Request` and the same init, so what was checked is what is sent. (The init again, whole:
+measured in WebKit, an abort that reached the fetch only through the `Request`'s own signal no longer stopped a
+response whose headers had arrived, so the timeout and teardown left the upstream connection open; and a partial
+init would make the `Request` constructor reset the referrer policy, which brought the `Referer` back on all three
+engines. Both were caught by `test/e2e/fetch-bridge.spec.ts`.) `validateRequest()` keeps only policy:
 origins, private hosts, methods, header names and sizes. `failed` means that the browser's `fetch()` rejected or
 no whole response arrived, not that a request left the page: `fetch()` also rejects before sending (the host
 page's own `connect-src`, mixed content, local-network blocking). Proof: `test/unit/channel-guarantees.test.ts`

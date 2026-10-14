@@ -440,22 +440,24 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
         // ByteString without NUL, CR or LF; the body is a BufferSource or a string; the method and mode agree),
         // so nothing it refuses can reach fetch() and be reported as 'failed'. What it throws is a refusal; no
         // request exists then. validateRequest() keeps only what is policy: the origin allowlist, private hosts,
-        // methods, header names, sizes. The Request is what fetch() is given, so what was checked is what is sent.
+        // methods, header names, sizes. fetch() is given that Request and the same init, so what was checked is
+        // what is sent.
         const controller = new AbortController();
+        const init: RequestInit = {
+            method: valid.method,
+            headers: valid.headers,
+            body: valid.body as BodyInit | undefined,
+            signal: controller.signal,
+            credentials: 'omit',
+            referrerPolicy: 'no-referrer',
+            redirect: 'manual',
+            mode: 'cors',
+            cache: 'no-store',
+            keepalive: false,
+        };
         let outgoing: Request;
         try {
-            outgoing = new Request(valid.url.href, {
-                method: valid.method,
-                headers: valid.headers,
-                body: valid.body as BodyInit | undefined,
-                signal: controller.signal,
-                credentials: 'omit',
-                referrerPolicy: 'no-referrer',
-                redirect: 'manual',
-                mode: 'cors',
-                cache: 'no-store',
-                keepalive: false,
-            });
+            outgoing = new Request(valid.url.href, init);
         } catch (error) {
             return refuse(fetchRefusal('FETCH_NOT_ALLOWED', `the browser refused the request (${error instanceof Error ? error.name : 'error'})`));
         }
@@ -464,7 +466,13 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
         let bytes = 0;
         let status: number | undefined;
         try {
-            const response = await (fetchImpl ?? globalThis.fetch)(outgoing);
+            // The init goes to fetch() again, whole. Not the Request alone: measured in WebKit, an abort that reaches
+            // the fetch only through the Request's own (following) signal no longer stops a response whose headers
+            // arrived, so neither the timeout nor a teardown closed the upstream connection
+            // (test/e2e/fetch-bridge.spec.ts); with the init, the fetch's signal follows the controller directly. And
+            // not a partial init: any init makes the Request constructor reset the referrer policy (Fetch, new
+            // Request(input, init)), and a Referer came back (measured on all three engines).
+            const response = await (fetchImpl ?? globalThis.fetch)(outgoing, init);
             if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400 && response.headers.has('location'))) {
                 await response.body?.cancel().catch(() => {});
                 throw fetchRefusal('FETCH_REDIRECT', 'the response was a redirect, which the bridge never follows');

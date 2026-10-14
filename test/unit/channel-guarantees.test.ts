@@ -236,8 +236,9 @@ describe('B6: the platform validates a request before the bridge records it (fol
         const { bridge, fetchImpl } = bridgeWith();
         await bridge.handle({ url: 'https://api.example/x#f', method: 'POST', headers: [['content-type', 'text/plain']], body: 'hi', credentials: 'include', mode: 'no-cors' });
         expect(fetchImpl.mock.calls).toHaveLength(1);
-        expect(fetchImpl.mock.calls[0]!).toHaveLength(1);
         const request = fetchImpl.mock.calls[0]![0];
+        // beside it the same pinned init, whole (a partial one would reset the referrer policy)
+        expect((fetchImpl.mock.calls[0] as unknown[])[1]).toMatchObject({ credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'manual', mode: 'cors', cache: 'no-store', keepalive: false });
         expect(request).toBeInstanceOf(Request);
         expect([request.url, request.method, request.credentials, request.redirect, request.mode, request.cache]).toEqual(['https://api.example/x', 'POST', 'omit', 'manual', 'cors', 'no-store']);
         expect(await request.text()).toBe('hi');

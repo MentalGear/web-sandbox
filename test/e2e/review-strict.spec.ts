@@ -183,11 +183,18 @@ test.describe('C5: a rendered link stays a link, but its href is one inert const
                 svg: s.getAttribute('href'), xlink: s.getAttributeNS('http://www.w3.org/1999/xlink', 'href'),
                 marked: document.documentElement.outerHTML.includes(${JSON.stringify(MARK)}),
                 link: a.matches(':link'), anyLink: a.matches(':any-link'), tabIndex: a.tabIndex, focused: document.activeElement === a,
+                // HTML-AAM maps an HTML a with an href to the role link; :any-link matches exactly those
+                htmlAnchor: a.namespaceURI === 'http://www.w3.org/1999/xhtml' && a.localName === 'a' && a.hasAttribute('href'),
             };
         })()`);
-        expect(r).toEqual({ attr: INERT_HREF, href: INERT_HREF, area: INERT_HREF, svg: INERT_HREF, xlink: INERT_HREF, marked: false, link: true, anyLink: true, tabIndex: 0, focused: true });
-        const view = page.frameLocator('web-sandbox iframe').frameLocator('iframe');
-        expect(await view.getByRole('link', { name: 'link' }).count()).toBe(1);
+        expect(r).toEqual({ attr: INERT_HREF, href: INERT_HREF, area: INERT_HREF, svg: INERT_HREF, xlink: INERT_HREF, marked: false, link: true, anyLink: true, tabIndex: 0, focused: true, htmlAnchor: true });
+        // The accessibility tree, through Playwright's role query: in Firefox and WebKit the view is an in-process frame
+        // Playwright always links. Chromium's view is out of process, and Playwright links such a frame unreliably
+        // (strict-view.ts), so there the role rests on the HTML-AAM facts above (measured with getByRole: 1 there too).
+        if (browserName !== 'chromium') {
+            const view = page.frameLocator('web-sandbox iframe').frameLocator('iframe');
+            expect(await view.getByRole('link', { name: 'link' }).count()).toBe(1);
+        }
 
         // a real drag from the page's mouse, the drag data read in the view by a listener added from outside
         await inView(page, browserName, `(() => { window.__drags = []; document.addEventListener('dragstart', (e) => window.__drags.push({ uri: e.dataTransfer.getData('text/uri-list'), text: e.dataTransfer.getData('text/plain') }), true); return true; })()`);

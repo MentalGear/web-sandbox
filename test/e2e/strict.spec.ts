@@ -404,10 +404,10 @@ test.describe('files', () => {
         await render(sandbox, browserName, `<img id="w" src="${workerUrl}"><img id="t" src=" b\tlob:${workerUrl.slice(5)}"><a id="a" href="${workerUrl}">x</a><img id="ok" src="img/logo.svg">`);
         const r = await inView<any>(page, browserName, `({
             w: document.getElementById('w').hasAttribute('src'), t: document.getElementById('t').hasAttribute('src'),
-            a: document.getElementById('a').hasAttribute('href'), ok: document.getElementById('ok').getAttribute('src').startsWith('blob:'),
+            a: document.getElementById('a').getAttribute('href'), ok: document.getElementById('ok').getAttribute('src').startsWith('blob:'),
             policy: document.querySelector('meta[http-equiv]').content,
         })`);
-        expect(r).toMatchObject({ w: false, t: false, a: false, ok: true });
+        expect(r).toMatchObject({ w: false, t: false, a: 'about:blank#', ok: true }); // a link's href is the inert constant (S24)
         expect(r.policy).toMatch(/script-src 'sha256-[A-Za-z0-9+/]+=' 'unsafe-eval'; /);
         expect(r.policy).not.toMatch(/script-src[^;]*blob:/);
         expect(r.policy).toContain('img-src blob:');

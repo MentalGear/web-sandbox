@@ -64,9 +64,9 @@ export interface SandboxConfig {
      */
     entry?: string;
     /**
-     * Max execution time in ms (worker and strict mode); 0 (the default) is off. Each execute() restarts it;
-     * when it fires the host logs 'Execution Timeout' and rebuilds the environment. Nothing reports that code
-     * finished, so it fires after code that completed too.
+     * Max execution time in ms of each execute() (worker and strict mode); 0 (the default) is off. The guest
+     * reports when the code returned; code still running at the deadline ends the sandbox ('Execution Timeout',
+     * then 'terminated'). See _armExecutionBudget.
      */
     workerExecutionTimeout?: number;
     /**
@@ -93,10 +93,10 @@ export interface SandboxConfig {
  *   idle        constructed, or removed from the document: no frame
  *   loading     a frame was created and is waiting for its one load
  *   ready       the port was handed over and 'ready' dispatched
- *   terminated  torn down by terminate(), a frame-integrity check or the watchdog; stays so until
- *               reset(), load() or setConfig() builds a new environment
- * There is deliberately no 'running' state: execute() is fire-and-forget and nothing reports when guest
- * code finishes, so the element could never say truthfully that code is running (or that it stopped).
+ *   terminated  torn down by terminate(), a budget (watchdog, workerExecutionTimeout), a frame-integrity check
+ *               or a build that failed; stays so until reset(), load() or setConfig() builds a new environment
+ * There is deliberately no 'running' state: only code from execute() reports that it returned, never guest code
+ * as a whole, so the element could never say truthfully that the guest is running (or that it stopped).
  */
 export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 
@@ -451,7 +451,8 @@ export class WebSandbox extends HTMLElement {
      * `code` (RpcErrorCode, see rpc.ts); UNKNOWN_METHOD, HANDLER_ERROR and RESULT_NOT_TRANSFERABLE
      * are reported by the guest, and their message is the guest's text.
      * Works WITHOUT scriptUnsafe: it calls a pre-registered function on the guest, it never evals.
-     * Times out after 30 s (TIMEOUT). Queued while loading; rejects with TERMINATED when the environment goes away.
+     * Times out after 30 s (TIMEOUT). Queued while loading; rejects with TERMINATED when the environment goes away,
+     * and at once while there is none (idle or terminated).
      */
     call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
         const refusal = this._noEnvironmentError();

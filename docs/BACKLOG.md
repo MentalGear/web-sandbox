@@ -41,7 +41,7 @@ conditional "continue".
 | Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18). ✅ in strict mode: guest code sees only its worker's `blob:` URL and no request carries a `Referer` |
 | API reference | ✅ [`API.md`](API.md): the whole public surface, checked against the code by a unit test (D3); framework adapters out of scope |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
-| Adversarial review 2026-10 | ✅ 21 candidates: 16 fixed (S19–S23), 1 held and is now asserted (A8, S20), 1 documented by design (S25), 3 residuals stated (S24); the follow-up by-construction audit moved C1, C4 and C5 to done (S24), found two gaps (S26) and hardened A3, A6, A7, B5, B6; [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
+| Adversarial review 2026-10 | ✅ 21 candidates: 19 fixed (S19–S24), 1 held and is now asserted (A8, S20), 1 documented by design (S25), no residual open; the follow-up by-construction audit moved C1, C4 and C5 to done (S24), found two gaps (S26) and hardened A3, A6, A7, B5, B6; [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
