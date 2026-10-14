@@ -42,7 +42,7 @@
  * a registry of their own, filled only by `exposeReserved`, and `expose` never registers such a name. So an
  * embedder's or a guest's method can never replace a library method, and a library method never answers to
  * a name someone else exposed: the two namespaces are disjoint by construction. A reserved method's
- * refusal may carry one of the LIBRARY codes (RpcLibraryCode, today the fetch bridge's FETCH_* codes), and
+ * refusal may carry one of the LIBRARY codes (RpcLibraryCode: the fetch bridge's FETCH_* codes and the guest writes' file codes), and
  * only a reserved method's: a code on any other handler's error is not forwarded (HANDLER_ERROR, as above).
  * The calling side accepts a library code only for a call to a reserved name, and only when created with
  * `acceptLibraryCodes` — the guest's broker. The host's broker is not, so nothing the guest sends can ever
@@ -91,11 +91,14 @@ export const MAX_INBOUND_IN_FLIGHT = 256;
 
 /**
  * Codes a library-reserved method (a `sandbox:` name) reports, from one closed set, disjoint from
- * RpcErrorCode. Today they are the fetch bridge's (backlog B5, src/lib/fetch-bridge.ts); the strings are
- * wire protocol (pinned by a test). Only the guest's calls to reserved methods can be refused with them.
+ * RpcErrorCode: the fetch bridge's FETCH_* (backlog B5, src/lib/fetch-bridge.ts) and the guest writes' file
+ * codes (backlog C5, src/lib/guest-writes.ts; the same FileErrorCode strings registerFiles() throws, files.ts).
+ * The strings are wire protocol (pinned by a test). Only the guest's calls to reserved methods can be refused
+ * with them. NOT_FOUND is not one: the guest mints it from the host's answer (in-sandbox-files.ts).
  */
 export type RpcLibraryCode =
-    | 'FETCH_NOT_ALLOWED' | 'FETCH_BUSY' | 'FETCH_REDIRECT' | 'FETCH_TOO_LARGE' | 'FETCH_TIMEOUT' | 'FETCH_FAILED';
+    | 'FETCH_NOT_ALLOWED' | 'FETCH_BUSY' | 'FETCH_REDIRECT' | 'FETCH_TOO_LARGE' | 'FETCH_TIMEOUT' | 'FETCH_FAILED'
+    | 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEEDED' | 'FILES_NOT_ALLOWED' | 'FILES_BUSY';
 
 /** Every library-reserved method name starts with this prefix; expose() never registers one. */
 export const RESERVED_METHOD_PREFIX = 'sandbox:';
@@ -176,7 +179,10 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     };
 
     // The library codes (RpcLibraryCode), closed: what a reserved method may report.
-    const LIBRARY_CODES: readonly RpcLibraryCode[] = ['FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED'];
+    const LIBRARY_CODES: readonly RpcLibraryCode[] = [
+        'FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED',
+        'INVALID_PATH', 'INVALID_FILE', 'FILES_QUOTA_EXCEEDED', 'FILES_NOT_ALLOWED', 'FILES_BUSY',
+    ];
     const isLibraryCode = (code: unknown): code is RpcLibraryCode => typeof code === 'string' && (LIBRARY_CODES as readonly string[]).includes(code);
     const isReservedName = (name: string) => name.startsWith(RESERVED_PREFIX);
 

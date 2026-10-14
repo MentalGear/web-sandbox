@@ -89,6 +89,7 @@ With [`autoResize`](#configuration) the element sets its own `style.height`; it 
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A budget for each `execute()`, from when the element posts the code until the guest reports that it returned or threw. Code still running at the deadline ends the sandbox: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. Work the code scheduled for later is not counted (use `watchdogTimeout`). Anything but a finite number `> 0` is off. |
 | `autoResize` | `boolean` | `false` | iframe, strict | Only a literal `true` enables it. The element's height follows the guest's content height; see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Gives the guest [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off. [ADR-006](ADR-006-fetch-bridge.md) |
+| `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
 
 ### `connectionsAllowed`
 
@@ -251,6 +252,29 @@ arguments. Unregistered paths are ignored; an invalid path throws `INVALID_PATH`
 `listFiles(): FileInfo[]` — the registered files, sorted by path, as `{ path, type, size }` (`size` in bytes,
 as registered).
 
+### `listGuestWrites()`
+
+`listGuestWrites(): GuestWrite[]` — the guest's pending changes, sorted by path: `{ path, change: 'write', type,
+size, content }` (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`.
+Empty without [`guestWrites`](#configuration). See [Guest writes](#guest-writes).
+
+### `commitGuestWrites(paths, options?)`
+
+`commitGuestWrites(paths: string[], options?: { code?: boolean }): void` — applies the pending changes at `paths`
+to the files, as one `registerFiles()` / `unregisterFiles()` would, and removes them from the pending list.
+
+- `paths` is required: there is no "commit everything". A path with no pending change is skipped.
+- A write whose type is not inert is refused with `FILES_NOT_ALLOWED` unless `options.code === true`. Inert:
+  `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/avif`, `image/x-icon`, `image/bmp`, `font/woff`,
+  `font/woff2`, `font/ttf`, `font/otf`, `audio/mpeg`, `audio/wav`, `audio/ogg`, `audio/mp4`, `audio/flac`,
+  `video/mp4`, `video/webm`, `video/ogg`, `text/plain`, `application/json`, `text/css`. Everything else (JavaScript,
+  HTML, SVG, XML, WebAssembly, unknown types, any other type the guest set) can run or be parsed as code. The
+  type checked is the one the file will be loaded as, never just its name.
+- All checks come first, as for `registerFiles()`, including the quota with what module and stylesheet rewrites
+  add, against the files as they are now: a refusal throws `INVALID_PATH`, `FILES_NOT_ALLOWED` or
+  `FILES_QUOTA_EXCEEDED` and changes neither the files nor the pending list.
+- Fires `fileschanged` when the files changed. The guest sees committed files from the next build on.
+
 ---
 
 ## Events
@@ -264,7 +288,8 @@ All events are `CustomEvent`s dispatched on the element. None is `composed`.
 | `sandbox-log` | `SandboxLog` | yes | A log line from the guest or from the element. |
 | `violation` | `SandboxViolation` | yes | The guest policy refused a load. |
 | `fetch` | `FetchRecord` | yes | A `sandboxFetch()` request settled (including refusals). |
-| `fileschanged` | `{ paths: string[] }` | no | `registerFiles()` or `unregisterFiles()` changed the store; synchronous. |
+| `fileschanged` | `{ paths: string[] }` | no | `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; synchronous. |
+| `fileswritten` | `{ paths: string[] }` | yes | The element recorded a guest write or removal (`guestWrites`); one path per event, at most `GUEST_WRITES_PER_SECOND` per environment. |
 
 The bubbling events reach a listener on `window` for every sandbox on the page; `event.target` says which one.
 Every `detail` is frozen. Fields that come from the guest are validated and clamped, but they remain the
@@ -359,7 +384,10 @@ and resets the per-environment caps (log rate, violations). Listeners run synchr
 
 | Kept across a rebuild | Not kept |
 | :--- | :--- |
-| Host-exposed methods, registered files, the configuration, the `autoResize` height (until the new guest reports) | The guest's realm and exposed methods, pending calls, queued `execute()` code, in-flight requests |
+| Host-exposed methods, registered files, the configuration, the `autoResize` height (until the new guest reports) | The guest's realm and exposed methods, pending calls, queued `execute()` code, in-flight requests, uncommitted guest writes |
+
+A termination keeps the guest's pending writes (listable and committable) until the next build; removing the
+element discards them.
 
 [ADR-003](ADR-003-lifecycle-and-liveness.md)
 
@@ -410,10 +438,15 @@ HTTP error statuses resolve, as with `fetch`. `sandboxFetch()` can also reject w
 
 | Code | Where | Meaning |
 | :--- | :--- | :--- |
-| `INVALID_PATH` | `registerFiles()`, `unregisterFiles()` | A path is not valid, or `unregisterFiles()` was not given an array. |
-| `INVALID_FILE` | `registerFiles()` | The batch is not an object, or an entry is not a string, a `Uint8Array` or `{ content, type }` with a valid MIME type. |
-| `FILES_QUOTA_EXCEEDED` | `registerFiles()` | The store would exceed `MAX_FILES` files or `MAX_TOTAL_BYTES` (a rewritten JavaScript or CSS file counts what its rewrite adds). |
-| `NOT_FOUND` | guest `sandboxFiles` | Any lookup of a path that is not registered, exactly as written. |
+| `INVALID_PATH` | `registerFiles()`, `unregisterFiles()`, `commitGuestWrites()`, guest `write()` / `remove()` | A path is not valid, or a list of paths is not an array. |
+| `INVALID_FILE` | `registerFiles()`, guest `write()` | The batch is not an object, or an entry is not a string, a `Uint8Array` or `{ content, type }` with a valid MIME type (in the guest: a string, `Blob`, `ArrayBuffer` or typed array). |
+| `FILES_QUOTA_EXCEEDED` | `registerFiles()`, `commitGuestWrites()`, guest `write()` | The files would exceed `MAX_FILES` files or `MAX_TOTAL_BYTES` (a rewritten JavaScript or CSS file counts what its rewrite adds; a guest write counts the files with every pending change applied). |
+| `FILES_NOT_ALLOWED` | `commitGuestWrites()`, guest `write()` / `remove()` | An opt-in is missing: `guestWrites` is off, or a non-inert file is committed without `{ code: true }`. |
+| `FILES_BUSY` | guest `write()` / `remove()` | Past `GUEST_WRITES_PER_SECOND` requests or `GUEST_WRITE_BYTES_PER_SECOND` bytes in one second; nothing was recorded. Retryable. |
+| `NOT_FOUND` | guest `sandboxFiles` | Any lookup of a path that is not there, exactly as written; a `remove()` of a path that is in neither the files nor the guest's writes. |
+
+In the guest, the codes other than `NOT_FOUND` come from the element through the broker, so `write()` and
+`remove()` can also reject with a [call code](#calls-rpcerrorcode) such as `BUSY` or `TERMINATED`.
 
 ---
 
@@ -453,10 +486,25 @@ Usable at once: calls and exposes made before the channel is connected are buffe
 | `url` | `(path: string) => string` | The file's `blob:` URL, minted in the guest's own realm. Throws `NOT_FOUND`. |
 | `read` | `(path: string) => Promise<Uint8Array>` | The bytes as registered, a fresh copy per call. Rejects `NOT_FOUND`. |
 | `text` | `(path: string) => Promise<string>` | The content decoded as UTF-8. Rejects `NOT_FOUND`. |
+| `write` | `(path: string, entry) => Promise<void>` | Asks the element to record a write ([`guestWrites`](#configuration)). `entry`: a string, `Blob`, `ArrayBuffer` or typed array, or `{ content, type }`; copied when called. Rejects with a [files code](#files-fileerrorcode-and-not_found). |
+| `remove` | `(path: string) => Promise<void>` | Asks the element to record a removal. Rejects `NOT_FOUND` for a path in neither the files nor the guest's writes. |
 
 Always present: with no files, `list()` is empty and every lookup fails. Lookups are exact (`../x`, `/x` and
 `%2e%2e/x` are not found). `url()` serves the rewritten form of a module or stylesheet; `read()` and `text()`
 return what you registered. [ADR-004](ADR-004-files-as-blob-urls.md)
+
+### Guest writes
+
+With `guestWrites: true`, `sandboxFiles.write()` and `remove()` change the guest's own view once the element
+has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` (nothing
+the guest writes gets a URL). The element checks each request as `registerFiles()` would (path, entry, type, the
+quota with every pending change applied) and at most `GUEST_WRITES_PER_SECOND` requests and
+`GUEST_WRITE_BYTES_PER_SECOND` bytes per second; a refused request changes nothing on either side. Nothing the
+guest writes reaches the files, a policy or another environment until the host calls
+[`commitGuestWrites()`](#commitguestwritespaths-options); it is listed by
+[`listGuestWrites()`](#listguestwrites) and announced by `fileswritten`. Without `guestWrites`, both methods
+reject with `FILES_NOT_ALLOWED`, and so does the element for any request that reaches it. Treat written
+content as the guest's data. [ADR-004](ADR-004-files-as-blob-urls.md)
 
 ### `sandboxFetch`
 
@@ -545,6 +593,8 @@ Choose strict mode for content you do not trust at all. [ADR-005](ADR-005-strict
 | Fetch: largest `timeoutMs` | 120000 | — |
 | Fetch: default `maxConcurrent` | 4 | — |
 | Fetch: largest `maxConcurrent` | 16 | — |
+| Guest writes: requests per second, per environment | 100 | `GUEST_WRITES_PER_SECOND` |
+| Guest writes: bytes per second, per environment | 8388608 (8 MiB) | `GUEST_WRITE_BYTES_PER_SECOND` |
 
 ---
 
@@ -559,11 +609,11 @@ Values:
 | `SandboxDevTools` | `new SandboxDevTools(element)`, then `activate()`, `deactivate()` or `toggle()`: prints the element's `sandbox-log` lines to the host console. |
 | `SAFE_CAPABILITIES`, `UNSAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS`, `UNSAFE_PERMISSIONS` | The capability lists accepted by `capabilities` and `unsafeCapabilities`. |
 | `FETCH_ERROR_CODES` | Every `FetchErrorCode`. |
-| `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS` | See [Limits](#limits). |
+| `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS`, `GUEST_WRITES_PER_SECOND`, `GUEST_WRITE_BYTES_PER_SECOND` | See [Limits](#limits). |
 
 Types: `SandboxConfig`, `SandboxState`, `RpcError`, `RpcErrorCode`, `SandboxLog`, `SandboxLogLevel`,
 `SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,
-`FileInfo`, `FileError`, `FileErrorCode`, `SandboxFiles`, `CSPDirectives`, `SafeCapability`,
+`FileInfo`, `FileError`, `FileErrorCode`, `SandboxFiles`, `GuestWrite`, `CSPDirectives`, `SafeCapability`,
 `UnsafeCapability`, `UnsafePermission`, `SandboxCapability`.
 
 The playground's scenarios (`src/lib/presets.ts`) are not part of the package: each preset is a `code` payload

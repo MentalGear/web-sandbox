@@ -6,7 +6,8 @@ import { dropMetaIgnoredDirectives } from "./lib/csp/drop-meta-ignored";
 import { dropEvalSources } from "./lib/csp/drop-eval";
 import { isKnownDirective, sanitizeDirectives } from "./lib/csp/policy-grammar";
 import { addFileSources } from "./lib/csp/file-sources";
-import { FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
+import { fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
+import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
 import { inlineScriptsAllowed, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
 import { mergeGuestImportMaps } from "./lib/import-map";
@@ -86,6 +87,13 @@ export interface SandboxConfig {
      * and time) and reports each one as a 'fetch' event. The guest policy is unchanged. See src/lib/fetch-bridge.ts.
      */
     fetchBridge?: FetchBridgeConfig;
+    /**
+     * Guest writes (off by default): the guest's sandboxFiles.write() and remove() are recorded by the host in an
+     * overlay of this environment, checked like registerFiles(), reported as 'fileswritten', listed by
+     * listGuestWrites() and applied only by commitGuestWrites(). Only a literal true enables it. See
+     * src/lib/guest-writes.ts.
+     */
+    guestWrites?: boolean;
 }
 
 /**
@@ -126,6 +134,7 @@ const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     workerExecutionTimeout: 0,
     watchdogTimeout: 0,
     autoResize: false,
+    guestWrites: false,
 };
 
 // Texts of the host's own refusals, for people reading them. Code branches on the error's `code`
@@ -195,6 +204,10 @@ export class WebSandbox extends HTMLElement {
     private _fetchPolicy: FetchPolicy | null = null; // the validated fetchBridge config, or null when off (B5)
     private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
     private _warnedFetchBridge = new Set<string>();  // fetchBridge config warnings, once each per instance
+    // The guest-write overlay (C5): created by each build when guestWrites is on, else null. It outlives its
+    // environment's termination (closed, still listable and committable) and is discarded by the next build and on
+    // removal (_discardGuestWrites).
+    private _guestWrites: GuestWrites | null = null;
     private _violationCounts = new Map<string, number>(); // 'violation' events dispatched per source for the current environment (capped, violation.ts)
     private _logLimiter = createLogLimiter(); // guest 'sandbox-log' events per second for the current environment (sandbox-log.ts)
     private _warnedLogLimit = false;          // the log rate limit warned for the current environment
@@ -243,6 +256,9 @@ export class WebSandbox extends HTMLElement {
         // The fetch bridge is a library method under a reserved name (B5): expose() can never replace it.
         // Registered once; it refuses while the current environment has no bridge.
         this._broker.exposeReserved(FETCH_METHOD, (request: unknown) => this._handleFetch(request));
+        // Guest writes (C5) are re-registered by every build, bound to that build's overlay (_startGuestWrites);
+        // until the first build, none: every request is refused.
+        this._exposeGuestWrites(null);
     }
 
     /** Where the sandbox is in its lifecycle; see SandboxState. Agrees with 'ready' / 'terminated' when they fire. */
@@ -260,6 +276,7 @@ export class WebSandbox extends HTMLElement {
     // a fresh environment through connectedCallback (which also makes moving the element a clean re-init).
     disconnectedCallback() {
         this._teardown();
+        this._discardGuestWrites();
         this._enterState('idle');
     }
 
@@ -331,6 +348,8 @@ export class WebSandbox extends HTMLElement {
         // Only a literal true enables eval or auto-sizing: both values are interpolated into the guest bootstrap.
         merged.scriptUnsafe = merged.scriptUnsafe === true;
         merged.autoResize = merged.autoResize === true;
+        // Guest writes too: the build reads only this normalised copy.
+        merged.guestWrites = merged.guestWrites === true;
         if (typeof merged.entry !== 'string') delete merged.entry;
 
         // apply new config
@@ -369,10 +388,80 @@ export class WebSandbox extends HTMLElement {
         return this._files.list();
     }
 
+    /**
+     * The guest's pending writes and removals (guestWrites), sorted by path: `{ path, change: 'write', type, size,
+     * content }` (content a copy of the bytes) or `{ path, change: 'remove' }`. Empty when writes are off. They belong
+     * to the current environment, survive its termination, and are discarded by the next build and on removal.
+     */
+    listGuestWrites(): GuestWrite[] {
+        return this._guestWrites?.list() ?? [];
+    }
+
+    /**
+     * Applies the guest's pending changes at `paths` (required: an array of paths; a path with no pending change is
+     * skipped) to the store, atomically, as registerFiles() and unregisterFiles() would, and fires 'fileschanged'.
+     * A write whose type is not inert (anything but images, fonts, audio, video, text/plain, application/json and
+     * text/css: JavaScript, HTML, SVG, XML, WebAssembly, unknown types) is refused with FILES_NOT_ALLOWED unless
+     * `options.code === true`. Refusals throw INVALID_PATH, FILES_NOT_ALLOWED or FILES_QUOTA_EXCEEDED and change
+     * nothing. Committed paths leave the pending list; the guest sees them from the next build on.
+     */
+    commitGuestWrites(paths: string[], options?: { code?: boolean }): void {
+        const { paths: checked, code } = parseCommitArguments(paths, options);
+        if (!this._guestWrites) return;
+        this._dispatchFilesChanged(this._guestWrites.commit(checked, code));
+    }
+
     // Synchronous, once per call that changed something.
     private _dispatchFilesChanged(paths: string[]) {
         if (paths.length === 0) return;
         this.dispatchEvent(new CustomEvent('fileschanged', { detail: { paths } }));
+    }
+
+    // One overlay per environment (C5), made with the build like the fetch bridge, and the reserved method bound to
+    // it. The method is registered again here, not once: the broker looks a method up when a request ARRIVES
+    // (handleRequest, rpc.ts), and only the current port's frames arrive (_onGuestMessage, B4), so a request is
+    // always handled by the overlay of the environment that sent it, even if it runs after a listener rebuilt the
+    // sandbox. Never the next environment's.
+    private _startGuestWrites() {
+        this._guestWrites = this._config.guestWrites === true ? createGuestWrites({ store: this._files }) : null;
+        this._exposeGuestWrites(this._guestWrites);
+    }
+
+    private _exposeGuestWrites(writes: GuestWrites | null) {
+        this._broker.exposeReserved(WRITE_METHOD, (request: unknown) => this._handleGuestWrite(writes, request));
+    }
+
+    // The next build, or the element's removal, ends what the last environment wrote and did not commit.
+    private _discardGuestWrites() {
+        this._guestWrites?.close();
+        this._guestWrites = null;
+        this._exposeGuestWrites(null);
+    }
+
+    // The reserved sandbox:write method. Every refusal is a FileError with a library code (guest-writes.ts); with
+    // writes off, FILES_NOT_ALLOWED: the guarantee, whatever the guest's own sandboxFiles does first. A recorded
+    // change is announced last, through _notifyThenAct (B5): 'fileswritten' runs embedder listeners, and the guest is
+    // told its change stands only if no listener reset or terminated the sandbox meanwhile (then the overlay that
+    // held it is gone or closed, and the answer could only reach a closed port anyway).
+    private _handleGuestWrite(writes: GuestWrites | null, request: unknown): Promise<GuestWriteAnswer> {
+        if (!writes) return Promise.reject(fileError('FILES_NOT_ALLOWED', 'guest writes are off (guestWrites is not set).'));
+        let answer: GuestWriteAnswer;
+        try {
+            answer = writes.handle(request);
+        } catch (error) {
+            return Promise.reject(error);
+        }
+        if (answer.change === 'none') return Promise.resolve(answer); // nothing recorded, nothing to announce
+        return new Promise((resolve, reject) => {
+            this._notifyThenAct(() => this._dispatchFilesWritten(answer.path), () => resolve(answer));
+            reject(new Error('[Sandbox] the sandbox was reset or terminated while this write was announced.')); // no-op once resolved
+        });
+    }
+
+    // One guest change the host recorded: dispatched on the element and bubbling, like the other events a guest
+    // causes. At most GUEST_WRITES_PER_SECOND per environment (guest-writes.ts).
+    private _dispatchFilesWritten(path: string) {
+        this.dispatchEvent(new CustomEvent('fileswritten', { detail: Object.freeze({ paths: Object.freeze([path]) }), bubbles: true }));
     }
 
     // virtualFilesUrl configured the removed Service-Worker hub (ADR-004). Dropped from the config, with
@@ -842,6 +931,7 @@ export class WebSandbox extends HTMLElement {
 
     private _teardown() {
         this._generation++;
+        this._guestWrites?.close(); // its writes stay listable and committable until the next build (initialize)
         this._logLimiter = createLogLimiter(); // the log rate limit is per environment
         this._warnedLogLimit = false;
         this._queuedMessages = []; // Clear queue for the old environment
@@ -883,6 +973,7 @@ export class WebSandbox extends HTMLElement {
     // one 'terminated' event with the reason, nothing half-built (_teardown).
     private initialize() {
         this._teardown();
+        this._discardGuestWrites(); // every build starts without the last environment's uncommitted writes
         if (!this.isConnected) {
             this._enterState('idle');
             return;
@@ -915,25 +1006,31 @@ export class WebSandbox extends HTMLElement {
         // communication, logs and RPC bridge template that any content running in the sandbox uses.
         // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
         // Opt-in features as one literal, only when one is on (a sandbox without them keeps its bootstrap text).
-        const features: { autoResize?: true; fetchBridge?: { timeoutMs: number } } = {};
+        const features: { autoResize?: true; fetchBridge?: { timeoutMs: number }; guestWrites?: true } = {};
         if (mode === 'iframe' && this._autoResizeEnabled()) features.autoResize = true;
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
+        if (this._config.guestWrites === true) features.guestWrites = true;
         const featuresArgument = Object.keys(features).length > 0 ? `, ${toInlineScriptLiteral(features)}` : '';
         // Only literals are interpolated: `=== true` here as well, whatever setConfig() stored (review A6).
-        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, '${mode}', console, ${createBroker.toString()}${featuresArgument});`;
+        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, '${mode}', console, ${createBroker.toString()}${featuresArgument})`;
+        // Guest writes (C5): sandboxFiles gets the comms script's captured write call through `comms`, a constant
+        // of a block the whole bootstrap then runs in: block-scoped, so never a global guest code could read.
+        // Without them the bootstrap keeps its text: the comms statement, then sandboxFiles without a write call
+        // (its write() and remove() refuse locally).
+        const writes = this._config.guestWrites === true;
         // The snapshot is one inline literal, so the blobs exist before the parser reaches guest markup.
         // Installed even with no files (an empty literal): sandboxFiles always exists, and a lookup in
         // an empty store is NOT_FOUND like any other miss, never a ReferenceError.
-        let filesCall = `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)})`;
+        let filesCall = `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}${writes ? ', comms.writeFiles' : ''})`;
         // With JavaScript files: the one import map, registered with the URLs filesCall just created,
         // before any guest markup (module graph, PR3). It hands the files object on to the next step.
         if (plan.importMap) {
             filesCall = `(${inSandboxImportMap.toString()})(${filesCall}, ${toInlineScriptLiteral(plan.importMap.paths)}, ${toInlineScriptLiteral(plan.importMap.guest)})`;
         }
-        if (!plan.parts) return `${comms}${filesCall};`;
         // Guest markup that names files: written by the bootstrap's last statement, with the blob: URLs
         // filesCall just created (markup-references.ts). The parts are one more inline literal.
-        return `${comms}(${inSandboxMarkup.toString()})(${filesCall}, ${toInlineScriptLiteral(plan.parts)});`;
+        const last = plan.parts ? `(${inSandboxMarkup.toString()})(${filesCall}, ${toInlineScriptLiteral(plan.parts)});` : `${filesCall};`;
+        return writes ? `{const comms = ${comms};${last}}` : `${comms};${last}`;
     }
 
     private _getWorkerBootstrapScript(files: FileSnapshotEntry[]) {
@@ -1068,6 +1165,7 @@ export class WebSandbox extends HTMLElement {
         const isWorkerMode = this._config.mode === 'worker';
         if (!this._autoResizeEnabled()) this._releaseAutoHeight();
         this._startFetchBridge();
+        this._startGuestWrites();
 
         // One snapshot per environment build: the policy and the guest's files come from the same one,
         // and later registerFiles() calls reach the guest only through the next build.
@@ -1162,13 +1260,14 @@ export class WebSandbox extends HTMLElement {
     // (globalThis.x = …). `this` inside is the global object, as at a script's top level. The scope check
     // (assertEntryScoped) refuses to start a worker whose entry escaped that scope.
     private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string): string {
-        const features: { fetchBridge?: { timeoutMs: number }; externalPort: true } = { externalPort: true };
+        const features: { fetchBridge?: { timeoutMs: number }; externalPort: true; guestWrites?: true } = { externalPort: true };
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
+        if (this._config.guestWrites === true) features.guestWrites = true;
         const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, entryDoneName: ENTRY_DONE_NAME, eventTypes: VIEW_EVENT_TYPES };
         const prelude = '(function (g) {'
             + `(${assertEntryScoped.toString()})(g);`
             + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)});`
-            + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)});`
+            + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}${this._config.guestWrites === true ? ', comms.writeFiles' : ''});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)});`
             + '})(this);';
         return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${ENTRY_DONE_NAME}();\n`;

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-    FALLBACK_TYPE, FileStore, MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES,
+    CheckedFile, FALLBACK_TYPE, FileStore, MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES,
     isJavaScriptType, isStylesheetType, isValidMimeType, isValidPath, mimeTypeFor, referenceCost, rewriteCost, SLOT_URL_BYTES,
     type ByteEdits, type FileErrorCode, type FileSnapshotEntry,
 } from './files';
@@ -675,5 +675,87 @@ describe('FileStore: the quota counts what stylesheet references add (PR4)', () 
         const css = rule.repeat(Math.floor(MAX_TOTAL_BYTES / 4 / rule.length));
         expect(refusal(() => store.register({ 'many.css': css }))).toEqual(refused('FILES_QUOTA_EXCEEDED'));
         expect(store.list()).toEqual([]);
+    });
+});
+
+describe('FileStore.apply(): the one mutation (backlog C5: register, unregister and the guest-write commit are wrappers over it)', () => {
+    const snapshotOf = (store: FileStore) => ({ list: store.list(), snapshot: store.snapshot(), total: (store as any)._totalBytes });
+
+    it('puts and removes in one atomic change, returning every changed path sorted', () => {
+        const store = new FileStore(() => {});
+        store.register({ 'a.txt': 'a', 'b.txt': 'b' });
+        expect(store.apply({ put: new Map([['c.txt', 'c'], ['a.txt', 'A']]), remove: ['b.txt', 'missing.txt'] }, 'test()')).toEqual(['a.txt', 'b.txt', 'c.txt']);
+        expect(store.list().map(f => [f.path, f.size])).toEqual([['a.txt', 1], ['c.txt', 1]]);
+        // identical content changes nothing; removing what is not there changes nothing
+        expect(store.apply({ put: new Map([['a.txt', 'A']]), remove: ['b.txt'] }, 'test()')).toEqual([]);
+    });
+
+    it.each([
+        ['a bad path in put', { put: new Map([['ok.txt', 'x'], ['../x', 'x']]) }, 'INVALID_PATH'],
+        ['a bad path in remove', { put: new Map([['ok.txt', 'x']]), remove: ['a.txt', '/x'] }, 'INVALID_PATH'],
+        ['a path both written and removed', { put: new Map([['a.txt', 'x']]), remove: ['a.txt'] }, 'INVALID_PATH'],
+        ['a bad entry', { put: new Map<string, unknown>([['ok.txt', 'x'], ['bad.txt', 7]]), remove: ['a.txt'] }, 'INVALID_FILE'],
+        ['past the count', { put: new Map(Array.from({ length: MAX_FILES }, (_, i) => [`n/${i}.txt`, ''])), remove: [] }, 'FILES_QUOTA_EXCEEDED'],
+        ['past the bytes', { put: new Map([['big.bin', new Uint8Array(MAX_TOTAL_BYTES)]]), remove: ['missing.txt'] }, 'FILES_QUOTA_EXCEEDED'],
+        ['past the bytes by a rewrite', { put: new Map<string, unknown>([['fill.bin', new Uint8Array(MAX_TOTAL_BYTES - 40)], ['m.js', "import './x.js';"]]), remove: ['a.txt', 'b.txt'] }, 'FILES_QUOTA_EXCEEDED'],
+    ] as const)('refused whole for %s: nothing changes, removals included', (_label, changes, code) => {
+        const store = new FileStore(() => {});
+        store.register({ 'a.txt': 'a', 'b.txt': 'b' });
+        const before = snapshotOf(store);
+        expect(refusal(() => store.apply(changes as any, 'test()'))).toEqual(refused(code as FileErrorCode));
+        expect(snapshotOf(store)).toEqual(before);
+    });
+
+    it('a removal frees its whole cost (rewrite included) within the same change', () => {
+        const store = new FileStore(() => {});
+        const source = Array.from({ length: 20 }, (_, i) => `import './m${i}.js';`).join('\n');
+        store.register({ 'app.js': source });
+        const free = MAX_TOTAL_BYTES - (store as any)._totalBytes;
+        expect(refusal(() => store.apply({ put: new Map([['fill.bin', new Uint8Array(free + 1)]]) }, 'test()'))).toEqual(refused('FILES_QUOTA_EXCEEDED'));
+        expect(store.apply({ put: new Map([['fill.bin', new Uint8Array(MAX_TOTAL_BYTES)]]), remove: ['app.js'] }, 'test()')).toEqual(['app.js', 'fill.bin']);
+        expect((store as any)._totalBytes).toBe(MAX_TOTAL_BYTES);
+    });
+
+    it('check() changes nothing and lexes nothing: no warning for a module the lexer cannot parse, which apply() warns about', () => {
+        const warn = vi.fn();
+        const store = new FileStore(warn);
+        store.register({ 'fill.bin': new Uint8Array(100) });
+        const before = snapshotOf(store);
+        expect(store.check({ put: new Map([['bad.js', 'import {']]), remove: ['fill.bin'] }, 'test()')).toBeUndefined();
+        expect(snapshotOf(store)).toEqual(before);
+        expect(warn).not.toHaveBeenCalled();
+        store.apply({ put: new Map([['bad.js', 'import {']]) }, 'test()');
+        expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('check() refuses past the registered bytes and the count; it does not count rewrites (the commit does)', () => {
+        const store = new FileStore(() => {});
+        store.register({ 'fill.bin': new Uint8Array(MAX_TOTAL_BYTES - 20) });
+        expect(store.check({ put: new Map([['m.js', "import'./a.js'"]]) }, 'test()')).toBeUndefined(); // 14 bytes: fits by bytes
+        expect(refusal(() => store.apply({ put: new Map([['m.js', "import'./a.js'"]]) }, 'test()'))).toEqual(refused('FILES_QUOTA_EXCEEDED')); // not with its rewrite
+        expect(refusal(() => store.check({ put: new Map([['x.bin', new Uint8Array(21)]]) }, 'test()'))).toEqual(refused('FILES_QUOTA_EXCEEDED'));
+        expect(refusal(() => store.check({ put: new Map([['../x', '']]) }, 'test()'))).toEqual(refused('INVALID_PATH'));
+        expect(refusal(() => store.check({ put: new Map(Array.from({ length: MAX_FILES }, (_, i) => [`n/${i}`, ''])) }, 'test()'))).toEqual(refused('FILES_QUOTA_EXCEEDED'));
+        expect(store.list().map(f => f.path)).toEqual(['fill.bin']);
+    });
+
+    it('a CheckedFile is taken as checked (no second copy), its type kept; CheckedFile.from() refuses exactly what register() refuses', () => {
+        const store = new FileStore(() => {});
+        const file = CheckedFile.from('img.png', { content: 'x', type: 'Text/Plain' }, 'test()');
+        expect([file.type, Array.from(file.bytes)]).toEqual(['text/plain', [120]]);
+        expect(store.apply({ put: new Map([['img.png', file]]) }, 'test()')).toEqual(['img.png']);
+        expect(store.list()).toEqual([{ path: 'img.png', type: 'text/plain', size: 1 }]);
+        // a CheckedFile under an invalid key is still refused by the key
+        expect(refusal(() => store.apply({ put: new Map([['../x', file]]) }, 'test()'))).toEqual(refused('INVALID_PATH'));
+        for (const [path, entry] of [['../x', ''], ['x.txt', 7], ['x.txt', { content: '', type: 'bad' }]] as const) {
+            expect(refusal(() => CheckedFile.from(path, entry, 'test()'))).toEqual(refusal(() => new FileStore().register({ [path]: entry })));
+        }
+    });
+
+    it('refusal messages name the caller', () => {
+        const store = new FileStore(() => {});
+        try { store.apply({ put: new Map([['../x', '']]) }, 'commitGuestWrites()'); } catch (e: any) { expect(e.message).toContain('commitGuestWrites() refused'); }
+        try { store.register({ '../x': '' }); } catch (e: any) { expect(e.message).toContain('registerFiles() refused'); }
+        try { store.unregister(['../x']); } catch (e: any) { expect(e.message).toContain('unregisterFiles() refused'); }
     });
 });

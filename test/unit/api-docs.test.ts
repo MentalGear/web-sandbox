@@ -8,6 +8,7 @@ import { createBroker } from '@src/lib/rpc';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES } from '@src/lib/files';
 import { toFetchPolicy } from '@src/lib/fetch-bridge';
+import { INERT_TYPES } from '@src/lib/guest-writes';
 import { KNOWN_DIRECTIVES } from '@src/lib/csp/policy-grammar';
 import { META_IGNORED_DIRECTIVES } from '@src/lib/csp/drop-meta-ignored';
 import { STRICT_FIXED, STRICT_PASSED_THROUGH } from '@src/lib/csp/strict-policy';
@@ -187,6 +188,12 @@ describe('docs/API.md lists the public surface', () => {
         }
         const listFiles = section('### `listFiles()`');
         for (const key of interfaceKeys('src/lib/files.ts', 'FileInfo')) expect(listFiles, key).toMatch(new RegExp(`\\b${key}\\b`));
+    });
+
+    it('every inert type a commit takes without { code: true }, and no other', () => {
+        const commit = section('### `commitGuestWrites(');
+        const listed = [...spans(commit)].filter(span => /^[a-z]+\/[a-z0-9.+-]+$/.test(span));
+        expect(sorted(listed)).toEqual(sorted(INERT_TYPES));
     });
 
     it('every termination reason', () => {

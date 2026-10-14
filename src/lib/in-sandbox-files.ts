@@ -37,9 +37,27 @@ import type { FileSnapshotEntry } from './files';
  * so `../x`, `%2e%2e/x`, `/x` or another instance's path is simply absent. Every failed lookup is the
  * same plain Error with an own `code: 'NOT_FOUND'` (the B7 shape), minted here, and its message
  * names nothing but the code.
+ *
+ * Guest writes (backlog C5, guest-writes.ts): `write(path, entry)` and `remove(path)` exist in every
+ * environment. `writeFiles` is the bootstrap's captured call of the reserved sandbox:write method
+ * (inSandboxScript), or null when the embedder did not set `guestWrites`: then both reject with
+ * FILES_NOT_ALLOWED without sending anything (the host refuses the method itself too; that refusal is the
+ * guarantee, this one only saves the round trip). With it:
+ *   - nothing is checked here: the host validates path, entry, quota and rate and answers, and this map
+ *     changes only after its answer, so the host is the single source of truth and a refused request
+ *     leaves both sides unchanged; the type a written file reads back with is the host's (the store's);
+ *   - the bytes are copied when write() is called (a Blob is immutable, so reading it later reads the same
+ *     bytes), and requests leave in call order whatever a Blob's read takes;
+ *   - list(), read() and text() show the guest's acknowledged writes and removals; url() of a written path
+ *     throws NOT_FOUND, here and in every mode. No blob: URL is minted for anything the guest wrote, so what
+ *     a URL names is always a file of this build's snapshot (in strict mode the view never sees the overlay
+ *     at all; committed files reach it as registered files in a later build);
+ *   - removing a path the host holds in neither its store nor the guest's writes rejects NOT_FOUND, minted
+ *     here from the host's answer.
  */
-export function inSandboxFiles(entries: FileSnapshotEntry[]) {
-    const files = new Map<string, { blob: Blob; url: string }>();
+export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((request: unknown) => Promise<unknown>) | null) {
+    // `url` is null for a path the guest wrote: never minted (see above)
+    const files = new Map<string, { blob: Blob; url: string | null }>();
     // Uint8Array.fromBase64 where the engine has it (much faster), else atob and a copy loop
     const fromBase64 = (Uint8Array as unknown as { fromBase64?: (b64: string) => Uint8Array<ArrayBuffer> }).fromBase64;
     const decode = (b64: string) => {
@@ -68,7 +86,7 @@ export function inSandboxFiles(entries: FileSnapshotEntry[]) {
                 } else {
                     const target = files.get((replacement as [string])[0]);
                     if (!target) continue; // not made yet: the reference keeps its registered bytes
-                    text = cssString(target.url);
+                    text = cssString(target.url as string); // every snapshot file has one: only written files do not
                 }
                 parts.push(blob.slice(at, edits[i] as number), text);
                 at = edits[i + 1] as number;
@@ -84,15 +102,77 @@ export function inSandboxFiles(entries: FileSnapshotEntry[]) {
         error.code = 'NOT_FOUND';
         return error;
     };
+    const notAllowed = () => {
+        const error = new Error('[sandboxFiles] FILES_NOT_ALLOWED: guest writes are off') as Error & { code: string };
+        error.code = 'FILES_NOT_ALLOWED';
+        return error;
+    };
     const lookup = (path: unknown) => {
         const file = typeof path === 'string' ? files.get(path) : undefined;
         if (!file) throw notFound();
         return file;
     };
 
+    // The bytes of a written entry, copied now; a Promise for a Blob's; null for content the host does not
+    // accept, sent as null so the host refuses it with INVALID_FILE.
+    const copyOf = (content: unknown): Uint8Array<ArrayBuffer> | Promise<Uint8Array<ArrayBuffer>> | null => {
+        if (typeof content === 'string') return new TextEncoder().encode(content);
+        if (content instanceof ArrayBuffer) return new Uint8Array(content.slice(0));
+        if (ArrayBuffer.isView(content)) return new Uint8Array(content.buffer, content.byteOffset, content.byteLength).slice();
+        if (typeof Blob === 'function' && content instanceof Blob) return content.arrayBuffer().then((buffer: ArrayBuffer) => new Uint8Array(buffer));
+        return null;
+    };
+    const isContent = (value: unknown) => typeof value !== 'object' || value === null || value instanceof ArrayBuffer || ArrayBuffer.isView(value) || (typeof Blob === 'function' && value instanceof Blob);
+    // Requests leave in call order: each is sent only after the one before it was (its `ready` may be a Blob's read).
+    let order: Promise<unknown> = Promise.resolve();
+    const noop = () => {};
+    const inTurn = (ready: unknown, send: (value: any) => Promise<void>): Promise<void> => {
+        const turn = order.then(() => ready);
+        const result = turn.then(send); // registered before `order` below, so it runs first when `turn` settles
+        order = turn.then(noop, noop);
+        return result;
+    };
+
+    const write = (path: unknown, entry: unknown): Promise<void> => {
+        if (!writeFiles) return Promise.reject(notAllowed());
+        const send = writeFiles;
+        const target = typeof path === 'string' ? path : null;
+        let ready: Uint8Array<ArrayBuffer> | Promise<Uint8Array<ArrayBuffer>> | null;
+        let type: unknown;
+        const wrapped = !isContent(entry);
+        try {
+            ready = copyOf(wrapped ? (entry as { content?: unknown }).content : entry);
+            if (wrapped) type = (entry as { type?: unknown }).type;
+        } catch (e) {
+            return Promise.reject(e);
+        }
+        const typeOverride = typeof type === 'string' ? type : null;
+        return inTurn(ready, (bytes: Uint8Array<ArrayBuffer> | null) => send({ change: 'write', path: target, entry: wrapped ? { content: bytes, type: typeOverride } : bytes }).then((answer: any) => {
+            // the host recorded it: its answer names the path and the type the store gave it
+            if (bytes && answer && answer.change === 'write' && answer.path === target) files.set(target as string, { blob: new Blob([bytes], { type: answer.type }), url: null });
+        }));
+    };
+
+    const remove = (path: unknown): Promise<void> => {
+        if (!writeFiles) return Promise.reject(notAllowed());
+        const send = writeFiles;
+        const target = typeof path === 'string' ? path : null;
+        return inTurn(null, () => send({ change: 'remove', path: target }).then((answer: any) => {
+            if (answer && answer.change === 'remove' && answer.path === target) {
+                files.delete(target as string);
+                return;
+            }
+            throw notFound(); // 'none': in neither the host's store nor the guest's writes; nothing was recorded
+        }));
+    };
+
     const api = Object.freeze({
         list: () => Array.from(files.keys()).sort(), // the literal is in dependency order, not path order
-        url: (path: string) => lookup(path).url,
+        url: (path: string) => {
+            const url = lookup(path).url;
+            if (url === null) throw notFound(); // a path the guest wrote has no URL
+            return url;
+        },
         read: (path: string) => {
             try {
                 return lookup(path).blob.arrayBuffer().then((buffer: ArrayBuffer) => new Uint8Array(buffer));
@@ -107,6 +187,8 @@ export function inSandboxFiles(entries: FileSnapshotEntry[]) {
                 return Promise.reject(e);
             }
         },
+        write: (path: string, entry: unknown) => write(path, entry),
+        remove: (path: string) => remove(path),
     });
     (globalThis as any).sandboxFiles = api;
     // returned too, so the bootstrap's next step (inSandboxMarkup) uses this very object, never a global

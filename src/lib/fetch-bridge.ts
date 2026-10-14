@@ -41,7 +41,7 @@ export const FETCH_METHOD = 'sandbox:fetch';
  *   FETCH_TIMEOUT      no whole response within timeoutMs (retryable)
  *   FETCH_FAILED       the request failed: network error, CORS, or the sandbox was torn down (retryable)
  */
-export type FetchErrorCode = RpcLibraryCode;
+export type FetchErrorCode = Extract<RpcLibraryCode, `FETCH_${string}`>;
 
 export const FETCH_ERROR_CODES: readonly FetchErrorCode[] = ['FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED'];
 

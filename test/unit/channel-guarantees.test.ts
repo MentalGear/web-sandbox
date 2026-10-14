@@ -195,7 +195,11 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
         const reads = [...source.matchAll(/this\._generation(?!\+\+)/g)].map(match => match.index!);
         expect(reads).toHaveLength(2); // `const generation = this._generation` and the comparison after notify()
         for (const index of reads) expect(index > start && index < end, source.slice(index - 80, index + 40)).toBe(true);
-        expect([...source.matchAll(/this\._notifyThenAct\(/g)]).toHaveLength(PATHS.length);
+        // Paths whose action is not a termination are forced where their feature is tested: the guest-write announcement
+        // ('fileswritten', then the acknowledgement; test/unit/guest-writes.test.ts, "review B5").
+        const OTHER_PATHS = ['_handleGuestWrite'];
+        for (const name of OTHER_PATHS) expect(source.slice(source.indexOf(`private ${name}(`)).indexOf('this._notifyThenAct(')).toBeLessThan(2000);
+        expect([...source.matchAll(/this\._notifyThenAct\(/g)]).toHaveLength(PATHS.length + OTHER_PATHS.length);
     });
 });
 
