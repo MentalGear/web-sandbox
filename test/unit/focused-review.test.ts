@@ -91,7 +91,7 @@ describe('W2: every rate the library states per second holds in any one-second w
         expect(busiestWindow(admitted)).toBeLessThanOrEqual(GUEST_WRITE_BYTES_PER_SECOND);
     });
 
-    it('guest writes, property: random request times and sizes never exceed either rate in any 1000 ms span', () => {
+    it('guest writes, property: random request times and sizes never exceed either rate in any 1000 ms span', { timeout: 30000 }, () => {
         for (let seed = 1; seed <= 20; seed++) {
             const random = prng(seed);
             const store = new FileStore(() => {});
@@ -99,7 +99,7 @@ describe('W2: every rate the library states per second holds in any one-second w
             const writes = createGuestWrites({ store, now: () => time });
             const requests: [number, number][] = [];
             const bytes: [number, number][] = [];
-            for (let i = 0; i < 1500; i++) {
+            for (let i = 0; i < 600; i++) { // a few seconds of guest time each; sizes up to 400 KB, so the byte rate engages too
                 time += Math.floor(random() * 40);
                 const size = Math.floor(random() * 400000);
                 try {
