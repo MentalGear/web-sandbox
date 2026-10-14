@@ -436,7 +436,7 @@ Why it is built this way: [ADR-004](docs/ADR-004-files-as-blob-urls.md).
 sandbox.registerFiles({
     'main.js': `sandboxView.render('<button id="go">Go</button><p id="out"></p>');
                 sandboxView.on('click', 'go', () => sandboxView.render('clicked', 'out'));`,
-    'logo.svg': svgText,
+    'logo.png': pngBytes,
 });
 sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
 ```
@@ -444,17 +444,18 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
 *   **Guest API (in the worker)**: `sandboxView.render(html, into?)` replaces the view's body, or the children of
     the element with id `into` (at most 256 Ki characters; the latest render per target wins);
     `sandboxView.on(type, id | null, handler)` returns `off` and receives `click`, `input`, `change`, `submit`
-    and `keydown` as `{ type, ids, target: { tag, id, name, value, checked }, key?, form? }`. `bridge`,
+    and `keydown` as `{ type, ids, target: { tag, id, name, value, checked }, key?, form?, truncated? }`. `bridge`,
     `sandboxFiles` and `sandboxFetch` work as in worker mode.
 *   **Host API**: `entry` names a registered JavaScript file the worker runs first (a classic script, in a
     function scope of its own: its top-level declarations stay local, so assign `globalThis.x` to share; `this`
     is the global object); `html` and `load()` set the initial view; `execute()` runs in the worker (needs
     `scriptUnsafe`); `call()`/`expose()` talk to the worker. An entry that fails to start ends the sandbox
     (`the guest entry failed to start`).
-*   **What it guarantees**, on Chromium, Firefox and WebKit: no guest script runs in any document — rendered
-    scripts, handlers and `javascript:` URLs never run, and frames, `object`/`embed`, `meta`, `base`,
-    `noscript`, `template` and SVG animation are removed before insertion, so no nested frame exists and no
-    checked attribute changes afterwards; guest code has no
+*   **What it guarantees**, on Chromium, Firefox and WebKit: no guest script runs in any document — the renderer
+    keeps only allowlisted elements and attributes (no handlers, frames, `object`/`embed`, `meta`, `base`,
+    `template`, SVG `use`, markers, filters or animation), so no nested frame exists and no checked attribute
+    changes afterwards; the view holds at most 50 000 elements, 256 deep, and shows only files that never open as
+    a document (no SVG, HTML or XML; no `data:` images); guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
     `Referer`); links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
     the browser's own link actions (copy, open in a new tab, drag) carry no guest URL (open external URLs through
@@ -462,11 +463,13 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
     directive apart, and cannot be forged; the view renders no `blob:` content but registered files (the worker's
     own source URL is revoked once its script ran).
-*   **What it does not**: rendering is host-thread work in Firefox and WebKit (one render at a time, but one
-    render of heavy markup can take hundreds of milliseconds there); CSS within what the policy allows;
+*   **What it does not**: rendering is host-thread work in Firefox and WebKit, and in Chromium where it keeps the
+    view in the page's process (one render at a time, but heavy markup takes hundreds of milliseconds, and CSS
+    filters on many elements can take seconds in WebKit); CSS within what the policy allows;
     memory; worker `violation` reports (`source: 'logic'`) are per engine and guest-influenced; a worker that
     closes itself is noticed only by the watchdog.
-*   **Limits**: no inline `<script>` and no nested frames in rendered markup; files are named by path in
+*   **Limits**: no inline `<script>`, nested frames or the elements listed in API.md as unavailable (popovers,
+    invoker commands, `canvas`, SVG `use`/filters/`image`) in rendered markup; files are named by path in
     `src`/`href`/`poster` (not `srcset` or inline styles; a registered stylesheet's own `url()` works), and
     JavaScript files reach only the worker; no modules or `importScripts`; `unsafeCapabilities` and the policy
     directives that decide what runs (`script-src`, `worker-src`, `frame-src`, `object-src`, `base-uri`,

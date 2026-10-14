@@ -142,7 +142,8 @@ A directive you pass replaces that directive's default; the others keep theirs. 
 - **Strict mode** takes only `default-src`, `style-src`, `connect-src`, `img-src`, `font-src`, `media-src`,
   `manifest-src` and `prefetch-src` from the config. `script-src`, `script-src-attr`, `base-uri`,
   `form-action`, `worker-src`, `frame-src` and `object-src` are fixed; every other directive is dropped; each
-  difference warns once. [ADR-005](ADR-005-strict-mode.md)
+  difference warns once. Images never load from `data:` there: it is dropped from `img-src` (or from the
+  `default-src` that governs images), with one warning. [ADR-005](ADR-005-strict-mode.md)
 
 ### `fetchBridge`
 
@@ -565,11 +566,50 @@ assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](
 | `render` | `(html: string, into?: string \| null) => void` | Replaces the view's body, or the children of the element with id `into`. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). The latest render per target wins; one render is in flight at a time. |
 | `on` | `(type, id: string \| null, handler: (detail) => void) => () => void` | Subscribes to `click`, `input`, `change`, `submit` or `keydown` on the element with that id (or inside it), or anywhere with `null`. Returns `off`. |
 
-The renderer removes `iframe`, `frame`, `frameset`, `object`, `embed`, `portal`, `fencedframe`, `script`, `meta`,
-`base`, `noscript` and `template` with their content, and the SVG animation elements `animate`, `set`,
-`animateMotion`, `animateTransform`, `animateColor`, `discard` and `animation`, so no attribute it checked can change
-afterwards; handler attributes and `javascript:` URLs never run; link clicks and form submissions navigate nowhere.
-Registered files are named by path in `src`, `href` and `poster`.
+The renderer is an allowlist: what it does not list is gone before insertion.
+
+**HTML**: `address`, `article`,
+`aside`, `footer`, `header`, `h1`, `h2`, `h3`, `h4`, `h5`, `h6`, `hgroup`, `main`, `nav`, `section`, `search`,
+`blockquote`, `dd`, `div`, `dl`, `dt`, `figcaption`, `figure`, `hr`, `li`, `menu`, `ol`, `p`, `pre`, `ul`, `a`,
+`abbr`, `b`, `bdi`, `bdo`, `br`, `cite`, `code`, `data`, `dfn`, `em`, `i`, `kbd`, `mark`, `q`, `rp`, `rt`, `ruby`,
+`s`, `samp`, `small`, `span`, `strong`, `sub`, `sup`, `time`, `u`, `var`, `wbr`, `del`, `ins`, `img`, `picture`,
+`source`, `video`, `audio`, `track`, `map`, `area`, `table`, `caption`, `colgroup`, `col`, `tbody`, `thead`,
+`tfoot`, `tr`, `td`, `th`, `form`, `label`, `input`, `button`, `select`, `datalist`, `optgroup`, `option`,
+`textarea`, `output`, `progress`, `meter`, `fieldset`, `legend`, `details`, `summary`, `dialog`, `style`, `link`.
+Any other HTML element is unwrapped (its content takes its place and is checked in turn); a custom element name with
+a hyphen (`my-card`) is kept as an inert element; `iframe`, `frame`, `frameset`, `object`, `embed`, `applet`,
+`portal`, `fencedframe`, `script`, `noscript`, `noembed`, `noframes`, `template`, `meta`, `base` and `title` go with
+their content.
+
+**SVG**: `svg`, `g`, `defs`, `symbol`, `title`, `desc`, `style`, `a`, `rect`, `circle`, `ellipse`, `line`,
+`polyline`, `polygon`, `path`, `text`, `tspan`, `linearGradient`, `radialGradient`, `stop`, `clipPath`, `mask`,
+`pattern`. **MathML**: `math`, `semantics`, `annotation`, `merror`, `mfrac`, `mi`, `mmultiscripts`, `mn`, `mo`,
+`mover`, `mpadded`, `mphantom`, `mprescripts`, `mroot`, `mrow`, `ms`, `mspace`, `msqrt`, `mstyle`, `msub`,
+`msubsup`, `msup`, `mtable`, `mtd`, `mtext`, `mtr`, `munder`, `munderover`, `none`. Any other SVG or MathML element
+goes with its content.
+
+**Attributes**: `id`, `class`, `style`, `title`, `lang`, `dir`, `hidden`, `tabindex`, `role`, `translate`, `inert`,
+`spellcheck`, `inputmode`, `enterkeyhint`, `autocapitalize`, `data-*` and `aria-*` everywhere, and per element the
+ones it needs (form controls, tables, lists, media, links; SVG geometry and presentation; MathML presentation).
+Never an event handler. `src`, `srcset` and `poster` keep an `https:` or `http:` URL, a registered file's path, or
+nothing (no `data:` or `javascript:`); SVG `fill`, `stroke`, `clip-path` and `mask` reference only `url(#id)`. Link
+clicks and form submissions navigate nowhere.
+
+Not available in strict mode: `use`, markers, SVG filters, SVG `image`, `foreignObject` and animation; `canvas`,
+`slot`, `selectedcontent` (customizable `select`); popovers (`popover`, `popovertarget`) and invoker commands
+(`commandfor`, `command`); `autofocus`, `contenteditable`; form `action`, `formaction`, `method` and `target`;
+`target` and `download` on links; SVG gradient and pattern templates (`href`). CSS filters, HTML images and inline
+SVG cover most of it.
+
+The view holds at most 50000 elements, nested at most 256 deep below its body, counted over the document a render
+would leave (the elements outside the target stay): a render past either is dropped as a whole, the next one still
+applies, and the guest's log says `[Sandbox] sandboxView.render: the view refused a render: …`.
+
+Registered files are named by path in `src`, `href` and `poster`. The view shows only files that never open as a
+document: CSS, PNG, JPEG, GIF, WebP, AVIF, APNG, BMP and ICO images, WOFF, WOFF2, TTF and OTF fonts, MP3, WAV, Ogg,
+MP4, FLAC, WebM and AAC audio, MP4, WebM and Ogg video, and WebVTT. Any other file (SVG, HTML, XML, JSON …) is the
+worker's through `sandboxFiles` only; a reference to it stays as written and loads nothing. Show vector graphics as
+inline `<svg>`.
 
 Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
 `about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and
@@ -590,11 +630,13 @@ An event handler receives:
     target: { tag: string, id: string, name: string, value: string, checked: boolean },
     key?: string,                        // keydown
     form?: [name: string, value: string][], // submit
+    truncated?: true,                    // something in this detail was cut
 }
 ```
 
-Never a URL. Strings are cut at 65536 characters, `ids` at 32 entries, `form` at 1000 fields. A handler that
-throws is logged and does not stop the others. [ADR-005](ADR-005-strict-mode.md)
+Never a URL. Strings are cut at 65536 characters, `ids` at 32 entries, `form` at 1000 fields, and all strings of
+one detail together at 262144 characters; a detail that was cut has `truncated: true`. A handler that throws is
+logged and does not stop the others. [ADR-005](ADR-005-strict-mode.md)
 
 ---
 
@@ -629,6 +671,9 @@ Choose strict mode for content you do not trust at all. [ADR-005](ADR-005-strict
 | Auto-size: height changes per second (and at most one per frame) | 30 | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` |
 | Strict: characters per `sandboxView.render()` | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
+| Strict: elements in the view | 50000 | — |
+| Strict: nesting depth below the view's body | 256 | — |
+| Strict: characters of one event detail, all strings together | 262144 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
 | Longest `loading` (ms of host time) | 5000 | `LOAD_TIMEOUT_MS` |
 | `workerExecutionTimeout`: how long the event loop may stay busy past a deadline (ms) | 1000 | `EXECUTION_TIMEOUT_GRACE_MS` |

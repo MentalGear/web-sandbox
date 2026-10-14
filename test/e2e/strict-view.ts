@@ -7,8 +7,9 @@ import type { Frame, Page } from '@playwright/test';
  *   main (harness) / wrapper (the element's iframe) / view / ...
  *
  * Firefox and WebKit: through page.frames(). Chromium: always through CDP, from ground truth, never through
- * Playwright's frame model. The sandboxed wrapper is an out-of-process iframe (measured: every time, idle or
- * under CPU load), and Playwright 1.58 maps that OOPIF target to its Frame asynchronously and not reliably:
+ * Playwright's frame model. The sandboxed wrapper can be an out-of-process iframe (measured so in earlier runs, idle
+ * or under CPU load; in the broad review's runs it shared the page's process: no iframe target, both frames local),
+ * and Playwright 1.58 maps such an OOPIF target to its Frame asynchronously and not reliably:
  * right after 'ready' it may already list the wrapper's children, may list none yet, or (under CPU load, about
  * 1 run in 10) never attach the target at all, so that newCDPSession(wrapper) keeps failing with "part of the
  * parent frame's session" although the wrapper has its own target. So Chromium is read through one CDP session

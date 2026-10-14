@@ -163,8 +163,9 @@ test.describe('F1: rendered markup cannot re-animate an attribute the renderer c
     test('an animated <image href> loads nothing: the static image of the same policy reaches the listener (positive control), the animated target never does, and an animated blob: URL the view did not mint is gone too', async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ ...strictView, connectionsAllowed: { 'img-src': [recorder.allowed] } })).toBe('ready');
         const workerCopy: string = await sandbox.inGuest(`return location.href`); // a blob: URL the view never minted
-        const html = '<svg width="30" height="30">'
-            + `<image id="static" width="3" height="5" href="${recorder.allowed}/f1-static.svg"/>`
+        // SVG <image> and <use> are not on the renderer's allowlist either (broad review 2026-10-14): they go with their
+        // animations; the static image is an HTML <img> of the same policy
+        const html = `<img id="static" width="3" height="5" src="${recorder.allowed}/f1-static.svg"><svg width="30" height="30">`
             + `<image id="animated" width="3" height="5" href="${recorder.allowed}/f1-static.svg"><set attributeName="href" to="${recorder.allowed}/f1-animated.svg" begin="0s" fill="freeze"/></image>`
             + `<image id="blobbed" width="3" height="5"><set attributeName="href" to="${workerCopy}" begin="0s" fill="freeze"/></image>`
             + `<use id="used" href="#static"><set attributeName="href" to="${recorder.allowed}/f1-use.svg#x" begin="0s" fill="freeze"/></use>`
@@ -174,8 +175,8 @@ test.describe('F1: rendered markup cannot re-animate an attribute the renderer c
         await recorder.waitFor('allowed', '/f1-static.svg');
         await page.waitForTimeout(800);
         expect(recorder.paths('allowed').filter(p => p.startsWith('/f1-'))).toEqual(['/f1-static.svg']);
-        const read = await inView<any>(page, browserName, `['animated', 'blobbed', 'used'].map((id) => document.getElementById(id).href.animVal)`);
-        expect(read).toEqual([`${recorder.allowed}/f1-static.svg`, '', '#static']);
+        const read = await inView<any>(page, browserName, `[['animated', 'blobbed', 'used'].map((id) => document.getElementById(id)), document.querySelectorAll('svg *').length]`);
+        expect(read).toEqual([[null, null, null], 0]);
     });
 });
 

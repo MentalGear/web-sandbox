@@ -260,6 +260,10 @@ WebKit on Linux is not Safari.
   declaration leaves (no engine has such a global of its own: measured, only `Infinity`, `NaN` and `undefined` are
   non-configurable), reaching `Object` through an object literal and the global through the script's `this`; a name
   the prelude cannot delete is now an error. The reviewer's two proposals together; neither alone closes the class.
+  *Corrected by the [broad review](BROAD-REVIEW-2026-10-14.md) (ST4):* the check catches escaped **functions** only.
+  An escaped top-level `let`, `const` or `class` is in its temporal dead zone while the prelude runs (one that shadows
+  a global the prelude reads fails it with a `ReferenceError`, which ends the sandbox), but after the entry it could
+  shadow the global marker the trailer calls; the marker's name is now drawn per build, so the entry cannot name it.
 - **Evidence**: the three end-to-end tests failed on all engines before; now declarations stay local, `Worker` stays
   deleted, and an entry that escapes its scope ends the sandbox with `the guest entry failed to start: … the entry
   declares "Worker" at the top level …`.

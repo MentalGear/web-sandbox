@@ -3,7 +3,8 @@ import type { SandboxConfig } from '@src/host';
 import type { SandboxViolation } from '@src/lib/violation';
 import type { FetchRecord } from '@src/lib/fetch-bridge';
 
-export const ORIGIN = 'http://localhost:4444';
+// The e2e server's origin; a local config that runs a second server on another port sets WEB_SANDBOX_E2E_ORIGIN.
+export const ORIGIN = process.env.WEB_SANDBOX_E2E_ORIGIN || 'http://localhost:4444';
 export const HARNESS = `${ORIGIN}/test/e2e/harness.html`;
 
 // What the specs need to run anything at all: scripts in the frame and execute().

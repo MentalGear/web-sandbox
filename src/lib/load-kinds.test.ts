@@ -3,7 +3,7 @@ import { admits, admitsAll, linkKinds, LOAD_KIND_NAMES, LOAD_KINDS, type LoadKin
 import { kindsForTypes } from './csp/file-sources';
 import { rewriteGuestMarkup, rewriteMarkupReferences, type KindMismatch } from './markup-references';
 import { FileStore, isJavaScriptType, isStylesheetType, mimeTypeFor } from './files';
-import { RENDER_RULES, sanitizeRender } from './in-sandbox-view';
+import { isViewFileType, RENDER_RULES, sanitizeRender, VIEW_FILE_TYPES, VIEW_LOAD_KINDS } from './in-sandbox-view';
 
 /**
  * Focused review 2026-10-14, W1: one table decides which file types each kind of load may name, and the policy
@@ -154,7 +154,10 @@ describe('registered stylesheets: @import names stylesheets, @font-face fonts, e
     });
 });
 
-describe('the strict view renderer reads the same table', () => {
+// The strict view mints only types that never open as a document (broad review ST1), written out independently too.
+const NOT_A_DOCUMENT = (type: string) => !/(html|xml)/.test(type) && /^(text\/css|text\/vtt|image\/(png|jpeg|gif|webp|avif|apng|bmp|x-icon|vnd\.microsoft\.icon)|font\/(woff2?|ttf|otf|collection|sfnt)|audio\/(mpeg|wav|ogg|mp4|flac|webm|aac)|video\/(mp4|webm|ogg))$/.test(type);
+
+describe('the strict view renderer reads a table derived from the same one', () => {
     const render = (html: string, type: string) => {
         const template = document.createElement('template');
         template.innerHTML = html;
@@ -174,8 +177,40 @@ describe('the strict view renderer reads the same table', () => {
         ['<audio src="f.bin"></audio>', 'media'],
         ['<video><source src="f.bin"></video>', 'media'],
         ['<video><track src="f.bin"></video>', 'track'],
-    ] as const)('%s names a file only of a %s type', (html, kind) => {
-        for (const type of TYPES) expect(render(html, type), `${kind} × ${type}`).toBe(EXPECTED[kind](type));
+    ] as const)('%s names a file only of a %s type the view mints (never a document type: no SVG, HTML or XML)', (html, kind) => {
+        for (const type of [...TYPES, 'image/svg+xml', 'video/x+xml', 'image/x-a+xml', 'audio/x+html', 'font/x+xml']) {
+            expect(render(html, type), `${kind} × ${type}`).toBe(EXPECTED[kind](type) && NOT_A_DOCUMENT(type));
+        }
+    });
+
+    it("VIEW_LOAD_KINDS is the table's style, image, font, media and track rows restricted to VIEW_FILE_TYPES, with no prefix; every view type is admitted by some row", () => {
+        expect(Object.keys(VIEW_LOAD_KINDS)).toEqual(['style', 'image', 'font', 'media', 'track']);
+        for (const [kind, rule] of Object.entries(VIEW_LOAD_KINDS)) {
+            expect(rule.directive).toBe(LOAD_KINDS[kind as LoadKindName].directive);
+            expect(rule.prefixes).toEqual([]);
+            expect([...rule.types]).toEqual(VIEW_FILE_TYPES.filter(type => admits(kind as LoadKindName, type)));
+        }
+        for (const type of VIEW_FILE_TYPES) {
+            expect(NOT_A_DOCUMENT(type), type).toBe(true);
+            expect(isViewFileType(type)).toBe(true);
+        }
+        expect(RENDER_RULES.kinds).toBe(VIEW_LOAD_KINDS);
+    });
+
+    it("a <link>'s kinds in the renderer are load-kinds.ts's linkKinds() (broad review I1): for every rel and as, the renderer names a file exactly when linkKinds admits it and every token is one a kept link may have", () => {
+        const rels = ['stylesheet', 'icon', 'stylesheet icon', 'ICON', 'preload', 'modulepreload', 'stylesheet preload', 'alternate stylesheet', 'shortcut icon', '', 'prefetch'];
+        for (const rel of rels) {
+            for (const as of [null, 'style', 'image', 'font']) {
+                for (const type of ['text/css', 'image/png', 'font/woff2']) {
+                    const html = `<link rel="${rel}"${as === null ? '' : ` as="${as}"`} href="f.bin">`;
+                    const tokens = rel.toLowerCase().split(' ').filter(Boolean);
+                    const keepable = tokens.length > 0 && tokens.every(token => RENDER_RULES.linkRelations.includes(token));
+                    const kinds = linkKinds(rel, as);
+                    expect(render(html, type), `${html} × ${type}`).toBe(keepable && kinds !== null && admitsAll(kinds, type));
+                }
+            }
+        }
+        expect(RENDER_RULES.linkRelKinds).toEqual({ stylesheet: 'style', icon: 'image' });
     });
 
     it('a <link> that names a file of another type is removed (only links to minted files of their kind stay)', () => {

@@ -56,7 +56,7 @@ test.describe('G1 rendered markup', () => {
 
         const corpus = [
             `<script>${M('inline')}</script>`,
-            `<img id="img-handler" src="data:," onerror="${M('onerror')}">`,
+            `<img id="img-handler" src="${recorder.blocked}/handler.svg" onerror="${M('onerror')}">`,
             `<svg onload="${M('svg-onload')}"><script>${M('svg-script')}</script><script href="data:text/javascript,${M('svg-script-href')}"></script></svg>`,
             `<details open ontoggle="${M('ontoggle')}"><summary>s</summary></details>`,
             `<a id="jslink" href="javascript:${M('javascript-link')}" style="${at(0, 0)}">js</a>`,
@@ -103,14 +103,16 @@ test.describe('G1 rendered markup', () => {
             head: Array.from(document.head.children).map(e => e.localName),
             shadowRoots: Array.from(document.querySelectorAll('*')).filter(e => e.shadowRoot).length,
             kept: ['img-handler', 'jslink', 'allowed'].filter(id => document.getElementById(id)),
+            // the renderer is an allowlist (broad review 2026-10-14): no handler attribute reaches the view at all; the
+            // policy's script-src-attr 'none' stands behind it (review-policy.spec.ts, A1)
+            handlers: Array.from(document.body.querySelectorAll('*')).filter(e => e.getAttributeNames().some(n => n.toLowerCase().startsWith('on'))).length,
             url: location.href,
         })`);
-        expect(view).toEqual({ removed: [], head: ['meta', 'meta', 'script'], shadowRoots: 0, kept: ['img-handler', 'jslink', 'allowed'], url: 'about:srcdoc' });
+        expect(view).toEqual({ removed: [], head: ['meta', 'meta', 'script'], shadowRoots: 0, kept: ['img-handler', 'jslink', 'allowed'], handlers: 0, url: 'about:srcdoc' });
 
-        // the refusals the view raised arrived, labelled 'view' (A6): the handler attribute, the data: image
-        await sandbox.waitForViolation('script-src-attr', '');
+        // the refusals the view raised arrived, labelled 'view' (A6): the image from the blocked origin
+        await sandbox.waitForViolation('img-src', recorder.blocked);
         const reported = (await sandbox.violations()).map(v => `${v.source} ${v.directive}`);
-        expect(reported).toContain('view script-src-attr');
         expect(reported).toContain('view img-src');
         // nothing reached the blocked listener; the allowed image did (positive control)
         expect(recorder.paths('blocked')).toEqual([]);
@@ -371,18 +373,19 @@ test('A5: a view that is gone (reloaded, so it never gets its ports back) ends t
 
 // ---- files in the view (A8, ADR-004 amendment) ------------------------------------------------------------
 
-const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="5"></svg>';
+// a 3 × 5 PNG: the view mints URLs only for types that never open as a document (broad review ST1), so no SVG
+const PNG_3X5 = { base64: 'iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAYAAACAcVaiAAAAEklEQVR4nGP4z8DwH4YZyOAAAMufHeOcQ//1AAAAAElFTkSuQmCC' };
 
 test.describe('files', () => {
     test('rendered markup names registered files by path: the view mints its own blob: URLs for images and stylesheets (with their url() references); the worker gets every file through sandboxFiles', async ({ sandbox, page, browserName }) => {
         await sandbox.registerFiles({
-            'img/logo.svg': SVG,
-            'css/site.css': '#styled { width: 7px; height: 9px; display: block; background: url(../img/logo.svg); }',
+            'img/logo.png': PNG_3X5,
+            'css/site.css': '#styled { width: 7px; height: 9px; display: block; background: url(../img/logo.png); }',
             'lib.js': 'export const x = 1;',
             'data.json': '{"answer":42}',
         });
         expect(await sandbox.mount(strict())).toBe('ready');
-        await render(sandbox, browserName, '<link rel="stylesheet" href="css/site.css"><img id="logo" src="./img/logo.svg"><i id="styled"></i><img id="unregistered" src="img/missing.svg">');
+        await render(sandbox, browserName, '<link rel="stylesheet" href="css/site.css"><img id="logo" src="./img/logo.png"><i id="styled"></i><img id="unregistered" src="img/missing.png">');
         await waitInView(page, browserName, `document.getElementById('logo').complete && document.getElementById('logo').naturalWidth === 3`);
         const r = await inView<any>(page, browserName, `({
             logo: document.getElementById('logo').getAttribute('src').slice(0, 10),
@@ -391,18 +394,18 @@ test.describe('files', () => {
             unregistered: document.getElementById('unregistered').getAttribute('src'),
             viewFiles: sandboxFiles.list(),
         })`);
-        // the view holds no JavaScript file
-        expect(r).toEqual({ logo: 'blob:null/', sheet: 'blob:null/', styled: '7px', unregistered: 'img/missing.svg', viewFiles: ['css/site.css', 'data.json', 'img/logo.svg'] });
+        // the view holds only the files it may show: no JavaScript, no JSON (VIEW_FILE_TYPES, broad review ST1)
+        expect(r).toEqual({ logo: 'blob:null/', sheet: 'blob:null/', styled: '7px', unregistered: 'img/missing.png', viewFiles: ['css/site.css', 'img/logo.png'] });
         const worker = await sandbox.inGuest(`return { list: sandboxFiles.list(), json: JSON.parse(await sandboxFiles.text('data.json')).answer, url: sandboxFiles.url('lib.js').slice(0, 10) }`);
-        expect(worker).toEqual({ list: ['css/site.css', 'data.json', 'img/logo.svg', 'lib.js'], json: 42, url: 'blob:null/' });
+        expect(worker).toEqual({ list: ['css/site.css', 'data.json', 'img/logo.png', 'lib.js'], json: 42, url: 'blob:null/' });
         expect((await sandbox.violations()).filter(v => v.source === 'view')).toEqual([]);
     });
 
     test('A8: a blob: URL the view did not mint is removed from rendered markup, wherever it appears; the policy has blob: only where a registered type needs it, never in script-src', async ({ sandbox, page, browserName }) => {
-        await sandbox.registerFiles({ 'img/logo.svg': SVG, 'app.js': 'void 0' });
+        await sandbox.registerFiles({ 'img/logo.png': PNG_3X5, 'app.js': 'void 0' });
         expect(await sandbox.mount(strict())).toBe('ready');
-        const workerUrl = await sandbox.inGuest(`return sandboxFiles.url('img/logo.svg')`);
-        await render(sandbox, browserName, `<img id="w" src="${workerUrl}"><img id="t" src=" b\tlob:${workerUrl.slice(5)}"><a id="a" href="${workerUrl}">x</a><img id="ok" src="img/logo.svg">`);
+        const workerUrl = await sandbox.inGuest(`return sandboxFiles.url('img/logo.png')`);
+        await render(sandbox, browserName, `<img id="w" src="${workerUrl}"><img id="t" src=" b\tlob:${workerUrl.slice(5)}"><a id="a" href="${workerUrl}">x</a><img id="ok" src="img/logo.png">`);
         const r = await inView<any>(page, browserName, `({
             w: document.getElementById('w').hasAttribute('src'), t: document.getElementById('t').hasAttribute('src'),
             a: document.getElementById('a').getAttribute('href'), ok: document.getElementById('ok').getAttribute('src').startsWith('blob:'),

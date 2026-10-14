@@ -8,7 +8,7 @@ import { dropDataWorkerSources } from "./lib/csp/drop-data-workers";
 import { isKnownDirective, sanitizeDirectives } from "./lib/csp/policy-grammar";
 import { addFileSources } from "./lib/csp/file-sources";
 import { addEvalSource } from "./lib/csp/effective-directive";
-import { fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
+import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
 import { inlineScriptsAllowed, kindMismatchMessage, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
@@ -24,7 +24,7 @@ import { createLogLimiter, LOG_EVENTS_PER_SECOND, toLogDetail, type SandboxLogLe
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
-import { assertEntryScoped, buildViewDocument, ENTRY_DONE_NAME, inStrictWorker, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
 import { strictPassedThrough, strictPolicyOverrides, strictViewDirectives } from "./lib/csp/strict-policy";
 
 /**
@@ -1301,7 +1301,9 @@ export class WebSandbox extends HTMLElement {
         const strict = this._config.mode === 'strict';
         const fileTypes = files.map(entry => entry[1]);
         if (strict) {
-            const viewSources = addFileSources(strictPassedThrough(cloned), fileTypes, this._warnedFileDirectives, { exclude: ['script-src-elem'] });
+            // A type the view mints no URL for (isViewFileType, broad review ST1) is only fetched, by the worker.
+            const viewTypes = fileTypes.map(type => (isViewFileType(type) ? type : FALLBACK_TYPE));
+            const viewSources = addFileSources(strictPassedThrough(cloned), viewTypes, this._warnedFileDirectives, { exclude: ['script-src-elem'] });
             // the 'self' drop as everywhere, then the view policy, built last from an allowlist (strict-policy.ts):
             // the hash of the one bootstrap, and 'unsafe-eval' only with scriptUnsafe.
             return strictViewDirectives(dropSelfSources(viewSources, this._warnedSelfDirectives), viewBootstrapHash(), this._config.scriptUnsafe === true);
@@ -1448,7 +1450,7 @@ export class WebSandbox extends HTMLElement {
         const directives = this._getCSPDirectives(files);
         this._strictInit = {
             workerSource: this._getStrictWorkerSource(files, entrySource),
-            viewFiles: files.filter(candidate => !isJavaScriptType(candidate[1])),
+            viewFiles: files.filter(candidate => isViewFileType(candidate[1])), // never a type that opens as a document (broad review ST1)
             html: this._config.html || '<div id="root"></div>',
             autoResize: this._autoResizeEnabled(),
         };
@@ -1475,14 +1477,15 @@ export class WebSandbox extends HTMLElement {
         const features: { fetchBridge?: { timeoutMs: number }; externalPort: true; guestWrites?: true } = { externalPort: true };
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
-        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, entryDoneName: ENTRY_DONE_NAME, eventTypes: VIEW_EVENT_TYPES };
+        const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)
+        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
         const prelude = '(function (g) {'
             + `(${assertEntryScoped.toString()})(g);`
             + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}${this._config.guestWrites === true ? ', comms.writeFiles' : ''});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)});`
             + '})(this);';
-        return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${ENTRY_DONE_NAME}();\n`;
+        return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${marker}();\n`;
     }
 
     // Strict-mode configuration the element will not honour, said once per instance each.

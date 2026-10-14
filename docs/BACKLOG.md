@@ -1135,6 +1135,44 @@ package lists its files and the smoke test asserts the tarball exactly, no sourc
 `scriptUnsafe` off; property tests for the host's and the guest's parse of rewritten markup and for inline-module
 rewrites; a test keeps the strict renderer's link kinds equal to `load-kinds.ts`.
 
+### S38 · The strict renderer was a list of what to remove — ✅ **done**
+
+*From the broad review, reviewer C (strict mode).*
+
+**Done**: the renderer keeps only allowlisted elements per namespace and allowlisted attributes; unknown HTML
+elements are unwrapped, unknown SVG and MathML elements removed with their content; `use`, markers, SVG filters,
+SVG `image`, `foreignObject`, handlers, form targets, popovers and invoker commands are gone
+([ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view)).
+Tests: `test/e2e/broad-strict.spec.ts`, `src/lib/in-sandbox-view.test.ts`.
+
+### S39 · A file the strict view showed could open as a script-running document — ✅ **done**
+
+*ST1, medium.* The view mints URLs only for `VIEW_FILE_TYPES` (never a document), and `data:` is dropped from the
+directive that governs images. Tests: `test/e2e/broad-strict.spec.ts` ("ST1"), `test/unit/strict.test.ts`.
+
+### S40 · One render could stall the host by fan-out; the view's document was unbounded — ✅ **done**
+
+*ST2, medium.* No instancing elements; at most `VIEW_MAX_ELEMENTS` elements and `VIEW_MAX_DEPTH` levels in the
+view, counted over the resulting document; a refused render is dropped, acknowledged and logged. Tests:
+`test/e2e/broad-strict.spec.ts` ("ST2"), `src/lib/in-sandbox-view.test.ts`.
+
+### S41 · An event detail was bounded per string, not in total — ✅ **done**
+
+*ST3, low.* One character budget per detail, `truncated: true` when cut. *ST4, info*: the entry marker is named per
+build. *I1*: the renderer's link kinds come from load-kinds.ts. Tests: as S40, plus `test/unit/strict.test.ts`,
+`src/lib/load-kinds.test.ts`.
+
+### S42 · CSS paint cost in the strict view can stall the host page — ⏳ **open**
+
+*Found while measuring ST2.* The renderer does not read CSS, and the view runs on the host page's thread (Firefox,
+WebKit, and Chromium in the measured configuration). A filter list on many elements costs their product: in WebKit,
+10 `blur()` functions on 1 000 elements (88 KB) stalled the host 3.7 s, 100 on 1 000 more than 180 s; Chromium and
+Firefox stayed under 0.2 s. Options: (a) a stylesheet of the view's own, in a first anonymous cascade layer with
+`!important`, that sets `filter` and `backdrop-filter` to `none`, together with removing the `style` attribute (inline
+declarations outrank layers); (b) parse guest CSS with the browser's own parser (a constructed stylesheet) and keep
+only allowlisted properties; (c) a view out of the host's process where the platform offers one. (a) is a list of
+expensive properties, so not by construction; (b) is the allowlist answer and costs every guest some CSS.
+
 ## B · API Surface & DX
 
 ### B1 · Promise-based RPC in both directions — ✅ **done**
