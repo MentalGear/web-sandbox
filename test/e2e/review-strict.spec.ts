@@ -123,7 +123,9 @@ test.describe('C2: the entry runs in its own scope', () => {
         await sandbox.registerFiles({ 'main.js': `}).call(this); function Worker() {} (function () {` });
         expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
         await expect.poll(() => sandbox.state(), { timeout: 8000 }).toBe('terminated');
-        expect(await sandbox.waitForLog('the guest entry failed to start')).toMatch(/the entry declares "Worker" at the top level/);
+        expect(await sandbox.waitForLog('the guest entry failed to start')).toBe('[Sandbox] the guest entry failed to start');
+        // the entry's own error text is a guest line (focused review F3), never part of the host line or the reason
+        expect(await sandbox.waitForLog(/^Uncaught .*the entry declares "Worker" at the top level/)).toBeTruthy();
     });
 });
 

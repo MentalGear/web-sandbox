@@ -324,7 +324,8 @@ test.describe('the entry', () => {
             await page.waitForFunction(() => (window as any).termination !== null, null, { timeout: 5000 });
             expect(await page.evaluate(() => (window as any).termination)).toBe('the guest entry failed to start');
             expect(await sandbox.state()).toBe('terminated');
-            expect(await sandbox.waitForLog('the guest entry failed to start:')).toBeTruthy();
+            expect(await sandbox.waitForLog('the guest entry failed to start')).toBe('[Sandbox] the guest entry failed to start');
+            expect(await sandbox.waitForLog(/^Uncaught /)).toBeTruthy(); // the error's text, as a guest line (focused review F3)
         });
     }
 

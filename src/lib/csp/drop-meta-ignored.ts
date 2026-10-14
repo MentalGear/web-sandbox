@@ -1,4 +1,5 @@
 import type { CSPDirectives } from "../../csp-directives";
+import { defineData } from "../utils";
 
 /**
  * Directives a policy delivered in a <meta> element cannot use (CSP Level 3, §3.3): the browser discards
@@ -37,7 +38,7 @@ export function dropMetaIgnoredDirectives(directives: CSPDirectives, warned: Set
     for (const [name, values] of Object.entries(directives)) {
         const ignored = ignoredUnderMeta(name);
         if (!ignored) {
-            output[name] = values;
+            defineData(output, name, values); // never assigned: a configured "__proto__" is a key like any other (F4)
             continue;
         }
         if (warned.has(ignored)) continue;

@@ -1,4 +1,5 @@
 import type { CSPDirectives } from "../../csp-directives";
+import { defineData } from "../utils";
 
 /**
  * Which directive of a policy governs a kind of check: the one table every part of the library that reasons
@@ -51,9 +52,57 @@ export function fallbackList(kind: LoadKind): readonly GoverningDirective[] {
  * since the generator always emits one ('none' unless configured).
  */
 export function effectiveDirective(policy: CSPDirectives, kind: LoadKind): GoverningDirective | null {
-    const directives = policy as Record<string, unknown>;
     for (const name of FALLBACK_LISTS[kind]) {
-        if (directives[name] !== undefined) return name;
+        if (directiveOf(policy, name) !== undefined) return name;
     }
     return null;
+}
+
+/** A directive's value if the policy holds it as its own key, else undefined: a directive is never inherited (F4). */
+export function directiveOf(policy: CSPDirectives, name: string): unknown {
+    return Object.hasOwn(policy, name) ? (policy as Record<string, unknown>)[name] : undefined;
+}
+
+const tokensOf = (values: readonly unknown[]): string[] => {
+    const tokens: string[] = [];
+    for (const value of values) {
+        if (typeof value !== 'string') continue; // generateCSP rejects it later
+        for (const token of value.trim().split(/\s+/)) {
+            if (token) tokens.push(token);
+        }
+    }
+    return tokens;
+};
+
+/**
+ * default-src's sources as a directive created in its place starts with them: every token but 'none' and 'self'
+ * (CSP keywords are case-insensitive). Empty when default-src is absent, empty or 'none'. A step that has to give
+ * one kind of load something of its own, where only default-src governs it, creates that kind's own directive
+ * from these, so the kind keeps what default-src allowed it and nothing else is widened (file-sources.ts, and
+ * addEvalSource below).
+ */
+export function inheritedDefaultSources(policy: CSPDirectives): string[] {
+    const values = directiveOf(policy, 'default-src');
+    if (!Array.isArray(values)) return [];
+    return tokensOf(values).filter(token => token.toLowerCase() !== "'none'" && token.toLowerCase() !== "'self'");
+}
+
+const UNSAFE_EVAL = "'unsafe-eval'";
+
+/**
+ * Grants string compilation (eval, new Function; 'unsafe-eval' covers WebAssembly too) where the table says a
+ * browser checks it: the directive that governs 'eval', script-src, or default-src when the policy has no
+ * script-src. It is never added to default-src, which is the fallback of every other kind of load: script-src is
+ * created instead, from default-src's sources (inheritedDefaultSources), so the scripts it now governs keep what
+ * default-src allowed them. The one place the keyword is written (focused review 2026-10-14, F5): scriptUnsafe in
+ * iframe and worker mode (host.ts) and the strict view (strict-policy.ts). Before, the host appended it with
+ * `directives["script-src"]?.push(...)`, which did nothing at all for a policy without script-src.
+ * A script-src that is not a list is left for generateCSP to refuse.
+ */
+export function addEvalSource(policy: CSPDirectives): CSPDirectives {
+    const output = { ...policy } as CSPDirectives;
+    const current = effectiveDirective(policy, 'eval') === 'script-src' ? directiveOf(policy, 'script-src') : inheritedDefaultSources(policy);
+    if (!Array.isArray(current)) return output;
+    defineData(output, 'script-src', [...current, UNSAFE_EVAL]);
+    return output;
 }

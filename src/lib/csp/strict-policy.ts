@@ -1,4 +1,6 @@
 import type { CSPDirectives } from "../../csp-directives";
+import { defineData } from "../utils";
+import { addEvalSource, directiveOf as own } from "./effective-directive";
 
 /**
  * The policy of the strict-mode view (ADR-005), which its worker inherits exactly.
@@ -34,22 +36,22 @@ export const STRICT_FIXED = ['script-src', 'script-src-attr', 'base-uri', 'form-
  * take the `blob:` a registered stylesheet needs away from the view's style-src.
  */
 export function strictPassedThrough(configured: CSPDirectives): CSPDirectives {
-    const source = configured as Record<string, unknown>;
+    const source = configured;
     const kept: Record<string, unknown> = {};
     for (const name of STRICT_PASSED_THROUGH) {
-        if (source[name] !== undefined) kept[name] = source[name];
+        if (own(source, name) !== undefined) defineData(kept, name, own(source, name));
     }
     return kept as CSPDirectives;
 }
 
 /** The view policy's directives, in emission order (generateCSP keeps it, with default-src first). */
 export function strictViewDirectives(configured: CSPDirectives, bootstrapHash: string, scriptUnsafe: boolean): CSPDirectives {
-    const source = configured as Record<string, unknown>;
+    const source = configured;
     const directives: Record<string, unknown> = {};
-    if (source['default-src'] !== undefined) directives['default-src'] = source['default-src'];
-    directives['script-src'] = scriptUnsafe ? [bootstrapHash, "'unsafe-eval'"] : [bootstrapHash];
+    if (own(source, 'default-src') !== undefined) defineData(directives, 'default-src', own(source, 'default-src'));
+    directives['script-src'] = [bootstrapHash];
     directives['script-src-attr'] = [];
-    if (source['style-src'] !== undefined) directives['style-src'] = source['style-src'];
+    if (own(source, 'style-src') !== undefined) defineData(directives, 'style-src', own(source, 'style-src'));
     directives['base-uri'] = [];
     directives['form-action'] = [];
     directives['worker-src'] = ['blob:'];
@@ -58,9 +60,10 @@ export function strictViewDirectives(configured: CSPDirectives, bootstrapHash: s
     directives['upgrade-insecure-requests'] = true;
     for (const name of STRICT_PASSED_THROUGH) {
         if (name === 'default-src' || name === 'style-src') continue;
-        if (source[name] !== undefined) directives[name] = source[name];
+        if (own(source, name) !== undefined) defineData(directives, name, own(source, name));
     }
-    return directives as CSPDirectives;
+    // 'unsafe-eval' only with scriptUnsafe, through the one helper that writes it (effective-directive.ts, F5)
+    return scriptUnsafe ? addEvalSource(directives as CSPDirectives) : directives as CSPDirectives;
 }
 
 /**

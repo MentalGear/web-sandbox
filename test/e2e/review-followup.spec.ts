@@ -21,7 +21,7 @@ test('a directive given a string instead of a list: setConfig() does not throw, 
             thrown = String(error);
         }
     }));
-    expect(outcome).toEqual({ reason: expect.stringMatching(/^the environment could not be built: Error: value type must be array/), state: 'terminated', frames: 0, thrown: null });
+    expect(outcome).toEqual({ reason: 'the environment could not be built (Error)', state: 'terminated', frames: 0, thrown: null });
     expect(await sandbox.mount()).toBe('ready');
 });
 

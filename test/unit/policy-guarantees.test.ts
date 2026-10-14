@@ -191,7 +191,7 @@ describe('A6: the values interpolated into the bootstrap come from one copy of t
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         expect(() => el.setConfig(shifty)).not.toThrow();
         expect([el.state, wrapperOf(el), trapped]).toEqual(['terminated', null, 0]);
-        expect(reasons).toEqual([expect.stringMatching(/^the configuration could not be used: DataCloneError/)]);
+        expect(reasons).toEqual(['the configuration could not be used (DataCloneError)']);
     });
 });
 
@@ -273,7 +273,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         const reasons = terminations(el);
         expect(() => el.setConfig(config)).not.toThrow();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
-        expect(reasons).toEqual([expect.stringMatching(/^the environment could not be built: Error: value type must be/)]);
+        expect(reasons).toEqual(['the environment could not be built (Error)']);
         expect(() => el.reset()).not.toThrow();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
         expect(warn.mock.calls.some(c => String(c[0]).startsWith('[Sandbox] terminated: the environment could not be built'))).toBe(true);
@@ -293,7 +293,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         const reasons = terminations(el);
         expect(() => el.setConfig(config())).not.toThrow();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
-        expect(reasons).toEqual([expect.stringMatching(/^the configuration could not be used: /)]);
+        expect(reasons).toEqual([expect.stringMatching(/^the configuration could not be used \([A-Za-z]+\)$/)]);
         expect(el._config.html).toBe('<p id="kept">'); // nothing of the refused config was applied
         el.load('<p>x</p>');
         el.reset();
@@ -321,7 +321,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         const reasons = terminations(el);
         el._completeBuild = () => { throw new Error('could not hand over the port'); };
         el._onFrameLoad();
-        expect([el.state, wrapperOf(el), reasons]).toEqual(['terminated', null, ['the environment could not be built: Error: could not hand over the port']]);
+        expect([el.state, wrapperOf(el), reasons]).toEqual(['terminated', null, ['the environment could not be built (Error)']]);
     });
 });
 describe('A8: the default bootstrap is parser-safe', () => {

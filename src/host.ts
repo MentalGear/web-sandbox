@@ -6,6 +6,7 @@ import { dropMetaIgnoredDirectives } from "./lib/csp/drop-meta-ignored";
 import { dropEvalSources } from "./lib/csp/drop-eval";
 import { isKnownDirective, sanitizeDirectives } from "./lib/csp/policy-grammar";
 import { addFileSources } from "./lib/csp/file-sources";
+import { addEvalSource } from "./lib/csp/effective-directive";
 import { fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
@@ -163,16 +164,29 @@ const EXECUTION_TIMEOUT_REASON = 'the executed code ran longer than workerExecut
 const CONFIG_REFUSED_REASON = 'the configuration could not be used';
 const BUILD_FAILED_REASON = 'the environment could not be built';
 
-// What a refusal's reason says about the error behind it: clamped, and never a throw of its own (a thrown
-// value can be anything, its name or message a getter).
-function describeError(error: unknown): string {
+// What a reason or a host line says about an error the element caught (focused review 2026-10-14, F3): a fixed
+// text of the element's own plus the error's name, never its message. The message is whatever the thrower put
+// there: Chromium's DataCloneError quotes the source of the function it could not clone, a throwing getter's
+// error carries any text, a guest's error is the guest's text. A reason reaches 'terminated' listeners, the
+// console warning and every log an embedder keeps, so it carries none of that. The name is checked too (a thrown
+// object can name itself anything): a short identifier, else "Error"; a thrown primitive is named by its type.
+// The one rule for every caught error: build failures, unusable configs, an entry that failed (whose text
+// arrives as a 'guest' line instead, the guest's own words labelled as such).
+function errorName(error: unknown): string {
+    if (error === null) return 'null';
+    if (typeof error !== 'object' && typeof error !== 'function') return typeof error;
     try {
-        const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-        return text.slice(0, 256);
+        const name = (error as { name?: unknown }).name;
+        if (typeof name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(name)) return name;
     } catch {
-        return 'an error that cannot be described';
+        // a name that throws: named below
     }
+    return 'Error';
 }
+
+// A worker's uncaught error as a guest line, prefixed once: Chromium's ErrorEvent message already starts with
+// "Uncaught", Firefox's and WebKit's do not.
+const uncaughtLine = (message: string) => (message.startsWith('Uncaught ') ? message : `Uncaught ${message}`);
 
 /**
  * Strict mode's view liveness check (A5): always on, independent of watchdogTimeout. The view runs no guest
@@ -253,11 +267,10 @@ export class WebSandbox extends HTMLElement {
     constructor() {
         super();
         this.attachShadow({ mode: "open" });
-        // The fetch bridge is a library method under a reserved name (B5): expose() can never replace it.
-        // Registered once; it refuses while the current environment has no bridge.
-        this._broker.exposeReserved(FETCH_METHOD, (request: unknown) => this._handleFetch(request));
-        // Guest writes (C5) are re-registered by every build, bound to that build's overlay (_startGuestWrites);
-        // until the first build, none: every request is refused.
+        // The fetch bridge (B5) and guest writes (C5) are library methods under reserved names: expose() can never
+        // replace them. Each build registers both again, bound to that build's bridge and overlay
+        // (_startFetchBridge, _startGuestWrites); until the first build, none: every request is refused.
+        this._exposeFetch(null);
         this._exposeGuestWrites(null);
     }
 
@@ -312,13 +325,13 @@ export class WebSandbox extends HTMLElement {
             this._applyConfig(config);
             this._configRefusal = null;
         } catch (error) {
-            this._configRefusal = `${CONFIG_REFUSED_REASON}: ${describeError(error)}`;
+            this._configRefusal = `${CONFIG_REFUSED_REASON} (${errorName(error)})`;
         }
         this.initialize();
     }
 
-    // Parses, sanitizes and stores one setConfig() argument. Throws for a config that cannot be used; then
-    // nothing is stored (the fields are assigned last).
+    // Parses, sanitizes, checks and stores one setConfig() argument. Throws for a config that cannot be used; then
+    // nothing is stored (the fields are assigned last, after every check and warning).
     private _applyConfig(config: Partial<SandboxConfig>) {
         // ---- Copy, then parse and sanitize
 
@@ -352,14 +365,21 @@ export class WebSandbox extends HTMLElement {
         merged.guestWrites = merged.guestWrites === true;
         if (typeof merged.entry !== 'string') delete merged.entry;
 
-        // apply new config
+        // The policy must be a directive object, whatever the mode: anything else could only fail a later step
+        // (sanitizeDirectives in the strict warnings, or the build) after the config had been stored.
+        const policy = merged.connectionsAllowed as unknown;
+        if (!policy || typeof policy !== 'object' || Array.isArray(policy)) throw new TypeError('connectionsAllowed must be an object of directives');
+
+        // Every check and warning reads the candidate, and only a config that passed them all is stored, last
+        // (focused review 2026-10-14, F6: the warnings ran after the assignment, so a config one of them refused,
+        // connectionsAllowed: null in strict mode, was stored all the same).
+        this._warnAboutUnknownMode(merged);
+        this._warnAboutUnsafeCapabilities(merged);
+        this._warnAboutScriptUnsafe(merged);
+        this._warnAboutAutoResizeInWorker(merged);
+        this._warnAboutStrictConfig(merged);
         this._config = merged;
         this._fetchPolicy = fetchPolicy;
-        this._warnAboutUnknownMode();
-        this._warnAboutUnsafeCapabilities();
-        this._warnAboutScriptUnsafe();
-        this._warnAboutAutoResizeInWorker();
-        this._warnAboutStrictConfig();
     }
 
     /**
@@ -577,8 +597,8 @@ export class WebSandbox extends HTMLElement {
     // A mode the element does not know is refused, never read as the default (review A4): strict mode is a
     // security opt-in, so a misspelt 'Strict' must not quietly give the weaker iframe mode. initialize() then
     // terminates every build with a reason until a config names a valid mode; this says why, once per value.
-    private _warnAboutUnknownMode() {
-        const mode = this._config.mode;
+    private _warnAboutUnknownMode(config: SandboxConfig) {
+        const mode = config.mode;
         if (isSandboxMode(mode)) return;
         const message = `[Sandbox] mode ${this._describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}: the sandbox will not start until setConfig() names one of them.`;
         if (this._warnedStrict.has(message)) return;
@@ -590,9 +610,9 @@ export class WebSandbox extends HTMLElement {
         return typeof mode === 'string' ? JSON.stringify(mode.slice(0, 32)) : `of type ${mode === null ? 'null' : typeof mode}`;
     }
 
-    private _warnAboutUnsafeCapabilities() {
-        if (this._config.mode === 'strict') return; // dropped there instead, with one warning (_warnAboutStrictConfig)
-        for (const capability of this._config.unsafeCapabilities || []) {
+    private _warnAboutUnsafeCapabilities(config: SandboxConfig) {
+        if (config.mode === 'strict') return; // dropped there instead, with one warning (_warnAboutStrictConfig)
+        for (const capability of config.unsafeCapabilities || []) {
             if (this._warnedUnsafeCapabilities.has(capability)) continue;
             this._warnedUnsafeCapabilities.add(capability);
             console.warn(`[Sandbox] unsafe capability "${capability}" is enabled: it lets guest content act outside the sandbox.`);
@@ -602,8 +622,8 @@ export class WebSandbox extends HTMLElement {
     // The guard rail for scriptUnsafe (backlog S4). It is on in most presets and every e2e spec, so it is the
     // path of least resistance for a copy-paste consumer; one warning per instance says what it costs
     // without repeating on every reset(), load() or setConfig().
-    private _warnAboutScriptUnsafe() {
-        if (this._config.scriptUnsafe !== true || this._warnedScriptUnsafe) return;
+    private _warnAboutScriptUnsafe(config: SandboxConfig) {
+        if (config.scriptUnsafe !== true || this._warnedScriptUnsafe) return;
         this._warnedScriptUnsafe = true;
         console.warn("[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content.");
     }
@@ -751,13 +771,17 @@ export class WebSandbox extends HTMLElement {
             // a later uncaught error of the worker's that only the view could still describe (in-sandbox-view.ts,
             // review C1): a guest line like the worker's own 'Uncaught …' lines, rate-limited the same way
             const message = typeof data.message === 'string' ? data.message.slice(0, 2048) : '';
-            this._dispatchGuestLog({ level: 'error', args: [`Uncaught ${message}`] });
+            this._dispatchGuestLog({ level: 'error', args: [uncaughtLine(message)] });
             return;
         }
         if (data?.type === 'GUEST_ERROR') {
-            // the worker's own error text (guest-influenced): logged, clamped, never the reason
+            // The entry's own error text is the guest's (it wrote the code, or threw the value): a 'guest' line,
+            // clamped and rate-limited like every guest line, never part of the host line or the reason (F3).
             const message = typeof data.message === 'string' ? data.message.slice(0, 2048) : '';
-            this._notifyThenAct(() => this._dispatchHostLog('error', `[Sandbox] ${ENTRY_FAILED_REASON}: ${message}`), () => this._terminate(ENTRY_FAILED_REASON));
+            this._notifyThenAct(() => {
+                this._dispatchHostLog('error', `[Sandbox] ${ENTRY_FAILED_REASON}`);
+                this._dispatchGuestLog({ level: 'error', args: [uncaughtLine(message)] });
+            }, () => this._terminate(ENTRY_FAILED_REASON));
         }
     }
 
@@ -868,8 +892,8 @@ export class WebSandbox extends HTMLElement {
         return this._config.autoResize === true && this._config.mode !== 'worker';
     }
 
-    private _warnAboutAutoResizeInWorker() {
-        if (this._config.autoResize !== true || this._config.mode !== 'worker' || this._warnedAutoResizeWorker) return;
+    private _warnAboutAutoResizeInWorker(config: SandboxConfig) {
+        if (config.autoResize !== true || config.mode !== 'worker' || this._warnedAutoResizeWorker) return;
         this._warnedAutoResizeWorker = true;
         console.warn('[Sandbox] autoResize has no effect in worker mode: a worker has no document to measure.');
     }
@@ -893,20 +917,30 @@ export class WebSandbox extends HTMLElement {
         this._autoHeight = null;
     }
 
-    // One fetch bridge per environment (B5), built with the environment and aborted by _teardown.
+    // One fetch bridge per environment (B5), built with the environment and aborted by _teardown. The reserved
+    // method is registered again with it, closed over THIS build's bridge (or null when off), as sandbox:write is
+    // over its overlay: the broker looks a method up when a request arrives and runs it a microtask later, and a
+    // request must be served by the bridge of the environment it arrived in. Before, the method read
+    // this._fetchBridge when it ran, so a request that arrived just before a rebuild was served by the next
+    // environment's bridge (focused review 2026-10-14, hardening). Now it reaches its own bridge, which teardown
+    // closed, and is refused there.
     private _startFetchBridge() {
-        if (!this._fetchPolicy) return;
-        this._fetchBridge = createFetchBridge({
+        this._fetchBridge = this._fetchPolicy ? createFetchBridge({
             policy: this._fetchPolicy,
             hostOrigin: globalThis.location?.origin ?? '',
             onRecord: (record) => this._dispatchFetch(record),
-        });
+        }) : null;
+        this._exposeFetch(this._fetchBridge);
     }
 
-    // The reserved sandbox:fetch method. Every refusal is minted in fetch-bridge.ts with a library code.
-    private _handleFetch(request: unknown): Promise<unknown> {
-        if (!this._fetchBridge) return Promise.reject(fetchRefusal('FETCH_NOT_ALLOWED', 'the fetch bridge is off (fetchBridge is not configured)'));
-        return this._fetchBridge.handle(request);
+    private _exposeFetch(bridge: FetchBridge | null) {
+        this._broker.exposeReserved(FETCH_METHOD, (request: unknown) => this._handleFetch(bridge, request));
+    }
+
+    // The reserved sandbox:fetch method of one environment. Every refusal is minted in fetch-bridge.ts with a library code.
+    private _handleFetch(bridge: FetchBridge | null, request: unknown): Promise<unknown> {
+        if (!bridge) return Promise.reject(fetchRefusal('FETCH_NOT_ALLOWED', 'the fetch bridge is off (fetchBridge is not configured)'));
+        return bridge.handle(request);
     }
 
     // Every request through the bridge, once, when it settled: dispatched on the element and bubbling, like
@@ -989,7 +1023,7 @@ export class WebSandbox extends HTMLElement {
         try {
             this.createIframe();
         } catch (error) {
-            this._terminate(`${BUILD_FAILED_REASON}: ${describeError(error)}`);
+            this._terminate(`${BUILD_FAILED_REASON} (${errorName(error)})`);
         }
     }
 
@@ -1102,17 +1136,15 @@ export class WebSandbox extends HTMLElement {
         }
         const directives = addFileSources(cloned, fileTypes, this._warnedFileDirectives);
 
-        // String compilation is checked against script-src, then default-src (effective-directive.ts, 'eval').
-        // The defaults always hold script-src, and a config can only replace its value, so it is the one.
-        if (this._config.scriptUnsafe === true) {
-            directives["script-src"]?.push("'unsafe-eval'");
-        }
+        // String compilation is checked against script-src, then default-src (effective-directive.ts, 'eval'):
+        // addEvalSource is the one writer of the keyword, and never puts it in default-src (focused review F5).
+        const withEval = this._config.scriptUnsafe === true ? addEvalSource(directives) : directives;
 
         // The one place every guest policy is built (worker mode inherits this frame's policy), so the
         // guest never gets 'self', whatever the config says: its meaning for an opaque origin differs by
         // engine (drop-self.ts). Done last, so a directive emptied by the drop becomes 'none' only if
         // nothing else was added to it.
-        return dropSelfSources(directives, this._warnedSelfDirectives);
+        return dropSelfSources(withEval, this._warnedSelfDirectives);
     }
 
     // What the bootstrap does with this build's guest markup (GuestMarkupPlan): references to registered
@@ -1274,20 +1306,20 @@ export class WebSandbox extends HTMLElement {
     }
 
     // Strict-mode configuration the element will not honour, said once per instance each.
-    private _warnAboutStrictConfig() {
+    private _warnAboutStrictConfig(config: SandboxConfig) {
         const warn = (message: string) => {
             if (this._warnedStrict.has(message)) return;
             this._warnedStrict.add(message);
             console.warn(message);
         };
-        if (this._config.mode !== 'strict') {
-            if (this._config.entry) warn('[Sandbox] "entry" is used only in strict mode and was ignored.');
+        if (config.mode !== 'strict') {
+            if (config.entry) warn('[Sandbox] "entry" is used only in strict mode and was ignored.');
             return;
         }
-        const unsafe = this._config.unsafeCapabilities || [];
+        const unsafe = config.unsafeCapabilities || [];
         if (unsafe.length > 0) warn(`[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: ${unsafe.join(', ')}.`);
         // Compared in the grammar's tokens (policy-grammar.ts): a name the grammar drops is warned about there.
-        for (const message of strictPolicyOverrides(sanitizeDirectives(this._config.connectionsAllowed), sanitizeDirectives(DEFAULT_SANDBOX_CONFIG.connectionsAllowed))) warn(message);
+        for (const message of strictPolicyOverrides(sanitizeDirectives(config.connectionsAllowed), sanitizeDirectives(DEFAULT_SANDBOX_CONFIG.connectionsAllowed))) warn(message);
     }
 
     // The view liveness check (A5): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.
@@ -1305,7 +1337,7 @@ export class WebSandbox extends HTMLElement {
         try {
             this._completeBuild();
         } catch (error) {
-            this._terminate(`${BUILD_FAILED_REASON}: ${describeError(error)}`);
+            this._terminate(`${BUILD_FAILED_REASON} (${errorName(error)})`);
         }
     }
 

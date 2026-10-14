@@ -20,7 +20,8 @@
  *     (in-sandbox-files.ts) changes only after this module's answer.
  *   - Removal marks are bounded by the store: a removal is recorded only for a path the store holds (or one the
  *     overlay wrote, which is then simply forgotten); a path in neither is answered `change: 'none'` (the guest
- *     rejects NOT_FOUND) and records nothing.
+ *     rejects NOT_FOUND) and records nothing. A mark whose path the host unregistered later is forgotten before
+ *     the marks are listed or committed, so a listed mark always names a stored file.
  *   - Code needs a second opt-in. A commit refuses any file whose type is not on INERT_TYPES unless
  *     `{ code: true }`: JavaScript, HTML, SVG, XML, WebAssembly and every type not listed (an override included).
  *     The type checked is the CheckedFile's, the one the store will load the file as, never the file name.
@@ -33,6 +34,7 @@
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
 import { CheckedFile, describePath, fileError, isValidPath, MAX_TOTAL_BYTES, type FileStore } from './files';
+import { createRateLimiter } from './rate-limit';
 
 /** The reserved broker method the guest's sandboxFiles.write() and remove() call (rpc.ts, reserved names). */
 export const WRITE_METHOD = 'sandbox:write';
@@ -101,10 +103,11 @@ export function createGuestWrites({ store, now = () => performance.now() }: Gues
     // path → the write (a CheckedFile) or a removal mark (null). Never holds a refused request.
     const overlay = new Map<string, CheckedFile | null>();
     let closed = false;
-    // fixed one-second windows, like the log limiter (sandbox-log.ts)
-    let windowStart = -Infinity;
-    let requests = 0;
-    let bytes = 0;
+    // Sliding one-second windows (rate-limit.ts, the limiter the log lines use too): at most the limit in ANY
+    // one-second window, as documented. The fixed windows they replace let 199 requests (and twice the bytes)
+    // through around a window boundary (focused review 2026-10-14, W2). One clock reading serves both.
+    const requests = createRateLimiter(GUEST_WRITES_PER_SECOND);
+    const bytes = createRateLimiter(GUEST_WRITE_BYTES_PER_SECOND);
 
     const busy = (what: string) => fileError('FILES_BUSY', `${what}: at most ${GUEST_WRITES_PER_SECOND} writes and ${GUEST_WRITE_BYTES_PER_SECOND} bytes per second; retry later.`);
 
@@ -125,13 +128,7 @@ export function createGuestWrites({ store, now = () => performance.now() }: Gues
         if (closed) throw fileError('FILES_NOT_ALLOWED', 'the environment that sent this write has ended.');
         // Counted first, refused or not: the window bounds the work a guest can make the host do.
         const time = now();
-        if (time - windowStart >= 1000) {
-            windowStart = time;
-            requests = 0;
-            bytes = 0;
-        }
-        if (requests >= GUEST_WRITES_PER_SECOND) throw busy('guest writes refused');
-        requests++;
+        if (!requests.admit(time)) throw busy('guest writes refused');
 
         // Only `change`, `path` and `entry` are read, each once: the request is the guest's structured-cloned data.
         const source = request !== null && typeof request === 'object' ? request as Record<string, unknown> : {};
@@ -154,13 +151,21 @@ export function createGuestWrites({ store, now = () => performance.now() }: Gues
         const valid = path as string; // CheckedFile.from() checked it
         store.check(overlaid(valid, file), WRITE_CALLER);
         // After the quota, so a write past the cap is FILES_QUOTA_EXCEEDED whatever the rate.
-        if (bytes + file.bytes.length > GUEST_WRITE_BYTES_PER_SECOND) throw busy(`${WRITE_CALLER} refused`);
-        bytes += file.bytes.length;
+        if (!bytes.admit(time, file.bytes.length)) throw busy(`${WRITE_CALLER} refused`);
         overlay.set(valid, file);
         return { path: valid, change: 'write', type: file.type, size: file.bytes.length };
     };
 
+    // A removal mark names a path the store held when it was recorded; the host may unregister that path later
+    // (focused review 2026-10-14, W3). A mark whose path the store no longer holds would remove nothing and only
+    // mislead whoever reads the list, so it is forgotten here, where marks are read: list() and commit() call
+    // this first, and handle() needs no copy of it (a removal of such a path is answered 'none' anyway).
+    const forgetStaleMarks = () => {
+        for (const [path, change] of [...overlay]) if (change === null && !store.has(path)) overlay.delete(path);
+    };
+
     const list = (): GuestWrite[] => {
+        forgetStaleMarks();
         const writes: GuestWrite[] = [];
         for (const path of [...overlay.keys()].sort()) {
             const file = overlay.get(path)!;
@@ -170,6 +175,7 @@ export function createGuestWrites({ store, now = () => performance.now() }: Gues
     };
 
     const commit = (paths: readonly string[], code: boolean): string[] => {
+        forgetStaleMarks();
         const put = new Map<string, CheckedFile>();
         const remove: string[] = [];
         for (const path of paths) {

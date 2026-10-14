@@ -616,7 +616,10 @@ function rewriteModule(path: string, bytes: Uint8Array): ModuleRewrite {
     try {
         edits = moduleSpecifierEdits(source, VIRTUAL_ROOT + path);
     } catch (e) {
-        return { edits: null, failure: e instanceof Error ? e.message.slice(0, 80) : 'lexer error' };
+        // The lexer's position only, never its message as such (the one rule for caught errors, focused review
+        // 2026-10-14 F3): es-module-lexer says "Parse error @:line:column", and nothing else reaches the warning.
+        const at = /@:(\d{1,9}):(\d{1,9})/.exec(e instanceof Error ? String(e.message) : '');
+        return { edits: null, failure: at ? `parse error at ${at[1]}:${at[2]}` : 'lexer error' };
     }
     if (edits.length === 0) return { edits: null };
 

@@ -1,4 +1,5 @@
 import type { CSPDirectives } from "../../csp-directives";
+import { defineData } from "../utils";
 
 /**
  * 'unsafe-eval' and 'wasm-unsafe-eval' belong to scriptUnsafe (review A5). scriptUnsafe is the one switch for
@@ -19,7 +20,7 @@ export function dropEvalSources(directives: CSPDirectives, scriptUnsafe: boolean
     const output: Record<string, unknown> = { ...directives };
     for (const [name, values] of Object.entries(directives)) {
         if (!Array.isArray(values) || !values.some(isEvalKeyword)) continue;
-        output[name] = values.filter(token => !isEvalKeyword(token));
+        defineData(output, name, values.filter(token => !isEvalKeyword(token))); // defined, never assigned (F4)
         if (scriptUnsafe || warned.has(name)) continue;
         warned.add(name);
         console.warn(`[Sandbox] 'unsafe-eval' and 'wasm-unsafe-eval' are not allowed in "connectionsAllowed.${name}" and were dropped: evaluating strings as code is enabled only by scriptUnsafe, which warns about what it costs.`);

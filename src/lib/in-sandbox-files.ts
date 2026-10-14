@@ -139,8 +139,12 @@ export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((requ
         const target = typeof path === 'string' ? path : null;
         let ready: Uint8Array<ArrayBuffer> | Promise<Uint8Array<ArrayBuffer>> | null;
         let type: unknown;
-        const wrapped = !isContent(entry);
+        let wrapped: boolean;
+        // Everything that inspects the guest's entry runs inside the try (focused review 2026-10-14, W4): an
+        // instanceof on a Proxy runs its getPrototypeOf trap, which can throw, and write() must reject then,
+        // never throw where the caller awaits a promise.
         try {
+            wrapped = !isContent(entry);
             ready = copyOf(wrapped ? (entry as { content?: unknown }).content : entry);
             if (wrapped) type = (entry as { type?: unknown }).type;
         } catch (e) {
