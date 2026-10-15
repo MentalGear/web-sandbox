@@ -1,7 +1,7 @@
 import type { SafeCapability, UnsafeCapability } from "./csp-directives";
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./csp-directives";
 import { cooperativePolicy, fileKinds, strictViewPolicy } from "./lib/csp/csp-generator";
-import { NO_ORIGINS, parseOrigins, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
+import { NO_ORIGINS, parseOrigins, shown, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
@@ -16,14 +16,14 @@ import { workerBootstrap } from "./lib/worker-bootstrap";
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
 import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
-import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT } from "./lib/violation";
-import { createLogLimiter, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, toLogDetail, type SandboxLogLevel } from "./lib/sandbox-log";
+import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT, type SandboxViolation } from "./lib/violation";
+import { createLogLimiter, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
 
 /**
  * The element's configuration, passed to setConfig(): every option left out takes its default
@@ -33,7 +33,7 @@ import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, is
  * `scripts`. A config from JSON is held to the same rules at run time (dropped with a warning). Strict mode is the
  * default, so a config that names no mode is a strict config; cooperative and worker mode are named.
  */
-export type SandboxConfig = StrictSandboxConfig | CooperativeSandboxConfig;
+export type SandboxConfig = StrictSandboxConfig | CooperativeSandboxConfig | WorkerSandboxConfig;
 
 /**
  * Strict mode (ADR-005), the default: guest code runs only in a worker spawned by a view document that runs no guest
@@ -45,17 +45,61 @@ export interface StrictSandboxConfig extends SandboxConfigOptions {
     mode?: 'strict';
     /** As in the other modes, without `scripts`: the view runs only the library's bootstrap. */
     origins?: StrictSandboxOrigins;
+    /** Not in strict mode (review round 1, R3-6): no capability reaches outside the view. Dropped at run time. */
+    unsafeCapabilities?: never;
 }
 
 /**
  * Cooperative mode, for content that cooperates: guest code runs in the guest document, within a frozen list of
- * documented limits (README, "Cooperative-mode limits"); 'iframe' was renamed 'cooperative'. Worker mode: guest code
- * runs in a worker inside the frame (frozen; to be folded into strict mode).
+ * documented limits (README, "Cooperative-mode limits"); 'iframe' was renamed 'cooperative'.
  */
 export interface CooperativeSandboxConfig extends SandboxConfigOptions {
-    mode: 'cooperative' | 'worker';
+    mode: 'cooperative';
     /** The exact origins the guest may load each kind from (src/lib/csp/origins.ts). Default: none. */
     origins?: SandboxOrigins;
+    /** Strict mode only (review round 1, R3-6); ignored with a warning at run time. */
+    entry?: never;
+    /** Worker and strict mode only: the guest document may share the host's thread, so no timer could fire (R3-6). */
+    workerExecutionTimeout?: never;
+}
+
+/** Worker mode: guest code runs in a worker inside the frame (frozen; to be folded into strict mode, S49). */
+export interface WorkerSandboxConfig extends SandboxConfigOptions {
+    mode: 'worker';
+    /** The exact origins the guest may load each kind from (src/lib/csp/origins.ts). Default: none. */
+    origins?: SandboxOrigins;
+    /** Strict mode only (review round 1, R3-6); ignored with a warning at run time. */
+    entry?: never;
+    /** A worker has no document (R3-6): ignored. */
+    html?: never;
+    /** A worker has no document to measure (R3-6): no effect, with a warning at run time. */
+    autoResize?: never;
+}
+
+/** The element's events and what each one carries (docs/API.md#events; review round 1, R4-12). */
+export interface WebSandboxEventMap extends HTMLElementEventMap {
+    ready: CustomEvent<null>;
+    terminated: CustomEvent<{ reason: string }>;
+    'sandbox-log': CustomEvent<SandboxLog>;
+    violation: CustomEvent<SandboxViolation>;
+    fetch: CustomEvent<FetchRecord>;
+    fileschanged: CustomEvent<{ paths: string[] }>;
+    fileswritten: CustomEvent<{ readonly paths: readonly string[] }>;
+}
+
+/** Typed listeners for the element's events (WebSandboxEventMap; R4-12): types only, merged into the class. */
+export interface WebSandbox {
+    addEventListener<K extends keyof WebSandboxEventMap>(type: K, listener: (this: WebSandbox, event: WebSandboxEventMap[K]) => unknown, options?: boolean | AddEventListenerOptions): void;
+    addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+    removeEventListener<K extends keyof WebSandboxEventMap>(type: K, listener: (this: WebSandbox, event: WebSandboxEventMap[K]) => unknown, options?: boolean | EventListenerOptions): void;
+    removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
+}
+
+declare global {
+    interface HTMLElementTagNameMap {
+        /** The element under its default tag name (defineWebSandbox()). */
+        'web-sandbox': WebSandbox;
+    }
 }
 
 /** The options every mode takes. */
@@ -201,6 +245,37 @@ const STARTUP_BLOCKED_REASON = "the sandbox's startup script did not run: the ho
 const WORKER_REFUSED_REASON = "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)";
 const TRUSTED_TYPES_REASON = `the host page's Trusted Types policy does not allow the policy name '${TRUSTED_TYPES_POLICY}' (trusted-types; see docs/API.md#host-page-policy)`;
 
+// A build that refuses its own inputs (a strict entry that is no registered JavaScript file): its message is the
+// reason, a fixed text of the element's own, never an error's.
+class BuildRefusal extends Error {
+    constructor(readonly reason: string) {
+        super(reason);
+    }
+}
+
+// Plain data, compared as data (R3-7): the same primitives, arrays and plain objects, key by key. Anything else (a
+// Date, a Map, a typed array) never compares equal, so a config holding one always rebuilds.
+function sameData(a: unknown, b: unknown, depth = 0): boolean {
+    if (Object.is(a, b)) return true;
+    if (depth > 64 || !a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+    const arrays = Array.isArray(a);
+    if (arrays !== Array.isArray(b)) return false;
+    if (!arrays && (Object.getPrototypeOf(a) !== Object.prototype || Object.getPrototypeOf(b) !== Object.prototype)) return false;
+    const keys = Object.keys(a);
+    if (keys.length !== Object.keys(b).length) return false;
+    for (const key of keys) {
+        if (!Object.hasOwn(b, key) || !sameData((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key], depth + 1)) return false;
+    }
+    return true;
+}
+
+// The first statement after the globals allowlist in worker mode's worker unless scriptUnsafe (R2-5). Stringified.
+function removeWebAssembly(g: { WebAssembly?: unknown }) {
+    if (!('WebAssembly' in g)) return;
+    delete g.WebAssembly;
+    if ('WebAssembly' in g) throw new Error('[Sandbox] the worker could not remove WebAssembly');
+}
+
 // What a reason or a host line says about an error the element caught (focused review 2026-10-14, F3): a fixed
 // text of the element's own plus the error's name, never its message. The message is whatever the thrower put
 // there: Chromium's DataCloneError quotes the source of the function it could not clone, a throwing getter's
@@ -336,6 +411,10 @@ export class WebSandbox extends HTMLElement {
     private _warnedStrict = new Set<string>(); // strict-mode config warnings, once each per instance
     private _warnedForeignDocument = false; // inserted into a document of another realm (CB7), once per instance
     private _warnedWrapperStyle = false;    // the host page's style-src refused the wrapper's style (R3-1), once per instance
+    private _lastConfig: { copy: unknown; inputs: number } | null = null; // the copy of the last usable setConfig() argument (R3-7)
+    private _pendingTermination: object | null = null; // a build's 'terminated' waiting for its task (R3-2), cleared by every teardown
+    private _heightBeforeAuto: string | null = null; // the embedder's inline height before auto-sizing first wrote one (R3-8)
+    private _exposedNames = new Set<string>(); // what expose() published, for the no-allow-scripts warning (R3-4)
 
     // Files are part of the environment: they live on the element, survive reset(), load(), setConfig()
     // and terminate(), and every environment build takes a snapshot (createIframe). See src/lib/files.ts.
@@ -422,26 +501,47 @@ export class WebSandbox extends HTMLElement {
         // environment torn down and no new one built (follow-up audit 2026-10-14): initialize() refuses every
         // build while _configRefusal is set, as it does for an unknown mode (review A4), until a usable config
         // arrives. Nothing of a refused config is applied.
+        //
+        // One structured clone of the whole argument before anything reads it: every check, and every later build,
+        // reads this copy, never the caller's objects. So an array the caller changes after setConfig() never changes
+        // the policy a later reset() builds, and a getter or a Proxy cannot answer two reads differently (review A6).
+        // What cannot be cloned (a Proxy, a function, a DOM node) throws here, and refuses the config.
+        let copy: unknown;
+        let unusable: unknown = null;
+        try {
+            copy = structuredClone(config);
+        } catch (error) {
+            unusable = error;
+        }
+        // The configuration the environment was built from, again, while that environment stands (review round 1,
+        // R3-7): nothing to change, so nothing is rebuilt (an embedder that applies its config on every edit, as the
+        // playground does, keeps its guest). Anything a build reads changed since (load(), the files) builds as usual.
+        if (unusable === null && this._isCurrentConfig(copy)) return;
         this._buildInputs++;
         try {
-            this._applyConfig(config);
+            if (unusable !== null) throw unusable;
+            this._applyConfig(copy);
             this._configRefusal = null;
+            this._lastConfig = { copy, inputs: this._buildInputs };
         } catch (error) {
             this._configRefusal = `${CONFIG_REFUSED_REASON} (${errorName(error)})`;
+            this._lastConfig = null;
         }
         this.initialize();
     }
 
-    // Parses, sanitizes, checks and stores one setConfig() argument. Throws for a config that cannot be used; then
-    // nothing is stored (the fields are assigned last, after every check and warning).
-    private _applyConfig(config: SandboxConfig) {
-        // ---- Copy, then parse and sanitize
+    // Whether `copy` is the configuration the standing environment was built from, with nothing else changed since.
+    private _isCurrentConfig(copy: unknown): boolean {
+        const last = this._lastConfig;
+        if (!last || last.inputs !== this._buildInputs || this._configRefusal !== null) return false;
+        if (this._state !== 'ready' && this._state !== 'loading') return false;
+        return sameData(copy, last.copy);
+    }
 
-        // One structured clone of the whole argument before anything reads it: every check below, and every
-        // later build, reads this copy, never the caller's objects. So an array the caller changes after
-        // setConfig() never changes the policy a later reset() builds, and a getter or a Proxy cannot answer two
-        // reads differently (review A6). What cannot be cloned (a Proxy, a function, a DOM node) throws here.
-        const copy: unknown = structuredClone(config);
+    // Parses, sanitizes, checks and stores one setConfig() argument, already copied (setConfig). Throws for a config
+    // that cannot be used; then nothing is stored (the fields are assigned last, after every check and warning).
+    private _applyConfig(copy: unknown) {
+        // ---- Parse and sanitize the copy
         if (!copy || typeof copy !== 'object' || Array.isArray(copy)) throw new TypeError('setConfig() takes an object');
         const input = copy as SandboxConfig;
 
@@ -453,9 +553,14 @@ export class WebSandbox extends HTMLElement {
         };
         // The entry is a registered path or nothing; it is looked up in each build's snapshot.
         if (Object.hasOwn(input, 'entry') && typeof input.entry !== 'string') delete sanitizedConfig.entry;
+        // Markup is a string or nothing (R1-3): anything else is dropped with a warning, never refuses the config.
+        if (Object.hasOwn(input, 'html') && typeof input.html !== 'string') {
+            delete sanitizedConfig.html;
+            this._warnOnce(`[Sandbox] "html" must be a string; ${shown(input.html)} was dropped.`);
+        }
         // The fetch bridge config is validated into a policy here and kept out of the merged config: a
         // config without it turns the bridge off.
-        const fetchPolicy = toFetchPolicy(input.fetchBridge, (message) => this._warnFetchBridge(message));
+        const fetchPolicy = toFetchPolicy(input.fetchBridge, (message) => this._warnFetchBridge(message), globalThis.location?.origin ?? '');
         delete sanitizedConfig.fetchBridge;
         // `origins` is kept out of the merged config too: it is parsed below, for the mode the merged config has.
         delete sanitizedConfig.origins;
@@ -669,11 +774,16 @@ export class WebSandbox extends HTMLElement {
      * warning). The arguments are the guest's data: validate them before use.
      */
     expose(name: string, fn: (...args: any[]) => unknown): void {
-        if (typeof name === 'string' && name.startsWith(RESERVED_METHOD_PREFIX)) {
+        // A name that is not a string, or a handler that is not a function, is a mistake to say at once (review round
+        // 1, R3-9): it used to be ignored, and the guest's call failed with UNKNOWN_METHOD far from the cause.
+        if (typeof name !== 'string') throw new TypeError('[Sandbox] expose(): the name must be a string');
+        if (typeof fn !== 'function') throw new TypeError(`[Sandbox] expose(): the handler for "${name.slice(0, 64)}" must be a function`);
+        if (name.startsWith(RESERVED_METHOD_PREFIX)) {
             console.warn(`[Sandbox] expose(): names starting with "${RESERVED_METHOD_PREFIX}" are reserved for the library; "${name}" was not exposed.`);
             return;
         }
         this._broker.expose(name, fn);
+        this._exposedNames.add(name);
     }
 
     /**
@@ -1142,17 +1252,21 @@ export class WebSandbox extends HTMLElement {
         if (!this._autoResizeEnabled()) return;
         this._resizer = startAutoResize((height) => {
             const value = `${height}px`;
+            // the embedder's own inline height, kept to give back (R3-8), unless it is one auto-sizing wrote
+            if (this._autoHeight === null || this.style.height !== this._autoHeight) this._heightBeforeAuto = this.style.height;
             this.style.height = value;
             this._autoHeight = value;
         });
     }
 
-    // Gives the height back to the embedder's CSS when auto-sizing is off for the environment being built,
-    // removing the inline height only if it is still the one auto-sizing wrote.
+    // Gives the height back to the embedder when auto-sizing is off for the environment being built: the inline height
+    // it had before auto-sizing first wrote one (review round 1, R3-8: it used to be removed), and only if the inline
+    // height is still the one auto-sizing wrote.
     private _releaseAutoHeight() {
         if (this._autoHeight === null) return;
-        if (this.style.height === this._autoHeight) this.style.height = '';
+        if (this.style.height === this._autoHeight) this.style.height = this._heightBeforeAuto ?? '';
         this._autoHeight = null;
+        this._heightBeforeAuto = null;
     }
 
     // One fetch bridge per environment (B5), built with the environment and aborted by _teardown. The reserved
@@ -1194,15 +1308,25 @@ export class WebSandbox extends HTMLElement {
     }
 
     // The one place `state` changes. The 'ready' and 'terminated' events are dispatched here, after the
-    // state is set, so a listener always reads the state its event announces.
-    private _enterState(next: SandboxState, reason?: string) {
+    // state is set, so a listener always reads the state its event announces; a build's 'terminated' in a task of its
+    // own (`dispatch: 'task'`, _terminateBuild).
+    private _enterState(next: SandboxState, reason?: string, dispatch: 'now' | 'task' = 'now') {
         this._state = next;
         if (next === 'ready') this.dispatchEvent(new CustomEvent('ready'));
-        if (next === 'terminated') this.dispatchEvent(new CustomEvent('terminated', { detail: { reason } }));
+        if (next !== 'terminated') return;
+        if (dispatch === 'now') {
+            this.dispatchEvent(new CustomEvent('terminated', { detail: { reason } }));
+            return;
+        }
+        const token = {};
+        this._pendingTermination = token;
+        const inputs = this._buildInputs;
+        setTimeout(() => this._dispatchBuildTermination(reason ?? '', token, inputs), 0);
     }
 
     private _teardown() {
         this._generation++;
+        this._pendingTermination = null; // a build's 'terminated' still to come is no longer the sandbox's state (R3-2)
         this._guestWrites?.close(); // its writes stay listable and committable until the next build (initialize)
         this._logLimiter = createLogLimiter(); // the log rate limit is per environment
         this._warnedLogLimit = false;
@@ -1275,18 +1399,33 @@ export class WebSandbox extends HTMLElement {
         try {
             this.createIframe();
         } catch (error) {
-            this._terminateBuild(error instanceof TrustedTypesRefusal ? TRUSTED_TYPES_REASON : `${BUILD_FAILED_REASON} (${errorName(error)})`);
+            this._terminateBuild(error instanceof BuildRefusal ? error.reason : error instanceof TrustedTypesRefusal ? TRUSTED_TYPES_REASON : `${BUILD_FAILED_REASON} (${errorName(error)})`);
             return;
         }
         if (this._state === 'loading') this._startLoadDeadline();
     }
 
-    // A termination of the build initialize() is making: dispatched once for these inputs (CB5).
+    // A termination of the build initialize() is making. The state is 'terminated' at once; the 'terminated' event comes
+    // in a task of its own, like 'ready' (review round 1, R3-2): a listener added right after setConfig(), reset() or
+    // load() hears it, where it used to be dispatched inside the call. Not at all if the environment changed meanwhile
+    // (another build, the element's removal): that answer is no longer the sandbox's state. While it is dispatched, a
+    // listener that builds again from the same inputs gets the same answer, so it is not dispatched again (CB5).
     private _terminateBuild(reason: string) {
+        if (this._state === 'terminated') return;
+        console.warn(`[Sandbox] terminated: ${reason}`);
+        this._teardown();
+        this._enterState('terminated', reason, 'task');
+    }
+
+    // The deferred 'terminated' of a build (above), dispatched only if nothing tore the environment down since: every
+    // teardown clears _pendingTermination, so a token that is no longer the pending one is a stale answer.
+    private _dispatchBuildTermination(reason: string, token: object, inputs: number) {
+        if (this._pendingTermination !== token || this._state !== 'terminated') return;
+        this._pendingTermination = null;
         const outer = this._buildTermination;
-        this._buildTermination = { reason, inputs: this._buildInputs };
+        this._buildTermination = { reason, inputs };
         try {
-            this._terminate(reason);
+            this.dispatchEvent(new CustomEvent('terminated', { detail: { reason } }));
         } finally {
             this._buildTermination = outer;
         }
@@ -1356,7 +1495,10 @@ export class WebSandbox extends HTMLElement {
     private _getWorkerBootstrapScript(files: FileSnapshotEntry[]) {
         // the worker keeps only the allowlisted globals (worker-globals.ts), then runs the comms script and builds its
         // own blobs and sandboxFiles from the same literal; the frame only spawns it and forwards the port
-        const workerSource = `${workerGlobalsStatement('this')}${this._getSandboxCommsScript('worker', files)}`;
+        // No WebAssembly unless scriptUnsafe (review round 1, R2-5), as in strict mode: WebKit compiles it without
+        // 'wasm-unsafe-eval', so the policy alone does not keep it out. Removed before the comms script, like the globals.
+        const noWasm = this._config.scriptUnsafe === true ? '' : `(${removeWebAssembly.toString()})(this);`;
+        const workerSource = `${workerGlobalsStatement('this')}${noWasm}${this._getSandboxCommsScript('worker', files)}`;
         return `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)});`;
     }
 
@@ -1424,6 +1566,22 @@ export class WebSandbox extends HTMLElement {
         return { parts: markup.parts, importMap: { paths: javascript, guest } };
     }
 
+    // Cooperative mode without allow-scripts runs no script, the library's bootstrap included (review round 1, R3-4): what
+    // needs one does nothing there, silently, so it is said once per element and message.
+    private _warnAboutNoScripts(html: string, sandboxFlags: string) {
+        if (sandboxFlags.split(' ').includes('allow-scripts')) return;
+        const unused: string[] = [];
+        if (scriptInMarkup(html)) unused.push('the scripts and handlers in html');
+        if (watchdogBudget(this._config.watchdogTimeout) > 0) unused.push('watchdogTimeout');
+        if (this._config.autoResize === true) unused.push('autoResize');
+        if (this._fetchPolicy) unused.push('fetchBridge');
+        if (this._config.guestWrites === true) unused.push('guestWrites');
+        if (this._config.scriptUnsafe === true) unused.push('execute()');
+        if (this._exposedNames.size > 0) unused.push('the methods published with expose()');
+        if (unused.length === 0) return;
+        this._warnOnce(`[Sandbox] cooperative mode without "allow-scripts" runs no script, the library's own included: ${unused.join(', ')} ${unused.length === 1 ? 'has' : 'have'} no effect. Add "allow-scripts" to capabilities.`);
+    }
+
     // Warnings about the guest's markup come back with every build of the same markup: one each per element.
     private _warnOnce(message: string) {
         if (this._warnedGuestMarkup.has(message)) return;
@@ -1457,6 +1615,7 @@ export class WebSandbox extends HTMLElement {
             guestDocument = buildGuestDocument({ csp: policy, bootstrapScript: this._getWorkerBootstrapScript(files), content: '' });
         } else {
             const html = this._config.html || '<div id="root"></div>';
+            this._warnAboutNoScripts(html, sandboxFlags);
             // A fresh slot nonce per build (inside rewriteGuestMarkup); null parts keep the markup verbatim.
             const plan = this._getMarkupPlan(html, files, sandboxFlags);
             guestDocument = buildGuestDocument({
@@ -1499,10 +1658,7 @@ export class WebSandbox extends HTMLElement {
         const entry = this._config.entry;
         if (typeof entry === 'string' && entry !== '') {
             const file = files.find(candidate => candidate[0] === entry);
-            if (!file || !isJavaScriptType(file[1])) {
-                this._terminate(`the guest entry "${entry.slice(0, 256)}" is not a registered JavaScript file`);
-                return;
-            }
+            if (!file || !isJavaScriptType(file[1])) throw new BuildRefusal(`the guest entry "${entry.slice(0, 256)}" is not a registered JavaScript file`);
             entrySource = new TextDecoder().decode(Uint8Array.from(atob(file[2]), c => c.charCodeAt(0)));
         }
 
@@ -1545,7 +1701,7 @@ export class WebSandbox extends HTMLElement {
             + `(${assertEntryScoped.toString()})(g);`
             + workerGlobalsStatement('g')
             + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()});`
-            + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}${this._config.guestWrites === true ? ', comms.writeFiles' : ''});`
+            + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}, ${this._config.guestWrites === true ? 'comms.writeFiles' : 'null'}, ${toInlineScriptLiteral(VIEW_FILE_TYPES)});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)});`
             + '})(this);';
         return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${marker}();\n`;

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
+import { defineWebSandbox } from '@src/host';
 import { createBroker, RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_BYTES_PER_SECOND, LOG_DROPPED_ARGUMENT, LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_BYTES, LOG_MAX_STRING, toLogDetail } from '@src/lib/sandbox-log';
@@ -268,7 +269,6 @@ describe('R3-3: one byte budget per RPC message, and per channel in flight', () 
     });
 
     it("both brokers the library makes measure: the element's call() refuses a call past the budget", async () => {
-        const { defineWebSandbox } = await import('@src/host');
         defineWebSandbox();
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = document.createElement('web-sandbox') as any;
@@ -363,5 +363,206 @@ describe('R3-1: the Trusted Types policy blesses only the sandbox\'s own documen
         const { setWrapperSrcdoc, TrustedTypesRefusal } = await import('@src/lib/trusted-types');
         const { buildWrapperDocument } = await import('@src/lib/frame-documents');
         expect(() => setWrapperSrcdoc(sink() as any, buildWrapperDocument('', ''))).toThrow(TrustedTypesRefusal);
+    });
+});
+
+// ---- low findings -------------------------------------------------------------------------------------------------
+
+const mountElement = async (config?: Record<string, unknown>) => {
+    defineWebSandbox();
+    const el = document.createElement('web-sandbox') as any;
+    document.body.appendChild(el);
+    if (config) el.setConfig(config);
+    return el;
+};
+const task = () => new Promise(resolve => setTimeout(resolve, 0));
+
+describe('R1-3: a value that should be dropped never refuses the whole config', () => {
+    it.each([
+        ['capabilities: 5', { capabilities: 5 }, 'must be a list'],
+        ['capabilities: {}', { capabilities: {} }, 'must be a list'],
+        ['unsafeCapabilities that is not a list', { unsafeCapabilities: 'allow-popups' }, 'must be a list'],
+        ['a BigInt and a cyclic entry in fetchBridge.allow', (() => { const cyclic: any = {}; cyclic.self = cyclic; return { fetchBridge: { allow: [1n, cyclic, 'https://api.example'] } }; })(), 'a value of type bigint'],
+        ['fetchBridge.methods that is not a list', { fetchBridge: { allow: [], methods: 'GET' } }, 'fetchBridge.methods must be a list'],
+        ['html that is not a string', { html: 5 }, '"html" must be a string'],
+    ])('%s: dropped with a warning, the rest applied, the sandbox builds', async (_, config, warning) => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mountElement({ mode: 'cooperative', capabilities: ['allow-scripts'], ...config });
+        expect(el.state).toBe('loading');
+        expect(warn.mock.calls.some(call => String(call[0]).includes(warning))).toBe(true);
+        el.remove();
+    });
+});
+
+describe('R1-4: an origin is printable ASCII as written, before anything is folded', () => {
+    it('U+212A KELVIN SIGN (which lowercases to "k") and U+0130 are refused; the ASCII name is accepted (positive control)', async () => {
+        const { parseOrigin } = await import('@src/lib/origin');
+        const rules = { anyHost: ['https:'], loopbackOnly: [] };
+        expect(parseOrigin('https://Ka.example', rules)).toBeNull();
+        expect(parseOrigin('https://İ.example', rules)).toBeNull();
+        expect(parseOrigin('https://ka.example', rules)).toBe('https://ka.example');
+    });
+});
+
+describe('R3-5: fetchBridge.allow naming the host page or a private host is honoured, with a warning; a non-list is dropped', () => {
+    it('warns once each, and keeps them; an allow that is not a list admits nothing, with a warning', async () => {
+        const { toFetchPolicy } = await import('@src/lib/fetch-bridge');
+        const warnings: string[] = [];
+        const policy = toFetchPolicy({ allow: ['http://localhost:4444', 'https://10.0.0.1', 'https://api.example'] }, (m) => warnings.push(m), 'http://localhost:4444')!;
+        expect(policy.allow).toEqual(['http://localhost:4444', 'https://10.0.0.1', 'https://api.example']);
+        expect(warnings).toEqual([
+            "[Sandbox] fetchBridge.allow lists the host page's own origin (http://localhost:4444): the guest can send requests to it through the bridge (without credentials).",
+            '[Sandbox] fetchBridge.allow lists https://10.0.0.1, a loopback, private or link-local host: the guest can reach it through the bridge.',
+        ]);
+        warnings.length = 0;
+        expect(toFetchPolicy({ allow: 'https://api.example' }, (m) => warnings.push(m))!.allow).toEqual([]);
+        expect(warnings).toEqual(['[Sandbox] fetchBridge.allow must be a list; "https://api.example" was dropped.']);
+    });
+});
+
+describe("R3-2: a build's 'terminated' comes in a task: a listener added right after the call hears it", () => {
+    it('setConfig() of an unknown mode, reset() of it, a strict entry that is not registered: state at once, the event after', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mountElement();
+        for (const act of [() => el.setConfig({ mode: 'Strict' }), () => el.reset(), () => el.setConfig({ entry: 'missing.js' })]) {
+            act();
+            expect(el.state).toBe('terminated');
+            const reasons: string[] = [];
+            el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason), { once: true });
+            await task();
+            expect(reasons).toHaveLength(1);
+        }
+    });
+
+    it('an answer that is no longer the state is never dispatched: a usable config set right after a refused one', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mountElement();
+        const reasons: string[] = [];
+        el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
+        el.setConfig({ mode: 'Strict' });
+        el.setConfig({ mode: 'cooperative' });
+        await task();
+        expect([el.state, reasons]).toEqual(['loading', []]);
+    });
+});
+
+describe('R3-7: setConfig() of the configuration the environment stands on is no change', () => {
+    it('no rebuild for the same config (the same frame stays); a changed config, load() in between, or a terminated sandbox rebuild', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const config = { mode: 'cooperative', capabilities: ['allow-scripts'], origins: { images: ['https://a.example'] } };
+        const el = await mountElement(config);
+        const frame = () => el.shadowRoot.querySelector('iframe');
+        const first = frame();
+        el.setConfig(structuredClone(config));
+        expect(frame()).toBe(first);
+        el.setConfig({ ...config, html: '<p>other</p>' });
+        expect(frame()).not.toBe(first);
+        const second = frame();
+        el.load('<p>loaded</p>');
+        el.setConfig({ ...config, html: '<p>other</p>' });
+        expect(frame()).not.toBe(second);
+        el.terminate();
+        el.setConfig({ ...config, html: '<p>other</p>' });
+        expect(el.state).toBe('loading');
+    });
+});
+
+describe("R3-8: auto-sizing gives the embedder's inline height back", () => {
+    it('the inline height before the first report returns when a build turns auto-sizing off', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mountElement({ mode: 'cooperative', capabilities: ['allow-scripts'], autoResize: true });
+        el.style.height = '123px';
+        el._startAutoResize(); // what 'ready' does (no frame loads in jsdom)
+        el._resizer.report({ type: 'RESIZE', height: 40 });
+        await vi.waitFor(() => expect(el.style.height).toBe('40px'));
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+        expect(el.style.height).toBe('123px');
+    });
+});
+
+describe('R3-9: expose() with a handler that is not a function, or a name that is not a string, throws a TypeError', () => {
+    it('throws; a function under a string name is exposed (positive control)', async () => {
+        const el = await mountElement({ mode: 'cooperative' });
+        expect(() => el.expose('m', 42)).toThrow(TypeError);
+        expect(() => el.expose(7, () => 1)).toThrow(TypeError);
+        expect(() => el.expose('m', () => 1)).not.toThrow();
+    });
+});
+
+describe("R3-4: cooperative mode without allow-scripts says once what has no effect", () => {
+    it('scripts in html, the watchdog, autoResize, the fetch bridge, guest writes, execute() and exposed methods are named, once', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mountElement();
+        el.expose('m', () => 1);
+        const config = { mode: 'cooperative', html: '<script>x()</script>', watchdogTimeout: 1000, autoResize: true, fetchBridge: { allow: [] }, guestWrites: true, scriptUnsafe: true };
+        el.setConfig(config);
+        el.reset();
+        const said = warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('without "allow-scripts"'));
+        expect(said).toHaveLength(1);
+        for (const name of ['scripts and handlers in html', 'watchdogTimeout', 'autoResize', 'fetchBridge', 'guestWrites', 'execute()', 'expose()']) expect(said[0]).toContain(name);
+        warn.mockClear();
+        el.setConfig({ ...config, capabilities: ['allow-scripts'] }); // positive control: nothing to say
+        expect(warn.mock.calls.filter(call => String(call[0]).includes('without "allow-scripts"'))).toEqual([]);
+    });
+});
+
+describe('R2-5: worker mode removes WebAssembly unless scriptUnsafe, as strict mode does', () => {
+    it("the worker's source removes it after the globals allowlist, before the comms script; with scriptUnsafe it is kept", async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        for (const scriptUnsafe of [false, true]) {
+            const el = await mountElement({ mode: 'worker', scriptUnsafe });
+            const source = el._getWorkerBootstrapScript([]);
+            const removal = source.indexOf('function removeWebAssembly');
+            expect(removal >= 0, String(scriptUnsafe)).toBe(!scriptUnsafe);
+            if (!scriptUnsafe) {
+                expect(removal).toBeGreaterThan(source.indexOf('keepOnlyWorkerGlobals'));
+                expect(removal).toBeLessThan(source.indexOf('function inSandboxScript'));
+            }
+            el.remove();
+        }
+    });
+});
+
+describe('R3-6, R4-12: the types narrow each mode, and type the element and its events', () => {
+    it('compiles only what each mode can use (checked by bun run typecheck)', async () => {
+        type Config = import('@src/host').SandboxConfig;
+        // @ts-expect-error cooperative mode has no entry
+        const cooperativeEntry: Config = { mode: 'cooperative', entry: 'main.js' };
+        // @ts-expect-error cooperative mode has no workerExecutionTimeout
+        const cooperativeTimeout: Config = { mode: 'cooperative', workerExecutionTimeout: 100 };
+        // @ts-expect-error worker mode has no html
+        const workerHtml: Config = { mode: 'worker', html: '<p>' };
+        // @ts-expect-error worker mode has no autoResize
+        const workerResize: Config = { mode: 'worker', autoResize: true };
+        // @ts-expect-error strict mode has no unsafeCapabilities
+        const strictUnsafe: Config = { unsafeCapabilities: ['allow-popups'] };
+        const fine: Config[] = [{ entry: 'main.js', workerExecutionTimeout: 100 }, { mode: 'cooperative', html: '<p>', autoResize: true }, { mode: 'worker', workerExecutionTimeout: 100 }];
+        const el = document.createElement('web-sandbox'); // HTMLElementTagNameMap: a WebSandbox
+        el.addEventListener('terminated', (event) => { const reason: string = event.detail.reason; void reason; });
+        el.addEventListener('sandbox-log', (event) => { const source: 'guest' | 'host' = event.detail.source; void source; });
+        // @ts-expect-error the detail of 'terminated' has no code
+        el.addEventListener('terminated', (event) => event.detail.code);
+        expect([cooperativeEntry, cooperativeTimeout, workerHtml, workerResize, strictUnsafe, fine].length).toBe(6);
+    });
+});
+
+describe('R2-4: the strict worker mints URLs only for the types the view shows', () => {
+    it('url() of an SVG is NOT_FOUND there, its bytes stay readable; a PNG gets its URL (positive control); without the list every file does', async () => {
+        const { inSandboxFiles } = await import('@src/lib/in-sandbox-files');
+        const { VIEW_FILE_TYPES } = await import('@src/lib/in-sandbox-view');
+        const created = vi.fn(() => 'blob:minted');
+        const original = URL.createObjectURL;
+        (URL as any).createObjectURL = created;
+        try {
+            const entries: any = [['i.svg', 'image/svg+xml', btoa('<svg/>')], ['p.png', 'image/png', btoa('png')]];
+            const files = inSandboxFiles(entries, null, VIEW_FILE_TYPES);
+            expect(() => files.url('i.svg')).toThrow(expect.objectContaining({ code: 'NOT_FOUND' }));
+            expect(files.list()).toEqual(['i.svg', 'p.png']); // still the worker's to read() and text()
+            expect(files.url('p.png')).toBe('blob:minted');
+            expect(created).toHaveBeenCalledTimes(1);
+            expect(inSandboxFiles(entries).url('i.svg')).toBe('blob:minted');
+        } finally {
+            (URL as any).createObjectURL = original;
+        }
     });
 });

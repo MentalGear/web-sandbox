@@ -21,7 +21,7 @@ import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
  */
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="5"></svg>';
-const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): SandboxConfig => ({ mode: 'strict', ...config });
+const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): StrictSandboxConfig & { mode: 'strict' } => ({ mode: 'strict', ...config });
 
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done') {
     await sandbox.run(`sandboxView.render(${JSON.stringify(html + `<p id="${doneId}">done</p>`)})`);

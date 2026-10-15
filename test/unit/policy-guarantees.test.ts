@@ -106,6 +106,9 @@ describe("A2: the S14 'self' drop cannot be bypassed by punctuation", () => {
     });
 });
 
+// A build's 'terminated' comes in a task of its own (review round 1, R3-2): the state changes at once, the event after.
+const settled = () => new Promise(resolve => setTimeout(resolve, 0));
+
 describe('A4: an unknown mode fails closed', () => {
     it.each([['Strict'], [' strict'], ['workers'], [null], [1]])('mode %j: no frame, state terminated with a reason, one warning; reset() keeps it closed; a valid mode starts again', async (mode) => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -115,6 +118,8 @@ describe('A4: an unknown mode fails closed', () => {
         el.setConfig({ mode });
         expect(el.state).toBe('terminated');
         expect(wrapperOf(el)).toBeNull();
+        expect(reasons).toHaveLength(0); // not inside the call (R3-2)
+        await settled();
         expect(reasons).toHaveLength(1);
         expect(reasons[0]).toMatch(/^unknown mode /);
         el.reset();
@@ -132,12 +137,15 @@ describe('A4: an unknown mode fails closed', () => {
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         el.setConfig({ mode: 'iframe', capabilities: ['allow-scripts'] });
+        await settled();
         el.reset();
+        await settled();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
         expect(reasons).toEqual([`unknown mode "iframe" ('iframe' was renamed 'cooperative')`, `unknown mode "iframe" ('iframe' was renamed 'cooperative')`]);
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.startsWith('[Sandbox] mode "iframe" is not one of strict, cooperative, worker (\'iframe\' was renamed \'cooperative\')'))).toHaveLength(1);
         // only that old name gets the note, never one the prototype chain answers
         el.setConfig({ mode: 'toString' });
+        await settled();
         expect(reasons.at(-1)).toBe('unknown mode "toString"');
         el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
         expect([el.state, wrapperOf(el) !== null]).toEqual(['loading', true]);
@@ -194,6 +202,7 @@ describe('A6: the values interpolated into the bootstrap come from one copy of t
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         expect(() => el.setConfig(shifty)).not.toThrow();
+        await settled();
         expect([el.state, wrapperOf(el), trapped]).toEqual(['terminated', null, 0]);
         expect(reasons).toEqual(['the configuration could not be used (DataCloneError)']);
     });
@@ -275,6 +284,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         el._guestPolicy = () => { throw new Error('the policy could not be made'); };
         expect(() => el.setConfig({ capabilities: ['allow-scripts'] })).not.toThrow();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
+        await settled();
         expect(reasons).toEqual(['the environment could not be built (Error)']);
         expect(() => el.reset()).not.toThrow();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
@@ -300,6 +310,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         const reasons = terminations(el);
         expect(() => el.setConfig(config())).not.toThrow();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
+        await settled();
         expect(reasons).toEqual([expect.stringMatching(/^the configuration could not be used \([A-Za-z]+\)$/)]);
         expect(el._config.html).toBe('<p id="kept">'); // nothing of the refused config was applied
         el.load('<p>x</p>');

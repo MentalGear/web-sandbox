@@ -209,10 +209,16 @@ describe('F3: a reason, event or host line never carries the text of a caught er
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
         const reasons = terminations(el);
+        // each build's 'terminated' comes in a task of its own (review round 1, R3-2), so each is awaited
+        const settled = () => new Promise(resolve => setTimeout(resolve, 0));
         el.setConfig({ html: 'x', hook: function hook() { return SECRET; } });
+        await settled();
         el.setConfig({ get mode() { throw new RangeError(SECRET); } });
+        await settled();
         el.setConfig({ get mode() { throw { name: SECRET, message: SECRET }; } });
+        await settled();
         el.setConfig({ get mode() { throw SECRET; } });
+        await settled();
         expect(reasons).toEqual([
             'the configuration could not be used (DataCloneError)',
             'the configuration could not be used (RangeError)',
@@ -226,9 +232,12 @@ describe('F3: a reason, event or host line never carries the text of a caught er
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
         const reasons = terminations(el);
+        const settled = () => new Promise(resolve => setTimeout(resolve, 0));
         el.setConfig({ origins: { images: `x; ${SECRET}` } });
+        await settled();
         el._guestPolicy = () => { throw new Error(SECRET); };
         el.setConfig({});
+        await settled();
         expect(reasons).toEqual(['the configuration could not be used (TypeError)', 'the environment could not be built (Error)']);
         for (const call of warn.mock.calls) expect(String(call[0])).not.toContain(SECRET);
     });
@@ -323,6 +332,7 @@ describe('F6: a refused config is never stored', () => {
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         el.setConfig({ mode: 'strict', origins: null });
+        await new Promise(resolve => setTimeout(resolve, 0)); // a build's 'terminated' comes in a task (review round 1, R3-2)
         expect(reasons).toEqual(['the configuration could not be used (TypeError)']);
         expect([el._config.mode, el._config.html, el._config.workerExecutionTimeout, el._origins.images]).toEqual(['worker', 'previous', 7, ['https://kept.example']]);
     });
@@ -333,7 +343,10 @@ describe('F6: a refused config is never stored', () => {
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         for (const mode of ['cooperative', 'worker', 'strict']) {
-            for (const value of [null, 'https://a.example', ['x'], 5, { images: 'https://a.example' }, { connect: null }]) el.setConfig({ mode, origins: value });
+            for (const value of [null, 'https://a.example', ['x'], 5, { images: 'https://a.example' }, { connect: null }]) {
+                el.setConfig({ mode, origins: value });
+                await new Promise(resolve => setTimeout(resolve, 0)); // each build's 'terminated' in a task (R3-2)
+            }
         }
         expect(reasons).toEqual(new Array(18).fill('the configuration could not be used (TypeError)'));
         el.setConfig({ origins: { images: ['https://a.example'] } });

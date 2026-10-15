@@ -109,7 +109,8 @@ describe('lifecycle: discarded by the next build and on removal, kept through a 
     it.each([
         ['reset()', (el: any) => el.reset()],
         ['load()', (el: any) => el.load('<p>x</p>')],
-        ['setConfig()', (el: any) => el.setConfig({ guestWrites: true })],
+        // another config: the same one again is no change and builds nothing (review round 1, R3-7)
+        ['setConfig()', (el: any) => el.setConfig({ guestWrites: true, html: '<p>another</p>' })],
         ['a setConfig() that cannot be used', (el: any) => el.setConfig(null)],
         ['removal from the document', (el: any) => el.remove()],
     ])('%s discards it', async (_label, act) => {

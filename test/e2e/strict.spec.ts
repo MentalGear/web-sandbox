@@ -29,7 +29,7 @@ const escapeAttribute = (value: string) => value.replaceAll('&', '&amp;').replac
 const srcdoc = (doc: string) => `srcdoc="${escapeAttribute(doc)}"`;
 const at = (left: number, top: number) => `position:absolute;left:${left}px;top:${top}px;width:80px;height:40px;display:block;margin:0`;
 
-const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): SandboxConfig => ({ mode: 'strict', ...config });
+const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): StrictSandboxConfig & { mode: 'strict' } => ({ mode: 'strict', ...config });
 
 /** Renders from the worker (execute() runs there) and waits until the view shows `doneId`. */
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done', into: string | null = null) {
@@ -425,7 +425,9 @@ test.describe('configuration', () => {
         const warnings: string[] = [];
         page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
         expect(await sandbox.mount(strict({
-            capabilities: ['allow-pointer-lock'], unsafeCapabilities: ['allow-popups', 'fullscreen'],
+            capabilities: ['allow-pointer-lock'],
+            // @ts-expect-error not in strict mode (review round 1, R3-6); a config from JSON can still carry them
+            unsafeCapabilities: ['allow-popups', 'fullscreen'],
             // @ts-expect-error strict mode has no scripts kind; a config from JSON can still carry one
             origins: { scripts: ['https://cdn.example'] },
         }))).toBe('ready');

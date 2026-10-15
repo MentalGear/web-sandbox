@@ -27,7 +27,7 @@ const MAX_ELEMENTS = VIEW_MAX_ELEMENTS; // 50 000
 const MAX_DEPTH = VIEW_MAX_DEPTH; // 256
 const MAX_DETAIL = VIEW_EVENT_LIMITS.maxTotal; // 262 144
 
-const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): SandboxConfig => ({ mode: 'strict', ...config });
+const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): StrictSandboxConfig & { mode: 'strict' } => ({ mode: 'strict', ...config });
 
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done', into: string | null = null, timeout = 8000) {
     await sandbox.run(`sandboxView.render(${JSON.stringify(html + `<p id="${doneId}">done</p>`)}, ${JSON.stringify(into)})`);

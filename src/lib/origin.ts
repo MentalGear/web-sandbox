@@ -53,6 +53,9 @@ const HOST = new RegExp(`^${LABEL}(?:\\.${LABEL})*$`);
  */
 export function parseOrigin(entry: unknown, rules: OriginRules): Origin | null {
     if (typeof entry !== 'string' || entry.length > 2048) return null;
+    // Printable ASCII only, tested before anything is folded (review round 1, R1-4): toLowerCase() maps a few non-ASCII
+    // letters to ASCII ones (U+212A KELVIN SIGN to "k", U+0130 to "i̇"), so a non-ASCII name could pass as written.
+    if (!/^[\x21-\x7e]+$/.test(entry)) return null;
     const written = WRITTEN.exec(entry);
     if (!written) return null;
     const [, scheme, host, port] = written as unknown as [string, string, string, string | undefined];

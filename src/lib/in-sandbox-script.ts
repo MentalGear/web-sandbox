@@ -229,9 +229,12 @@ export function inSandboxScript(
     // sandbox:fetch method; the host decides everything else and refuses with a FETCH_* code. The broker's
     // own timeout is a backstop a little past the host's, so the host's FETCH_TIMEOUT normally arrives first.
     // Whole responses only: the answer becomes a Response here, with its body in memory.
-    if (bridge && features?.fetchBridge) {
+    // Defined in every environment (review round 1, R4-8): without the bridge the host refuses every request with
+    // FETCH_NOT_ALLOWED ("the fetch bridge is off"), as docs/API.md says, where the global used to be missing and a
+    // call threw a ReferenceError. One path either way: the host decides.
+    if (bridge) {
         const callWithTimeout = bridge.callWithTimeout;
-        const callTimeoutMs = features.fetchBridge.timeoutMs + 5000;
+        const callTimeoutMs = (features?.fetchBridge ? features.fetchBridge.timeoutMs : 10000) + 5000;
         const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
         const toBody = (body: any) => {
             if (body === undefined || body === null) return undefined;

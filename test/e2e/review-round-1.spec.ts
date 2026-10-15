@@ -131,6 +131,24 @@ test.describe('R3-3: byte budgets on log lines and RPC messages', () => {
     });
 });
 
+test.describe('R4-8, R2-4: the guest globals say what the docs say', () => {
+    for (const [mode, config] of Object.entries(MODES)) {
+        test(`${mode} mode: sandboxFetch exists without the fetch bridge and rejects with FETCH_NOT_ALLOWED`, async ({ sandbox }) => {
+            expect(await sandbox.mount(config)).toBe('ready');
+            expect(await sandbox.inGuest(`try { await sandboxFetch('https://api.example/'); return 'resolved'; } catch (error) { return error.code; }`)).toBe('FETCH_NOT_ALLOWED');
+        });
+    }
+
+    test('strict mode: the worker mints no URL for a type the view would not show (SVG): NOT_FOUND; its bytes stay readable; a PNG gets one', async ({ sandbox }) => {
+        await sandbox.registerFiles({ 'i.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>', 'p.png': { base64: 'iVBORw0KGgo=' } });
+        expect(await sandbox.mount({ mode: 'strict', scriptUnsafe: true })).toBe('ready');
+        expect(await sandbox.inGuest(`
+            let svg;
+            try { svg = sandboxFiles.url('i.svg'); } catch (error) { svg = error.code; }
+            return [svg, (await sandboxFiles.text('i.svg')).length > 0, sandboxFiles.url('p.png').startsWith('blob:')];`)).toEqual(['NOT_FOUND', true, true]);
+    });
+});
+
 test.describe('R2-2 (cooperative-mode limit, measured): a script-synthesized modifier click opens a new top-level window', () => {
     // The guest's own script dispatches a click with a modifier on its link or on its form's submit button: Chromium
     // opens a new tab at the guest's URL (no user gesture needed while its popup blocker is off, as in Playwright), and
