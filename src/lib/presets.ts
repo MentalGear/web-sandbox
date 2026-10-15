@@ -9,7 +9,14 @@
  */
 
 import type { SafeCapability } from "../csp-directives";
-import type { SandboxConfig } from "../host";
+import type { SandboxConfigOptions } from "../host";
+import type { StrictSandboxOrigins } from "./csp/origins";
+
+/**
+ * A preset's rules: a config every mode can run, since the playground and the specs run a preset in the mode they
+ * choose (`{ ...preset.rules, mode }`). So its origins have no `scripts`, which strict mode does not take.
+ */
+export type PresetRules = SandboxConfigOptions & { mode?: 'iframe' | 'worker' | 'strict'; origins?: StrictSandboxOrigins };
 
 export interface Preset {
     id: string;
@@ -19,7 +26,7 @@ export interface Preset {
     // How `code` runs: as a script through execute() (needs scriptUnsafe) or as guest markup through load().
     run: 'script' | 'markup';
     code: string;
-    rules: Partial<SandboxConfig>;
+    rules: PresetRules;
     // Registered on the sandbox before it is built (registerFiles); the guest reads them through sandboxFiles.
     files?: Record<string, string>;
     // A URL in `code` (and every variant) that stands for the attacker: specs aim it at a listener outside the
@@ -44,10 +51,7 @@ fetch("https://jsonplaceholder.typicode.com/todos/1")
   .then(r => r.json())
   .then(j => console.log("Fetched:", j));`,
         rules: {
-            connectionsAllowed: {
-                "script-src": ["'unsafe-inline'"],
-                "connect-src": ["https://jsonplaceholder.typicode.com"]
-            },
+            origins: { connect: ["https://jsonplaceholder.typicode.com"] },
             scriptUnsafe: true,
             capabilities: ["allow-scripts"],
         },
@@ -437,11 +441,7 @@ console.log('TEST_DONE');`,
 </body>
 </html>`,
         rules: {
-            connectionsAllowed: {
-                "script-src": ["'unsafe-inline'"],
-                "style-src": ["'unsafe-inline'"],
-                "img-src": ["https://picsum.dev"]
-            },
+            origins: { images: ["https://picsum.dev"] },
             // scriptUnsafe: true,
             capabilities: ["allow-scripts"],
         },

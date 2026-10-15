@@ -1,5 +1,8 @@
 # Content Security Policy (CSP) Guide: unsafe-inline, connect-src, and More
 
+> **Superseded** for this library by [ADR-007](ADR-007-typed-origins.md) (2026-10-14): the guest policy is not
+> configured as directives any more; see [API.md](API.md#origins). General CSP background, kept as a record.
+
 ## Overview
 This document summarizes key CSP concepts, focusing on `unsafe-inline` risks (scripts/styles), `connect-src` vs. other directives, and best practices for iframe sandboxing and policy configuration. All recommendations prioritize security without `'unsafe-inline'` where possible.
 

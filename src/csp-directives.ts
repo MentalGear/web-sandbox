@@ -1,4 +1,5 @@
-// Capabilities that keep the guest inside the frame and its network policy.
+// The capabilities (sandbox flags and Permissions Policy features) an embedder can grant the guest. Its network
+// policy is `origins` (src/lib/csp/origins.ts).
 // allow-forms is safe because form-action defaults to 'none' and the wrapper frame blocks
 // the guest frame from navigating (which is what a form submission does).
 /** The values `capabilities` accepts: sandbox flags that keep the guest inside the frame. */
@@ -40,35 +41,3 @@ export type SafeCapability = (typeof SAFE_CAPABILITIES)[number];
 export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];
 export type UnsafePermission = (typeof UNSAFE_PERMISSIONS)[number];
 export type SandboxCapability = (typeof ALLOWED_CAPABILITIES)[number];
-
-// Only these names reach a policy: any other key, or a name with other spelling or case, is dropped with a
-// warning, and so is any value token that is not one CSP source expression (src/lib/csp/policy-grammar.ts).
-// 'unsafe-eval' and 'wasm-unsafe-eval' are the library's to add, with scriptUnsafe (src/lib/csp/drop-eval.ts).
-/** The guest policy as `connectionsAllowed` takes it: one key per directive, each value a list of CSP source expressions. */
-export interface CSPDirectives {
-    "upgrade-insecure-requests"?: true; // the host always sets it
-    "default-src"?: string[];
-    "script-src"?: string[];
-    "script-src-elem"?: string[]; // <script> elements (falls back to script-src)
-    "script-src-attr"?: string[]; // event handler attributes (falls back to script-src)
-    "connect-src"?: string[];
-    "base-uri"?: string[];
-    "img-src"?: string[];
-    "style-src"?: string[];
-    "style-src-elem"?: string[]; // <style> and stylesheet links (falls back to style-src)
-    "style-src-attr"?: string[]; // style="" attributes (falls back to style-src)
-    "font-src"?: string[];
-    "media-src"?: string[];
-    "manifest-src"?: string[];
-    "prefetch-src"?: string[];
-    "form-action"?: string[];
-    "object-src"?: string[]; // <embed, <object, ...
-    "frame-src"?: string[]; // specifies sources where iframes in this page can be loaded from
-    /**
-     * @deprecated Has no effect: the guest policy is a <meta> policy, where browsers ignore frame-ancestors, so the
-     * element drops it with a warning (backlog S7). Who may embed the sandbox is up to the page that hosts it.
-     */
-    "frame-ancestors"?: string[];
-    "worker-src"?: string[]; // 'blob' or 'data' might be needed for frontend-frameworks to spawn workers
-    "child-src"?: string[]; // fallback for frame-src and worker-src
-}

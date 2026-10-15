@@ -1,8 +1,6 @@
-import type { CSPDirectives } from "../csp-directives";
 import { rewriteInlineModule } from "./module-specifiers";
 import { cssUrlReferences, replaceRanges } from "./css-references";
 import { srcsetCandidates } from "./srcset";
-import { effectiveDirective } from "./csp/effective-directive";
 import { admitsAll, linkKinds, type LoadKindName } from "./load-kinds";
 
 /**
@@ -322,30 +320,4 @@ function serialiseDocument(doc: Document): string {
         else if (node.nodeType === node.COMMENT_NODE) html += `<!--${(node as Comment).data}-->`;
     }
     return html;
-}
-
-const tokensOf = (values: readonly unknown[]): string[] => {
-    const tokens: string[] = [];
-    for (const value of values) {
-        if (typeof value !== 'string') continue;
-        for (const token of value.trim().split(/\s+/)) if (token) tokens.push(token.toLowerCase());
-    }
-    return tokens;
-};
-
-/**
- * Whether the guest's inline bootstrap can run under these (final) directives. An inline <script> element is
- * checked against the directive that governs 'script-src-elem' (the one fallback table, effective-directive.ts:
- * script-src-elem, then script-src, then default-src); it must allow 'unsafe-inline', and must carry no nonce,
- * hash or 'strict-dynamic' (each makes the browser ignore 'unsafe-inline'). The markup is written by the
- * bootstrap only when it can run; otherwise it stays in the document as written. (Review A3: script-src-elem
- * used to be ignored here, so a policy that refused the bootstrap through it went unwarned.)
- */
-export function inlineScriptsAllowed(directives: CSPDirectives): boolean {
-    const governing = effectiveDirective(directives, 'script-src-elem');
-    const values = governing === null ? undefined : directives[governing];
-    if (!Array.isArray(values)) return false;
-    const tokens = tokensOf(values);
-    if (!tokens.includes("'unsafe-inline'")) return false;
-    return !tokens.some(token => token === "'strict-dynamic'" || /^'(nonce|sha256|sha384|sha512)-/.test(token));
 }

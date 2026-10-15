@@ -6,7 +6,7 @@ test('Basic Sandbox Interaction & Logging', async ({ sandbox, browserName }) => 
     // with Chromium's out-of-process sandbox frame.)
     test.skip(browserName === 'webkit', 'WebKit upgrades http://localhost under upgrade-insecure-requests');
     // allowlist the test server for fetch
-    await sandbox.mount({ connectionsAllowed: { 'upgrade-insecure-requests': true, 'connect-src': [ORIGIN] } as any });
+    await sandbox.mount({ origins: { connect: [ORIGIN] } }); // plain http: an origin only for loopback, as here (ADR-007)
 
     await sandbox.run('console.log("Hello from Sandbox")');
     await sandbox.waitForLog('Hello from Sandbox');

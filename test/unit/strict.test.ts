@@ -1,12 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { viewBootstrapHash, viewBootstrapText } from '@src/lib/in-sandbox-view';
-import { strictPolicyOverrides, strictViewDirectives, STRICT_FIXED, STRICT_PASSED_THROUGH } from '@src/lib/csp/strict-policy';
-import { generateCSP } from '@src/lib/csp/csp-generator';
-import { policyTokens } from '@src/lib/csp/policy-grammar';
-import type { CSPDirectives } from '@src/csp-directives';
-
-// the policy steps take only the grammar's output (PolicyTokens, A1): test policies are checked into it
-const tokens = (directives: CSPDirectives) => policyTokens(directives, 'test');
 
 /**
  * Strict mode on the host (ADR-005): the documents the element builds, read back from the wrapper's srcdoc.
@@ -37,84 +30,60 @@ afterEach(() => {
     document.body.replaceChildren();
 });
 
+// The strict template (csp-generator.ts, ADR-007) with `origins` filled in: every directive emitted, in its order.
+const STRICT = (h: string, parts: { script?: string; style?: string; img?: string; font?: string; media?: string; connect?: string } = {}) =>
+    `default-src 'none'; script-src ${h}${parts.script ?? ''}; script-src-attr 'none'; style-src 'unsafe-inline'${parts.style ?? ''}; `
+    + `img-src ${parts.img ?? "'none'"}; font-src ${parts.font ?? "'none'"}; media-src ${parts.media ?? "'none'"}; connect-src ${parts.connect ?? "'none'"}; `
+    + `worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests`;
+
 describe('the strict view policy: exact strings', () => {
     it('default config', async () => {
         const el = await mount({ mode: 'strict' });
-        expect(policyOf(el)).toBe(`default-src 'none'; script-src ${H()}; script-src-attr 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; upgrade-insecure-requests;`);
+        expect(policyOf(el)).toBe(STRICT(H()));
     });
 
     it("scriptUnsafe adds 'unsafe-eval' and nothing else", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount({ mode: 'strict', scriptUnsafe: true });
-        expect(policyOf(el)).toBe(`default-src 'none'; script-src ${H()} 'unsafe-eval'; script-src-attr 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; upgrade-insecure-requests;`);
+        expect(policyOf(el)).toBe(STRICT(H(), { script: " 'unsafe-eval'" }));
     });
 
-    it('registered files: blob: for their types\' directives, never in script-src, even with JavaScript files; embedder fetch directives pass through', async () => {
-        const el = await mount({ mode: 'strict', connectionsAllowed: { 'connect-src': ['https://api.example'], 'font-src': ['https://fonts.example'] } },
+    it("registered files: blob: for their types' kinds, never in script-src, even with JavaScript files; the configured origins are there", async () => {
+        const el = await mount({ mode: 'strict', origins: { connect: ['https://api.example'], fonts: ['https://fonts.example'] } },
             { 'app.js': 'void 0', 'lib/mod.mjs': 'export {}', 'img/logo.png': 'x', 'site.css': 'p{}' });
-        expect(policyOf(el)).toBe(`default-src 'none'; script-src ${H()}; script-src-attr 'none'; style-src 'unsafe-inline' blob:; base-uri 'none'; form-action 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; upgrade-insecure-requests; connect-src https://api.example blob:; img-src blob:; font-src https://fonts.example;`);
+        expect(policyOf(el)).toBe(STRICT(H(), { style: ' blob:', img: 'blob:', font: 'https://fonts.example', connect: 'https://api.example blob:' }));
         expect(policyOf(el)).not.toMatch(/script-src[^;]*blob:/);
     });
 
     it('broad review ST1: a file of a type the view mints no URL for (SVG, HTML, XML, any +xml) adds blob: only to connect-src (the worker reads it), and is not given to the view', async () => {
         const el = await mount({ mode: 'strict' }, { 'img/logo.svg': '<svg/>', 'page.html': '<p>', 'data.xml': '<x/>' });
-        expect(policyOf(el)).toBe(`default-src 'none'; script-src ${H()}; script-src-attr 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; upgrade-insecure-requests; connect-src blob:;`);
+        expect(policyOf(el)).toBe(STRICT(H(), { connect: 'blob:' }));
         if (el._strictInit) expect(el._strictInit.viewFiles).toEqual([]);
     });
 
-    it('broad review ST1: data: is dropped from the directive that governs images (img-src, else default-src), with one warning; other directives keep it', async () => {
+    it('broad review ST1: data: cannot be configured for any kind (ADR-007): dropped with one warning each, the kind stays as listed', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'strict', connectionsAllowed: { 'img-src': ['data:', 'https://img.example'], 'font-src': ['data:'], 'media-src': ['DATA:'] } });
-        expect(policyOf(el)).toContain('img-src https://img.example; font-src data:; media-src DATA:;');
-        const byDefault = await mount({ mode: 'strict', connectionsAllowed: { 'default-src': ['data:', 'https://all.example'] } });
-        expect(policyOf(byDefault)).toMatch(/^default-src data: https:\/\/all\.example; .* img-src https:\/\/all\.example;$/);
-        const onlyData = await mount({ mode: 'strict', connectionsAllowed: { 'img-src': ['Data:'] } });
-        expect(policyOf(onlyData)).toContain("img-src 'none';");
-        const messages = warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('admits data:'));
-        expect(messages).toEqual([
-            expect.stringContaining('"connectionsAllowed.img-src" admits data:'),
-            expect.stringContaining('"connectionsAllowed.default-src" admits data:'),
-            expect.stringContaining('"connectionsAllowed.img-src" admits data:'),
-        ]);
-        expect(generateCSP(strictViewDirectives(tokens({ 'img-src': ['https://x.example'] }), "'sha256-x'", false))).toContain('img-src https://x.example;');
+        const el = await mount({ mode: 'strict', origins: { images: ['data:', 'https://img.example'], fonts: ['data:'], media: ['DATA:'] } });
+        expect(policyOf(el)).toBe(STRICT(H(), { img: 'https://img.example' }));
+        expect(policyOf(el)).not.toMatch(/data:/i);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => /origins\.\w+ entry "data:"/i.test(m))).toHaveLength(3);
     });
 
-    it('fixed directives are replaced and unknown ones dropped, each with one warning per instance (across reset); the policy never shows them', async () => {
+    it("scripts are dropped with one warning per instance (across reset); the policy never shows them; nothing else can be configured", async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'strict', connectionsAllowed: {
-            'script-src': ["'unsafe-inline'", 'https://cdn.example', 'blob:'],
-            'worker-src': ['data:', 'https://w.example'],
-            'frame-src': ['https://frames.example'],
-            'object-src': ['*'], 'base-uri': ['https://b.example'], 'form-action': ['https://f.example'],
-            'script-src-elem': ['*'], 'child-src': ['*'],
-            'img-src': ["'self'", 'https://img.example'],
-        } });
+        const el = await mount({ mode: 'strict', origins: { scripts: ['https://cdn.example'], images: ["'self'", 'https://img.example'] } });
         el.reset();
-        el.setConfig({ mode: 'strict', connectionsAllowed: { 'script-src': ['https://cdn.example'] } });
-        const policy = policyOf(el);
-        expect(policy).toBe(`default-src 'none'; script-src ${H()}; script-src-attr 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; upgrade-insecure-requests;`);
+        el.setConfig({ mode: 'strict', origins: { scripts: ['https://cdn.example'] } });
+        expect(policyOf(el)).toBe(STRICT(H()));
         const messages = warn.mock.calls.map(c => String(c[0]));
-        for (const name of ['script-src', 'worker-src', 'frame-src', 'object-src', 'base-uri', 'form-action']) {
-            expect(messages.filter(m => m.includes(`"connectionsAllowed.${name}" is fixed in strict mode`)), name).toHaveLength(1);
-        }
-        for (const name of ['script-src-elem', 'child-src']) {
-            expect(messages.filter(m => m.includes(`"connectionsAllowed.${name}" is not used in strict mode`)), name).toHaveLength(1);
-        }
-        expect(messages.filter(m => m.includes("'self'"))).toHaveLength(1); // the S14 drop applies as everywhere
+        expect(messages.filter(m => m.includes('origins.scripts is not used in strict mode'))).toHaveLength(1);
+        expect(messages.filter(m => m.includes("'self'"))).toHaveLength(1);
     });
 
     it('the shipping defaults raise no strict-mode warning', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         await mount({ mode: 'strict' });
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('strict mode'))).toEqual([]);
-    });
-
-    it('strictViewDirectives / strictPolicyOverrides: every key of a config is passed through, fixed, or dropped', () => {
-        const all = { 'default-src': ['https://d.example'], 'script-src': ['*'], 'unknown-src': ['*'], 'img-src': ['https://i.example'] } as any;
-        const policy = generateCSP(strictViewDirectives(tokens(all), "'sha256-x'", false));
-        expect(policy).toBe("default-src https://d.example; script-src 'sha256-x'; script-src-attr 'none'; base-uri 'none'; form-action 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; upgrade-insecure-requests; img-src https://i.example;");
-        expect(strictPolicyOverrides(all, { 'script-src': ["'unsafe-inline'"] })).toHaveLength(2);
-        expect(new Set([...STRICT_FIXED, ...STRICT_PASSED_THROUGH]).size).toBe(STRICT_FIXED.length + STRICT_PASSED_THROUGH.length);
     });
 });
 

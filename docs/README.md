@@ -27,6 +27,9 @@
 - [**ADR-006 — A host-mediated fetch bridge**](ADR-006-fetch-bridge.md) — `sandboxFetch()`: why a
   reserved broker method, the bridge discipline (no credentials, no redirects, exact origins, caps), the
   `fetch` log and what the bridge cannot hide.
+- [**ADR-007 — Typed origins**](ADR-007-typed-origins.md) — the guest policy is a fixed template per mode and the
+  embedder lists exact origins per kind of load (`origins`); why that replaced the raw-CSP `connectionsAllowed` and
+  its guard rails, the accepted origin grammar, what became unrepresentable.
 - [research/ARCHITECTURE_COMPARISON.md](research/ARCHITECTURE_COMPARISON.md) — host-level vs
   iframe-level Service Worker (superseded by ADR-004).
 
@@ -54,9 +57,10 @@
 
 - [research/](research/README.md) — fourteen documented attack vectors with reproductions, design probes
   (blob delivery, strict mode), plus the CSP and virtual-files architecture analyses.
-- [CSP_CONFIG_RATIONALE.md](CSP_CONFIG_RATIONALE.md) — why `'unsafe-inline'`, why not nonces.
-- [CSP-Content-Security-Policy-settings.md](CSP-Content-Security-Policy-settings.md) — directive
-  reference.
+- [CSP_CONFIG_RATIONALE.md](CSP_CONFIG_RATIONALE.md) — why `'unsafe-inline'`, why not nonces (superseded for
+  the policy itself by [ADR-007](ADR-007-typed-origins.md)).
+- [CSP-Content-Security-Policy-settings.md](CSP-Content-Security-Policy-settings.md) — general CSP background
+  (superseded for this library by [ADR-007](ADR-007-typed-origins.md)).
 
 ## Reading order
 

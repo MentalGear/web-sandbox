@@ -1,261 +1,169 @@
 import { describe, it, expect } from 'vitest';
-import { generateCSP } from './csp-generator';
-import type { CSPDirectives } from '@src/csp-directives';
-
-describe('generateCSP', () => {
-  it('should generate a valid CSP string from multiple directives', () => {
-    const input: CSPDirectives = {
-      'default-src': ["'none'"],
-      'script-src': ["'self'", "'unsafe-inline'"],
-      'worker-src': ['blob:', 'data:'],
-    };
-    const expected = "default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src blob: data:;";
-    expect(generateCSP(input)).toBe(expected);
-  });
-
-  it(`should always at least output default-src 'none' fallback`, () => {
-    const input: CSPDirectives = {
-      // empty csp list
-    };
-    const expected = "default-src 'none';";
-    expect(generateCSP(input)).toBe(expected);
-  });
-
-  it(`should be able to change default-src`, () => {
-    const input: CSPDirectives = {
-      'default-src': ["'self'"],
-    };
-    const expected = "default-src 'self';";
-    expect(generateCSP(input)).toBe(expected);
-  });
-
-  it(`should parse [''] as [], and emit both as 'none'`, () => {
-    const input: CSPDirectives = {
-      'default-src': ["'self'"],
-      'img-src': [],
-      'font-src': [''],
-    };
-    const expected = "default-src 'self'; img-src 'none'; font-src 'none';";
-    expect(generateCSP(input)).toBe(expected);
-  });
-
-  it('should filter out duplicate values within a directive', () => {
-    const input: CSPDirectives = {
-      'script-src': ["'self'", "'self'", 'https://example.com', "'self'"],
-    };
-    const expected = "default-src 'none'; script-src 'self' https://example.com;";
-    expect(generateCSP(input)).toBe(expected);
-  });
-
-  it(`should throw when invalid input is provided`, () => {
-    const input: CSPDirectives = {
-      'connect-src': [null as any],
-    };
-    expect(()=> {generateCSP(input)}).toThrowError("value type must be string");
-  });
-
-  it('should throw if a directive or value is not a string', () => {
-    const input: CSPDirectives = {
-      'img-src': [],
-      'style-src': 32 as any,
-    };
-// outpus default-src instead of error
-    expect(()=> {generateCSP(input)}).toThrowError("value type must be array");
-  });
-
-  it(`should emit [] as 'none' and leave out directives that are not filled in`, () => {
-    const input: CSPDirectives = {
-      'img-src': [],
-      'script-src': ["example.com"],
-      'base-uri': ["example.com"],
-    };
-    expect(generateCSP(input)).toBe(`default-src 'none'; img-src 'none'; script-src example.com; base-uri example.com;`);
-  });
-
- it('default-src should always be present, even if not defined', () => {
-    const input: CSPDirectives = {
-      'style-src': [],
-      'script-src': ["example.com"],
-      'img-src': ["images.com"],
-    };
-    expect(generateCSP(input)).toBe(`default-src 'none'; style-src 'none'; script-src example.com; img-src images.com;`);
-  });
-
-  it('default-src should always be first, even if it s just for better readbility', () => {
-    const input: CSPDirectives = {
-      'style-src': [],
-      'script-src': ["example.com"],
-      'img-src': ["images.com"],
-      'default-src': ["'none'"],
-    };
-    expect(generateCSP(input)).toBe(`default-src 'none'; style-src 'none'; script-src example.com; img-src images.com;`);
-
-  });
-
-  it('should handle upgrade-insecure-requests as a boolean directive', () => {
-    const input: CSPDirectives = {
-      'upgrade-insecure-requests': true,
-    };
-    const expected = "default-src 'none'; upgrade-insecure-requests;";
-    expect(generateCSP(input)).toBe(expected);
-  });
-
-  it('should handle directive of boolean and string[] type', () => {
-    const input: CSPDirectives = {
-      'upgrade-insecure-requests': true,
-      'script-src': ["example.com"],
-    };
-    const expected = "default-src 'none'; upgrade-insecure-requests; script-src example.com;";
-    expect(generateCSP(input)).toBe(expected);
-  });
-});
-// ---- S16: an empty directive can never widen the policy ------------------------------------------
-
-// Every list-valued directive of CSPDirectives. The type below fails `bun run typecheck` when one is
-// added to CSPDirectives and not here, so the tests cannot silently skip a directive.
-const LIST_DIRECTIVES = [
-  'default-src', 'script-src', 'connect-src', 'base-uri', 'img-src', 'style-src', 'font-src', 'media-src',
-  'manifest-src', 'prefetch-src', 'form-action', 'object-src', 'frame-src', 'frame-ancestors', 'worker-src',
-  'script-src-elem', 'script-src-attr', 'style-src-elem', 'style-src-attr', 'child-src',
-] as const satisfies readonly Exclude<keyof CSPDirectives, 'upgrade-insecure-requests'>[];
-type Unlisted = Exclude<keyof CSPDirectives, 'upgrade-insecure-requests' | (typeof LIST_DIRECTIVES)[number]>;
-const everyDirectiveListed: [Unlisted] extends [never] ? true : Unlisted = true;
-void everyDirectiveListed;
-
-type Directive = (typeof LIST_DIRECTIVES)[number];
+import { cooperativePolicy, fileKinds, KIND_DIRECTIVES, strictViewPolicy, type PolicyInput } from './csp-generator';
+import { NO_ORIGINS, ORIGIN_KINDS, parseOrigins, type OriginKind, type OriginPolicy } from './origins';
+import { ORIGIN_PATTERN } from '../origin';
+import { parseLikeABrowser, prng, randomInjection } from '../../../test/unit/policy-helpers';
 
 /**
- * What "broader" means here: for each directive, the set of sources a browser enforces for it.
- * - A directive present in the policy enforces its own list; 'none' is the empty set ('none' next to
- *   other sources is ignored by browsers, so it is dropped from the list).
- * - An absent fetch directive enforces the next one in its CSP Level 3 fallback chain
- *   (worker-src → child-src → script-src → default-src; frame-src → child-src → default-src; every
- *   other fetch directive → default-src). Nothing present at the end of the chain means unrestricted.
- * - An absent base-uri, form-action or frame-ancestors is unrestricted: they have no fallback.
- * Policy A is no broader than policy B when every directive's set in A is a subset of B's (anything
- * is a subset of unrestricted; unrestricted is a subset only of unrestricted).
+ * The guest policy (ADR-007): one template per mode. The golden strings are the policies; the properties say that no
+ * input reaches beyond the six configurable directives, and that only origins do.
  */
-const UNRESTRICTED = null;
-type Sources = Set<string> | typeof UNRESTRICTED;
 
-const FALLBACK: Record<Directive, string[]> = {
-  'default-src': ['default-src'],
-  'script-src': ['script-src', 'default-src'],
-  'connect-src': ['connect-src', 'default-src'],
-  'img-src': ['img-src', 'default-src'],
-  'style-src': ['style-src', 'default-src'],
-  'font-src': ['font-src', 'default-src'],
-  'media-src': ['media-src', 'default-src'],
-  'manifest-src': ['manifest-src', 'default-src'],
-  'prefetch-src': ['prefetch-src', 'default-src'],
-  'object-src': ['object-src', 'default-src'],
-  'frame-src': ['frame-src', 'child-src', 'default-src'],
-  'worker-src': ['worker-src', 'child-src', 'script-src', 'default-src'],
-  'base-uri': ['base-uri'],
-  'form-action': ['form-action'],
-  'frame-ancestors': ['frame-ancestors'],
-  'script-src-elem': ['script-src-elem', 'script-src', 'default-src'],
-  'script-src-attr': ['script-src-attr', 'script-src', 'default-src'],
-  'style-src-elem': ['style-src-elem', 'style-src', 'default-src'],
-  'style-src-attr': ['style-src-attr', 'style-src', 'default-src'],
-  'child-src': ['child-src', 'default-src'],
-};
+const HASH = `'sha256-${'A'.repeat(43)}='`;
+const NOTHING: ReadonlySet<OriginKind> = new Set();
+const input = (overrides: Partial<PolicyInput> = {}): PolicyInput => ({ origins: NO_ORIGINS, fileKinds: NOTHING, scriptUnsafe: false, ...overrides });
+const origins = (config: Record<string, unknown>, mode = 'iframe') => parseOrigins(config, mode, () => {});
+const ALL = origins({
+    scripts: ['https://cdn.example'], styles: ['https://css.example'], images: ['https://img.example', 'http://localhost:5173'],
+    fonts: ['https://fonts.example'], media: ['https://media.example:8443'], connect: ['https://api.example', 'wss://ws.example'],
+});
 
-function parsePolicy(policy: string): Map<string, string[]> {
-  const parsed = new Map<string, string[]>();
-  for (const part of policy.split(';')) {
-    const [name, ...tokens] = part.trim().split(/\s+/);
-    if (name && !parsed.has(name)) parsed.set(name.toLowerCase(), tokens); // the first occurrence wins
-  }
-  return parsed;
-}
+const COOPERATIVE_DEFAULT = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests";
+const STRICT_DEFAULT = `default-src 'none'; script-src ${HASH}; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests`;
 
-function enforced(policy: Map<string, string[]>, directive: Directive): Sources {
-  for (const name of FALLBACK[directive]) {
-    const tokens = policy.get(name);
-    if (tokens) return new Set(tokens.filter(token => token.toLowerCase() !== "'none'"));
-  }
-  return UNRESTRICTED;
-}
-
-const isSubset = (a: Sources, b: Sources) => b === UNRESTRICTED || (a !== UNRESTRICTED && [...a].every(token => b.has(token)));
-
-/** Directives whose enforced sources in policy `a` are NOT a subset of those in policy `b`. */
-function broaderIn(a: string, b: string): Directive[] {
-  const [pa, pb] = [parsePolicy(a), parsePolicy(b)];
-  return LIST_DIRECTIVES.filter(directive => !isSubset(enforced(pa, directive), enforced(pb, directive)));
-}
-
-// Configs the property is checked against: empty, the shipping default, broad and narrow default-src,
-// directives set and unset, and the 'self'/blank/duplicate shapes a caller can pass.
-const SAMPLE_CONFIGS: CSPDirectives[] = [
-  {},
-  {
-    'upgrade-insecure-requests': true, 'default-src': ["'none'"], 'script-src': ["'unsafe-inline'"],
-    'base-uri': [], 'style-src': ["'unsafe-inline'"], 'form-action': [], 'worker-src': ['blob:'],
-  },
-  { 'default-src': ['https:', "'unsafe-inline'"] },
-  { 'default-src': ['*'], 'script-src': ["'unsafe-inline'"] },
-  { 'script-src': ['https://cdn.example', "'unsafe-eval'"], 'connect-src': ['https://api.example'] },
-  { 'default-src': ['https://a.example'], 'img-src': ['data:'], 'frame-src': ['https://f.example'], 'worker-src': ['blob:'] },
-  { 'default-src': [''], 'base-uri': ['https://b.example'], 'form-action': ['https://f.example'], 'frame-ancestors': ["'self'"] },
-  Object.fromEntries(LIST_DIRECTIVES.map(d => [d, [`https://${d}.example`]])) as CSPDirectives,
-];
-
-const without = (config: CSPDirectives, directive: Directive): CSPDirectives => {
-  const copy: Record<string, unknown> = { ...config };
-  delete copy[directive];
-  return copy as CSPDirectives;
-};
-
-describe('generateCSP: an empty directive means deny, for every directive (S16)', () => {
-  it.each(LIST_DIRECTIVES)("%s: [] and blank strings are emitted as 'none', never omitted", (directive) => {
-    for (const empty of [[], [''], ['  ', '']]) {
-      const policy = generateCSP({ [directive]: empty } as CSPDirectives);
-      expect(parsePolicy(policy).get(directive)).toEqual(["'none'"]);
-      // and default-src stays 'none' (an empty default-src no longer replaces the built-in one)
-      expect(parsePolicy(policy).get('default-src')).toEqual(["'none'"]);
-    }
-  });
-
-  it("{ 'default-src': [] } with a script-src set still denies every other fetch directive", () => {
-    const policy = generateCSP({ 'default-src': [], 'script-src': ["'unsafe-inline'"] });
-    expect(policy).toBe("default-src 'none'; script-src 'unsafe-inline';");
-    const parsed = parsePolicy(policy);
-    for (const directive of LIST_DIRECTIVES) {
-      if (FALLBACK[directive].includes('default-src') && !FALLBACK[directive].includes('script-src')) {
-        expect(enforced(parsed, directive), directive).toEqual(new Set());
-      }
-    }
-  });
-
-  it('upgrade-insecure-requests is emitted whenever the key is present, whatever its value', () => {
-    for (const value of [true, false, [], undefined]) {
-      expect(generateCSP({ 'upgrade-insecure-requests': value } as unknown as CSPDirectives)).toBe("default-src 'none'; upgrade-insecure-requests;");
-    }
-  });
-
-  it('a non-array value is refused, never omitted', () => {
-    for (const value of ['', "'none'", null, undefined, {}, true]) {
-      expect(() => generateCSP({ 'img-src': value } as unknown as CSPDirectives)).toThrowError('value type must be array');
-    }
-  });
-
-  it('the oracle is not vacuous: it reports omission of a set directive, and an empty default-src as it used to be emitted', () => {
-    // omitting connect-src under a broad default-src widens connect-src
-    expect(broaderIn('default-src *;', "default-src *; connect-src 'none';")).toEqual(['connect-src']);
-    // the pre-S16 output for { 'default-src': [], 'script-src': ["'unsafe-inline'"] } versus leaving default-src out
-    expect(broaderIn("script-src 'unsafe-inline';", "default-src 'none'; script-src 'unsafe-inline';"))
-      .toEqual(LIST_DIRECTIVES.filter(d => !FALLBACK[d].includes('script-src') && !['base-uri', 'form-action', 'frame-ancestors'].includes(d)));
-    // an omitted base-uri is unrestricted
-    expect(broaderIn("default-src 'none';", "default-src 'none'; base-uri 'none';")).toEqual(['base-uri']);
-  });
-
-  for (const [index, config] of SAMPLE_CONFIGS.entries()) {
-    it.each(LIST_DIRECTIVES)(`sample config ${index}: the policy with %s: [] is never broader than with it left out`, (directive) => {
-      const withEmpty = generateCSP({ ...config, [directive]: [] });
-      const leftOut = generateCSP(without(config, directive));
-      expect(broaderIn(withEmpty, leftOut)).toEqual([]);
+describe('the templates: golden policies', () => {
+    it('cooperative (iframe and worker mode), the default: every directive emitted, nothing admitted beyond the inline bootstrap and inline styles', () => {
+        expect(cooperativePolicy(input())).toBe(COOPERATIVE_DEFAULT);
     });
-  }
+
+    it('cooperative with every kind, every file kind and scriptUnsafe', () => {
+        expect(cooperativePolicy(input({ origins: ALL, fileKinds: new Set(ORIGIN_KINDS), scriptUnsafe: true }))).toBe(
+            "default-src 'none'; script-src 'unsafe-inline' https://cdn.example blob: 'unsafe-eval'; style-src 'unsafe-inline' https://css.example blob:; "
+            + "img-src https://img.example http://localhost:5173 blob:; font-src https://fonts.example blob:; media-src https://media.example:8443 blob:; "
+            + "connect-src https://api.example wss://ws.example blob:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; "
+            + "form-action 'none'; manifest-src 'none'; upgrade-insecure-requests");
+    });
+
+    it('strict view, the default: the bootstrap by its hash, no handler attribute', () => {
+        expect(strictViewPolicy({ ...input(), bootstrapHash: HASH })).toBe(STRICT_DEFAULT);
+    });
+
+    it("strict view with every kind and file kind and scriptUnsafe: scripts are never read, and script-src never gets blob:", () => {
+        expect(strictViewPolicy({ ...input({ origins: ALL, fileKinds: new Set(ORIGIN_KINDS), scriptUnsafe: true }), bootstrapHash: HASH })).toBe(
+            `default-src 'none'; script-src ${HASH} 'unsafe-eval'; script-src-attr 'none'; style-src 'unsafe-inline' https://css.example blob:; `
+            + "img-src https://img.example http://localhost:5173 blob:; font-src https://fonts.example blob:; media-src https://media.example:8443 blob:; "
+            + "connect-src https://api.example wss://ws.example blob:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; "
+            + "form-action 'none'; manifest-src 'none'; upgrade-insecure-requests");
+    });
+
+    it('a strict view needs one sha256 hash source', () => {
+        for (const bad of ['', "'unsafe-inline'", "'sha256-x'", `${HASH}; script-src *`, `${HASH} 'unsafe-inline'`]) {
+            expect(() => strictViewPolicy({ ...input(), bootstrapHash: bad }), bad).toThrow(/sha256 hash source/);
+        }
+    });
+
+    it('the generator takes only origins: a cast that carries a source expression in fails the build', () => {
+        for (const bad of ["'self'", '*', 'https:', 'data:', 'https://a.example; script-src *', 'https://a.example/path', 'https://*.example', 7]) {
+            const forced = { ...NO_ORIGINS, images: [bad] } as unknown as OriginPolicy;
+            expect(() => cooperativePolicy(input({ origins: forced })), String(bad)).toThrow(/not an origin for img-src/);
+            expect(() => strictViewPolicy({ ...input({ origins: forced }), bootstrapHash: HASH }), String(bad)).toThrow(/not an origin/);
+        }
+    });
+
+    it('strict never reads `scripts`, whatever the policy holds there', () => {
+        const forced = { ...NO_ORIGINS, scripts: ['https://cdn.example'] } as unknown as OriginPolicy;
+        expect(strictViewPolicy({ ...input({ origins: forced, fileKinds: new Set(['scripts' as const]) }), bootstrapHash: HASH })).toBe(STRICT_DEFAULT);
+    });
+});
+
+describe('fileKinds: blob: for exactly the kinds of load a registered type is for (load-kinds.ts)', () => {
+    it.each<[string, OriginKind[]]>([
+        ['text/javascript', ['connect', 'scripts']],
+        ['application/javascript', ['connect', 'scripts']],
+        ['text/css', ['connect', 'styles']],
+        ['image/png', ['connect', 'images']],
+        ['image/svg+xml', ['connect', 'images']],
+        ['font/woff2', ['connect', 'fonts']],
+        ['audio/mpeg', ['connect', 'media']],
+        ['video/mp4', ['connect', 'media']],
+        ['text/vtt', ['connect', 'media']],
+        ['application/json', ['connect']],
+        ['text/plain', ['connect']],
+        ['application/octet-stream', ['connect']],
+    ])('%s: %j', (type, kinds) => {
+        expect([...fileKinds([type])].sort()).toEqual([...kinds].sort());
+    });
+
+    it('no files: no kind', () => {
+        expect(fileKinds([]).size).toBe(0);
+    });
+});
+
+describe('properties over any `origins` input', () => {
+    const COOPERATIVE_NAMES = ['default-src', 'script-src', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'frame-src', 'object-src', 'base-uri', 'form-action', 'manifest-src', 'upgrade-insecure-requests'];
+    const STRICT_NAMES = ['default-src', 'script-src', 'script-src-attr', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'frame-src', 'object-src', 'base-uri', 'form-action', 'manifest-src', 'upgrade-insecure-requests'];
+    // what each directive holds besides origins and blob:, per template
+    const LIBRARY_SOURCES: Record<string, string[]> = { 'script-src': ["'unsafe-inline'", "'unsafe-eval'", HASH], 'style-src': ["'unsafe-inline'"] };
+    const CONFIGURABLE = new Set(Object.values(KIND_DIRECTIVES) as string[]);
+    const KEYS = [...ORIGIN_KINDS, 'img-src', 'default-src', 'script-src', '__proto__', 'Images', 'frames'];
+    const ENTRIES = ['https://a.example', 'https://b.example:8443', 'http://localhost:3000', 'http://127.0.0.1', 'wss://w.example', 'https:', '*', "'self'", 'data:', 'blob:',
+        'https://*.a.example', 'https://a.example/p', "https://a.example; script-src 'unsafe-inline'", 'https://a.example,https://b.example', 'HTTPS://C.EXAMPLE:443/', 'http://api.example', ''];
+
+    function randomConfig(random: () => number): Record<string, unknown[]> {
+        const config: Record<string, unknown[]> = {};
+        for (let k = Math.floor(random() * 5); k > 0; k--) {
+            const key = KEYS[Math.floor(random() * KEYS.length)]!;
+            const entries: unknown[] = [];
+            for (let e = Math.floor(random() * 4); e > 0; e--) entries.push(random() < 0.6 ? ENTRIES[Math.floor(random() * ENTRIES.length)] : randomInjection(random));
+            Object.defineProperty(config, key, { value: entries, enumerable: true, writable: true, configurable: true });
+        }
+        return config;
+    }
+
+    it('3000 random configs, files and switches: the directives are exactly the template\'s, in order, each once; the fixed ones byte-identical; every other source is an origin', () => {
+        const random = prng(0x0219);
+        const fixedOf = (policy: string, names: Set<string>) => policy.split('; ').filter(part => !names.has(part.split(' ')[0]!)).join('; ');
+        const cooperativeFixed = fixedOf(COOPERATIVE_DEFAULT, CONFIGURABLE);
+        const strictFixed = fixedOf(STRICT_DEFAULT, CONFIGURABLE);
+        for (let run = 0; run < 3000; run++) {
+            const config = randomConfig(random);
+            const mode = random() < 0.5 ? 'strict' : 'iframe';
+            const parsed = parseOrigins(config, mode, () => {});
+            const kinds = new Set(ORIGIN_KINDS.filter(() => random() < 0.3));
+            const scriptUnsafe = random() < 0.5;
+            const context = JSON.stringify({ config, mode, kinds: [...kinds], scriptUnsafe });
+            const policy = mode === 'strict'
+                ? strictViewPolicy({ origins: parsed, fileKinds: kinds, scriptUnsafe, bootstrapHash: HASH })
+                : cooperativePolicy({ origins: parsed, fileKinds: kinds, scriptUnsafe });
+
+            const { names, directives } = parseLikeABrowser(policy);
+            expect(names, context).toEqual(mode === 'strict' ? STRICT_NAMES : COOPERATIVE_NAMES);
+            expect(fixedOf(policy, CONFIGURABLE), context).toBe(mode === 'strict' ? strictFixed : cooperativeFixed);
+            if (mode === 'strict') expect(directives.get('script-src'), context).toEqual(scriptUnsafe ? [HASH, "'unsafe-eval'"] : [HASH]);
+            for (const [name, tokens] of directives) {
+                for (const token of tokens) {
+                    expect(token, context).not.toMatch(/[;,\s"]/);
+                    if (!CONFIGURABLE.has(name) || token === 'blob:' || token === "'none'") continue;
+                    if ((LIBRARY_SOURCES[name] ?? []).includes(token)) continue;
+                    expect(ORIGIN_PATTERN.test(token), `${name} ${token} in ${context}`).toBe(true);
+                }
+            }
+            // nothing beyond what the config listed, in its kind's directive
+            for (const kind of ORIGIN_KINDS) {
+                const tokens = directives.get(KIND_DIRECTIVES[kind]) ?? [];
+                for (const token of tokens.filter(token => ORIGIN_PATTERN.test(token))) expect(parsed[kind], context).toContain(token);
+            }
+            expect(policy.toLowerCase(), context).not.toMatch(/'self'|data:|\*|'strict-dynamic'|'nonce-|https: |wasm/);
+        }
+    });
+
+    it("cooperative script-src always holds 'unsafe-inline' and never a nonce, a hash or 'strict-dynamic' (each would make a browser ignore it): the inline bootstrap always runs", () => {
+        const random = prng(0xb007);
+        for (let run = 0; run < 1000; run++) {
+            const parsed = parseOrigins(randomConfig(random), 'iframe', () => {});
+            const kinds = new Set(ORIGIN_KINDS.filter(() => random() < 0.5));
+            const scriptSrc = parseLikeABrowser(cooperativePolicy({ origins: parsed, fileKinds: kinds, scriptUnsafe: random() < 0.5 })).directives.get('script-src')!;
+            expect(scriptSrc[0]).toBe("'unsafe-inline'");
+            expect(scriptSrc.some(token => /^'(nonce|sha256|sha384|sha512)-|^'strict-dynamic'$/i.test(token))).toBe(false);
+        }
+    });
+
+    it("'unsafe-eval' only with scriptUnsafe, only in script-src, in both templates", () => {
+        for (const scriptUnsafe of [false, true]) {
+            for (const policy of [cooperativePolicy(input({ origins: ALL, scriptUnsafe })), strictViewPolicy({ ...input({ origins: ALL, scriptUnsafe }), bootstrapHash: HASH })]) {
+                const { directives } = parseLikeABrowser(policy);
+                for (const [name, tokens] of directives) expect(tokens.includes("'unsafe-eval'"), name).toBe(scriptUnsafe && name === 'script-src');
+            }
+        }
+    });
 });

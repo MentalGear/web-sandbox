@@ -1,18 +1,23 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createFetchBridge, FETCH_ERROR_CODES, isPrivateHost, toAllowedOrigin, toFetchPolicy, validateRequest, type FetchPolicy, type FetchRecord } from './fetch-bridge';
+import { createFetchBridge, FETCH_ERROR_CODES, FETCH_ORIGIN_RULES, isPrivateHost, toFetchPolicy, validateRequest, type FetchPolicy, type FetchRecord } from './fetch-bridge';
 
 const HOST = 'https://host.example';
 const policy = (overrides: Record<string, unknown> = {}): FetchPolicy => toFetchPolicy({ allow: ['https://api.example'], ...overrides }, () => {})!;
 const refusalCode = (value: unknown) => (value instanceof Error ? (value as any).code : 'accepted');
 
 describe('the fetch bridge config (backlog B5)', () => {
-    it('allow takes exact origins only', () => {
-        expect(toAllowedOrigin('https://api.example')).toBe('https://api.example');
-        expect(toAllowedOrigin('https://API.example:443/')).toBe('https://api.example');
-        expect(toAllowedOrigin('http://localhost:8080')).toBe('http://localhost:8080');
+    it('allow takes exact origins only, through the one origin parser (origin.ts)', () => {
+        const allowed = (entry: unknown) => toFetchPolicy({ allow: [entry] }, () => {})!.allow[0] ?? null;
+        expect(allowed('https://api.example')).toBe('https://api.example');
+        expect(allowed('https://API.example:443/')).toBe('https://api.example');
+        expect(allowed('http://localhost:8080')).toBe('http://localhost:8080');
+        expect(allowed('http://api.example:8080')).toBe('http://api.example:8080');
+        expect(FETCH_ORIGIN_RULES).toEqual({ anyHost: ['https:', 'http:'], loopbackOnly: [] });
         for (const entry of ['https://api.example/v1', 'https://api.example/?q', 'https://api.example/#x', 'https://u:p@api.example',
-            'https://*.example', '*', 'api.example', 'ftp://api.example', 'blob:https://api.example/x', 'data:,x', '', 42, null]) {
-            expect(toAllowedOrigin(entry), String(entry)).toBeNull();
+            'https://*.example', '*', 'api.example', 'ftp://api.example', 'blob:https://api.example/x', 'data:,x', '', 42, null,
+            // what the URL parser would rewrite into another spelling of some origin (ADR-007)
+            'https://api.example.', 'https://127.1', 'https://a%2eexample', ' https://api.example', 'https://api.exa\tmple', 'https://bücher.example', 'https://[::1]:8080']) {
+            expect(allowed(entry), String(entry)).toBeNull();
         }
     });
 

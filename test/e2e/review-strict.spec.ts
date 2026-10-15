@@ -1,7 +1,7 @@
 import { test, expect, type SandboxDriver } from './fixture';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { INERT_HREF } from '@src/lib/in-sandbox-view';
-import type { SandboxConfig } from '@src/host';
+import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
 
 /**
  * Adversarial review 2026-10, strict mode and files (docs/security/ADVERSARIAL-REVIEW-2026-10.md):
@@ -21,7 +21,7 @@ import type { SandboxConfig } from '@src/host';
  */
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="5"></svg>';
-const strict = (config: Partial<SandboxConfig> = {}): Partial<SandboxConfig> => ({ mode: 'strict', ...config });
+const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): SandboxConfig => ({ mode: 'strict', ...config });
 
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done') {
     await sandbox.run(`sandboxView.render(${JSON.stringify(html + `<p id="${doneId}">done</p>`)})`);

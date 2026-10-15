@@ -98,7 +98,7 @@ export function isViewFileType(type: string): boolean {
  * (no script, no fetch), each admitting exactly the VIEW_FILE_TYPES the table admits for it, and no prefix.
  */
 export const VIEW_LOAD_KINDS: Readonly<Record<string, KindRule>> = Object.fromEntries((['style', 'image', 'font', 'media', 'track'] as const)
-    .map(kind => [kind, { directive: LOAD_KINDS[kind].directive, types: VIEW_FILE_TYPES.filter(type => admits(kind, type)), prefixes: [] }]));
+    .map(kind => [kind, { key: LOAD_KINDS[kind].key, types: VIEW_FILE_TYPES.filter(type => admits(kind, type)), prefixes: [] }]));
 
 /**
  * The renderer is an allowlist (broad review 2026-10-14): an element or attribute it does not list is gone before

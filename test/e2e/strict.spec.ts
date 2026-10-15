@@ -1,7 +1,7 @@
 import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inFrames, inView, waitInView } from './strict-view';
-import type { SandboxConfig } from '@src/host';
+import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
 
 /**
  * Strict mode (ADR-005; backlog S6, S13, S17). Guest code runs only in a worker; the view document runs only
@@ -29,7 +29,7 @@ const escapeAttribute = (value: string) => value.replaceAll('&', '&amp;').replac
 const srcdoc = (doc: string) => `srcdoc="${escapeAttribute(doc)}"`;
 const at = (left: number, top: number) => `position:absolute;left:${left}px;top:${top}px;width:80px;height:40px;display:block;margin:0`;
 
-const strict = (config: Partial<SandboxConfig> = {}): Partial<SandboxConfig> => ({ mode: 'strict', ...config });
+const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): SandboxConfig => ({ mode: 'strict', ...config });
 
 /** Renders from the worker (execute() runs there) and waits until the view shows `doneId`. */
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done', into: string | null = null) {
@@ -50,7 +50,7 @@ const REMOVED = ['iframe', 'frame', 'frameset', 'object', 'embed', 'portal', 'fe
 
 test.describe('G1 rendered markup', () => {
     test('a script corpus rendered into the view: nothing runs anywhere, every frame and document-level control is absent, refusals are reported as view violations (A6; the labels and caps: violations.spec.ts)', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount(strict({ connectionsAllowed: { 'img-src': [recorder.allowed] } }))).toBe('ready');
+        expect(await sandbox.mount(strict({ origins: { images: [recorder.allowed] } }))).toBe('ready');
         const bootstrap = await inView<string>(page, browserName, `document.head.querySelector('script').textContent`);
         expect(typeof bootstrap === 'string' && bootstrap.length > 1000).toBe(true);
 
@@ -255,7 +255,7 @@ test.describe('G2 the worker', () => {
     });
 
     test('importScripts and fetch obey the inherited policy: refused off the allowlist, fetch allowed to connect-src (positive control)', async ({ sandbox }) => {
-        expect(await sandbox.mount(strict({ connectionsAllowed: { 'connect-src': [recorder.allowed] } }))).toBe('ready');
+        expect(await sandbox.mount(strict({ origins: { connect: [recorder.allowed] } }))).toBe('ready');
         const r = await sandbox.inGuest(`
             let imported;
             try { importScripts('${recorder.blocked}/import.js'); imported = 'ran'; } catch (e) { imported = e.name; }
@@ -421,10 +421,14 @@ test.describe('files', () => {
 // ---- configuration ----------------------------------------------------------------------------------------
 
 test.describe('configuration', () => {
-    test('sandbox flags are allow-scripts allow-forms plus safe capabilities; unsafe capabilities are dropped with one warning; a configured script-src is replaced with one', async ({ sandbox, page }) => {
+    test('sandbox flags are allow-scripts allow-forms plus safe capabilities; unsafe capabilities are dropped with one warning; configured script origins are dropped with one', async ({ sandbox, page }) => {
         const warnings: string[] = [];
         page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
-        expect(await sandbox.mount(strict({ capabilities: ['allow-pointer-lock'], unsafeCapabilities: ['allow-popups', 'fullscreen'], connectionsAllowed: { 'script-src': ['https://cdn.example'] } }))).toBe('ready');
+        expect(await sandbox.mount(strict({
+            capabilities: ['allow-pointer-lock'], unsafeCapabilities: ['allow-popups', 'fullscreen'],
+            // @ts-expect-error strict mode has no scripts kind; a config from JSON can still carry one
+            origins: { scripts: ['https://cdn.example'] },
+        }))).toBe('ready');
         expect(await sandbox.reset()).toBe('ready');
         const attributes = await page.evaluate(() => {
             const frame = (document.querySelector('web-sandbox') as any).shadowRoot.querySelector('iframe') as HTMLIFrameElement;
@@ -433,7 +437,7 @@ test.describe('configuration', () => {
         });
         expect(attributes).toEqual({ outer: 'allow-scripts allow-forms allow-pointer-lock', inner: 'allow-scripts allow-forms allow-pointer-lock', allow: null, innerAllow: null });
         expect(warnings.filter(w => w.includes('not available in strict mode'))).toHaveLength(1);
-        expect(warnings.filter(w => w.includes('"connectionsAllowed.script-src" is fixed in strict mode'))).toHaveLength(1);
+        expect(warnings.filter(w => w.includes('origins.scripts is not used in strict mode'))).toHaveLength(1);
     });
 
     test('fetchBridge: sandboxFetch works from the worker (B5), each request logged', async ({ sandbox }) => {

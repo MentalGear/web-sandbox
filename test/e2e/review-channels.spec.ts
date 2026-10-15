@@ -69,7 +69,7 @@ test('B1: another frame on the host page announcing ports to the host window, ra
         document.querySelector('web-sandbox')!.addEventListener('terminated', (e) => (window as any).terminations.push((e as CustomEvent).detail.reason));
     });
     await startStranger(page);
-    expect(await sandbox.mount({ html, watchdogTimeout: 2000, connectionsAllowed: { 'img-src': [recorder.allowed] } })).toBe('ready');
+    expect(await sandbox.mount({ html, watchdogTimeout: 2000, origins: { images: [recorder.allowed] } })).toBe('ready');
     await page.waitForTimeout(300); // more announcements after ready, with the watchdog pinging the real port
     await stopStranger(page);
 

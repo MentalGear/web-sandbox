@@ -84,7 +84,7 @@ test.describe('Escape attempts', () => {
 });
 
 test('positive control: the same loads to an allowlisted origin succeed and reach the listener, with no violation', async ({ sandbox, browserName }) => {
-    expect(await sandbox.mount({ connectionsAllowed: { 'img-src': [recorder.allowed], 'connect-src': [recorder.allowed] } })).toBe('ready');
+    expect(await sandbox.mount({ origins: { images: [recorder.allowed], connect: [recorder.allowed] } })).toBe('ready');
     const outcome = await sandbox.inGuest(`
         const style = document.createElement('style');
         style.textContent = 'body { background-image: url("${recorder.allowed}/track.svg"); }';

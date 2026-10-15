@@ -4,7 +4,8 @@ import { useRecorder } from './recorder';
 import { waitInView, inView } from './strict-view';
 import { MAX_FILES, MAX_TOTAL_BYTES } from '@src/lib/files';
 import { GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECOND } from '@src/lib/guest-writes';
-import type { SandboxConfig } from '@src/host';
+import type { SandboxConfig, SandboxConfigOptions } from '@src/host';
+import type { StrictSandboxOrigins } from '@src/lib/csp/origins';
 
 /**
  * Guest writes (backlog C5, src/lib/guest-writes.ts, ADR-004 amendment "guest writes"), in iframe, worker and
@@ -38,7 +39,8 @@ const OUTCOME = `const outcome = (run) => Promise.resolve().then(run).then(
     (e) => ({ code: e && e.code, isError: e instanceof Error, keys: e && typeof e === 'object' ? Object.keys(e) : null }));`;
 const inGuest = <T = any>(sandbox: SandboxDriver, body: string, timeout?: number) => sandbox.inGuest<T>(`${OUTCOME}\n${body}`, timeout);
 
-const writesOn = (mode: Mode, config: Partial<SandboxConfig> = {}): Partial<SandboxConfig> => ({ mode, guestWrites: true, ...config });
+// a config every mode can take: origins without scripts (strict mode has none)
+const writesOn = (mode: Mode, config: SandboxConfigOptions & { origins?: StrictSandboxOrigins } = {}): SandboxConfig => ({ mode, guestWrites: true, ...config });
 
 // What the host page sees, read outside the guest.
 async function hostView(sandbox: SandboxDriver, selector = 'web-sandbox') {
@@ -451,7 +453,7 @@ test.describe('strict mode: the view and the overlay', () => {
 test.describe('9. writing adds no egress', () => {
     for (const mode of MODES) {
         test(`${mode} mode: written code never runs, so it reaches no listener; committed with { code: true } and loaded at the next build, the same file does (positive control)`, async ({ sandbox }) => {
-            const policy = { connectionsAllowed: { 'connect-src': [recorder.allowed] } };
+            const policy = { origins: { connect: [recorder.allowed] } };
             expect(await sandbox.mount(writesOn(mode, policy))).toBe('ready');
             const source = `fetch('${recorder.allowed}/written-js').catch(() => {}); globalThis.__written = true;`;
             await inGuest(sandbox, `

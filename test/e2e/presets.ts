@@ -1,5 +1,4 @@
-import { PRESETS, type Preset, type PresetId } from '@src/lib/presets';
-import type { SandboxConfig } from '@src/host';
+import { PRESETS, type Preset, type PresetId, type PresetRules } from '@src/lib/presets';
 
 /**
  * The one way a spec reaches a preset (backlog T4): `fromPreset('id')`, with the id as a string literal, so
@@ -10,7 +9,7 @@ export interface PresetForSpec {
     readonly id: PresetId;
     readonly run: Preset['run'];
     /** The preset's rules, a fresh copy: pass to sandbox.mount(), or spread and extend for a positive control. */
-    readonly rules: Partial<SandboxConfig>;
+    readonly rules: PresetRules;
     readonly code: string;
     /** `code` first (under the name 'code'), then each variant, in order. */
     readonly payloads: [string, string][];

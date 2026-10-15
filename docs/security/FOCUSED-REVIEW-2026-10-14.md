@@ -160,6 +160,8 @@ Stated in API.md.
 
 ### F4 · A configured `__proto__` became a prototype in a CSP step
 
+> Since 2026-10-14 the policy steps described here are replaced by typed `origins` and one policy template per mode ([ADR-007](../ADR-007-typed-origins.md)); their guarantees hold by construction there.
+
 - **Found**: `drop-meta-ignored.ts` wrote `output[name] = values` before the grammar ran, so a JSON `__proto__`
   directive (kept as an own key by the merge and by structured clone) became its output's prototype. Latent: the
   grammar reads own keys only and dropped it.

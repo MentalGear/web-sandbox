@@ -97,6 +97,8 @@ each negative — fixed at the chokepoint that closes its class, and re-run gree
 
 Each was a mutation that no test failed; each now has a test that fails under it (re-run with the mutation applied).
 
+> Since 2026-10-14 the policy steps described here are replaced by typed `origins` and one policy template per mode ([ADR-007](../ADR-007-typed-origins.md)); their guarantees hold by construction there.
+
 | Gap | Mutation that survived | Test now | Under the mutation |
 | :--- | :--- | :--- | :--- |
 | A1, the host's first grammar pass | remove `sanitizeDirectives` before the steps: `script-src: ["'unsafe-inline' 'unsafe-eval'"]` re-admitted eval in iframe and worker mode, `worker-src: ['blob: data:']` data: workers, `default-src: ["https://a.example 'wasm-unsafe-eval'"]` wasm-unsafe-eval in strict mode | `test/unit/verification.test.ts` ("A1", per mode) | fails |

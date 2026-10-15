@@ -35,12 +35,12 @@ async function readyAndLoad(page: Page, config: Record<string, unknown>) {
     }), config);
 }
 
-const scriptsFrom = (origin: string) => ({ 'script-src': ["'unsafe-inline'", origin] });
+const scriptsFrom = (origin: string) => ({ scripts: [origin] });
 
 test.describe('S46: ready when the guest checks in', () => {
     test("'ready' fires before a 2 s image has loaded; the image still loads, and the wrapper's load after 'ready' changes nothing (positive control)", async ({ sandbox, page }) => {
         const html = `<script>bridge.expose('image', () => { const i = document.getElementById('slow'); return [i.complete, i.naturalWidth]; });</script><img id="slow" src="${recorder.allowed}/delay?ms=2000">`;
-        const report = await readyAndLoad(page, { html, connectionsAllowed: { 'img-src': [recorder.allowed] } });
+        const report = await readyAndLoad(page, { html, origins: { images: [recorder.allowed] } });
         expect(report.terminated).toBeNull();
         expect(report.readyAt).toBeGreaterThanOrEqual(0);
         expect(report.loadedAt).toBeGreaterThanOrEqual(1900); // the wrapper's load waited for the image
@@ -67,7 +67,7 @@ test.describe('S46: ready when the guest checks in', () => {
                 const early = settleOutcome(el.call('early'));
                 resolve({ readyAt, queued: await queued, atReady: await atReady, early: await early, settledAt: performance.now() - started });
             }, { once: true });
-        }), { html, connectionsAllowed: scriptsFrom(recorder.allowed) });
+        }), { html, origins: scriptsFrom(recorder.allowed) });
         expect(report.readyAt).toBeLessThan(1000); // before the slow script arrived
         expect(report.settledAt).toBeGreaterThanOrEqual(1400); // the calls waited for the parser
         expect(report.queued).toEqual({ status: 'resolved', value: { ran: 1 } });
@@ -90,7 +90,7 @@ test.describe('S46: ready when the guest checks in', () => {
                 el.execute(`__order.push('exec2')`);
                 resolve(await el.call('note', 'call2'));
             }, { once: true });
-        }), { html, connectionsAllowed: scriptsFrom(recorder.allowed) });
+        }), { html, origins: scriptsFrom(recorder.allowed) });
         expect(order).toEqual(['exec1', 'call1', 'exec2', 'call2']);
     });
 
@@ -104,7 +104,7 @@ test.describe('S46: ready when the guest checks in', () => {
                 el.shadowRoot.querySelector('iframe').srcdoc = '<p>a document the host did not write</p>';
                 setTimeout(() => resolve('nothing'), 4000);
             }, { once: true });
-        }), { html, connectionsAllowed: { 'img-src': [recorder.allowed] } });
+        }), { html, origins: { images: [recorder.allowed] } });
         expect(outcome).toEqual({ reason: SECOND_LOAD, state: 'terminated' });
         await sandbox.run('console.log("after terminate")');
         await page.waitForTimeout(300);
@@ -117,7 +117,7 @@ test.describe('S46: ready when the guest checks in', () => {
             document.querySelector('web-sandbox')!.addEventListener('terminated', (e) => (window as any).terminations.push((e as CustomEvent).detail.reason));
         });
         const html = `<script>parent.parent.postMessage({ type: 'SANDBOX_PORT' }, '*', [new MessageChannel().port2]);</script><img src="${recorder.allowed}/delay?ms=1000">`;
-        await sandbox.mount({ html, connectionsAllowed: { 'img-src': [recorder.allowed] } });
+        await sandbox.mount({ html, origins: { images: [recorder.allowed] } });
         await expect.poll(() => page.evaluate(() => (window as any).terminations)).toEqual([SECOND_ANNOUNCEMENT]);
         expect(await sandbox.state()).toBe('terminated');
     });
@@ -125,7 +125,7 @@ test.describe('S46: ready when the guest checks in', () => {
     test("without allow-scripts no bootstrap checks in: 'ready' comes with the wrapper's load, after the guest's images", async ({ sandbox, page }) => {
         void sandbox; // opens the harness
         const html = `<img src="${recorder.allowed}/delay?ms=600">`;
-        const report = await readyAndLoad(page, { html, capabilities: [], scriptUnsafe: false, connectionsAllowed: { 'img-src': [recorder.allowed] } });
+        const report = await readyAndLoad(page, { html, capabilities: [], scriptUnsafe: false, origins: { images: [recorder.allowed] } });
         expect(report.terminated).toBeNull();
         expect(report.readyAt).toBeGreaterThanOrEqual(500);
         expect(report.stateAtLoad).toBe('ready');
@@ -140,7 +140,7 @@ test.describe('S46: ready when the guest checks in', () => {
             el.addEventListener('ready', () => resolve('ready'), { once: true });
             el.addEventListener('terminated', (e: CustomEvent) => resolve({ reason: e.detail.reason, after: performance.now() - started }), { once: true });
             el.setConfig(config);
-        }), { html, capabilities: [], connectionsAllowed: { 'img-src': [recorder.allowed] } });
+        }), { html, capabilities: [], origins: { images: [recorder.allowed] } });
         expect(outcome).toMatchObject({ reason: LOAD_TIMEOUT });
         expect((outcome as { after: number }).after).toBeGreaterThanOrEqual(4900);
     });

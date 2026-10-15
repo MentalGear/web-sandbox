@@ -6,19 +6,10 @@ import { createGuestWrites, GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECON
 import { createLogLimiter, LOG_EVENTS_PER_SECOND } from '@src/lib/sandbox-log';
 import { AUTO_RESIZE_MAX_UPDATES_PER_SECOND, startAutoResize } from '@src/lib/auto-resize';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
-import { dropMetaIgnoredDirectives } from '@src/lib/csp/drop-meta-ignored';
-import { sanitizeDirectives } from '@src/lib/csp/policy-grammar';
-import { dropEvalSources } from '@src/lib/csp/drop-eval';
-import { addFileSources } from '@src/lib/csp/file-sources';
-import { dropSelfSources } from '@src/lib/csp/drop-self';
-import { strictPassedThrough, strictViewDirectives } from '@src/lib/csp/strict-policy';
+import { parseOrigins } from '@src/lib/csp/origins';
+import { cooperativePolicy, strictViewPolicy } from '@src/lib/csp/csp-generator';
 import { deepMerge } from '@src/lib/utils';
 import { prng } from './policy-helpers';
-import { policyTokens } from '@src/lib/csp/policy-grammar';
-import type { CSPDirectives } from '@src/csp-directives';
-
-// the policy steps take only the grammar's output (PolicyTokens, A1): test policies are checked into it
-const tokens = (directives: CSPDirectives) => policyTokens(directives, 'test');
 
 /**
  * Focused review 2026-10-14 (docs/security/FOCUSED-REVIEW-2026-10-14.md), host and library side: the guarantees
@@ -231,12 +222,14 @@ describe('F3: a reason, event or host line never carries the text of a caught er
         for (const call of warn.mock.calls) expect(String(call[0])).not.toContain(SECRET);
     });
 
-    it('a build that throws (a directive given a string) ends with a fixed reason and the error name', async () => {
+    it('a build that throws ends with a fixed reason and the error name; a kind given a string is refused the same way', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
         const reasons = terminations(el);
-        el.setConfig({ connectionsAllowed: { 'img-src': `x; ${SECRET}` } });
-        expect(reasons).toEqual(['the environment could not be built (Error)']);
+        el.setConfig({ origins: { images: `x; ${SECRET}` } });
+        el._guestPolicy = () => { throw new Error(SECRET); };
+        el.setConfig({});
+        expect(reasons).toEqual(['the configuration could not be used (TypeError)', 'the environment could not be built (Error)']);
         for (const call of warn.mock.calls) expect(String(call[0])).not.toContain(SECRET);
     });
 
@@ -262,35 +255,41 @@ describe('F3: a reason, event or host line never carries the text of a caught er
     });
 });
 
-describe('F4: no CSP step or config transform writes a config-derived key by assignment', () => {
+describe('F4: no config transform writes a config-derived key by assignment', () => {
     // An own "__proto__" key, as JSON.parse and structured clone produce it (review B8), at the top level.
-    const injected = () => JSON.parse('{"__proto__": {"script-src": ["https://evil.example"], "default-src": ["*"]}, "img-src": ["https://a.example"], "script-src": ["\'unsafe-inline\'"]}');
+    const injected = () => JSON.parse('{"__proto__": {"scripts": ["https://evil.example"], "images": ["https://evil.example"]}, "images": ["https://a.example"], "img-src": ["https://evil.example"]}');
     const steps: [string, (input: any) => unknown][] = [
-        ['dropMetaIgnoredDirectives', (d) => dropMetaIgnoredDirectives(d, new Set())],
-        ['sanitizeDirectives', (d) => sanitizeDirectives(d)],
-        ['dropEvalSources', (d) => dropEvalSources(tokens(d), false, new Set())],
-        ['addFileSources', (d) => addFileSources(tokens(d), ['image/png', 'text/javascript'], new Set())],
-        ['dropSelfSources', (d) => dropSelfSources(tokens(d), new Set())],
-        ['strictPassedThrough', (d) => strictPassedThrough(tokens(d))],
-        ['strictViewDirectives', (d) => strictViewDirectives(tokens(d), "'sha256-x'", true)],
-        ['deepMerge', (d) => deepMerge({ 'img-src': [] } as any, d)],
+        ['parseOrigins', (d) => parseOrigins(d, 'iframe', () => {})],
+        ['parseOrigins (strict)', (d) => parseOrigins(d, 'strict', () => {})],
+        ['deepMerge', (d) => deepMerge({ images: [] } as any, d)],
     ];
 
-    it.each(steps)('%s: the output has an ordinary prototype and no inherited directive', (_name, step) => {
+    it.each(steps)('%s: the output has an ordinary prototype and no inherited kind', (_name, step) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const output = step(injected()) as Record<string, unknown>;
         expect(Object.getPrototypeOf(output) === Object.prototype || Object.getPrototypeOf(output) === null).toBe(true);
-        for (const name of ['script-src', 'default-src']) {
+        for (const name of ['scripts', 'images']) {
             if (name in output) expect(Object.hasOwn(output, name), name).toBe(true);
             expect(JSON.stringify(output[name] ?? null)).not.toContain('evil.example');
         }
-        expect(({} as any)['script-src']).toBeUndefined();
+        expect(({} as any).scripts).toBeUndefined();
     });
 
-    it('property: every step, any depth of "__proto__", "constructor" and "prototype" keys, never a prototype change or pollution', () => {
+    it('the policies made from them hold no inherited origin', () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        for (const mode of ['iframe', 'strict']) {
+            const origins = parseOrigins(injected(), mode, () => {});
+            const input = { origins, fileKinds: new Set<never>(), scriptUnsafe: true };
+            const policy = mode === 'strict' ? strictViewPolicy({ ...input, bootstrapHash: `'sha256-${'A'.repeat(43)}='` }) : cooperativePolicy(input);
+            expect(policy, mode).not.toContain('evil.example');
+            expect(policy, mode).toContain('img-src https://a.example;');
+        }
+    });
+
+    it('property: any depth of "__proto__", "constructor" and "prototype" keys, never a prototype change or pollution', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const random = prng(7);
-        const keys = ['__proto__', 'constructor', 'prototype', 'img-src', 'script-src', 'default-src', 'sandbox'];
+        const keys = ['__proto__', 'constructor', 'prototype', 'images', 'scripts', 'connect', 'img-src'];
         const value = (depth: number): unknown => (depth > 2 || random() < 0.5 ? ['https://evil.example'] : Object.fromEntries(Array.from({ length: 2 }, () => [keys[Math.floor(random() * keys.length)]!, value(depth + 1)])));
         for (let i = 0; i < 200; i++) {
             const text = JSON.stringify(Object.fromEntries(Array.from({ length: 3 }, () => [keys[Math.floor(random() * keys.length)]!, value(0)])));
@@ -302,40 +301,42 @@ describe('F4: no CSP step or config transform writes a config-derived key by ass
                     continue; // a value a step refuses is not this test's concern
                 }
                 if (output && typeof output === 'object') expect([Object.prototype, null], `${name} ${text}`).toContain(Object.getPrototypeOf(output));
-                expect(({} as any)['img-src'], name).toBeUndefined();
+                expect(({} as any).images, name).toBeUndefined();
             }
         }
     });
 });
 
-describe("F5: 'unsafe-eval' goes where the effective-directive table says, through one code path", () => {
-    it("only the table's helper writes the eval keyword: neither host.ts nor strict-policy.ts spells it in a write", () => {
-        for (const file of ['../../src/host.ts', '../../src/lib/csp/strict-policy.ts']) {
-            const source = readFileSync(join(__dirname, file), 'utf8');
-            expect(source, file).not.toMatch(/push\(\s*"'unsafe-eval'"\s*\)|\[[^\]]*"'unsafe-eval'"[^\]]*\]/);
-        }
+describe("F5: 'unsafe-eval' is written in one place, the generator, and only with scriptUnsafe", () => {
+    it('host.ts never spells the keyword in a write; csp-generator.ts holds it once', () => {
+        const host = readFileSync(join(__dirname, '../../src/host.ts'), 'utf8');
+        expect(host).not.toMatch(/push\(\s*"'unsafe-eval'"\s*\)|\[[^\]]*"'unsafe-eval'"[^\]]*\]/);
+        const generator = readFileSync(join(__dirname, '../../src/lib/csp/csp-generator.ts'), 'utf8');
+        expect(generator.match(/= "'unsafe-eval'"/g)).toHaveLength(1);
     });
 });
 
 describe('F6: a refused config is never stored', () => {
-    it("strict mode with connectionsAllowed: null is refused before anything is stored: the previous config stays", async () => {
+    it("strict mode with origins: null is refused before anything is stored: the previous config stays", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'worker', html: 'previous', workerExecutionTimeout: 7 });
+        const el = await mount({ mode: 'worker', html: 'previous', workerExecutionTimeout: 7, origins: { images: ['https://kept.example'] } });
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
-        el.setConfig({ mode: 'strict', connectionsAllowed: null });
+        el.setConfig({ mode: 'strict', origins: null });
         expect(reasons).toEqual(['the configuration could not be used (TypeError)']);
-        expect([el._config.mode, el._config.html, el._config.workerExecutionTimeout]).toEqual(['worker', 'previous', 7]);
+        expect([el._config.mode, el._config.html, el._config.workerExecutionTimeout, el._origins.images]).toEqual(['worker', 'previous', 7, ['https://kept.example']]);
     });
 
-    it('connectionsAllowed that is not an object is refused in every mode, before a build (before: iframe mode failed in the build)', async () => {
+    it('origins that is not an object, or a kind that is not a list, is refused in every mode, before a build', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
-        for (const value of [null, 'default-src *', ['x'], 5]) el.setConfig({ connectionsAllowed: value });
-        expect(reasons).toEqual(new Array(4).fill('the configuration could not be used (TypeError)'));
-        el.setConfig({ connectionsAllowed: { 'img-src': ['https://a.example'] } });
+        for (const mode of ['iframe', 'worker', 'strict']) {
+            for (const value of [null, 'https://a.example', ['x'], 5, { images: 'https://a.example' }, { connect: null }]) el.setConfig({ mode, origins: value });
+        }
+        expect(reasons).toEqual(new Array(18).fill('the configuration could not be used (TypeError)'));
+        el.setConfig({ origins: { images: ['https://a.example'] } });
         expect(el.state).toBe('loading'); // positive control
     });
 });

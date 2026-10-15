@@ -1,17 +1,11 @@
-import type { CSPDirectives, SafeCapability, UnsafeCapability } from "./csp-directives";
+import type { SafeCapability, UnsafeCapability } from "./csp-directives";
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./csp-directives";
-import { generateCSP } from "./lib/csp/csp-generator";
-import { dropSelfSources } from "./lib/csp/drop-self";
-import { dropMetaIgnoredDirectives } from "./lib/csp/drop-meta-ignored";
-import { dropEvalSources } from "./lib/csp/drop-eval";
-import { dropDataWorkerSources } from "./lib/csp/drop-data-workers";
-import { isKnownDirective, sanitizeDirectives } from "./lib/csp/policy-grammar";
-import { addFileSources } from "./lib/csp/file-sources";
-import { addEvalSource } from "./lib/csp/effective-directive";
+import { cooperativePolicy, fileKinds, strictViewPolicy } from "./lib/csp/csp-generator";
+import { NO_ORIGINS, parseOrigins, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
-import { inlineScriptsAllowed, kindMismatchMessage, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
+import { kindMismatchMessage, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { deepMerge } from "./lib/utils";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
@@ -20,24 +14,42 @@ import { workerBootstrap } from "./lib/worker-bootstrap";
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
 import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
-import { toViolationDetail, VIOLATION_EVENT_LIMIT } from "./lib/violation";
+import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT } from "./lib/violation";
 import { createLogLimiter, LOG_EVENTS_PER_SECOND, toLogDetail, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
 import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
-import { strictPassedThrough, strictPolicyOverrides, strictViewDirectives } from "./lib/csp/strict-policy";
 
 /**
- * The element's configuration, passed to setConfig() as a Partial: every option left out takes its default
+ * The element's configuration, passed to setConfig(): every option left out takes its default
  * (DEFAULT_SANDBOX_CONFIG), not its previous value. Reference with defaults and modes: docs/API.md#configuration.
+ *
+ * A union keyed by `mode` (ADR-007), so what a mode cannot use does not type-check: strict mode's `origins` has no
+ * `scripts`. A config from JSON is held to the same rules at run time (dropped with a warning).
  */
-export interface SandboxConfig {
-    /**
-     * The guest's Content Security Policy. Providing a key here will merge with/override the default for that
-     * directive. `[]` means 'none'; 'self' and eval keywords are dropped with a warning (src/lib/csp/).
-     */
-    connectionsAllowed: CSPDirectives;
+export type SandboxConfig = CooperativeSandboxConfig | StrictSandboxConfig;
+
+/** iframe mode (the default) and worker mode: guest code runs in the guest document, or in a worker inside it. */
+export interface CooperativeSandboxConfig extends SandboxConfigOptions {
+    /** Execution mode, default 'iframe'. Any value that is not a mode starts no environment (review A4). */
+    mode?: 'iframe' | 'worker';
+    /** The exact origins the guest may load each kind from (src/lib/csp/origins.ts). Default: none. */
+    origins?: SandboxOrigins;
+}
+
+/**
+ * Strict mode (ADR-005): guest code runs only in a worker spawned by a view document that runs no guest script; the
+ * worker draws into the view with sandboxView.render().
+ */
+export interface StrictSandboxConfig extends SandboxConfigOptions {
+    mode: 'strict';
+    /** As in the other modes, without `scripts`: the view runs only the library's bootstrap. */
+    origins?: StrictSandboxOrigins;
+}
+
+/** The options every mode takes. */
+export interface SandboxConfigOptions {
     /**
      * 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox). For testing: enabling it
      * logs one warning per instance (backlog S4), since it lets guest code compile strings as code.
@@ -56,12 +68,6 @@ export interface SandboxConfig {
      * worker mode. Empty (the default) means `<div id="root"></div>`. load() sets it too.
      */
     html?: string;
-    /**
-     * Execution mode, default 'iframe'. 'strict' (ADR-005): guest code runs only in a worker spawned by a view
-     * document that runs no guest script; the worker draws into the view with sandboxView.render(). Any other
-     * value starts no environment: the sandbox terminates until a config names a valid mode.
-     */
-    mode?: 'iframe' | 'worker' | 'strict';
     /**
      * Strict mode: the path of a registered JavaScript file the worker runs first, as a classic script.
      * Ignored (with a warning) in other modes.
@@ -115,22 +121,17 @@ export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 
 /** The execution modes. Anything else is refused: the sandbox does not start (review A4). */
 const SANDBOX_MODES = ['iframe', 'worker', 'strict'] as const;
-const isSandboxMode = (mode: unknown): mode is SandboxConfig['mode'] => (SANDBOX_MODES as readonly unknown[]).includes(mode);
+type SandboxMode = (typeof SANDBOX_MODES)[number];
+const isSandboxMode = (mode: unknown): mode is SandboxMode => (SANDBOX_MODES as readonly unknown[]).includes(mode);
 
-const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
-    // An empty array means 'none' for every directive (generateCSP, backlog S16), so the defaults list
-    // only what they set: a fetch directive left out here falls back to default-src, which is 'none' by
-    // default and is the embedder's own value once they set it. Listing connect-src, img-src … as []
-    // would pin each to 'none' and silently cut it off from an embedder's default-src.
-    connectionsAllowed: {
-        "upgrade-insecure-requests": true,
-        "default-src": ["'none'"],
-        "script-src": ["'unsafe-inline'"], // never 'self': see src/lib/csp/drop-self.ts
-        "base-uri": [], // no default-src fallback: 'none' (the guest also inherits an inert base, frame-documents.ts)
-        "style-src": ["'unsafe-inline'"],
-        "form-action": [], // no default-src fallback: 'none'
-        "worker-src": ["blob:"] // never data: (drop-data-workers.ts, broad review PD1): the library's workers are blob:
-    },
+/**
+ * The configuration as the element keeps it: the options merged over the defaults. `origins` is not kept here: it is
+ * parsed into an OriginPolicy by setConfig() (_origins). `mode` can hold a value that is not a mode; every build
+ * is refused then (_buildRefusal).
+ */
+type StoredConfig = SandboxConfigOptions & { mode?: SandboxMode };
+
+const DEFAULT_SANDBOX_CONFIG: StoredConfig = {
     scriptUnsafe: false,
     capabilities: [],
     unsafeCapabilities: [],
@@ -267,6 +268,8 @@ export class WebSandbox extends HTMLElement {
     private _resizer: AutoResizer | null = null; // this environment's auto-sizing (B6), or null when off
     private _autoHeight: string | null = null;   // the inline height auto-sizing last wrote on the element
     private _fetchPolicy: FetchPolicy | null = null; // the validated fetchBridge config, or null when off (B5)
+    private _origins: OriginPolicy = NO_ORIGINS; // the parsed `origins` (ADR-007), what the guest policy admits
+    private _warnedOrigins = new Set<string>();  // origins warnings (an entry dropped, connectionsAllowed), once each per instance
     private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
     private _warnedFetchBridge = new Set<string>();  // fetchBridge config warnings, once each per instance
     // The guest-write overlay (C5): created by each build when guestWrites is on, else null. It outlives its
@@ -280,7 +283,7 @@ export class WebSandbox extends HTMLElement {
     // action that dispatches an event and then acts on the environment, so a listener that reset or terminated
     // the sandbox in between is never undone (review B5).
     private _generation = 0;
-    private _config: SandboxConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
+    private _config: StoredConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
     // Why the last setConfig() argument could not be used, or null: while set, every build is refused with
     // this reason (initialize), as for an unknown mode.
     private _configRefusal: string | null = null;
@@ -297,14 +300,7 @@ export class WebSandbox extends HTMLElement {
     private _rpcQueue: unknown[] = []; // the host's own RPC requests waiting for a port (cloned at call time)
     private _warnedUnsafeCapabilities = new Set<string>();
     private _warnedScriptUnsafe = false; // the scriptUnsafe guard rail warns once per instance (S4)
-    private _warnedSelfDirectives = new Set<string>(); // directives already warned about for 'self' (drop-self.ts)
-    private _warnedMetaIgnored = new Set<string>(); // directives a <meta> policy discards, already warned about (drop-meta-ignored.ts)
-    private _warnedFileDirectives = new Set<string>(); // directives already warned about for an explicit 'none' (file-sources.ts)
-    private _warnedEvalDirectives = new Set<string>(); // directives already warned about for an eval keyword (drop-eval.ts)
-    private _warnedDataWorkers = new Set<string>(); // directives already warned about for data: workers (drop-data-workers.ts)
-    private _warnedPolicy = new Set<string>(); // names and sources the policy grammar dropped, once each (policy-grammar.ts)
     private _warnedVirtualFilesUrl = false;
-    private _warnedBootstrapRefused = false; // the guest policy refuses the inline bootstrap (S13), once per instance
     private _warnedAutoResizeWorker = false; // autoResize asked for in worker mode, once per instance
     private _warnedGuestMarkup = new Set<string>(); // module-graph warnings about guest markup, once per text (_warnOnce)
     private _warnedStrict = new Set<string>(); // strict-mode config warnings, once each per instance
@@ -377,10 +373,10 @@ export class WebSandbox extends HTMLElement {
 
     /**
      * Replaces the configuration and rebuilds the environment now (when the element is in the document).
-     * Partial: anything left out keeps its default (see DEFAULT_SANDBOX_CONFIG), not its previous value: `html`
+     * Anything left out keeps its default (see DEFAULT_SANDBOX_CONFIG), not its previous value: `html`
      * included. Values that cannot be used are dropped with a warning before anything is applied.
      */
-    setConfig(config: Partial<SandboxConfig>) {
+    setConfig(config: SandboxConfig) {
         // A config the element cannot use is a termination with a reason, never a throw that leaves the old
         // environment torn down and no new one built (follow-up audit 2026-10-14): initialize() refuses every
         // build while _configRefusal is set, as it does for an unknown mode (review A4), until a usable config
@@ -397,7 +393,7 @@ export class WebSandbox extends HTMLElement {
 
     // Parses, sanitizes, checks and stores one setConfig() argument. Throws for a config that cannot be used; then
     // nothing is stored (the fields are assigned last, after every check and warning).
-    private _applyConfig(config: Partial<SandboxConfig>) {
+    private _applyConfig(config: SandboxConfig) {
         // ---- Copy, then parse and sanitize
 
         // One structured clone of the whole argument before anything reads it: every check below, and every
@@ -406,10 +402,10 @@ export class WebSandbox extends HTMLElement {
         // reads differently (review A6). What cannot be cloned (a Proxy, a function, a DOM node) throws here.
         const copy: unknown = structuredClone(config);
         if (!copy || typeof copy !== 'object' || Array.isArray(copy)) throw new TypeError('setConfig() takes an object');
-        const input = copy as Partial<SandboxConfig>;
+        const input = copy as SandboxConfig;
 
         // Filter out any forbidden capabilities that might have been passed
-        const sanitizedConfig: Partial<SandboxConfig> = {
+        const sanitizedConfig: Partial<StoredConfig> & { origins?: unknown } = {
             ...input,
             capabilities: filterCapabilities(input.capabilities, SAFE_CAPABILITIES, 'capabilities'),
             unsafeCapabilities: filterCapabilities(input.unsafeCapabilities, UNSAFE_CAPABILITIES, 'unsafeCapabilities'),
@@ -420,9 +416,14 @@ export class WebSandbox extends HTMLElement {
         // config without it turns the bridge off.
         const fetchPolicy = toFetchPolicy(input.fetchBridge, (message) => this._warnFetchBridge(message));
         delete sanitizedConfig.fetchBridge;
-        this._dropVirtualFilesUrl(sanitizedConfig);
+        // `origins` is parsed into the policy's origins here, once, and kept out of the merged config too
+        // (origins.ts): an entry that is not an origin is dropped with a warning; a value that cannot be read
+        // refuses the config. Parsed for the mode this config names, so strict mode drops `scripts`.
+        const origins = parseOrigins(input.origins, input.mode, (message) => this._warnOrigins(message));
+        delete sanitizedConfig.origins;
+        this._dropRemovedOptions(sanitizedConfig);
 
-        const merged = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig);
+        const merged = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig as Partial<StoredConfig>);
         // Only a literal true enables eval or auto-sizing: both values are interpolated into the guest bootstrap.
         merged.scriptUnsafe = merged.scriptUnsafe === true;
         merged.autoResize = merged.autoResize === true;
@@ -430,14 +431,9 @@ export class WebSandbox extends HTMLElement {
         merged.guestWrites = merged.guestWrites === true;
         if (typeof merged.entry !== 'string') delete merged.entry;
 
-        // The policy must be a directive object, whatever the mode: anything else could only fail a later step
-        // (sanitizeDirectives in the strict warnings, or the build) after the config had been stored.
-        const policy = merged.connectionsAllowed as unknown;
-        if (!policy || typeof policy !== 'object' || Array.isArray(policy)) throw new TypeError('connectionsAllowed must be an object of directives');
-
         // Every check and warning reads the candidate, and only a config that passed them all is stored, last
-        // (focused review 2026-10-14, F6: the warnings ran after the assignment, so a config one of them refused,
-        // connectionsAllowed: null in strict mode, was stored all the same).
+        // (focused review 2026-10-14, F6: the warnings ran after the assignment, so a config one of them refused
+        // was stored all the same).
         this._warnAboutUnknownMode(merged);
         this._warnAboutUnsafeCapabilities(merged);
         this._warnAboutScriptUnsafe(merged);
@@ -445,6 +441,7 @@ export class WebSandbox extends HTMLElement {
         this._warnAboutStrictConfig(merged);
         this._config = merged;
         this._fetchPolicy = fetchPolicy;
+        this._origins = origins;
     }
 
     /**
@@ -553,14 +550,27 @@ export class WebSandbox extends HTMLElement {
         this.dispatchEvent(new CustomEvent('fileswritten', { detail: Object.freeze({ paths: Object.freeze([path]) }), bubbles: true }));
     }
 
-    // virtualFilesUrl configured the removed Service-Worker hub (ADR-004). Dropped from the config, with
-    // one warning per instance, so an old config keeps working without it.
-    private _dropVirtualFilesUrl(config: Partial<SandboxConfig>) {
+    // Options that were removed, dropped from the config with one warning per instance each, so an old config keeps
+    // working without them. virtualFilesUrl configured the removed Service-Worker hub (ADR-004). connectionsAllowed
+    // was the raw policy, replaced by `origins` (ADR-007): ignored, never adapted, so it fails closed (no origin).
+    private _dropRemovedOptions(config: object) {
+        if (Object.hasOwn(config, 'connectionsAllowed')) {
+            delete (config as Record<string, unknown>).connectionsAllowed;
+            this._warnOrigins('[Sandbox] connectionsAllowed was removed; use origins. It was ignored: the guest policy admits only the exact origins listed in `origins` (see docs/API.md#origins).');
+        }
         if (!Object.hasOwn(config, 'virtualFilesUrl')) return;
         delete (config as Record<string, unknown>).virtualFilesUrl;
         if (this._warnedVirtualFilesUrl) return;
         this._warnedVirtualFilesUrl = true;
         console.warn('[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).');
+    }
+
+    // What setConfig() dropped from `origins` (origins.ts), and the connectionsAllowed removal: the same config is set
+    // again and again (the playground applies it on every edit), so each message is said once per element.
+    private _warnOrigins(message: string) {
+        if (this._warnedOrigins.has(message)) return;
+        this._warnedOrigins.add(message);
+        console.warn(message);
     }
 
     /**
@@ -684,7 +694,7 @@ export class WebSandbox extends HTMLElement {
     // A mode the element does not know is refused, never read as the default (review A4): strict mode is a
     // security opt-in, so a misspelt 'Strict' must not quietly give the weaker iframe mode. initialize() then
     // terminates every build with a reason until a config names a valid mode; this says why, once per value.
-    private _warnAboutUnknownMode(config: SandboxConfig) {
+    private _warnAboutUnknownMode(config: StoredConfig) {
         const mode = config.mode;
         if (isSandboxMode(mode)) return;
         const message = `[Sandbox] mode ${this._describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}: the sandbox will not start until setConfig() names one of them.`;
@@ -697,7 +707,7 @@ export class WebSandbox extends HTMLElement {
         return typeof mode === 'string' ? JSON.stringify(mode.slice(0, 32)) : `of type ${mode === null ? 'null' : typeof mode}`;
     }
 
-    private _warnAboutUnsafeCapabilities(config: SandboxConfig) {
+    private _warnAboutUnsafeCapabilities(config: StoredConfig) {
         if (config.mode === 'strict') return; // dropped there instead, with one warning (_warnAboutStrictConfig)
         for (const capability of config.unsafeCapabilities || []) {
             if (this._warnedUnsafeCapabilities.has(capability)) continue;
@@ -709,7 +719,7 @@ export class WebSandbox extends HTMLElement {
     // The guard rail for scriptUnsafe (backlog S4). It is on in most presets and every e2e spec, so it is the
     // path of least resistance for a copy-paste consumer; one warning per instance says what it costs
     // without repeating on every reset(), load() or setConfig().
-    private _warnAboutScriptUnsafe(config: SandboxConfig) {
+    private _warnAboutScriptUnsafe(config: StoredConfig) {
         if (config.scriptUnsafe !== true || this._warnedScriptUnsafe) return;
         this._warnedScriptUnsafe = true;
         console.warn("[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content.");
@@ -801,7 +811,7 @@ export class WebSandbox extends HTMLElement {
     }
 
     // The guest's port, announced by the guest frame itself (CB1), becomes this environment's port. Null when this
-    // build's guest runs no bootstrap (no allow-scripts, or a policy that refuses it): there is nothing to talk to,
+    // build's guest runs no bootstrap (no allow-scripts): there is nothing to talk to,
     // and calls wait in the queue until they time out.
     private setupChannel(port: MessagePort | null) {
         if (this._port) { this._port.close(); this._port = null; }
@@ -1016,12 +1026,12 @@ export class WebSandbox extends HTMLElement {
     // and a later refusal of another kind (a handler attribute: script-src-attr) went unreported. The directive
     // of a view report is the browser's own, so per-directive counts are sound there; the buckets are the known
     // directive names plus one for any other name, which bounds the view's events at
-    // (KNOWN_DIRECTIVES + 1) × VIOLATION_EVENT_LIMIT per environment. The logic port, and iframe and worker mode,
+    // (VIOLATION_DIRECTIVES + 1) × VIOLATION_EVENT_LIMIT per environment. The logic port, and iframe and worker mode,
     // keep one count: guest code writes the directive name there, so per-name counts would be guest-chosen.
     private _dispatchViolation(frame: unknown, source: 'view' | 'logic' | null = null) {
         const detail = toViolationDetail(frame, source ?? undefined);
         if (!detail) return;
-        const key = source === 'view' ? `view:${isKnownDirective(detail.directive) ? detail.directive : '*'}` : (source ?? '');
+        const key = source === 'view' ? `view:${VIOLATION_DIRECTIVES.includes(detail.directive) ? detail.directive : '*'}` : (source ?? '');
         const count = this._violationCounts.get(key) ?? 0;
         if (count > VIOLATION_EVENT_LIMIT) return;
         this._violationCounts.set(key, count + 1);
@@ -1050,7 +1060,7 @@ export class WebSandbox extends HTMLElement {
         return this._config.autoResize === true && this._config.mode !== 'worker';
     }
 
-    private _warnAboutAutoResizeInWorker(config: SandboxConfig) {
+    private _warnAboutAutoResizeInWorker(config: StoredConfig) {
         if (config.autoResize !== true || config.mode !== 'worker' || this._warnedAutoResizeWorker) return;
         this._warnedAutoResizeWorker = true;
         console.warn('[Sandbox] autoResize has no effect in worker mode: a worker has no document to measure.');
@@ -1164,8 +1174,8 @@ export class WebSandbox extends HTMLElement {
     //
     // Every build failure is a termination (follow-up audit 2026-10-14). A build that threw used to leave the
     // old environment torn down, state 'loading', no frame and no 'terminated' event, and the throw escaped to
-    // whoever called setConfig() or reset(): a configured string where a directive takes a list
-    // ("img-src": "x; script-src *") made generateCSP throw there. Now a refusal known up front (a config that
+    // whoever called setConfig() or reset(): a configured string where a directive took a list
+    // ("img-src": "x; script-src *") made the policy generator throw there. Now a refusal known up front (a config that
     // could not be used, an unknown mode) and anything the build throws end the same way: state 'terminated',
     // one 'terminated' event with the reason, nothing half-built (_teardown).
     private initialize() {
@@ -1299,61 +1309,26 @@ export class WebSandbox extends HTMLElement {
         return permissions;
     }
 
-    private _getCSPDirectives(files: FileSnapshotEntry[]): CSPDirectives {
-        // Clone the config directives to avoid mutating the original config
-        // passing the refs of the original object. Directives a <meta> policy discards (frame-ancestors,
-        // report-uri, report-to, sandbox) are dropped first, with a warning: the guest policy is always a
-        // <meta> policy, so emitting them would only look like control (drop-meta-ignored.ts, S7).
-        // Then the policy grammar (review A1): only known directive names, and only tokens that are one CSP
-        // source expression, go on, so every later step sees the tokens the policy will hold and no value can
-        // add a directive. generateCSP enforces the same grammar again on whatever reaches it. Then the eval
-        // keywords, which only scriptUnsafe grants (review A5).
-        const metaApplicable = dropMetaIgnoredDirectives(structuredClone(
-            this._config.connectionsAllowed
-        ), this._warnedMetaIgnored);
-        const grammatical = sanitizeDirectives(metaApplicable, (message) => this._warnPolicy(message));
-        // Then data: for worker loads, which WebKit runs outside the guest policy (drop-data-workers.ts, PD1).
-        const cloned = dropDataWorkerSources(dropEvalSources(grammatical, this._config.scriptUnsafe === true, this._warnedEvalDirectives), this._warnedDataWorkers);
-
-        cloned["upgrade-insecure-requests"] = true
-
-        // blob: only for the file types in this build's snapshot, each in the directive that governs its kind of
-        // load in this policy (file-sources.ts, effective-directive.ts). No files, no change. Before 'unsafe-eval'
-        // and the 'self' drop, so S14 stays the last step.
-        // Strict mode: only the directives the view will hold are asked which one governs a load
-        // (strictPassedThrough), and never for scripts (its worker is classic and its view runs no guest script).
-        const strict = this._config.mode === 'strict';
-        const fileTypes = files.map(entry => entry[1]);
-        if (strict) {
-            // A type the view mints no URL for (isViewFileType, broad review ST1) is only fetched, by the worker.
-            const viewTypes = fileTypes.map(type => (isViewFileType(type) ? type : FALLBACK_TYPE));
-            const viewSources = addFileSources(strictPassedThrough(cloned), viewTypes, this._warnedFileDirectives, { exclude: ['script-src-elem'] });
-            // the 'self' drop as everywhere, then the view policy, built last from an allowlist (strict-policy.ts):
-            // the hash of the one bootstrap, and 'unsafe-eval' only with scriptUnsafe.
-            return strictViewDirectives(dropSelfSources(viewSources, this._warnedSelfDirectives), viewBootstrapHash(), this._config.scriptUnsafe === true);
-        }
-        const directives = addFileSources(cloned, fileTypes, this._warnedFileDirectives);
-
-        // String compilation is checked against script-src, then default-src (effective-directive.ts, 'eval'):
-        // addEvalSource is the one writer of the keyword, and never puts it in default-src (focused review F5).
-        const withEval = this._config.scriptUnsafe === true ? addEvalSource(directives) : directives;
-
-        // The one place every guest policy is built (worker mode inherits this frame's policy), so the
-        // guest never gets 'self', whatever the config says: its meaning for an opaque origin differs by
-        // engine (drop-self.ts). Done last, so a directive emptied by the drop becomes 'none' only if
-        // nothing else was added to it.
-        return dropSelfSources(withEval, this._warnedSelfDirectives);
+    // The guest policy of this build (csp-generator.ts, ADR-007): the mode's template, the parsed origins, and blob:
+    // for the kinds of load this build's files need (the snapshot's types, through the one load-kind table). The one
+    // place a guest policy is made; worker mode's worker and strict mode's worker inherit their frame's.
+    private _guestPolicy(files: FileSnapshotEntry[]): string {
+        const types = files.map(entry => entry[1]);
+        const scriptUnsafe = this._config.scriptUnsafe === true;
+        if (this._config.mode !== 'strict') return cooperativePolicy({ origins: this._origins, fileKinds: fileKinds(types), scriptUnsafe });
+        // A type the view mints no URL for (isViewFileType, broad review ST1) is only fetched, by the worker.
+        const viewTypes = types.map(type => (isViewFileType(type) ? type : FALLBACK_TYPE));
+        return strictViewPolicy({ origins: this._origins, fileKinds: fileKinds(viewTypes), scriptUnsafe, bootstrapHash: viewBootstrapHash() });
     }
 
     // What the bootstrap does with this build's guest markup (GuestMarkupPlan): references to registered
     // files cut into parts for it to write (markup-references.ts) and, with JavaScript files, the one
-    // import map (module graph). Only when the bootstrap can run — scripts allowed by the sandbox flags
-    // and inline scripts by the policy — since otherwise nothing would write the markup or register the
-    // map; references then stay as written and fail closed, and so do relative imports between modules.
-    private _getMarkupPlan(html: string, files: FileSnapshotEntry[], sandboxFlags: string, directives: CSPDirectives): GuestMarkupPlan {
+    // import map (module graph). Only when the bootstrap can run — scripts allowed by the sandbox flags (the
+    // policy always admits the inline bootstrap, csp-generator.ts) — since otherwise nothing would write the markup
+    // or register the map; references then stay as written and fail closed, and so do relative imports between modules.
+    private _getMarkupPlan(html: string, files: FileSnapshotEntry[], sandboxFlags: string): GuestMarkupPlan {
         if (files.length === 0) return NO_MARKUP_PLAN;
         if (!sandboxFlags.split(' ').includes('allow-scripts')) return NO_MARKUP_PLAN;
-        if (!inlineScriptsAllowed(directives)) return NO_MARKUP_PLAN;
 
         // The module graph maps only files a script load admits (load-kinds.ts, through isJavaScriptType): an import
         // of any other file names nothing in the import map and fails closed, as a <script src> of one does (W1).
@@ -1366,25 +1341,6 @@ export class WebSandbox extends HTMLElement {
         if (javascript.length === 0) return { parts: markup.parts, importMap: null };
         const guest = mergeGuestImportMaps(markup.importMaps, (message) => this._warnOnce(message));
         return { parts: markup.parts, importMap: { paths: javascript, guest } };
-    }
-
-    // The guarantees that live in the guest bootstrap — WebRTC removed from the guest realm (S13), violation
-    // reports (S5), the bridge and sandboxFiles — hold only where it runs. It is an inline script, so a policy
-    // that refuses inline scripts while the sandbox flags allow scripts lets guest scripts from allowlisted
-    // origins run without it. Said once per instance, since only the embedder's config can cause it.
-    private _warnIfBootstrapRefused(sandboxFlags: string, directives: CSPDirectives) {
-        if (this._warnedBootstrapRefused) return;
-        if (!sandboxFlags.split(' ').includes('allow-scripts') || inlineScriptsAllowed(directives)) return;
-        this._warnedBootstrapRefused = true;
-        console.warn("[Sandbox] the guest policy refuses inline scripts, so the sandbox bootstrap cannot run: guest scripts would run with no bridge, no sandboxFiles, no violation reports, and with WebRTC available. Keep 'unsafe-inline' in script-src (without nonces or hashes).");
-    }
-
-    // What the policy grammar dropped (policy-grammar.ts): the same config is built again on every reset(),
-    // load() or setConfig(), so each message is said once per element.
-    private _warnPolicy(message: string) {
-        if (this._warnedPolicy.has(message)) return;
-        this._warnedPolicy.add(message);
-        console.warn(message);
     }
 
     // Warnings about the guest's markup come back with every build of the same markup: one each per element.
@@ -1411,20 +1367,19 @@ export class WebSandbox extends HTMLElement {
 
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
-        const directives = this._getCSPDirectives(files);
-        this._warnIfBootstrapRefused(sandboxFlags, directives);
+        const policy = this._guestPolicy(files);
 
         // TODO: run through DOMPurify ?
         let guestDocument: string;
         if (isWorkerMode) {
             // worker mode is headless: no guest markup, so no markup references either
-            guestDocument = buildGuestDocument({ csp: generateCSP(directives, (message) => this._warnPolicy(message)), bootstrapScript: this._getWorkerBootstrapScript(files), content: '' });
+            guestDocument = buildGuestDocument({ csp: policy, bootstrapScript: this._getWorkerBootstrapScript(files), content: '' });
         } else {
             const html = this._config.html || '<div id="root"></div>';
             // A fresh slot nonce per build (inside rewriteGuestMarkup); null parts keep the markup verbatim.
-            const plan = this._getMarkupPlan(html, files, sandboxFlags, directives);
+            const plan = this._getMarkupPlan(html, files, sandboxFlags);
             guestDocument = buildGuestDocument({
-                csp: generateCSP(directives, (message) => this._warnPolicy(message)),
+                csp: policy,
                 bootstrapScript: this._getSandboxCommsScript('iframe', files, plan),
                 content: plan.parts ? '' : html,
                 bootstrapWritesContent: plan.parts !== null,
@@ -1447,7 +1402,7 @@ export class WebSandbox extends HTMLElement {
         this._iframe.srcdoc = buildWrapperDocument(guestDocument, sandboxFlags, permissions);
         // The guest announces its port from its first statement (CB1), so the listener is in place before the frame
         // exists. A bootstrap runs, and announces, exactly where the inline script can run (_getMarkupPlan's test).
-        this._expectAnnouncement = sandboxFlags.split(' ').includes('allow-scripts') && inlineScriptsAllowed(directives);
+        this._expectAnnouncement = sandboxFlags.split(' ').includes('allow-scripts');
         this._listenForAnnouncement(this._iframe);
         this.shadowRoot!.appendChild(this._iframe);
     }
@@ -1471,14 +1426,14 @@ export class WebSandbox extends HTMLElement {
         }
 
         const sandboxFlags = this._getSandboxFlags();
-        const directives = this._getCSPDirectives(files);
+        const policy = this._guestPolicy(files);
         this._strictInit = {
             workerSource: this._getStrictWorkerSource(files, entrySource),
             viewFiles: files.filter(candidate => isViewFileType(candidate[1])), // never a type that opens as a document (broad review ST1)
             html: this._config.html || '<div id="root"></div>',
             autoResize: this._autoResizeEnabled(),
         };
-        const view = buildViewDocument(generateCSP(directives, (message) => this._warnPolicy(message)), viewBootstrapText());
+        const view = buildViewDocument(policy, viewBootstrapText());
 
         this._iframe = document.createElement("iframe");
         this._iframe.setAttribute("sandbox", sandboxFlags);
@@ -1514,7 +1469,7 @@ export class WebSandbox extends HTMLElement {
     }
 
     // Strict-mode configuration the element will not honour, said once per instance each.
-    private _warnAboutStrictConfig(config: SandboxConfig) {
+    private _warnAboutStrictConfig(config: StoredConfig) {
         const warn = (message: string) => {
             if (this._warnedStrict.has(message)) return;
             this._warnedStrict.add(message);
@@ -1526,8 +1481,6 @@ export class WebSandbox extends HTMLElement {
         }
         const unsafe = config.unsafeCapabilities || [];
         if (unsafe.length > 0) warn(`[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: ${unsafe.join(', ')}.`);
-        // Compared in the grammar's tokens (policy-grammar.ts): a name the grammar drops is warned about there.
-        for (const message of strictPolicyOverrides(sanitizeDirectives(config.connectionsAllowed), sanitizeDirectives(DEFAULT_SANDBOX_CONFIG.connectionsAllowed))) warn(message);
     }
 
     // The view liveness check (A5): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.
@@ -1583,8 +1536,8 @@ export class WebSandbox extends HTMLElement {
     }
 
     // Iframe and worker mode: the build completes when the guest checks in, its bootstrap's announcement accepted
-    // (CB1, S46), with the port it announced; where this build's guest runs no bootstrap (no allow-scripts, or a policy
-    // that refuses it), on the wrapper's one load, with no port. Anything it throws ends the sandbox, as in _onFrameLoad.
+    // (CB1, S46), with the port it announced; where this build's guest runs no bootstrap (no allow-scripts), on the
+    // wrapper's one load, with no port. Anything it throws ends the sandbox, as in _onFrameLoad.
     private _finishBuild(port: MessagePort | null) {
         if (this._state !== 'loading') {
             port?.close();

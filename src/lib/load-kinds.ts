@@ -1,3 +1,5 @@
+import type { OriginKind } from "./csp/origins";
+
 /**
  * Which file types each kind of load admits: the one table that both the policy and reference resolution read
  * (focused review 2026-10-14, W1). Host-side; the strict view gets the table as data (RENDER_RULES).
@@ -12,19 +14,19 @@
  * So the library itself decides, at the one place every reference is resolved: a reference names a file only when
  * the file's type is admitted for the kind of load the referencing element or rule makes. A mismatch is not a
  * reference: it stays as written and fails closed (a relative URL against the guest's about:blank base), with one
- * warning. The same table decides which directive a registered type gets `blob:` in (kindsForTypes,
- * csp/file-sources.ts), so CSP admission and resolution cannot drift apart.
+ * warning. The same table decides which kinds of the guest policy a registered type gets `blob:` for (fileKinds,
+ * csp/csp-generator.ts), so CSP admission and resolution cannot drift apart.
  *
- *   kind     admits                                     load                                          directive
- *   script   text/javascript, application/javascript,  <script src>, <link rel=modulepreload>,       script-src-elem
+ *   kind     admits                                     load                                          origins key
+ *   script   text/javascript, application/javascript,  <script src>, <link rel=modulepreload>,       scripts
  *            text/ecmascript, application/ecmascript    preload as=script, the module graph
- *   style    text/css                                   <link rel=stylesheet>, @import, preload as=style  style-src-elem
- *   image    image/*                                    <img src>, srcset, poster, <link rel=icon>,   img-src
+ *   style    text/css                                   <link rel=stylesheet>, @import, preload as=style  styles
+ *   image    image/*                                    <img src>, srcset, poster, <link rel=icon>,   images
  *                                                       CSS url() outside @font-face, preload as=image
- *   font     font/*                                     url() inside @font-face, preload as=font      font-src
- *   media    audio/*, video/*                           <audio>, <video>, <source src>, preload as=audio|video  media-src
- *   track    text/vtt                                   <track src>, preload as=track                 media-src
- *   fetch    any type                                   preload as=fetch (and sandboxFiles.read())     connect-src
+ *   font     font/*                                     url() inside @font-face, preload as=font      fonts
+ *   media    audio/*, video/*                           <audio>, <video>, <source src>, preload as=audio|video  media
+ *   track    text/vtt                                   <track src>, preload as=track                 media
+ *   fetch    any type                                   preload as=fetch (and sandboxFiles.read())     connect
  *
  * This applies to host-registered files exactly as to committed ones: a host that registers `x.js` as text/plain
  * gets a text file, never a script. What it does not cover is code that asks for a URL itself
@@ -34,23 +36,22 @@
  */
 
 export interface KindRule {
-    /** The directive that governs this kind of load (CSP Level 3 effective directive, effective-directive.ts). */
-    directive: 'script-src-elem' | 'style-src-elem' | 'img-src' | 'font-src' | 'media-src' | 'connect-src';
+    /** The kind of the guest policy this load is checked as: its `origins` key (csp/origins.ts). */
+    key: OriginKind;
     /** Types admitted exactly. */
     types: readonly string[];
     /** Type prefixes admitted ('' admits every type). */
     prefixes: readonly string[];
 }
 
-// In this order: kindsForTypes adds directives in it, and the policy's directive order follows (fetch first, as before the table).
 export const LOAD_KINDS = {
-    fetch: { directive: 'connect-src', types: [], prefixes: [''] },
-    script: { directive: 'script-src-elem', types: ['text/javascript', 'application/javascript', 'text/ecmascript', 'application/ecmascript'], prefixes: [] },
-    style: { directive: 'style-src-elem', types: ['text/css'], prefixes: [] },
-    image: { directive: 'img-src', types: [], prefixes: ['image/'] },
-    font: { directive: 'font-src', types: [], prefixes: ['font/'] },
-    media: { directive: 'media-src', types: [], prefixes: ['audio/', 'video/'] },
-    track: { directive: 'media-src', types: ['text/vtt'], prefixes: [] },
+    fetch: { key: 'connect', types: [], prefixes: [''] },
+    script: { key: 'scripts', types: ['text/javascript', 'application/javascript', 'text/ecmascript', 'application/ecmascript'], prefixes: [] },
+    style: { key: 'styles', types: ['text/css'], prefixes: [] },
+    image: { key: 'images', types: [], prefixes: ['image/'] },
+    font: { key: 'fonts', types: [], prefixes: ['font/'] },
+    media: { key: 'media', types: [], prefixes: ['audio/', 'video/'] },
+    track: { key: 'media', types: ['text/vtt'], prefixes: [] },
 } as const satisfies Record<string, KindRule>;
 
 /** A kind of load a reference can make. */

@@ -61,6 +61,8 @@ WebKit on Linux is not Safari.
 
 ### A1, A2 · A configured value or key could add CSP directives
 
+> Since 2026-10-14 the policy steps described here are replaced by typed `origins` and one policy template per mode ([ADR-007](../ADR-007-typed-origins.md)); their guarantees hold by construction there.
+
 - **Guarantee**: no configuration can add a directive to a guest policy; the directives strict mode fixes are the
   only ones of their name in the view policy.
 - **Found**: `generateCSP()` trimmed and joined values; the strict view policy copied passed-through values as they

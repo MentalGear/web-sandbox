@@ -211,7 +211,7 @@ for (const guestMeta of [false, true]) {
     test(`iframe mode, ${label}: no request carries the host page URL in Referer; at most the host origin, where the engine sends it`, async ({ sandbox, browserName }) => {
         const prefix = `t${++run}${guestMeta ? 'meta' : 'plain'}`;
         expect(await sandbox.mount({
-            connectionsAllowed: { 'img-src': [REC], 'connect-src': [REC] },
+            origins: { images: [REC], connect: [REC] },
             ...(guestMeta ? { html: '<head><meta name="referrer" content="unsafe-url"></head><body></body>' } : {}),
         })).toBe('ready');
         const outcomes = await sandbox.inGuest(requestsBody(prefix));
@@ -238,7 +238,7 @@ for (const guestMeta of [false, true]) {
 
 test('iframe mode, residual S18: a guest asking for unsafe-url sends a same-site target the host ORIGIN in Firefox and the FULL host URL in WebKit (measured; strict mode closes it, section 4)', async ({ sandbox, browserName }) => {
     const prefix = `t${++run}samesite`;
-    expect(await sandbox.mount({ connectionsAllowed: { 'img-src': [REC_SAME_SITE] } })).toBe('ready');
+    expect(await sandbox.mount({ origins: { images: [REC_SAME_SITE] } })).toBe('ready');
     const outcome = await sandbox.inGuest(`
         const image = (kind, policy) => new Promise(res => { const i = new Image(); if (policy) i.referrerPolicy = policy; i.onload = () => res('loaded'); i.onerror = () => res('error'); i.src = '${REC_SAME_SITE}/r?id=${prefix}-' + kind; });
         return { image: await image('image'), imageUnsafe: await image('imageUnsafe', 'unsafe-url') };
@@ -254,7 +254,7 @@ test('iframe mode, residual S18: a guest asking for unsafe-url sends a same-site
 
 test('worker mode: the worker sees only its own blob: URL, and its requests carry no Referer even with unsafe-url', async ({ sandbox }) => {
     const prefix = `t${++run}worker`;
-    expect(await sandbox.mount({ mode: 'worker', connectionsAllowed: { 'connect-src': [REC] } })).toBe('ready');
+    expect(await sandbox.mount({ mode: 'worker', origins: { connect: [REC] } })).toBe('ready');
     const r = await sandbox.inGuest(`
         const id = (kind) => '${REC}/r?id=${prefix}-' + kind;
         return {
@@ -278,7 +278,7 @@ test('worker mode: the worker sees only its own blob: URL, and its requests carr
 test('strict mode: the worker sees only its own blob: URL; no request from the worker or from rendered markup carries a Referer or the host origin, cross-site or same-site, even when the markup asks for unsafe-url (control: the host page)', async ({ sandbox, browserName }) => {
     const prefix = `t${++run}strict`;
     const targets = { cross: REC, same: REC_SAME_SITE };
-    expect(await sandbox.mount({ mode: 'strict', connectionsAllowed: { 'img-src': [REC, REC_SAME_SITE], 'connect-src': [REC, REC_SAME_SITE] } })).toBe('ready');
+    expect(await sandbox.mount({ mode: 'strict', origins: { images: [REC, REC_SAME_SITE], connect: [REC, REC_SAME_SITE] } })).toBe('ready');
 
     const worker = await sandbox.inGuest(`
         const r = { href: self.location.href, origin: self.origin, stack: String(new Error('probe').stack), names: ['document', 'parent', 'top', 'opener', 'frames'].filter(n => n in globalThis) };

@@ -48,7 +48,7 @@ const ATTEMPTS = (blocked: string) => `
 test.describe('V1: a guest worker keeps only the allowlisted globals; every request it can make is governed by the policy', () => {
     for (const mode of ['worker', 'strict'] as const) {
         test(`${mode} mode: new EventSource() to an origin connect-src blocks reaches nothing (Firefox sent it); fetch to the allowed listener arrives (positive control)`, async ({ sandbox }) => {
-            expect(await sandbox.mount({ mode, connectionsAllowed: { 'connect-src': [recorder.allowed] } })).toBe('ready');
+            expect(await sandbox.mount({ mode, origins: { connect: [recorder.allowed] } })).toBe('ready');
             await sandbox.run(`try { new EventSource('${recorder.blocked}/es?x=1'); } catch (e) {} fetch('${recorder.allowed}/es-control').catch(() => {});`);
             await recorder.waitFor('allowed', '/es-control');
             await sandbox.page.waitForTimeout(1000);
@@ -56,8 +56,9 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         });
 
         test(`${mode} mode: the worker's globals are the allowlist and nothing else, and no network API of any engine reaches the blocked listener; fetch, XMLHttpRequest, WebSocket${mode === 'worker' ? ' and importScripts' : ''} reach the allowed one (positive controls)`, async ({ sandbox }) => {
-            const scriptSources = mode === 'worker' ? { 'script-src': ["'unsafe-inline'", recorder.allowed] } : {};
-            expect(await sandbox.mount({ mode, connectionsAllowed: { 'connect-src': [recorder.allowed, wss(recorder.allowed)], 'font-src': [recorder.allowed], ...scriptSources } })).toBe('ready');
+            const origins = { connect: [recorder.allowed, wss(recorder.allowed)], fonts: [recorder.allowed] };
+            // importScripts' positive control needs a script origin, which only worker mode takes (strict has no scripts kind)
+            expect(await sandbox.mount(mode === 'worker' ? { mode, origins: { ...origins, scripts: [recorder.allowed] } } : { mode, origins })).toBe('ready');
             const seen = await sandbox.inGuest(`
                 // a WebIDL constant (a non-configurable primitive, Chromium's TEMPORARY) cannot be deleted and requests nothing
                 const isConstant = (owner, n) => { const d = Object.getOwnPropertyDescriptor(owner, n); return !d.configurable && 'value' in d && Object(d.value) !== d.value; };
@@ -85,14 +86,14 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
     }
 
     test('positive control of the evidence: an EventSource the policy allows reaches the allowed listener (iframe mode, the document)', async ({ sandbox }) => {
-        expect(await sandbox.mount({ connectionsAllowed: { 'connect-src': [recorder.allowed] } })).toBe('ready');
+        expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         await sandbox.run(`new EventSource('${recorder.allowed}/es-allowed?x=1');`);
         await recorder.waitFor('allowed', '/es-allowed');
         expect(recorder.hits.find(hit => hit.path.startsWith('/es-allowed'))?.headers.accept).toBe('text/event-stream');
     });
 
     test('residual (measured), iframe mode: a worker the guest creates is a realm of its own; Firefox sends its EventSource and loads its FontFace past the policy, Chromium and WebKit do not', async ({ sandbox, browserName }) => {
-        expect(await sandbox.mount({ connectionsAllowed: { 'connect-src': [recorder.allowed] } })).toBe('ready');
+        expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         const body = `try { new EventSource('${recorder.blocked}/v1-guest-worker-es') } catch (e) {} try { new FontFace('v1', 'url(${recorder.blocked}/v1-guest-worker-font.woff)').load().catch(() => {}) } catch (e) {} fetch('${recorder.allowed}/v1-guest-worker-control').catch(() => {});`;
         await sandbox.run(`new Worker(URL.createObjectURL(new Blob([${JSON.stringify(body)}], { type: 'text/javascript' })));`);
         await recorder.waitFor('allowed', '/v1-guest-worker-control'); // the guest's worker runs (positive control)
@@ -209,7 +210,7 @@ test.describe('L1: a guest cannot outlive terminate() or reset()', () => {
     for (const mode of ['iframe', 'worker'] as const) {
         for (const ending of ['terminate', 'reset'] as const) {
             test(`${mode} mode, ${ending}(): timers, a promise loop${mode === 'iframe' ? ' and a nested worker' : ''} all stop; they ran before (positive control)`, async ({ sandbox }) => {
-                expect(await sandbox.mount({ mode, connectionsAllowed: { 'connect-src': [recorder.allowed] } })).toBe('ready');
+                expect(await sandbox.mount({ mode, origins: { connect: [recorder.allowed] } })).toBe('ready');
                 await sandbox.run(OUTLIVE(recorder.allowed));
                 for (const path of ['/l1-interval', '/l1-timeout', '/l1-promise', ...(mode === 'iframe' ? ['/l1-worker'] : [])]) await recorder.waitFor('allowed', path);
                 if (ending === 'terminate') await sandbox.page.evaluate(() => (document.querySelector('web-sandbox') as any).terminate('L1'));

@@ -20,7 +20,7 @@ test('Monkey Patch Bypass - Mitigated', async ({ sandbox }) => {
 });
 
 test('positive control: the same fetch to an allowlisted origin succeeds and the listener sees it', async ({ sandbox }) => {
-    await sandbox.mount({ ...preset.rules, connectionsAllowed: { 'connect-src': [recorder.allowed] } });
+    await sandbox.mount({ ...preset.rules, origins: { connect: [recorder.allowed] } });
 
     const logs = await sandbox.runUntilDone(payload(recorder.allowed));
 

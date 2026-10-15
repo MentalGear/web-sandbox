@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { isSourceExpression, KNOWN_DIRECTIVES } from '@src/lib/csp/policy-grammar';
 import { parseLikeABrowser, prng, randomInjection } from './policy-helpers';
 import { viewBootstrapHash } from '@src/lib/in-sandbox-view';
-import { STRICT_PASSED_THROUGH } from '@src/lib/csp/strict-policy';
+import { ORIGIN_PATTERN } from '@src/lib/origin';
+import { ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { buildGuestDocument } from '@src/lib/frame-documents';
 import { deepMerge } from '@src/lib/utils';
 
@@ -32,91 +32,77 @@ afterEach(() => {
 });
 
 const STRICT_FIXED_VALUES = (hash: string): Record<string, string[]> => ({
-    'script-src': [hash], 'script-src-attr': ["'none'"], 'base-uri': ["'none'"], 'form-action': ["'none'"],
-    'worker-src': ['blob:'], 'frame-src': ["'none'"], 'object-src': ["'none'"],
+    'default-src': ["'none'"], 'script-src': [hash], 'script-src-attr': ["'none'"], 'base-uri': ["'none'"], 'form-action': ["'none'"],
+    'worker-src': ['blob:'], 'frame-src': ["'none'"], 'object-src': ["'none'"], 'manifest-src': ["'none'"],
 });
+const COOPERATIVE_NAMES = ['default-src', 'script-src', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'frame-src', 'object-src', 'base-uri', 'form-action', 'manifest-src', 'upgrade-insecure-requests'];
+// what a configurable directive may hold besides origins: the library's own sources
+const LIBRARY_SOURCES = new Set(["'unsafe-inline'", "'none'", 'blob:']);
 
-describe('A1: no configured key or value adds a directive to a guest policy', () => {
-    it("strict mode, the reviewers' injection: the view keeps script-src-attr 'none', frame-src 'none' and its hash-only script-src", async () => {
+describe('A1: no configured key or value adds a directive to a guest policy (ADR-007: only origins reach it)', () => {
+    it("strict mode, the reviewers' injection as origins: dropped; the view keeps script-src-attr 'none', frame-src 'none' and its hash-only script-src", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'strict', connectionsAllowed: {
-            'default-src': ["'none'; script-src-attr 'unsafe-inline'; script-src * 'unsafe-inline'; frame-src *; base-uri *; form-action *"],
-            'connect-src': ['https://api.example; script-src-elem https:'],
+        const el = await mount({ mode: 'strict', origins: {
+            images: ["'none'; script-src-attr 'unsafe-inline'; script-src * 'unsafe-inline'; frame-src *; base-uri *; form-action *"],
+            connect: ['https://api.example; script-src-elem https:'],
         } });
         const { names, directives } = parseLikeABrowser(policyOf(el));
         for (const [name, value] of Object.entries(STRICT_FIXED_VALUES(viewBootstrapHash()))) expect(directives.get(name), name).toEqual(value);
+        expect([directives.get('img-src'), directives.get('connect-src')]).toEqual([["'none'"], ["'none'"]]);
         expect(names).not.toContain('script-src-elem');
         expect(new Set(names).size).toBe(names.length);
     });
 
-    it('iframe mode, an injected key: S7, S14 and the bootstrap check see what the policy holds', async () => {
+    it('iframe mode, an injected key: not a kind, dropped with one warning; the policy is the template', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'], connectionsAllowed: { 'img-src https://a; script-src-elem': ["'self'", 'https://cdn.example'] } });
+        const el = await mount({ capabilities: ['allow-scripts'], origins: { 'img-src https://a; script-src-elem': ["'self'", 'https://cdn.example'] } });
         const { names } = parseLikeABrowser(policyOf(el));
-        expect(names).not.toContain('script-src-elem');
-        expect(names).not.toContain('img-src');
+        expect(names).toEqual(COOPERATIVE_NAMES);
         expect(policyOf(el).toLowerCase()).not.toContain("'self'");
-        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('directive name'))).toHaveLength(1);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('origins takes'))).toHaveLength(1);
     });
 
-    it('property, strict and iframe mode: 200 random configs; fixed directives keep their values, the directive set is what the config may name, each once, every token a source expression', async () => {
+    it('property, strict and iframe mode: 200 random configs; the directives are the template\'s, in order, the fixed ones keep their values, every other token is an origin or the library\'s', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const random = prng(14102026);
-        const listNames = KNOWN_DIRECTIVES.filter(n => n !== 'upgrade-insecure-requests');
+        const keys = [...ORIGIN_KINDS, 'img-src', 'script-src', 'default-src'];
         const fixed = STRICT_FIXED_VALUES(viewBootstrapHash());
-        const strictAllowed = new Set([...Object.keys(fixed), ...STRICT_PASSED_THROUGH, 'style-src', 'upgrade-insecure-requests']);
-        const META_IGNORED = ['frame-ancestors', 'report-uri', 'report-to', 'sandbox'];
-        const DEFAULT_KEYS = ['upgrade-insecure-requests', 'default-src', 'script-src', 'base-uri', 'style-src', 'form-action', 'worker-src'];
         const el = await mount();
         for (let run = 0; run < 200; run++) {
-            const connectionsAllowed: Record<string, string[]> = {};
+            const origins: Record<string, string[]> = {};
             for (let k = 0; k < 3; k++) {
-                const key = random() < 0.5 ? listNames[Math.floor(random() * listNames.length)]! : randomInjection(random);
-                connectionsAllowed[key] = [randomInjection(random), randomInjection(random)];
+                const key = random() < 0.5 ? keys[Math.floor(random() * keys.length)]! : randomInjection(random);
+                origins[key] = [randomInjection(random), random() < 0.3 ? 'https://a.example' : randomInjection(random)];
             }
-            const context = JSON.stringify(connectionsAllowed);
+            const context = JSON.stringify(origins);
 
-            el.setConfig({ mode: 'strict', connectionsAllowed });
+            el.setConfig({ mode: 'strict', origins });
             const strict = parseLikeABrowser(policyOf(el));
             for (const [name, value] of Object.entries(fixed)) expect(strict.directives.get(name), `${name} in ${context}`).toEqual(value);
-            for (const name of strict.names) expect(strictAllowed.has(name), `${name} in ${context}`).toBe(true);
             expect(new Set(strict.names).size, context).toBe(strict.names.length);
 
-            el.setConfig({ capabilities: ['allow-scripts'], connectionsAllowed });
+            el.setConfig({ capabilities: ['allow-scripts'], origins });
             const iframe = parseLikeABrowser(policyOf(el));
-            const configured = Object.keys(connectionsAllowed).filter(key => (KNOWN_DIRECTIVES as readonly string[]).includes(key) && !META_IGNORED.includes(key));
-            expect(new Set(iframe.names), context).toEqual(new Set([...DEFAULT_KEYS, ...configured]));
-            expect(iframe.names.length, context).toBe(new Set(iframe.names).size);
-            for (const tokens of [...strict.directives.values(), ...iframe.directives.values()]) {
-                for (const token of tokens) expect(isSourceExpression(token), `${token} in ${context}`).toBe(true);
+            expect(iframe.names, context).toEqual(COOPERATIVE_NAMES);
+            for (const { directives } of [strict, iframe]) {
+                for (const [name, tokens] of directives) {
+                    if (name === 'script-src' && tokens[0] !== "'unsafe-inline'") continue; // the strict hash, checked above
+                    for (const token of tokens) expect(LIBRARY_SOURCES.has(token) || ORIGIN_PATTERN.test(token), `${name} ${token} in ${context}`).toBe(true);
+                }
             }
         }
     }, 60000); // 400 environment builds in jsdom
 });
 
 describe("A2: the S14 'self' drop cannot be bypassed by punctuation", () => {
-    it("\"'self';\", \"'self',\" and 'SELF' in a key never reach the policy", async () => {
+    it("\"'self';\", \"'self',\" and 'SELF' never reach the policy, in any kind, in any mode", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         for (const mode of ['iframe', 'worker', 'strict']) {
-            const el = await mount({ mode, capabilities: ['allow-scripts'], connectionsAllowed: {
-                'script-src': ["'unsafe-inline' 'self';"], 'img-src': ["'self',"], 'connect-src': ["'SELF'"], "font-src 'self'": ['https://f.example'],
+            const el = await mount({ mode, capabilities: ['allow-scripts'], origins: {
+                scripts: ["'unsafe-inline' 'self';"], images: ["'self',"], connect: ["'SELF'"], "fonts 'self'": ['https://f.example'],
             } });
             expect(policyOf(el).toLowerCase(), mode).not.toContain('self');
         }
-    });
-});
-
-describe('A3: the bootstrap check follows the script-src-elem fallback', () => {
-    it('warns once when script-src-elem refuses inline scripts, even though script-src allows them', async () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        await mount({ capabilities: ['allow-scripts'], connectionsAllowed: { 'script-src-elem': ['https://cdn.example'] } });
-        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('cannot run'))).toHaveLength(1);
-    });
-
-    it("does not warn when script-src-elem allows them", async () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        await mount({ capabilities: ['allow-scripts'], connectionsAllowed: { 'script-src-elem': ["'unsafe-inline'"] } });
-        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('cannot run'))).toEqual([]);
     });
 });
 
@@ -142,22 +128,22 @@ describe('A4: an unknown mode fails closed', () => {
 });
 
 describe("A5: 'unsafe-eval' and 'wasm-unsafe-eval' come only from scriptUnsafe", () => {
-    it('dropped from every directive with one warning each while scriptUnsafe is off, in every mode', async () => {
+    it('a configured eval keyword is not an origin: dropped with one warning each, in every mode', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         for (const mode of ['iframe', 'worker', 'strict']) {
             warn.mockClear();
-            const el = await mount({ mode, capabilities: ['allow-scripts'], connectionsAllowed: {
-                'script-src': ["'unsafe-inline'", "'unsafe-eval'"], 'default-src': ["'wasm-unsafe-eval'"], 'style-src': ["'UNSAFE-EVAL'"],
+            const el = await mount({ mode, capabilities: ['allow-scripts'], origins: {
+                connect: ["'unsafe-eval'"], images: ["'wasm-unsafe-eval'"], styles: ["'UNSAFE-EVAL'"],
             } });
             el.reset();
             expect(policyOf(el).toLowerCase(), mode).not.toContain('eval');
-            expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes("'unsafe-eval' and 'wasm-unsafe-eval' are not allowed")), mode).toHaveLength(3);
+            expect(warn.mock.calls.map(c => String(c[0])).filter(m => /origins\.\w+ entry "'(wasm-)?unsafe-eval'"/i.test(m)), mode).toHaveLength(3);
         }
     });
 
     it("with scriptUnsafe the host's own 'unsafe-eval' is the only eval keyword, in script-src, with the S4 warning and no other", async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ scriptUnsafe: true, capabilities: ['allow-scripts'], connectionsAllowed: { 'script-src': ["'unsafe-inline'", "'unsafe-eval'"], 'default-src': ["'wasm-unsafe-eval'"] } });
+        const el = await mount({ scriptUnsafe: true, capabilities: ['allow-scripts'] });
         const { directives } = parseLikeABrowser(policyOf(el));
         expect(directives.get('script-src')).toEqual(["'unsafe-inline'", "'unsafe-eval'"]);
         expect(directives.get('default-src')).toEqual(["'none'"]);
@@ -247,12 +233,12 @@ describe('A7: a merge never writes prototypes, with no list of keys', () => {
 
     it('a JSON config with "__proto__" keys gives the element no inherited settings', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const config = JSON.parse('{"capabilities": ["allow-scripts"], "__proto__": {"scriptUnsafe": true, "mode": "worker", "entry": "x.js"}, "connectionsAllowed": {"__proto__": {"img-src": ["*"]}}}');
+        const config = JSON.parse('{"capabilities": ["allow-scripts"], "__proto__": {"scriptUnsafe": true, "mode": "worker", "entry": "x.js"}, "origins": {"__proto__": {"images": ["https://p.example"]}}}');
         const el = await mount(config);
         expect(Object.getPrototypeOf(el._config)).toBe(Object.prototype);
-        expect(Object.getPrototypeOf(el._config.connectionsAllowed)).toBe(Object.prototype);
+        expect(Object.getPrototypeOf(el._origins)).toBe(Object.prototype);
         expect([el._config.scriptUnsafe, el._config.mode, el._config.entry]).toEqual([false, 'iframe', undefined]);
-        expect(policyOf(el)).not.toContain('img-src');
+        expect(policyOf(el)).toContain("img-src 'none';");
     });
 });
 
@@ -263,27 +249,30 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         return reasons;
     };
 
-    it.each([
-        ['a string where a directive takes a list', { connectionsAllowed: { 'img-src': 'x; script-src *' } }],
-        ['a number where a directive takes a list', { connectionsAllowed: { 'connect-src': 7 } }],
-        ['a list holding a non-string', { connectionsAllowed: { 'img-src': [1] } }],
-    ])('%s: setConfig() does not throw; state terminated, one event with the reason, no frame; reset() stays closed; a usable config starts again', async (_, config) => {
+    it('a build that throws: setConfig() does not throw; state terminated, one event with the reason, no frame; reset() stays closed; a usable config starts again', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
         const reasons = terminations(el);
-        expect(() => el.setConfig(config)).not.toThrow();
+        const build = el._guestPolicy;
+        el._guestPolicy = () => { throw new Error('the policy could not be made'); };
+        expect(() => el.setConfig({ capabilities: ['allow-scripts'] })).not.toThrow();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
         expect(reasons).toEqual(['the environment could not be built (Error)']);
         expect(() => el.reset()).not.toThrow();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
         expect(warn.mock.calls.some(c => String(c[0]).startsWith('[Sandbox] terminated: the environment could not be built'))).toBe(true);
+        el._guestPolicy = build;
         el.setConfig({ capabilities: ['allow-scripts'] });
         expect(el.state).toBe('loading');
         expect(wrapperOf(el)).not.toBeNull();
     });
 
     it.each([
-        ['a Proxy array', () => ({ connectionsAllowed: { 'connect-src': new Proxy(['https://a.example'], {}) } })],
+        ['a Proxy array', () => ({ origins: { connect: new Proxy(['https://a.example'], {}) } })],
+        ['origins that is not an object', () => ({ origins: 'https://a.example' })],
+        ['origins: null', () => ({ origins: null })],
+        ['a kind that is not a list (a string)', () => ({ origins: { images: "x; script-src *" } })],
+        ['a kind that is not a list (a number)', () => ({ origins: { connect: 7 } })],
         ['a function value', () => ({ html: () => '<p>' })],
         ['null', () => null],
         ['an array', () => []],
@@ -306,7 +295,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const list = ['https://a.example'];
         const capabilities: string[] = ['allow-scripts'];
-        const el = await mount({ capabilities, connectionsAllowed: { 'connect-src': list } });
+        const el = await mount({ capabilities, origins: { connect: list } });
         list.push('https://later.example');
         capabilities.push('allow-forms');
         el.reset();
