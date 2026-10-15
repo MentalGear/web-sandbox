@@ -1009,15 +1009,19 @@ test.describe('10. CSS references and srcset: stylesheets and inline styles name
             <img id="s3" srcset="missing.svg 1x, img/bg.svg?v=2 2x">`;
         expect(await sandbox.mount({ html })).toBe('ready');
         const r = await inGuest(sandbox, `${LOADED}
-            const img = (id) => { const i = document.getElementById(id); return { event: __events[id], current: i.currentSrc, size: i.naturalWidth + 'x' + i.naturalHeight }; };
+            const img = (id) => { const i = document.getElementById(id); return { event: __events[id], complete: i.complete, current: i.currentSrc, size: i.naturalWidth + 'x' + i.naturalHeight }; };
             return {
                 s1: img('s1'), s2: img('s2'), s3: { ...img('s3'), srcset: document.getElementById('s3').getAttribute('srcset') },
                 urls: { bg: sandboxFiles.url('img/bg.svg'), x: sandboxFiles.url('img/x.svg') },
                 violations: await settle([]),
             };
         `);
-        expect(r.s1).toEqual({ event: 'load', current: r.urls.bg, size: '7x9' });
-        expect(r.s2).toEqual({ event: 'load', current: r.urls.x, size: '5x3' });
+        // A file-named candidate loaded: after the document's load (which waits for every image) the element is
+        // complete, shows the file's blob: URL and has its decoded size. Not its `load` event: on a CI runner Firefox once
+        // reported the <picture> image complete at the right URL and size without the document-level listener having
+        // recorded the event (not reproduced locally in 60 runs, quiet and under load), so the event is not evidence here.
+        expect(r.s1).toMatchObject({ complete: true, current: r.urls.bg, size: '7x9' });
+        expect(r.s2).toMatchObject({ complete: true, current: r.urls.x, size: '5x3' });
         // the document's load event waits for every image, so 0x0 after it means the load failed
         expect(r.s3.event).toBe(UNRESOLVED_SRCSET_EVENT[browserName]);
         expect(r.s3).toMatchObject({ size: '0x0', srcset: 'missing.svg 1x, img/bg.svg?v=2 2x' });
