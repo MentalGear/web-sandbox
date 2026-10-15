@@ -11,12 +11,13 @@ import { mergeGuestImportMaps } from "./lib/import-map";
 import { deepMerge } from "./lib/utils";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
 import { createBroker, RESERVED_METHOD_PREFIX } from "./lib/rpc";
+import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
 import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT } from "./lib/violation";
-import { createLogLimiter, LOG_EVENTS_PER_SECOND, toLogDetail, type SandboxLogLevel } from "./lib/sandbox-log";
+import { createLogLimiter, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, toLogDetail, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
@@ -299,6 +300,7 @@ export class WebSandbox extends HTMLElement {
     private _violationCounts = new Map<string, number>(); // 'violation' events dispatched per source for the current environment (capped, violation.ts)
     private _logLimiter = createLogLimiter(); // guest 'sandbox-log' events per second for the current environment (sandbox-log.ts)
     private _warnedLogLimit = false;          // the log rate limit warned for the current environment
+    private _warnedLogBytes = false;          // a guest line past LOG_MAX_BYTES warned for the current environment
     // Counts environments: every teardown increments it. Read only by _notifyThenAct, the one path for a host
     // action that dispatches an event and then acts on the environment, so a listener that reset or terminated
     // the sandbox in between is never undone (review B5).
@@ -334,7 +336,7 @@ export class WebSandbox extends HTMLElement {
     // frame recreation (the guest's broker is per-frame and resets with each new frame). Its send only
     // ever carries the host's own requests: it queues them until a port exists, then setupChannel
     // flushes them. Answers to the guest never use it — they go back on the port the request arrived on.
-    private _broker = createBroker((frame) => this._postRpc(frame));
+    private _broker = createBroker((frame) => this._postRpc(frame), { sizeOf: createSizeOf() });
 
     constructor() {
         super();
@@ -1016,7 +1018,14 @@ export class WebSandbox extends HTMLElement {
     // Every detail is normalised and labelled with where it came from (sandbox-log.ts, review B3), here, from the
     // raw line and its source: no caller can hand this a detail of its own making.
     private _dispatchLog(line: unknown, source: 'guest' | 'host') {
-        this.dispatchEvent(new CustomEvent('sandbox-log', { detail: toLogDetail(line, source), bubbles: true }));
+        this.dispatchEvent(new CustomEvent('sandbox-log', { detail: toLogDetail(line, source, () => this._warnLogBytes()), bubbles: true }));
+    }
+
+    // A line past LOG_MAX_BYTES arrived (the guest's relay never sends one): its arguments past the budget were dropped.
+    private _warnLogBytes() {
+        if (this._warnedLogBytes) return;
+        this._warnedLogBytes = true;
+        console.warn(`[Sandbox] a guest log line was larger than ${LOG_MAX_BYTES} bytes; its arguments past that were dropped.`);
     }
 
     // A LOG frame from the guest's port: normalised, labelled 'guest', and at most LOG_EVENTS_PER_SECOND per
@@ -1157,6 +1166,7 @@ export class WebSandbox extends HTMLElement {
         this._guestWrites?.close(); // its writes stay listable and committable until the next build (initialize)
         this._logLimiter = createLogLimiter(); // the log rate limit is per environment
         this._warnedLogLimit = false;
+        this._warnedLogBytes = false;
         this._queuedMessages = []; // Clear queue for the old environment
         this._rpcQueue = [];       // same for the host's RPC requests queued for the old environment
         this._violationCounts.clear(); // the violation cap is per environment
@@ -1270,9 +1280,9 @@ export class WebSandbox extends HTMLElement {
         if (mode === 'cooperative' && this._autoResizeEnabled()) features.autoResize = true;
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
-        const featuresArgument = Object.keys(features).length > 0 ? `, ${toInlineScriptLiteral(features)}` : '';
+        const featuresArgument = Object.keys(features).length > 0 ? `, ${toInlineScriptLiteral(features)}` : ', undefined';
         // Only literals are interpolated: `=== true` here as well, whatever setConfig() stored (review A6).
-        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, '${mode}', console, ${createBroker.toString()}${featuresArgument})`;
+        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, '${mode}', console, ${createBroker.toString()}${featuresArgument}, ${createSizeOf.toString()})`;
         // Guest writes (C5): sandboxFiles gets the comms script's captured write call through `comms`, a constant
         // of a block the whole bootstrap then runs in: block-scoped, so never a global guest code could read.
         // Without them the bootstrap keeps its text: the comms statement, then sandboxFiles without a write call
@@ -1484,7 +1494,7 @@ export class WebSandbox extends HTMLElement {
         const prelude = '(function (g) {'
             + `(${assertEntryScoped.toString()})(g);`
             + workerGlobalsStatement('g')
-            + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)});`
+            + `var comms = (${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, 'strict', console, ${createBroker.toString()}, ${toInlineScriptLiteral(features)}, ${createSizeOf.toString()});`
             + `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}${this._config.guestWrites === true ? ', comms.writeFiles' : ''});`
             + `(${inStrictWorker.toString()})(comms, ${toInlineScriptLiteral(options)});`
             + '})(this);';

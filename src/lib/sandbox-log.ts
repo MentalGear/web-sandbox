@@ -16,6 +16,7 @@
  */
 
 import { createRateLimiter } from './rate-limit';
+import { createSizeOf } from './structured-size';
 
 export type SandboxLogLevel = 'log' | 'info' | 'warn' | 'error';
 
@@ -28,6 +29,24 @@ export interface SandboxLog {
     /** 'host': a line the element wrote itself. 'guest': a line from the guest's port, whatever it claims. */
     source: 'guest' | 'host';
 }
+
+/**
+ * The byte budget of one line, all its arguments together, measured with structured-size.ts (review round 1, R3-3):
+ * LOG_MAX_ARGS and LOG_MAX_STRING bound the strings, this bounds the rest (a typed array, an object of 100 000 keys).
+ * The guest's console relay applies it before a line is posted (an argument past it crosses as a string saying so),
+ * and the host again on receipt. Mirrored in in-sandbox-script.ts (a test keeps them equal).
+ */
+export const LOG_MAX_BYTES = 1048576;
+
+/**
+ * The guest's console relay sends at most this many bytes of lines per second, and at most LOG_EVENTS_PER_SECOND lines
+ * (review round 1, R3-3): a line dropped in the guest is never cloned onto the host's thread. Mirrored in
+ * in-sandbox-script.ts (a test keeps them equal).
+ */
+export const LOG_BYTES_PER_SECOND = 4194304;
+
+/** What an argument past LOG_MAX_BYTES becomes on receipt. */
+export const LOG_DROPPED_ARGUMENT = "[Sandbox] dropped: past the log line's byte budget";
 
 /** Most arguments one line keeps; later ones are dropped. */
 export const LOG_MAX_ARGS = 64;
@@ -45,15 +64,33 @@ const LEVELS: readonly SandboxLogLevel[] = ['log', 'info', 'warn', 'error'];
 
 const clampArgument = (value: unknown): unknown => (typeof value === 'string' && value.length > LOG_MAX_STRING ? value.slice(0, LOG_MAX_STRING) : value);
 
-/** Normalises one LOG frame (or a line of the host's own) into the event detail. Never throws. */
-export function toLogDetail(frame: unknown, source: 'guest' | 'host'): SandboxLog {
+const sizeOf = createSizeOf();
+
+/**
+ * Normalises one LOG frame (or a line of the host's own) into the event detail. Never throws. An argument past what is
+ * left of LOG_MAX_BYTES becomes LOG_DROPPED_ARGUMENT, and `onDropped` is called once for the line.
+ */
+export function toLogDetail(frame: unknown, source: 'guest' | 'host', onDropped?: () => void): SandboxLog {
     const data = frame && typeof frame === 'object' ? frame as Record<string, unknown> : {};
     const level = LEVELS.find(candidate => candidate === data.level) ?? 'log';
     const args: unknown[] = [];
+    let dropped = false;
     if (Array.isArray(data.args)) {
         const count = Math.min(data.args.length, LOG_MAX_ARGS);
-        for (let i = 0; i < count; i++) args.push(clampArgument(data.args[i]));
+        let left = LOG_MAX_BYTES;
+        for (let i = 0; i < count; i++) {
+            const value = clampArgument(data.args[i]);
+            const bytes = sizeOf(value, left);
+            if (bytes > left) {
+                dropped = true;
+                args.push(LOG_DROPPED_ARGUMENT);
+                continue;
+            }
+            left -= bytes;
+            args.push(value);
+        }
     }
+    if (dropped) onDropped?.();
     return Object.freeze({ type: 'LOG', level, args: Object.freeze(args), source });
 }
 

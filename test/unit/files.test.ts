@@ -5,6 +5,7 @@ import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from '@src/lib/in
 import { rewriteMarkupReferences } from '@src/lib/markup-references';
 import { mimeTypeFor } from '@src/lib/files';
 import { createBroker } from '@src/lib/rpc';
+import { createSizeOf } from '@src/lib/structured-size';
 import { workerBootstrap } from '@src/lib/worker-bootstrap';
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 
@@ -55,7 +56,7 @@ const UNSAFE_POLICY = DEFAULT_POLICY.replace("script-src 'unsafe-inline'", "scri
 
 describe('with no files: the policy is unchanged, and the document differs only by the empty files bootstrap', () => {
     // How 98f9c81 composed the bootstrap, before files existed, and the one thing added since.
-    const comms = (scriptUnsafe: boolean, mode: string) => `(${inSandboxScript.toString()})(${scriptUnsafe}, '${mode}', console, ${createBroker.toString()});`;
+    const comms = (scriptUnsafe: boolean, mode: string) => `(${inSandboxScript.toString()})(${scriptUnsafe}, '${mode}', console, ${createBroker.toString()}, undefined, ${createSizeOf.toString()});`;
     const EMPTY_FILES = `(${inSandboxFiles.toString()})([]);`;
 
     it('cooperative mode, default config', async () => {
@@ -248,7 +249,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
     const snapshotLiteral = (el: any) => toInlineScriptLiteral(el._files.snapshot());
     // FILES has one JavaScript file, so the bootstrap also registers the import map (module graph, PR3)
     const filesStep = (el: any) => `(${inSandboxImportMap.toString()})((${inSandboxFiles.toString()})(${snapshotLiteral(el)}), ["app.js"], null)`;
-    const comms = (mode = 'cooperative') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()});`;
+    const comms = (mode = 'cooperative') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()}, undefined, ${createSizeOf.toString()});`;
     const bootstrapScriptOf = (el: HTMLElement) => parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
 
     it.each([
@@ -351,7 +352,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
 
 describe('module graph (PR3): one import map, registered by the bootstrap, only with JavaScript files', () => {
     const SCRIPTS = { capabilities: ['allow-scripts'] };
-    const comms = (mode = 'cooperative') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()});`;
+    const comms = (mode = 'cooperative') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()}, undefined, ${createSizeOf.toString()});`;
     const filesCall = (el: any) => `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(el._files.snapshot())})`;
     const mapCall = (el: any, paths: string[], guest: string | null) => `(${inSandboxImportMap.toString()})(${filesCall(el)}, ${toInlineScriptLiteral(paths)}, ${toInlineScriptLiteral(guest)})`;
     const bootstrapScriptOf = (el: HTMLElement) => parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;

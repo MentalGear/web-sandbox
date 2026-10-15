@@ -1,4 +1,5 @@
 import type { createBroker } from './rpc';
+import type { createSizeOf } from './structured-size';
 
 /**
  * The type of the one message the guest frame posts to the host page in cooperative mode, carrying its port (the
@@ -30,7 +31,10 @@ export function inSandboxScript(
     // worker prelude takes the ports from the one trusted INIT message and hands the logic port to attach().
     // `guestWrites`: the host records the guest's file writes (backlog C5); returned as `writeFiles` below.
     features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean },
-): { attach(port: MessagePort): void; writeFiles: ((request: unknown) => Promise<unknown>) | null } {
+    // The byte measure (structured-size.ts), stringified in like createBroker: the console relay's budget and the
+    // broker's are measured with it, made before any guest code runs.
+    createSizeOfFn?: typeof createSizeOf,
+): { attach(port: MessagePort): void; writeFiles: ((request: unknown) => Promise<unknown>) | null; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void } {
     // The announcement (broad review 2026-10-14, CB1), the first statement, before anything else in the guest
     // document can run: in cooperative mode the bootstrap makes the channel itself, keeps port1 in this closure and
     // posts port2 to the host page (parent.parent: the guest's parent is the wrapper). The host takes exactly one
@@ -70,6 +74,7 @@ export function inSandboxScript(
     const FunctionConstructor = Function;
     const construct = Reflect.construct;
     const append = (list: unknown[], value: unknown) => defineOwn(list, list.length, { value, writable: true, enumerable: true, configurable: true });
+    const sizeOf = createSizeOfFn ? createSizeOfFn() : null;
 
     // The port does not exist until INIT_PORT, but guest content scripts parse BEFORE that and may
     // call bridge.expose()/bridge.call() straight away. So the bridge is created now with a send that
@@ -214,7 +219,7 @@ export function inSandboxScript(
 
     // The guest's broker accepts a library code (FETCH_*) in the refusal of a call to a reserved method, so
     // sandboxFetch() rejects with the host's code; the host's broker never accepts one (see rpc.ts).
-    const bridge = createBrokerFn ? createBrokerFn(send, { acceptLibraryCodes: true }) : null;
+    const bridge = createBrokerFn ? createBrokerFn(send, { acceptLibraryCodes: true, sizeOf: sizeOf ?? undefined }) : null;
     const handleBridgeMessage = bridge ? bridge.handleMessage : null;
     if (bridge) (globalThis as any).bridge = bridge;
 
@@ -266,30 +271,284 @@ export function inSandboxScript(
         writeFiles = (request: unknown) => callWithTimeout(30000, 'sandbox:write', request);
     }
 
-    // Console output (every level a 'sandbox-log' detail can carry, sandbox-log.ts, info included: backlog B8), relayed
-    // from now on, before any guest code runs. Lines logged before the port is attached wait in the outbox like bridge
-    // frames, in order with them, and are flushed on attach: a strict entry runs its top level before the view hands
-    // the worker its ports, so its synchronous lines were lost when the relay was installed only on attach (independent
-    // verification 2026-10-14). At most LOG_BUFFER_LIMIT lines wait (the host dispatches LOG_EVENTS_PER_SECOND, the
-    // same number, in any second anyway); past that they are counted, and one warning says how many were dropped.
+    // ---- The console relay (review round 1: R4-1, R3-3, R4-2, R4-6, R4-7): the one chokepoint every guest log line
+    // goes through, in every mode (cooperative, worker, and strict, whose prelude logs through `log` below). It never
+    // throws, whatever the guest logs, and what it posts is bounded before it is posted:
+    //   - at most LOG_MAX_ARGS arguments, strings cut at LOG_MAX_STRING (the host cuts again on receipt);
+    //   - an Error or DOMException becomes { name, message, stack }, strings cut the same way;
+    //   - a value structured clone refuses (a function, a Symbol, a DOM node, an Event, a Response, a Proxy, a WeakMap,
+    //     a Promise) becomes a string that names its kind, instead of a DataCloneError thrown at the guest's console
+    //     call (before, `console.log(() => {})` threw in cooperative mode and in the worker, and the line was lost);
+    //   - all arguments of one line together measure at most LOG_MAX_BYTES (structured-size.ts, with primitives
+    //     captured now): an argument past what is left of it becomes a string saying so, so
+    //     `console.log(new Uint8Array(64 MiB))` crosses as a few bytes;
+    //   - at most LOG_LINES_PER_SECOND lines and LOG_BYTES_PER_SECOND bytes leave per second (token buckets): the
+    //     host dispatches no more than that anyway, and a line dropped here is never cloned onto the host's thread,
+    //     which is what a flood within the per-line caps cost (Firefox's host ran ~7 ticks per second). The first
+    //     dropped line sends one warning, once per environment.
+    // The arguments are cloned once here (the captured structuredClone), so a line buffered before the port is
+    // attached holds its values as they were when logged, as postMessage would, and is known to post.
+    // Mirrors of LOG_MAX_ARGS, LOG_MAX_STRING, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES and LOG_BYTES_PER_SECOND
+    // (sandbox-log.ts; a test keeps them equal): declared here to survive stringification.
+    const LOG_MAX_ARGS = 64;
+    const LOG_MAX_STRING = 65536;
+    const LOG_MAX_BYTES = 1048576;
+    const LOG_LINES_PER_SECOND = 1000;
+    const LOG_BYTES_PER_SECOND = 4194304;
+    // At most LOG_BUFFER_LIMIT lines wait for the port (a strict entry's top level runs before the view hands the
+    // worker its ports: independent verification 2026-10-14); past that they are counted, and one warning on attach
+    // says how many were dropped.
     const LOG_BUFFER_LIMIT = 1000;
+    const clone = g.structuredClone;
+    const toTag = Object.prototype.toString;
+    const symbolText = Symbol.prototype.toString;
+    const slice = String.prototype.slice;
+    const startsWith = String.prototype.startsWith;
+    const clock = g.performance;
+    const nowOf = clock && typeof clock.now === 'function' ? clock.now : null;
+    const DateConstructor = Date;
+    const dateNow = Date.now;
+    const now = (): number => (nowOf ? apply(nowOf, clock, []) : apply(dateNow, DateConstructor, []));
+    const cut = (text: string) => (text.length > LOG_MAX_STRING ? apply(slice, text, [0, LOG_MAX_STRING]) as string : text);
+    const tagOf = (value: unknown): string => {
+        try {
+            return apply(toTag, value, []) as string;
+        } catch {
+            return '[object]';
+        }
+    };
+    // The string form of a value clone refuses: its kind, never its contents (a function's source, a node's markup).
+    const describe = (value: unknown): string => {
+        if (typeof value === 'symbol') {
+            try {
+                return cut(apply(symbolText, value, []) as string);
+            } catch {
+                return '[symbol]';
+            }
+        }
+        if (typeof value === 'function') return '[function]';
+        return tagOf(value);
+    };
+    const textOf = (value: unknown): string => (typeof value === 'string' ? cut(value) : '');
+    const isErrorLike = (value: unknown) => {
+        if (!value || typeof value !== 'object') return false;
+        const tag = tagOf(value);
+        return tag === '[object Error]' || tag === '[object DOMException]';
+    };
+    const errorForm = (value: any) => {
+        const form = { name: '', message: '', stack: '' };
+        try {
+            form.name = textOf(value.name);
+            form.message = textOf(value.message);
+            form.stack = textOf(value.stack);
+        } catch {
+            // a getter that throws: what was read so far
+        }
+        return form;
+    };
+    // A thrown or rejected value as text: an error's "name: message", anything else by kind (a primitive as itself).
+    const errorText = (value: unknown): string => {
+        if (typeof value === 'string') return cut(value);
+        if (isErrorLike(value)) {
+            const form = errorForm(value);
+            return form.name ? (form.message ? form.name + ': ' + form.message : form.name) : form.message;
+        }
+        if (value === null || (typeof value !== 'object' && typeof value !== 'function' && typeof value !== 'symbol')) return '' + (value as string);
+        return describe(value);
+    };
+    // "Uncaught …" once: Chromium's ErrorEvent message already starts with it, Firefox's and WebKit's do not.
+    const uncaught = (text: string) => (apply(startsWith, text, ['Uncaught ']) ? text : 'Uncaught ' + text);
+
+    // The line to post, and whether it is smaller than what was logged (an argument, a string or a byte budget cut).
+    const safeArgs = (args: unknown[]): { line: unknown[]; cut: boolean } => {
+        let reduced = args.length > LOG_MAX_ARGS;
+        const count = reduced ? LOG_MAX_ARGS : args.length;
+        const out: unknown[] = [];
+        let left = LOG_MAX_BYTES;
+        for (let i = 0; i < count; i++) {
+            let value = args[i];
+            if (typeof value === 'string') {
+                value = cut(value);
+                if (value !== args[i]) reduced = true;
+            } else if (typeof value === 'symbol' || typeof value === 'function') value = describe(value);
+            else if (isErrorLike(value)) value = errorForm(value);
+            const bytes = sizeOf ? sizeOf(value, left) : 0;
+            if (bytes > left) {
+                reduced = true;
+                value = '[' + (typeof value === 'object' && value !== null ? tagOf(value) : typeof value) + ': past the log line\'s byte budget (' + LOG_MAX_BYTES + ')]';
+                left -= (value as string).length * 2 + 8;
+            } else {
+                left -= bytes;
+            }
+            append(out, value);
+        }
+        return { line: cloned(out), cut: reduced };
+    };
+    const cloned = (out: unknown[]): unknown[] => {
+        try {
+            return clone(out);
+        } catch {
+            // something clone refuses deeper in (a function in an object, a Proxy): those arguments by kind
+            const each: unknown[] = [];
+            for (let i = 0; i < out.length; i++) {
+                let value = out[i];
+                try {
+                    value = clone(value);
+                } catch {
+                    value = describe(value);
+                }
+                append(each, value);
+            }
+            return each;
+        }
+    };
+
+    // Token buckets: at most `rate` per second, in bursts of at most `rate`.
+    const bucket = (rate: number) => {
+        let tokens = rate;
+        let last = now();
+        return (cost: number): boolean => {
+            const at = now();
+            tokens = Math.min(rate, tokens + ((at - last) / 1000) * rate);
+            last = at;
+            if (tokens < cost) return false;
+            tokens -= cost;
+            return true;
+        };
+    };
+    const lineBudget = bucket(LOG_LINES_PER_SECOND);
+    const byteBudget = bucket(LOG_BYTES_PER_SECOND);
     let logsBuffered = 0;
-    let logsDropped = 0;
-    const levels = ['log', 'info', 'warn', 'error'] as const;
-    for (let i = 0; i < levels.length; i++) {
-        const level = levels[i]!;
-        const original = sandboxConsole[level];
-        sandboxConsole[level] = (...args: any[]) => {
-            if (port) post({ type: 'LOG', level, args });
-            else if (logsBuffered < LOG_BUFFER_LIMIT) {
-                logsBuffered++;
-                append(outbox, { type: 'LOG', level, args });
-            } else logsDropped++;
-            // Log to the actual browser console for easier debugging
-            if (original) {
-                apply(original, sandboxConsole, args);
+    let logsDropped = 0;     // before the port: past LOG_BUFFER_LIMIT
+    let rateDropped = false; // past the per-second budgets: warned once per environment
+    // Before the port is attached a line waits in the outbox, at most LOG_BUFFER_LIMIT of them (the bound there: they
+    // are flushed in one go on attach); once attached the per-second budgets apply.
+    // Relays one line; says whether it was relayed (null: dropped) and what the browser's own console may be given:
+    // the line as logged when it was relayed whole, else the bounded line. The browser's console is the other way a
+    // line reaches the host page's thread: Chromium and Firefox hand a worker's console arguments to the page
+    // (measured: a worker logging 64 strings of 64 Ki characters in a loop cost Firefox's host page half its ticks
+    // with only 21 lines relayed), so a dropped line goes nowhere and a cut one goes there cut.
+    // Before the port is attached a line waits in the outbox: at most LOG_BUFFER_LIMIT lines and LOG_BYTES_PER_SECOND
+    // bytes (they are flushed in one go on attach); once attached the per-second budgets apply.
+    let bufferedBytes = 0;
+    const relayLine = (level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): unknown[] | null => {
+        if (port && !lineBudget(1)) return dropped();
+        let line: unknown[];
+        let reduced = true;
+        try {
+            const safe = safeArgs(args);
+            line = safe.line;
+            reduced = safe.cut;
+        } catch {
+            line = ['[Sandbox] a console line could not be relayed'];
+        }
+        const bytes = sizeOf ? sizeOf(line, LOG_MAX_BYTES) : 0;
+        if (!port) {
+            if (logsBuffered >= LOG_BUFFER_LIMIT || bufferedBytes + bytes > LOG_BYTES_PER_SECOND) {
+                logsDropped++;
+                return null;
+            }
+            logsBuffered++;
+            bufferedBytes += bytes;
+            append(outbox, { type: 'LOG', level, args: line });
+            return reduced ? line : args;
+        }
+        if (!byteBudget(bytes)) return dropped();
+        try {
+            post({ type: 'LOG', level, args: line });
+        } catch {
+            // nothing a guest logs can make the relay throw at its console call
+        }
+        return reduced ? line : args;
+    };
+    const dropped = (): null => {
+        if (rateDropped) return null;
+        rateDropped = true;
+        try {
+            post({ type: 'LOG', level: 'warn', args: [`[Sandbox] the guest logged more than ${LOG_LINES_PER_SECOND} lines or ${LOG_BYTES_PER_SECOND} bytes in one second; lines past that are dropped in the sandbox.`] });
+        } catch {
+            // as above
+        }
+        return null;
+    };
+    const log = (level: 'log' | 'info' | 'warn' | 'error', args: unknown[]) => {
+        relayLine(level, args);
+    };
+
+    // Every console method a line can come from, mapped to a 'sandbox-log' level (sandbox-log.ts has four): debug,
+    // dir, dirxml, table, group and groupCollapsed are 'log' lines, trace says so, a failed assert is an 'error'
+    // line. groupEnd and the counters and timers relay nothing. Each still reaches the browser's own console, as
+    // relayLine() allows.
+    type Level = 'log' | 'info' | 'warn' | 'error';
+    type Relay = (args: unknown[]) => [Level, unknown[]] | null;
+    const relays: [string, Relay][] = [
+        ['log', (args) => ['log', args]],
+        ['info', (args) => ['info', args]],
+        ['warn', (args) => ['warn', args]],
+        ['error', (args) => ['error', args]],
+        ['debug', (args) => ['log', args]],
+        ['dir', (args) => ['log', args]],
+        ['dirxml', (args) => ['log', args]],
+        ['table', (args) => ['log', args]],
+        ['group', (args) => ['log', args]],
+        ['groupCollapsed', (args) => ['log', args]],
+        ['trace', (args) => ['log', ['console.trace()', ...args]]],
+        ['assert', (args) => (args[0] ? null : ['error', ['Assertion failed:', ...(args.length > 1 ? args.slice(1) : ['console.assert'])]])],
+    ];
+    for (let i = 0; i < relays.length; i++) {
+        const [name, relay] = relays[i]!;
+        const original = (sandboxConsole as any)[name];
+        (sandboxConsole as any)[name] = (...args: any[]) => {
+            let mapped: [Level, unknown[]] | null = null;
+            try {
+                mapped = relay(args);
+            } catch {
+                mapped = null;
+            }
+            const shown = mapped ? relayLine(mapped[0], mapped[1]) : args;
+            // Log to the actual browser console for easier debugging: what relayLine() allows (above)
+            if (typeof original === 'function' && shown !== null) {
+                try {
+                    apply(original, sandboxConsole, shown === mapped?.[1] ? args : shown);
+                } catch {
+                    // the browser's console refused it: the relayed line stands
+                }
             }
         };
+    }
+
+    // Uncaught errors and unhandled rejections (R4-2, R4-6): relayed as 'error' lines, "Uncaught …" and
+    // "Uncaught (in promise) …", from capture listeners on the global installed before any guest code runs, and left
+    // to reach the browser's console as well. Errors in cooperative and worker mode, trusted ones only; in strict
+    // mode the prelude owns the error event (an entry's own error ends the sandbox, in-sandbox-view.ts) and logs
+    // later ones through `log`. Unhandled rejections in every mode, trusted or not: WebKit (every realm) and Firefox
+    // (workers) dispatch the platform's own with isTrusted false (measured), and a forged one makes only a line the
+    // guest could log itself. What the browser gives is all there is: WebKit mutes the errors of the guest
+    // document's inline scripts and of a worker's blob: script ("Script error.", no error object; measured).
+    const addGlobalListener = g.addEventListener;
+    if (typeof addGlobalListener === 'function') {
+        if (mode !== 'strict') {
+            apply(addGlobalListener, g, ['error', (event: any) => {
+                if (event.isTrusted !== true) return;
+                let text = '';
+                try {
+                    text = event.error !== null && event.error !== undefined ? errorText(event.error) : textOf(event.message);
+                    if (!text) text = textOf(event.message) || 'an error';
+                } catch {
+                    text = 'an error';
+                }
+                log('error', [uncaught(text)]);
+            }, true]);
+        }
+        apply(addGlobalListener, g, ['unhandledrejection', (event: any) => {
+            let text = '';
+            try {
+                text = errorText(event.reason);
+            } catch {
+                text = 'a rejection';
+            }
+            log('error', ['Uncaught (in promise) ' + text]);
+        }, true]);
     }
 
     // One frame from the host that runs guest code: an EXECUTE, or an RPC_REQ (the broker calls the exposed method).
@@ -302,7 +561,7 @@ export function inSandboxScript(
             // sends one; execute() refuses anything else), and nothing converts it, so guest code that replaced
             // String, Error or any other global cannot change what runs.
             if (!scriptUnsafe) {
-                post({ type: 'LOG', level: 'error', args: ['Execution blocked: scriptUnsafe is false'] });
+                log('error', ['Execution blocked: scriptUnsafe is false']);
                 return;
             }
             const code = data.code;
@@ -310,11 +569,13 @@ export function inSandboxScript(
             try {
                 apply(construct(FunctionConstructor, [code]) as () => void, undefined, []);
             } catch (e: any) {
+                let text = '';
                 try {
-                    post({ type: 'LOG', level: 'error', args: [e.message] });
+                    text = e && typeof e.message === 'string' ? cut(e.message) : errorText(e);
                 } catch {
-                    // a thrown value whose message cannot be read or cloned: no line
+                    text = 'an error'; // a thrown value whose message cannot be read
                 }
+                log('error', [text]);
             }
             return;
         }
@@ -395,7 +656,7 @@ export function inSandboxScript(
             return;
         }
         if (data.type === 'EXECUTE') {
-            post({ type: 'LOG', level: 'error', args: [`[Sandbox] execute() was dropped: ${MAX_HELD} calls and executions are already waiting for the guest document to be parsed.`] });
+            log('error', [`[Sandbox] execute() was dropped: ${MAX_HELD} calls and executions are already waiting for the guest document to be parsed.`]);
             return;
         }
         const id = data.id;
@@ -448,7 +709,7 @@ export function inSandboxScript(
     // Cooperative mode: the bootstrap's own end of the channel it announced, attached now, before any guest code runs.
     if (announced) {
         attach(announced.port1);
-        return { attach, writeFiles };
+        return { attach, writeFiles, log };
     }
 
     // Worker mode: the one INIT_PORT (review B1), the port1 the frame made and announced (worker-bootstrap.ts): a
@@ -474,5 +735,5 @@ export function inSandboxScript(
         }
     };
     if (!features?.externalPort) g.addEventListener('message', onInit, true);
-    return { attach, writeFiles };
+    return { attach, writeFiles, log };
 }

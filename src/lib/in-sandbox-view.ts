@@ -939,7 +939,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * the next only after the view's VIEW_ACK, and `sandboxView.on`, which registers handlers for the events
  * the view forwards (the port itself is never handed to a handler).
  */
-export function inStrictWorker(comms: { attach(port: MessagePort): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; entryDoneName: string; eventTypes: readonly string[] }) {
+export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; entryDoneName: string; eventTypes: readonly string[] }) {
     const g = globalThis as any;
     const apply = Reflect.apply;
     // The prelude's own lists have no prototype (review C3): an index written to them never reaches an inherited
@@ -957,7 +957,12 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
     const post = MessagePort.prototype.postMessage;
     const startPort = MessagePort.prototype.start;
     const join = Array.prototype.join; // for error texts: a patched join would otherwise receive the prelude's own list as `this`
-    const sandboxConsole = console;
+    // The prelude's own lines go through the comms script's relay (in-sandbox-script.ts), the one chokepoint every
+    // guest line goes through, never through `console`, which guest code can replace.
+    const log = comms.log;
+    const startsWith = String.prototype.startsWith;
+    // "Uncaught …" once (review round 1, R4-7): Chromium's ErrorEvent message already starts with it.
+    const uncaught = (text: string) => (apply(startsWith, text, ['Uncaught ']) ? text : 'Uncaught ' + text);
     const reportError = typeof g.reportError === 'function' ? g.reportError : null;
 
     // A name that stays after its deletion is a failure, not something to carry on with (review C2): a top-level
@@ -1069,7 +1074,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
             } catch (error) {
                 // reported like any uncaught error (logged by the listener below), without stopping the others
                 if (reportError) apply(reportError, g, [error]);
-                else sandboxConsole.error('Uncaught ' + String(error));
+                else log('error', [uncaught(String(error))]);
             }
         }
     };
@@ -1081,9 +1086,9 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
             // a render past the view's budget (broad review ST2) was dropped: said here, to the guest's own log
             const refused = data.refused;
             for (let i = 0; refused && i < refused.length; i++) {
-                sandboxConsole.warn('[Sandbox] sandboxView.render: the view refused a render: ' + (refused[i] === 'VIEW_MAX_DEPTH'
+                log('warn', ['[Sandbox] sandboxView.render: the view refused a render: ' + (refused[i] === 'VIEW_MAX_DEPTH'
                     ? 'it would nest elements more than ' + options.maxDepth + ' deep'
-                    : 'the view would hold more than ' + options.maxElements + ' elements') + '; nothing of it was applied.');
+                    : 'the view would hold more than ' + options.maxElements + ' elements') + '; nothing of it was applied.']);
             }
             inFlight = false;
             sendNext();
@@ -1135,7 +1140,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void }, optio
         }
         if (isMuted(event)) return;
         apply(cancel, event, []);
-        sandboxConsole.error('Uncaught ' + String(event.message));
+        log('error', [uncaught(String(event.message))]);
     }, true]);
     Object.defineProperty(g, options.entryDoneName, { value: () => { entryRan = true; } });
 }

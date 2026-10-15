@@ -259,7 +259,7 @@ describe("inSandboxScript", () => {
         delete (globalThis as any).__ranByCaptured;
         const frames = port.posted.mock.calls.map(call => call[0]);
         expect(frames.filter((f: any) => f.type === 'EXECUTED')).toEqual([]);
-        expect(frames.filter((f: any) => f.type === 'LOG' && typeof f.args[0] === 'string').map((f: any) => f.args[0])).toEqual(['Boom']);
+        expect(frames.filter((f: any) => f.type === 'LOG' && typeof f.args[0] === 'string').map((f: any) => f.args[0])).toEqual(['Boom', '[object Object]']); // a thrown value whose message is not a string: named by its kind (review round 1, R4-7)
         port.deliver({ type: 'PING', n: -3 }); // a probe's ping: answered like any ping
         expect(port.posted.mock.calls.at(-1)![0]).toEqual({ type: 'PONG', n: -3 });
     });
