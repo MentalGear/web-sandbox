@@ -16,8 +16,8 @@ import { TRUSTED_TYPES_POLICY } from './trusted-types';
  *
  * Three ports, all MessageChannels created per environment:
  *   logic   host ↔ worker   RPC, LOG, PING/PONG, VIOLATION (source 'logic'), EXECUTE — as in worker mode
- *   view    host ↔ view     VIOLATION (source 'view'), RESIZE, GUEST_ERROR, GUEST_UNCAUGHT, VIEW_PING/VIEW_PONG
- *   render  view ↔ worker   VIEW_STARTED, VIEW_RENDER, VIEW_ACK, VIEW_LISTEN, VIEW_EVENT — the host is not on this path
+ *   view    host ↔ view     VIOLATION (source 'view'), RESIZE, GUEST_ERROR, GUEST_UNCAUGHT, VIEW_PING/VIEW_PONG, VIEW_WRITE/VIEW_WRITTEN
+ *   render  view ↔ worker   VIEW_STARTED, VIEW_RENDER, VIEW_TEXT, VIEW_SET, VIEW_ACK, VIEW_LISTEN, VIEW_EVENT — the host is not on this path
  * The render port is created by the view and handed to the library's worker prelude, which keeps it in a
  * closure and only ever uses primitives it captured before any guest code ran (A4): guest code cannot post
  * on it, so it cannot get past the flow control below.
@@ -860,12 +860,93 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     const innerHTMLOf = getter(Element.prototype, 'innerHTML');
 
+    // sandboxView.text() and set() (review round 1, R4-5). The element is found as a render's target is, by id inside
+    // the body (never the body itself, never the bootstrap's own head), and an id that names nothing is dropped, like a
+    // render to a missing target. What either leaves in the body is counted against the view's characters as the
+    // browser serializes it, over the document it would leave (R1-1), before anything changes.
+    const elementInBody = (id: string): Element | null => {
+        const body = call(bodyOf, document, []);
+        const target = call(D.getElementById, document, [id]);
+        return target && body && target !== body && call(containsNode, body, [target]) ? target : null;
+    };
+    const HTML_NS = 'http://www.w3.org/1999/xhtml';
+    const namespaceOf = getter(Element.prototype, 'namespaceURI');
+    const setTextContent = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent')!.set!;
+    const setter = (proto: object, name: string) => Object.getOwnPropertyDescriptor(proto, name)!.set!;
+    const inputValue = setter(HTMLInputElement.prototype, 'value');
+    const inputChecked = setter(HTMLInputElement.prototype, 'checked');
+    const inputType = getter(HTMLInputElement.prototype, 'type');
+    const textareaValue = setter(HTMLTextAreaElement.prototype, 'value');
+    const selectValue = setter(HTMLSelectElement.prototype, 'value');
+    const outputValue = setter(HTMLOutputElement.prototype, 'value');
+    const focusElement = HTMLElement.prototype.focus;
+    const hasFocus = D.hasFocus;
+    // How many characters `text` is as an element's content, serialized (escaped, as in every element the renderer
+    // keeps but <style>, where it is raw text and so shorter: the count is an upper bound there).
+    const textLength = (text: string) => {
+        const probe = call(D.createElement, document, ['template']) as HTMLTemplateElement;
+        call(setTextContent, probe.content, [text]);
+        return call(innerHTMLOf, probe, []).length as number;
+    };
+    // How many characters an attribute `value="…"` adds to its element's serialization; 0 for none.
+    const valueAttributeLength = (value: string | null) => {
+        if (value === null) return 0;
+        const probe = call(D.createElement, document, ['span']);
+        call(E.setAttribute, probe, ['value', value]);
+        return (call(outerHTMLOf, probe, []).length as number) - '<span></span>'.length;
+    };
+    const outerHTMLOf = getter(Element.prototype, 'outerHTML');
+    const bodyCharacters = () => call(innerHTMLOf, call(bodyOf, document, []), []).length as number;
+    const assertCharacters = (total: number) => {
+        if (total > options.render.maxCharacters) throw new RangeError('VIEW_MAX_CHARACTERS');
+    };
+    // The element's content becomes one text node holding `text`: assigned, never parsed.
+    const replaceText = (target: Element, text: string) => {
+        assertCharacters(bodyCharacters() - (call(innerHTMLOf, target, []).length as number) + textLength(text));
+        call(setTextContent, target, [text]);
+    };
+    const applyText = (text: string, into: string) => {
+        const target = elementInBody(into);
+        if (target) replaceText(target, text);
+    };
+    // value: an input's (shown, and its value attribute, so the characters it holds are in the serialization and the
+    // budget), a textarea's (shown, and its text), a select's (which option), an output's (its text); any other element,
+    // or a file input, is left as it is. checked: an input's. focus: only while this document has the user's focus, so
+    // a guest can move focus within the sandbox but never take it from the host page (VIEW_FOCUS, refused); a value or
+    // checked state in the same set still applies.
+    const applySet = (id: string, fields: { value?: string; checked?: boolean; focus?: boolean }) => {
+        const target = elementInBody(id);
+        if (!target || call(namespaceOf, target, []) !== HTML_NS) return;
+        const name = call(localNameOf, target, []);
+        const value = fields.value;
+        if (value !== undefined) {
+            if (name === 'input' && call(inputType, target, []) !== 'file') {
+                assertCharacters(bodyCharacters() - valueAttributeLength(call(E.getAttribute, target, ['value'])) + valueAttributeLength(value));
+                call(E.setAttribute, target, ['value', value]);
+                call(inputValue, target, [value]);
+            } else if (name === 'textarea') {
+                replaceText(target, value);
+                call(textareaValue, target, [value]);
+            } else if (name === 'output') {
+                replaceText(target, value);
+                call(outputValue, target, [value]);
+            } else if (name === 'select') {
+                call(selectValue, target, [value]);
+            }
+        }
+        if (fields.checked !== undefined && name === 'input') call(inputChecked, target, [fields.checked]);
+        if (fields.focus !== true) return;
+        if (!call(hasFocus, document, [])) throw new RangeError('VIEW_FOCUS');
+        call(focusElement, target, []);
+    };
 
-    // At most one render applied per animation frame (a timer stands in where frames are throttled), the
-    // latest per target; one VIEW_ACK per flush releases the worker's next render (A4). And at most
-    // VIEW_RENDER_CHARACTERS_PER_SECOND characters of markup per second (R1-1), a token bucket charged with each
-    // render's length when it is applied, refused or not: a flush that the budget does not cover yet waits until it does.
-    let pending: [string | null, string][] = [];
+    // At most one flush per animation frame (a timer stands in where frames are throttled), the latest render or text
+    // per target; one VIEW_ACK per flush releases the worker's next operation (A4). And at most
+    // VIEW_RENDER_CHARACTERS_PER_SECOND characters per second (R1-1), a token bucket charged with each operation's
+    // characters (a render's markup, a text, a value) when it is applied, refused or not: a flush that the budget does
+    // not cover yet waits until it does.
+    type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: { value?: string; checked?: boolean; focus?: boolean } | null };
+    let pending: Job[] = [];
     let scheduled = false;
     let tokens = options.renderRate;
     let refilled = performance.now();
@@ -874,9 +955,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         tokens = Math.min(options.renderRate, tokens + ((now - refilled) / 1000) * options.renderRate);
         refilled = now;
     };
-    const costOf = (jobs: [string | null, string][]) => {
+    const costOf = (jobs: Job[]) => {
         let cost = 0;
-        for (let i = 0; i < jobs.length; i++) cost += jobs[i]![1].length;
+        for (let i = 0; i < jobs.length; i++) cost += jobs[i]!.kind === 'set' ? (jobs[i]!.fields!.value || '').length : jobs[i]!.html.length;
         return cost;
     };
     const flush = () => {
@@ -887,13 +968,17 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         tokens -= costOf(jobs);
         const refused: string[] = [];
         for (let i = 0; i < jobs.length; i++) {
+            const job = jobs[i]!;
             try {
-                apply(jobs[i]![1], jobs[i]![0]);
+                if (job.kind === 'render') apply(job.html, job.target);
+                else if (job.kind === 'text') applyText(job.html, job.target!);
+                else applySet(job.target!, job.fields!);
             } catch (error: any) {
-                // the renderer threw before anything was inserted: this render is dropped, and the ack below
-                // still releases the next one; one past the view's budget is named to the worker, which says so
+                // refused before anything was changed (the renderer, or a budget): this operation is dropped, and the ack
+                // below still releases the next one; one past the view's budget, or a focus the view refused, is named to
+                // the worker, which says so
                 const message = error && error.message;
-                if (message === 'VIEW_MAX_ELEMENTS' || message === 'VIEW_MAX_DEPTH' || message === 'VIEW_MAX_CHARACTERS') refused.push(message);
+                if (message === 'VIEW_MAX_ELEMENTS' || message === 'VIEW_MAX_DEPTH' || message === 'VIEW_MAX_CHARACTERS' || message === 'VIEW_FOCUS') refused.push(message);
             }
         }
         if (renderPort) renderPort.postMessage(refused.length > 0 ? { type: 'VIEW_ACK', refused } : { type: 'VIEW_ACK' });
@@ -917,6 +1002,22 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (wait > 0) setTimeout(start, wait);
         else start();
     };
+    const isTarget = (id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= options.maxTarget;
+    const isText = (text: unknown) => typeof text === 'string' && text.length <= options.maxRender;
+    // A VIEW_SET's fields, each of its type, or null for a malformed one.
+    const fieldsOf = (data: any): Job['fields'] => {
+        const fields: Job['fields'] = {};
+        if (data.value !== undefined) {
+            if (!isText(data.value)) return null;
+            fields.value = data.value;
+        }
+        for (const key of ['checked', 'focus'] as const) {
+            if (data[key] === undefined) continue;
+            if (typeof data[key] !== 'boolean') return null;
+            fields[key] = data[key];
+        }
+        return fields;
+    };
     const onRender = (event: MessageEvent) => {
         const data = event.data;
         if (!data || typeof data !== 'object') return;
@@ -924,22 +1025,32 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             subscribed = Array.isArray(data.types) ? data.types.filter((type: unknown) => options.events.types.indexOf(type as string) >= 0) : [];
             return;
         }
-        if (data.type !== 'VIEW_RENDER') return;
-        const into = data.into;
-        const valid = typeof data.html === 'string' && data.html.length <= options.maxRender
-            && (into === null || (typeof into === 'string' && into.length > 0 && into.length <= options.maxTarget));
-        if (!valid) {
+        let job: Job | null = null;
+        if (data.type === 'VIEW_RENDER') {
+            if (isText(data.html) && (data.into === null || isTarget(data.into))) job = { kind: 'render', target: data.into, html: data.html, fields: null };
+        } else if (data.type === 'VIEW_TEXT') {
+            if (isText(data.text) && isTarget(data.into)) job = { kind: 'text', target: data.into, html: data.text, fields: null };
+        } else if (data.type === 'VIEW_SET') {
+            const fields = isTarget(data.id) ? fieldsOf(data) : null;
+            if (fields) job = { kind: 'set', target: data.id, html: '', fields };
+        } else {
+            return;
+        }
+        if (!job) {
             renderPort!.postMessage({ type: 'VIEW_ACK' }); // refused, but never a stall
             return;
         }
-        for (let i = 0; i < pending.length; i++) {
-            if (pending[i]![0] === into) {
-                pending[i]![1] = data.html;
-                schedule();
-                return;
+        // a render or a text replaces what is pending for its target: the latest wins
+        if (job.kind !== 'set') {
+            for (let i = 0; i < pending.length; i++) {
+                if (pending[i]!.kind !== 'set' && pending[i]!.target === job.target) {
+                    pending[i] = job;
+                    schedule();
+                    return;
+                }
             }
         }
-        pending.push([into, data.html]);
+        pending.push(job);
         schedule();
     };
 
@@ -1119,9 +1230,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * posts to this worker), so guest listeners never see it. Every operation on the port and on the message
  * goes through primitives captured here, called with a captured Reflect.apply, so patching
  * MessagePort.prototype, MessageEvent.prototype or Function.prototype cannot reach the port. Guest code
- * gets only `sandboxView.render`, which keeps the latest html per target and posts one render at a time,
- * the next only after the view's VIEW_ACK, and `sandboxView.on`, which registers handlers for the events
- * the view forwards (the port itself is never handed to a handler).
+ * gets only `sandboxView.render`, `text` and `set`, which queue operations for the view and post one at a time, the
+ * next only after the view's VIEW_ACK, and `sandboxView.on`, which registers handlers for the events the view forwards
+ * (the port itself is never handed to a handler).
  */
 export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; entryDoneName: string; eventTypes: readonly string[] }) {
     const g = globalThis as any;
@@ -1159,40 +1270,81 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     remove(g.URL, 'createObjectURL');
     remove(g.webkitURL, 'createObjectURL');
 
-    // ---- render flow control ----
+    // ---- render flow control: sandboxView.render, text and set ----
+    // One queue of operations for the view, one in flight at a time (A4): the next is posted only after the view's
+    // VIEW_ACK. render and text replace an element's content, so they share one slot per target and the latest wins
+    // where it is queued; a set is merged only into a set of the same id queued right before it, so no operation ever
+    // moves past another (a set queued after the render that creates its element stays after it).
+    type Operation = { slot: string; kind: 'render' | 'text' | 'set'; message: Record<string, unknown> };
     let renderPort: MessagePort | null = null;
-    let inFlight = false;
-    const targets = list<string | null>();
-    const htmls = list<string>();
+    let inFlight: Operation | null = null;
+    const queue = list<Operation>();
+    const keysOf = Object.keys;
     const sendNext = () => {
-        if (!renderPort || inFlight || targets.length === 0) return;
-        const into = targets[0];
-        const html = htmls[0];
-        for (let i = 1; i < targets.length; i++) {
-            targets[i - 1] = targets[i]!;
-            htmls[i - 1] = htmls[i]!;
-        }
-        targets.length = targets.length - 1;
-        htmls.length = htmls.length - 1;
-        inFlight = true;
-        apply(post, renderPort, [{ type: 'VIEW_RENDER', html, into }]);
+        if (!renderPort || inFlight || queue.length === 0) return;
+        const next = queue[0]!;
+        for (let i = 1; i < queue.length; i++) queue[i - 1] = queue[i]!;
+        queue.length = queue.length - 1;
+        inFlight = next;
+        apply(post, renderPort, [next.message]);
     };
+    const enqueue = (operation: Operation) => {
+        if (operation.kind !== 'set') {
+            for (let i = 0; i < queue.length; i++) {
+                if (queue[i]!.slot === operation.slot) {
+                    queue[i] = operation;
+                    return;
+                }
+            }
+        } else if (queue.length > 0 && queue[queue.length - 1]!.slot === operation.slot) {
+            const merged = queue[queue.length - 1]!.message;
+            const keys = keysOf(operation.message); // indexed, never iterated: guest code can replace the array iterator (C3)
+            for (let i = 0; i < keys.length; i++) merged[keys[i]!] = operation.message[keys[i]!];
+            return;
+        }
+        queue[queue.length] = operation;
+        sendNext();
+    };
+    const isId = (id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= options.maxTarget;
     const render = (html: unknown, into?: unknown) => {
         if (typeof html !== 'string') throw new TypeError('sandboxView.render: html must be a string');
         if (html.length > options.maxRender) throw new RangeError('sandboxView.render: html is longer than ' + options.maxRender + ' characters');
         const target = into === undefined || into === null ? null : into;
-        if (target !== null && (typeof target !== 'string' || target.length === 0 || target.length > options.maxTarget)) {
-            throw new TypeError('sandboxView.render: into must be an element id or null');
-        }
-        for (let i = 0; i < targets.length; i++) {
-            if (targets[i] === target) {
-                htmls[i] = html;
-                return;
+        if (target !== null && !isId(target)) throw new TypeError('sandboxView.render: into must be an element id or null');
+        enqueue({ slot: target === null ? 'content' : 'content#' + target, kind: 'render', message: { type: 'VIEW_RENDER', html, into: target } });
+    };
+    // The text of the element with that id, as one text node: the view assigns it, so nothing in it is parsed, and the
+    // guest escapes nothing (review round 1, R4-5). Bounded like a render: VIEW_RENDER_MAX_LENGTH, and the view's
+    // character budget and rate.
+    const text = (id: unknown, value: unknown) => {
+        if (!isId(id)) throw new TypeError('sandboxView.text: id must be an element id');
+        if (typeof value !== 'string') throw new TypeError('sandboxView.text: text must be a string');
+        if (value.length > options.maxRender) throw new RangeError('sandboxView.text: text is longer than ' + options.maxRender + ' characters');
+        enqueue({ slot: 'content#' + id, kind: 'text', message: { type: 'VIEW_TEXT', into: id, text: value } });
+    };
+    // A form control's value or checked state, or focus (R4-5). Each own enumerable field of `fields` is read once,
+    // and only these three are allowed, each of its one type; what is posted is a fresh object of those primitives.
+    const set = (id: unknown, fields: unknown) => {
+        if (!isId(id)) throw new TypeError('sandboxView.set: id must be an element id');
+        if (fields === null || typeof fields !== 'object' || Array.isArray(fields)) throw new TypeError('sandboxView.set: the second argument must be an object: { value?, checked?, focus? }');
+        const message: Record<string, unknown> = setPrototype({ type: 'VIEW_SET', id }, null); // no inherited setter for a key (C3)
+        let any = false;
+        const keys = keysOf(fields);
+        for (let i = 0; i < keys.length; i++) {
+            const key = keys[i]!;
+            const value = (fields as Record<string, unknown>)[key];
+            if (key === 'value') {
+                if (typeof value !== 'string') throw new TypeError('sandboxView.set: value must be a string');
+                if (value.length > options.maxRender) throw new RangeError('sandboxView.set: value is longer than ' + options.maxRender + ' characters');
+            } else if (key === 'checked' || key === 'focus') {
+                if (typeof value !== 'boolean') throw new TypeError('sandboxView.set: ' + key + ' must be a boolean');
+            } else {
+                throw new TypeError('sandboxView.set: unknown key "' + String(key).slice(0, 64) + '"; the keys are value, checked and focus');
             }
+            message[key] = value;
+            any = true;
         }
-        targets[targets.length] = target as string | null;
-        htmls[htmls.length] = html;
-        sendNext();
+        if (any) enqueue({ slot: 'set#' + id, kind: 'set', message });
     };
     // ---- events: sandboxView.on(type, id | null, handler) → off ----
     // The view forwards only the types some handler listens to (VIEW_LISTEN, sent whenever that set changes).
@@ -1267,22 +1419,29 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         const data = apply(dataOf, event, []);
         if (!data || typeof data !== 'object') return;
         if (data.type === 'VIEW_ACK') {
-            // a render past the view's budget (broad review ST2) was dropped: said here, to the guest's own log
+            // what the view refused of the one operation in flight (an operation past the view's budget, broad review
+            // ST2; focus without the user's focus, R4-5): said here, to the guest's own log
             const refused = data.refused;
+            const kind = inFlight ? inFlight.kind : 'render';
             for (let i = 0; refused && i < refused.length; i++) {
-                log('warn', ['[Sandbox] sandboxView.render: the view refused a render: ' + (refused[i] === 'VIEW_MAX_DEPTH'
+                if (refused[i] === 'VIEW_FOCUS') {
+                    log('warn', ["[Sandbox] sandboxView.set: the view refused focus: the user's focus is not in the sandbox (they last interacted with the host page, or the window is not focused); the rest was applied."]);
+                    continue;
+                }
+                const why = refused[i] === 'VIEW_MAX_DEPTH'
                     ? 'it would nest elements more than ' + options.maxDepth + ' deep'
                     : refused[i] === 'VIEW_MAX_CHARACTERS'
                         ? 'the view would hold more than ' + options.maxCharacters + ' characters'
-                        : 'the view would hold more than ' + options.maxElements + ' elements') + '; nothing of it was applied.']);
+                        : 'the view would hold more than ' + options.maxElements + ' elements';
+                log('warn', ['[Sandbox] sandboxView.' + kind + ': the view refused ' + (kind === 'render' ? 'a render' : 'it') + ': ' + why + '; nothing of it was applied.']);
             }
-            inFlight = false;
+            inFlight = null;
             sendNext();
             return;
         }
         if (data.type === 'VIEW_EVENT') dispatch(data.detail);
     };
-    g.sandboxView = Object.freeze({ render, on });
+    g.sandboxView = Object.freeze({ render, text, set, on });
 
     // ---- the one INIT_WORKER ----
     let initialised = false;
@@ -1393,6 +1552,17 @@ export function viewBootstrapText(): string {
 export function viewBootstrapHash(): string {
     if (cachedHash === null) cachedHash = scriptHashSource(viewBootstrapText());
     return cachedHash;
+}
+
+/**
+ * The strict view bootstrap's CSP hash source, `'sha256-…'`, for this build of the library (review round 1, R4-5): the
+ * very value the element puts in the view's script-src, so an embedder can allow it in the host page's own
+ * Content-Security-Policy, which the view inherits (docs/API.md, "Host page policy"). It is the hash of the library's
+ * own function text, so it changes with the build (a bundler or minifier can change it): read it from the build you
+ * serve, for example in a build step.
+ */
+export function viewScriptHash(): string {
+    return viewBootstrapHash();
 }
 
 /**

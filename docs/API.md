@@ -650,7 +650,9 @@ assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](
 
 | Member | Signature | Description |
 | :--- | :--- | :--- |
-| `render` | `(html: string, into?: string \| null) => void` | Replaces the view's body, or the children of the element with id `into`. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). The latest render per target wins; one render is in flight at a time. |
+| `render` | `(html: string, into?: string \| null) => void` | Replaces the view's body, or the children of the element with id `into`. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). The latest render per target wins; one operation is in flight at a time. |
+| `text` | `(id: string, text: string) => void` | Makes `text` the only content of the element with that id, as text: the view assigns it and parses nothing, so nothing needs escaping. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). Shares its slot with `render`: the latest of the two per target wins. |
+| `set` | `(id: string, fields: { value?: string, checked?: boolean, focus?: boolean }) => void` | Sets the value of an `input`, `textarea`, `select` or `output` (not a file input), the checked state of an `input`, or focuses the element. Any other key, or a field of another type, is a `TypeError`; a value past `VIEW_RENDER_MAX_LENGTH` characters a `RangeError`. |
 | `on` | `(type, id: string \| null, handler: (detail) => void) => () => void` | Subscribes to `click`, `input`, `change`, `submit` or `keydown` on the element with that id (or inside it), or anywhere with `null`. Returns `off`. |
 
 The renderer is an allowlist: what it does not list is gone before insertion.
@@ -729,6 +731,17 @@ Never a URL. Strings are cut at 65536 characters, `ids` at 32 entries, `form` at
 one detail together at 262144 characters; a detail that was cut has `truncated: true`. A handler that throws is
 logged and does not stop the others. [ADR-005](ADR-005-strict-mode.md)
 
+`render`, `text` and `set` go to the view in order, one at a time: an id that names no element in the view's body is
+dropped, and the next one applies. What `text` and `set` leave in the view counts against its characters and the
+characters it handles per second, as a render does (an input's value as its `value` attribute, a textarea's and an
+output's as their text); past the budget the operation is dropped and the guest's log says
+`[Sandbox] sandboxView.text: the view refused it: …`. `set({ focus: true })` moves focus within the sandbox only while
+the user's focus is in it (the view's `document.hasFocus()`: the user last clicked or tabbed into the sandbox, and the
+window is focused). Otherwise it is refused, the host page keeps its focused element and its keystrokes, and the log
+says `[Sandbox] sandboxView.set: the view refused focus: …`; a `value` or `checked` in the same call still applies. A
+non-focusable element is left as it is. Without this rule a sandboxed frame's `focus()` takes focus from the host
+page in Chromium and Firefox, with no user activation (measured; cooperative mode's limit).
+
 ---
 
 ## Modes
@@ -784,7 +797,7 @@ in strict mode.
 | `violation` events per environment (strict mode: per source, and per directive for the view) | 100 | `VIOLATION_EVENT_LIMIT` |
 | Auto-size: tallest height (px) | 100000 | `AUTO_RESIZE_MAX_HEIGHT` |
 | Auto-size: height changes per second (and at most one per frame) | 30 | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` |
-| Strict: characters per `sandboxView.render()` | 262144 | `VIEW_RENDER_MAX_LENGTH` |
+| Strict: characters per `sandboxView.render()`, `text()` or `set()` value | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
 | Strict: elements in the view | 50000 | — |
 | Strict: characters in the view (its body's serialization) | 1048576 | — |
@@ -833,16 +846,17 @@ policy must allow:
   `origins` that your page's policy does not allow is refused in the sandbox too. The refusal happens in the sandbox's
   documents, so it arrives as the element's `violation` event (where the browser reports it), never as a
   `securitypolicyviolation` on your page, and nothing warns at `setConfig()`.
-- **The view bootstrap's hash** is constant for one build of the library (it is the hash of the library's own
-  function text, which a bundler or minifier can change), so it cannot be listed here. Read it once from the view's
-  policy, which the wrapper's `srcdoc` carries, and put it in your page's policy (for example in a build step):
+- **The view bootstrap's hash** is `viewScriptHash()`, the very value the element puts in the view's `script-src`.
+  It is constant for one build of the library (it is the hash of the library's own function text, which a bundler or
+  minifier can change), so it cannot be listed here: read it from the build you serve, for example in a build step,
+  and put it in your page's policy:
 
   ```js
-  const srcdoc = sandbox.shadowRoot.querySelector('iframe').srcdoc;   // a strict build, any config
-  const hash = /script-src '(sha256-[A-Za-z0-9+/=]+)'/.exec(srcdoc)[1]; // 'sha256-…' for your script-src
+  import { viewScriptHash } from 'web-sandbox';
+  const policy = `script-src 'self' ${viewScriptHash()}; worker-src blob:`; // viewScriptHash() is 'sha256-…', quoted
   ```
 
-  A dedicated export of the hash is pending the owner's decision.
+  The wrapper style's hash is a constant of the library, listed in the table above.
 
 ---
 
@@ -855,6 +869,7 @@ Values:
 | `defineWebSandbox` | Registers the element; see [above](#registering-the-element). |
 | `WebSandbox` | The element class. |
 | `SandboxDevTools` | `new SandboxDevTools(element)`, then `activate()`, `deactivate()` or `toggle()`: prints the element's `sandbox-log` lines to the host console. |
+| `viewScriptHash` | `viewScriptHash(): string`: the strict view bootstrap's hash source, `'sha256-…'`, for your page's policy; see [Host page policy](#host-page-policy). |
 | `SAFE_CAPABILITIES`, `UNSAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS`, `UNSAFE_PERMISSIONS` | The capability lists accepted by `capabilities` and `unsafeCapabilities`. |
 | `FETCH_ERROR_CODES` | Every `FetchErrorCode`. |
 | `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS`, `LOAD_TIMEOUT_MS`, `EXECUTION_TIMEOUT_GRACE_MS`, `GUEST_WRITES_PER_SECOND`, `GUEST_WRITE_BYTES_PER_SECOND` | See [Limits](#limits). |
@@ -910,9 +925,9 @@ sandbox.registerFiles({
         sandboxView.render('<button id="load">Load</button><ul id="list"></ul>');
         sandboxView.on('click', 'load', async () => {
             const items = await (await sandboxFetch('https://api.example/items')).json();
-            // escape what the API returns: text, not markup (the renderer would keep a <b> or an <img> it carries)
-            const text = (s) => String(s).replace(/[&<>"']/g, (c) => '&#' + c.charCodeAt(0) + ';');
-            sandboxView.render(items.map(i => '<li>' + text(i.name) + '</li>').join(''), 'list');
+            sandboxView.render(items.map((_, n) => '<li id="item-' + n + '"></li>').join(''), 'list');
+            // what the API returns is text, never markup: text() assigns it, so nothing needs escaping
+            items.forEach((item, n) => sandboxView.text('item-' + n, String(item.name)));
         });`,
 });
 sandbox.setConfig({

@@ -49,14 +49,19 @@ async function strictEntry(sandbox: SandboxDriver): Promise<HostEvent[]> {
     return configure(sandbox, { entry: 'main.js' });
 }
 
-/** The view's bootstrap hash, read the way docs/API.md says: from the wrapper's srcdoc. */
+/**
+ * The view's bootstrap hash, the way docs/API.md says to get it: the package's viewScriptHash() (review round 1, R4-5).
+ * It is the hash the element puts in the view's policy, which the wrapper's srcdoc carries (read here from outside).
+ */
 async function viewHash(sandbox: SandboxDriver): Promise<string> {
     await openWithPolicy(sandbox.page, {});
     expect(await strictEntry(sandbox)).toEqual([{ type: 'ready', reason: null }]);
-    return sandbox.page.evaluate(() => {
+    const [exported, built] = await sandbox.page.evaluate(() => {
         const srcdoc = (document.querySelector('web-sandbox') as HTMLElement).shadowRoot!.querySelector('iframe')!.srcdoc;
-        return `'${/script-src '(sha256-[A-Za-z0-9+/=]+)'/.exec(srcdoc)![1]}'`;
+        return [(window as any).viewScriptHash(), `'${/script-src '(sha256-[A-Za-z0-9+/=]+)'/.exec(srcdoc)![1]}'`];
     });
+    expect(exported).toBe(built);
+    return exported;
 }
 
 /** Heights of the wrapper and of the frame inside it, read from outside. */

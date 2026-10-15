@@ -2,6 +2,7 @@
 // (vite.config.ts, /__host-policy): no inline script and no inline style, so a host policy without 'unsafe-inline'
 // runs it and sizes the element. The element's size is set through the CSSOM, which no style-src governs.
 import { defineWebSandbox } from '@src/host';
+import { viewScriptHash } from '@src/index';
 
 defineWebSandbox();
 
@@ -29,4 +30,5 @@ element.style.height = '300px';
 for (const type of ['ready', 'terminated']) {
     element.addEventListener(type, (event: any) => w.sandboxEvents.push({ type, reason: event.detail?.reason ?? null }));
 }
+w.viewScriptHash = viewScriptHash; // what an embedder reads for its own policy (docs/API.md, host page policy)
 w.harnessReady = true;

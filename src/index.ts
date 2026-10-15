@@ -12,7 +12,7 @@ export { LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_STRING } from "./lib/sandb
 export type { SandboxViolation } from "./lib/violation";
 export { VIOLATION_EVENT_LIMIT } from "./lib/violation";
 export { AUTO_RESIZE_MAX_HEIGHT, AUTO_RESIZE_MAX_UPDATES_PER_SECOND } from "./lib/auto-resize";
-export { VIEW_RENDER_MAX_LENGTH } from "./lib/in-sandbox-view";
+export { VIEW_RENDER_MAX_LENGTH, viewScriptHash } from "./lib/in-sandbox-view";
 export type { FetchBridgeConfig, FetchErrorCode, FetchRecord } from "./lib/fetch-bridge";
 export { FETCH_ERROR_CODES } from "./lib/fetch-bridge";
 export type { FileContent, FileEntry, FileInfo, FileError, FileErrorCode, SandboxFiles } from "./lib/files";

@@ -1,7 +1,7 @@
 import { deflateSync } from 'node:zlib';
 import { test, expect, type MountConfig, type SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
-import { inView, waitInView } from './strict-view';
+import { clickInSandbox, inView, waitInView } from './strict-view';
 
 /**
  * The owner's decisions after review round 1 (docs/security/REVIEW-ROUND-1-2026-10-15.md, "Awaiting the owner"), where
@@ -9,6 +9,7 @@ import { inView, waitInView } from './strict-view';
  * attributes from the host page, the view's DOM through strict-view.ts (DevTools in Chromium), the recorder's listeners.
  *   R2-2  allow-forms is an unsafe capability in cooperative mode (and test/e2e/review-round-1.spec.ts, "R2-2")
  *   R4-4  the strict view shows raster-image guest writes, decoded only
+ *   R4-5  sandboxView.text() and sandboxView.set() (viewScriptHash(): host-policy.spec.ts and package.spec.ts)
  */
 
 const recorder = useRecorder();
@@ -144,5 +145,63 @@ test.describe('R4-4: the strict view shows the raster images the guest writes, f
         expect(view).toEqual({ imgs: ['w/a.svg 0', 'w/b.html 0', 'w/c.js 0', 'w/d.png 0'], links: 0, video: 'w/a.svg' });
         expect(recorder.paths('allowed')).toEqual(['/control.svg']);
         expect(recorder.paths('blocked')).toEqual([]);
+    });
+});
+
+test.describe('R4-5: sandboxView.text() and sandboxView.set()', () => {
+    const STRICT: MountConfig = { mode: 'strict', scriptUnsafe: true };
+    const render = async (sandbox: SandboxDriver, html: string, done: string) => {
+        await sandbox.run(`sandboxView.render(${JSON.stringify(html + `<p id="${done}">${done}</p>`)})`);
+        await waitInView(sandbox.page, test.info().project.name, `!!document.getElementById('${done}')`, 8000);
+    };
+
+    test('text(): the string is the element\'s text, markup and all: nothing of it is parsed, nothing loads; an unknown id is dropped and the next operation applies', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount({ ...STRICT, origins: { images: [recorder.allowed] } })).toBe('ready');
+        await render(sandbox, `<p id="out"><b>old</b></p><img id="control" src="${recorder.allowed}/control-text.svg">`, 'r1');
+        await recorder.waitFor('allowed', '/control-text.svg'); // an image the view parses does load
+        const hostile = `<img src="${recorder.allowed}/from-text.svg"><b>bold</b> & <script>x()</script>`;
+        await sandbox.run(`sandboxView.text('nope', 'dropped'); sandboxView.text('out', ${JSON.stringify(hostile)}); sandboxView.text('r1', 'after');`);
+        await waitInView(page, browserName, `document.getElementById('r1').textContent === 'after'`, 8000);
+        const view = await inView<any>(page, browserName, `({ text: document.getElementById('out').textContent, elements: document.getElementById('out').children.length, images: document.images.length, scripts: document.body.getElementsByTagName('script').length })`);
+        expect(view).toEqual({ text: hostile, elements: 0, images: 1, scripts: 0 }); // the one image is the control
+        await page.waitForTimeout(300);
+        expect(recorder.paths('allowed')).toEqual(['/control-text.svg']);
+        expect((await sandbox.logs()).filter(line => line.includes('sandboxView.text'))).toEqual([]);
+    });
+
+    test('set(): the values of an input, a textarea and a select, the checked state of a checkbox, read from outside; the guest\'s TypeError for an unknown key', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount(STRICT)).toBe('ready');
+        await render(sandbox, '<input id="name"><textarea id="notes"></textarea><select id="size"><option value="s">s</option><option value="l">l</option></select><input id="ok" type="checkbox">', 'r1');
+        const thrown = await sandbox.inGuest(`
+            sandboxView.set('name', { value: 'Ada' });
+            sandboxView.set('notes', { value: 'two\\nlines' });
+            sandboxView.set('size', { value: 'l' });
+            sandboxView.set('ok', { checked: true });
+            sandboxView.text('r1', 'set');
+            try { sandboxView.set('name', { colour: 'red' }); return 'no throw'; } catch (error) { return error.name + ': ' + error.message; }`);
+        expect(thrown).toBe('TypeError: sandboxView.set: unknown key "colour"; the keys are value, checked and focus');
+        await waitInView(page, browserName, `document.getElementById('r1').textContent === 'set'`, 8000);
+        expect(await inView(page, browserName, `[document.getElementById('name').value, document.getElementById('notes').value, document.getElementById('size').value, document.getElementById('ok').checked]`)).toEqual(['Ada', 'two\nlines', 'l', true]);
+    });
+
+    test('set({ focus }): refused while the host page has the user\'s focus (the host keeps it and its keystrokes, on every engine); after the user clicks into the sandbox, focus moves within it (the positive control)', async ({ sandbox, page, browserName }) => {
+        await page.evaluate(() => { const input = document.createElement('input'); input.id = 'host-input'; document.body.prepend(input); });
+        expect(await sandbox.mount(STRICT)).toBe('ready');
+        await render(sandbox, '<button id="b" style="position:absolute;left:0;top:0;width:120px;height:40px">b</button><input id="name" style="position:absolute;left:0;top:60px">', 'r1');
+        await sandbox.run(`sandboxView.on('click', 'b', () => sandboxView.set('name', { focus: true }));`);
+        await page.focus('#host-input');
+        await sandbox.run(`sandboxView.set('name', { focus: true }); sandboxView.text('r1', 'asked');`);
+        await waitInView(page, browserName, `document.getElementById('r1').textContent === 'asked'`, 8000);
+        await page.waitForTimeout(300);
+        await page.keyboard.type('abc');
+        expect(await page.evaluate(() => [document.activeElement?.id, (document.getElementById('host-input') as HTMLInputElement).value])).toEqual(['host-input', 'abc']);
+        expect(await inView(page, browserName, `[document.activeElement.localName, document.getElementById('name').value]`)).toEqual(['body', '']);
+        await sandbox.waitForLog("sandboxView.set: the view refused focus: the user's focus is not in the sandbox");
+
+        await clickInSandbox(page, 60, 20); // the user clicks the guest's button: its handler asks for focus
+        await waitInView(page, browserName, `document.activeElement && document.activeElement.id === 'name'`, 8000);
+        await page.keyboard.type('xyz');
+        expect(await inView(page, browserName, `document.getElementById('name').value`)).toBe('xyz');
+        expect(await page.evaluate(() => [document.activeElement?.localName, (document.getElementById('host-input') as HTMLInputElement).value])).toEqual(['web-sandbox', 'abc']);
     });
 });
