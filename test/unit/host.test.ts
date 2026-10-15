@@ -84,9 +84,9 @@ describe('the guest policy built by the element: `origins` (ADR-007)', () => {
 
   it('connectionsAllowed was removed: one warning per instance, ignored (no origin from it), the rest of the config applied', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const el = await mount({ connectionsAllowed: { 'img-src': ['https://img.example'], 'default-src': ['*'] }, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
+    const el = await mount({ mode: 'cooperative', connectionsAllowed: { 'img-src': ['https://img.example'], 'default-src': ['*'] }, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
     el.reset();
-    el.setConfig({ connectionsAllowed: null, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
+    el.setConfig({ mode: 'cooperative', connectionsAllowed: null, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
     expect(el.state).toBe('loading');
     expect(frames(el).policy).toBe(COOPERATIVE_DEFAULT.replace("connect-src 'none'", 'connect-src https://api.example'));
     expect(el._config.html).toBe('<p id="kept">');
@@ -242,11 +242,11 @@ describe('content auto-sizing reaches the guest bootstrap only when asked for (b
     document.body.appendChild(el);
     const FEATURE = '{"autoResize":true}';
 
-    el.setConfig({ capabilities: ['allow-scripts'] });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
     expect(guestDocument(el)).not.toContain(FEATURE);
-    el.setConfig({ capabilities: ['allow-scripts'], autoResize: 'yes' });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], autoResize: 'yes' });
     expect(guestDocument(el)).not.toContain(FEATURE);
-    el.setConfig({ capabilities: ['allow-scripts'], autoResize: true });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], autoResize: true });
     expect(guestDocument(el)).toContain(FEATURE);
     el.setConfig({ mode: 'worker', autoResize: true });
     expect(guestDocument(el)).not.toMatch(/autoResize\\*":true/); // the worker source is a string literal: escaped quotes
@@ -270,13 +270,13 @@ describe('the fetch bridge reaches the guest only when configured (backlog B5)',
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
 
-    el.setConfig({ capabilities: ['allow-scripts'] });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
     expect(guestDocument(el)).not.toMatch(/fetchBridge\\*":/);
-    el.setConfig({ capabilities: ['allow-scripts'], fetchBridge: { allow: ['https://api.example'], timeoutMs: 2500 } });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: { allow: ['https://api.example'], timeoutMs: 2500 } });
     expect(guestDocument(el)).toContain('{"fetchBridge":{"timeoutMs":2500}}');
     el.setConfig({ mode: 'worker', fetchBridge: { allow: [] } });
     expect(guestDocument(el)).toMatch(/fetchBridge\\*":\{\\*"timeoutMs\\*":10000\}/);
-    el.setConfig({ capabilities: ['allow-scripts'], fetchBridge: 'on' });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: 'on' });
     expect(guestDocument(el)).not.toMatch(/fetchBridge\\*":/);
 
     el.expose('sandbox:fetch', () => 'forged');

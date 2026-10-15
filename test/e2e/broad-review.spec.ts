@@ -151,7 +151,7 @@ test.describe('CB3: calls while loading, and the load deadline', () => {
             const until = performance.now() + 300;
             while (performance.now() < until) { /* hold the host's thread */ }
             el.addEventListener('ready', async () => resolve({ timedOut: await timedOut, waiting: await waiting }), { once: true });
-        }), { html, config: { capabilities: ['allow-scripts'], scriptUnsafe: true } });
+        }), { html, config: { mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true } });
         expect(outcome).toEqual({ timedOut: { outcome: 'TIMEOUT', state: 'loading' }, waiting: 0 });
         await page.waitForTimeout(200);
         expect(await sandbox.call('counted')).toBe(0);

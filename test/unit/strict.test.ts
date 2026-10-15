@@ -115,9 +115,9 @@ describe('the strict documents', () => {
 
     it('"entry" outside strict mode is ignored with one warning', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ entry: 'main.js' });
+        const el = await mount({ mode: 'cooperative', entry: 'main.js' });
         el.reset();
-        el.setConfig({ entry: 'main.js' });
+        el.setConfig({ mode: 'worker', entry: 'main.js' });
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('"entry"'))).toHaveLength(1);
     });
 });

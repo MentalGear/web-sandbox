@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PRESETS, type Preset } from '@src/lib/presets';
+import { DEFAULT_PRESET, PRESETS, type Preset } from '@src/lib/presets';
 
 /**
  * Presets drive the regression specs (backlog T4). Specs reach a preset only through fromPreset('<id>')
@@ -84,6 +84,18 @@ describe('presets drive the regression specs (backlog T4)', () => {
                 expect(payload, preset.id).toContain(preset.target);
             }
         }
+    });
+});
+
+describe('modes: every preset names its own, and the playground opens in the default', () => {
+    it('every preset names the mode it was written for (the type requires it; a preset from JSON is checked here)', () => {
+        for (const preset of presets) expect(['strict', 'cooperative', 'worker'], preset.id).toContain(preset.rules.mode);
+    });
+
+    it('the playground opens on a strict demo whose entry is one of its files', () => {
+        const preset: Preset = PRESETS[DEFAULT_PRESET];
+        expect([preset.category, preset.rules.mode]).toEqual(['demo', 'strict']);
+        expect(Object.keys(preset.files ?? {})).toContain(preset.rules.entry);
     });
 });
 

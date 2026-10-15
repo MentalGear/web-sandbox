@@ -194,7 +194,7 @@ describe('PD1: no worker loads from data: in the guest policy', () => {
 
     it('a config cannot reach worker-src at all (no kind names it), and data: is not an origin for any kind: one warning each across builds', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'], origins: { 'worker-src': ['data:'], scripts: ['data:'], images: ['data:'] } });
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { 'worker-src': ['data:'], scripts: ['data:'], images: ['data:'] } });
         el.reset();
         expect(policyOf(el)).toContain('worker-src blob:;');
         expect(policyOf(el)).not.toContain('data:');

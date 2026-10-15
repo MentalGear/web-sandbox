@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from '@playwright/test';
-import type { SandboxConfig } from '@src/host';
+import type { CooperativeSandboxConfig, SandboxConfig, StrictSandboxConfig } from '@src/host';
 import type { SandboxViolation } from '@src/lib/violation';
 import type { FetchRecord } from '@src/lib/fetch-bridge';
 
@@ -14,6 +14,13 @@ export const BASELINE_CONFIG: SandboxConfig = {
     capabilities: ['allow-scripts'],
     scriptUnsafe: true,
 };
+
+/**
+ * A config for mount(): applied over BASELINE_CONFIG, so one that names no mode is a cooperative config (the baseline's
+ * mode), as the specs were written; a strict or worker config names its mode. To apply a config as an embedder would,
+ * with the library's defaults (strict mode), call setConfig() itself (strict-default.spec.ts).
+ */
+export type MountConfig = (StrictSandboxConfig & { mode: 'strict' }) | (Omit<CooperativeSandboxConfig, 'mode'> & { mode?: CooperativeSandboxConfig['mode'] });
 
 export type MountResult = 'ready' | 'terminated';
 
@@ -50,7 +57,7 @@ export class SandboxDriver {
     }
 
     /** Applies BASELINE_CONFIG merged with `config`, and waits for the sandbox to become ready. */
-    async mount(config: SandboxConfig = {}): Promise<MountResult> {
+    async mount(config: MountConfig = {}): Promise<MountResult> {
         return this.page.evaluate((merged) => whenSettled(s => s.setConfig(merged)), { ...BASELINE_CONFIG, ...config } as any);
     }
 
@@ -73,7 +80,7 @@ export class SandboxDriver {
      * Mounts a second <web-sandbox id="second"> next to the harness's, with BASELINE_CONFIG merged with
      * `config`, and waits for it to become ready. Its log lines land in sandboxLogs too (they bubble to window).
      */
-    async mountSecond(config: SandboxConfig = {}): Promise<MountResult> {
+    async mountSecond(config: MountConfig = {}): Promise<MountResult> {
         return this.page.evaluate((merged) => new Promise<MountResult>(resolve => {
             const second = document.createElement('web-sandbox') as any;
             second.id = 'second';

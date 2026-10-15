@@ -380,7 +380,7 @@ describe('W1: a reference names a file only for the kind of load its type is for
 
     it('a guest-written app.js committed as text/plain (no { code: true } needed) gets no script slot in the next build; JavaScript committed with { code: true } does (positive control)', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'], guestWrites: true, html: '<script src="app.js"></script><script src="ok.js"></script>' });
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], guestWrites: true, html: '<script src="app.js"></script><script src="ok.js"></script>' });
         el._guestWrites.handle({ change: 'write', path: 'app.js', entry: { content: new TextEncoder().encode('globalThis.ran = 1'), type: 'text/plain' } });
         el._guestWrites.handle({ change: 'write', path: 'ok.js', entry: { content: new TextEncoder().encode('globalThis.ok = 1'), type: 'text/javascript' } });
         el.commitGuestWrites(['app.js']);
@@ -393,7 +393,7 @@ describe('W1: a reference names a file only for the kind of load its type is for
 
     it('the same for host-registered files: x.js registered as text/plain is not a script; a stylesheet link never names a text file, an image never a stylesheet; an image does (positive control)', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'], html: '<script src="host.js"></script><link rel="stylesheet" href="style.txt"><img src="pic.css"><img src="pic.png">' });
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], html: '<script src="host.js"></script><link rel="stylesheet" href="style.txt"><img src="pic.css"><img src="pic.png">' });
         el.registerFiles({ 'host.js': { content: 'globalThis.ran = 1', type: 'text/plain' }, 'style.txt': 'a {}', 'pic.css': 'a {}', 'pic.png': new Uint8Array([137, 80]) });
         el.reset();
         expect(slotsOf(el)).toEqual(['pic.png']);

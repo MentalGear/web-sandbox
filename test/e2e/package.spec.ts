@@ -11,7 +11,7 @@ test('the built package mounts a working sandbox under a custom tag', async ({ p
         const sandbox = document.querySelector('packaged-sandbox') as any;
         sandbox.addEventListener('ready', () => resolve('ready'), { once: true });
         sandbox.addEventListener('terminated', () => resolve('terminated'), { once: true });
-        sandbox.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true });
+        sandbox.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
     }));
     expect(outcome).toBe('ready');
 
@@ -60,7 +60,7 @@ test('the built package passes the parser-safety assertion for every default boo
         });
         const html = '<script type="module" src="app.js"></script><link rel="stylesheet" href="a.css"><img src="i.svg">';
         return [
-            await settle({ capabilities: ['allow-scripts'], scriptUnsafe: true, autoResize: true, fetchBridge: { allow: ['https://api.example'] }, html }),
+            await settle({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, autoResize: true, fetchBridge: { allow: ['https://api.example'] }, html }),
             await settle({ mode: 'worker', scriptUnsafe: true, fetchBridge: { allow: [] } }),
         ];
     });

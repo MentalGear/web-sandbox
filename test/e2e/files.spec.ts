@@ -210,7 +210,7 @@ test.describe('3. isolation between sandboxes and from the host page', () => {
             second.id = 'second';
             second.addEventListener('ready', () => resolve('ready'), { once: true });
             second.registerFiles({ 'other.txt': 'B-own' });
-            second.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true });
+            second.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
             document.body.appendChild(second);
         }))).toBe('ready');
         await page.evaluate((url) => (document.querySelector('#second') as any).execute(`

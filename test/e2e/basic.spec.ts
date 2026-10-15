@@ -21,7 +21,7 @@ test('renders loaded guest markup and runs its inline scripts', async ({ sandbox
 test('queues execute() calls made before the sandbox is ready', async ({ sandbox, page }) => {
     await page.evaluate(() => {
         const s = document.querySelector('web-sandbox') as any;
-        s.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true });
+        s.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
         s.execute('console.log("queued ran")');
     });
 

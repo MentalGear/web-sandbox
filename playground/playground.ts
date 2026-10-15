@@ -4,7 +4,7 @@ import { WebSandbox, defineWebSandbox } from '@src/host.ts';
 defineWebSandbox();
 
 import { SandboxDevTools } from '@src/devtools.ts';
-import { PRESETS, type Preset } from '@src/lib/presets.ts';
+import { DEFAULT_PRESET, PRESETS, type Preset } from '@src/lib/presets.ts';
 import type { SandboxConfig } from '@src/host.ts';
 
 // -----------------
@@ -51,8 +51,6 @@ function byId<T extends HTMLElement = HTMLElement>(id: string): T {
     if (!element) throw new Error(`Playground element #${id} is missing`);
     return element as T;
 }
-
-const DEFAULT_PRESET = 'basic';
 
 const capturedLogs: LogEntry[] = [];
 const sandbox = byId<WebSandbox>('sandbox');

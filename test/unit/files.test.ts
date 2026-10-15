@@ -33,13 +33,14 @@ const guestDocumentOf = (el: HTMLElement) => parse(wrapperOf(el)).querySelector(
 const policyOf = (el: HTMLElement) => parse(guestDocumentOf(el)).querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
 const directive = (policy: string, name: string) => policy.split(';').map(d => d.trim()).find(d => d === name || d.startsWith(name + ' '));
 
+// These tests read the guest document of cooperative mode: a config that names no mode is a cooperative one here.
 async function mount(config?: Record<string, unknown>, files?: Record<string, unknown>) {
     const { defineWebSandbox } = await import('@src/host');
     defineWebSandbox();
     const el = document.createElement('web-sandbox') as any;
     if (files) el.registerFiles(files);
     document.body.appendChild(el);
-    if (config) el.setConfig(config);
+    el.setConfig({ mode: 'cooperative', ...config });
     return el;
 }
 
@@ -48,7 +49,7 @@ afterEach(() => {
     document.body.replaceChildren();
 });
 
-// The guest policy for the shipped default, and with scriptUnsafe, with no files (the cooperative template, ADR-007). Pinned literally.
+// The cooperative guest policy with nothing configured, and with scriptUnsafe, with no files (the template, ADR-007). Pinned literally.
 const DEFAULT_POLICY = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests";
 const UNSAFE_POLICY = DEFAULT_POLICY.replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' 'unsafe-eval'");
 
@@ -196,7 +197,7 @@ describe('files are part of the environment', () => {
         const el = await mount(undefined, { 'a.js': '1' });
         el.terminate('test');
         el.load('<p>x</p>');
-        el.setConfig({ capabilities: ['allow-scripts'] });
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
         expect(el.listFiles()).toEqual([{ path: 'a.js', type: 'text/javascript', size: 1 }]);
         expect(guestDocumentOf(el)).toContain(inSandboxFiles.toString());
     });
@@ -233,7 +234,7 @@ describe('virtualFilesUrl is gone', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const plain = await mount({ capabilities: ['allow-scripts'] });
         const el = await mount({ capabilities: ['allow-scripts'], virtualFilesUrl: 'http://virtual-files.localhost:4444' });
-        el.setConfig({ capabilities: ['allow-scripts'], virtualFilesUrl: '/src/virtual-files' });
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], virtualFilesUrl: '/src/virtual-files' });
         expect(wrapperOf(el)).toBe(wrapperOf(plain));
         expect(document.querySelectorAll('iframe')).toHaveLength(0); // no hub frame in the host page
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('virtualFilesUrl'))).toHaveLength(1);

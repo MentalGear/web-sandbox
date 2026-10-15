@@ -55,7 +55,7 @@ describe('A1: no configured key or value adds a directive to a guest policy (ADR
 
     it('cooperative mode, an injected key: not a kind, dropped with one warning; the policy is the template', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'], origins: { 'img-src https://a; script-src-elem': ["'self'", 'https://cdn.example'] } });
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { 'img-src https://a; script-src-elem': ["'self'", 'https://cdn.example'] } });
         const { names } = parseLikeABrowser(policyOf(el));
         expect(names).toEqual(COOPERATIVE_NAMES);
         expect(policyOf(el).toLowerCase()).not.toContain("'self'");
@@ -81,7 +81,7 @@ describe('A1: no configured key or value adds a directive to a guest policy (ADR
             for (const [name, value] of Object.entries(fixed)) expect(strict.directives.get(name), `${name} in ${context}`).toEqual(value);
             expect(new Set(strict.names).size, context).toBe(strict.names.length);
 
-            el.setConfig({ capabilities: ['allow-scripts'], origins });
+            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], origins });
             const cooperative = parseLikeABrowser(policyOf(el));
             expect(cooperative.names, context).toEqual(COOPERATIVE_NAMES);
             for (const { directives } of [strict, cooperative]) {
@@ -160,7 +160,7 @@ describe("A5: 'unsafe-eval' and 'wasm-unsafe-eval' come only from scriptUnsafe",
 
     it("with scriptUnsafe the host's own 'unsafe-eval' is the only eval keyword, in script-src, with the S4 warning and no other", async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ scriptUnsafe: true, capabilities: ['allow-scripts'] });
+        const el = await mount({ mode: 'cooperative', scriptUnsafe: true, capabilities: ['allow-scripts'] });
         const { directives } = parseLikeABrowser(policyOf(el));
         expect(directives.get('script-src')).toEqual(["'unsafe-inline'", "'unsafe-eval'"]);
         expect(directives.get('default-src')).toEqual(["'none'"]);
@@ -173,6 +173,7 @@ describe('A6: the values interpolated into the bootstrap come from one copy of t
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         let reads = 0;
         const shifty = {
+            mode: 'cooperative',
             capabilities: ['allow-scripts'],
             get scriptUnsafe() { return ++reads === 1 ? '1, globalThis.__A6 = 1, 0' : true; },
         };
@@ -254,7 +255,7 @@ describe('A7: a merge never writes prototypes, with no list of keys', () => {
         const el = await mount(config);
         expect(Object.getPrototypeOf(el._config)).toBe(Object.prototype);
         expect(Object.getPrototypeOf(el._origins)).toBe(Object.prototype);
-        expect([el._config.scriptUnsafe, el._config.mode, el._config.entry]).toEqual([false, 'cooperative', undefined]);
+        expect([el._config.scriptUnsafe, el._config.mode, el._config.entry]).toEqual([false, 'strict', undefined]);
         expect(policyOf(el)).toContain("img-src 'none';");
     });
 });
@@ -312,7 +313,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const list = ['https://a.example'];
         const capabilities: string[] = ['allow-scripts'];
-        const el = await mount({ capabilities, origins: { connect: list } });
+        const el = await mount({ mode: 'cooperative', capabilities, origins: { connect: list } });
         list.push('https://later.example');
         capabilities.push('allow-forms');
         el.reset();

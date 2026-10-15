@@ -6,6 +6,7 @@ import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, 
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
 import { kindMismatchMessage, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
+import { scriptInMarkup } from "./lib/markup-scripts";
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { deepMerge } from "./lib/utils";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
@@ -26,29 +27,31 @@ import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, is
  * (DEFAULT_SANDBOX_CONFIG), not its previous value. Reference with defaults and modes: docs/API.md#configuration.
  *
  * A union keyed by `mode` (ADR-007), so what a mode cannot use does not type-check: strict mode's `origins` has no
- * `scripts`. A config from JSON is held to the same rules at run time (dropped with a warning).
+ * `scripts`. A config from JSON is held to the same rules at run time (dropped with a warning). Strict mode is the
+ * default, so a config that names no mode is a strict config; cooperative and worker mode are named.
  */
-export type SandboxConfig = CooperativeSandboxConfig | StrictSandboxConfig;
+export type SandboxConfig = StrictSandboxConfig | CooperativeSandboxConfig;
 
 /**
- * Cooperative mode (the default) and worker mode: guest code runs in the guest document, or in a worker inside it.
- * Any value that is not a mode starts no environment (review A4); 'iframe' was renamed 'cooperative'.
+ * Strict mode (ADR-005), the default: guest code runs only in a worker spawned by a view document that runs no guest
+ * script; the worker draws into the view with sandboxView.render(). `html` is the initial view, rendered without its
+ * scripts and handlers.
  */
-export interface CooperativeSandboxConfig extends SandboxConfigOptions {
-    /** Execution mode, default 'cooperative'. */
-    mode?: 'cooperative' | 'worker';
-    /** The exact origins the guest may load each kind from (src/lib/csp/origins.ts). Default: none. */
-    origins?: SandboxOrigins;
+export interface StrictSandboxConfig extends SandboxConfigOptions {
+    /** Execution mode: strict when left out. Any value that is not a mode starts no environment (review A4). */
+    mode?: 'strict';
+    /** As in the other modes, without `scripts`: the view runs only the library's bootstrap. */
+    origins?: StrictSandboxOrigins;
 }
 
 /**
- * Strict mode (ADR-005): guest code runs only in a worker spawned by a view document that runs no guest script; the
- * worker draws into the view with sandboxView.render().
+ * Cooperative mode and worker mode, for content that cooperates: guest code runs in the guest document, or in a worker
+ * inside it, and their limits are documented (README, "Cooperative-mode limits"). 'iframe' was renamed 'cooperative'.
  */
-export interface StrictSandboxConfig extends SandboxConfigOptions {
-    mode: 'strict';
-    /** As in the other modes, without `scripts`: the view runs only the library's bootstrap. */
-    origins?: StrictSandboxOrigins;
+export interface CooperativeSandboxConfig extends SandboxConfigOptions {
+    mode: 'cooperative' | 'worker';
+    /** The exact origins the guest may load each kind from (src/lib/csp/origins.ts). Default: none. */
+    origins?: SandboxOrigins;
 }
 
 /** The options every mode takes. */
@@ -67,8 +70,9 @@ export interface SandboxConfigOptions {
      */
     unsafeCapabilities?: UnsafeCapability[];
     /**
-     * Initial HTML content: the guest document in cooperative mode, the initial view in strict mode. Ignored in
-     * worker mode. Empty (the default) means `<div id="root"></div>`. load() sets it too.
+     * Initial HTML content: the initial view in strict mode (its scripts and handlers do not run; one warning per
+     * element says so), the guest document in cooperative mode. Ignored in worker mode. Empty (the default) means
+     * `<div id="root"></div>`. load() sets it too.
      */
     html?: string;
     /**
@@ -149,7 +153,7 @@ const DEFAULT_SANDBOX_CONFIG: StoredConfig = {
     capabilities: [],
     unsafeCapabilities: [],
     html: '',
-    mode: 'cooperative',
+    mode: 'strict',
     workerExecutionTimeout: 0,
     watchdogTimeout: 0,
     autoResize: false,
@@ -173,6 +177,8 @@ interface GuestMarkupPlan {
 }
 
 const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
+
+const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 
 const DEFAULT_TERMINATE_REASON = 'terminated by the host';
 const WATCHDOG_REASON = 'the guest stopped responding (watchdog)';
@@ -429,14 +435,15 @@ export class WebSandbox extends HTMLElement {
         // config without it turns the bridge off.
         const fetchPolicy = toFetchPolicy(input.fetchBridge, (message) => this._warnFetchBridge(message));
         delete sanitizedConfig.fetchBridge;
-        // `origins` is parsed into the policy's origins here, once, and kept out of the merged config too
-        // (origins.ts): an entry that is not an origin is dropped with a warning; a value that cannot be read
-        // refuses the config. Parsed for the mode this config names, so strict mode drops `scripts`.
-        const origins = parseOrigins(input.origins, input.mode, (message) => this._warnOrigins(message));
+        // `origins` is kept out of the merged config too: it is parsed below, for the mode the merged config has.
         delete sanitizedConfig.origins;
         this._dropRemovedOptions(sanitizedConfig);
 
         const merged = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig as Partial<StoredConfig>);
+        // `origins` is parsed into the policy's origins here, once (origins.ts): an entry that is not an origin is
+        // dropped with a warning; a value that cannot be read refuses the config. Parsed for the mode the build will
+        // have, the default included, so strict mode drops `scripts` whether the config names it or not.
+        const origins = parseOrigins(input.origins, merged.mode, (message) => this._warnOrigins(message));
         // Only a literal true enables eval or auto-sizing: both values are interpolated into the guest bootstrap.
         merged.scriptUnsafe = merged.scriptUnsafe === true;
         merged.autoResize = merged.autoResize === true;
@@ -1438,12 +1445,14 @@ export class WebSandbox extends HTMLElement {
             entrySource = new TextDecoder().decode(Uint8Array.from(atob(file[2]), c => c.charCodeAt(0)));
         }
 
+        const html = this._config.html || '<div id="root"></div>';
+        this._warnAboutStrictHtml(html);
         const sandboxFlags = this._getSandboxFlags();
         const policy = this._guestPolicy(files);
         this._strictInit = {
             workerSource: this._getStrictWorkerSource(files, entrySource),
             viewFiles: files.filter(candidate => isViewFileType(candidate[1])), // never a type that opens as a document (broad review ST1)
-            html: this._config.html || '<div id="root"></div>',
+            html,
             autoResize: this._autoResizeEnabled(),
         };
         const view = buildViewDocument(policy, viewBootstrapText());
@@ -1494,6 +1503,15 @@ export class WebSandbox extends HTMLElement {
         }
         const unsafe = config.unsafeCapabilities || [];
         if (unsafe.length > 0) warn(`[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: ${unsafe.join(', ')}.`);
+    }
+
+    // Strict mode is the default, so markup written for cooperative mode reaches it unchanged: its scripts and
+    // handlers never run (the renderer drops them, and the view's policy admits only the bootstrap). Said once per
+    // element, read with an inert parser (markup-scripts.ts); not again once said, so a big view is parsed only until then.
+    private _warnAboutStrictHtml(html: string) {
+        if (this._warnedStrict.has(STRICT_HTML_SCRIPT_WARNING) || !scriptInMarkup(html)) return;
+        this._warnedStrict.add(STRICT_HTML_SCRIPT_WARNING);
+        console.warn(STRICT_HTML_SCRIPT_WARNING);
     }
 
     // The view liveness check (A5): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.
