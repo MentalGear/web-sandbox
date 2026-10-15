@@ -106,6 +106,19 @@ export const VIEW_FILE_TYPES = [
     'text/vtt',
 ] as const;
 
+/** The raster image types: the browser only decodes them, and opened on their own they are an image, never a document. */
+export const RASTER_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'] as const;
+
+/**
+ * The only types the view mints a URL for from a guest write (review round 1, R4-4, the owner's decision): the files
+ * the view shows (VIEW_FILE_TYPES) that are raster images. A plugin can show an image it made (a chart drawn on an
+ * OffscreenCanvas) without a rebuild. The host sends the view the bytes of every write it recorded whose store type is
+ * one of these, and the view, the chokepoint, mints a URL only for them (inSandboxView, `showWrite`): the guest never
+ * supplies a URL, and what it can name is decoded only, as an image (the view's load kinds admit these types for image
+ * loads alone: img, srcset, poster, icon links). Never SVG, which is a document that can hold script.
+ */
+export const VIEW_WRITE_TYPES: readonly string[] = VIEW_FILE_TYPES.filter(type => (RASTER_IMAGE_TYPES as readonly string[]).includes(type));
+
 /** Whether the view mints a URL for a file of `type` (VIEW_FILE_TYPES). */
 export function isViewFileType(type: string): boolean {
     return (VIEW_FILE_TYPES as readonly string[]).includes(type);
@@ -609,6 +622,8 @@ export interface ViewOptions {
     events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
     /** The Trusted Types policy name the view creates where the host page enforces them (trusted-types.ts). */
     trustedTypesPolicy: string;
+    /** VIEW_WRITE_TYPES: the only types the view mints a URL for from a guest write. */
+    writeTypes: readonly string[];
 }
 
 /**
@@ -794,8 +809,30 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
     let viewFiles = new Map<string, { url: string; type: string }>();
     let minted = new Set<string>();
-    const fileOf = (path: string) => viewFiles.get(path) || null;
+    // The guest's writes as the host recorded them (R4-4): path → the URL this view minted from the host's bytes, or null
+    // where the path names nothing any more (a removal, or a write of a type the view does not mint for). A path the
+    // guest changed resolves as the guest's own sandboxFiles lists it, so a registered file it replaced or removed is
+    // gone from here too. Only VIEW_WRITE_TYPES are minted, whatever the message says: this is the chokepoint.
+    const written = new Map<string, { url: string; type: string } | null>();
+    const fileOf = (path: string) => (written.has(path) ? written.get(path)! : viewFiles.get(path) || null);
     const isMinted = (url: string) => minted.has(url);
+    const showWrite = (path: unknown, mime: unknown, bytes: unknown) => {
+        if (typeof path !== 'string') return;
+        const previous = written.get(path);
+        if (previous) {
+            // A later write or a removal replaces the URL: the old one is revoked and no longer the view's, so rendered
+            // markup can no longer name it (A8); an image that already shows it keeps what it decoded.
+            minted.delete(previous.url);
+            URL.revokeObjectURL(previous.url);
+        }
+        if (typeof mime !== 'string' || options.writeTypes.indexOf(mime) < 0 || !ArrayBuffer.isView(bytes)) {
+            written.set(path, null);
+            return;
+        }
+        const url = URL.createObjectURL(new Blob([bytes as ArrayBufferView<ArrayBuffer>], { type: mime }));
+        written.set(path, { url, type: mime });
+        minted.add(url);
+    };
 
     // template.innerHTML parses into an inert fragment (no script runs, nothing loads); the renderer cleans
     // it; replaceChildren MOVES its nodes into the document (A2) — never a clone or an import. The renderer gets the
@@ -937,6 +974,12 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         viewPort.onmessage = (message: MessageEvent) => {
             const m = message.data;
             if (m && m.type === 'VIEW_PING' && typeof m.n === 'number') viewPort!.postMessage({ type: 'VIEW_PONG', n: m.n });
+            // A guest write the host recorded (R4-4), answered once shown: the host tells the guest its write stands only
+            // then, so a render after `await sandboxFiles.write()` finds the URL here.
+            if (m && m.type === 'VIEW_WRITE' && typeof m.id === 'number') {
+                showWrite(m.path, m.mime, m.bytes);
+                viewPort!.postMessage({ type: 'VIEW_WRITTEN', id: m.id });
+            }
         };
         // The check-in (review round 1, R3-1): the first frame on the view port, which only this bootstrap holds. The
         // host is 'ready' on it, never on the frame's load alone, which fires also when this script did not run.
@@ -946,8 +989,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         for (let i = 0; i < outbox.length; i++) viewPort.postMessage(outbox[i]);
         outbox.length = 0;
 
-        // The view's own blob: URLs for the registered files it may show (no JavaScript among them): the
-        // only blob: URLs the renderer keeps (A8).
+        // The view's own blob: URLs for the registered files it may show (no JavaScript among them): with the ones it
+        // mints for raster-image guest writes (showWrite, R4-4), the only blob: URLs the renderer keeps (A8).
         const entries = Array.isArray(data.viewFiles) ? data.viewFiles : [];
         const files = installFiles(entries);
         viewFiles = new Map();
@@ -964,8 +1007,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         // when it takes INIT_WORKER, which a worker handles only after its whole script (prelude, entry, marker)
         // has run: the source has been read and evaluated by then, and the entry's own errors have been raised.
         // From then on the URL resolves nowhere, so the view can no longer load or fetch the worker's source: the
-        // only blob: URLs left that rendered markup could name are the worker's copies of registered files, and the
-        // narrowed A8 guarantee, "the view renders no blob: content but registered files", holds by construction.
+        // only blob: URLs left that rendered markup could name are the worker's copies of registered files and the
+        // view's own, and the narrowed A8 guarantee, "the view renders no blob: content but registered files and
+        // raster-image guest writes, decoded only" (R4-4 added the writes), holds by construction.
         // Revoking earlier (once the Worker object exists) was rejected in the review: in WebKit the worker's
         // script had not been read yet, and every blob: URL it then minted was unreadable (sandboxFiles failed
         // with NotReadableError). Measured at this point on all three engines: Blob reads, fetches of the
@@ -1327,6 +1371,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
     events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,
+    writeTypes: VIEW_WRITE_TYPES,
 };
 
 let cachedText: string | null = null;

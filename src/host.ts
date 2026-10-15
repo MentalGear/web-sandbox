@@ -7,6 +7,7 @@ import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite,
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
 import { kindMismatchMessage, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
 import { scriptInMarkup } from "./lib/markup-scripts";
+import { LOAD_KINDS } from "./lib/load-kinds";
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { deepMerge } from "./lib/utils";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
@@ -23,7 +24,7 @@ import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type Fetc
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
  * The element's configuration, passed to setConfig(): every option left out takes its default
@@ -404,6 +405,10 @@ export class WebSandbox extends HTMLElement {
     private _port: MessagePort | null = null;     // the guest's port: the guest document's bootstrap, or the worker (logic port)
     private _viewPort: MessagePort | null = null; // strict mode: the view's port (violations, resize, entry errors, liveness)
     private _viewWatchdog: Watchdog | null = null; // strict mode: the view liveness check (A5)
+    // Strict mode (R4-4): guest writes posted to the view and not yet confirmed (VIEW_WRITTEN), by id; their guest is
+    // answered on confirmation. Emptied by every teardown.
+    private _viewWrites = new Map<number, { shown: () => void; lost: (error: Error) => void }>();
+    private _viewWriteIds = 0;
     private _strictInit: StrictInit | null = null; // strict mode: what the next frame load hands the view
     private _executionTimers = new Set<ReturnType<typeof setTimeout>>(); // workerExecutionTimeout deadlines of this environment
     // Liveness probes started at a deadline (F2): each PING number they sent (negative, so never the watchdog's)
@@ -687,6 +692,7 @@ export class WebSandbox extends HTMLElement {
     // change is announced last, through _notifyThenAct (B5): 'fileswritten' runs embedder listeners, and the guest is
     // told its change stands only if no listener reset or terminated the sandbox meanwhile (then the overlay that
     // held it is gone or closed, and the answer could only reach a closed port anyway).
+    // In strict mode the change goes to the view as well (R4-4), and the guest is answered once the view has it.
     private _handleGuestWrite(writes: GuestWrites | null, request: unknown): Promise<GuestWriteAnswer> {
         if (!writes) return refuseGuestWrite();
         let answer: GuestWriteAnswer;
@@ -696,10 +702,31 @@ export class WebSandbox extends HTMLElement {
             return Promise.reject(error);
         }
         if (answer.change === 'none') return Promise.resolve(answer); // nothing recorded, nothing to announce
+        // What the view is told, taken now: a 'fileswritten' listener may commit the change and empty its place.
+        const shown = this._viewPort ? viewWriteOf(answer.path, writes.change(answer.path)) : null;
         return new Promise((resolve, reject) => {
-            this._notifyThenAct(() => this._dispatchFilesWritten(answer.path), () => resolve(answer));
-            reject(new Error('[Sandbox] the sandbox was reset or terminated while this write was announced.')); // no-op once resolved
+            let acted = false;
+            this._notifyThenAct(() => this._dispatchFilesWritten(answer.path), () => {
+                acted = true;
+                this._showInView(shown, () => resolve(answer), reject);
+            });
+            if (!acted) reject(new Error('[Sandbox] the sandbox was reset or terminated while this write was announced.'));
         });
+    }
+
+    // Strict mode (R4-4): one recorded guest change to the view, which mints a URL for a raster image from these bytes
+    // (VIEW_WRITE_TYPES, its own check) and answers VIEW_WRITTEN; `shown` runs then. The view is the only reader of the
+    // bytes: a copy, transferred. Without a view (cooperative and worker mode) `shown` runs at once. A teardown before the
+    // view answered ends the wait (_teardown): the change stays recorded, and the guest's port is closed anyway.
+    private _showInView(change: ViewWrite | null, shown: () => void, lost: (error: Error) => void) {
+        const port = this._viewPort;
+        if (!change || !port) {
+            shown();
+            return;
+        }
+        const id = ++this._viewWriteIds;
+        this._viewWrites.set(id, { shown, lost });
+        port.postMessage({ type: 'VIEW_WRITE', id, ...change }, change.bytes ? [change.bytes.buffer] : []);
     }
 
     // One guest change the host recorded: dispatched on the element and bubbling, like the other events a guest
@@ -1102,6 +1129,14 @@ export class WebSandbox extends HTMLElement {
             this._viewWatchdog?.handlePong(data.n);
             return;
         }
+        if (data?.type === 'VIEW_WRITTEN') {
+            // the view holds a guest write (R4-4): the guest may now be told its write stands
+            const pending = typeof data.id === 'number' ? this._viewWrites.get(data.id) : undefined;
+            if (!pending) return;
+            this._viewWrites.delete(data.id);
+            pending.shown();
+            return;
+        }
         if (data?.type === 'VIOLATION') {
             this._dispatchViolation(data, 'view');
             return;
@@ -1356,6 +1391,9 @@ export class WebSandbox extends HTMLElement {
         if (this._iframe) { this._iframe.onload = null; this._iframe.remove(); this._iframe = null; }
         if (this._port) { this._port.close(); this._port = null; }
         if (this._viewPort) { this._viewPort.close(); this._viewPort = null; }
+        const unshown = [...this._viewWrites.values()];
+        this._viewWrites.clear(); // the guest writes the view never confirmed: their guest is gone with its port
+        for (const { lost } of unshown) lost(new Error('[Sandbox] the sandbox was reset or terminated before the view showed this write.'));
         for (const timer of this._executionTimers) clearTimeout(timer);
         this._executionTimers.clear();
         for (const end of new Set(this._executionProbes.values())) end(); // stops every probe; empties the map
@@ -1551,7 +1589,10 @@ export class WebSandbox extends HTMLElement {
         if (this._config.mode !== 'strict') return cooperativePolicy({ origins: this._origins, fileKinds: fileKinds(types), scriptUnsafe });
         // A type the view mints no URL for (isViewFileType, broad review ST1) is only fetched, by the worker.
         const viewTypes = types.map(type => (isViewFileType(type) ? type : FALLBACK_TYPE));
-        return strictViewPolicy({ origins: this._origins, fileKinds: fileKinds(viewTypes), scriptUnsafe, bootstrapHash: viewBootstrapHash() });
+        const kinds = fileKinds(viewTypes);
+        // With guest writes the view may mint URLs for raster images during the environment (R4-4): image loads only.
+        if (this._config.guestWrites === true) kinds.add(LOAD_KINDS.image.key);
+        return strictViewPolicy({ origins: this._origins, fileKinds: kinds, scriptUnsafe, bootstrapHash: viewBootstrapHash() });
     }
 
     // What the bootstrap does with this build's guest markup (GuestMarkupPlan): references to registered
@@ -1834,6 +1875,20 @@ const LIFECYCLE = WebSandbox.prototype as unknown as {
     _discardGuestWrites(): void;
     _enterState(state: SandboxState): void;
 };
+
+// One guest change as the strict view is told it (R4-4): the path, its store type (null after a removal) and, only for a
+// type the view mints a URL for (VIEW_WRITE_TYPES), a copy of the bytes. Any other change still names the path, so the
+// view stops resolving whatever it named before.
+interface ViewWrite {
+    path: string;
+    mime: string | null;
+    bytes: Uint8Array | null;
+}
+
+function viewWriteOf(path: string, change: { type: string; bytes: Uint8Array } | null | undefined): ViewWrite {
+    if (!change) return { path, mime: null, bytes: null };
+    return { path, mime: change.type, bytes: VIEW_WRITE_TYPES.includes(change.type) ? change.bytes.slice() : null };
+}
 
 // A guest write while writes are off, or after the overlay was discarded: the one refusal.
 function refuseGuestWrite(): Promise<never> {

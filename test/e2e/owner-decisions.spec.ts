@@ -1,11 +1,45 @@
+import { deflateSync } from 'node:zlib';
 import { test, expect, type MountConfig, type SandboxDriver } from './fixture';
+import { useRecorder } from './recorder';
+import { inView, waitInView } from './strict-view';
 
 /**
  * The owner's decisions after review round 1 (docs/security/REVIEW-ROUND-1-2026-10-15.md, "Awaiting the owner"), where
  * the browser decides, on Chromium, Firefox and WebKit. Evidence is read from outside the sandbox: the frames'
  * attributes from the host page, the view's DOM through strict-view.ts (DevTools in Chromium), the recorder's listeners.
  *   R2-2  allow-forms is an unsafe capability in cooperative mode (and test/e2e/review-round-1.spec.ts, "R2-2")
+ *   R4-4  the strict view shows raster-image guest writes, decoded only
  */
+
+const recorder = useRecorder();
+
+// A PNG of width × height, so a rendered <img> tells "this file decoded" by its natural size.
+function png(width: number, height: number): number[] {
+    const table = Array.from({ length: 256 }, (_, n) => {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        return c >>> 0;
+    });
+    const crc = (bytes: Buffer) => {
+        let c = 0xffffffff;
+        for (const byte of bytes) c = table[(c ^ byte) & 0xff]! ^ (c >>> 8);
+        return (c ^ 0xffffffff) >>> 0;
+    };
+    const chunk = (type: string, data: Buffer) => {
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(data.length);
+        const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+        const sum = Buffer.alloc(4);
+        sum.writeUInt32BE(crc(body));
+        return Buffer.concat([length, body, sum]);
+    };
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(width, 0);
+    header.writeUInt32BE(height, 4);
+    header.set([8, 2, 0, 0, 0], 8); // 8-bit RGB
+    const rows = Buffer.concat(Array.from({ length: height }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3, 0x80)])));
+    return Array.from(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]));
+}
 
 // The sandbox flags of the wrapper and of the guest frame inside it, read from the host page.
 const flagsOf = (sandbox: SandboxDriver) => sandbox.page.evaluate(() => {
@@ -32,5 +66,83 @@ test.describe('R2-2: in cooperative mode a form submits only with unsafeCapabili
 
     test("unsafeCapabilities: ['allow-forms'] grants it on both frames and the submission starts on every engine (the positive control)", async ({ sandbox }) => {
         expect(await fires(sandbox, { capabilities: ['allow-scripts'], unsafeCapabilities: ['allow-forms'] })).toEqual({ flags: ['allow-scripts allow-forms', 'allow-scripts allow-forms'], submitted: true });
+    });
+});
+
+test.describe('R4-4: the strict view shows the raster images the guest writes, from URLs it mints itself', () => {
+    const WRITES: MountConfig = { mode: 'strict', guestWrites: true, scriptUnsafe: true };
+    // An <img> by id, read in the view from outside: its natural size once it loaded (a src that names no file loads
+    // nothing: Firefox never marks such an image complete), and what its src attribute holds.
+    const image = (id: string) => `(() => { const i = document.getElementById('${id}'); return i && (i.complete || !/^blob:/.test(i.getAttribute('src'))) ? { size: i.naturalWidth + 'x' + i.naturalHeight, src: i.getAttribute('src') } : null; })()`;
+
+    test('a chart the guest draws on an OffscreenCanvas and writes as PNG shows in an <img> named by its path, without a rebuild; the worker gets no URL for it', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount(WRITES)).toBe('ready');
+        const url = await sandbox.inGuest(`
+            const canvas = new OffscreenCanvas(7, 4);
+            const context = canvas.getContext('2d');
+            context.fillStyle = '#c00';
+            context.fillRect(0, 0, 7, 4);
+            await sandboxFiles.write('gen/chart.png', await canvas.convertToBlob({ type: 'image/png' }));
+            sandboxView.render('<figure><img id="chart" src="gen/chart.png" alt="chart"></figure>');
+            try { return sandboxFiles.url('gen/chart.png'); } catch (error) { return error.code; }`);
+        expect(url).toBe('NOT_FOUND');
+        const shown = await waitInView<{ size: string; src: string }>(page, browserName, image('chart'), 8000);
+        expect(shown.size).toBe('7x4');
+        expect(shown.src).toMatch(/^blob:/);
+        expect(await sandbox.page.evaluate(() => (document.querySelector('web-sandbox') as any).listGuestWrites().map((w: any) => [w.path, w.type]))).toEqual([['gen/chart.png', 'image/png']]);
+    });
+
+    test('a later write to the path shows the new image from a new URL and revokes the old one; a removal revokes it and the path names nothing', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount(WRITES)).toBe('ready');
+        let renders = 0;
+        const show = async (bytes: number[] | null) => {
+            const token = `render${++renders}`;
+            await sandbox.inGuest(`
+                ${bytes ? `await sandboxFiles.write('gen/chart.png', new Uint8Array(${JSON.stringify(bytes)}));` : `await sandboxFiles.remove('gen/chart.png');`}
+                sandboxView.render('<img id="chart" src="gen/chart.png"><p id="${token}">${token}</p>');
+                return true;`);
+            return waitInView<{ size: string; src: string }>(page, browserName, `document.getElementById('${token}') && ${image('chart')}`, 8000);
+        };
+        const first = await show(png(3, 5));
+        expect(first.size).toBe('3x5');
+        const second = await show(png(7, 4));
+        expect(second.size).toBe('7x4');
+        expect(second.src).toMatch(/^blob:/);
+        expect(second.src).not.toBe(first.src);
+        // A revoked URL is no longer the view's: markup that names it keeps no src (A8); the live one stays (the control).
+        // (Whether a revoked URL still loads is the engine's image cache: Firefox serves what it already decoded.)
+        const named = async (urls: string[]) => {
+            await sandbox.run(`sandboxView.render(${JSON.stringify(urls.map((url, i) => `<img id="u${i}" src="${url}">`).join('') + '<p id="named">n</p>')}, null)`);
+            await waitInView(page, browserName, `!!document.getElementById('named')`, 8000);
+            return inView<(string | null)[]>(page, browserName, `${JSON.stringify(urls.map((_, i) => `u${i}`))}.map((id) => document.getElementById(id).getAttribute('src'))`);
+        };
+        expect(await named([first.src, second.src])).toEqual([null, second.src]);
+        const removed = await show(null);
+        expect(removed).toEqual({ size: '0x0', src: 'gen/chart.png' });
+        expect(await named([second.src])).toEqual([null]);
+    });
+
+    test('an SVG, HTML or JavaScript write named in an <img> (or as an icon, a video, a stylesheet) does not resolve and reaches no listener; a PNG write in the same render does (positive control)', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount({ ...WRITES, origins: { images: [recorder.allowed], connect: [recorder.allowed], styles: [recorder.allowed], media: [recorder.allowed] } })).toBe('ready');
+        await sandbox.inGuest(`
+            await sandboxFiles.write('w/a.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="9" height="9"><image href="${recorder.allowed}/from-svg.svg" width="9" height="9"/><script>fetch("${recorder.allowed}/svg-script")</script></svg>');
+            await sandboxFiles.write('w/b.html', '<img src="${recorder.allowed}/from-html.svg"><script>fetch("${recorder.allowed}/html-script")</script>');
+            await sandboxFiles.write('w/c.js', 'fetch("${recorder.allowed}/from-js")');
+            await sandboxFiles.write('w/d.png', { content: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><image href="${recorder.allowed}/from-override.svg"/></svg>'), type: 'image/svg+xml' });
+            await sandboxFiles.write('w/ok.png', new Uint8Array(${JSON.stringify(png(3, 5))}));
+            sandboxView.render('<img id="a" src="w/a.svg"><img id="b" src="w/b.html"><img id="c" src="w/c.js"><img id="d" src="w/d.png">'
+                + '<link rel="icon" href="w/a.svg"><link rel="stylesheet" href="w/b.html"><video id="v" src="w/a.svg"></video><img id="ok" src="w/ok.png"><img id="control" src="${recorder.allowed}/control.svg">');
+            return true;`);
+        expect((await waitInView<{ size: string }>(page, browserName, image('ok'), 8000)).size).toBe('3x5');
+        await recorder.waitFor('allowed', '/control.svg'); // the listener hears an image load from the view
+        await page.waitForTimeout(500);
+        const view = await inView<any>(page, browserName, `({
+            imgs: ['a', 'b', 'c', 'd'].map((id) => document.getElementById(id).getAttribute('src') + ' ' + document.getElementById(id).naturalWidth),
+            links: document.querySelectorAll('link').length,
+            video: document.getElementById('v').getAttribute('src'),
+        })`);
+        expect(view).toEqual({ imgs: ['w/a.svg 0', 'w/b.html 0', 'w/c.js 0', 'w/d.png 0'], links: 0, video: 'w/a.svg' });
+        expect(recorder.paths('allowed')).toEqual(['/control.svg']);
+        expect(recorder.paths('blocked')).toEqual([]);
     });
 });
