@@ -34,8 +34,10 @@ class ClonePort {
     deliver(data: unknown) { this.handler!(new FakeMessageEvent({ data })); }
 }
 class FakeMessageChannel {
+    static last: FakeMessageChannel | null = null;
     readonly port1 = new ClonePort();
     readonly port2 = new ClonePort();
+    constructor() { FakeMessageChannel.last = this; }
 }
 const PLATFORM = { MessagePort: ClonePort, MessageEvent: FakeMessageEvent, Event: FakeEvent, MessageChannel: FakeMessageChannel };
 const originals: Record<string, unknown> = {};
@@ -67,6 +69,14 @@ function recordingConsole() {
     const console: Record<string, (...args: unknown[]) => void> = {};
     for (const name of names) console[name] = (...args: unknown[]) => { calls.push([name, args]); };
     return { console: console as unknown as Console, calls };
+}
+
+/** The bootstrap in cooperative mode: its own channel's port1, attached at once; the browser's console is still given lines (M-5). */
+function cooperativeComms(console: Console) {
+    inSandboxScript(false, 'cooperative', console, createBroker, undefined, createSizeOf);
+    const port = FakeMessageChannel.last!.port1;
+    port.frames.length = 0;
+    return { port, lines: () => port.frames.filter(frame => frame.type === 'LOG') };
 }
 
 /** The bootstrap as the host builds it in strict mode (externalPort), attached to a cloning port. */
@@ -233,7 +243,7 @@ describe('C-1: code that runs after guest code started reads nothing the guest c
 describe('C-2: the console wrappers never hand the browser console what the relay did not bound', () => {
     it('with Array.prototype[Symbol.iterator] patched, trace and assert still relay, and the browser console gets the bounded line', () => {
         const { console, calls } = recordingConsole();
-        const { lines } = strictComms(console);
+        const { lines } = cooperativeComms(console);
         const long = 'x'.repeat(LOG_MAX_STRING + 10);
         const iterator = Array.prototype[Symbol.iterator];
         try {
@@ -245,6 +255,7 @@ describe('C-2: the console wrappers never hand the browser console what the rela
         }
         expect(lines().map(line => [line.args[0], (line.args[1] as string).length])).toEqual([['console.trace()', LOG_MAX_STRING], ['Assertion failed:', LOG_MAX_STRING]]);
         const forwarded = calls.filter(([name]) => name === 'trace' || name === 'assert');
+        expect(forwarded.map(([name, args]) => [name, args.length])).toEqual([['trace', 1], ['assert', 2]]);
         expect(forwarded.flatMap(([, args]) => args.filter(arg => typeof arg === 'string' && arg.length > LOG_MAX_STRING))).toEqual([]);
     });
 
@@ -252,7 +263,7 @@ describe('C-2: the console wrappers never hand the browser console what the rela
         let now = 1000;
         vi.spyOn(performance, 'now').mockImplementation(() => now);
         const { console, calls } = recordingConsole();
-        strictComms(console);
+        cooperativeComms(console);
         const long = 'x'.repeat(LOG_MAX_STRING + 10);
         const c = console as any;
         c.count(long);
@@ -484,5 +495,90 @@ describe('C-11: only real import and export specifiers are rewritten in the decl
         } finally {
             rmSync(work, { recursive: true, force: true });
         }
+    });
+});
+
+describe("M-1, M-2: the relay's own lines always reach the host, and its budgets fit the host's window by construction", () => {
+    // The host side: the element, with a port of its own, dispatching what the guest's relay posted on it.
+    function hostOf() {
+        defineWebSandbox();
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = document.createElement('web-sandbox') as any;
+        document.body.appendChild(el);
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+        const dispatched: string[] = [];
+        el.addEventListener('sandbox-log', (event: CustomEvent) => dispatched.push(String(event.detail.args[0])));
+        // a fresh environment's limits each time, on a port of its own
+        const deliver = (frames: unknown[]) => {
+            dispatched.length = 0;
+            el._teardown();
+            const { port1 } = new MessageChannel();
+            el._port = port1;
+            for (const frame of frames) el._onGuestMessage(port1, () => {}, frame, null);
+            port1.close();
+            return dispatched;
+        };
+        return { deliver, done: () => el.remove() };
+    }
+    const withPlatform = <T>(platform: Record<string, unknown>, run: () => T): T => {
+        const saved: Record<string, unknown> = {};
+        for (const name of Object.keys(PLATFORM)) {
+            saved[name] = (globalThis as any)[name];
+            (globalThis as any)[name] = platform[name];
+        }
+        try {
+            return run();
+        } finally {
+            for (const name of Object.keys(PLATFORM)) (globalThis as any)[name] = saved[name];
+        }
+    };
+
+    it('M-1: a burst of 1 001 lines after ready: 1 000 lines and the warning that the guest started dropping all arrive', () => {
+        vi.spyOn(performance, 'now').mockImplementation(() => 1000);
+        const { console } = recordingConsole();
+        const { port } = strictComms(console);
+        for (let i = 0; i < LOG_EVENTS_PER_SECOND + 1; i++) console.log('line ' + i);
+        const frames = port.frames.filter(frame => frame.type === 'LOG');
+        const host = withPlatform(originals, hostOf);
+        const dispatched = withPlatform(originals, () => host.deliver(frames));
+        expect(dispatched.filter(line => line.startsWith('line '))).toHaveLength(LOG_EVENTS_PER_SECOND);
+        expect(dispatched.filter(line => /lines past that are dropped/.test(line))).toHaveLength(1);
+        host.done();
+    });
+
+    it("M-2: 1 000 lines before the port is attached all arrive, then '<mode> Ready'; past a cap, the warning names the cap that was reached", () => {
+        vi.spyOn(performance, 'now').mockImplementation(() => 1000);
+        const host = withPlatform(originals, hostOf);
+        // a line of one short string, or of 900 000 bytes (within LOG_MAX_BYTES; five of them are past 4 MiB)
+        const cases = [[LOG_EVENTS_PER_SECOND, () => 'x', null], [LOG_EVENTS_PER_SECOND + 1, () => 'x', '1000 lines'], [6, () => new Uint8Array(900000), '4194304 bytes']] as const;
+        for (const [count, value, cap] of cases) {
+            const { console } = recordingConsole();
+            const comms = inSandboxScript(false, 'strict', console, createBroker, { externalPort: true }, createSizeOf);
+            for (let i = 0; i < count; i++) console.log(value());
+            const port = new ClonePort();
+            comms.attach(port as any);
+            const dispatched = withPlatform(originals, () => host.deliver(port.frames));
+            expect(dispatched.filter(line => line === 'strict Ready'), `${count} lines`).toHaveLength(1);
+            const warning = dispatched.filter(line => /logged before the sandbox was connected were dropped/.test(line));
+            if (cap === null) expect(warning).toEqual([]);
+            else expect(warning.length === 1 && warning[0]!.includes(cap), `${count} lines: ${warning}`).toBe(true);
+        }
+        host.done();
+    });
+});
+
+describe("M-5: in a worker (worker and strict mode) the relay is the only sink: nothing goes to the worker's own console", () => {
+    it('strict: a line, a cut line and console.count reach the host only; cooperative: the browser console still gets them, bounded', () => {
+        const strict = recordingConsole();
+        const { lines } = strictComms(strict.console);
+        strict.console.log('hello');
+        strict.console.log('x'.repeat(LOG_MAX_STRING + 1));
+        (strict.console as any).count('n');
+        expect(lines()).toHaveLength(2);
+        expect(strict.calls).toEqual([]);
+        const cooperative = recordingConsole();
+        inSandboxScript(false, 'cooperative', cooperative.console, createBroker, undefined, createSizeOf);
+        cooperative.console.log('hello');
+        expect(cooperative.calls).toEqual([['log', ['hello']]]);
     });
 });

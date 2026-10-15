@@ -1417,7 +1417,7 @@ middle-child removals (Chromium 13 s for 38 000) and WebKit's layout of a word o
 and drops comments; `wbr`, `ruby`, `rt`, `rp` unwrapped. S42's statement is replaced: host-page availability is not
 protected wherever the view shares the host's thread (WebKit always, Firefox, Chromium depending on its process model);
 the budgets bound the common cases, CSS paint and bidirectional text layout are not bounded (240 000 characters
-alternating directions in one paragraph: Chromium 10 s, WebKit 20 s). Tests: `test/e2e/view-budget.spec.ts`,
+alternating directions in one paragraph: tens of seconds in Chromium and WebKit, engine and machine dependent). Tests: `test/e2e/view-budget.spec.ts`,
 `src/lib/in-sandbox-view.test.ts`.
 
 ### S53 · Review round 1, the low findings and the cooperative residual — ✅ **done** (R2-2 documented)

@@ -1,4 +1,5 @@
 import { test, expect, type MountConfig } from './fixture';
+import type { Page } from '@playwright/test';
 
 /**
  * Review round 2 (reviewer C): the findings where the browser decides, on Chromium, Firefox and WebKit. Each test failed
@@ -75,6 +76,58 @@ test.describe('C-3: what a call answers is measured as it is posted, by an allow
                 twoFaced: 'resolved 5', // the snapshot measured is the one posted: the getter is read once
                 small: 'resolved 3 a',
             });
+        });
+    }
+});
+
+// Review round 2, M-3: what the view's operations cost the host page's thread, which the view shares in WebKit and Firefox
+// (and in Chromium depending on its process model), measured from the host page as ticks of a 10 ms interval, idle
+// against loaded, as in view-budget.spec.ts. Each flood stays within every budget the view counts in characters.
+const countTicks = (page: Page, ms = 2500) => page.evaluate((duration) => new Promise<number>(resolve => {
+    let count = 0;
+    const timer = setInterval(() => count++, 10);
+    setTimeout(() => { clearInterval(timer); resolve(count); }, duration);
+}), ms);
+
+const VIEW_FLOODS: [string, string][] = [
+    ['re-rendering 37 449 empty elements without pause', `
+        sandboxView.render('<div id="a"></div>');
+        globalThis.flood = () => {
+            const html = '<i></i>'.repeat(37449); // 262 143 characters: within VIEW_RENDER_MAX_LENGTH and VIEW_MAX_ELEMENTS
+            const end = Date.now() + 11000;
+            const timer = setInterval(() => {
+                sandboxView.render(html, 'a');
+                if (Date.now() > end) { clearInterval(timer); console.log('M3 flood done'); }
+            }, 5);
+        };`],
+    ['set() of a 250 000-character textarea value 4 times a second', `
+        sandboxView.render('<textarea id="t" rows="40" cols="120"></textarea>');
+        globalThis.flood = () => {
+            const end = Date.now() + 11000;
+            let n = 0;
+            const timer = setInterval(() => {
+                sandboxView.set('t', { value: 'x'.repeat(250000) + (n++) });
+                if (Date.now() > end) { clearInterval(timer); console.log('M3 flood done'); }
+            }, 250);
+        };`],
+];
+
+test.describe("M-3: the view's work is budgeted by the time it takes, not only by its characters", () => {
+    for (const [name, entry] of VIEW_FLOODS) {
+        test(`${name}: the host page keeps at least half its ticks`, async ({ sandbox, page, browserName }) => {
+            test.setTimeout(90000);
+            await sandbox.registerFiles({ 'main.js': entry });
+            expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', scriptUnsafe: true })).toBe('ready');
+            await page.waitForTimeout(300);
+            const idle = await countTicks(page, 8000);
+            await sandbox.run('flood()');
+            // sustained, not the first operation: one operation's own cost (one textarea's paint, 1.3–1.7 s in WebKit) is
+            // not something a rate can bound; what follows it is
+            await page.waitForTimeout(2000);
+            const loaded = await countTicks(page, 8000);
+            await sandbox.waitForLog('M3 flood done', 30000);
+            console.log(`MEASURED ${browserName} M-3 ${name}: host ticks in 8 s idle ${idle}, loaded ${loaded}`);
+            expect(loaded).toBeGreaterThan(idle * 0.5);
         });
     }
 });

@@ -19,7 +19,7 @@ import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { setLongTimeout, type LongTimeout } from "./lib/long-timer";
 import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT, type SandboxViolation } from "./lib/violation";
-import { createLogLimiter, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
+import { createLogLimiter, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, LOG_OWN_LINES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
@@ -419,6 +419,7 @@ export class WebSandbox extends ElementBase {
     private _violationCounts = new Map<string, number>(); // 'violation' events dispatched per source for the current environment (capped, violation.ts)
     private _logLimiter = createLogLimiter(); // guest 'sandbox-log' events per second for the current environment (sandbox-log.ts)
     private _warnedLogLimit = false;          // the log rate limit warned for the current environment
+    private _ownLines = 0;                    // the guest relay's own lines dispatched for the current environment (LOG_OWN_LINES)
     private _warnedLogBytes = false;          // a guest line past LOG_MAX_BYTES warned for the current environment
     // Counts environments: every teardown increments it. Read only by _notifyThenAct, the one path for a host
     // action that dispatches an event and then acts on the environment, so a listener that reset or terminated
@@ -1265,6 +1266,12 @@ export class WebSandbox extends ElementBase {
     // A LOG frame from the guest's port: normalised, labelled 'guest', and at most LOG_EVENTS_PER_SECOND per
     // environment, so a guest cannot make the host run embedder listeners without bound (one warning).
     private _dispatchGuestLog(frame: unknown) {
+        // the relay's own lines, up to LOG_OWN_LINES per environment, outside the guest's window (M-1, M-2)
+        if ((frame as { own?: unknown } | null)?.own === true && this._ownLines < LOG_OWN_LINES) {
+            this._ownLines++;
+            this._dispatchLog(frame, 'guest');
+            return;
+        }
         if (!this._logLimiter.admit()) {
             if (this._warnedLogLimit) return;
             this._warnedLogLimit = true;
@@ -1414,6 +1421,7 @@ export class WebSandbox extends ElementBase {
         this._guestWrites?.close(); // its writes stay listable and committable until the next build (initialize)
         this._logLimiter = createLogLimiter(); // the log rate limit is per environment
         this._warnedLogLimit = false;
+        this._ownLines = 0;
         this._warnedLogBytes = false;
         this._queue = []; // what was queued for the old environment
         this._violationCounts.clear(); // the violation cap is per environment

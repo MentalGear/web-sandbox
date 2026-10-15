@@ -395,12 +395,15 @@ handlers and of worker mode's worker: they arrive as `Uncaught Script error.`, a
 The bounds: `LOG_MAX_ARGS` and `LOG_MAX_STRING` bound the strings; `LOG_MAX_BYTES` bounds all arguments of a line
 together, whatever they are (a typed array, an object of 100 000 keys), measured as [`call()`](#callmethod-args)
 measures a message: an argument the measure does not know (an `ImageData`) is a string saying so. The guest applies them before a line is
-posted, and sends at most `LOG_EVENTS_PER_SECOND` lines and 4 MiB per second (one `warn` line when it starts dropping),
-so a flood never reaches the host page's thread; the browser's own console gets a dropped line not at all and a cut
-line cut. The element measures every line again on receipt, and dispatches at most `LOG_EVENTS_PER_SECOND` guest
-lines in any one-second window per environment (one warning). Lines logged before the guest is connected (a strict
-entry's top level runs before the worker has its port) are kept, at most 1000 and 4 MiB, and arrive in order once it
-is; past that, one `warn` line says how many were dropped.
+posted, and sends at most `LOG_EVENTS_PER_SECOND` lines and 4 MiB in any one-second window (one `warn` line when it
+starts dropping), so a flood never reaches the host page's thread. In cooperative mode the browser's own console gets a
+dropped line not at all and a cut line cut; in worker and strict mode it gets none (the worker's console is not a sink:
+`sandbox-log` is). The element measures every line again on receipt, and dispatches at most `LOG_EVENTS_PER_SECOND`
+guest lines in any one-second window per environment (one warning); the relay's own lines (`<mode> Ready` and its
+`warn` lines) are not counted there, so they always arrive. Lines logged before the guest is connected (a strict
+entry's top level runs before the worker has its port) are kept, at most 1000 and 4 MiB (one window's worth), and
+arrive in order once it is, counted in that second's window; past either cap, one `warn` line says how many were
+dropped and for which cap.
 
 Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`), and
 `[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
@@ -712,8 +715,10 @@ at most 50000 elements, nested at most 256 deep below its body, and at most 1048
 serialization: text, attributes and markup alike), counted over the document a render would leave (what is outside the target stays): a render past
 any of them is dropped as a whole, the next one still applies, and the guest's log says
 `[Sandbox] sandboxView.render: the view refused a render: …`. The view parses at most 1048576 characters of markup
-per second, renders it refused included: a render past that waits, and so does the worker's next one (one render in
-flight), so a flood of renders is slowed, not dropped.
+per second, renders it refused included, and spends at most 200 ms of its own time per second on them, measured
+(their layout and the rendering that follows included): an operation past either waits, and so does the worker's next
+one (one in flight), so a flood of renders is slowed, not dropped. One operation's own cost is not bounded by them (one
+textarea of 250 000 characters took WebKit 1.3–1.7 s); what follows it waits for the budget.
 
 Registered files are named by path in `src`, `href` and `poster`. The view shows only files that never open as a
 document: CSS, PNG, JPEG, GIF, WebP, AVIF, APNG, BMP and ICO images, WOFF, WOFF2, TTF and OTF fonts, MP3, WAV, Ogg,
@@ -819,6 +824,7 @@ in strict mode.
 | Strict: elements in the view | 50000 | — |
 | Strict: characters in the view (its body's serialization) | 1048576 | — |
 | Strict: characters of markup the view parses per second | 1048576 | — |
+| Strict: time the view spends applying operations per second, their layout and rendering included (ms) | 200 | — |
 | Strict: nesting depth below the view's body | 256 | — |
 | Strict: characters of one event detail, all strings together | 262144 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |

@@ -571,10 +571,11 @@ What remains for the default:
 *   **The host page's availability**: strict mode protects confidentiality and egress. It does not protect the host
     page's availability wherever the view shares the host page's thread: WebKit always, Firefox, and Chromium
     depending on its process model. The view's budgets bound the common cases (one render in flight; elements,
-    depth and characters held; characters parsed per second), but not what layout and paint cost beyond what the
-    markup weighs: CSS filters (WebKit: 10 `blur()`s on 1 000 elements, 3.7 s) and bidirectional text in one paragraph
-    (240 000 characters alternating directions: Chromium 10 s, WebKit 20 s). Cooperative mode is no better: there a
-    guest `while (true) {}` freezes the host page wherever the frame shares its thread.
+    depth and characters held; characters parsed per second; 200 ms of the view's own time per second, measured),
+    but not what one operation's layout and paint cost beyond what the markup weighs: CSS filters (WebKit: 10
+    `blur()`s on 1 000 elements, 3.7 s) and bidirectional text in one paragraph (240 000 characters alternating
+    directions: tens of seconds in Chromium and WebKit, engine and machine dependent). Cooperative mode is no better:
+    there a guest `while (true) {}` freezes the host page wherever the frame shares its thread.
 *   **CSS within what the policy allows**: style-based probing of the view's own content, and loads from the origins
     you allow.
 *   **Worker `violation` reports** (`source: 'logic'`): per engine (WebKit raises none in workers) and influenced by

@@ -60,6 +60,17 @@ export const LOG_MAX_STRING = 65536;
  */
 export const LOG_EVENTS_PER_SECOND = 1000;
 
+/**
+ * The guest relay's own lines the host dispatches per environment besides the guest's lines, outside their window
+ * (review round 2, M-1, M-2): '<mode> Ready' and the relay's warnings (lines dropped past the per-second budgets, lines
+ * dropped before the guest was connected, queued frames that could not be posted), each sent at most once per
+ * environment and marked `own` by the bootstrap. The guest relay counts its lines in a window of LOG_EVENTS_PER_SECOND,
+ * the host's own (in-sandbox-script.ts), so those warnings used to arrive just past a full window, and were dropped:
+ * the one line that said lines were missing went missing. Only the bootstrap posts on the port, so a guest cannot mark a
+ * line; past this many marked lines in one environment, a marked line counts as the guest's like any other.
+ */
+export const LOG_OWN_LINES = 4;
+
 const LEVELS: readonly SandboxLogLevel[] = ['log', 'info', 'warn', 'error'];
 
 const clampArgument = (value: unknown): unknown => (typeof value === 'string' && value.length > LOG_MAX_STRING ? value.slice(0, LOG_MAX_STRING) : value);

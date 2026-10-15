@@ -62,6 +62,14 @@ export const VIEW_MAX_CHARACTERS = 4 * VIEW_RENDER_MAX_LENGTH;
  */
 export const VIEW_RENDER_CHARACTERS_PER_SECOND = 4 * VIEW_RENDER_MAX_LENGTH;
 
+/**
+ * The most milliseconds of its own time the view spends applying operations per second, their layout included (review
+ * round 2, M-3): a fifth of one thread, which it shares with the host page in WebKit and Firefox (and in Chromium
+ * depending on its process model). An operation past it waits, like one past VIEW_RENDER_CHARACTERS_PER_SECOND; nothing
+ * is dropped. See the view's flush (inSandboxView) for why time, and not only characters, is budgeted.
+ */
+export const VIEW_APPLY_MS_PER_SECOND = 200;
+
 /** The events sandboxView.on() can subscribe to (ADR-005). */
 export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'] as const;
 
@@ -159,7 +167,8 @@ export const VIEW_LOAD_KINDS: Readonly<Record<string, KindRule>> = Object.fromEn
  * stays. Every other listed element measured linear (br, span, bdi, bdo, nested inline formatting 200 deep, tables of
  * 25 000 cells, inline blocks: under 0.4 s per render on all three engines, br 1.4 s in Firefox for 43 000 lines).
  * Text itself is not bounded by layout cost: one paragraph of 240 000 characters alternating left-to-right and
- * right-to-left took 10 s in Chromium and 20 s in WebKit (ADR-005: host-page availability is not protected).
+ * right-to-left took tens of seconds in Chromium and WebKit, engine and machine dependent (ADR-005: host-page availability
+ * is not protected).
  *
  * Attributes: the global ones of each namespace, data-* and aria-*, and per HTML element the ones it needs. Never an
  * event handler, a form target (action, formaction, method, target), popover or command invokers, autofocus, or a
@@ -619,6 +628,8 @@ export interface ViewOptions {
     maxTarget: number;
     /** VIEW_RENDER_CHARACTERS_PER_SECOND */
     renderRate: number;
+    /** VIEW_APPLY_MS_PER_SECOND */
+    applyTime: number;
     violationLimit: number;
     events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
     /** The Trusted Types policy name the view creates where the host page enforces them (trusted-types.ts). */
@@ -1039,17 +1050,38 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // At most one flush per animation frame (a timer stands in where frames are throttled), the latest render or text
     // per target; one VIEW_ACK per flush releases the worker's next operation (A4). And at most
     // VIEW_RENDER_CHARACTERS_PER_SECOND characters per second (R1-1), a token bucket charged with each operation's
-    // characters (a render's markup, a text, a value) when it is applied, refused or not: a flush that the budget does
-    // not cover yet waits until it does.
+    // characters (a render's markup, a text, a value) when it is applied, refused or not, and with the characters it
+    // serialized (C-4): a flush that the budget does not cover yet waits until it does.
+    //
+    // And at most VIEW_APPLY_MS_PER_SECOND ms of the view's own time per second (review round 2, M-3), a second token
+    // bucket charged with what each flush took, measured: its operations, and the layout they cause, forced at the end of
+    // the flush so that it is part of the measure (the browser lays out the view before its next frame anyway). Characters
+    // are a proxy of the work and the time is the work: within every character budget, re-rendering 37 449 empty
+    // elements without pause, or setting a 250 000-character textarea value four times a second (WebKit), kept the host
+    // page's thread 80–95% busy, where the view shares it. A time budget bounds the whole class, whatever makes an
+    // operation slow (elements, layout, a control's editor), on the machine it runs on. What the rendering update after a
+    // flush takes is charged too, as it is measured: the time from the flush's end to the next animation frame, past one
+    // frame's length (WebKit lays out and paints a 250 000-character textarea there, 1.3–1.7 s, not when layout is
+    // forced). Whether a flush may run is checked when it is about to run, so a charge that arrived after it was
+    // scheduled still holds it back. The rate is a share of one thread: what is left is the host page's.
     type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: { value?: string; checked?: boolean; focus?: boolean } | null };
     let pending: Job[] = [];
     let scheduled = false;
     let tokens = options.renderRate;
+    let time = options.applyTime; // ms of the view's time the budget holds now
     let refilled = performance.now();
     const refill = () => {
         const now = performance.now();
         tokens = Math.min(options.renderRate, tokens + ((now - refilled) / 1000) * options.renderRate);
+        time = Math.min(options.applyTime, time + ((now - refilled) / 1000) * options.applyTime);
         refilled = now;
+    };
+    const offsetHeightOf = getter(HTMLElement.prototype, 'offsetHeight');
+    const FRAME_MS = 1000 / 60;
+    // Lays the view out now, so that what the operations cost there is in the measure (above).
+    const layout = () => {
+        const body = call(bodyOf, document, []);
+        if (body) call(offsetHeightOf, body, []);
     };
     const costOf = (jobs: Job[]) => {
         let cost = 0;
@@ -1063,6 +1095,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         refill();
         tokens -= costOf(jobs);
         work = 0;
+        const started = performance.now();
         const refused: string[] = [];
         for (let i = 0; i < jobs.length; i++) {
             const job = jobs[i]!;
@@ -1080,6 +1113,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         }
         tokens -= work; // what the operations serialized (C-4): the next flush waits until the budget covers it
         work = 0;
+        layout();
+        const ended = performance.now();
+        time -= ended - started; // what the flush took (M-3), likewise
+        requestAnimationFrame(() => {
+            const rendering = performance.now() - ended - FRAME_MS; // the rendering update that followed it, past a frame
+            if (rendering > 0) time -= rendering;
+        });
         if (renderPort) renderPort.postMessage(refused.length > 0 ? { type: 'VIEW_ACK', refused } : { type: 'VIEW_ACK' });
     };
     const schedule = () => {
@@ -1089,11 +1129,19 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const run = () => {
             if (ran) return;
             ran = true;
+            refill();
+            if (time < 0) {
+                // charged since this was scheduled (the rendering update of the last flush): wait for the budget again
+                scheduled = false;
+                schedule();
+                return;
+            }
             flush();
         };
         refill();
         const short = costOf(pending) - tokens; // what the budget lacks now, in characters
-        const wait = short > 0 ? Math.ceil((short / options.renderRate) * 1000) : 0;
+        const late = -time; // and in ms of the view's time
+        const wait = Math.max(short > 0 ? Math.ceil((short / options.renderRate) * 1000) : 0, late > 0 ? Math.ceil((late / options.applyTime) * 1000) : 0);
         const start = () => {
             requestAnimationFrame(run);
             setTimeout(run, 100);
@@ -1314,6 +1362,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         observeBody();
         if (typeof data.html === 'string' && data.html !== '') {
             work = 0;
+            const started = performance.now();
             try {
                 tokens -= data.html.length; // the initial view is charged like any render (R1-1)
                 apply(data.html, null);
@@ -1322,6 +1371,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             }
             tokens -= work;
             work = 0;
+            layout();
+            time -= performance.now() - started;
         }
         if (data.autoResize === true) startAutoResize();
     }, true);
@@ -1657,6 +1708,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     maxRender: VIEW_RENDER_MAX_LENGTH,
     maxTarget: VIEW_TARGET_MAX_LENGTH,
     renderRate: VIEW_RENDER_CHARACTERS_PER_SECOND,
+    applyTime: VIEW_APPLY_MS_PER_SECOND,
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
     events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,

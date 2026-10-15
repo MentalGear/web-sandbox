@@ -386,8 +386,8 @@ export function inSandboxScript(
     //   - all arguments of one line together measure at most LOG_MAX_BYTES (structured-size.ts, with primitives
     //     captured now): an argument past what is left of it becomes a string saying so, so
     //     `console.log(new Uint8Array(64 MiB))` crosses as a few bytes;
-    //   - at most LOG_LINES_PER_SECOND lines and LOG_BYTES_PER_SECOND bytes leave per second (token buckets): the
-    //     host dispatches no more than that anyway, and a line dropped here is never cloned onto the host's thread,
+    //   - at most LOG_LINES_PER_SECOND lines and LOG_BYTES_PER_SECOND bytes leave in any one-second window (the host's
+    //     own rule and constant, below): the host dispatches no more than that anyway, and a line dropped here is never cloned onto the host's thread,
     //     which is what a flood within the per-line caps cost (Firefox's host ran ~7 ticks per second). The first
     //     dropped line sends one warning, once per environment.
     // Each argument is cloned once here, with the captured structuredClone (review round 2, C-3), and the clone, the
@@ -400,10 +400,11 @@ export function inSandboxScript(
     const LOG_MAX_BYTES = 1048576;
     const LOG_LINES_PER_SECOND = 1000;
     const LOG_BYTES_PER_SECOND = 4194304;
-    // At most LOG_BUFFER_LIMIT lines wait for the port (a strict entry's top level runs before the view hands the
-    // worker its ports: independent verification 2026-10-14); past that they are counted, and one warning on attach
-    // says how many were dropped.
-    const LOG_BUFFER_LIMIT = 1000;
+    // At most LOG_BUFFER_LIMIT lines (and LOG_BYTES_PER_SECOND bytes) wait for the port (a strict entry's top level runs
+    // before the view hands the worker its ports: independent verification 2026-10-14): one window's worth, so they fit
+    // the host's window when they are flushed (M-2). Past either they are counted, and one warning on attach says how
+    // many were dropped, and for which cap.
+    const LOG_BUFFER_LIMIT = LOG_LINES_PER_SECOND;
     const now = (): number => (nowOf ? apply(nowOf, clock, []) : apply(dateNow, DateConstructor, []));
     const cut = (text: string) => (text.length > LOG_MAX_STRING ? apply(slice, text, [0, LOG_MAX_STRING]) as string : text);
     const tagOf = (value: unknown): string => {
@@ -492,27 +493,61 @@ export function inSandboxScript(
         return { line: out, bytes: LOG_MAX_BYTES - left + 16, cut: reduced };
     };
 
-    // Token buckets: at most `rate` per second, in bursts of at most `rate`. Inline arithmetic only (C-1: Math.min,
-    // which this called before, is the guest's to replace).
-    const bucket = (rate: number) => {
-        let tokens = rate;
-        let last = now();
-        return (cost: number): boolean => {
+    // The per-second budgets: at most `limit` in any one-second window, the host's own rule for guest lines
+    // (LOG_EVENTS_PER_SECOND, rate-limit.ts) with the same constant (review round 2, M-1): each admitted weight is kept
+    // with its time until it leaves the window. A token bucket, as before, let a full bucket and its refill through in
+    // one window, twice what the host dispatches, so the host dropped lines the guest had relayed, among them the
+    // relay's own warning that it had started dropping. Inline arithmetic and lists of our own only (C-1: Math.min, which
+    // the bucket called, is the guest's to replace). `admit(weight, true)` records a weight already spent (the lines
+    // flushed on attach, below) whatever the window holds.
+    const slidingWindow = (limit: number) => {
+        const times: number[] = list();
+        const weights: number[] = list();
+        let head = 0; // entries before head have left the window
+        let total = 0;
+        return (weight: number, spent?: boolean): boolean => {
             const at = now();
-            const refilled = tokens + ((at - last) / 1000) * rate;
-            tokens = refilled < rate ? refilled : rate;
-            last = at;
-            if (!(tokens >= cost)) return false;
-            tokens -= cost;
+            while (head < times.length && times[head]! <= at - 1000) {
+                total -= weights[head]!;
+                head++;
+            }
+            if (head > 64 && head * 2 > times.length) { // drop what left the window, now and then
+                let kept = 0;
+                for (let i = head; i < times.length; i++, kept++) {
+                    times[kept] = times[i]!;
+                    weights[kept] = weights[i]!;
+                }
+                times.length = kept;
+                weights.length = kept;
+                head = 0;
+            }
+            if (!spent && total + weight > limit) return false;
+            if (weight > 0) {
+                times[times.length] = at;
+                weights[weights.length] = weight;
+                total += weight;
+            }
             return true;
         };
     };
-    const lineBudget = bucket(LOG_LINES_PER_SECOND);
-    const byteBudget = bucket(LOG_BYTES_PER_SECOND);
+    const lineBudget = slidingWindow(LOG_LINES_PER_SECOND);
+    const byteBudget = slidingWindow(LOG_BYTES_PER_SECOND);
     let logsBuffered = 0;
-    let logsDropped = 0;     // before the port: past LOG_BUFFER_LIMIT
+    let droppedForLines = 0; // before the port: past LOG_BUFFER_LIMIT lines
+    let droppedForBytes = 0; // before the port: past LOG_BYTES_PER_SECOND bytes
     let rateDropped = false; // past the per-second budgets: warned once per environment
     let bufferedBytes = 0;
+    // The relay's own lines ('<mode> Ready' and its warnings, each at most once per environment) are marked `own`: the
+    // host dispatches up to LOG_OWN_LINES of them per environment besides the guest's lines (sandbox-log.ts), so the
+    // warning that lines were dropped arrives even when the lines before it filled the host's window (M-1, M-2). Only the
+    // bootstrap posts on the port (guest code never holds it, review B2), so no guest line is ever marked.
+    const ownLine = (level: 'warn', text: string) => {
+        try {
+            post({ type: 'LOG', level, args: [text], own: true });
+        } catch {
+            // nothing a guest logs can make the relay throw at its console call
+        }
+    };
     // Relays one line, and says what the browser's own console may be given: the line as logged when it was relayed
     // whole, else the bounded line; null when it was dropped. `level` null: a console call that relays nothing to the
     // host (count, time, …) but reaches the browser's console, bounded and budgeted the same way. The browser's console
@@ -537,8 +572,12 @@ export function inSandboxScript(
             bytes = 128;
         }
         if (!port) {
-            if (logsBuffered >= LOG_BUFFER_LIMIT || bufferedBytes + bytes > LOG_BYTES_PER_SECOND) {
-                logsDropped++;
+            if (logsBuffered >= LOG_BUFFER_LIMIT) {
+                droppedForLines++;
+                return null;
+            }
+            if (bufferedBytes + bytes > LOG_BYTES_PER_SECOND) {
+                droppedForBytes++;
                 return null;
             }
             logsBuffered++;
@@ -559,11 +598,7 @@ export function inSandboxScript(
     const dropped = (): null => {
         if (rateDropped) return null;
         rateDropped = true;
-        try {
-            post({ type: 'LOG', level: 'warn', args: [`[Sandbox] the guest logged more than ${LOG_LINES_PER_SECOND} lines or ${LOG_BYTES_PER_SECOND} bytes in one second; lines past that are dropped in the sandbox.`] });
-        } catch {
-            // as above
-        }
+        ownLine('warn', `[Sandbox] the guest logged more than ${LOG_LINES_PER_SECOND} lines or ${LOG_BYTES_PER_SECOND} bytes in one second; lines past that are dropped in the sandbox.`);
         return null;
     };
     const log = (level: 'log' | 'info' | 'warn' | 'error', args: unknown[]) => {
@@ -604,6 +639,11 @@ export function inSandboxScript(
         for (let i = ours; i < shown.length; i++) given[given.length] = shown[i];
         return given;
     };
+    // The browser's own console is given a line only in cooperative mode, for debugging the guest document in its frame
+    // (review round 2, M-5). In a worker (worker and strict mode) the relay is the only sink: Chromium keeps a worker's
+    // console arguments in the page's memory (measured: +445 MiB in 90 s of lines within the 4 MiB/s budget), and the
+    // host's 'sandbox-log' is the documented place to read them.
+    const toBrowserConsole = mode === 'cooperative';
     for (let i = 0; i < CONSOLE_METHODS.length; i++) {
         const name = CONSOLE_METHODS[i]!;
         const level = LEVELS[i]!;
@@ -615,7 +655,7 @@ export function inSandboxScript(
             } catch {
                 given = null; // a line that could not be relayed goes nowhere
             }
-            if (given === null || typeof original !== 'function') return;
+            if (given === null || !toBrowserConsole || typeof original !== 'function') return;
             try {
                 apply(original, sandboxConsole, given); // for easier debugging: what relayLine() allows
             } catch {
@@ -799,10 +839,21 @@ export function inSandboxScript(
             }
         }
         outbox.length = 0;
-        if (skipped > 0) log('warn', [`[bridge] skipped ${skipped} queued bridge frame(s) that could not be posted (not transferable).`]);
-        if (logsDropped > 0) post({ type: 'LOG', level: 'warn', args: [`[Sandbox] ${logsDropped} console line(s) logged before the sandbox was connected were dropped: at most ${LOG_BUFFER_LIMIT} are kept until then.`] });
+        // The lines buffered before the port count against this second's budgets as they leave now (M-2): at most
+        // LOG_BUFFER_LIMIT (= LOG_LINES_PER_SECOND) lines and LOG_BYTES_PER_SECOND bytes, what one window holds, so the
+        // guest's lines that follow at once wait for the window like any others, and the host dispatches all of them.
+        lineBudget(logsBuffered, true);
+        byteBudget(bufferedBytes, true);
+        if (skipped > 0) ownLine('warn', `[bridge] skipped ${skipped} queued bridge frame(s) that could not be posted (not transferable).`);
+        if (droppedForLines + droppedForBytes > 0) {
+            const caps = (droppedForLines > 0 ? `${droppedForLines} past ${LOG_BUFFER_LIMIT} lines` : '')
+                + (droppedForLines > 0 && droppedForBytes > 0 ? ', ' : '')
+                + (droppedForBytes > 0 ? `${droppedForBytes} past ${LOG_BYTES_PER_SECOND} bytes` : '');
+            ownLine('warn', `[Sandbox] ${droppedForLines + droppedForBytes} console line(s) logged before the sandbox was connected were dropped (${caps}): at most ${LOG_BUFFER_LIMIT} lines and ${LOG_BYTES_PER_SECOND} bytes are kept until then.`);
+        }
 
-        post({ type: 'LOG', level: 'info', args: [`${mode} Ready`] });
+        // posted as it is, never swallowed: a port that cannot carry it is no port, and attach() throws (onInit)
+        post({ type: 'LOG', level: 'info', args: [`${mode} Ready`], own: true });
     };
 
     // Cooperative mode: the bootstrap's own end of the channel it announced, attached now, before any guest code runs.

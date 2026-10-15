@@ -528,8 +528,8 @@ measurements); backlog S50–S52.
   "in WebKit": strict mode protects confidentiality and egress; the host page's availability is not protected wherever
   the view shares the host's thread (WebKit always; Firefox; Chromium depending on its process model). The budgets
   bound the common cases; what layout and paint cost beyond what the markup weighs is not bounded: CSS filters (S42)
-  and bidirectional text in one paragraph (240 000 characters alternating directions: Chromium 10 s, WebKit 20 s,
-  Firefox 1 s). "Revisit if" stands: an out-of-process view.
+  and bidirectional text in one paragraph (240 000 characters alternating directions: tens of seconds in Chromium and
+  WebKit, seconds in Firefox; engine and machine dependent). "Revisit if" stands: an out-of-process view.
 
 Tests: `test/e2e/host-policy.spec.ts` (each host policy on all three engines, with positive controls),
 `test/e2e/view-budget.spec.ts` (R1-1, R1-2, measured), `src/lib/in-sandbox-view.test.ts` (R1-2), `test/unit/review-round-1.test.ts`.
