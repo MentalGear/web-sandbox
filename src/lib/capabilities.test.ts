@@ -8,7 +8,7 @@ describe('capability tiers', () => {
         expect(overlap).toEqual([]);
     });
 
-    it.each(['allow-popups', 'allow-modals', 'allow-downloads', 'allow-presentation', 'fullscreen'])('treats %s as unsafe', (capability) => {
+    it.each(['allow-forms', 'allow-popups', 'allow-modals', 'allow-downloads', 'allow-presentation', 'fullscreen'])('treats %s as unsafe', (capability) => {
         expect(SAFE_CAPABILITIES as readonly string[]).not.toContain(capability);
         expect(UNSAFE_CAPABILITIES as readonly string[]).toContain(capability);
     });

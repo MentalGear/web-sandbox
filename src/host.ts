@@ -226,6 +226,15 @@ interface GuestMarkupPlan {
 
 const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
 
+// The sandbox flags of strict mode's view, always: scripts for its bootstrap, and forms so that `submit` reaches it, to be
+// forwarded to the worker's handlers and cancelled (research 15, P4: without allow-forms Chromium and Firefox dispatch no
+// submit). allow-forms is an unsafe capability in cooperative and worker mode (review round 1, R2-2: a modifier-click
+// submission opens a new tab past form-action in Chromium), not here: no guest script runs in the view to synthesize a
+// click, the view cancels every submit, and its forms keep no action, formaction, method or target (ADR-005). So the
+// owner's move of allow-forms leaves strict mode as it was.
+const STRICT_VIEW_FLAGS = ['allow-scripts', 'allow-forms'] as const;
+const STRICT_CAPABILITIES = [...SAFE_CAPABILITIES, ...STRICT_VIEW_FLAGS] as const;
+
 const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 
 const DEFAULT_TERMINATE_REASON = 'terminated by the host';
@@ -545,10 +554,12 @@ export class WebSandbox extends HTMLElement {
         if (!copy || typeof copy !== 'object' || Array.isArray(copy)) throw new TypeError('setConfig() takes an object');
         const input = copy as SandboxConfig;
 
-        // Filter out any forbidden capabilities that might have been passed
+        // Filter out any forbidden capabilities that might have been passed. Strict mode's view always has its own
+        // flags (STRICT_VIEW_FLAGS), so listing one of them there asks for nothing more and is not dropped.
+        const strict = (input.mode ?? DEFAULT_SANDBOX_CONFIG.mode) === 'strict';
         const sanitizedConfig: Partial<StoredConfig> & { origins?: unknown } = {
             ...input,
-            capabilities: filterCapabilities(input.capabilities, SAFE_CAPABILITIES, 'capabilities'),
+            capabilities: filterCapabilities(input.capabilities, strict ? STRICT_CAPABILITIES : SAFE_CAPABILITIES, 'capabilities') as SafeCapability[] | undefined,
             unsafeCapabilities: filterCapabilities(input.unsafeCapabilities, UNSAFE_CAPABILITIES, 'unsafeCapabilities'),
         };
         // The entry is a registered path or nothing; it is looked up in each build's snapshot.
@@ -1507,9 +1518,8 @@ export class WebSandbox extends HTMLElement {
     }
 
     private _getSandboxFlags(): string {
-        // Strict mode (ADR-005): the view needs scripts for its bootstrap and forms so that `submit` reaches it
-        // (to be cancelled; research 15 P4), plus the safe capabilities configured. No unsafe capability.
-        if (this._config.mode === 'strict') return [...new Set<string>(['allow-scripts', 'allow-forms', ...(this._config.capabilities || [])])].join(' ');
+        // Strict mode (ADR-005): STRICT_VIEW_FLAGS, plus the safe capabilities configured. No unsafe capability.
+        if (this._config.mode === 'strict') return [...new Set<string>([...STRICT_VIEW_FLAGS, ...(this._config.capabilities || [])])].join(' ');
         const flags = new Set<string>(this._config.capabilities || []);
         for (const capability of this._config.unsafeCapabilities || []) {
             if (this._isPermission(capability)) continue; // goes into the allow attribute instead

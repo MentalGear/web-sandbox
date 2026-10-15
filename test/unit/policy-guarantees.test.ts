@@ -326,7 +326,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         const capabilities: string[] = ['allow-scripts'];
         const el = await mount({ mode: 'cooperative', capabilities, origins: { connect: list } });
         list.push('https://later.example');
-        capabilities.push('allow-forms');
+        capabilities.push('allow-pointer-lock'); // a safe capability: only the copy keeps it out
         el.reset();
         expect(policyOf(el)).toContain('connect-src https://a.example;');
         expect(policyOf(el)).not.toContain('later.example');

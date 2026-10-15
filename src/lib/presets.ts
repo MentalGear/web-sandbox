@@ -502,7 +502,9 @@ console.log('TEST_DONE');`,
   <input name="stolen" value="session-secret">
 </form>
 <script>document.getElementById('f').submit();</script>`,
-        rules: { mode: "cooperative", capabilities: ["allow-scripts", "allow-forms"] }
+        // allow-forms is an unsafe capability (review round 1, R2-2): without it no submission starts at all, and the
+        // attack would prove nothing about form-action
+        rules: { mode: "cooperative", capabilities: ["allow-scripts"], unsafeCapabilities: ["allow-forms"] }
     },
     "popup-exfiltration": {
         id: "popup-exfiltration",

@@ -155,14 +155,19 @@ test.describe('R2-2 (cooperative-mode limit, measured): a script-synthesized mod
     // for the form it skips form-action 'none', so the form's fields reach the listener; Firefox opens the link only
     // within a user's transient activation (after any click in the guest), never the form; Playwright's WebKit opens
     // none (it opens no tab for a user's own Ctrl+click either: verification.spec.ts, V3's control, a measurement
-    // limit). No capability is involved: neither allow-popups nor (for the link) allow-forms. Strict mode has no guest
-    // script in its view, so nothing can synthesize a click there; the view also ignores synthetic events (ADR-005).
+    // limit). No capability is involved for the link: no allow-popups. The form needs allow-forms, which is therefore an
+    // unsafe capability (the owner's decision on R2-2): `capabilities` drops it, only `unsafeCapabilities` grants it.
+    // Strict mode has no guest script in its view, so nothing can synthesize a click there; the view also ignores
+    // synthetic events (ADR-005).
     const LINK = (origin: string) => `<a id="l" href="${origin}/r22-link">l</a><div id="g" style="width:300px;height:100px;background:#ccc">g</div>`;
     const FORM = (origin: string) => `<form action="${origin}/r22-form" method="get"><input name="q" value="secret"><button id="b">b</button></form><div id="g" style="width:300px;height:100px;background:#ccc">g</div>`;
     const modifierClick = (id: string) => `document.getElementById('${id}').dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true, cancelable: true }))`;
 
-    async function measure(sandbox: SandboxDriver, html: string, capabilities: string[], script: string, gesture: boolean) {
-        expect(await sandbox.mount({ mode: 'cooperative', capabilities: capabilities as any, html })).toBe('ready');
+    const SCRIPTS: MountConfig = { capabilities: ['allow-scripts'] };
+    const FORMS: MountConfig = { capabilities: ['allow-scripts'], unsafeCapabilities: ['allow-forms'] };
+
+    async function measure(sandbox: SandboxDriver, html: string, config: MountConfig, script: string, gesture: boolean) {
+        expect(await sandbox.mount({ mode: 'cooperative', ...config, html })).toBe('ready');
         const page = sandbox.page;
         let opened = 0;
         page.context().on('page', () => { opened++; });
@@ -179,17 +184,25 @@ test.describe('R2-2 (cooperative-mode limit, measured): a script-synthesized mod
     for (const gesture of [false, true]) {
         test(`a link, ${gesture ? 'after a user click' : 'with no user gesture'}: ${gesture ? 'Chromium and Firefox open it' : 'Chromium opens it'}`, async ({ sandbox, browserName }) => {
             const opens = browserName === 'chromium' || (gesture && browserName === 'firefox');
-            expect(await measure(sandbox, LINK(recorder.blocked), ['allow-scripts'], modifierClick('l'), gesture)).toEqual(opens ? { opened: 1, heard: ['/r22-link'] } : { opened: 0, heard: [] });
+            expect(await measure(sandbox, LINK(recorder.blocked), SCRIPTS, modifierClick('l'), gesture)).toEqual(opens ? { opened: 1, heard: ['/r22-link'] } : { opened: 0, heard: [] });
         });
 
-        test(`a form submit with allow-forms, ${gesture ? 'after a user click' : 'with no user gesture'}: Chromium submits it in a new tab past form-action 'none'`, async ({ sandbox, browserName }) => {
+        test(`a form submit with unsafeCapabilities: ['allow-forms'], ${gesture ? 'after a user click' : 'with no user gesture'}: Chromium submits it in a new tab past form-action 'none'`, async ({ sandbox, browserName }) => {
             const opens = browserName === 'chromium';
-            expect(await measure(sandbox, FORM(recorder.blocked), ['allow-scripts', 'allow-forms'], modifierClick('b'), gesture)).toEqual(opens ? { opened: 1, heard: ['/r22-form?q=secret'] } : { opened: 0, heard: [] });
+            expect(await measure(sandbox, FORM(recorder.blocked), FORMS, modifierClick('b'), gesture)).toEqual(opens ? { opened: 1, heard: ['/r22-form?q=secret'] } : { opened: 0, heard: [] });
         });
     }
 
     test("control: the same form submitted without a modifier is refused by form-action 'none' on every engine", async ({ sandbox }) => {
-        expect(await measure(sandbox, FORM(recorder.blocked), ['allow-scripts', 'allow-forms'], `document.getElementById('b').click()`, false)).toEqual({ opened: 0, heard: [] });
+        expect(await measure(sandbox, FORM(recorder.blocked), FORMS, `document.getElementById('b').click()`, false)).toEqual({ opened: 0, heard: [] });
+    });
+
+    test("R2-2 decided: capabilities: ['allow-forms'] is dropped, so the same modifier click submits nothing on any engine (the opt-in above is the positive control)", async ({ sandbox }) => {
+        await sandbox.page.evaluate(() => { (window as any).__warnings = []; const warn = console.warn; console.warn = (...args: unknown[]) => { (window as any).__warnings.push(String(args[0])); warn(...args); }; });
+        const dropped: MountConfig = { capabilities: ['allow-scripts', 'allow-forms' as any] };
+        for (const gesture of [false, true]) expect(await measure(sandbox, FORM(recorder.blocked), dropped, modifierClick('b'), gesture)).toEqual({ opened: 0, heard: [] });
+        const warnings: string[] = await sandbox.page.evaluate(() => (window as any).__warnings);
+        expect(warnings.filter(w => w.includes('"allow-forms" is not allowed in "capabilities"')).length).toBeGreaterThan(0);
     });
 });
 
