@@ -1,6 +1,6 @@
 # ADR-005: Strict mode — guest logic in a worker, a view that runs no guest script
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view); [independent verification](#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist); [typed origins](#amendment-2026-10-14-typed-origins-the-view-policy-is-a-template)) · 2026-10-15 ([strict is the default](#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen); [review round 1](#amendment-2026-10-15-review-round-1-the-views-check-in-its-character-budget-host-page-availability))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view); [independent verification](#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist); [typed origins](#amendment-2026-10-14-typed-origins-the-view-policy-is-a-template)) · 2026-10-15 ([strict is the default](#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen); [review round 1](#amendment-2026-10-15-review-round-1-the-views-check-in-its-character-budget-host-page-availability); [the owner's decisions](#amendment-2026-10-15-the-owners-decisions-after-review-round-1))
 
 ## Why this ADR exists
 
@@ -40,8 +40,8 @@ Three ports per environment, all `MessageChannel`s:
 | Port | Ends | Carries |
 | :--- | :--- | :--- |
 | logic | host ↔ worker | RPC (`call`/`expose`), `LOG`, `PING`/`PONG`, `VIOLATION` (labelled `logic`), `EXECUTE` — as in worker mode |
-| view | host ↔ view | `VIOLATION` (labelled `view`), `RESIZE`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `VIEW_PING`/`VIEW_PONG` |
-| render | view ↔ worker | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_ACK`, `VIEW_LISTEN`, `VIEW_EVENT` — the host is not on this path ([ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-13-strict-mode-renders-bypass-the-host)) |
+| view | host ↔ view | `VIOLATION` (labelled `view`), `RESIZE`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `VIEW_PING`/`VIEW_PONG`, `VIEW_WRITE`/`VIEW_WRITTEN` |
+| render | view ↔ worker | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_TEXT`, `VIEW_SET`, `VIEW_ACK`, `VIEW_LISTEN`, `VIEW_EVENT` — the host is not on this path ([ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-13-strict-mode-renders-bypass-the-host)) |
 
 On the wrapper's one `load`, the host posts `INIT_VIEW { workerSource, viewFiles, html, autoResize }` to the
 view with the logic and view ports. The bootstrap accepts exactly one `INIT_VIEW`, from `parent.parent`, in a
@@ -280,7 +280,8 @@ Proof: `test/e2e/review-policy.spec.ts`, `test/e2e/review-strict.spec.ts`, the s
   after the whole worker script ran; guest code cannot post on that port). From then on the URL resolves nowhere,
   so the only `blob:` URLs rendered CSS could name are the worker's copies of registered files: the narrowed A8
   guarantee, **the view renders no `blob:` content but registered files**, holds by construction instead of by
-  the source's type and prefix. The earlier attempt revoked when the Worker object existed, before WebKit had read
+  the source's type and prefix. *Widened 2026-10-15 (the owner's decisions, below): and raster-image guest writes,
+  decoded only.* The earlier attempt revoked when the Worker object existed, before WebKit had read
   the script, and broke `sandboxFiles` there. At this point, measured on all three engines: `sandboxFiles`
   (`url`, `read`, `text`), fetches of the worker's own `blob:` URLs, Blob reads and `execute()` keep working. One
   WebKit effect was found and is handled: inside the worker, a later uncaught error thrown by code from the revoked
@@ -532,3 +533,41 @@ measurements); backlog S50–S52.
 
 Tests: `test/e2e/host-policy.spec.ts` (each host policy on all three engines, with positive controls),
 `test/e2e/view-budget.spec.ts` (R1-1, R1-2, measured), `src/lib/in-sandbox-view.test.ts` (R1-2), `test/unit/review-round-1.test.ts`.
+
+## Amendment (2026-10-15): the owner's decisions after review round 1
+
+**When**: [review round 1](security/REVIEW-ROUND-1-2026-10-15.md), "Awaiting the owner" (R4-4, R4-5, R2-2); backlog S54.
+
+- **The view shows raster-image guest writes (R4-4)**, from URLs it mints itself out of the bytes the host holds,
+  decoded only; the rule is one constant, `VIEW_WRITE_TYPES` = `VIEW_FILE_TYPES` ∩ PNG, JPEG, GIF, WebP, AVIF
+  ([ADR-004 amendment](ADR-004-files-as-blob-urls.md#amendment-2026-10-15-the-strict-view-shows-raster-image-guest-writes)).
+  A8's guarantee now reads: **the view renders no `blob:` content but registered files and raster-image guest writes,
+  decoded only.** The view port carries `VIEW_WRITE` and its answer `VIEW_WRITTEN`.
+- **`sandboxView.text(id, text)` and `sandboxView.set(id, { value?, checked?, focus? })` (R4-5).** `text` makes a string
+  an element's only content, assigned and never parsed, so a guest escapes nothing; `set` sets an `input`'s,
+  `textarea`'s, `select`'s or `output`'s value (not a file input's) or an `input`'s checked state, or focuses the
+  element. Both go over the render port (`VIEW_TEXT`, `VIEW_SET`) under A4's flow control, one operation in flight:
+  `render` and `text` share one slot per target, and a `set` merges only into a `set` of the same id queued right before
+  it, so no operation passes another. The view finds the element as a render's target, drops an id that names nothing
+  and acknowledges, and counts what they leave against `VIEW_MAX_CHARACTERS` and the per-second budget (an input's value
+  as its `value` attribute, a textarea's and an output's as their text), so text stays inside every budget (R1-1). The
+  worker throws `TypeError` for an id that is no element id, an unknown key or a wrong type, `RangeError` past
+  `VIEW_RENDER_MAX_LENGTH`.
+- **Focus never leaves the host page for the sandbox on the guest's say.** Measured (broad review PD5): a sandboxed
+  frame's `focus()` without user activation takes focus from the host page's focused element in Chromium and Firefox
+  (Chromium also its keystrokes); WebKit keeps it. So `set({ focus: true })` focuses only while the view's
+  `document.hasFocus()`: the user last clicked or tabbed into the sandbox and the window is focused. Otherwise the view
+  refuses it (`VIEW_FOCUS` in the ack, a line in the guest's log) and applies the rest of the call; asserted on all three
+  engines with a host input that keeps its focus and keystrokes, and the positive control after a user's click in the
+  sandbox.
+- **`viewScriptHash()` (R4-5)**, exported: the bootstrap's hash source, the very value `viewBootstrapHash()` puts in the
+  view's `script-src`, for an embedder's own policy. The wrapper style's hash is a constant and stays documented in
+  API.md; it gets no name.
+- **`allow-forms` (R2-2)** is an unsafe capability in cooperative and worker mode (`UNSAFE_SANDBOX_FLAGS`). Strict mode
+  is unchanged: the view always has `allow-scripts allow-forms` (`STRICT_VIEW_FLAGS`, `src/host.ts`), since `submit` must
+  reach the bootstrap to be forwarded and cancelled (P4), no guest script runs in the view, and its forms keep no
+  `action`, `formaction`, `method` or `target`. A strict config that lists `allow-forms` in `capabilities` warns nothing.
+
+Tests: `test/unit/view-api.test.ts`, `test/unit/owner-decisions.test.ts`, `test/e2e/owner-decisions.spec.ts`,
+`test/e2e/host-policy.spec.ts` (the exported hash admits strict mode under `script-src 'self'`), `test/e2e/package.spec.ts`
+(the bundle's hash), `test/e2e/review-round-1.spec.ts` ("R2-2").

@@ -34,7 +34,7 @@ counted apart. Each test named failed at `5ede7ba`.
 | R3-3 | medium | ours: unbounded resource | No byte caps: a 64 MiB typed array logged arrived whole; 100 000-key objects; a flood within the log caps cut Firefox's host to ~7 ticks/s; 256 × 32 MiB RPC arguments held on WebKit. | fixed (S51): `LOG_MAX_BYTES` and a per-second budget in the guest, `RPC_MAX_BYTES` and 64 MiB of running inbound arguments, measured at both ends | as R4-1 |
 | R4-2 | medium | ours: a documented promise unmet | Cooperative (and worker) uncaught errors and rejections never reached `sandbox-log`. | fixed (S51); WebKit's muted "Script error." documented (platform) | as R4-1 |
 | R4-3 | medium | ours: packaging | The published `.d.ts` broke under NodeNext (TS2834), and with skipLibCheck every type read as `any`. | fixed: `.js` specifiers in declarations; the smoke test type-checks a NodeNext consumer and asserts wrong configs are type errors | `scripts/smoke-package.sh` |
-| R2-2 | medium | platform: cooperative-mode limit | A modifier click the guest's script synthesizes opens a new top-level tab (Chromium with no gesture, Firefox in a user's activation); Chromium submits a form that way past `form-action`. | documented (S53, S44) and measured per engine; moving `allow-forms` awaits the owner | `test/e2e/review-round-1.spec.ts` |
+| R2-2 | medium | platform: cooperative-mode limit | A modifier click the guest's script synthesizes opens a new top-level tab (Chromium with no gesture, Firefox in a user's activation); Chromium submits a form that way past `form-action`. | documented (S53, S44) and measured per engine; decided: `allow-forms` is an unsafe capability (S54) | `test/e2e/review-round-1.spec.ts` |
 | availability | medium | ours: a claim | S42 said availability was lost "in WebKit"; R1 measured host stalls from strict renders on all three engines where the view shares the host thread. | restated (S52, ADR-005 amendment): not protected wherever the view shares the host's thread; bidirectional text layout added as a measured residual (platform) | `test/e2e/view-budget.spec.ts` |
 | R1-3 | low | ours | Values that should be dropped refused the whole config (`capabilities: 5`, `{}`, BigInt or cyclic fetch bridge entries; `JSON.stringify` in a warning threw). | fixed | unit |
 | R1-4 | low | ours | `parseOrigin` accepted U+212A KELVIN SIGN (lowercased to "k"). | fixed | unit |
@@ -54,7 +54,7 @@ counted apart. Each test named failed at `5ede7ba`.
 | R4-8 | low | ours | `sandboxFetch` was missing without the bridge (API.md said `FETCH_NOT_ALLOWED`). | fixed: always defined, the host refuses | e2e |
 | R4-11 | info | docs | Plugins whose async init outlives `ready`. | documented (API.md) | — |
 | R4-12 | low | ours | No `display: block` default; no tag map or event map in the typings. | fixed (constructed stylesheet; `WebSandboxEventMap`) | e2e, type tests |
-| R4-4, R4-5 | — | owner decision | See below. | awaiting the owner | — |
+| R4-4, R4-5 | — | owner decision | See below. | decided and done (S54) | `test/e2e/owner-decisions.spec.ts` |
 
 Measured before and after (host ticks of a 10 ms interval in 2.5 s, idle / loaded):
 
@@ -77,6 +77,10 @@ suggests the next rounds keep an embedder and a real-application reviewer, and t
 the embedder's environment (a served host policy, real application code) rather than from the harness.
 
 ## Awaiting the owner
+
+*Decided on 2026-10-15 and done in S54: the strict view shows raster-image guest writes, decoded only (R4-4);
+`viewScriptHash()`, `sandboxView.text()` and `sandboxView.set()` (R4-5); `allow-forms` is an unsafe capability in
+cooperative and worker mode (R2-2). The items as they were raised:*
 
 - **R4-4**: showing guest-written images in the strict view.
 - **R4-5**: a new public name: an exported view-hash function, and a `sandboxView.text()` / `set()` API. API.md says how

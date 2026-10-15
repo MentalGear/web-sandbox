@@ -104,8 +104,8 @@ a config without `mode` is a strict config (strict mode is the default).
 | :--- | :--- | :--- | :--- | :--- |
 | `mode` | `'strict' \| 'cooperative' \| 'worker'` | `'strict'` | — | Where guest code runs; see [Modes](#modes). Any other value starts no environment: the sandbox terminates with the reason `unknown mode …` until a valid mode is configured. `'iframe'` was renamed `'cooperative'`: refused the same way, and the reason says so. |
 | `html` | `string` | `''` | strict, cooperative | The initial view (strict mode) or the guest document (cooperative mode). In strict mode its `<script>` elements and `on…` handler attributes never run, and markup that holds any warns once per element: ``strict mode (the default) runs no script in `html`; …``. Empty means `<div id="root"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml). |
-| `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-scripts`, `allow-forms`, `allow-pointer-lock`, `allow-orientation-lock`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms`. |
-| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-popups`, `allow-modals`, `allow-downloads`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). |
+| `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-scripts`, `allow-pointer-lock`, `allow-orientation-lock`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms` (listing either there changes nothing). |
+| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-forms`, `allow-popups`, `allow-modals`, `allow-downloads`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). |
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
 | `origins` | `SandboxOrigins` | none | all (strict: no `scripts`) | The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. See [below](#origins). |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
@@ -148,7 +148,8 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   `StrictSandboxOrigins`.
 - **Registered files** add `blob:` to the directive of each kind of load their types are for (JavaScript: `scripts`;
   `text/css`: `styles`; `image/*`: `images`; `font/*`: `fonts`; `audio/*`, `video/*`, `text/vtt`: `media`; every
-  file: `connect`), whatever `origins` lists. Strict mode never adds it to `script-src`.
+  file: `connect`), whatever `origins` lists. Strict mode never adds it to `script-src`, and with `guestWrites` adds it
+  to `img-src` (the view shows the raster images the guest writes).
 - **`'unsafe-eval'`** is added to `script-src` by `scriptUnsafe` only.
 - A `connectionsAllowed` key is ignored, with one warning: the policy is built from `origins` alone.
 
@@ -621,8 +622,8 @@ return what you registered. [ADR-004](ADR-004-files-as-blob-urls.md)
 ### Guest writes
 
 With `guestWrites: true`, `sandboxFiles.write()` and `remove()` change the guest's own view once the element
-has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` (nothing
-the guest writes gets a URL). The element checks each request as `registerFiles()` would (path, entry, type, the
+has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` (the guest
+gets no URL for anything it wrote). The element checks each request as `registerFiles()` would (path, entry, type, the
 quota with every pending change applied) and at most `GUEST_WRITES_PER_SECOND` requests and
 `GUEST_WRITE_BYTES_PER_SECOND` bytes in any one-second window; a refused request changes nothing on either side. Nothing the
 guest writes reaches the files, a policy or another environment until the host calls
@@ -630,6 +631,13 @@ guest writes reaches the files, a policy or another environment until the host c
 [`listGuestWrites()`](#listguestwrites) and announced by `fileswritten`. Without `guestWrites`, both methods
 reject with `FILES_NOT_ALLOWED`, and so does the element for any request that reaches it. Treat written
 content as the guest's data. [ADR-004](ADR-004-files-as-blob-urls.md)
+
+In strict mode the view shows the raster images the guest writes: a write whose type is `image/png`, `image/jpeg`,
+`image/gif`, `image/webp` or `image/avif` (as the files would give it, never SVG) can be named by path in `img`,
+`poster` or an icon link of the next render, with no rebuild. The element sends the view the bytes it recorded, the
+view makes its own URL from them, and the image is only decoded; `write()` resolves once the view has it. A later
+write to the path replaces the image; a removal, or a write of any other type, leaves the path naming nothing in the
+view (a registered file the guest replaced or removed included). A rebuild starts from the registered files again.
 
 The element records a change before it announces it, and `listGuestWrites()` is the truth; the guest's view
 changes only when the element's answer arrives. They disagree by design in two cases: a `fileswritten` listener
@@ -700,9 +708,9 @@ flight), so a flood of renders is slowed, not dropped.
 
 Registered files are named by path in `src`, `href` and `poster`. The view shows only files that never open as a
 document: CSS, PNG, JPEG, GIF, WebP, AVIF, APNG, BMP and ICO images, WOFF, WOFF2, TTF and OTF fonts, MP3, WAV, Ogg,
-MP4, FLAC, WebM and AAC audio, MP4, WebM and Ogg video, and WebVTT. Any other file (SVG, HTML, XML, JSON …) is the
-worker's through `sandboxFiles` only; a reference to it stays as written and loads nothing. Show vector graphics as
-inline `<svg>`.
+MP4, FLAC, WebM and AAC audio, MP4, WebM and Ogg video, and WebVTT; and the raster images the guest wrote (see
+[Guest writes](#guest-writes)). Any other file (SVG, HTML, XML, JSON …) is the worker's through `sandboxFiles` only; a
+reference to it stays as written and loads nothing. Show vector graphics as inline `<svg>`.
 
 Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
 `about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and
@@ -772,9 +780,9 @@ cookies on requests to allowed same-site origins (every mode).
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;
 focus and the clipboard; messages to the host window; the user's link actions and modifier clicks the guest's script
-synthesizes (a new top-level tab without `allow-popups`; Chromium submits a form that way past `form-action`); session
-history; guest-only stalls; forgeable reports; the host page's URL and origin; the host page's Trusted Types
-requirement. Each is described in the
+synthesizes (a new top-level tab without `allow-popups`; with `allow-forms`, Chromium submits a form that way past
+`form-action`); session history; guest-only stalls; forgeable reports; the host page's URL and origin; the host page's
+Trusted Types requirement. Each is described in the
 [README](../README.md#cooperative-mode-limits). Worker mode shares only the reports: the worker's are per engine, as
 in strict mode.
 
