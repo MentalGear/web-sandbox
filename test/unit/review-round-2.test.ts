@@ -132,8 +132,8 @@ describe('C-1: code that runs after guest code started reads nothing the guest c
         'ResizeObserver', 'MutationObserver', 'History', 'Navigation', 'trustedTypes', 'crypto', 'Worker',
     ]);
     // Methods called on objects these functions make themselves, as own data properties: a pending call's resolve and
-    // reject (rpc.ts), the strict prelude's handler entries and the comms object it is given.
-    const OWN_METHODS = new Set(['resolve', 'reject', 'handler', 'attach']);
+    // reject and its timeout's disarm (rpc.ts), the strict prelude's handler entries and the comms object it is given.
+    const OWN_METHODS = new Set(['resolve', 'reject', 'disarm', 'handler', 'attach']);
     // Accessors of the platform's prototypes (a Map's size, a buffer's length, an event's data): read through a getter
     // captured in the list, never through the object.
     const ACCESSORS = new Set(['size', 'byteLength', 'byteOffset', 'buffer', 'data', 'ports', 'source']);

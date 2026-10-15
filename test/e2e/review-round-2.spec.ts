@@ -15,6 +15,41 @@ const MODES: Record<string, MountConfig> = {
 const PAST_BUDGET = 18_000_000;
 // (A RegExp is measured by its source too, unit-tested: WebKit refuses a pattern this long before it is ever returned.)
 
+test.describe("Review round 2, L-1 and L-5: in another window's document", () => {
+    test('the element keeps its methods (Firefox too), builds nothing whatever starts a build, and refuses calls at once', async ({ sandbox, page }) => {
+        expect(await sandbox.mount({ mode: 'cooperative' })).toBe('ready');
+        const result = await page.evaluate(async () => {
+            const el = document.querySelector('web-sandbox') as any;
+            const frame = document.createElement('iframe');
+            document.body.appendChild(frame);
+            await new Promise(resolve => setTimeout(resolve, 50));
+            const events: string[] = [];
+            el.addEventListener('ready', () => events.push('ready'));
+            el.addEventListener('terminated', () => events.push('terminated'));
+            let filesChanged = 0;
+            el.addEventListener('fileschanged', () => filesChanged++);
+            frame.contentDocument!.body.appendChild(el);
+            const methods = ['reset', 'load', 'setConfig', 'call', 'registerFiles'].every(name => typeof el[name] === 'function');
+            const states = [el.state];
+            el.reset();
+            states.push(el.state);
+            el.load('<p>x</p><script>parent.parent.postMessage("GUEST RAN", "*")</script>');
+            states.push(el.state);
+            el.setConfig({ mode: 'cooperative', origins: 5 });
+            states.push(el.state);
+            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] }); // usable again: still nothing built here
+            states.push(el.state);
+            el.registerFiles({ 'a.txt': 'a' });
+            const code = await el.call('anything').then(() => 'resolved', (error: any) => error.code);
+            await new Promise(resolve => setTimeout(resolve, 300));
+            const frames = el.shadowRoot.querySelectorAll('iframe').length;
+            document.body.appendChild(el); // positive control: back in its own document, it builds
+            return { methods, states, code, events, frames, filesChanged, back: el.state };
+        });
+        expect(result).toEqual({ methods: true, states: ['idle', 'idle', 'idle', 'idle', 'idle'], code: 'TERMINATED', events: [], frames: 0, filesChanged: 1, back: 'loading' });
+    });
+});
+
 test.describe('C-3: what a call answers is measured as it is posted, by an allow-list', () => {
     for (const [mode, config] of Object.entries(MODES)) {
         test(`${mode} mode: a guest method answering a large Error or ImageData is refused RESULT_NOT_TRANSFERABLE (each measured ~16 bytes before); a small answer resolves`, async ({ sandbox }) => {

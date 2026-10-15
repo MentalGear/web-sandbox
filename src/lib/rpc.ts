@@ -223,6 +223,29 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const MAX_BYTES = 34603008;
     const MAX_INBOUND_BYTES = 67108864;
     const bytesOf = (value: unknown, limit: number, buffers?: unknown[]) => (sizeOf ? sizeOf(value, limit, buffers) : 0);
+    // Mirrors MAX_TIMER_DELAY (long-timer.ts; a test keeps them equal), for the same reason. A call's timeout is the
+    // caller's to choose, and setTimeout overflows at 2^31 ms and fires at once (review round 2, L-2): a longer timeout
+    // is waited out in steps of at most this, and Infinity never fires. Returns how to disarm it.
+    const MAX_TIMER_DELAY = 2147483647;
+    const armTimer = (onTimeout: () => void, ms: number): (() => void) => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        let disarmed = false;
+        const wait = (left: number) => {
+            const step = left > MAX_TIMER_DELAY ? MAX_TIMER_DELAY : left;
+            timer = setTimer(() => {
+                timer = null;
+                if (disarmed) return;
+                if (left > step) wait(left - step);
+                else onTimeout();
+            }, step);
+        };
+        if (ms !== Infinity) wait(ms);
+        return () => {
+            disarmed = true;
+            if (timer !== null) clearTimer(timer);
+            timer = null;
+        };
+    };
 
     // The one source of truth for the code strings (see RpcErrorCode for meanings). Inside the function
     // for the same reason as everything else; the type makes it exhaustive and exact.
@@ -264,7 +287,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     type Pending = {
         resolve: (value: unknown) => void;
         reject: (error: Error) => void;
-        timer: ReturnType<typeof setTimeout> | null;
+        disarm: (() => void) | null; // its timeout's, or null without one
         reserved: boolean; // a call to a reserved name: the only kind a library code may refuse
     };
     const pending = mapOf<number, Pending>();
@@ -337,7 +360,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         const entry = get(pending, id);
         if (!entry) return null;
         remove(pending, id);
-        if (entry.timer !== null) clearTimer(entry.timer);
+        if (entry.disarm !== null) entry.disarm();
         return entry;
     }
 
@@ -520,15 +543,12 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
 
         const id = ++nextId;
         return construct(PromiseConstructor, [(resolve: (value: unknown) => void, reject: (error: Error) => void) => {
-            let timer: ReturnType<typeof setTimeout> | null = null;
-            if (timeoutMs > 0) {
-                timer = setTimer(() => {
-                    const entry = takePending(id);
-                    if (entry) entry.reject(localRefusal(CODE.TIMEOUT, `RPC timeout after ${timeoutMs}ms: ${method}`));
-                }, timeoutMs);
-            }
+            const disarm = timeoutMs > 0 ? armTimer(() => {
+                const entry = takePending(id);
+                if (entry) entry.reject(localRefusal(CODE.TIMEOUT, `RPC timeout after ${timeoutMs}ms: ${method}`));
+            }, timeoutMs) : null;
             // Record the pending promise BEFORE sending, so a response can never arrive first.
-            set(pending, id, { resolve, reject, timer, reserved: isReservedName(method) });
+            set(pending, id, { resolve, reject, disarm, reserved: isReservedName(method) });
             try {
                 send({ type: 'RPC_REQ', id, method, args: sendableArgs });
             } catch (error) {

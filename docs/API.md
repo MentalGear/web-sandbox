@@ -64,7 +64,8 @@ TypeScript: `document.createElement('web-sandbox')` is a `WebSandbox`, and `addE
 
 The element builds an environment only in the document of the window that defined it. Moved into another document
 (`adoptNode()`, an iframe's document), it tears its environment down and stays `idle` there, with one warning; moved
-back, it builds again.
+back, it builds again. Its methods work there as anywhere (in every engine): `reset()`, `load()` and `setConfig()` keep
+what they are given for its return and build nothing, calls reject at once with `TERMINATED`.
 
 The guest can post messages to the host page's window (any frame can; it reaches your own `message` listeners).
 Act on a message only from a sender you know, by `event.source`, never by the message's shape. Do not give host
@@ -216,7 +217,8 @@ pending calls reject with `TERMINATED`. Wait for `ready` before relying on the n
 ### `terminate(reason?)`
 
 `terminate(reason: string = 'terminated by the host'): void` — removes the frame now, sets `state` to
-`terminated` and fires `terminated` with `{ reason }` (a non-string reason uses the default). Pending calls
+`terminated` and fires `terminated` with `{ reason }` (a reason that is not a string, or is empty or blank, uses the
+default). Pending calls
 reject with `TERMINATED`; later calls reject at once. Calling it while terminated does nothing. The sandbox stays
 terminated until `reset()`, `load()` or `setConfig()`.
 
@@ -280,7 +282,8 @@ would show the guest, or wrap the handler.
 ### `callWithTimeout(timeoutMs, method, ...args)`
 
 `callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T>` — like
-`call()` with a timeout for this one call; `0` (or any value that is not `> 0`) disables it.
+`call()` with a timeout for this one call; `0` (or any value that is not `> 0`) disables it, and so does `Infinity`.
+Every other timeout is waited out in full, however long (`watchdogTimeout` and `workerExecutionTimeout` too).
 
 ### `registerFiles(files)`
 
@@ -437,7 +440,7 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 
 | Reason | Cause |
 | :--- | :--- |
-| `terminated by the host` | `terminate()` without a reason (or with your own text instead). |
+| `terminated by the host` | `terminate()` without a reason, or with an empty one (or with your own text instead). |
 | `the guest stopped responding (watchdog)` | `watchdogTimeout` expired. |
 | `the guest entry failed to start` | Strict mode: the entry threw or did not parse. |
 | `the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)` | The frame loaded but the library's startup script (strict mode's view bootstrap, cooperative and worker mode's bootstrap) never checked in: the host page's policy refused it. See [Host page policy](#host-page-policy). |
