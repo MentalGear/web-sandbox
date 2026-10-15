@@ -1384,8 +1384,9 @@ and margin without CSS and the element warns with the wrapper style's constant h
 through a constructed stylesheet (R4-12). API.md "Host page policy" lists what each mode needs, how to read the view's
 hash today, and that the host's fetch directives narrow `origins` silently. **Residuals**: the wrapper's height needs
 CSS (`'unsafe-inline'` or the hash: a `srcdoc` document is never in quirks mode, and the wrapper runs no script);
-WebKit refuses the view's `blob:` worker under COEP; cooperative and worker mode inherit the Trusted Types requirement
-(cooperative-mode limit). **Awaiting the owner**: an exported view-hash function (R4-5).
+WebKit refuses the view's `blob:` worker under COEP; cooperative mode inherits the Trusted Types requirement (a
+cooperative-mode limit; worker mode's frame starts its worker through the policy), and under it no mode evaluates
+strings (`execute()` is refused). **Awaiting the owner**: an exported view-hash function (R4-5).
 Tests: `test/e2e/host-policy.spec.ts`, `test/unit/review-round-1.test.ts` (Trusted Types), `test/unit/channel-guarantees.test.ts`.
 
 ### S51 · One console relay; byte budgets on log lines and RPC messages — ✅ **done**

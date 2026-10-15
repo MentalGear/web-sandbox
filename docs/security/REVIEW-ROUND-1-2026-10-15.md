@@ -27,7 +27,7 @@ counted apart. Each test named failed at `5ede7ba`.
 
 | ID | Severity | Class | Finding | Status | Tests |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| R3-1 = R2-1 | medium | ours: environment inheritance | The frames inherit the host page's CSP, Trusted Types and COEP. Host `script-src 'self'`: strict `ready`, then "the sandbox view stopped responding"; cooperative "did not finish loading". Host `worker-src` without `blob:`: "the guest entry failed to start". Trusted Types: "could not be built (TypeError)". `style-src 'self'`: the frame 150 px high. COEP: WebKit's worker failed. | fixed (S50): strict `ready` on the view's check-in; reasons that name the host policy; one Trusted Types policy `web-sandbox`; a style warning with the constant hash; API.md "Host page policy". Residuals: the wrapper's height needs CSS; WebKit's COEP worker (platform). | `test/e2e/host-policy.spec.ts` |
+| R3-1 = R2-1 | medium | ours: environment inheritance | The frames inherit the host page's CSP, Trusted Types and COEP. Host `script-src 'self'`: strict `ready`, then "the sandbox view stopped responding"; cooperative "did not finish loading". Host `worker-src` without `blob:`: "the guest entry failed to start". Trusted Types: "could not be built (TypeError)". `style-src 'self'`: the frame 150 px high. COEP: WebKit's worker failed. | fixed (S50): strict `ready` on the view's check-in; reasons that name the host policy; one Trusted Types policy `web-sandbox` (the element, the view, worker mode's frame); a style warning with the constant hash; API.md "Host page policy". Residuals: the wrapper's height needs CSS; WebKit's COEP worker and no string evaluation under Trusted Types (platform). | `test/e2e/host-policy.spec.ts` |
 | R4-1 = R2-3 | medium | ours: a relay's input domain | The console relay threw `DataCloneError` for functions, Symbols, DOM nodes, Events, Responses, Proxies, WeakMaps, Promises (cooperative, worker, strict). | fixed (S51): one relay for every mode, never throws, names refused values by kind | `test/unit/review-round-1.test.ts`, `test/e2e/review-round-1.spec.ts` |
 | R1-1 | medium | ours: unbounded resource | Text was in no view budget: renders of 261 000 characters into 200 targets every 20 ms kept the host 95–100% busy on all three engines; the document grew without bound. | fixed (S52): `VIEW_MAX_CHARACTERS`, `VIEW_RENDER_CHARACTERS_PER_SECOND` | `test/e2e/view-budget.spec.ts` |
 | R1-2 | medium | ours: super-linear layout admitted | `'x<wbr>'.repeat(43000)` stalled Firefox's host about 20 s. The scan found `ruby` in WebKit (10.7 s), the renderer's own middle-child removals (Chromium 13 s) and WebKit's layout of a word over many text nodes. | fixed (S52): `wbr`, `ruby`, `rt`, `rp` unwrapped; a linear walk that joins text and drops comments | `test/e2e/view-budget.spec.ts`, `src/lib/in-sandbox-view.test.ts` |
@@ -82,6 +82,17 @@ the embedder's environment (a served host policy, real application code) rather 
 - **R4-5**: a new public name: an exported view-hash function, and a `sandboxView.text()` / `set()` API. API.md says how
   to read the hash today, from the wrapper's `srcdoc`.
 - **R2-2**: moving `allow-forms` between the capability lists. The residual is documented and measured.
+
+## Validation
+
+On the branch: `bun run typecheck` clean; 1413 unit tests; `bun run build` and `scripts/smoke-package.sh` (now with a
+NodeNext consumer); the full Playwright suite on Chromium, Firefox and WebKit, 1542 passed and 27 skipped (as before);
+the strict-mode design probes, 24 passed; the new and changed specs three times over (`--repeat-each 3`), no failure.
+The suite's first run after the fixes failed 7 tests on each engine, each one asserting behaviour the round changed on
+purpose (the same config no longer rebuilds, the strict worker mints fewer URLs, the view's character budget,
+`sandboxFetch` always defined, a test that matched text inside the bootstrap's source); they were updated with the
+reason in place. A baseline run at `5ede7ba` taken while sources were being edited is not counted: the dev server
+served the edited files mid-run.
 
 ## Round result
 

@@ -830,8 +830,9 @@ policy must allow:
   `… does not allow the policy name 'web-sandbox' …` (Trusted Types). A refused wrapper style leaves the frame 150 px
   high, and the element warns with the hash to allow.
 - **Your `connect-src`, `img-src` and the other fetch directives narrow `origins` silently**: an origin listed in
-  `origins` that your page's policy does not allow is refused in the sandbox too, and the refusal is reported in the
-  sandbox's own document (a `violation` event), not on your page.
+  `origins` that your page's policy does not allow is refused in the sandbox too. The refusal happens in the sandbox's
+  documents, so it arrives as the element's `violation` event (where the browser reports it), never as a
+  `securitypolicyviolation` on your page, and nothing warns at `setConfig()`.
 - **The view bootstrap's hash** is constant for one build of the library (it is the hash of the library's own
   function text, which a bundler or minifier can change), so it cannot be listed here. Read it once from the view's
   policy, which the wrapper's `srcdoc` carries, and put it in your page's policy (for example in a build step):
