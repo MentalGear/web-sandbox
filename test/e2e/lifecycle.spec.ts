@@ -7,7 +7,7 @@ import { test, expect, type CallOutcome } from './fixture';
  * termination, and re-inserting it brings it back. Every pending call settles: never a hang.
  */
 
-const MODES = ['iframe', 'worker', 'strict'] as const;
+const MODES = ['cooperative', 'worker', 'strict'] as const;
 
 const RESET_TEXT = '[Sandbox] call() rejected: the sandbox was reset or terminated.';
 const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.';

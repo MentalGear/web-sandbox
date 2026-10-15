@@ -112,7 +112,7 @@ describe('CB2: the EXECUTE path looks up no global', () => {
 
 describe('PD2: the guest realm\'s fetch refuses keepalive', () => {
     it('keepalive in the init, through a getter that answers twice, or in a Request: refused before the platform\'s fetch; a plain request reaches it (control)', async () => {
-        inSandboxScript(false, 'iframe', console_(), createBroker);
+        inSandboxScript(false, 'cooperative', console_(), createBroker);
         reached.length = 0;
         // An init whose keepalive getter answers differently on each read: the guard reads it exactly once, through the
         // Request it builds, and sends that Request, so the answer it checked is the request that is made.
@@ -136,7 +136,7 @@ describe('PD4, PD6: history traversal and window.name in the guest realm', () =>
         class Navigation { back() { (globalThis as any).__traversed = true; } forward() {} traverseTo() {} }
         (globalThis as any).Navigation = Navigation;
         const original = ORIGINAL_BACK;
-        inSandboxScript(false, 'iframe', console_(), createBroker);
+        inSandboxScript(false, 'cooperative', console_(), createBroker);
         for (const name of ['back', 'forward', 'go'] as const) {
             const descriptor = Object.getOwnPropertyDescriptor(History.prototype, name)!;
             expect([descriptor.configurable, descriptor.writable], name).toEqual([false, false]);
@@ -151,7 +151,7 @@ describe('PD4, PD6: history traversal and window.name in the guest realm', () =>
 
     it('window.name reads "" and ignores writes: the platform\'s accessor is replaced (whether the frame\'s name stays is the browsers\', e2e)', () => {
         const platform = Object.getOwnPropertyDescriptor(globalThis, 'name');
-        inSandboxScript(false, 'iframe', console_(), createBroker);
+        inSandboxScript(false, 'cooperative', console_(), createBroker);
         const replaced = Object.getOwnPropertyDescriptor(globalThis, 'name')!;
         expect(replaced.get).not.toBe(platform?.get);
         expect(replaced.set).not.toBe(platform?.set);

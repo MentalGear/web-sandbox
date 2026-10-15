@@ -47,7 +47,7 @@ test.describe('S4: scriptUnsafe', () => {
 test.describe('S7: directives a <meta> policy discards', () => {
     const IGNORED = ['frame-ancestors', 'report-uri', 'report-to', 'sandbox'];
 
-    test('cannot be configured: named as origins they are dropped, with one warning per name per instance, in iframe and worker mode; the browser has nothing to discard', async ({ sandbox, page, browserName }) => {
+    test('cannot be configured: named as origins they are dropped, with one warning per name per instance, in cooperative and worker mode; the browser has nothing to discard', async ({ sandbox, page, browserName }) => {
         const dropped: string[] = [];
         const discardedByBrowser: string[] = [];
         page.on('console', m => {

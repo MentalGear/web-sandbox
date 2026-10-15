@@ -16,7 +16,7 @@ import type { StrictSandboxOrigins } from "./csp/origins";
  * A preset's rules: a config every mode can run, since the playground and the specs run a preset in the mode they
  * choose (`{ ...preset.rules, mode }`). So its origins have no `scripts`, which strict mode does not take.
  */
-export type PresetRules = SandboxConfigOptions & { mode?: 'iframe' | 'worker' | 'strict'; origins?: StrictSandboxOrigins };
+export type PresetRules = SandboxConfigOptions & { mode?: 'cooperative' | 'worker' | 'strict'; origins?: StrictSandboxOrigins };
 
 export interface Preset {
     id: string;

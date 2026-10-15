@@ -20,7 +20,7 @@ test('12.1 every policy restricts base-uri and form-action, which have no fallba
     // base-uri and form-action do not fall back to default-src, so their absence would mean "unrestricted".
     // Fixed (backlog S9), and since ADR-007 by construction: both templates always emit them as 'none', and no
     // `origins` kind can reach them.
-    const origins = parseOrigins({ connect: ['https://a.example'], 'base-uri': ['https://a.example'], 'form-action': ['*'] }, 'iframe', () => {});
+    const origins = parseOrigins({ connect: ['https://a.example'], 'base-uri': ['https://a.example'], 'form-action': ['*'] }, 'cooperative', () => {});
     const input = { origins, fileKinds: new Set<never>(), scriptUnsafe: true };
     for (const policy of [cooperativePolicy(input), strictViewPolicy({ ...input, bootstrapHash: `'sha256-${'A'.repeat(43)}='` })]) {
         expect(policy, 'base-uri has no default-src fallback').toContain("base-uri 'none'");

@@ -259,7 +259,7 @@ describe('F4: no config transform writes a config-derived key by assignment', ()
     // An own "__proto__" key, as JSON.parse and structured clone produce it (review B8), at the top level.
     const injected = () => JSON.parse('{"__proto__": {"scripts": ["https://evil.example"], "images": ["https://evil.example"]}, "images": ["https://a.example"], "img-src": ["https://evil.example"]}');
     const steps: [string, (input: any) => unknown][] = [
-        ['parseOrigins', (d) => parseOrigins(d, 'iframe', () => {})],
+        ['parseOrigins', (d) => parseOrigins(d, 'cooperative', () => {})],
         ['parseOrigins (strict)', (d) => parseOrigins(d, 'strict', () => {})],
         ['deepMerge', (d) => deepMerge({ images: [] } as any, d)],
     ];
@@ -277,7 +277,7 @@ describe('F4: no config transform writes a config-derived key by assignment', ()
 
     it('the policies made from them hold no inherited origin', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        for (const mode of ['iframe', 'strict']) {
+        for (const mode of ['cooperative', 'strict']) {
             const origins = parseOrigins(injected(), mode, () => {});
             const input = { origins, fileKinds: new Set<never>(), scriptUnsafe: true };
             const policy = mode === 'strict' ? strictViewPolicy({ ...input, bootstrapHash: `'sha256-${'A'.repeat(43)}='` }) : cooperativePolicy(input);
@@ -332,7 +332,7 @@ describe('F6: a refused config is never stored', () => {
         const el = await mount();
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
-        for (const mode of ['iframe', 'worker', 'strict']) {
+        for (const mode of ['cooperative', 'worker', 'strict']) {
             for (const value of [null, 'https://a.example', ['x'], 5, { images: 'https://a.example' }, { connect: null }]) el.setConfig({ mode, origins: value });
         }
         expect(reasons).toEqual(new Array(18).fill('the configuration could not be used (TypeError)'));

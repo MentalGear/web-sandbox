@@ -7,8 +7,10 @@ import type { FetchRecord } from '@src/lib/fetch-bridge';
 export const ORIGIN = process.env.WEB_SANDBOX_E2E_ORIGIN || 'http://localhost:4444';
 export const HARNESS = `${ORIGIN}/test/e2e/harness.html`;
 
-// What the specs need to run anything at all: scripts in the frame and execute().
+// What the specs need to run anything at all: scripts in the frame and execute(), in cooperative mode (the mode most
+// specs were written for; a spec for another mode names it).
 export const BASELINE_CONFIG: SandboxConfig = {
+    mode: 'cooperative',
     capabilities: ['allow-scripts'],
     scriptUnsafe: true,
 };

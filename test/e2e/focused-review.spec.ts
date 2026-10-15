@@ -39,7 +39,7 @@ const commit = (sandbox: SandboxDriver, paths: string[], options?: unknown) => s
 const SCRIPT = (name: string, allowed: string) => `bridge.call('mark', ${JSON.stringify(name)}); new Image().src = ${JSON.stringify(`${allowed}/w1-${name}.svg`)};`;
 
 test.describe('W1: a committed inert file is never a script of the next build', () => {
-    for (const writer of ['iframe', 'worker', 'strict'] as const) {
+    for (const writer of ['cooperative', 'worker', 'strict'] as const) {
         test(`written in ${writer} mode: app.js committed as text/plain gets no script slot and never runs in the next build's <script src>; ok.js committed as JavaScript with { code: true } runs (positive control)`, async ({ sandbox }) => {
             await exposeMark(sandbox);
             expect(await sandbox.mount({ mode: writer, guestWrites: true })).toBe('ready');
@@ -51,10 +51,10 @@ test.describe('W1: a committed inert file is never a script of the next build', 
             expect(await commit(sandbox, ['ok.js'])).toBe('FILES_NOT_ALLOWED'); // code needs the second opt-in
             expect(await commit(sandbox, ['ok.js'], { code: true })).toBe('ok');
 
-            // The next build, in iframe mode with host markup naming both. Classic scripts run in order, so once the
+            // The next build, in cooperative mode with host markup naming both. Classic scripts run in order, so once the
             // inline script after them has reported, app.js would have run before ok.js if it ran at all.
             const config: SandboxConfig = {
-                mode: 'iframe',
+                mode: 'cooperative',
                 html: '<script src="app.js"></script><script src="ok.js"></script><script>bridge.call("mark", "after")</script>',
                 origins: { images: [recorder.allowed] },
             };

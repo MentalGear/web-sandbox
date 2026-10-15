@@ -25,7 +25,7 @@ test('an origins kind given a string instead of a list: setConfig() does not thr
     expect(await sandbox.mount()).toBe('ready');
 });
 
-for (const mode of ['iframe', 'worker', 'strict'] as const) {
+for (const mode of ['cooperative', 'worker', 'strict'] as const) {
     test(`${mode} mode: console.info is relayed as level 'info' with source 'guest', like log, warn and error`, async ({ sandbox, page }) => {
         expect(await sandbox.mount({ mode })).toBe('ready');
         await page.evaluate(() => {

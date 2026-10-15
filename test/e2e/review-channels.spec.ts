@@ -75,7 +75,7 @@ test('B1: another frame on the host page announcing ports to the host window, ra
 
     expect(await page.evaluate(() => (window as any).strangerDelivered)).toBeGreaterThan(20); // positive control
     // the host's port is the bridge's: the bootstrap announced itself on it, and calls work both ways
-    await sandbox.waitForLog('iframe Ready', 5000);
+    await sandbox.waitForLog('cooperative Ready', 5000);
     await sandbox.exposeGuest('twice', '(x) => x * 2');
     expect(await sandbox.call('twice', 21)).toBe(42);
     // no announcement of the stranger's ended the environment, and its ports never heard a thing (not a PING, not a call)
@@ -119,7 +119,7 @@ const PATCH_EVERYTHING = `
 const DELEGATE = `new Worker(URL.createObjectURL(new Blob([\`onmessage = (e) => { const port = e.ports[0]; port.onmessage = (m) => { if (m.data && m.data.type === 'PING') port.postMessage({ type: 'PONG', n: m.data.n }); }; port.postMessage({ type: 'DELEGATE_UP' }); };\`], { type: 'text/javascript' })))`;
 
 test.describe('B2: the port never reaches guest code', () => {
-    for (const mode of ['iframe', 'worker'] as const) {
+    for (const mode of ['cooperative', 'worker'] as const) {
         test(`${mode} mode: patching every port, event and call primitive yields no port; a delegate worker answers pings on a port it is handed (positive control)`, async ({ sandbox }) => {
             expect(await sandbox.mount({ mode, watchdogTimeout: BUDGET })).toBe('ready');
             await sandbox.run(PATCH_EVERYTHING);
@@ -172,7 +172,7 @@ test.describe('B2: the port never reaches guest code', () => {
 // ---- B4 ------------------------------------------------------------------------------------------------
 
 test.describe('B4: a listener that resets the sandbox mid-flood hears nothing more from the old environment', () => {
-    for (const mode of ['iframe', 'worker'] as const) {
+    for (const mode of ['cooperative', 'worker'] as const) {
         test(`${mode} mode: 500 log lines and 100 violation reports already on their way; reset() from the first line's listener; none of the rest is dispatched`, async ({ sandbox, page }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             await page.evaluate(() => {

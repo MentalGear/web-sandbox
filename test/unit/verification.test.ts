@@ -40,7 +40,7 @@ describe('A1: a configured entry holding several sources never reaches the polic
         media: ['blob: data:'],
     };
 
-    for (const mode of ['iframe', 'worker', 'strict'] as const) {
+    for (const mode of ['cooperative', 'worker', 'strict'] as const) {
         it(`${mode} mode: no eval keyword, no data:, no 'self' and no part of such an entry reaches the policy; a whole origin does`, async () => {
             const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
             const el = await mount({ mode, capabilities: ['allow-scripts'], origins: MULTI });
@@ -111,7 +111,7 @@ describe('CB7: the lifecycle callbacks reach the element through the class, so t
 });
 
 describe("F5: 'unsafe-eval' is never written into default-src", () => {
-    for (const mode of ['iframe', 'worker', 'strict'] as const) {
+    for (const mode of ['cooperative', 'worker', 'strict'] as const) {
         it(`${mode} mode with scriptUnsafe and origins: default-src stays 'none', the policy grants eval in script-src only`, async () => {
             vi.spyOn(console, 'warn').mockImplementation(() => {});
             const el = await mount({ mode, scriptUnsafe: true, capabilities: ['allow-scripts'], origins: { connect: ['https://a.example'], images: ['https://a.example'] } });

@@ -43,7 +43,7 @@ test('the built package runs strict mode: the view bootstrap is admitted by its 
 
 // Review A8 (docs/security/ADVERSARIAL-REVIEW-2026-10.md): the default bootstrap is asserted parser-safe when the
 // guest document is built (no "</script", "<script", "<!--" or NUL), and the bundle's function text is what is
-// asserted here. Every variant of the bootstrap is built: iframe mode with files, the module graph, markup
+// asserted here. Every variant of the bootstrap is built: cooperative mode with files, the module graph, markup
 // references, the fetch bridge and auto-sizing, and worker mode. A text that failed the assertion would throw in
 // setConfig() and never reach 'ready'.
 test('the built package passes the parser-safety assertion for every default bootstrap variant (review A8)', async ({ page }) => {

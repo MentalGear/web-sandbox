@@ -31,7 +31,7 @@ class FakePort {
     /** Delivers `data` to the handler the bootstrap set, as a MessageEvent would. */
     deliver(data: unknown) { this.handler!(new FakeMessageEvent({ data })); }
 }
-// Iframe mode makes its own channel (broad review CB1): port1 stays with the bootstrap, port2 is announced to the host.
+// Cooperative mode makes its own channel (broad review CB1): port1 stays with the bootstrap, port2 is announced to the host.
 // A test that wants to watch the bootstrap's end sets `next` to its FakePort first.
 class FakeMessageChannel {
     static next: FakePort | null = null;
@@ -80,7 +80,7 @@ describe("inSandboxScript", () => {
         return { log, warn, error, _log: log, _warn: warn, _error: error } as any;
     };
 
-    it("iframe mode (broad review CB1): announces port2 of its own channel to parent.parent, once, keeps port1, and listens for no port at all", () => {
+    it("cooperative mode (broad review CB1): announces port2 of its own channel to parent.parent, once, keeps port1, and listens for no port at all", () => {
         const port = createMockPort();
         FakeMessageChannel.next = port;
         const sandboxConsole = createMockConsole();
@@ -89,7 +89,7 @@ describe("inSandboxScript", () => {
             listeners[type] = cb;
         };
 
-        inSandboxScript(true, 'iframe', sandboxConsole);
+        inSandboxScript(true, 'cooperative', sandboxConsole);
 
         expect(ANNOUNCEMENT_TYPE).toBe('SANDBOX_PORT');
         // the stringified functions spell the literal out: both carry this constant
@@ -104,7 +104,7 @@ describe("inSandboxScript", () => {
         expect(port.posted).toHaveBeenCalledWith({
             type: 'LOG',
             level: 'info',
-            args: ['iframe Ready']
+            args: ['cooperative Ready']
         });
         expect(typeof port.onmessage).toBe('function');
     });
@@ -199,7 +199,7 @@ describe("inSandboxScript", () => {
         };
 
         FakeMessageChannel.next = port;
-        inSandboxScript(true, 'iframe', sandboxConsole);
+        inSandboxScript(true, 'cooperative', sandboxConsole);
 
         sandboxConsole.log("hello", { a: 1 });
 
@@ -209,7 +209,7 @@ describe("inSandboxScript", () => {
             args: ["hello", { a: 1 }]
         });
 
-        // In iframe mode, original console should also be called
+        // In cooperative mode, original console should also be called
         expect((sandboxConsole as any)._log).toHaveBeenCalled();
     });
 
@@ -272,7 +272,7 @@ describe("inSandboxScript", () => {
             listeners[type] = cb;
         };
         FakeMessageChannel.next = port;
-        inSandboxScript(true, 'iframe', sandboxConsole);
+        inSandboxScript(true, 'cooperative', sandboxConsole);
         for (const level of ['log', 'info', 'warn', 'error'] as const) sandboxConsole[level](`via ${level}`);
         const relayed = port.posted.mock.calls.map(call => call[0]).filter((f: any) => f.type === 'LOG' && String(f.args[0]).startsWith('via '));
         expect(relayed.map((f: any) => [f.level, f.args[0]])).toEqual([['log', 'via log'], ['info', 'via info'], ['warn', 'via warn'], ['error', 'via error']]);
@@ -317,7 +317,7 @@ describe("inSandboxScript", () => {
         };
 
         FakeMessageChannel.next = port;
-        inSandboxScript(true, 'iframe', sandboxConsole, createBroker);
+        inSandboxScript(true, 'cooperative', sandboxConsole, createBroker);
         const bridge = (globalThis as any).bridge;
         const guestPing = vi.fn(() => 'guest method');
         bridge.expose('PING', guestPing); // a guest method of the same name is never reached by the watchdog
@@ -392,7 +392,7 @@ describe("inSandboxScript", () => {
             const sandboxConsole = createMockConsole();
             const port = createMockPort();
             FakeMessageChannel.next = port;
-            inSandboxScript(true, 'iframe', sandboxConsole, createBroker);
+            inSandboxScript(true, 'cooperative', sandboxConsole, createBroker);
 
             // guest code, after the bootstrap (which attached its own port before any guest code ran)
             const seen: unknown[] = [];
@@ -497,7 +497,7 @@ describe("inSandboxScript", () => {
         };
         afterEach(() => { delete (globalThis as any).ResizeObserver; });
 
-        const start = (mode: 'iframe' | 'worker', autoResize: boolean | undefined) => {
+        const start = (mode: 'cooperative' | 'worker', autoResize: boolean | undefined) => {
             const listeners: Record<string, Function> = {};
             (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
             const port = createMockPort();
@@ -510,7 +510,7 @@ describe("inSandboxScript", () => {
 
         it("observes the root element and reports a changed height as a RESIZE frame, outside the broker", () => {
             const observers = installObserver();
-            const port = start('iframe', true);
+            const port = start('cooperative', true);
             expect(observers).toHaveLength(1);
             expect(observers[0]!.targets).toEqual([document.documentElement]);
 
@@ -524,7 +524,7 @@ describe("inSandboxScript", () => {
 
         it("reports the scroll height when content overflows the viewport", () => {
             const observers = installObserver();
-            const port = start('iframe', true);
+            const port = start('cooperative', true);
             vi.spyOn(document.documentElement, 'getBoundingClientRect').mockReturnValue({ height: 100 } as DOMRect);
             vi.spyOn(document.documentElement, 'scrollHeight', 'get').mockReturnValue(900);
             vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(300);
@@ -533,7 +533,7 @@ describe("inSandboxScript", () => {
         });
 
         it("installs nothing when off, when not literally true, or in worker mode", () => {
-            for (const [mode, autoResize] of [['iframe', false], ['iframe', undefined], ['iframe', 'true'], ['worker', true]] as const) {
+            for (const [mode, autoResize] of [['cooperative', false], ['cooperative', undefined], ['cooperative', 'true'], ['worker', true]] as const) {
                 const observers = installObserver();
                 start(mode, autoResize as any);
                 expect(observers, `${mode} ${String(autoResize)}`).toEqual([]);
@@ -549,7 +549,7 @@ describe("inSandboxScript", () => {
             (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
             const port = createMockPort();
             FakeMessageChannel.next = port;
-            inSandboxScript(false, 'iframe', createMockConsole(), createBroker, features);
+            inSandboxScript(false, 'cooperative', createMockConsole(), createBroker, features);
             const requests = () => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RPC_REQ');
             const answer = (frame: Record<string, unknown>) => port.deliver({ type: 'RPC_RES', id: requests().at(-1).id, ...frame });
             return { requests, answer };
@@ -600,7 +600,7 @@ describe("inSandboxScript", () => {
             (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
             const port = createMockPort();
             FakeMessageChannel.next = port;
-            const comms = inSandboxScript(false, 'iframe', createMockConsole(), createBroker, features);
+            const comms = inSandboxScript(false, 'cooperative', createMockConsole(), createBroker, features);
             const requests = () => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RPC_REQ');
             const answer = (frame: Record<string, unknown>) => port.deliver({ type: 'RPC_RES', id: requests().at(-1).id, ...frame });
             return { comms, port, requests, answer };
@@ -659,7 +659,7 @@ describe("inSandboxScript", () => {
             (globalThis as any).RTCSessionDescription = class {};
             (globalThis as any).addEventListener = () => {};
 
-            inSandboxScript(false, 'iframe', createMockConsole(), createBroker);
+            inSandboxScript(false, 'cooperative', createMockConsole(), createBroker);
 
             for (const name of NAMES) expect(name in globalThis, name).toBe(false);
             expect(typeof (globalThis as any).RTCSessionDescription).toBe('function');
@@ -673,7 +673,7 @@ describe("inSandboxScript", () => {
         });
     });
 
-    // The startup gate (backlog S46, iframe mode). `ready` comes when the bootstrap checks in, so the host's calls and
+    // The startup gate (backlog S46, cooperative mode). `ready` comes when the bootstrap checks in, so the host's calls and
     // execute() can arrive while the guest document is still being parsed: they wait in one queue until it is parsed.
     describe("the startup gate (backlog S46): calls and execute() wait until the guest document is parsed", () => {
         let readyState = 'loading';
@@ -686,7 +686,7 @@ describe("inSandboxScript", () => {
 
         // Runs the bootstrap against a document whose readyState the test sets, and records the DOMContentLoaded
         // listeners it registers through EventTarget.prototype.addEventListener (fired by the test as the platform would).
-        const start = (mode: 'iframe' | 'worker' = 'iframe', scriptUnsafe = true) => {
+        const start = (mode: 'cooperative' | 'worker' = 'cooperative', scriptUnsafe = true) => {
             readyState = 'loading';
             original = Object.getOwnPropertyDescriptor(Document.prototype, 'readyState');
             Object.defineProperty(Document.prototype, 'readyState', { configurable: true, get: () => readyState });
@@ -867,7 +867,7 @@ describe("inSandboxScript", () => {
         });
 
         it("a held execute() is still refused when scriptUnsafe is false, when it runs", async () => {
-            const { port, fireParsed, posted } = start('iframe', false);
+            const { port, fireParsed, posted } = start('cooperative', false);
             port.deliver(execute('never'));
             expect(posted()).toEqual([]);
             readyState = 'interactive';

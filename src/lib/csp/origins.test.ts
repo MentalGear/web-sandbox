@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { NO_ORIGINS, ORIGIN_KINDS, originRules, parseOrigins, type SandboxOrigins, type StrictSandboxOrigins } from './origins';
 import type { SandboxConfig } from '../../host';
 
-const parse = (input: unknown, mode: unknown = 'iframe') => {
+const parse = (input: unknown, mode: unknown = 'cooperative') => {
     const warnings: string[] = [];
     const policy = parseOrigins(input, mode, (message) => warnings.push(message));
     return { policy, warnings };
@@ -62,7 +62,7 @@ describe('parseOrigins: `origins` parsed once, at the boundary (ADR-007)', () =>
         expect([strict.policy.scripts, strict.policy.images]).toEqual([[], ['https://img.example']]);
         expect(strict.warnings).toEqual(["[Sandbox] origins.scripts is not used in strict mode and was dropped: the view runs only the library's bootstrap, and the worker loads no script (see docs/ADR-005)."]);
         expect(parse({ scripts: [] }, 'strict').warnings).toEqual([]);
-        for (const mode of ['iframe', 'worker', undefined]) expect(parse({ scripts: ['https://cdn.example'] }, mode).policy.scripts, String(mode)).toEqual(['https://cdn.example']);
+        for (const mode of ['cooperative', 'worker', undefined]) expect(parse({ scripts: ['https://cdn.example'] }, mode).policy.scripts, String(mode)).toEqual(['https://cdn.example']);
     });
 
     it('absent, and every kind absent or undefined: no origin', () => {
@@ -88,17 +88,17 @@ describe('the types: what a mode cannot use does not compile', () => {
         const strictOrigins: StrictSandboxOrigins = { connect: ['https://api.example'] };
         // @ts-expect-error not even through a variable
         const strictFromVariable: SandboxConfig = { mode: 'strict', origins: { scripts: ['https://cdn.example'] } as SandboxOrigins };
-        const iframe: SandboxConfig = { origins: { scripts: ['https://cdn.example'] } };
+        const cooperative: SandboxConfig = { mode: 'cooperative', origins: { scripts: ['https://cdn.example'] } };
         const worker: SandboxConfig = { mode: 'worker', origins: { scripts: ['https://cdn.example'] } };
         // a mode chosen at run time takes origins that every mode can use
-        const anyMode = (mode: 'iframe' | 'worker' | 'strict'): SandboxConfig => ({ mode, origins: strictOrigins });
+        const anyMode = (mode: 'cooperative' | 'worker' | 'strict'): SandboxConfig => ({ mode, origins: strictOrigins });
         // @ts-expect-error connectionsAllowed was removed
         const removed: SandboxConfig = { connectionsAllowed: { 'img-src': ['https://a.example'] } };
         // @ts-expect-error a kind takes origins, not a source string
         const notAList: SandboxConfig = { origins: { images: 'https://a.example' } };
         // @ts-expect-error not a kind
         const notAKind: SandboxOrigins = { 'img-src': ['https://a.example'] };
-        expect([strict, strictScripts, strictFromVariable, iframe, worker, anyMode('strict'), removed, notAList, notAKind]).toHaveLength(9);
+        expect([strict, strictScripts, strictFromVariable, cooperative, worker, anyMode('strict'), removed, notAList, notAKind]).toHaveLength(9);
     });
 
     it('ORIGIN_KINDS are exactly the keys of SandboxOrigins', () => {

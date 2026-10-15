@@ -111,8 +111,8 @@ describe('B8, focused review F2: workerExecutionTimeout requires a free event lo
         expect(el._executionProbes.size).toBe(0);
     });
 
-    it('iframe mode has no budget, and a budget that is not a finite number > 0 is off', async () => {
-        for (const [mode, budget] of [['iframe', 50], ['worker', '50'], ['worker', -1], ['worker', Infinity]] as const) {
+    it('cooperative mode has no budget, and a budget that is not a finite number > 0 is off', async () => {
+        for (const [mode, budget] of [['cooperative', 50], ['worker', '50'], ['worker', -1], ['worker', Infinity]] as const) {
             const { el, reasons, pings, grace } = await start(mode, budget);
             el.execute('for (;;) {}');
             vi.advanceTimersByTime(1000 + grace);
@@ -219,7 +219,7 @@ describe('C4: the view port counts violations per directive; the logic port and 
         expect(events).toBe((VIOLATION_DIRECTIVES.length + 1) * VIOLATION_EVENT_LIMIT);
     });
 
-    it.each([['strict', 'logic'], ['iframe', 'guest'], ['worker', 'guest']])('%s mode, %s port: one count for every directive (guest code names them there)', async (mode, _port) => {
+    it.each([['strict', 'logic'], ['cooperative', 'guest'], ['worker', 'guest']])('%s mode, %s port: one count for every directive (guest code names them there)', async (mode, _port) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount({ mode });
         const port = recordingPort();

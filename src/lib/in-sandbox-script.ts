@@ -1,7 +1,7 @@
 import type { createBroker } from './rpc';
 
 /**
- * The type of the one message the guest frame posts to the host page in iframe mode, carrying its port (the
+ * The type of the one message the guest frame posts to the host page in cooperative mode, carrying its port (the
  * announcement, broad review 2026-10-14 CB1); the worker-mode frame posts the same one. host.ts accepts exactly one
  * per environment. The stringified functions spell the literal out (they close over nothing); a unit test keeps
  * them equal to this constant.
@@ -10,8 +10,8 @@ export const ANNOUNCEMENT_TYPE = 'SANDBOX_PORT';
 
 /**
  * This function is stringified and injected into the sandbox (iframe or worker).
- * It makes (iframe mode) or receives (worker mode) the guest's end of the channel, relays console output, keeps the
- * EXECUTE escape hatch, and installs the β RPC bridge; in iframe mode the host's calls and EXECUTE frames wait until
+ * It makes (cooperative mode) or receives (worker mode) the guest's end of the channel, relays console output, keeps the
+ * EXECUTE escape hatch, and installs the β RPC bridge; in cooperative mode the host's calls and EXECUTE frames wait until
  * the guest document is parsed (the startup gate, below).
  *
  * The RPC broker is injected the same way this function is — createBroker is stringified and
@@ -22,7 +22,7 @@ export const ANNOUNCEMENT_TYPE = 'SANDBOX_PORT';
  */
 export function inSandboxScript(
     scriptUnsafe: boolean,
-    mode: 'iframe' | 'worker' | 'strict',
+    mode: 'cooperative' | 'worker' | 'strict',
     sandboxConsole: Console,
     createBrokerFn?: typeof createBroker,
     // Opt-in features; the host passes this literal only when one is on, so the bootstrap text of a sandbox
@@ -32,7 +32,7 @@ export function inSandboxScript(
     features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean },
 ): { attach(port: MessagePort): void; writeFiles: ((request: unknown) => Promise<unknown>) | null } {
     // The announcement (broad review 2026-10-14, CB1), the first statement, before anything else in the guest
-    // document can run: in iframe mode the bootstrap makes the channel itself, keeps port1 in this closure and
+    // document can run: in cooperative mode the bootstrap makes the channel itself, keeps port1 in this closure and
     // posts port2 to the host page (parent.parent: the guest's parent is the wrapper). The host takes exactly one
     // announcement per environment, from this frame's window, and ends the environment on a second one (a guest
     // that reloads or rewrites itself runs a bootstrap again). Before, the host posted its port INTO the guest
@@ -43,7 +43,7 @@ export function inSandboxScript(
     // the guest. Worker mode: the frame (worker-bootstrap.ts) announces the same way and hands port1 to the worker,
     // whose one INIT_PORT listener below takes it (a worker has no document to open, and no guest code runs in it
     // before the port is there).
-    const announced = mode === 'iframe' ? new MessageChannel() : null;
+    const announced = mode === 'cooperative' ? new MessageChannel() : null;
     if (announced) parent.parent.postMessage({ type: 'SANDBOX_PORT' }, '*', [announced.port2]);
 
     // The port never reaches guest code (review B2). Every operation on it, and on the events that carry it,
@@ -129,7 +129,7 @@ export function inSandboxScript(
         };
         defineOwn(g, 'fetch', { value: guardedFetch, writable: true, enumerable: true, configurable: false });
     }
-    if (mode === 'iframe') {
+    if (mode === 'cooperative') {
         // PD4, history traversal. history.back(), forward() and go() traverse the whole tab's session history, so a
         // guest's history.back() navigated the HOST page in Firefox and WebKit; the Navigation API's back(),
         // forward() and traverseTo() reach the same history where it exists. In the guest realm they do nothing
@@ -185,7 +185,7 @@ export function inSandboxScript(
         });
     }, true);
 
-    // Content auto-sizing (backlog B6, src/lib/auto-resize.ts), opt-in and iframe mode only: a worker has no
+    // Content auto-sizing (backlog B6, src/lib/auto-resize.ts), opt-in and cooperative mode only: a worker has no
     // document. A ResizeObserver on the root element reports the content height as a RESIZE frame, outside
     // the broker like VIOLATION. Its callbacks run at most once per rendering update, after layout, so the
     // guest measures once per frame and sends only a changed height. The measure is the root element's
@@ -194,7 +194,7 @@ export function inSandboxScript(
     // overflow the root's box does not contain still grows the frame. The body is observed as well once it
     // exists, for guests whose root is pinned to the viewport (html { height: 100% }). The host validates,
     // clamps and rate-limits every report: guest code can reach the port and post its own.
-    if (features?.autoResize === true && mode === 'iframe' && typeof ResizeObserver === 'function') {
+    if (features?.autoResize === true && mode === 'cooperative' && typeof ResizeObserver === 'function') {
         let lastHeight = -1;
         const measure = () => {
             const root = document.documentElement;
@@ -324,7 +324,7 @@ export function inSandboxScript(
         if (handleBridgeMessage) handleBridgeMessage(data);
     };
 
-    // The startup gate (backlog S46, iframe mode; ADR-003 amendment). The host is `ready` as soon as this bootstrap
+    // The startup gate (backlog S46, cooperative mode; ADR-003 amendment). The host is `ready` as soon as this bootstrap
     // has announced its port, before the parser has reached the guest's own scripts, so a call or an execute() can
     // arrive while the methods those scripts expose do not exist yet. Such frames (RPC_REQ, EXECUTE) wait here, in
     // one queue in arrival order, until the guest document is parsed: a trusted DOMContentLoaded has fired (deferred
@@ -344,7 +344,7 @@ export function inSandboxScript(
     // gate: their guest code runs only in a worker, which has no document.
     // Mirrors the exported MAX_INBOUND_IN_FLIGHT (rpc.ts; a test keeps them equal): declared here to survive stringification.
     const MAX_HELD = 256;
-    const gatedDocument = mode === 'iframe' ? document : null;
+    const gatedDocument = mode === 'cooperative' ? document : null;
     let readyStateOf: (() => unknown) | undefined;
     for (let proto = gatedDocument ? Object.getPrototypeOf(gatedDocument) : null; proto && !readyStateOf; proto = Object.getPrototypeOf(proto)) {
         readyStateOf = Object.getOwnPropertyDescriptor(proto, 'readyState')?.get; // on Document.prototype in every engine
@@ -445,7 +445,7 @@ export function inSandboxScript(
         post({ type: 'LOG', level: 'info', args: [`${mode} Ready`] });
     };
 
-    // Iframe mode: the bootstrap's own end of the channel it announced, attached now, before any guest code runs.
+    // Cooperative mode: the bootstrap's own end of the channel it announced, attached now, before any guest code runs.
     if (announced) {
         attach(announced.port1);
         return { attach, writeFiles };
