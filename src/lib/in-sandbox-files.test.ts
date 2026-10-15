@@ -60,17 +60,22 @@ describe('inSandboxFiles (the guest bootstrap, run from its source text)', () =>
         const bytes = new TextEncoder().encode(source);
         const at = (text: string) => new TextEncoder().encode(source.slice(0, source.indexOf(text))).length;
         const edits = [at("'./a.js'"), at("'./a.js'") + 8, '"https://vfs.invalid/a.js"', at("'./b.js'"), at("'./b.js'") + 8, '"https://vfs.invalid/b.js"'];
-        install([['m.js', 'text/javascript', btoa(String.fromCharCode(...bytes)), edits]]);
+        // jsdom's Blob has no arrayBuffer(): give it one (through FileReader) for this read() only, before the store
+        // captures it (review round 2, C-1: sandboxFiles uses what it took before any guest code ran)
+        const original = Blob.prototype.arrayBuffer;
+        Blob.prototype.arrayBuffer = function (this: Blob) { return bytesOf(this).then(b => new Uint8Array(b).buffer); };
+        try {
+            install([['m.js', 'text/javascript', btoa(String.fromCharCode(...bytes)), edits]]);
+        } finally {
+            Blob.prototype.arrayBuffer = original;
+        }
 
         const blobs = (URL.createObjectURL as any).mock.calls.map((call: [Blob]) => call[0]) as Blob[];
         expect(blobs).toHaveLength(1); // one URL per file: the module form's
         expect(blobs[0]!.type).toBe('text/javascript');
         expect(new TextDecoder().decode(new Uint8Array(await bytesOf(blobs[0]!)))).toBe('é import "https://vfs.invalid/a.js"; import("https://vfs.invalid/b.js");');
         expect(files().url('m.js')).toBe(`blob:null/fake-${minted}`);
-        // jsdom's Blob has no arrayBuffer(): give it one (through FileReader) for this read() only
-        const original = Blob.prototype.arrayBuffer;
-        Blob.prototype.arrayBuffer = function (this: Blob) { return bytesOf(this).then(b => new Uint8Array(b).buffer); };
-        const registered = new TextDecoder().decode(await files().read('m.js').finally(() => { Blob.prototype.arrayBuffer = original; }));
+        const registered = new TextDecoder().decode(await files().read('m.js'));
         expect(registered).toBe(source);
     });
 

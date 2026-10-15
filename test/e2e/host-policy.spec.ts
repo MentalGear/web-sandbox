@@ -27,11 +27,15 @@ const COOPERATIVE = { mode: 'cooperative', capabilities: ['allow-scripts'], html
 
 type HostEvent = { type: 'ready' | 'terminated'; reason: string | null };
 
-/** Opens the harness with the given host policy headers; the element is inserted (a default, strict build). */
-async function openWithPolicy(page: Page, policy: { csp?: string; coep?: string }) {
+/**
+ * Opens the harness with the given host policy headers; the element is inserted (a default, strict build). `ttDefault`:
+ * the host page makes a Trusted Types default policy of its own first (host-policy-harness.ts).
+ */
+async function openWithPolicy(page: Page, policy: { csp?: string; coep?: string; ttDefault?: boolean }) {
     const query = new URLSearchParams();
     if (policy.csp) query.set('csp', policy.csp);
     if (policy.coep) query.set('coep', policy.coep);
+    if (policy.ttDefault) query.set('tt-default', '');
     await page.goto(`${ORIGIN}/__host-policy?${query}`);
     await page.waitForFunction(() => (window as any).harnessReady === true);
 }
@@ -125,6 +129,33 @@ test.describe('host page policy', () => {
         const expected = browserName === 'firefox' ? [{ type: 'ready', reason: null }] : [{ type: 'terminated', reason: TRUSTED_TYPES }];
         expect(await strictEntry(sandbox)).toEqual(expected);
         expect(await configure(sandbox, COOPERATIVE)).toEqual(expected);
+    });
+
+    test("review round 2, C-5: worker mode under a worker-src without blob: ends with the worker reason and is never ready (before: ready, and call() hung)", async ({ sandbox, page }) => {
+        await openWithPolicy(page, { csp: "script-src 'self' 'unsafe-inline'; worker-src 'self'" });
+        await configure(sandbox, { mode: 'worker' });
+        await expect.poll(() => page.evaluate(() => (window as any).sandboxEvents.length)).toBe(1);
+        expect(await page.evaluate(() => (window as any).sandboxEvents)).toEqual([{ type: 'terminated', reason: WORKER_REFUSED }]);
+        expect(await sandbox.logs()).toContain(`[Sandbox] ${WORKER_REFUSED}`);
+        // positive control: the same page with blob: allowed
+        await openWithPolicy(page, { csp: "script-src 'self' 'unsafe-inline'; worker-src 'self' blob:" });
+        expect(await configure(sandbox, { mode: 'worker' })).toEqual([{ type: 'ready', reason: null }]);
+        expect(await sandbox.callWithTimeoutOutcome(4000, 'nothing-exposed')).toMatchObject({ status: 'rejected', code: 'UNKNOWN_METHOD' });
+    });
+
+    test("review round 2, C-6: 'trusted-types default' and a default policy of the host page's own: strict and worker mode end with the Trusted Types reason, never 'the guest entry failed to start' or a ready with no worker", async ({ sandbox, page }) => {
+        await openWithPolicy(page, { csp: "require-trusted-types-for 'script'; trusted-types default", ttDefault: true });
+        const enforced = await page.evaluate(() => 'trustedTypes' in window);
+        const expected = enforced ? [{ type: 'terminated', reason: TRUSTED_TYPES }] : [{ type: 'ready', reason: null }];
+        expect(await strictEntry(sandbox)).toEqual(expected);
+        expect((await sandbox.logs()).filter(line => line.includes('entry failed'))).toEqual([]);
+        expect(await configure(sandbox, { mode: 'worker' })).toEqual(expected);
+        if (!enforced) return;
+        // positive control: with the policy name allowed, both run
+        await openWithPolicy(page, { csp: "require-trusted-types-for 'script'; trusted-types default web-sandbox", ttDefault: true });
+        expect(await strictEntry(sandbox)).toEqual([{ type: 'ready', reason: null }]);
+        expect(await configure(sandbox, { mode: 'worker' })).toEqual([{ type: 'ready', reason: null }]);
+        expect(await sandbox.callWithTimeoutOutcome(4000, 'nothing-exposed')).toMatchObject({ status: 'rejected', code: 'UNKNOWN_METHOD' });
     });
 
     test(`style-src 'self': the frame is 150 px high and the element warns once, naming the hash; with ${WRAPPER_STYLE_HASH} it fills the element, no warning`, async ({ sandbox, page, browserName }) => {

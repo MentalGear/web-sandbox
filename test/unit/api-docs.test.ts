@@ -251,7 +251,7 @@ describe('docs/API.md lists the public surface', () => {
 
     it('every fetch code and every files code', () => {
         expect(sorted(rowKeys(section('### `sandboxFetch()`')))).toEqual(sorted(publicApi.FETCH_ERROR_CODES));
-        const fileCodes = [...unionMembers('src/lib/files.ts', 'FileErrorCode'), read('src/lib/in-sandbox-files.ts').match(/error\.code = '([A-Z_]+)'/)![1]!];
+        const fileCodes = [...unionMembers('src/lib/files.ts', 'FileErrorCode'), read('src/lib/in-sandbox-files.ts').match(/const notFound = \(\) => coded\('[^']*', '([A-Z_]+)'\)/)![1]!];
         expect(sorted(rowKeys(section('### Files')))).toEqual(sorted(fileCodes));
     });
 
@@ -261,8 +261,10 @@ describe('docs/API.md lists the public surface', () => {
         const removed: string[] = [];
         for (const file of files) {
             const source = read(file);
-            for (const match of source.matchAll(/(?:\(globalThis as any\)|\bg)\.([A-Za-z]\w*) = /g)) installed.push(match[1]!);
-            for (const match of source.matchAll(/remove\(g(?:\.\w+)?, '(\w+)'\)/g)) removed.push(match[1]!);
+            // published with the captured defineProperty (review round 2, C-1): `publish('x', …)` or `defineOwn(g, 'x', { value: … })`,
+            // but for the guard that replaces fetch and the inert window.name, which are no globals of the library's
+            for (const match of source.matchAll(/(?:\bpublish\(|defineOwn\(g, )'([A-Za-z]\w*)', (?!\{ get:|\{ value: guardedFetch)/g)) installed.push(match[1]!);
+            for (const match of source.matchAll(/remove\((?:g|\w+Statics), '(\w+)'\)/g)) removed.push(match[1]!);
             const peer = source.match(/PEER_CONNECTION_CONSTRUCTORS = \['(\w+)'/);
             if (peer) removed.push(peer[1]!);
         }
@@ -290,7 +292,7 @@ describe('docs/API.md lists the public surface', () => {
         delete (globalThis as any).sandboxFiles;
         expect(sorted(rowKeys(section('### `sandboxFiles`')))).toEqual(sorted(files));
 
-        const view = read('src/lib/in-sandbox-view.ts').match(/g\.sandboxView = Object\.freeze\(\{([^}]+)\}\)/)![1]!.split(',').map(name => name.trim());
+        const view = read('src/lib/in-sandbox-view.ts').match(/defineOwn\(g, 'sandboxView', \{ value: freeze\(\{([^}]+)\}\)/)![1]!.split(',').map(name => name.trim());
         const viewSection = section('### `sandboxView`');
         expect(sorted(rowKeys(viewSection))).toEqual(sorted(view));
         const viewSpans = spans(viewSection);

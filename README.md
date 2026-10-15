@@ -149,7 +149,7 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     leaves it `idle`. Inserting it again builds a fresh one. Moved into another window's document, it builds
     nothing there (one warning) until it is back.
 *   **`ready` is the guest's check-in**, not its load: slow images never delay it. In strict mode it is the view's
-    check-in, on the port only its bootstrap holds. Calls and `execute()` sent while
+    check-in, on the port only its bootstrap holds; in worker mode it comes once the worker runs. Calls and `execute()` sent while
     the guest document is still being parsed wait in the guest until it is, in order, so methods its scripts expose
     are there ([API](docs/API.md#ready-and-the-startup-gate)). A build whose guest has not checked in within
     `LOAD_TIMEOUT_MS` (5 s of host time) ends with `the sandbox did not finish loading`, or, when its frame loaded and

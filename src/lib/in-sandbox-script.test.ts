@@ -381,7 +381,9 @@ describe("inSandboxScript", () => {
             const late = createMockPort();
             listener.cb(initPort(late, { source: null }));
             expect(late.posted).not.toHaveBeenCalled();
-            expect(announcements).toEqual([]); // a worker announces nothing: its frame does (worker-bootstrap.ts)
+            // a worker announces nothing: its frame does (worker-bootstrap.ts), once the worker told it, once, that it
+            // runs (review round 2, C-5; in jsdom the worker's postMessage to its frame is the window's)
+            expect(announcements).toEqual([{ data: { type: 'WORKER_STARTED' }, target: undefined, transfer: undefined }]);
         });
     });
 
@@ -508,13 +510,15 @@ describe("inSandboxScript", () => {
         };
         const resizeFrames = (port: FakePort) => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RESIZE');
 
+        // The bootstrap measures through Element.prototype's own methods and getters, captured before any guest code
+        // runs (review round 2, C-1), so the stand-ins are installed there, before it starts.
         it("observes the root element and reports a changed height as a RESIZE frame, outside the broker", () => {
             const observers = installObserver();
+            const box = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ height: 120.4 } as DOMRect);
             const port = start('cooperative', true);
             expect(observers).toHaveLength(1);
             expect(observers[0]!.targets).toEqual([document.documentElement]);
 
-            const box = vi.spyOn(document.documentElement, 'getBoundingClientRect').mockReturnValue({ height: 120.4 } as DOMRect);
             observers[0]!.callback();
             observers[0]!.callback(); // unchanged: nothing sent
             box.mockReturnValue({ height: 40 } as DOMRect);
@@ -524,10 +528,10 @@ describe("inSandboxScript", () => {
 
         it("reports the scroll height when content overflows the viewport", () => {
             const observers = installObserver();
+            vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ height: 100 } as DOMRect);
+            vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockReturnValue(900);
+            vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(300);
             const port = start('cooperative', true);
-            vi.spyOn(document.documentElement, 'getBoundingClientRect').mockReturnValue({ height: 100 } as DOMRect);
-            vi.spyOn(document.documentElement, 'scrollHeight', 'get').mockReturnValue(900);
-            vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(300);
             observers[0]!.callback();
             expect(resizeFrames(port)).toEqual([{ type: 'RESIZE', height: 900 }]);
         });

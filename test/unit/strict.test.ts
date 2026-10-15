@@ -155,7 +155,7 @@ describe('guest writes in strict mode (backlog C5): the worker carries the write
         expect(source).toContain('"guestWrites":true');
         // the third argument: the only types the worker mints URLs for, the view's (review round 1, R2-4)
         expect(source).toMatch(/\}\)\(\[\[[^\n]*\]\], comms\.writeFiles, \["text\/css",[^\n]*?\]\);\(function inStrictWorker\(/);
-        const removal = source.search(/remove\(g\.URL, ['"]createObjectURL['"]\)/);
+        const removal = source.search(/remove\(urlStatics, ['"]createObjectURL['"]\)/);
         expect(removal).toBeGreaterThan(0);
         expect(removal).toBeLessThan(source.indexOf('(function () {\nvoid 0\n}).call(this);'));
         expect(el._guestWrites).not.toBeNull();

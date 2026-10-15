@@ -114,7 +114,7 @@ export interface SandboxConfigOptions {
     /** Sandbox attributes that keep the guest inside the frame (SAFE_CAPABILITIES). Default []. */
     capabilities?: SafeCapability[];
     /**
-     * Capabilities that reach outside the frame (popups, modals, downloads, presentation, fullscreen). Opt-in
+     * Capabilities that reach outside the frame (popups, modals, downloads, forms, presentation, fullscreen). Opt-in
      * only, logs a warning. Dropped in strict mode. Default [].
      */
     unsafeCapabilities?: UnsafeCapability[];
@@ -164,8 +164,9 @@ export interface SandboxConfigOptions {
 /**
  * Where the element is in its lifecycle (read it from `sandbox.state`):
  *   idle        constructed, or removed from the document: no frame
- *   loading     a frame was created; waiting for the guest to check in (its bootstrap announces its port, S46), or
- *               without a bootstrap (no allow-scripts) and in strict mode, for the frame's one load
+ *   loading     a frame was created; waiting for the guest to check in (its bootstrap announces its port, S46; in
+ *               worker mode once its worker runs; in strict mode the view's bootstrap checks in on its own port), or
+ *               without a bootstrap (no allow-scripts), for the frame's one load
  *   ready       the guest's port is this environment's and 'ready' dispatched; in cooperative mode the guest document
  *               may still be loading (its calls and execute() wait in the guest until it is parsed)
  *   terminated  torn down by terminate(), a budget (watchdog, workerExecutionTimeout), a frame-integrity check
@@ -254,6 +255,12 @@ const LOAD_TIMEOUT_REASON = 'the sandbox did not finish loading';
 const STARTUP_BLOCKED_REASON = "the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)";
 const WORKER_REFUSED_REASON = "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)";
 const TRUSTED_TYPES_REASON = `the host page's Trusted Types policy does not allow the policy name '${TRUSTED_TYPES_POLICY}' (trusted-types; see docs/API.md#host-page-policy)`;
+// What worker mode's frame may announce instead of a port (worker-bootstrap.ts), and the reason each ends the build with.
+const WORKER_FRAME_REFUSALS: Readonly<Record<string, string>> = Object.freeze(Object.assign(Object.create(null), {
+    'worker': WORKER_REFUSED_REASON,
+    'trusted-types': TRUSTED_TYPES_REASON,
+    'failed': `${BUILD_FAILED_REASON} (Error)`,
+}));
 
 // A build that refuses its own inputs (a strict entry that is no registered JavaScript file): its message is the
 // reason, a fixed text of the element's own, never an error's.
@@ -265,16 +272,34 @@ class BuildRefusal extends Error {
 
 // Plain data, compared as data (R3-7): the same primitives, arrays and plain objects, key by key. Anything else (a
 // Date, a Map, a typed array) never compares equal, so a config holding one always rebuilds.
-function sameData(a: unknown, b: unknown, depth = 0): boolean {
-    if (Object.is(a, b)) return true;
-    if (depth > 64 || !a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
-    const arrays = Array.isArray(a);
-    if (arrays !== Array.isArray(b)) return false;
-    if (!arrays && (Object.getPrototypeOf(a) !== Object.prototype || Object.getPrototypeOf(b) !== Object.prototype)) return false;
-    const keys = Object.keys(a);
-    if (keys.length !== Object.keys(b).length) return false;
-    for (const key of keys) {
-        if (!Object.hasOwn(b, key) || !sameData((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key], depth + 1)) return false;
+// Each pair of objects is compared once (review round 2, C-7): a config is a structured clone, which keeps shared
+// references, and a recursive comparison walked a shared object once per path to it, exponential in the nesting (one
+// object shared 24 levels deep blocked setConfig() for 2.4 s). A pair already compared, or being compared, adds nothing:
+// were it different, the comparison already in progress or done answers so. At most SAME_DATA_MAX_PAIRS pairs are
+// compared; past that, and past a depth of 64, the configs count as different, which only costs a rebuild.
+const SAME_DATA_MAX_PAIRS = 10000;
+function sameData(a: unknown, b: unknown): boolean {
+    const compared = new Map<object, Set<object>>();
+    const pending: [unknown, unknown, number][] = [[a, b, 0]];
+    let pairs = 0;
+    while (pending.length > 0) {
+        const [x, y, depth] = pending.pop()!;
+        if (Object.is(x, y)) continue;
+        if (depth > 64 || !x || !y || typeof x !== 'object' || typeof y !== 'object') return false;
+        const partners = compared.get(x) ?? new Set<object>();
+        if (partners.has(y)) continue;
+        if (++pairs > SAME_DATA_MAX_PAIRS) return false;
+        partners.add(y);
+        compared.set(x, partners);
+        const arrays = Array.isArray(x);
+        if (arrays !== Array.isArray(y)) return false;
+        if (!arrays && (Object.getPrototypeOf(x) !== Object.prototype || Object.getPrototypeOf(y) !== Object.prototype)) return false;
+        const keys = Object.keys(x);
+        if (keys.length !== Object.keys(y).length) return false;
+        for (const key of keys) {
+            if (!Object.hasOwn(y, key)) return false;
+            pending.push([(x as Record<string, unknown>)[key], (y as Record<string, unknown>)[key], depth + 1]);
+        }
     }
     return true;
 }
@@ -342,10 +367,12 @@ export const VIEW_LIVENESS_TIMEOUT_MS = 5000;
 
 /**
  * How long a build may stay `loading` (broad review 2026-10-14, CB3): the liveness budget, counted in host ticks
- * (watchdog.ts), so a host stall never counts. It bounds the wait for the guest's check-in, the announcement its
- * bootstrap posts as its first statement (cooperative and worker mode, S46), and, where no bootstrap runs (no
- * allow-scripts) and in strict mode, the wait for the frame's one load. A build still `loading` then is terminated
- * with 'the sandbox did not finish loading'. Where a bootstrap checks in, the guest's own subresources and scripts
+ * (watchdog.ts), so a host stall never counts. It bounds the wait for the guest's check-in: the announcement its
+ * bootstrap posts as its first statement (cooperative mode, S46), the frame's announcement once its worker runs (worker
+ * mode), or the view's check-in on its own port (strict mode, R3-1); and, where no bootstrap runs (no allow-scripts),
+ * the wait for the frame's one load. A build still `loading` then is terminated with 'the sandbox did not finish
+ * loading', or with the reason that names the host page's policy when the frame loaded and its startup script never
+ * checked in. Where a bootstrap checks in, the guest's own subresources and scripts
  * never count (the check-in comes before them): a guest page with slow images, or one that never finishes its
  * document, is `ready`. Without one, the frame's load waits for the guest's subresources, and they count.
  */
@@ -363,7 +390,12 @@ interface StrictInit {
  * The `<web-sandbox>` element: one sandboxed environment for untrusted web content, rebuilt by setConfig(),
  * load() and reset(). Register it with defineWebSandbox(). Public surface: docs/API.md.
  */
-export class WebSandbox extends HTMLElement {
+// What the element extends: HTMLElement where there is a DOM. Importing the package must not need one (review round 2,
+// C-8): an embedder reads viewScriptHash() in a build step, in Node or Bun, and the class declaration is the only thing
+// evaluated at import that names a DOM interface. Without a DOM the class extends an empty one, which nothing constructs.
+const ElementBase: typeof HTMLElement = typeof HTMLElement === 'function' ? HTMLElement : (class {} as unknown as typeof HTMLElement);
+
+export class WebSandbox extends ElementBase {
     private _iframe: HTMLIFrameElement | null = null;
     private _frameLoaded = false;
     // The reversed handshake (broad review 2026-10-14, CB1): whether this build's guest runs a bootstrap that announces
@@ -372,7 +404,7 @@ export class WebSandbox extends HTMLElement {
     private _expectAnnouncement = false;
     private _guestWindow: Window | null = null;
     private _stopListening: (() => void) | null = null;
-    private _loadDeadline: Watchdog | null = null; // LOAD_TIMEOUT_MS until the guest checks in, or the frame loads (CB3, S46)
+    private _loadDeadline: Watchdog | null = null; // LOAD_TIMEOUT_MS until the guest checks in, or a frame with no bootstrap loads (CB3, S46)
     // A build termination being dispatched from initialize(), and the build inputs it was for (CB5): a 'terminated'
     // listener that builds again from the same inputs gets the same answer, so it is not dispatched again.
     private _buildTermination: { reason: string; inputs: number } | null = null;
@@ -438,7 +470,8 @@ export class WebSandbox extends HTMLElement {
     // frame recreation (the guest's broker is per-frame and resets with each new frame). Its send only
     // ever carries the host's own requests: it queues them until a port exists, then setupChannel
     // flushes them. Answers to the guest never use it — they go back on the port the request arrived on.
-    private _broker = createBroker((frame) => this._postRpc(frame), { sizeOf: createSizeOf() });
+    // Results go back with their snapshot's ArrayBuffers transferred (review round 2, C-3: rpc.ts, sendResult).
+    private _broker = createBroker((frame) => this._postRpc(frame), { sizeOf: createSizeOf(), transferResults: true });
 
     constructor() {
         super();
@@ -993,6 +1026,12 @@ export class WebSandbox extends HTMLElement {
      * _generation, and this is the only place that compares it. A path that dispatches and then acts goes through
      * here; none compares the count by hand (test/unit/channel-guarantees.test.ts enumerates them).
      */
+    // A frame of ours that the host page's policy refused, as it reported (R3-1; review round 2, C-5 and C-6): one host
+    // line, then the termination with the reason that names the policy (unless a listener of that line acted first).
+    private _refusedByHostPage(reason: string) {
+        this._notifyThenAct(() => this._dispatchHostLog('error', `[Sandbox] ${reason}`), () => this._terminate(reason));
+    }
+
     private _notifyThenAct(notify: () => void, act: () => void) {
         const generation = this._generation;
         notify();
@@ -1009,7 +1048,7 @@ export class WebSandbox extends HTMLElement {
         this._port = port;
         // One reply channel per port: answers go back where their request came from, and the broker counts the
         // calls it runs per channel (review B7), so the count belongs to this environment.
-        const reply = (frame: unknown) => port.postMessage(frame);
+        const reply = (frame: unknown, transfer?: Transferable[]) => port.postMessage(frame, transfer ?? []);
         // Setting onmessage starts the port: frames the guest posted before its announcement was accepted are
         // delivered now, after 'ready'.
         port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, null);
@@ -1036,11 +1075,19 @@ export class WebSandbox extends HTMLElement {
             const data = event.data;
             if (!data || typeof data !== 'object' || data.type !== ANNOUNCEMENT_TYPE) return;
             event.stopImmediatePropagation(); // the port is the element's: no other listener on this window sees it
-            if (accepted || !this._expectAnnouncement || !event.isTrusted || event.ports.length !== 1) {
+            // Worker mode's frame announces a worker that could not start as its one announcement, with no port (review
+            // round 2, C-5, worker-bootstrap.ts): the build ends with the reason strict mode gives for the same refusal,
+            // and is never 'ready'. Only in worker mode, whose frame runs no guest code: elsewhere it is a forgery.
+            const refusal = this._config.mode === 'worker' && event.ports.length === 0 ? WORKER_FRAME_REFUSALS[data.refused as string] : undefined;
+            if (accepted || !this._expectAnnouncement || !event.isTrusted || (event.ports.length !== 1 && refusal === undefined)) {
                 this._terminate(SECOND_ANNOUNCEMENT_REASON);
                 return;
             }
             accepted = true;
+            if (refusal !== undefined) {
+                this._refusedByHostPage(refusal);
+                return;
+            }
             // The check-in (S46): the environment is ready now, whether or not the wrapper has loaded (its load waits
             // for the guest's subresources). The guest frame it came from is the one the wrapper's load must still hold.
             this._guestWindow = guestWindow;
@@ -1101,7 +1148,7 @@ export class WebSandbox extends HTMLElement {
         const viewPort = view.port1;
         this._port = port;
         this._viewPort = viewPort;
-        const reply = (frame: unknown) => port.postMessage(frame);
+        const reply = (frame: unknown, transfer?: Transferable[]) => port.postMessage(frame, transfer ?? []);
         port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, 'logic');
         viewPort.onmessage = (e) => this._onViewMessage(viewPort, e.data);
 
@@ -1120,9 +1167,16 @@ export class WebSandbox extends HTMLElement {
             this._enterReady();
             return;
         }
+        if (data?.type === 'TRUSTED_TYPES_REFUSED') {
+            // The view could not create its Trusted Types policy (review round 2, C-6): the host page's trusted-types
+            // directive does not name it, though the host page itself never needed it (its own default policy took the
+            // element's strings). The view checked before its check-in, so the build was never ready.
+            this._refusedByHostPage(TRUSTED_TYPES_REASON);
+            return;
+        }
         if (data?.type === 'WORKER_REFUSED') {
             // The view could not load the worker at all (no script of the guest's ran): the host page's policy (R3-1).
-            this._notifyThenAct(() => this._dispatchHostLog('error', `[Sandbox] ${WORKER_REFUSED_REASON}`), () => this._terminate(WORKER_REFUSED_REASON));
+            this._refusedByHostPage(WORKER_REFUSED_REASON);
             return;
         }
         if (data?.type === 'VIEW_PONG') {
@@ -1481,7 +1535,8 @@ export class WebSandbox extends HTMLElement {
     }
 
     // `loading` is bounded (CB3): a build that has not completed within LOAD_TIMEOUT_MS of host ticks ends with a
-    // reason. Completed means the guest checked in (S46), or, without a bootstrap and in strict mode, the frame loaded.
+    // reason. Completed means the guest checked in (S46; strict mode: the view's VIEW_READY), or, without a bootstrap,
+    // the frame loaded.
     // A watchdog that nothing answers: it expires after the whole budget, never counting a host stall.
     private _startLoadDeadline() {
         this._loadDeadline = startWatchdog({

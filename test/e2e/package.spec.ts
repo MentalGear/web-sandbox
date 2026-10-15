@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { ORIGIN } from './fixture';
 
 // The built bundle stringifies the in-sandbox scripts like the sources do; a bundler transform that
@@ -46,6 +48,30 @@ test('the built package runs strict mode: the view bootstrap is admitted by its 
     });
     expect(exported).toMatch(/^'sha256-[A-Za-z0-9+/]{43}='$/);
     expect(exported).toBe(built);
+});
+
+// Review round 2, C-8: an embedder reads the hash for its own policy at build time, in Node or Bun, from the package it
+// ships (docs/API.md, "Host page policy"). Importing the package there must not need a DOM, and the value must be the one
+// the browser finds in the view's policy: the bootstrap is one literal of the bundle, so nothing about where the bundle
+// runs, or how a consumer's build minifies it, changes the text that is hashed.
+test('the built package imports in Node without a DOM, and its viewScriptHash() is the hash in the view policy the browser runs', async ({ page }) => {
+    const built = await import(pathToFileURL(join(process.cwd(), 'dist', 'index.js')).href);
+    const fromNode = built.viewScriptHash();
+    expect(fromNode).toMatch(/^'sha256-[A-Za-z0-9+/]{43}='$/);
+    await page.goto(`${ORIGIN}/test/e2e/package-harness.html`);
+    await page.waitForFunction(() => (window as any).harnessReady === true);
+    const outcome = await page.evaluate(() => new Promise<string>(resolve => {
+        const sandbox = document.querySelector('packaged-sandbox') as any;
+        sandbox.addEventListener('ready', () => resolve('ready'), { once: true });
+        sandbox.addEventListener('terminated', () => resolve('terminated'), { once: true });
+        sandbox.setConfig({ mode: 'strict' });
+    }));
+    expect(outcome).toBe('ready');
+    const inPolicy = await page.evaluate(() => {
+        const srcdoc = (document.querySelector('packaged-sandbox') as HTMLElement).shadowRoot!.querySelector('iframe')!.srcdoc;
+        return `'${/script-src '(sha256-[A-Za-z0-9+/=]+)'/.exec(srcdoc)![1]}'`;
+    });
+    expect(fromNode).toBe(inPolicy);
 });
 
 // Review A8 (docs/security/ADVERSARIAL-REVIEW-2026-10.md): the default bootstrap is asserted parser-safe when the

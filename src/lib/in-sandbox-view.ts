@@ -16,7 +16,8 @@ import { TRUSTED_TYPES_POLICY } from './trusted-types';
  *
  * Three ports, all MessageChannels created per environment:
  *   logic   host ↔ worker   RPC, LOG, PING/PONG, VIOLATION (source 'logic'), EXECUTE — as in worker mode
- *   view    host ↔ view     VIOLATION (source 'view'), RESIZE, GUEST_ERROR, GUEST_UNCAUGHT, VIEW_PING/VIEW_PONG, VIEW_WRITE/VIEW_WRITTEN
+ *   view    host ↔ view     VIEW_READY (the check-in), VIOLATION (source 'view'), RESIZE, GUEST_ERROR, GUEST_UNCAUGHT,
+ *                           WORKER_REFUSED, TRUSTED_TYPES_REFUSED, VIEW_PING/VIEW_PONG, VIEW_WRITE/VIEW_WRITTEN
  *   render  view ↔ worker   VIEW_STARTED, VIEW_RENDER, VIEW_TEXT, VIEW_SET, VIEW_ACK, VIEW_LISTEN, VIEW_EVENT — the host is not on this path
  * The render port is created by the view and handed to the library's worker prelude, which keeps it in a
  * closure and only ever uses primitives it captured before any guest code ran (A4): guest code cannot post
@@ -807,6 +808,25 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         sink(policy![kind](value));
     };
 
+    // Whether the sinks are usable: the document does not require Trusted Types, or the policy exists or could be made.
+    const trustedTypesReady = () => {
+        if (policy || !g.trustedTypes) return true;
+        try {
+            const probe = call(D.createElement, document, ['template']) as HTMLTemplateElement;
+            probe.innerHTML = '';
+            return true;
+        } catch (error) {
+            if (!(error instanceof TypeError)) return true; // not Trusted Types: the sinks' own callers handle it
+        }
+        try {
+            const pass = (input: string) => input;
+            policy = g.trustedTypes.createPolicy(options.trustedTypesPolicy, { createHTML: pass, createScriptURL: pass });
+            return true;
+        } catch {
+            return false;
+        }
+    };
+
     let viewFiles = new Map<string, { url: string; type: string }>();
     let minted = new Set<string>();
     // The guest's writes as the host recorded them (R4-4): path → the URL this view minted from the host's bytes, or null
@@ -834,31 +854,95 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         minted.add(url);
     };
 
+    // What the body holds, kept as running counts (review round 2, C-4): its serialization's length (VIEW_MAX_CHARACTERS)
+    // and its elements (VIEW_MAX_ELEMENTS). Every operation used to serialize the whole body (and a render counted all its
+    // elements) to check the budget, so a guest that filled the view once and then sent 2-character set() operations
+    // made the view do ~1 M characters of work per operation, charged 2 (Firefox's host page fell from 233 to 67 ticks
+    // per second). Now an operation measures only what it changes: the target's old content, its new content, a value
+    // attribute; the body's totals are updated from those. Each operation is also charged that work (`work`, on top of
+    // its own text): what the view serializes, the guest pays for, at VIEW_RENDER_CHARACTERS_PER_SECOND. A piece of
+    // content is serialized as old content once, when it is replaced, and it was charged when it was rendered.
+    // The counts are exact: the body changes only through these operations, and a MutationObserver on it reports anything
+    // else (a user opening a <details>, the browser's find-in-page revealing hidden="until-found", a translation
+    // extension, or a side effect of an operation outside its target, such as an exclusive <details name> closing
+    // another): then the counts are dropped and the next operation counts the whole body again, charged in full. An
+    // operation's own records are taken from the observer as soon as it is done, so only foreign ones ever reach it.
+    let bodyCharacters: number | null = null;
+    let bodyElements: number | null = null;
+    let work = 0; // characters serialized by the current flush, charged to the budget with it
+    const innerHTMLOf = getter(Element.prototype, 'innerHTML');
+    const outerHTMLOf = getter(Element.prototype, 'outerHTML');
+    const innerLength = (element: Element) => {
+        const length = call(innerHTMLOf, element, []).length as number;
+        work += length;
+        return length;
+    };
+    const countOf = (root: Element) => call(lengthOf, call(E.getElementsByTagName, root, ['*']), []) as number;
+    const forget = () => {
+        bodyCharacters = null;
+        bodyElements = null;
+    };
+    const hasRecords = typeof MutationObserver === 'function' && typeof MutationRecord === 'function';
+    const observer = hasRecords ? new MutationObserver(forget) : null;
+    const takeRecords = hasRecords ? MutationObserver.prototype.takeRecords : null;
+    const recordTarget = hasRecords ? getter(MutationRecord.prototype, 'target') : null;
+    const recordType = hasRecords ? getter(MutationRecord.prototype, 'type') : null;
+    const recordAttribute = hasRecords ? getter(MutationRecord.prototype, 'attributeName') : null;
+    // The body's counts, counted again where they are unknown.
+    const counts = (body: Element): { characters: number; elements: number } => {
+        if (bodyCharacters === null || bodyElements === null) {
+            bodyCharacters = innerLength(body);
+            bodyElements = countOf(body);
+        }
+        return { characters: bodyCharacters, elements: bodyElements };
+    };
+    // After an operation on `target`: its own records (the target's children, its value attribute) are dropped, and
+    // any other record means the counts no longer hold. Without an observer the counts are never trusted.
+    const settle = (target: Element) => {
+        if (!observer || !takeRecords || !recordTarget || !recordType || !recordAttribute) {
+            forget();
+            return;
+        }
+        const records = call(takeRecords, observer, []) as MutationRecord[];
+        for (let i = 0; i < records.length; i++) {
+            const type = call(recordType, records[i], []);
+            const own = call(recordTarget, records[i], []) === target && (type === 'childList' || (type === 'attributes' && call(recordAttribute, records[i], []) === 'value'));
+            if (!own) forget();
+        }
+    };
+    const observeBody = () => {
+        const body = call(bodyOf, document, []);
+        if (observer && body) observer.observe(body, { subtree: true, childList: true, attributes: true, characterData: true });
+    };
+
     // template.innerHTML parses into an inert fragment (no script runs, nothing loads); the renderer cleans
     // it; replaceChildren MOVES its nodes into the document (A2) — never a clone or an import. The renderer gets the
     // room the view's budget leaves (broad review ST2): the body's elements outside the target stay, the target's own
     // are replaced, and the target's depth below the body counts; past it the renderer throws before insertion.
-    const countOf = (root: Element) => call(lengthOf, call(E.getElementsByTagName, root, ['*']), []) as number;
     const apply = (html: string, into: string | null) => {
         const body = call(bodyOf, document, []);
         const target = into === null ? body : call(D.getElementById, document, [into]);
         if (!target || !body || (target !== body && !call(containsNode, body, [target]))) return;
         const template = call(D.createElement, document, ['template']) as HTMLTemplateElement;
         trusted((value) => { template.innerHTML = value as string; }, html, 'createHTML');
-        const inBody = countOf(body);
-        const outside = target === body ? 0 : inBody - countOf(target);
+        const before = counts(body);
+        const ownElements = target === body ? before.elements : countOf(target);
+        const ownCharacters = target === body ? before.characters : innerLength(target);
         let depth = 0;
         for (let n = target; n !== body; n = call(parentOf, n, [])) depth++;
-        sanitize(template.content, fileOf, isMinted, options.render, { elements: options.render.maxElements - outside, depth: options.render.maxDepth - depth });
+        const kept = sanitize(template.content, fileOf, isMinted, options.render, { elements: options.render.maxElements - (before.elements - ownElements), depth: options.render.maxDepth - depth });
         // The characters the body would hold (R1-1): its serialization outside the target, plus the cleaned fragment's
-        // (which is what the target's serialization becomes: the same nodes, moved). Measured on the browser's own
-        // serializer, after the renderer, so attributes it dropped and elements it unwrapped never count.
-        const bodyLength = call(innerHTMLOf, body, []).length as number;
-        const charactersOutside = target === body ? 0 : bodyLength - (call(innerHTMLOf, target, []).length as number);
-        if (charactersOutside + (call(innerHTMLOf, template, []).length as number) > options.render.maxCharacters) throw new RangeError('VIEW_MAX_CHARACTERS');
+        // (what the target's serialization becomes: the same nodes, moved; never more, and less only inside a raw-text
+        // element, whose text is not escaped). Measured on the browser's own serializer, after the renderer, so
+        // attributes it dropped and elements it unwrapped never count. Once inserted, the target is measured again, so
+        // the count is what the body serializes to, exactly.
+        if (before.characters - ownCharacters + innerLength(template) > options.render.maxCharacters) throw new RangeError('VIEW_MAX_CHARACTERS');
         call(E.replaceChildren, target, [template.content]);
+        settle(target);
+        if (bodyCharacters === null) return;
+        bodyCharacters = before.characters - ownCharacters + innerLength(target);
+        bodyElements = before.elements - ownElements + kept;
     };
-    const innerHTMLOf = getter(Element.prototype, 'innerHTML');
 
     // sandboxView.text() and set() (review round 1, R4-5). The element is found as a render's target is, by id inside
     // the body (never the body itself, never the bootstrap's own head), and an id that names nothing is dropped, like a
@@ -886,24 +970,31 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const textLength = (text: string) => {
         const probe = call(D.createElement, document, ['template']) as HTMLTemplateElement;
         call(setTextContent, probe.content, [text]);
-        return call(innerHTMLOf, probe, []).length as number;
+        return innerLength(probe);
     };
     // How many characters an attribute `value="…"` adds to its element's serialization; 0 for none.
     const valueAttributeLength = (value: string | null) => {
         if (value === null) return 0;
         const probe = call(D.createElement, document, ['span']);
         call(E.setAttribute, probe, ['value', value]);
-        return (call(outerHTMLOf, probe, []).length as number) - '<span></span>'.length;
+        const length = call(outerHTMLOf, probe, []).length as number;
+        work += length;
+        return length - '<span></span>'.length;
     };
-    const outerHTMLOf = getter(Element.prototype, 'outerHTML');
-    const bodyCharacters = () => call(innerHTMLOf, call(bodyOf, document, []), []).length as number;
     const assertCharacters = (total: number) => {
         if (total > options.render.maxCharacters) throw new RangeError('VIEW_MAX_CHARACTERS');
     };
     // The element's content becomes one text node holding `text`: assigned, never parsed.
     const replaceText = (target: Element, text: string) => {
-        assertCharacters(bodyCharacters() - (call(innerHTMLOf, target, []).length as number) + textLength(text));
+        const before = counts(call(bodyOf, document, []));
+        const ownCharacters = innerLength(target);
+        const ownElements = countOf(target);
+        assertCharacters(before.characters - ownCharacters + textLength(text));
         call(setTextContent, target, [text]);
+        settle(target);
+        if (bodyCharacters === null) return;
+        bodyCharacters = before.characters - ownCharacters + innerLength(target);
+        bodyElements = before.elements - ownElements;
     };
     const applyText = (text: string, into: string) => {
         const target = elementInBody(into);
@@ -921,15 +1012,20 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const value = fields.value;
         if (value !== undefined) {
             if (name === 'input' && call(inputType, target, []) !== 'file') {
-                assertCharacters(bodyCharacters() - valueAttributeLength(call(E.getAttribute, target, ['value'])) + valueAttributeLength(value));
+                const before = counts(call(bodyOf, document, []));
+                const change = valueAttributeLength(value) - valueAttributeLength(call(E.getAttribute, target, ['value']));
+                assertCharacters(before.characters + change);
                 call(E.setAttribute, target, ['value', value]);
                 call(inputValue, target, [value]);
+                settle(target);
+                if (bodyCharacters !== null) bodyCharacters = before.characters + change;
             } else if (name === 'textarea') {
                 replaceText(target, value);
                 call(textareaValue, target, [value]);
             } else if (name === 'output') {
                 replaceText(target, value);
                 call(outputValue, target, [value]);
+                settle(target);
             } else if (name === 'select') {
                 call(selectValue, target, [value]);
             }
@@ -966,6 +1062,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         scheduled = false;
         refill();
         tokens -= costOf(jobs);
+        work = 0;
         const refused: string[] = [];
         for (let i = 0; i < jobs.length; i++) {
             const job = jobs[i]!;
@@ -981,6 +1078,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 if (message === 'VIEW_MAX_ELEMENTS' || message === 'VIEW_MAX_DEPTH' || message === 'VIEW_MAX_CHARACTERS' || message === 'VIEW_FOCUS') refused.push(message);
             }
         }
+        tokens -= work; // what the operations serialized (C-4): the next flush waits until the budget covers it
+        work = 0;
         if (renderPort) renderPort.postMessage(refused.length > 0 ? { type: 'VIEW_ACK', refused } : { type: 'VIEW_ACK' });
     };
     const schedule = () => {
@@ -1092,6 +1191,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 viewPort!.postMessage({ type: 'VIEW_WRITTEN', id: m.id });
             }
         };
+        // The Trusted Types probe (review round 2, C-6), before the check-in: where this document requires Trusted Types
+        // (assigning a string to a sink throws a TypeError), the policy is created now, and a host page whose
+        // trusted-types directive does not name it is told so, on this port, with the reason the element gives for it.
+        // The host page may never have needed the policy itself (its own default policy took the element's strings, and
+        // a default policy is the host page's object, not this document's), so only this side can find out. Before,
+        // the refusal surfaced later as "the guest entry failed to start", after 'ready'.
+        if (!trustedTypesReady()) {
+            viewPort.postMessage({ type: 'TRUSTED_TYPES_REFUSED' });
+            return;
+        }
         // The check-in (review round 1, R3-1): the first frame on the view port, which only this bootstrap holds. The
         // host is 'ready' on it, never on the frame's load alone, which fires also when this script did not run.
         // It carries the view's size: a host page whose style-src refuses the wrapper's style leaves it 150 px high,
@@ -1202,13 +1311,17 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         };
         worker!.postMessage({ type: 'INIT_WORKER' }, [logicPort, channel.port2]);
 
+        observeBody();
         if (typeof data.html === 'string' && data.html !== '') {
+            work = 0;
             try {
                 tokens -= data.html.length; // the initial view is charged like any render (R1-1)
                 apply(data.html, null);
             } catch {
                 // past the budget, or anything else the renderer refused: the initial view stays empty
             }
+            tokens -= work;
+            work = 0;
         }
         if (data.autoResize === true) startAutoResize();
     }, true);
@@ -1235,51 +1348,71 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * (the port itself is never handed to a handler).
  */
 export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; entryDoneName: string; eventTypes: readonly string[] }) {
+    // ---- The captured list (review C3; review round 2, C-1): sandboxView's methods, the render port's listener and the
+    // error listener run after the entry, so everything they use is taken here, and nothing below reads a global or a
+    // prototype guest code can replace (a unit test scans the text). The prelude's own lists have no prototype (review
+    // C3): an index written to them never reaches an inherited setter, so guest code that defines one on Array.prototype
+    // (or puts a Proxy in its chain) sees none of the render queue, the handlers or the subscribed types. They are only
+    // ever read by index and length.
     const g = globalThis as any;
     const apply = Reflect.apply;
-    // The prelude's own lists have no prototype (review C3): an index written to them never reaches an inherited
-    // setter, so guest code that defines one on Array.prototype (or puts a Proxy in its chain) sees none of the
-    // render queue, the handlers or the subscribed types. They are only ever read by index and length.
+    const defineOwn = Reflect.defineProperty;
+    const deleteOwn = Reflect.deleteProperty;
+    const getOwn = Object.getOwnPropertyDescriptor;
     const setPrototype = Object.setPrototypeOf;
-    const list = <T>(): T[] => setPrototype([], null);
+    const keysOf = Object.keys;
+    const freeze = Object.freeze;
+    const isArray = Array.isArray;
     const addListener = EventTarget.prototype.addEventListener;
-    const dataOf = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'data')!.get!;
-    const portsOf = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'ports')!.get!;
+    const dataOf = getOwn(MessageEvent.prototype, 'data')!.get!;
+    const portsOf = getOwn(MessageEvent.prototype, 'ports')!.get!;
     const stopImmediate = Event.prototype.stopImmediatePropagation;
     const cancel = Event.prototype.preventDefault;
-    const defaultPreventedOf = Object.getOwnPropertyDescriptor(Event.prototype, 'defaultPrevented')!.get!;
+    const defaultPreventedOf = getOwn(Event.prototype, 'defaultPrevented')!.get!;
     const laterMicrotask = g.queueMicrotask;
     const post = MessagePort.prototype.postMessage;
     const startPort = MessagePort.prototype.start;
     const join = Array.prototype.join; // for error texts: a patched join would otherwise receive the prelude's own list as `this`
+    const slice = String.prototype.slice;
+    const startsWith = String.prototype.startsWith;
+    const StringConstructor = String;
+    const ErrorConstructor = Error;
+    const TypeErrorConstructor = TypeError;
+    const RangeErrorConstructor = RangeError;
+    const reportUncaught = typeof g.reportError === 'function' ? g.reportError : null;
+    const urlStatics = g.URL;
+    const webkitUrlStatics = g.webkitURL;
     // The prelude's own lines go through the comms script's relay (in-sandbox-script.ts), the one chokepoint every
     // guest line goes through, never through `console`, which guest code can replace.
     const log = comms.log;
-    const startsWith = String.prototype.startsWith;
+    const attach = comms.attach;
+    const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
+
+    const list = <T>(): T[] => setPrototype([], null);
     // "Uncaught …" once (review round 1, R4-7): Chromium's ErrorEvent message already starts with it.
     const uncaught = (text: string) => (apply(startsWith, text, ['Uncaught ']) ? text : 'Uncaught ' + text);
-    const reportError = typeof g.reportError === 'function' ? g.reportError : null;
 
     // A name that stays after its deletion is a failure, not something to carry on with (review C2): a top-level
     // declaration of the entry could once make a global non-configurable before this ran.
     const remove = (owner: any, name: string) => {
-        if (owner && name in owner) Reflect.deleteProperty(owner, name);
-        if (owner && name in owner) throw new Error('[Sandbox] the strict worker could not remove ' + name);
+        if (owner && name in owner) deleteOwn(owner, name);
+        if (owner && name in owner) throw new ErrorConstructor('[Sandbox] the strict worker could not remove ' + name);
     };
     if (!options.scriptUnsafe) remove(g, 'WebAssembly');
-    remove(g.URL, 'createObjectURL');
-    remove(g.webkitURL, 'createObjectURL');
+    remove(urlStatics, 'createObjectURL');
+    remove(webkitUrlStatics, 'createObjectURL');
 
     // ---- render flow control: sandboxView.render, text and set ----
     // One queue of operations for the view, one in flight at a time (A4): the next is posted only after the view's
-    // VIEW_ACK. render and text replace an element's content, so they share one slot per target and the latest wins
-    // where it is queued; a set is merged only into a set of the same id queued right before it, so no operation ever
-    // moves past another (a set queued after the render that creates its element stays after it).
+    // VIEW_ACK. render and text replace an element's content, so they share one slot per target and the latest wins:
+    // a queued one of the same slot is taken out, and the new one goes to the end (review round 2, C-9: replacing the
+    // queued one in place moved it before what was queued after it, so [render A into x, set y, render B into x] applied
+    // the set after B). A set is merged only into a set of the same id queued right before it. So the operations that
+    // are applied keep the order they were made in.
     type Operation = { slot: string; kind: 'render' | 'text' | 'set'; message: Record<string, unknown> };
     let renderPort: MessagePort | null = null;
     let inFlight: Operation | null = null;
     const queue = list<Operation>();
-    const keysOf = Object.keys;
     const sendNext = () => {
         if (!renderPort || inFlight || queue.length === 0) return;
         const next = queue[0]!;
@@ -1290,12 +1423,9 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     };
     const enqueue = (operation: Operation) => {
         if (operation.kind !== 'set') {
-            for (let i = 0; i < queue.length; i++) {
-                if (queue[i]!.slot === operation.slot) {
-                    queue[i] = operation;
-                    return;
-                }
-            }
+            let kept = 0;
+            for (let i = 0; i < queue.length; i++) if (queue[i]!.slot !== operation.slot) queue[kept++] = queue[i]!;
+            queue.length = kept;
         } else if (queue.length > 0 && queue[queue.length - 1]!.slot === operation.slot) {
             const merged = queue[queue.length - 1]!.message;
             const keys = keysOf(operation.message); // indexed, never iterated: guest code can replace the array iterator (C3)
@@ -1307,26 +1437,26 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     };
     const isId = (id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= options.maxTarget;
     const render = (html: unknown, into?: unknown) => {
-        if (typeof html !== 'string') throw new TypeError('sandboxView.render: html must be a string');
-        if (html.length > options.maxRender) throw new RangeError('sandboxView.render: html is longer than ' + options.maxRender + ' characters');
+        if (typeof html !== 'string') throw new TypeErrorConstructor('sandboxView.render: html must be a string');
+        if (html.length > options.maxRender) throw new RangeErrorConstructor('sandboxView.render: html is longer than ' + options.maxRender + ' characters');
         const target = into === undefined || into === null ? null : into;
-        if (target !== null && !isId(target)) throw new TypeError('sandboxView.render: into must be an element id or null');
+        if (target !== null && !isId(target)) throw new TypeErrorConstructor('sandboxView.render: into must be an element id or null');
         enqueue({ slot: target === null ? 'content' : 'content#' + target, kind: 'render', message: { type: 'VIEW_RENDER', html, into: target } });
     };
     // The text of the element with that id, as one text node: the view assigns it, so nothing in it is parsed, and the
     // guest escapes nothing (review round 1, R4-5). Bounded like a render: VIEW_RENDER_MAX_LENGTH, and the view's
     // character budget and rate.
     const text = (id: unknown, value: unknown) => {
-        if (!isId(id)) throw new TypeError('sandboxView.text: id must be an element id');
-        if (typeof value !== 'string') throw new TypeError('sandboxView.text: text must be a string');
-        if (value.length > options.maxRender) throw new RangeError('sandboxView.text: text is longer than ' + options.maxRender + ' characters');
+        if (!isId(id)) throw new TypeErrorConstructor('sandboxView.text: id must be an element id');
+        if (typeof value !== 'string') throw new TypeErrorConstructor('sandboxView.text: text must be a string');
+        if (value.length > options.maxRender) throw new RangeErrorConstructor('sandboxView.text: text is longer than ' + options.maxRender + ' characters');
         enqueue({ slot: 'content#' + id, kind: 'text', message: { type: 'VIEW_TEXT', into: id, text: value } });
     };
     // A form control's value or checked state, or focus (R4-5). Each own enumerable field of `fields` is read once,
     // and only these three are allowed, each of its one type; what is posted is a fresh object of those primitives.
     const set = (id: unknown, fields: unknown) => {
-        if (!isId(id)) throw new TypeError('sandboxView.set: id must be an element id');
-        if (fields === null || typeof fields !== 'object' || Array.isArray(fields)) throw new TypeError('sandboxView.set: the second argument must be an object: { value?, checked?, focus? }');
+        if (!isId(id)) throw new TypeErrorConstructor('sandboxView.set: id must be an element id');
+        if (fields === null || typeof fields !== 'object' || isArray(fields)) throw new TypeErrorConstructor('sandboxView.set: the second argument must be an object: { value?, checked?, focus? }');
         const message: Record<string, unknown> = setPrototype({ type: 'VIEW_SET', id }, null); // no inherited setter for a key (C3)
         let any = false;
         const keys = keysOf(fields);
@@ -1334,12 +1464,12 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
             const key = keys[i]!;
             const value = (fields as Record<string, unknown>)[key];
             if (key === 'value') {
-                if (typeof value !== 'string') throw new TypeError('sandboxView.set: value must be a string');
-                if (value.length > options.maxRender) throw new RangeError('sandboxView.set: value is longer than ' + options.maxRender + ' characters');
+                if (typeof value !== 'string') throw new TypeErrorConstructor('sandboxView.set: value must be a string');
+                if (value.length > options.maxRender) throw new RangeErrorConstructor('sandboxView.set: value is longer than ' + options.maxRender + ' characters');
             } else if (key === 'checked' || key === 'focus') {
-                if (typeof value !== 'boolean') throw new TypeError('sandboxView.set: ' + key + ' must be a boolean');
+                if (typeof value !== 'boolean') throw new TypeErrorConstructor('sandboxView.set: ' + key + ' must be a boolean');
             } else {
-                throw new TypeError('sandboxView.set: unknown key "' + String(key).slice(0, 64) + '"; the keys are value, checked and focus');
+                throw new TypeErrorConstructor('sandboxView.set: unknown key "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the keys are value, checked and focus');
             }
             message[key] = value;
             any = true;
@@ -1374,12 +1504,12 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         apply(post, renderPort, [{ type: 'VIEW_LISTEN', types }]);
     };
     const on = (type: unknown, id: unknown, handler: unknown) => {
-        if (!isEventType(type)) throw new TypeError('sandboxView.on: type must be one of ' + apply(join, options.eventTypes, [', ']));
+        if (!isEventType(type)) throw new TypeErrorConstructor('sandboxView.on: type must be one of ' + apply(join, options.eventTypes, [', ']));
         const target = id === undefined || id === null ? null : id;
         if (target !== null && (typeof target !== 'string' || target.length === 0 || target.length > options.maxTarget)) {
-            throw new TypeError('sandboxView.on: id must be an element id or null');
+            throw new TypeErrorConstructor('sandboxView.on: id must be an element id or null');
         }
-        if (typeof handler !== 'function') throw new TypeError('sandboxView.on: handler must be a function');
+        if (typeof handler !== 'function') throw new TypeErrorConstructor('sandboxView.on: handler must be a function');
         const entry: Handler = { type: type as string, id: target as string | null, handler: handler as (detail: unknown) => void, active: true };
         handlers[handlers.length] = entry;
         syncListen();
@@ -1409,8 +1539,8 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
                 entry.handler(detail);
             } catch (error) {
                 // reported like any uncaught error (logged by the listener below), without stopping the others
-                if (reportError) apply(reportError, g, [error]);
-                else log('error', [uncaught(String(error))]);
+                if (reportUncaught) apply(reportUncaught, g, [error]);
+                else log('error', [uncaught(StringConstructor(error))]);
             }
         }
     };
@@ -1441,7 +1571,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         }
         if (data.type === 'VIEW_EVENT') dispatch(data.detail);
     };
-    g.sandboxView = Object.freeze({ render, text, set, on });
+    defineOwn(g, 'sandboxView', { value: freeze({ render, text, set, on }), writable: true, enumerable: true, configurable: true });
 
     // ---- the one INIT_WORKER ----
     let initialised = false;
@@ -1461,7 +1591,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         // many of the errors that reach the Worker object were the entry's (the view ends the sandbox for those);
         // the view revokes the worker's source URL on it (review C1). Before attach(), so it precedes everything.
         apply(post, renderPort, [{ type: 'VIEW_STARTED', entryErrors }]);
-        comms.attach(ports[0]);
+        attach(ports[0]);
         syncListen();
         sendNext();
     }, true]);
@@ -1485,9 +1615,9 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         }
         if (isMuted(event)) return;
         apply(cancel, event, []);
-        log('error', [uncaught(String(event.message))]);
+        log('error', [uncaught(StringConstructor(event.message))]);
     }, true]);
-    Object.defineProperty(g, options.entryDoneName, { value: () => { entryRan = true; } });
+    defineOwn(g, options.entryDoneName, { value: () => { entryRan = true; } });
 }
 
 /**
@@ -1537,12 +1667,26 @@ let cachedText: string | null = null;
 let cachedHash: string | null = null;
 
 /**
- * The view bootstrap's text: constant for this page (it is the text of library functions), built once.
- * Throws if it could not be hashed as written (A3): a CR or NUL, or anything that ends a script element.
+ * The view bootstrap as one string literal, in the published bundle (review round 2, C-8): scripts/build-lib.ts builds
+ * the text below once, from the sources, and bundles it in as this constant. The text that is hashed is then a value of
+ * the package, not the text of its functions as wherever the bundle runs prints them: a consumer's bundler or minifier
+ * rewrites functions and leaves a string's value alone, so the hash an embedder computes in a build step (Node or Bun,
+ * importing the package) is the one the browser computes for the script the element injects. When it was the functions'
+ * Function.prototype.toString(), the same source gave one hash plain and another minified, and a host page that listed
+ * the build-time hash ended with "the sandbox's startup script did not run". Undefined where the sources run unbundled
+ * (the dev server, the unit tests): there the text is built from the functions, as it always matches the page serving it.
+ */
+declare const __WEB_SANDBOX_VIEW_BOOTSTRAP__: string | undefined;
+
+/**
+ * The view bootstrap's text: constant for this page, built once. Throws if it could not be hashed as written (A3): a CR
+ * or NUL, or anything that ends a script element.
  */
 export function viewBootstrapText(): string {
     if (cachedText !== null) return cachedText;
-    const text = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(VIEW_OPTIONS).replaceAll('<', '\\u003c')});`;
+    const text = typeof __WEB_SANDBOX_VIEW_BOOTSTRAP__ === 'string'
+        ? __WEB_SANDBOX_VIEW_BOOTSTRAP__
+        : `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(VIEW_OPTIONS).replaceAll('<', '\\u003c')});`;
     assertHashableScript(text);
     cachedText = text;
     return text;
@@ -1555,11 +1699,11 @@ export function viewBootstrapHash(): string {
 }
 
 /**
- * The strict view bootstrap's CSP hash source, `'sha256-…'`, for this build of the library (review round 1, R4-5): the
+ * The strict view bootstrap's CSP hash source, `'sha256-…'`, for this release of the package (review round 1, R4-5): the
  * very value the element puts in the view's script-src, so an embedder can allow it in the host page's own
- * Content-Security-Policy, which the view inherits (docs/API.md, "Host page policy"). It is the hash of the library's
- * own function text, so it changes with the build (a bundler or minifier can change it): read it from the build you
- * serve, for example in a build step.
+ * Content-Security-Policy, which the view inherits (docs/API.md, "Host page policy"). The bootstrap is a string literal
+ * of the bundle (above), so the hash is the same in a build step (importing the package needs no DOM) and in the browser,
+ * however the embedder's app is bundled or minified; it changes only with the package's own version.
  */
 export function viewScriptHash(): string {
     return viewBootstrapHash();

@@ -5,9 +5,11 @@
  * hash. The hash is computed here, synchronously, when the first strict view is built, and cached by
  * the caller. Synchronous on purpose: crypto.subtle.digest() returns a promise, and building an
  * environment is synchronous end to end (setConfig(), load(), reset() and the element's lifecycle
- * invariants in ADR-003 rely on that); a build-time constant was rejected too, because the bootstrap is
- * the text of library functions, which differs between the dev server, the bundle and a consumer's
- * build. Hashing the text at run time always matches what this page actually serves.
+ * invariants in ADR-003 rely on that). Hashing the text at run time always matches what this page actually
+ * serves. In the published bundle that text is a string literal built with the package (review round 2,
+ * C-8: in-sandbox-view.ts, viewBootstrapText), so the hash is also a constant of the package that an
+ * embedder can compute in a build step; a hash constant written into the sources was not chosen, as the
+ * text it hashes would still differ between the dev server and the bundle.
  *
  * What is hashed (research 15, P2): the browser hashes the script's text AS PARSED, encoded as UTF-8.
  * Non-ASCII, "<", "&" and quotes survive the srcdoc attribute decoding unchanged, but the HTML parser
