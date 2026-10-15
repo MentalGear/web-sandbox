@@ -599,7 +599,7 @@ the default. Measured per engine and asserted by tests; worker mode shares the r
     activation; on a submit button (with `allow-forms`) Chromium opens the submission in a new tab past `form-action`.
 *   **Trusted Types**: under a host page's `require-trusted-types-for 'script'` the guest inherits the requirement, so
     its own scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too
-    (strict mode is unaffected: its view assigns through its own policy).
+    (strict mode renders as usual: its view assigns through its own policy; in every mode `execute()` is refused).
 *   **Session history**: the guest's fragment navigations add entries to the tab's history (the back button walks
     them first), and in Chromium so does a navigation the wrapper refuses.
 *   **Guest-only stalls**: a guest that never finishes its document stays `ready`, and its calls time out; Firefox

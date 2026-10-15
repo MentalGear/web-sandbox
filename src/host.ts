@@ -1499,7 +1499,7 @@ export class WebSandbox extends HTMLElement {
         // 'wasm-unsafe-eval', so the policy alone does not keep it out. Removed before the comms script, like the globals.
         const noWasm = this._config.scriptUnsafe === true ? '' : `(${removeWebAssembly.toString()})(this);`;
         const workerSource = `${workerGlobalsStatement('this')}${noWasm}${this._getSandboxCommsScript('worker', files)}`;
-        return `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)});`;
+        return `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)}, ${toInlineScriptLiteral(TRUSTED_TYPES_POLICY)});`;
     }
 
     private _isPermission(capability: string): boolean {

@@ -87,7 +87,8 @@ a config without `mode` is a strict config (strict mode is the default).
 - Values are validated before they are applied; what cannot be used is dropped with one `console.warn` per
   element, never applied half-way: an entry that is not allowed, a list option that is not a list, `html` that is not
   a string.
-- The configuration the environment already stands on, set again, changes nothing: no rebuild (anything a build reads
+- The configuration the environment already stands on, set again, changes nothing: no rebuild and no event, so read
+  `state` rather than wait for `ready` (anything a build reads
   that changed since, `load()` or the files, rebuilds as usual).
 - A config that cannot be used at all (not an object, not cloneable: a `Proxy`, a function value; an `origins` that
   is not an object, or a kind of it that is not a list) applies nothing, and the sandbox terminates with the reason
@@ -577,7 +578,8 @@ runs; in cooperative mode that needs `allow-scripts` (the policy always admits i
 | `console` relayed | every method ([`sandbox-log`](#sandbox-log--sandboxlog)) | every method | every method |
 
 Removed before guest code runs: `RTCPeerConnection` (and prefixed variants) in every mode. In strict and worker mode
-also `WebAssembly` unless `scriptUnsafe`, and in strict mode `URL.createObjectURL`. In strict mode the view document
+also `WebAssembly` unless `scriptUnsafe` (WebKit compiles it without `'wasm-unsafe-eval'`, so the policy alone does not
+keep it out; cooperative mode keeps it, a frozen limit), and in strict mode `URL.createObjectURL`. In strict mode the view document
 runs no guest code at all, and acts only on trusted events: a synthetic event is never forwarded to `sandboxView.on`.
 
 **The worker's globals are an allowlist** (worker and strict mode): before anything else runs in it, the worker keeps
@@ -820,7 +822,7 @@ policy must allow:
 | `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; `'unsafe-inline'` for the guest's own inline styles | the same | the same |
 | `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` | the same | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
-| Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox`, which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too | `execute()` and the worker need it too |
+| Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox`, which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
 | `Cross-Origin-Embedder-Policy: require-corp` | works in Chromium and Firefox; WebKit refuses the view's `blob:` worker | works; resources from `origins` need CORP or CORS headers | as strict |
 
 - **What a refusal looks like**: the build ends with a reason that names your page's policy: `the sandbox's startup

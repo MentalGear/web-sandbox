@@ -396,8 +396,10 @@ test.describe('files', () => {
         })`);
         // the view holds only the files it may show: no JavaScript, no JSON (VIEW_FILE_TYPES, broad review ST1)
         expect(r).toEqual({ logo: 'blob:null/', sheet: 'blob:null/', styled: '7px', unregistered: 'img/missing.png', viewFiles: ['css/site.css', 'img/logo.png'] });
-        const worker = await sandbox.inGuest(`return { list: sandboxFiles.list(), json: JSON.parse(await sandboxFiles.text('data.json')).answer, url: sandboxFiles.url('lib.js').slice(0, 10) }`);
-        expect(worker).toEqual({ list: ['css/site.css', 'data.json', 'img/logo.png', 'lib.js'], json: 42, url: 'blob:null/' });
+        // the worker reads every file; it mints URLs only for the types the view shows (review round 1, R2-4)
+        const worker = await sandbox.inGuest(`let js; try { js = sandboxFiles.url('lib.js'); } catch (error) { js = error.code; }
+            return { list: sandboxFiles.list(), json: JSON.parse(await sandboxFiles.text('data.json')).answer, js, png: sandboxFiles.url('img/logo.png').slice(0, 10) }`);
+        expect(worker).toEqual({ list: ['css/site.css', 'data.json', 'img/logo.png', 'lib.js'], json: 42, js: 'NOT_FOUND', png: 'blob:null/' });
         expect((await sandbox.violations()).filter(v => v.source === 'view')).toEqual([]);
     });
 

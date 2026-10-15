@@ -108,6 +108,13 @@ test.describe('host page policy', () => {
         }
     });
 
+    test("require-trusted-types-for 'script', worker mode: the frame starts its worker through the policy, so the worker answers (before: ready, and nothing behind it)", async ({ sandbox, page }) => {
+        await openWithPolicy(page, { csp: "require-trusted-types-for 'script'" });
+        expect(await configure(sandbox, { mode: 'worker' })).toEqual([{ type: 'ready', reason: null }]);
+        // UNKNOWN_METHOD is the worker's broker answering; TIMEOUT would mean no worker ran
+        expect(await sandbox.callWithTimeoutOutcome(4000, 'nothing-exposed')).toMatchObject({ status: 'rejected', code: 'UNKNOWN_METHOD' });
+    });
+
     test("a trusted-types directive that does not name 'web-sandbox': the build ends with the reason naming it (Firefox: no Trusted Types, ready)", async ({ sandbox, page, browserName }) => {
         await openWithPolicy(page, { csp: "require-trusted-types-for 'script'; trusted-types other" });
         const expected = browserName === 'firefox' ? [{ type: 'ready', reason: null }] : [{ type: 'terminated', reason: TRUSTED_TYPES }];

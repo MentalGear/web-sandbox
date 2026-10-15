@@ -284,7 +284,12 @@ export const test = base.extend<{ sandbox: SandboxDriver }>({
                 };
                 sandbox.addEventListener('ready', settle);
                 sandbox.addEventListener('terminated', settle);
+                const frame = () => sandbox.shadowRoot?.querySelector('iframe') ?? null;
+                const before = frame();
                 action(sandbox);
+                // setConfig() of the configuration a ready environment stands on builds nothing and dispatches
+                // nothing (review round 1, R3-7): the same frame, still ready, is the answer
+                if (before !== null && frame() === before && sandbox.state === 'ready') settle(new Event('ready'));
             });
             (window as any).settleOutcome = (promise: Promise<unknown>) => promise.then(
                 (value) => ({ status: 'resolved', value }),
