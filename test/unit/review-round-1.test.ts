@@ -312,3 +312,56 @@ describe('structured-size: a bounded measure', () => {
         }
     });
 });
+
+describe('R3-1: the Trusted Types policy blesses only the sandbox\'s own documents', () => {
+    afterEach(() => { delete (globalThis as any).trustedTypes; vi.resetModules(); });
+
+    const install = (refuse = false) => {
+        const created: { name: string; rules: any }[] = [];
+        (globalThis as any).trustedTypes = {
+            createPolicy(name: string, rules: any) {
+                if (refuse) throw new TypeError('refused by trusted-types');
+                created.push({ name, rules });
+                return { createHTML: (input: string) => ({ trusted: rules.createHTML(input) }) };
+            },
+        };
+        return created;
+    };
+    // an HTML sink as Chromium enforces it: a string throws a TypeError, a trusted value is taken
+    const sink = () => ({ value: null as unknown, set srcdoc(v: unknown) { if (typeof v === 'string') throw new TypeError('requires TrustedHTML'); this.value = v; } });
+
+    it('a string is assigned as it is where the page takes it; no policy is created', async () => {
+        const created = install();
+        const { setWrapperSrcdoc } = await import('@src/lib/trusted-types');
+        const plain = { srcdoc: '' } as any;
+        setWrapperSrcdoc(plain, '<!DOCTYPE html>x');
+        expect(plain.srcdoc).toBe('<!DOCTYPE html>x');
+        expect(created).toEqual([]);
+    });
+
+    it("where the page requires Trusted HTML: one policy, 'web-sandbox', that blesses a wrapper document and markup being parsed inert, nothing else", async () => {
+        const created = install();
+        const { setWrapperSrcdoc, parseInert, TRUSTED_TYPES_POLICY } = await import('@src/lib/trusted-types');
+        const { buildWrapperDocument } = await import('@src/lib/frame-documents');
+        const frame = sink();
+        const wrapper = buildWrapperDocument('<p>guest</p>', 'allow-scripts');
+        setWrapperSrcdoc(frame as any, wrapper);
+        expect(frame.value).toEqual({ trusted: wrapper });
+        expect(created.map(p => p.name)).toEqual([TRUSTED_TYPES_POLICY]);
+        const rules = created[0]!.rules;
+        expect(() => rules.createHTML('<img src=x onerror=alert(1)>')).toThrow(TypeError);
+        expect(() => setWrapperSrcdoc(sink() as any, '<p>not a wrapper</p>')).toThrow(TypeError);
+        // parseInert: jsdom's DOMParser takes strings, so the policy is not needed there; its rule admits markup only while parsing
+        expect(parseInert('<p id="a">x</p>').getElementById('a')!.textContent).toBe('x');
+        expect(() => rules.createHTML('<p>after</p>')).toThrow(TypeError);
+        setWrapperSrcdoc(sink() as any, wrapper);
+        expect(created).toHaveLength(1); // created once per page
+    });
+
+    it("a trusted-types directive that does not name the policy: TrustedTypesRefusal (the element's reason names the policy)", async () => {
+        install(true);
+        const { setWrapperSrcdoc, TrustedTypesRefusal } = await import('@src/lib/trusted-types');
+        const { buildWrapperDocument } = await import('@src/lib/frame-documents');
+        expect(() => setWrapperSrcdoc(sink() as any, buildWrapperDocument('', ''))).toThrow(TrustedTypesRefusal);
+    });
+});

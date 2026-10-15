@@ -3,6 +3,7 @@ import { assertHashableScript, scriptHashSource } from './csp/script-hash';
 import { escapeAttribute } from './frame-documents';
 import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './markup-references';
 import { admits, LINK_REL_KINDS, LOAD_KINDS, type KindRule } from './load-kinds';
+import { TRUSTED_TYPES_POLICY } from './trusted-types';
 
 /**
  * Strict mode (backlog S6, S13, S17; ADR-005): guest logic runs only in a worker, and the DOM frame — the
@@ -557,6 +558,8 @@ export interface ViewOptions {
     maxTarget: number;
     violationLimit: number;
     events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
+    /** The Trusted Types policy name the view creates where the host page enforces them (trusted-types.ts). */
+    trustedTypesPolicy: string;
 }
 
 /**
@@ -718,6 +721,28 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     for (let i = 0; i < options.events.types.length; i++) addEventListener(options.events.types[i]!, forward, true);
 
+    // The view's two sinks under a host page's Trusted Types (review round 1, R3-1): the view inherits the host page's
+    // `require-trusted-types-for 'script'`, which makes the template's innerHTML and the Worker constructor throw a
+    // TypeError for a string. Each is tried with the string first; only when that throws a TypeError and the view has
+    // Trusted Types is the operation repeated through the one policy of the view's own, created once, named like the
+    // element's (trusted-types.ts: the host page's trusted-types directive admits it already). Its rules pass the
+    // value through: the markup goes into an inert template and through the renderer, and the URL is the worker's own.
+    let policy: { createHTML(value: string): unknown; createScriptURL(value: string): unknown } | null = null;
+    const trusted = (sink: (value: unknown) => void, value: string, kind: 'createHTML' | 'createScriptURL') => {
+        try {
+            sink(value);
+            return;
+        } catch (error) {
+            const factory = g.trustedTypes;
+            if (!(error instanceof TypeError) || !factory) throw error;
+        }
+        if (!policy) {
+            const pass = (input: string) => input;
+            policy = g.trustedTypes.createPolicy(options.trustedTypesPolicy, { createHTML: pass, createScriptURL: pass });
+        }
+        sink(policy![kind](value));
+    };
+
     let viewFiles = new Map<string, { url: string; type: string }>();
     let minted = new Set<string>();
     const fileOf = (path: string) => viewFiles.get(path) || null;
@@ -733,7 +758,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const target = into === null ? body : call(D.getElementById, document, [into]);
         if (!target || !body || (target !== body && !call(containsNode, body, [target]))) return;
         const template = call(D.createElement, document, ['template']) as HTMLTemplateElement;
-        template.innerHTML = html;
+        trusted((value) => { template.innerHTML = value as string; }, html, 'createHTML');
         const inBody = countOf(body);
         const outside = target === body ? 0 : inBody - countOf(target);
         let depth = 0;
@@ -833,6 +858,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             const m = message.data;
             if (m && m.type === 'VIEW_PING' && typeof m.n === 'number') viewPort!.postMessage({ type: 'VIEW_PONG', n: m.n });
         };
+        // The check-in (review round 1, R3-1): the first frame on the view port, which only this bootstrap holds. The
+        // host is 'ready' on it, never on the frame's load alone, which fires also when this script did not run.
+        // It carries the view's size: a host page whose style-src refuses the wrapper's style leaves it 150 px high,
+        // which only this side can see (frame-documents.ts, WRAPPER_STYLE); the host warns.
+        viewPort.postMessage({ type: 'VIEW_READY', width: g.innerWidth, height: g.innerHeight });
         for (let i = 0; i < outbox.length; i++) viewPort.postMessage(outbox[i]);
         outbox.length = 0;
 
@@ -886,18 +916,47 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             }
             onRender(event);
         };
-        let worker: Worker;
+        let worker: Worker | null = null;
         try {
-            sourceUrl = URL.createObjectURL(new Blob([data.workerSource], { type: 'text/javascript' }));
-            worker = new Worker(sourceUrl);
+            const url = URL.createObjectURL(new Blob([data.workerSource], { type: 'text/javascript' }));
+            sourceUrl = url;
+            trusted((value) => { worker = new Worker(value as string); }, url, 'createScriptURL');
         } catch (error: any) {
-            viewPort.postMessage({ type: 'GUEST_ERROR', message: String((error && error.message) || error) });
+            // A SecurityError is the policy refusing the worker's URL (Chromium can throw it here): no guest code ran.
+            viewPort.postMessage(error && error.name === 'SecurityError' ? { type: 'WORKER_REFUSED' } : { type: 'GUEST_ERROR', message: String((error && error.message) || error) });
             return;
         }
         // Errors the worker did not cancel: the entry's own (a syntax error, a throw at its top level), which end
-        // the sandbox, and later ones the worker could not describe (muted, above), which are logged.
-        worker.onerror = (error: ErrorEvent) => {
+        // the sandbox, and later ones the worker could not describe (muted, above), which are logged. An error event
+        // with no message before the worker started says only that its script did not run: either it was not loaded
+        // at all (all three engines, for a host page's worker-src without blob:; WebKit under the host page's
+        // Cross-Origin-Embedder-Policy) or it did not parse (Firefox gives a syntax error no message). A probe worker
+        // of one statement tells which (R3-1): if it cannot run either, the policy refuses blob: workers and nothing of
+        // the guest's ran; if it runs, the entry did not parse. Only on that path, so a build pays nothing for it.
+        const probe = (decide: (refused: boolean) => void) => {
+            let probeWorker: Worker | null = null;
+            let url = '';
+            const done = (refused: boolean) => {
+                if (probeWorker) probeWorker.terminate();
+                URL.revokeObjectURL(url);
+                decide(refused);
+            };
+            try {
+                url = URL.createObjectURL(new Blob(['postMessage(0)'], { type: 'text/javascript' }));
+                trusted((value) => { probeWorker = new Worker(value as string); }, url, 'createScriptURL');
+            } catch {
+                done(true);
+                return;
+            }
+            probeWorker!.onmessage = () => done(false);
+            probeWorker!.onerror = () => done(true);
+        };
+        worker!.onerror = (error: ErrorEvent) => {
             const index = errorsSeen++;
+            if (!started && !error.message) {
+                probe((refused) => viewPort!.postMessage(refused ? { type: 'WORKER_REFUSED' } : { type: 'GUEST_ERROR', message: 'the entry did not parse (this browser gives no detail)' }));
+                return;
+            }
             const message = String(error.message || 'the worker failed');
             if (!started || index < entryErrors) {
                 viewPort!.postMessage({ type: 'GUEST_ERROR', message });
@@ -906,7 +965,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             error.preventDefault();
             viewPort!.postMessage({ type: 'GUEST_UNCAUGHT', message });
         };
-        worker.postMessage({ type: 'INIT_WORKER' }, [logicPort, channel.port2]);
+        worker!.postMessage({ type: 'INIT_WORKER' }, [logicPort, channel.port2]);
 
         if (typeof data.html === 'string' && data.html !== '') {
             try {
@@ -1183,6 +1242,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     maxTarget: VIEW_TARGET_MAX_LENGTH,
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
     events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
+    trustedTypesPolicy: TRUSTED_TYPES_POLICY,
 };
 
 let cachedText: string | null = null;

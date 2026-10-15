@@ -1,14 +1,16 @@
+import { parseInert } from './trusted-types';
+
 /**
  * Whether guest markup asks to run script: a `script` element (any namespace) or an event handler attribute (`on…`,
  * any case, any namespace), anywhere, template contents included. Strict mode, the default, runs none of it (the
  * renderer drops both, ADR-005), so the element says so once (host.ts, _warnAboutStrictHtml).
  *
- * Read with the host's DOMParser: a parsed document has no browsing context, so nothing in it runs or loads. Only
+ * Read with the host's DOMParser (parseInert, trusted-types.ts): a parsed document has no browsing context, so nothing in it runs or loads. Only
  * elements and attribute names are read, so text, comments, raw-text content (`<textarea>`, `<style>`, `<title>`) and
  * attribute values never count, nor do `data-on…` names. Host-side only, never stringified into a guest.
  */
 export function scriptInMarkup(html: string): boolean {
-    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    const parsed = parseInert(html);
     return holdsScript(parsed);
 }
 

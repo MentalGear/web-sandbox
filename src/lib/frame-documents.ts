@@ -129,28 +129,44 @@ export function permissionAttributes(permissions: readonly string[]): Record<str
 }
 
 /**
+ * The start of every wrapper document (buildWrapperDocument): its policy, before anything else. The Trusted Types
+ * policy the element assigns a srcdoc through (trusted-types.ts) blesses only HTML that starts with it.
+ */
+export const WRAPPER_PREFIX = `<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${WRAPPER_CSP}">`;
+
+/**
+ * The wrapper's one stylesheet: the guest frame fills the wrapper. A srcdoc document inherits the host page's policy
+ * (review round 1, R3-1), so a host page whose style-src has neither 'unsafe-inline' nor this text's hash
+ * (WRAPPER_STYLE_HASH, constant: docs/API.md#host-page-policy lists it, a unit test keeps the two equal) refuses it.
+ * Without it the frame still fills the width and has no border or margin (attributes, which no style-src governs),
+ * but is 150 px high: nothing but CSS sizes a frame's height to a parent of auto height, and a srcdoc document is
+ * never in quirks mode, where a percentage height would do. The wrapper has no script (it loads exactly once, by
+ * design), so a constructed stylesheet is not an option either. Strict mode's view reports its size, and the element
+ * warns when the frame came out short (host.ts).
+ */
+export const WRAPPER_STYLE = 'html,body,iframe{margin:0;width:100%;height:100%;border:0;display:block}';
+
+/**
  * Builds the wrapper document that embeds the guest document.
  * The wrapper carries the same sandbox flags as the guest: nested sandbox flags only ever add up,
  * so a stricter wrapper would silently restrict the guest as well.
  * The same goes for `allow` (Permissions Policy): a feature reaches the guest only if every frame
- * on the way delegates it.
+ * on the way delegates it. * Sized by WRAPPER_STYLE, and by presentational attributes where a host page's style-src refuses it (see there).
  */
 export function buildWrapperDocument(guestDocument: string, sandboxFlags: string, permissions: readonly string[] = []): string {
-    const style = `<style>html,body,iframe{margin:0;width:100%;height:100%;border:0;display:block}</style>`;
 
     let permissionMarkup = '';
     for (const [name, value] of Object.entries(permissionAttributes(permissions))) {
         permissionMarkup += value ? ` ${name}="${escapeAttribute(value)}"` : ` ${name}`;
     }
 
-    const guestFrame = `<iframe sandbox="${escapeAttribute(sandboxFlags)}"${permissionMarkup} referrerpolicy="${FRAME_REFERRER_POLICY}" srcdoc="${escapeAttribute(guestDocument)}"></iframe>`;
+    const guestFrame = `<iframe sandbox="${escapeAttribute(sandboxFlags)}"${permissionMarkup} referrerpolicy="${FRAME_REFERRER_POLICY}" width="100%" height="100%" frameborder="0" srcdoc="${escapeAttribute(guestDocument)}"></iframe>`;
 
     // The base and the referrer policy sit in <head>, so both are in force before the parser reaches the
     // guest frame: the guest takes its base URL and referrer policy from the wrapper when it is created.
-    const head = `<meta http-equiv="Content-Security-Policy" content="${WRAPPER_CSP}">`
-        + `<base href="${WRAPPER_BASE}">`
+    const head = `<base href="${WRAPPER_BASE}">`
         + `<meta name="referrer" content="${FRAME_REFERRER_POLICY}">`
-        + style;
+        + `<style>${WRAPPER_STYLE}</style>`;
 
-    return `<!DOCTYPE html><html><head>${head}</head><body>${guestFrame}</body></html>`;
+    return `${WRAPPER_PREFIX}${head}</head><body marginwidth="0" marginheight="0">${guestFrame}</body></html>`;
 }

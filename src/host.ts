@@ -20,7 +20,9 @@ import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT } from "
 import { createLogLimiter, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, toLogDetail, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
-import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral } from "./lib/frame-documents";
+import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
+import { scriptHashSource } from "./lib/csp/script-hash";
+import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
 
 /**
@@ -192,6 +194,12 @@ const BUILD_FAILED_REASON = 'the environment could not be built';
 const SECOND_LOAD_REASON = 'the sandbox frame loaded a second time';
 const SECOND_ANNOUNCEMENT_REASON = 'the guest frame announced itself again (it reloaded or rewrote its document)';
 const LOAD_TIMEOUT_REASON = 'the sandbox did not finish loading';
+// What the host page's own policy can refuse (review round 1, R3-1): the sandbox's frames are srcdoc documents, and a
+// srcdoc document inherits the policies of the page that made it (CSP3: a copy of its policy list; Trusted Types;
+// COEP). Each reason names the policy, so a misconfigured host page is told what to allow (docs/API.md#host-page-policy).
+const STARTUP_BLOCKED_REASON = "the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)";
+const WORKER_REFUSED_REASON = "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)";
+const TRUSTED_TYPES_REASON = `the host page's Trusted Types policy does not allow the policy name '${TRUSTED_TYPES_POLICY}' (trusted-types; see docs/API.md#host-page-policy)`;
 
 // What a reason or a host line says about an error the element caught (focused review 2026-10-14, F3): a fixed
 // text of the element's own plus the error's name, never its message. The message is whatever the thrower put
@@ -327,6 +335,7 @@ export class WebSandbox extends HTMLElement {
     private _warnedGuestMarkup = new Set<string>(); // module-graph warnings about guest markup, once per text (_warnOnce)
     private _warnedStrict = new Set<string>(); // strict-mode config warnings, once each per instance
     private _warnedForeignDocument = false; // inserted into a document of another realm (CB7), once per instance
+    private _warnedWrapperStyle = false;    // the host page's style-src refused the wrapper's style (R3-1), once per instance
 
     // Files are part of the environment: they live on the element, survive reset(), load(), setConfig()
     // and terminate(), and every environment build takes a snapshot (createIframe). See src/lib/files.ts.
@@ -340,7 +349,17 @@ export class WebSandbox extends HTMLElement {
 
     constructor() {
         super();
-        this.attachShadow({ mode: "open" });
+        const root = this.attachShadow({ mode: "open" });
+        // A block by default (review round 1, R4-12): a custom element is inline, and an inline element has no height to
+        // fill. Through a constructed stylesheet, which no style-src governs (a <style> in the shadow root is subject to
+        // the host page's policy); the embedder's own CSS for the element still wins over :host.
+        try {
+            const sheet = new CSSStyleSheet();
+            sheet.replaceSync(':host { display: block }');
+            root.adoptedStyleSheets = [sheet];
+        } catch {
+            // an engine without constructed stylesheets: the embedder's CSS decides, as before
+        }
         // The fetch bridge (B5) and guest writes (C5) are library methods under reserved names: expose() can never
         // replace them. Each build registers both again, bound to that build's bridge and overlay
         // (_startFetchBridge, _startGuestWrites); until the first build, none: every request is refused.
@@ -946,6 +965,18 @@ export class WebSandbox extends HTMLElement {
 
     private _onViewMessage(viewPort: MessagePort, data: any) {
         if (!viewPort || viewPort !== this._viewPort) return; // only the current environment's view (review B4)
+        if (data?.type === 'VIEW_READY') {
+            // The view's check-in, the first frame on the port only its bootstrap holds (R3-1): the strict build is ready.
+            if (this._state !== 'loading') return;
+            this._checkViewSize(data.height);
+            this._enterReady();
+            return;
+        }
+        if (data?.type === 'WORKER_REFUSED') {
+            // The view could not load the worker at all (no script of the guest's ran): the host page's policy (R3-1).
+            this._notifyThenAct(() => this._dispatchHostLog('error', `[Sandbox] ${WORKER_REFUSED_REASON}`), () => this._terminate(WORKER_REFUSED_REASON));
+            return;
+        }
         if (data?.type === 'VIEW_PONG') {
             this._viewWatchdog?.handlePong(data.n);
             return;
@@ -974,6 +1005,15 @@ export class WebSandbox extends HTMLElement {
                 this._dispatchGuestLog({ level: 'error', args: [uncaughtLine(message)] });
             }, () => this._terminate(ENTRY_FAILED_REASON));
         }
+    }
+
+    // The view's height against the frame's (R3-1): a view 150 px high in a taller frame means the host page's style-src
+    // refused the wrapper's style (frame-documents.ts, WRAPPER_STYLE), which nothing on this side can see. Once per element.
+    private _checkViewSize(height: unknown) {
+        const frame = this._iframe?.clientHeight ?? 0;
+        if (this._warnedWrapperStyle || typeof height !== 'number' || height > 150 || frame <= height + 1) return;
+        this._warnedWrapperStyle = true;
+        console.warn(`[Sandbox] the sandbox's view is ${height} px high in a frame of ${frame} px: the host page's style-src refuses the wrapper's style. Allow 'unsafe-inline' or '${scriptHashSource(WRAPPER_STYLE)}' in style-src (see docs/API.md#host-page-policy).`);
     }
 
     // Flushes what was queued before the guest's port existed onto it.
@@ -1235,7 +1275,7 @@ export class WebSandbox extends HTMLElement {
         try {
             this.createIframe();
         } catch (error) {
-            this._terminateBuild(`${BUILD_FAILED_REASON} (${errorName(error)})`);
+            this._terminateBuild(error instanceof TrustedTypesRefusal ? TRUSTED_TYPES_REASON : `${BUILD_FAILED_REASON} (${errorName(error)})`);
             return;
         }
         if (this._state === 'loading') this._startLoadDeadline();
@@ -1259,8 +1299,18 @@ export class WebSandbox extends HTMLElement {
         this._loadDeadline = startWatchdog({
             timeoutMs: LOAD_TIMEOUT_MS,
             ping: () => {},
-            onExpire: () => this._terminate(LOAD_TIMEOUT_REASON),
+            onExpire: () => this._terminate(this._loadTimeoutReason()),
         });
+    }
+
+    // Why a build is still `loading` at its deadline. Once the wrapper has loaded, the frame that runs the library's
+    // startup script (the strict view, or the guest's bootstrap) has loaded too, and that script runs before anything
+    // else in it: had it run, it would have checked in long before. So it did not run, and what stops an inline script
+    // of ours there is the host page's policy, which srcdoc documents inherit (R3-1). Before the wrapper's load, the
+    // frame itself did not finish loading.
+    private _loadTimeoutReason(): string {
+        const scripted = this._config.mode === 'strict' || this._expectAnnouncement;
+        return this._frameLoaded && scripted ? STARTUP_BLOCKED_REASON : LOAD_TIMEOUT_REASON;
     }
 
     // Why no environment may be built from the current config, or null. Fail closed on a config that could not be
@@ -1430,7 +1480,7 @@ export class WebSandbox extends HTMLElement {
 
         // srcdoc goes in before the frame is inserted: an iframe inserted without one first
         // loads about:blank, which would count as the frame's one load (see _onFrameLoad)
-        this._iframe.srcdoc = buildWrapperDocument(guestDocument, sandboxFlags, permissions);
+        setWrapperSrcdoc(this._iframe, buildWrapperDocument(guestDocument, sandboxFlags, permissions));
         // The guest announces its port from its first statement (CB1), so the listener is in place before the frame
         // exists. A bootstrap runs, and announces, exactly where the inline script can run (_getMarkupPlan's test).
         this._expectAnnouncement = sandboxFlags.split(' ').includes('allow-scripts');
@@ -1474,7 +1524,7 @@ export class WebSandbox extends HTMLElement {
         this._iframe.style.cssText = "width:100%;height:100%;border:none";
         this._frameLoaded = false;
         this._iframe.onload = () => this._onFrameLoad();
-        this._iframe.srcdoc = buildWrapperDocument(view, sandboxFlags, []);
+        setWrapperSrcdoc(this._iframe, buildWrapperDocument(view, sandboxFlags, []));
         this.shadowRoot!.appendChild(this._iframe);
     }
 
@@ -1569,9 +1619,12 @@ export class WebSandbox extends HTMLElement {
         // A bootstrap runs: its check-in completes the build, after this load.
         if (this._expectAnnouncement) return;
 
+        // Strict mode: the view gets its ports now, and the build completes when the view checks in on its port
+        // (VIEW_READY, _onViewMessage): never on this load alone, which also fires for a view whose bootstrap did not
+        // run (refused by the host page's policy, R3-1: 'ready' came, and 5 s later "the sandbox view stopped
+        // responding").
         if (this._config.mode === 'strict') {
             this._setupStrictChannels(guestWindow);
-            this._enterReady();
             return;
         }
         this._finishBuild(null);
