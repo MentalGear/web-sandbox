@@ -50,8 +50,10 @@ test('R1-1: renders of 261 000 characters of text into 200 targets every 20 ms l
     console.log(`MEASURED ${browserName} R1-1 host ticks in 2.5 s: idle ${idle}, during the render flood ${loaded}; view characters ${held}`);
     expect(loaded).toBeGreaterThan(idle * 0.5);
     expect(held).toBeLessThanOrEqual(4 * 262144);
-    // renders past the budget were refused, acknowledged, and said in the guest's log
-    expect(await sandbox.logs()).toContain('[Sandbox] sandboxView.render: the view refused a render: the view would hold more than 1048576 characters; nothing of it was applied.');
+    // renders past the budget were refused, acknowledged, and said in the guest's log: the queued renders keep being
+    // applied after the flood, at the view's rates (characters, and its time per second: review round 2, M-3), so the
+    // refusal can come after the flood's end (WebKit, whose renders of this text take longest)
+    await sandbox.waitForLog('[Sandbox] sandboxView.render: the view refused a render: the view would hold more than 1048576 characters; nothing of it was applied.', 30000);
 });
 
 test('R1-2: 43 000 <wbr> elements (within the element budget) leave the host page responsive (Firefox stalled about 20 s)', async ({ sandbox, page, browserName }) => {

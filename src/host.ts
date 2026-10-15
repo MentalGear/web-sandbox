@@ -1024,17 +1024,17 @@ export class WebSandbox extends ElementBase {
      * _generation, and this is the only place that compares it. A path that dispatches and then acts goes through
      * here; none compares the count by hand (test/unit/channel-guarantees.test.ts enumerates them).
      */
-    // A frame of ours that the host page's policy refused, as it reported (R3-1; review round 2, C-5 and C-6): one host
-    // line, then the termination with the reason that names the policy (unless a listener of that line acted first).
-    private _refusedByHostPage(reason: string) {
-        this._notifyThenAct(() => this._dispatchHostLog('error', `[Sandbox] ${reason}`), () => this._terminate(reason));
-    }
-
     private _notifyThenAct(notify: () => void, act: () => void) {
         const generation = this._generation;
         notify();
         if (generation !== this._generation) return;
         act();
+    }
+
+    // A frame of ours that the host page's policy refused, as it reported (R3-1; review round 2, C-5 and C-6): one host
+    // line, then the termination with the reason that names the policy (unless a listener of that line acted first).
+    private _refusedByHostPage(reason: string) {
+        this._notifyThenAct(() => this._dispatchHostLog('error', `[Sandbox] ${reason}`), () => this._terminate(reason));
     }
 
     // The guest's port, announced by the guest frame itself (CB1), becomes this environment's port. Null when this
