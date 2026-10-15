@@ -26,7 +26,7 @@ conditional "continue".
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7); at most 256 inbound calls in flight per environment, then `BUSY` (S22) |
 | Host-mediated network | ✅ opt-in `fetchBridge`: `sandboxFetch()` under the bridge discipline, every request logged as a `fetch` event, refusals coded (B5, [ADR-006](ADR-006-fetch-bridge.md)) |
 | Modes | ✅ `'strict'` (the default), `'cooperative'` (cooperative content; its limits a frozen list, S44) and `'worker'` (frozen; to be folded into strict mode, S49); `'iframe'` was renamed `'cooperative'` and fails closed with a reason that says so (S48, [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen)) |
-| Limits | **Strict mode, every default user**: host-page availability in WebKit (S42, accepted), CSS within the policy, worker violation reports per engine and guest-influenced, a worker that closes itself, memory, same-site cookies on requests to allowed origins (every mode). **Cooperative mode only**, a frozen list (no new guest-realm patches; new findings are documented here): S6 same-thread execution, S8, S13, S15, S17, S18, S35's and S36's residuals, forgeable violation reports, CB3-class guest-only stalls (S44) |
+| Limits | **Strict mode, every default user**: host-page availability wherever the view shares the host's thread (S42, S52), CSS within the policy, worker violation reports per engine and guest-influenced, a worker that closes itself, memory, same-site cookies on requests to allowed origins (every mode). **Cooperative mode only**, a frozen list (no new guest-realm patches; new findings are documented here): S6 same-thread execution, S8, S13, S15, S17, S18, S35's and S36's residuals, forgeable violation reports, CB3-class guest-only stalls (S44) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1); it keeps only allowlisted globals, so every request it can make goes through `fetch`, `XMLHttpRequest`, `WebSocket` or `importScripts`, each governed by the policy on every engine (S43) |
 | Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5; per directive for the strict view, S24); a listener's `reset()`/`terminate()` is never undone, through one helper (S22); every build failure, and every config that cannot be used, is a termination with a reason, and the config is a copy (S26); `workerExecutionTimeout` requires a free event loop at each `execute()` deadline, else terminates (B8, S30); `ready` is the guest's check-in, never its subresources, with its calls and `execute()` held in the guest until its document is parsed (S46) |
 | Auto-sizing | ✅ opt-in `autoResize` (strict and cooperative mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
@@ -47,6 +47,7 @@ conditional "continue".
 | Broad review 2026-10-14 | ✅ reviewers A, B, D (S32–S37): the guest announces its port (CB1, PD8), bounded loading (CB3), no `data:` workers (PD1), guest-realm hardening for keepalive, history, `window.name`, DNS prefetch (PD2–PD4, PD6) with residuals stated (S35, S36); reviewer C's strict-mode findings (ST1–ST4) are reported separately; [report](security/BROAD-REVIEW-2026-10-14.md) |
 | Independent verification 2026-10-14 | ✅ five verifiers (63 of 66 mutations caught): a Firefox worker's `EventSource` and `FontFace` passed the policy, closed by an allowlist of worker globals (S43); a strict entry's synchronous console lines arrive (S45); the cooperative-mode limits in one list, user actions and history added (S44); 9 test gaps closed and the design probes in CI (S45); decision 1, `ready` on the guest's check-in (S46); decision 2, strict mode the default (S48); [report](security/VERIFICATION-2026-10-14.md) |
 | Focused review 2026-10-14 | ✅ 11 findings and one hardening, all closed (S27–S31): a reference names a file only for the kind of load its type is for (W1), rates hold in any one-second window (W2), the strict renderer removes SVG animation (F1), `workerExecutionTimeout` is a free event loop at the deadline (F2), no error text in reasons (F3), no assigned config keys (F4), one eval writer (F5), refused configs never stored (F6); [report](security/FOCUSED-REVIEW-2026-10-14.md) |
+| Review round 1 2026-10-15 | 🟡 not clean (the stopping rule's count stays 0): 8 medium and 22 low or info findings from four reviewers (R5 did not complete), all fixed or documented (S50–S53): the host page's policy (S50), one console relay with byte budgets (S51), the strict view's character and rate budget and a linear renderer (S52), the low findings and the cooperative modifier-click residual (S53); three items await the owner; [report](security/REVIEW-ROUND-1-2026-10-15.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -68,7 +69,8 @@ S47 replaced the raw-CSP `connectionsAllowed` with typed `origins` and one polic
 unrepresentable states.
 On 2026-10-15 strict mode became the default and `'iframe'` was renamed `'cooperative'` (S48): cooperative mode's
 limits are a frozen list (S44: no new guest-realm patches), S42 was accepted and documented, and S49 records folding
-worker mode into strict mode.
+worker mode into strict mode. Review round 1 the same day ([report](security/REVIEW-ROUND-1-2026-10-15.md)) added and
+closed S50–S53 (R2-2 a cooperative-mode limit; three items await the owner).
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1180,6 +1182,10 @@ build. *I1*: the renderer's link kinds come from load-kinds.ts. Tests: as S40, p
 
 ### S42 · CSS paint cost in the strict view can stall the host page — ✅ **accepted** (documented; 2026-10-15)
 
+**Restated** by review round 1 (S52): host-page availability is not protected wherever the view shares the host page's
+thread (WebKit always, Firefox, Chromium depending on its process model), not only in WebKit; the view's budgets bound
+the common cases, CSS paint and bidirectional text layout are not bounded.
+
 **Accepted** (owner's decision with S48): in WebKit, strict mode protects confidentiality and egress, not the host
 page's availability. Cooperative mode is no better there: a guest `while (true) {}` already freezes WebKit's host page
 (S6). Stated in the README ("What strict mode does not cover"), API.md and the
@@ -1235,7 +1241,11 @@ applies in strict mode, the default; worker mode shares only the reports item.
 - messages to the host window; embedders check `event.source` (S36);
 - the user's Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens a new tab at the guest's URL
   in Chromium and Firefox, without `allow-popups`, as for any sandboxed frame (Playwright's WebKit opens none, a
-  measurement limit);
+  measurement limit); so does a modifier click the guest's script synthesizes (Chromium with no gesture where its
+  popup blocker lets it, Firefox within a user's activation), and Chromium submits a form that way past `form-action`
+  (S53, R2-2);
+- the host page's Trusted Types requirement reaches the guest: its scripts, the import map and the markup the bootstrap
+  writes for registered files need Trusted Types too (S50);
 - the guest's fragment navigations add entries to the tab's session history (every engine), and a navigation the
   wrapper refuses adds one in Chromium;
 - guest-only stalls (the CB3 class): a guest that never finishes its document stays `ready` and its calls time out;
@@ -1247,7 +1257,7 @@ applies in strict mode, the default; worker mode shares only the reports item.
   `ancestorOrigins` and image `Referer` (S15), and WebKit's full host URL to same-site origins when asked (S18).
 
 **What strict mode, the default, does not cover** (every default user; the same list in the README and API.md): host-page
-availability in WebKit (S42, accepted), CSS within the policy, worker violation reports per engine and guest-influenced,
+availability wherever the view shares the host page's thread (S42, S52), CSS within the policy, worker violation reports per engine and guest-influenced,
 a worker that closes itself (only the watchdog notices), memory, and the host site's cookies on requests to allowed
 origins that are same-site with the host page (Firefox and WebKit, observed by the verification; every mode).
 
@@ -1352,6 +1362,77 @@ worker-globals allowlist (S43), code only through `execute()`. What differs, and
 lost with the allowlist (S43), so nothing to keep; `WebAssembly`, which worker mode keeps (WebKit compiles it without
 `'unsafe-eval'`) and strict mode keeps only with `scriptUnsafe`; and a headless strict build (no view, or a hidden
 one). Until then worker mode gets no new features.
+
+### S50 · The host page's policy reaches the sandbox's frames — ✅ **done**
+
+*From [review round 1](security/REVIEW-ROUND-1-2026-10-15.md), R2-1 = R3-1 (medium);
+[ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-15-review-round-1-the-views-check-in-its-character-budget-host-page-availability).*
+
+**Verified** (all three engines, the harness served with each host policy): the frames are `srcdoc` documents and
+inherit the host page's CSP list, Trusted Types and COEP. Host `script-src 'self'`: strict was `ready`, then 5 s later
+"the sandbox view stopped responding"; cooperative "did not finish loading". Host `worker-src` without `blob:`: "the guest
+entry failed to start". `require-trusted-types-for 'script'`: "could not be built (TypeError)" (Chromium, WebKit). Host
+`style-src 'self'`: the guest frame 150 px high. COEP `require-corp`: WebKit's strict worker failed.
+
+**Done**: strict mode is `ready` only on the view's check-in (`VIEW_READY`, on the port only its bootstrap holds); a
+build whose frame loaded but whose startup script never checked in ends with "the sandbox's startup script did not run:
+the host page's Content-Security-Policy must allow it"; a refused worker ends with the worker reason (a probe worker,
+only on that failure path, tells it from Firefox's message-less syntax error); the element's and the view's HTML and
+script sinks go through one Trusted Types policy, `web-sandbox`, that blesses only the sandbox's own documents, and a
+`trusted-types` directive without that name ends the build with a reason naming it; the frame keeps its width, border
+and margin without CSS and the element warns with the wrapper style's constant hash; the element is `display: block`
+through a constructed stylesheet (R4-12). API.md "Host page policy" lists what each mode needs, how to read the view's
+hash today, and that the host's fetch directives narrow `origins` silently. **Residuals**: the wrapper's height needs
+CSS (`'unsafe-inline'` or the hash: a `srcdoc` document is never in quirks mode, and the wrapper runs no script);
+WebKit refuses the view's `blob:` worker under COEP; cooperative and worker mode inherit the Trusted Types requirement
+(cooperative-mode limit). **Awaiting the owner**: an exported view-hash function (R4-5).
+Tests: `test/e2e/host-policy.spec.ts`, `test/unit/review-round-1.test.ts` (Trusted Types), `test/unit/channel-guarantees.test.ts`.
+
+### S51 · One console relay; byte budgets on log lines and RPC messages — ✅ **done**
+
+*From review round 1, R4-1 = R2-3, R3-3, R4-2 (medium), R4-6, R4-7 (low);
+[ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-15-review-round-1-byte-budgets-on-every-message).*
+
+**Verified**: `console.log(fn)` (and Symbols, DOM nodes, Events, Responses, Proxies, WeakMaps, Promises) threw
+`DataCloneError` in cooperative mode, the worker and the strict worker; a strict guest's `console.log(new Uint8Array(64 MiB))`
+arrived whole; a log flood within the caps cut Firefox's host page to 47 of 242 ticks and WebKit's never finished;
+cooperative and worker mode relayed no uncaught error, strict mode no unhandled rejection; Chromium's "Uncaught
+Uncaught". **Done**: the relay in `in-sandbox-script.ts` is the one chokepoint in every mode (the strict prelude logs
+through it); it never throws, names what clone refuses by its kind, sends an `Error` as `{ name, message, stack }`,
+relays every console method and uncaught errors and rejections, and bounds each line to `LOG_MAX_BYTES` (1 MiB) and the
+lines it sends to 1000 and 4 MiB per second before anything is posted (the browser's own console gets a dropped line
+not at all); the host measures again. RPC messages: `RPC_MAX_BYTES` (33 MiB) at sender and receiver, 64 MiB of running
+inbound arguments per channel. Measured host ticks during the flood now within a few of idle on all three engines.
+WebKit's muted errors ("Script error.") are documented. Tests: `test/unit/review-round-1.test.ts`, `test/e2e/review-round-1.spec.ts`.
+
+### S52 · The strict view's budget: characters, work per second, a linear renderer — ✅ **done**
+
+*From review round 1, R1-1, R1-2 (medium) and the availability claim; ADR-005 amendment.*
+
+**Verified**: text was in no budget (renders of 261 000 characters into 200 targets every 20 ms: host 95–100% busy, view
+up to 24 M characters); Firefox's `<wbr>` line breaking (43 000: 23 s), WebKit's `ruby` (10 000: 10.7 s), the renderer's
+middle-child removals (Chromium 13 s for 38 000) and WebKit's layout of a word over many text nodes were super-linear.
+**Done**: `VIEW_MAX_CHARACTERS` and `VIEW_RENDER_CHARACTERS_PER_SECOND` (1 Mi each); a linear walk that joins text runs
+and drops comments; `wbr`, `ruby`, `rt`, `rp` unwrapped. S42's statement is replaced: host-page availability is not
+protected wherever the view shares the host's thread (WebKit always, Firefox, Chromium depending on its process model);
+the budgets bound the common cases, CSS paint and bidirectional text layout are not bounded (240 000 characters
+alternating directions in one paragraph: Chromium 10 s, WebKit 20 s). Tests: `test/e2e/view-budget.spec.ts`,
+`src/lib/in-sandbox-view.test.ts`.
+
+### S53 · Review round 1, the low findings and the cooperative residual — ✅ **done** (R2-2 documented)
+
+*From review round 1.* **Done**: configs drop what they cannot use instead of refusing (R1-3); origins are printable
+ASCII as written (R1-4); invalid punycode labels are left to each engine's URL parser, documented (R1-5); the strict
+worker mints URLs only for the view's types (R2-4); worker mode removes `WebAssembly` unless `scriptUnsafe` (R2-5); a
+refused build's `terminated` comes in a task (R3-2); cooperative mode without `allow-scripts` warns once (R3-4);
+fetch bridge allowlist warnings (R3-5); `SandboxConfig` narrows each mode, typed events and tag map (R3-6, R4-12); the
+same config again rebuilds nothing (R3-7); auto-sizing restores the embedder's height (R3-8); `expose()` throws a
+TypeError (R3-9); `sandboxFetch` always exists and is refused without the bridge (R4-8); docs for `for…in` copies,
+handler messages, the element's own announcement, synthetic events, and plugins whose init outlives `ready` (R3-10–12,
+R4-9, R4-11). **R2-2, a cooperative-mode limit (S44)**: a modifier click the guest's script synthesizes opens a new
+top-level tab (Chromium with no gesture where its popup blocker lets it, Firefox within a user's activation) and
+Chromium submits a form that way past `form-action`; measured and asserted per engine; moving `allow-forms` between the
+capability lists awaits the owner. Tests: `test/unit/review-round-1.test.ts`, `test/e2e/review-round-1.spec.ts`.
 
 ## B · API Surface & DX
 

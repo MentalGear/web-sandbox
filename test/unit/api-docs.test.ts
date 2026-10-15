@@ -11,7 +11,9 @@ import { toFetchPolicy } from '@src/lib/fetch-bridge';
 import { INERT_TYPES } from '@src/lib/guest-writes';
 import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { cooperativePolicy, KIND_DIRECTIVES, strictViewPolicy } from '@src/lib/csp/csp-generator';
-import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_TARGET_MAX_LENGTH } from '@src/lib/in-sandbox-view';
+import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_TARGET_MAX_LENGTH } from '@src/lib/in-sandbox-view';
+import { LOG_BYTES_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
+import { RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { WORKER_GLOBALS } from '@src/lib/worker-globals';
 
 /**
@@ -116,6 +118,12 @@ describe('docs/API.md lists the public surface', () => {
             ['Guest log lines kept until the guest is connected', logBuffer],
             ['Strict: characters of a render or event target id', VIEW_TARGET_MAX_LENGTH],
             ['Strict: elements in the view', VIEW_MAX_ELEMENTS],
+            ['Strict: characters in the view', VIEW_MAX_CHARACTERS],
+            ['Strict: characters of markup the view parses per second', VIEW_RENDER_CHARACTERS_PER_SECOND],
+            ['Bytes per log line', LOG_MAX_BYTES],
+            ['Bytes of guest log lines sent per second', LOG_BYTES_PER_SECOND],
+            ['Bytes per RPC message', RPC_MAX_BYTES],
+            ['Bytes of arguments in inbound calls running at once', RPC_MAX_INBOUND_BYTES],
             ['Strict: nesting depth below the view', VIEW_MAX_DEPTH],
             ['Strict: characters of one event detail', VIEW_EVENT_LIMITS.maxTotal],
             ['Strict: view liveness budget', VIEW_LIVENESS_TIMEOUT_MS],
@@ -136,7 +144,7 @@ describe('docs/API.md lists the public surface', () => {
 
     it('every config option, and no other', () => {
         const options = section('## Configuration', true);
-        const keys = ['SandboxConfigOptions', 'CooperativeSandboxConfig', 'StrictSandboxConfig'].flatMap(name => interfaceKeys('src/host.ts', name));
+        const keys = ['SandboxConfigOptions', 'CooperativeSandboxConfig', 'WorkerSandboxConfig', 'StrictSandboxConfig'].flatMap(name => interfaceKeys('src/host.ts', name));
         expect(sorted(rowKeys(options))).toEqual(sorted(keys));
     });
 
@@ -289,6 +297,8 @@ describe('docs/API.md lists the public surface', () => {
         // the renderer's allowlist, every element of every namespace
         for (const element of [...RENDER_ELEMENTS.html, ...RENDER_ELEMENTS.svg, ...RENDER_ELEMENTS.mathml]) expect(viewSpans.has(element), element).toBe(true);
         expect(viewSection).toContain(`at most ${VIEW_MAX_ELEMENTS} elements, nested at most ${VIEW_MAX_DEPTH} deep`);
+        expect(viewSection).toContain(`at most ${VIEW_MAX_CHARACTERS} characters`); // review round 1, R1-1
+        expect(viewSection).toContain(`at most ${VIEW_RENDER_CHARACTERS_PER_SECOND} characters of markup`);
         expect(VIEW_FILE_TYPES.length).toBe(27); // a new type is a new line of prose in the section, too
         expect(viewSection.replace(/\s+/g, ' ')).toContain(`Strings are cut at ${VIEW_EVENT_LIMITS.maxString} characters, \`ids\` at ${VIEW_EVENT_LIMITS.maxIds} entries, \`form\` at ${VIEW_EVENT_LIMITS.maxFields} fields, and all strings of one detail together at ${VIEW_EVENT_LIMITS.maxTotal} characters`);
     });

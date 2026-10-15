@@ -313,6 +313,18 @@ describe('structured-size: a bounded measure', () => {
     });
 });
 
+describe("R3-1: the wrapper style's hash, as docs/API.md lists it for a host page's style-src", () => {
+    it('is the hash of WRAPPER_STYLE (constant), and the host-policy spec allows the same', async () => {
+        const { readFileSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const { scriptHashSource } = await import('@src/lib/csp/script-hash');
+        const { WRAPPER_STYLE } = await import('@src/lib/frame-documents');
+        const hash = scriptHashSource(WRAPPER_STYLE);
+        expect(readFileSync(join(__dirname, '../../docs/API.md'), 'utf8')).toContain(hash);
+        expect(readFileSync(join(__dirname, '../e2e/host-policy.spec.ts'), 'utf8')).toContain(hash);
+    });
+});
+
 describe('R3-1: the Trusted Types policy blesses only the sandbox\'s own documents', () => {
     afterEach(() => { delete (globalThis as any).trustedTypes; vi.resetModules(); });
 

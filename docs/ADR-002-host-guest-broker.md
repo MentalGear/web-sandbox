@@ -1,6 +1,6 @@
 # ADR-002: How should host and guest call each other?
 
-**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes)), 2026-10-13 ([strict mode renders bypass the host](#amendment-2026-10-13-strict-mode-renders-bypass-the-host)), 2026-10-14 ([adversarial review: the channel](#amendment-2026-10-14-adversarial-review-the-channel)), 2026-10-14 ([broad review: the guest announces its port](#amendment-2026-10-14-broad-review-the-guest-announces-its-port)), 2026-10-14 ([the announcement completes the build](#amendment-2026-10-14-the-announcement-completes-the-build))
+**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes)), 2026-10-13 ([strict mode renders bypass the host](#amendment-2026-10-13-strict-mode-renders-bypass-the-host)), 2026-10-14 ([adversarial review: the channel](#amendment-2026-10-14-adversarial-review-the-channel)), 2026-10-14 ([broad review: the guest announces its port](#amendment-2026-10-14-broad-review-the-guest-announces-its-port)), 2026-10-14 ([the announcement completes the build](#amendment-2026-10-14-the-announcement-completes-the-build)), 2026-10-15 ([byte budgets](#amendment-2026-10-15-review-round-1-byte-budgets-on-every-message))
 
 ## Why this ADR exists
 
@@ -278,3 +278,21 @@ handled on arrival. The queue holds at most `MAX_INBOUND_IN_FLIGHT` frames, the 
 flight; past it a call is refused with `BUSY` in the broker's frame shape.
 
 Proof: `test/e2e/ready.spec.ts`, `src/lib/in-sandbox-script.test.ts` ("the startup gate").
+
+## Amendment (2026-10-15): review round 1: byte budgets on every message
+
+**When**: [review round 1](security/REVIEW-ROUND-1-2026-10-15.md) (R3-3, R4-1); backlog S51. **Why**: the frames had
+counts (`MAX_INBOUND_IN_FLIGHT`, `LOG_MAX_ARGS`) and string caps, but no byte bound: a strict guest's
+`console.log(new Uint8Array(64 MiB))` arrived whole, a flood of lines within the caps cut Firefox's host page to a few
+ticks per second, and 256 calls of 32 MiB each were held on WebKit's host. And the guest's console threw
+`DataCloneError` for a function or a DOM node.
+
+**Decision**: one measure, `createSizeOf()` (`src/lib/structured-size.ts`): a bounded estimate of what structured clone
+copies, with every primitive captured when it is made, stringified into the guest like `createBroker`. Every RPC
+message is at most `RPC_MAX_BYTES` (33 MiB, the largest fetch bridge body with its headers), measured where it is made
+(a call is refused, `ARGS_NOT_TRANSFERABLE`; a result is answered `RESULT_NOT_TRANSFERABLE`) and where it arrives; the
+calls a broker runs at once hold at most `RPC_MAX_INBOUND_BYTES` (64 MiB) of arguments per channel (`BUSY`). The
+guest's console relay is the one chokepoint for log lines in every mode: it never throws (what clone refuses crosses
+as a string naming its kind), bounds each line to `LOG_MAX_BYTES` and the lines it sends to `LOG_EVENTS_PER_SECOND`
+and `LOG_BYTES_PER_SECOND` per second, so a flood never reaches the host's thread; the host measures every line again.
+No new code: the existing ones say it.

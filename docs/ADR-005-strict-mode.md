@@ -1,6 +1,6 @@
 # ADR-005: Strict mode — guest logic in a worker, a view that runs no guest script
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view); [independent verification](#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist); [typed origins](#amendment-2026-10-14-typed-origins-the-view-policy-is-a-template)) · 2026-10-15 ([strict is the default](#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view); [independent verification](#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist); [typed origins](#amendment-2026-10-14-typed-origins-the-view-policy-is-a-template)) · 2026-10-15 ([strict is the default](#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen); [review round 1](#amendment-2026-10-15-review-round-1-the-views-check-in-its-character-budget-host-page-availability))
 
 ## Why this ADR exists
 
@@ -207,7 +207,8 @@ configuration, fetch bridge, auto-sizing), `strict-render-flood.spec.ts` (A4),
   may too: in the broad review's runs it kept the wrapper and the view in the host page's process (no iframe
   target; both frames local), and the host stalled as in the other engines. So each apply is host-thread work.
   Flow control bounds it to one apply at a time; since the broad review the DOM one apply builds is linear in its
-  markup and the document is bounded (amendment below), but what painting it costs is not: CSS is not read by the
+  markup, and since review round 1 the document is bounded in elements, depth and characters, and the markup parsed
+  per second is bounded (amendments below), but what laying it out and painting it costs is not: CSS is not read by the
   renderer, and a filter list on many elements costs their product (measured in WebKit: 10 `blur()` functions on
   1 000 elements, 88 KB, stalled the host 3.7 s; 100 on 1 000, over 180 s; backlog S42). Measured for markup
   (Playwright 1.58 builds, 256 Ki characters per render, flood as fast as allowed): host lag ≤ 10 ms in Chromium,
@@ -493,3 +494,41 @@ whose one script is the hashed bootstrap; a `<script>` and an `on…` handler in
 once, while the same html in cooperative mode runs: positive control; `'iframe'` terminates with the rename; the
 playground opens in strict mode). Every existing preset and spec names the mode it was written for (the e2e baseline
 config is cooperative), so the attack regressions keep testing that mode.
+
+## Amendment (2026-10-15): review round 1, the view's check-in, its character budget, host-page availability
+
+**When**: [review round 1](security/REVIEW-ROUND-1-2026-10-15.md) (R1-1, R1-2, R2-1 = R3-1, R1's availability
+measurements); backlog S50–S52.
+
+**Decision**:
+
+- **`ready` is the view's check-in.** The view's bootstrap posts `VIEW_READY` as the first frame on the view port, which
+  only it holds; the host enters `ready` on it, never on the wrapper's load alone. Before, a strict build was `ready` on
+  the load, also when the view's bootstrap never ran (refused by the host page's `script-src`, which a `srcdoc`
+  document inherits), and 5 s later "the sandbox view stopped responding". A build whose frame loaded but whose
+  bootstrap never checked in ends with a reason that names the host page's policy; a worker the host page's policy
+  refuses ends with its own reason (a probe worker tells it from Firefox's message-less syntax error). The view's two
+  HTML and script sinks go through one Trusted Types policy (`web-sandbox`) where the host page requires them
+  (API.md, "Host page policy").
+- **The view's budget counts characters and work per second.** Besides `VIEW_MAX_ELEMENTS` and `VIEW_MAX_DEPTH`, the
+  view's body holds at most `VIEW_MAX_CHARACTERS` (4 × `VIEW_RENDER_MAX_LENGTH`) characters of serialization, counted
+  over the document a render would leave and checked after the renderer, before insertion; and the view parses at most
+  `VIEW_RENDER_CHARACTERS_PER_SECOND` characters per second, renders it refused included: a render past it waits, and
+  flow control holds the worker meanwhile. Text was outside every budget: renders of 261 000 characters of text into
+  200 targets every 20 ms kept the host page 95–100% busy on all three engines, and the view held up to 24 M
+  characters. Measured after (host ticks of a 10 ms interval, idle / loaded): Chromium 250/239, Firefox 242/229,
+  WebKit 208/153; the view holds 1 048 090 characters.
+- **The renderer is linear, and keeps no element whose layout is super-linear.** Its walk takes each parent's children
+  from the front and appends the kept ones back; removing middle children one by one cost Chromium 13 s for 38 000
+  removals. Runs of text are joined into one node (WebKit lays out a word over many text nodes super-linearly), and
+  comments are dropped. `wbr` (Firefox: 43 000 in one paragraph, 23 s) and `ruby`, `rt`, `rp` (WebKit: 10 000 rubies,
+  10.7 s) are unwrapped; a measured scan of the other listed elements found them linear.
+- **Host-page availability is not protected where the view shares the host page's thread.** This replaces S42's
+  "in WebKit": strict mode protects confidentiality and egress; the host page's availability is not protected wherever
+  the view shares the host's thread (WebKit always; Firefox; Chromium depending on its process model). The budgets
+  bound the common cases; what layout and paint cost beyond what the markup weighs is not bounded: CSS filters (S42)
+  and bidirectional text in one paragraph (240 000 characters alternating directions: Chromium 10 s, WebKit 20 s,
+  Firefox 1 s). "Revisit if" stands: an out-of-process view.
+
+Tests: `test/e2e/host-policy.spec.ts` (each host policy on all three engines, with positive controls),
+`test/e2e/view-budget.spec.ts` (R1-1, R1-2, measured), `src/lib/in-sandbox-view.test.ts` (R1-2), `test/unit/review-round-1.test.ts`.

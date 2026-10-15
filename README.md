@@ -84,7 +84,13 @@ const sandbox = document.querySelector('web-sandbox');
 sandbox.load('<h1>Hello</h1>');     // strict mode, the default: shown, and no script in it runs
 ```
 
-Importing the module registers nothing, so you choose the tag name.
+Importing the module registers nothing, so you choose the tag name. The element is a block by default; give it a
+height.
+
+**Your page's own policy applies inside the sandbox.** Its frames are `srcdoc` documents, which inherit the host
+page's Content-Security-Policy, Trusted Types and Cross-Origin-Embedder-Policy. A host policy that refuses what the
+sandbox needs ends the build with a reason that names it; what to allow, per mode, is in
+[API.md](docs/API.md#host-page-policy).
 
 ### Modes
 
@@ -142,20 +148,28 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 *   **Removing the element** tears the sandbox down the same way, without a `terminated` event, and
     leaves it `idle`. Inserting it again builds a fresh one. Moved into another window's document, it builds
     nothing there (one warning) until it is back.
-*   **`ready` is the guest's check-in**, not its load: slow images never delay it. Calls and `execute()` sent while
+*   **`ready` is the guest's check-in**, not its load: slow images never delay it. In strict mode it is the view's
+    check-in, on the port only its bootstrap holds. Calls and `execute()` sent while
     the guest document is still being parsed wait in the guest until it is, in order, so methods its scripts expose
     are there ([API](docs/API.md#ready-and-the-startup-gate)). A build whose guest has not checked in within
-    `LOAD_TIMEOUT_MS` (5 s of host time) ends with `the sandbox did not finish loading`. A guest that reloads or
+    `LOAD_TIMEOUT_MS` (5 s of host time) ends with `the sandbox did not finish loading`, or, when its frame loaded and
+    its startup script never ran, with a reason that names the host page's policy. A guest that reloads or
     rewrites its own document ends its environment (`the guest frame announced itself again …`).
+*   **A build that is refused** (a config that cannot be used, an unknown mode, an entry that is not registered) sets
+    `state` to `terminated` at once and dispatches `terminated` in a task, like `ready`, so a listener added right
+    after the call hears it. `setConfig()` with the configuration the environment already stands on changes nothing.
 *   **Events** are dispatched on the element. `sandbox-log` (guest `console` output and errors) bubbles,
     so a listener on `window` hears every sandbox on the page and `event.target` says which one. Its detail
     is `{ type: 'LOG', level, args, source }` (type `SandboxLog`): `level` is `log`, `info`, `warn` or
-    `error`; `args` holds at most 64 values, strings cut at 64 Ki characters; `source` is `'host'` for the
-    element's own lines (an execution timeout, an entry that failed) and `'guest'` for everything from the
-    guest, whatever it claims. Guest lines are limited to 1000 per second per environment
-    (`LOG_EVENTS_PER_SECOND`, one warning); lines logged before the guest is connected (a strict entry's top level)
-    are kept, up to 1000, and arrive once it is. `args` are the guest's data: read them, don't merge them into
-    your objects with `Object.assign` (an own `__proto__` key survives the copy).
+    `error`; `source` is `'host'` for the element's own lines (an execution timeout, an entry that failed) and
+    `'guest'` for everything from the guest, whatever it claims. Guest lines carry the guest's `console` calls (every
+    method), uncaught errors and unhandled rejections (`Uncaught …`), in every mode; the guest's console never throws:
+    a function, a DOM node or anything else structured clone refuses arrives as a string naming its kind, an `Error`
+    as `{ name, message, stack }`. Bounded in the guest before anything is posted: 64 arguments, strings cut at
+    64 Ki characters, 1 MiB per line (`LOG_MAX_BYTES`), 1000 lines and 4 MiB per second; the element measures each
+    line again. Lines logged before the guest is connected (a strict entry's top level) are kept, up to 1000, and
+    arrive once it is. `args` are the guest's data: read them, don't merge them into your objects with
+    `Object.assign` (an own `__proto__` key survives the copy).
 *   **`violation`** reports a load the guest policy refused: `{ directive, blockedURI }`, plus
     `sourceFile`, `lineNumber` and `columnNumber` when the browser gives them. It bubbles like
     `sandbox-log`. The guest's bootstrap listens before any guest code runs, but every field comes from
@@ -492,7 +506,8 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
 *   **What it guarantees**, on Chromium, Firefox and WebKit: no guest script runs in any document — the renderer
     keeps only allowlisted elements and attributes (no handlers, frames, `object`/`embed`, `meta`, `base`,
     `template`, SVG `use`, markers, filters or animation), so no nested frame exists and no checked attribute
-    changes afterwards; the view holds at most 50 000 elements, 256 deep, and shows only files that never open as
+    changes afterwards; the view holds at most 50 000 elements, 256 deep and 1 Mi characters, parses at most 1 Mi
+    characters of markup per second, and shows only files that never open as
     a document (no SVG, HTML or XML; no `data:` images); guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
     `Referer`); the worker keeps only allowlisted globals, so it can request only through `fetch`, `XMLHttpRequest`,
@@ -502,7 +517,7 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
     directive apart, and cannot be forged; the view renders no `blob:` content but registered files (the worker's
     own source URL is revoked once its script ran).
-*   **What it does not**: [below](#what-strict-mode-does-not-cover), with WebKit's host-page availability first.
+*   **What it does not**: [below](#what-strict-mode-does-not-cover), with the host page's availability first.
 *   **Programming model**: no inline `<script>`, nested frames or the elements listed in API.md as unavailable (popovers,
     invoker commands, `canvas`, SVG `use`/filters/`image`) in rendered markup; files are named by path in
     `src`/`href`/`poster` (not `srcset` or inline styles; a registered stylesheet's own `url()` works), and
@@ -544,12 +559,13 @@ One list, the same in [API.md](docs/API.md#modes) and the [backlog](docs/BACKLOG
 
 What remains for the default:
 
-*   **Host-page availability in WebKit**: the view renders on the host page's thread (always in Firefox and WebKit;
-    in Chromium where it keeps the view in the page's process). One render is in flight at a time, and the DOM it
-    builds is bounded, but CSS paint cost is not: a filter list on many elements stalled WebKit's host thread for
-    seconds (10 `blur()`s on 1 000 elements, 3.7 s). In WebKit, strict mode protects confidentiality and egress, not
-    the host page's availability. Cooperative mode is no better: there a guest `while (true) {}` already freezes
-    WebKit's host page.
+*   **The host page's availability**: strict mode protects confidentiality and egress. It does not protect the host
+    page's availability wherever the view shares the host page's thread: WebKit always, Firefox, and Chromium
+    depending on its process model. The view's budgets bound the common cases (one render in flight; elements,
+    depth and characters held; characters parsed per second), but not what layout and paint cost beyond what the
+    markup weighs: CSS filters (WebKit: 10 `blur()`s on 1 000 elements, 3.7 s) and bidirectional text in one paragraph
+    (240 000 characters alternating directions: Chromium 10 s, WebKit 20 s). Cooperative mode is no better: there a
+    guest `while (true) {}` freezes the host page wherever the frame shares its thread.
 *   **CSS within what the policy allows**: style-based probing of the view's own content, and loads from the origins
     you allow.
 *   **Worker `violation` reports** (`source: 'logic'`): per engine (WebKit raises none in workers) and influenced by
@@ -578,7 +594,12 @@ the default. Measured per engine and asserted by tests; worker mode shares the r
     Chromium and Firefox).
 *   **Messages**: the guest can post to the host window; check `event.source`.
 *   **The user's link actions**: Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens a new tab at
-    the guest's URL in Chromium and Firefox, without `allow-popups`.
+    the guest's URL in Chromium and Firefox, without `allow-popups`. So does a modifier click the guest's own script
+    synthesizes: in Chromium with no user gesture (where its popup blocker lets it), in Firefox within a user's
+    activation; on a submit button (with `allow-forms`) Chromium opens the submission in a new tab past `form-action`.
+*   **Trusted Types**: under a host page's `require-trusted-types-for 'script'` the guest inherits the requirement, so
+    its own scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too
+    (strict mode is unaffected: its view assigns through its own policy).
 *   **Session history**: the guest's fragment navigations add entries to the tab's history (the back button walks
     them first), and in Chromium so does a navigation the wrapper refuses.
 *   **Guest-only stalls**: a guest that never finishes its document stays `ready`, and its calls time out; Firefox
