@@ -9,7 +9,7 @@ import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-global
  *       governed. A worker the guest creates in cooperative mode is a realm of its own (residual, measured).
  *   V2  a strict entry's synchronous console lines arrive (they were lost before the logic port was attached);
  *   V3  the user's modifier clicks and Ctrl/Shift+Enter on a guest link open a new top-level tab in Chromium and
- *       Firefox (default mode, platform behaviour: residual, measured); strict mode opens none;
+ *       Firefox (cooperative mode, platform behaviour: a limit, measured); strict mode opens none;
  *   L1  a guest's timers, promise loops and nested workers stop at terminate() and reset();
  *   L2  an announcement a frame the guest creates posts to top is never accepted;
  *   PD7 the playground acts only on messages from its own window;
@@ -111,7 +111,7 @@ test('V2: a strict entry\'s synchronous console lines arrive as sandbox-log, in 
     expect((await sandbox.logs()).filter(line => line.startsWith('V2 '))).toEqual(['V2 sync 1', 'V2 sync 2', 'V2 sync 3', 'V2 async']);
 });
 
-// ---- V3: modifier clicks and Enter on a guest link (default-mode residual, measured) ----------------------------
+// ---- V3: modifier clicks and Enter on a guest link (a cooperative-mode limit, measured) ------------------------
 
 const LINKS = (origin: string) => `<style>body{margin:0}</style><a id="l" href="${origin}/v3-html" style="display:block;width:300px;height:40px">link</a>`
     + `<svg width="300" height="40" style="display:block"><a id="s" href="${origin}/v3-svg"><rect width="300" height="40" fill="#ccc"/></a></svg>`;
@@ -158,7 +158,7 @@ const linkActionsOpen = (opens: boolean) => {
     };
 };
 
-test.describe('V3: the user\'s modifier clicks and Enter on a guest link (default mode: a platform residual, measured; strict mode: nothing opens)', () => {
+test.describe('V3: the user\'s modifier clicks and Enter on a guest link (cooperative mode: a platform limit, measured; strict mode: nothing opens)', () => {
     test('cooperative mode without allow-popups: Chromium and Firefox open a new tab at the guest\'s URL, which no policy governs; WebKit opens none (see the control below: a measurement limit)', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ html: LINKS(recorder.blocked) })).toBe('ready');
         const results = await userLinkActions(sandbox, () => sandbox.run(`document.getElementById('l').focus()`));
@@ -273,7 +273,7 @@ test('PD7: the playground ignores a RESET_COMPLETE posted by the guest (it reloa
     expect(await page.evaluate(() => (window as any).__pd7NotReloaded)).toBeUndefined();
 });
 
-// ---- H1: session history (default-mode residual, measured) ---------------------------------------------------------
+// ---- H1: session history (a cooperative-mode limit, measured) -----------------------------------------------------
 
 test.describe('H1 (residual, measured): the guest adds entries to the tab\'s session history; the host URL itself never changes', () => {
     test('fragment navigations: one entry each, on every engine, so the host page\'s back button first walks the guest\'s', async ({ sandbox, page }) => {

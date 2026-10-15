@@ -71,7 +71,8 @@ name (the guest's own frame cannot; its `window.name` is inert).
 ## Configuration
 
 **`setConfig(config: SandboxConfig): void`** replaces the configuration and rebuilds the environment
-(see [Lifecycle](#lifecycle)). `SandboxConfig` is a union keyed by `mode`: strict mode's `origins` has no `scripts`.
+(see [Lifecycle](#lifecycle)). `SandboxConfig` is a union keyed by `mode`: strict mode's `origins` has no `scripts`, and
+a config without `mode` is a strict config (strict mode is the default).
 
 - Each call is applied **over the defaults, not over the previous configuration**: an option left out returns
   to its default. That includes `html`, so a `setConfig()` after `load(html)` starts with an empty document
@@ -88,16 +89,16 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 | Option | Type | Default | Modes | What it does |
 | :--- | :--- | :--- | :--- | :--- |
-| `mode` | `'iframe' \| 'worker' \| 'strict'` | `'iframe'` | — | Where guest code runs; see [Modes](#modes). Any other value starts no environment: the sandbox terminates with the reason `unknown mode …` until a valid mode is configured. |
-| `html` | `string` | `''` | iframe, strict | The guest document (iframe mode) or the initial view (strict mode). Empty means `<div id="root"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml). |
+| `mode` | `'strict' \| 'cooperative' \| 'worker'` | `'strict'` | — | Where guest code runs; see [Modes](#modes). Any other value starts no environment: the sandbox terminates with the reason `unknown mode …` until a valid mode is configured. `'iframe'` was renamed `'cooperative'`: refused the same way, and the reason says so. |
+| `html` | `string` | `''` | strict, cooperative | The initial view (strict mode) or the guest document (cooperative mode). In strict mode its `<script>` elements and `on…` handler attributes never run, and markup that holds any warns once per element: ``strict mode (the default) runs no script in `html`; …``. Empty means `<div id="root"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml). |
 | `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-scripts`, `allow-forms`, `allow-pointer-lock`, `allow-orientation-lock`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms`. |
-| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | iframe, worker | Capabilities that act outside the frame: `allow-popups`, `allow-modals`, `allow-downloads`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in iframe mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see the README's default-mode residuals). |
+| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-popups`, `allow-modals`, `allow-downloads`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). |
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
 | `origins` | `SandboxOrigins` | none | all (strict: no `scripts`) | The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. See [below](#origins). |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
-| `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in worker and strict mode on every browser, and in iframe mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
+| `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in strict and worker mode on every browser, and in cooperative mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
-| `autoResize` | `boolean` | `false` | iframe, strict | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
+| `autoResize` | `boolean` | `false` | strict, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Gives the guest [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off. [ADR-006](ADR-006-fetch-bridge.md) |
 | `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
 
@@ -137,7 +138,7 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 - A `connectionsAllowed` key is ignored, with one warning: the policy is built from `origins` alone.
 
 Every directive is always emitted (`'none'` when it admits nothing), so no browser falls back to `default-src`. With no
-origins and no files, iframe and worker mode get:
+origins and no files, cooperative and worker mode get:
 
 ```
 default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none';
@@ -206,13 +207,13 @@ terminated until `reset()`, `load()` or `setConfig()`.
 ### `execute(code)`
 
 `execute(code: string): void` — runs `code` in the guest's global scope as the body of a function (the guest
-document in iframe mode, the worker in worker and strict mode), compiled with the `Function` the bootstrap captured
+document in cooperative mode, the worker in strict and worker mode), compiled with the `Function` the bootstrap captured
 before any guest code ran. Nothing reaches the host: no return value, no report that it returned.
 
 - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
 - While `idle` (not in the document) or `terminated` there is no environment: it warns and does nothing, as
   `call()` rejects then.
-- While `loading` the code is queued and sent when the guest is ready. In iframe mode it runs once the guest
+- While `loading` the code is queued and sent when the guest is ready. In cooperative mode it runs once the guest
   document is parsed (see [the startup gate](#ready-and-the-startup-gate)), in order with calls.
 - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
 - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
@@ -247,7 +248,7 @@ rejection reaches the guest as `HANDLER_ERROR` with the error's message.
 - Arguments and results are copied by structured clone (no functions, DOM nodes or symbols).
 - Default timeout: 30 s.
 - Calls made while `loading` are queued and sent when the guest is ready; one that settles while queued (its
-  timeout) leaves the queue and never runs. In iframe mode a call reaches the guest's method once the guest
+  timeout) leaves the queue and never runs. In cooperative mode a call reaches the guest's method once the guest
   document is parsed (see [the startup gate](#ready-and-the-startup-gate)). Calls made while `idle` (not in the
   document) or `terminated` reject at once with `TERMINATED`, as `execute()` does nothing then.
 - Rejects with an `RpcError` (an `Error` with a `code`); see [Refusal codes](#refusal-codes).
@@ -329,7 +330,7 @@ All events are `CustomEvent`s dispatched on the element. None is `composed`.
 
 | Event | `detail` | Bubbles | When |
 | :--- | :--- | :--- | :--- |
-| `ready` | none | no | The guest checked in: its startup script announced itself, and `state` is now `ready` (see [the startup gate](#ready-and-the-startup-gate)). Once per environment. In iframe mode its document may still be loading. (Without `allow-scripts` no guest script runs: `ready` comes with the frame's load, and calls time out.) |
+| `ready` | none | no | The guest checked in: its startup script announced itself, and `state` is now `ready` (see [the startup gate](#ready-and-the-startup-gate)). Once per environment. In cooperative mode its document may still be loading. (Without `allow-scripts` no guest script runs: `ready` comes with the frame's load, and calls time out.) |
 | `terminated` | `{ reason: string }` | no | The sandbox was terminated: `state` is now `terminated`. Once per termination. |
 | `sandbox-log` | `SandboxLog` | yes | A log line from the guest or from the element. |
 | `violation` | `SandboxViolation` | yes | The guest policy refused a load. |
@@ -400,13 +401,13 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | `the guest entry failed to start` | Strict mode: the entry threw or did not parse. |
 | `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
-| `unknown mode …` | `mode` is not `iframe`, `worker` or `strict`. |
+| `unknown mode …` | `mode` is not `strict`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`. |
 | `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned, an `origins` that is not an object, or a kind of it that is not a list. |
 | `the environment could not be built (…)` | Building the frame failed. |
 | `the executed code ran longer than workerExecutionTimeout` | The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline. |
 | `the sandbox frame loaded a second time` | Something navigated or reloaded the library's frame (also before its first load, once the guest had checked in). |
-| `the guest frame announced itself again (it reloaded or rewrote its document)` | Iframe and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. |
-| `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time: in iframe and worker mode the guest had not checked in (announced its port); without `allow-scripts`, and in strict mode, the frame had not loaded (subresources included). |
+| `the guest frame announced itself again (it reloaded or rewrote its document)` | Cooperative and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. |
+| `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time: in cooperative and worker mode the guest had not checked in (announced its port); without `allow-scripts`, and in strict mode, the frame had not loaded (subresources included). |
 | `the guest frame is missing` | The library's frame has no guest frame. |
 
 Branch on `state` and the event, not on these texts. A reason never carries the text of an error the element
@@ -421,7 +422,7 @@ name.
 | :--- | :--- |
 | `idle` | Not in the document (constructed, or removed): no frame. |
 | `loading` | A frame was built; waiting for the guest to check in (without `allow-scripts`, and in strict mode, for the frame to load); at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
-| `ready` | The guest can be reached; `ready` was dispatched. In iframe mode the guest document may still be loading. |
+| `ready` | The guest can be reached; `ready` was dispatched. In cooperative mode the guest document may still be loading. |
 | `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`), an integrity check or a failed build; `terminated` was dispatched. |
 
 There is no `running` state: nothing reports that guest code is running or that it stopped.
@@ -438,12 +439,12 @@ and resets the per-environment caps (log rate, violations). Listeners run synchr
 
 ### `ready` and the startup gate
 
-`ready` means the guest's startup script checked in: the bootstrap, the first script of the guest document (iframe
+`ready` means the guest's startup script checked in: the bootstrap, the first script of the guest document (cooperative
 mode) or of the worker's frame (worker mode), announced its port. It does not wait for the guest's images or its own
 scripts, so `LOAD_TIMEOUT_MS` bounds only that check-in; a page with slow images, or one that never finishes its
 document, is `ready`. Strict mode is `ready` when its view has loaded, as before.
 
-In iframe mode the guest document can still be loading at `ready`. Calls and `execute()` code that arrive while it is
+In cooperative mode the guest document can still be loading at `ready`. Calls and `execute()` code that arrive while it is
 being parsed wait in the guest, in one queue in the order they were sent, until it is parsed: `DOMContentLoaded` has
 fired (classic, deferred and module scripts have run) or it has loaded. So a method a guest script exposes is there
 when a call reaches it. Not covered: methods exposed from `async` scripts, after an `await`, or in a `load` handler
@@ -523,14 +524,14 @@ In the guest, the codes other than `NOT_FOUND` come from the element through the
 ## Guest globals
 
 What guest code can use, by mode. Everything here is installed by the library's bootstrap before any guest code
-runs; in iframe mode that needs `allow-scripts` (the policy always admits it).
+runs; in cooperative mode that needs `allow-scripts` (the policy always admits it).
 
-| Global | iframe | worker | strict (worker) |
+| Global | strict (worker) | cooperative | worker |
 | :--- | :--- | :--- | :--- |
 | `bridge` | ✓ | ✓ | ✓ |
 | `sandboxFiles` | ✓ | ✓ | ✓ |
 | `sandboxFetch` | with `fetchBridge` | with `fetchBridge` | with `fetchBridge` |
-| `sandboxView` | — | — | ✓ |
+| `sandboxView` | ✓ | — | — |
 | `console` relayed | `log`, `info`, `warn`, `error` | `log`, `info`, `warn`, `error` | `log`, `info`, `warn`, `error` |
 
 Removed before guest code runs: `RTCPeerConnection` (and prefixed variants) in every mode. In strict mode also
@@ -683,20 +684,33 @@ logged and does not stop the others. [ADR-005](ADR-005-strict-mode.md)
 
 ## Modes
 
-| | `iframe` (default) | `worker` | `strict` |
+| | `strict` (default) | `cooperative` | `worker` |
 | :--- | :--- | :--- | :--- |
-| Guest code runs in | the guest document | a worker spawned inside the frame | a worker; the view runs only the library's hash-admitted script |
-| Guest markup | `html` / `load()` | none | rendered by `sandboxView.render()`; `html` is the initial view |
-| How code starts | markup scripts, `execute()` | `execute()` | `entry`, `execute()` |
-| `autoResize` | ✓ | — | ✓ |
-| `workerExecutionTimeout` | — | ✓ | ✓ |
-| Watchdog bounds a loop | where the frame runs in its own process | ✓ | ✓ |
-| `unsafeCapabilities` | ✓ | ✓ | — |
-| Files named from markup | ✓ | — | `src`, `href`, `poster` in rendered markup |
-| Worker globals | — | allowlist | allowlist |
-| Residuals | the README's default-mode list | that list, where it applies | its platform limits only |
+| For | content you do not trust | cooperative content | headless code (frozen) |
+| Guest code runs in | a worker; the view runs only the library's hash-admitted script | the guest document | a worker spawned inside the frame |
+| Guest markup | `html` is the initial view, rendered without scripts or handlers; then `sandboxView.render()` | `html` / `load()` | none |
+| How code starts | `entry`, `execute()` | markup scripts, `execute()` | `execute()` |
+| `autoResize` | ✓ | ✓ | — |
+| `workerExecutionTimeout` | ✓ | — | ✓ |
+| Watchdog bounds a loop | ✓ | where the frame runs in its own process | ✓ |
+| `unsafeCapabilities` | — | ✓ | ✓ |
+| Files named from markup | `src`, `href`, `poster` in rendered markup | ✓ | — |
+| Worker globals | allowlist | — | allowlist |
 
-Choose strict mode for content you do not trust at all. [ADR-005](ADR-005-strict-mode.md)
+A config without `mode` is strict. `'iframe'` was renamed `'cooperative'`; it starts nothing, like any value that is not
+a mode. [ADR-005](ADR-005-strict-mode.md)
+
+**What strict mode does not cover**: the host page's availability in WebKit (the view paints on the host page's
+thread, and CSS paint cost is not bounded; cooperative mode is no better there), CSS within what the policy allows,
+the worker's `violation` reports (per engine, guest-influenced), a worker that closes itself (only the watchdog
+notices), memory, and the host site's cookies on requests to allowed same-site origins (every mode).
+
+**Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
+new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;
+focus and the clipboard; messages to the host window; the user's link actions; session history; guest-only stalls;
+forgeable reports; the host page's URL and origin. Each is described in the
+[README](../README.md#cooperative-mode-limits). Worker mode shares only the reports: the worker's are per engine, as
+in strict mode.
 
 ---
 
@@ -761,12 +775,13 @@ specs.
 
 ## Examples
 
-**Markup with a host method** (iframe mode):
+**Markup with a host method** (cooperative mode):
 
 ```js
 const sandbox = document.querySelector('web-sandbox');
 sandbox.expose('save', (record) => store.put({ ...record }));
 sandbox.setConfig({
+    mode: 'cooperative',
     capabilities: ['allow-scripts'],
     html: `<button id="b">Save</button>
            <script>b.onclick = () => bridge.call('save', { at: Date.now() });</script>`,
@@ -787,7 +802,7 @@ sandbox.addEventListener('ready', async () => {
 });
 ```
 
-**Strict mode with files, a watchdog and the fetch bridge**:
+**Strict mode (the default) with files, a watchdog and the fetch bridge**:
 
 ```js
 sandbox.registerFiles({
@@ -799,7 +814,6 @@ sandbox.registerFiles({
         });`,
 });
 sandbox.setConfig({
-    mode: 'strict',
     entry: 'main.js',
     watchdogTimeout: 2000,
     fetchBridge: { allow: ['https://api.example'] },

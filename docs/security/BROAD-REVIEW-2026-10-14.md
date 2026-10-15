@@ -271,8 +271,8 @@ The three markup presets (`csp-swallow`, `form-action-exfil`, `self-navigation`)
 
 ## Residuals, with rationale
 
-The default-mode residuals, one list (the same in [README](../../README.md#default-mode-residuals) and the
-[backlog](../BACKLOG.md#s44--default-mode-residuals-one-list-user-actions-history-guest-workers--documented-residual));
+The default-mode residuals, one list (the same in [README](../../README.md#cooperative-mode-limits) and the
+[backlog](../BACKLOG.md#s44--cooperative-mode-limits-one-frozen-list--documented-limits));
 the last six rows were added by the [independent verification](VERIFICATION-2026-10-14.md).
 
 | Id | What remains | Why it is not closed in default mode | Asserted by |

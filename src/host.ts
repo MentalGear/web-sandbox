@@ -45,8 +45,9 @@ export interface StrictSandboxConfig extends SandboxConfigOptions {
 }
 
 /**
- * Cooperative mode and worker mode, for content that cooperates: guest code runs in the guest document, or in a worker
- * inside it, and their limits are documented (README, "Cooperative-mode limits"). 'iframe' was renamed 'cooperative'.
+ * Cooperative mode, for content that cooperates: guest code runs in the guest document, within a frozen list of
+ * documented limits (README, "Cooperative-mode limits"); 'iframe' was renamed 'cooperative'. Worker mode: guest code
+ * runs in a worker inside the frame (frozen; to be folded into strict mode).
  */
 export interface CooperativeSandboxConfig extends SandboxConfigOptions {
     mode: 'cooperative' | 'worker';

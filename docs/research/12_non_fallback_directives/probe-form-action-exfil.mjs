@@ -21,7 +21,7 @@ await page.goto('http://localhost:4444/playground/index.html');
 await page.waitForSelector('web-sandbox');
 await page.evaluate((h) => {
   const s = document.querySelector('web-sandbox');
-  s.setConfig({ capabilities: ['allow-scripts', 'allow-forms'] });  // both are in ALLOWED_CAPABILITIES
+  s.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts', 'allow-forms'] });  // both are in ALLOWED_CAPABILITIES
   s.load(h);
 }, html);
 await page.waitForTimeout(3000);

@@ -180,7 +180,7 @@ describe('B3: _dispatchLog makes every detail itself, from the raw line and its 
     });
 });
 
-describe('C4: the view port counts violations per directive; the logic port and the default modes keep one count', () => {
+describe('C4: the view port counts violations per directive; the logic port and cooperative and worker mode keep one count', () => {
     const flood = (el: any, port: unknown, directive: string, count: number, onView: boolean) => {
         for (let i = 0; i < count; i++) {
             const frame = { type: 'VIOLATION', directive, blockedURI: `https://x.test/${directive}/${i}` };

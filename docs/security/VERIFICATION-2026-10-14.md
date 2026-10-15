@@ -127,8 +127,8 @@ an interval, a timeout chain, a promise loop and (iframe mode) a nested worker �
 - BACKLOG B8's "Done" described the `EXECUTED` report that S30 removed.
 - The adversarial review's "no residual left open" and its "Chromium kept the wrapper out of process every time"
   (the broad review measured both frames in the host page's process), and the comment in `review-strict.spec.ts`.
-- One list of default-mode residuals, the same in [README](../../README.md#default-mode-residuals), the
-  [backlog](../BACKLOG.md#s44--default-mode-residuals-one-list-user-actions-history-guest-workers--documented-residual)
+- One list of default-mode residuals (since 2026-10-15: the cooperative-mode limits), the same in
+  [README](../../README.md#cooperative-mode-limits), the [backlog](../BACKLOG.md#s44--cooperative-mode-limits-one-frozen-list--documented-limits)
   and the [broad review](BROAD-REVIEW-2026-10-14.md#residuals-with-rationale).
 
 ## Not covered
@@ -174,3 +174,11 @@ listener's `event.source` check, the playground's, the worker allowlist not appl
    guest that never closes its document still announces within 22–40 ms. Now the host is `ready` on the
    announcement, the deadline bounds only that, and the guest holds the host's calls and `execute()` code until its
    document is parsed.
+2. **Strict mode is the default** — ✅ done (2026-10-15;
+   [backlog S48](../BACKLOG.md#s48--strict-is-the-default-iframe-is-renamed-cooperative-cooperative-modes-limits-are-frozen---done);
+   [ADR-005 amendment](../ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen)).
+   Every finding of the reviews above that strict mode does not close lives in the document mode. A config without a
+   mode now builds the strict view; `'iframe'` was renamed `'cooperative'` (it fails closed, saying so); strict `html`
+   that holds a script or an `on…` handler warns once per element; every preset names its mode. Cooperative mode's
+   limits are a frozen list (no new guest-realm patches; V3 and H1 above are on it), and S42, WebKit's host-page
+   availability under CSS paint cost, is accepted and documented: strict mode protects confidentiality and egress there.

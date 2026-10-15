@@ -1,7 +1,7 @@
 import { test, expect } from './fixture';
 
 /**
- * The opt-in liveness watchdog (backlog S6, default mode; ADR-003). With `watchdogTimeout` set, a guest
+ * The opt-in liveness watchdog (backlog S6, cooperative and worker mode; ADR-003). With `watchdogTimeout` set, a guest
  * whose event loop stops answering is terminated within the budget, while the host page stays
  * responsive; a guest that keeps answering is never terminated; and the watchdog stops with the
  * environment it watches.

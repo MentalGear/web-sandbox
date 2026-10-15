@@ -74,7 +74,7 @@ export function entryDoneName(): string {
  * shows in a new tab ("open image in new tab", "open video in new tab"): a browser-initiated navigation the view
  * cannot cancel, to a top-level document outside the sandbox and its policy. A registered SVG shown as an image
  * opened there as an SVG document and ran its script (Chromium, Firefox), and so would any type an engine renders as
- * a document: HTML, XML, and every `+xml` type, which the default mode's prefixes (`image/`, `audio/`, `video/`,
+ * a document: HTML, XML, and every `+xml` type, which cooperative mode's prefixes (`image/`, `audio/`, `video/`,
  * `font/`) admit. So strict mode lists, per kind of load the view makes, the types that are never a document; a
  * file of any other type gets no URL in the view, wherever it is named (markup, a stylesheet's url()), and its
  * references stay as written, failing closed. Inline <svg> is the way to show vector graphics.
@@ -292,7 +292,7 @@ export const RENDER_RULES: RenderRules = {
     removed: RENDER_REMOVED_ELEMENTS,
     attributes: RENDER_ATTRIBUTES,
     urls: RENDER_URL_ATTRIBUTES,
-    // derived, not copied: the table markup-references.ts resolves in default mode. Scripts never survive
+    // derived, not copied: the table markup-references.ts resolves in cooperative mode. Scripts never survive
     // the renderer, so <script src> names nothing here.
     references: REFERENCES.filter(([element]) => element !== 'script'),
     // the view's kinds, derived from the one table (load-kinds.ts, focused review W1; broad review ST1)

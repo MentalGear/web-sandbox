@@ -22,7 +22,7 @@ const result = await page.evaluate(async (h) => {
     const handler = e => { if (e.data && 'csp' in e.data) { window.removeEventListener('message', handler); resolve(e.data); } };
     window.addEventListener('message', handler);
     const s = document.querySelector('web-sandbox');
-    s.setConfig({ capabilities: ['allow-scripts'] });
+    s.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
     s.load(h);
     setTimeout(() => resolve({timeout: true}), 5000);
   });

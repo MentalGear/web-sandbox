@@ -1,5 +1,5 @@
 /**
- * Liveness watchdog for one frame generation (backlog S6, default mode; ADR-003).
+ * Liveness watchdog for one frame generation (backlog S6, cooperative and worker mode; ADR-003).
  *
  * The host pings the guest over the private port and the guest's bootstrap answers each ping from its
  * port handler (see in-sandbox-script.ts). A guest whose event loop is blocked — an endless loop, or

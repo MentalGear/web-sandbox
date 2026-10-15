@@ -1,6 +1,6 @@
 # ADR-005: Strict mode — guest logic in a worker, a view that runs no guest script
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view); [independent verification](#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist); [typed origins](#amendment-2026-10-14-typed-origins-the-view-policy-is-a-template))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view); [independent verification](#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist); [typed origins](#amendment-2026-10-14-typed-origins-the-view-policy-is-a-template)) · 2026-10-15 ([strict is the default](#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen))
 
 ## Why this ADR exists
 
@@ -440,3 +440,56 @@ base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-reque
 time. `data:` is not an origin, so it reaches no image (ST1) and no font or media either. Tests:
 `src/lib/csp/csp-generator.test.ts`, `test/unit/strict.test.ts`, `test/unit/policy-guarantees.test.ts` ("A1"),
 `test/e2e/review-policy.spec.ts`, `test/e2e/broad-strict.spec.ts` ("ST1").
+
+## Amendment (2026-10-15): strict is the default; cooperative mode's limits are frozen
+
+**When**: after the [independent verification](security/VERIFICATION-2026-10-14.md#decisions-after-the-verification)
+(decision 2) and typed origins ([ADR-007](ADR-007-typed-origins.md)); backlog S48. **Why**: every review since this
+ADR found its new issues in the mode where guest script runs in a document, and every one was the S6/S13 class: a
+realm the library does not reach, or a platform behaviour no policy governs. Each fix was a guest-realm patch, and the
+next finding was another. Strict mode closes that class by construction, so it should be what an embedder gets
+without asking.
+
+**Decision**:
+
+- **`mode: 'strict'` is the default** (`DEFAULT_SANDBOX_CONFIG`). A config without `mode` is a strict config, in the
+  types too (`StrictSandboxConfig.mode` is optional; `CooperativeSandboxConfig.mode` is required), and `origins` is
+  parsed for the mode the build will have, so a config that names no mode drops `scripts`. A default element with only
+  `html` renders the cleaned html in the view and runs no guest script: without an `entry` the worker runs only the
+  prelude.
+- **The modes are `'strict' | 'cooperative' | 'worker'`.** The document mode is `'cooperative'`: it is for cooperative
+  content. `'iframe'` is removed, not aliased (nothing is published): it fails closed like any unknown mode (A4), and
+  the reason and the one warning say `('iframe' was renamed 'cooperative')`.
+- **Markup written for cooperative mode is said to run nothing.** When a strict build's `html` holds a script element
+  or an `on…` handler attribute, the element warns once: ``strict mode (the default) runs no script in `html`; name a
+  registered file in `entry`, or choose `mode: 'cooperative'`.`` It reads the markup with the host's `DOMParser`,
+  which runs and loads nothing (`src/lib/markup-scripts.ts`), and never changes what is rendered: the renderer drops
+  both, as before.
+- **Cooperative mode's limits are a frozen list.** No new guest-realm patch is made in cooperative mode; a new finding
+  there is documented as a limit (README "Cooperative-mode limits", the same in API.md and backlog S44). The list: the
+  same-thread execution budget (S6); the pre-policy window over guest markup (S8); frames the guest creates (S13: WebRTC;
+  S35: Firefox keepalive, history traversal, naming) and workers it creates (Firefox `EventSource`, `FontFace`); the host
+  URL in WebKit's created frames (S17) and to same-site origins (S18), with S15's platform limits; WebKit's preconnect;
+  focus, clipboard, messages to the host window, modifier-click tabs and session history (S36, V3, H1); forgeable
+  violation reports; guest-only stalls of the CB3 class (a document that never finishes, Firefox's silent
+  `<meta refresh>`). The hardening already in the guest realm (S35) stays.
+- **Worker mode is frozen as it is.** It duplicates strict mode without a view; folding it into strict mode with
+  `entry` is backlog S49.
+- **S42 is accepted.** The view renders on the host page's thread in Firefox and WebKit (and in Chromium where it
+  shares the page's process), and CSS paint cost is not bounded: a filter list on many elements stalls WebKit's host
+  thread for seconds. In WebKit, strict mode protects confidentiality and egress, not the host page's availability.
+  Cooperative mode is no better there: a guest `while (true) {}` already freezes WebKit's host page. Revisit with
+  ADR-005's "Revisit if" (an out-of-process view).
+
+What remains for the default, the strict list: S42 (above), CSS within the policy, worker violation reports per engine
+and guest-influenced, a worker that closes itself, memory, and same-site cookies on requests to allowed origins (every
+mode).
+
+Tests: `test/unit/strict-default.test.ts` (the default builds the view, `origins` parsed for it, the types, detection
+with no false positives on text, comments, raw text, attribute values or `data-on…`, one warning per element),
+`test/unit/policy-guarantees.test.ts` (A4, the rename), `test/unit/presets.test.ts`, `test/unit/api-docs.test.ts`;
+`test/e2e/strict-default.spec.ts` on all three engines (the never-configured element and a default mount are views
+whose one script is the hashed bootstrap; a `<script>` and an `on…` handler in `html` run in no document and warn
+once, while the same html in cooperative mode runs: positive control; `'iframe'` terminates with the rename; the
+playground opens in strict mode). Every existing preset and spec names the mode it was written for (the e2e baseline
+config is cooperative), so the attack regressions keep testing that mode.

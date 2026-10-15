@@ -140,6 +140,15 @@ describe('docs/API.md lists the public surface', () => {
         expect(sorted(rowKeys(options))).toEqual(sorted(keys));
     });
 
+    it('the default mode, and the strict html warning, as the code has them', () => {
+        const source = read('src/host.ts');
+        const mode = source.match(/const DEFAULT_SANDBOX_CONFIG[^}]+?\bmode: '(\w+)'/)![1]!;
+        const options = section('## Configuration', true);
+        expect(row(options, '`mode`').split(/(?<!\\)\|/)[3]!.trim()).toBe(`\`'${mode}'\``);
+        const warning = source.match(/const STRICT_HTML_SCRIPT_WARNING = "\[Sandbox\] ([^;]+);/)![1]!;
+        expect(row(options, '`html`')).toContain(`${warning};`);
+    });
+
     it('every fetchBridge field, and no other, with the defaults and bounds the code applies', () => {
         const table = section('### `fetchBridge`');
         expect(sorted(rowKeys(table))).toEqual(sorted(interfaceKeys('src/lib/fetch-bridge.ts', 'FetchBridgeConfig')));

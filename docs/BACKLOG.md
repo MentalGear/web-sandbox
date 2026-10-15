@@ -25,25 +25,27 @@ conditional "continue".
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker; taken only from the host's INIT_PORT, never reachable by guest code, only the current environment's port heard (S21) |
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7); at most 256 inbound calls in flight per environment, then `BUSY` (S22) |
 | Host-mediated network | ✅ opt-in `fetchBridge`: `sandboxFetch()` under the bridge discipline, every request logged as a `fetch` event, refusals coded (B5, [ADR-006](ADR-006-fetch-bridge.md)) |
+| Modes | ✅ `'strict'` (the default), `'cooperative'` (cooperative content; its limits a frozen list, S44) and `'worker'` (frozen; to be folded into strict mode, S49); `'iframe'` was renamed `'cooperative'` and fails closed with a reason that says so (S48, [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen)) |
+| Limits | **Strict mode, every default user**: host-page availability in WebKit (S42, accepted), CSS within the policy, worker violation reports per engine and guest-influenced, a worker that closes itself, memory, same-site cookies on requests to allowed origins (every mode). **Cooperative mode only**, a frozen list (no new guest-realm patches; new findings are documented here): S6 same-thread execution, S8, S13, S15, S17, S18, S35's and S36's residuals, forgeable violation reports, CB3-class guest-only stalls (S44) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1); it keeps only allowlisted globals, so every request it can make goes through `fetch`, `XMLHttpRequest`, `WebSocket` or `importScripts`, each governed by the policy on every engine (S43) |
 | Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5; per directive for the strict view, S24); a listener's `reset()`/`terminate()` is never undone, through one helper (S22); every build failure, and every config that cannot be used, is a termination with a reason, and the config is a copy (S26); `workerExecutionTimeout` requires a free event loop at each `execute()` deadline, else terminates (B8, S30); `ready` is the guest's check-in, never its subresources, with its calls and `execute()` held in the guest until its document is parsed (S46) |
-| Auto-sizing | ✅ opt-in `autoResize` (iframe mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
-| Execution budget | ✅ strict mode bounds guest logic on every engine: it runs only in a worker the watchdog stops (S6, [ADR-005](ADR-005-strict-mode.md)); default mode: opt-in watchdog, bounded in worker mode and out-of-process frames, not where the frame shares the host's thread |
-| Strict mode | ✅ opt-in `mode: 'strict'`: guest code only in a worker, a view running only the hash-admitted library bootstrap, rendered markup cleaned (no nested frames, scripts, `meta`, `base`, SVG animation) and moved, links inert (one constant href), one render in flight, delegated events, view liveness check, the worker's source URL revoked once it ran (S6, S13, S17, S18, S24; [ADR-005](ADR-005-strict-mode.md)) |
+| Auto-sizing | ✅ opt-in `autoResize` (strict and cooperative mode): height validated, clamped, at most one write per frame and 30 per second (B6) |
+| Execution budget | ✅ strict mode, the default, bounds guest logic on every engine: it runs only in a worker the watchdog stops (S6, [ADR-005](ADR-005-strict-mode.md)); worker mode too; cooperative mode: opt-in watchdog, bounded in out-of-process frames, not where the frame shares the host's thread (a cooperative-mode limit, S44) |
+| Strict mode | ✅ the default (S48): guest code only in a worker, a view running only the hash-admitted library bootstrap, rendered markup cleaned (no nested frames, scripts, `meta`, `base`, SVG animation) and moved, links inert (one constant href), one render in flight, delegated events, view liveness check, the worker's source URL revoked once it ran (S6, S13, S17, S18, S24; [ADR-005](ADR-005-strict-mode.md)) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
 | E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C); the specs run the playground's presets, and a security preset without a spec fails the unit suite (T4) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
 | Type check | ✅ `bun run typecheck` is clean and gates CI (H3) |
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2), and the strict-mode design probes (research 15) on all three (S45) |
-| CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window (S8) |
+| CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window over guest markup (S8, cooperative mode) |
 | Default policy | ✅ the template: `base-uri`, `form-action`, `frame-src`, `object-src`, `manifest-src` always `'none'` (S9), every fetch directive `'none'` unless `origins` lists an origin (S16); no `'self'`, `data:`, wildcard or scheme can be configured (S14, S47); `blob:` only with registered files, only for their types' kinds ([ADR-004](ADR-004-files-as-blob-urls.md)) |
 | Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`), each only for a load its type is for (S27); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); guest writes opt-in (`guestWrites`): checked by the store's own rules into a per-environment overlay, never given a URL, kept only by an explicit `commitGuestWrites(paths)`, code only with `{ code: true }` (C5) |
-| Host page URL | 🟡 hidden from the guest: base URL `about:blank`, no-referrer frames (S15). The host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18). ✅ in strict mode: guest code sees only its worker's `blob:` URL and no request carries a `Referer` |
+| Host page URL | ✅ in strict mode, the default: guest code sees only its worker's `blob:` URL and no request carries a `Referer`. Cooperative mode (limits, S44): hidden from the guest's document (base URL `about:blank`, no-referrer frames, S15), but the host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18) |
 | API reference | ✅ [`API.md`](API.md): the whole public surface, checked against the code by a unit test (D3); framework adapters out of scope |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
 | Adversarial review 2026-10 | ✅ 21 candidates: 19 fixed (S19–S24), 1 held and is now asserted (A8, S20), 1 documented by design (S25), none of them left as a residual (the default-mode residuals stated elsewhere remain: S44); the follow-up by-construction audit moved C1, C4 and C5 to done (S24), found two gaps (S26) and hardened A3, A6, A7, B5, B6; [report](security/ADVERSARIAL-REVIEW-2026-10.md) |
 | Broad review 2026-10-14 | ✅ reviewers A, B, D (S32–S37): the guest announces its port (CB1, PD8), bounded loading (CB3), no `data:` workers (PD1), guest-realm hardening for keepalive, history, `window.name`, DNS prefetch (PD2–PD4, PD6) with residuals stated (S35, S36); reviewer C's strict-mode findings (ST1–ST4) are reported separately; [report](security/BROAD-REVIEW-2026-10-14.md) |
-| Independent verification 2026-10-14 | ✅ five verifiers (63 of 66 mutations caught): a Firefox worker's `EventSource` and `FontFace` passed the policy, closed by an allowlist of worker globals (S43); a strict entry's synchronous console lines arrive (S45); the default-mode residuals in one list, user actions and history added (S44); 9 test gaps closed and the design probes in CI (S45); decision 1, `ready` on the guest's check-in (S46); [report](security/VERIFICATION-2026-10-14.md) |
+| Independent verification 2026-10-14 | ✅ five verifiers (63 of 66 mutations caught): a Firefox worker's `EventSource` and `FontFace` passed the policy, closed by an allowlist of worker globals (S43); a strict entry's synchronous console lines arrive (S45); the cooperative-mode limits in one list, user actions and history added (S44); 9 test gaps closed and the design probes in CI (S45); decision 1, `ready` on the guest's check-in (S46); decision 2, strict mode the default (S48); [report](security/VERIFICATION-2026-10-14.md) |
 | Focused review 2026-10-14 | ✅ 11 findings and one hardening, all closed (S27–S31): a reference names a file only for the kind of load its type is for (W1), rates hold in any one-second window (W2), the strict renderer removes SVG animation (F1), `workerExecutionTimeout` is a free event loop at the deadline (F2), no error text in reasons (F3), no assigned config keys (F4), one eval writer (F5), refused configs never stored (F6); [report](security/FOCUSED-REVIEW-2026-10-14.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
@@ -64,6 +66,9 @@ added S43–S45: S43 and S45 done, S44 the one list of default-mode residuals. I
 S47 replaced the raw-CSP `connectionsAllowed` with typed `origins` and one policy template per mode the same day
 ([ADR-007](ADR-007-typed-origins.md)): the policy guard rails of S7, S14, S16, S19, S20 (A3, A5) and S34 became
 unrepresentable states.
+On 2026-10-15 strict mode became the default and `'iframe'` was renamed `'cooperative'` (S48): cooperative mode's
+limits are a frozen list (S44: no new guest-realm patches), S42 was accepted and documented, and S49 records folding
+worker mode into strict mode.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -385,7 +390,7 @@ success log with a 2s timeout — slow and prone to false green.
 a first-class event. **Acceptance**: a blocked request produces an observable `violation` event on
 the host, and the security specs assert on it directly.
 
-### S6 · No execution budget in iframe mode — ✅ **done** (strict mode; default-mode watchdog)
+### S6 · No execution budget in iframe mode — ✅ **done** (strict mode, the default; cooperative-mode watchdog, its same-thread case a limit, S44)
 
 **Done (strict mode, 2026-10-13)**, decided in [ADR-005](ADR-005-strict-mode.md): `mode: 'strict'` runs guest
 code only in a worker spawned by a view document whose policy admits one script, the library's bootstrap, by
@@ -502,7 +507,11 @@ directive the browser discards.
 *Update (2026-10-13, S16)*: the shipped default no longer lists `frame-ancestors`, and an explicit `[]`
 is now emitted as `frame-ancestors 'none'`, which a `<meta>` policy discards like any other value.
 
-### S8 · Pre-policy egress window — **P3 · accepted risk**
+### S8 · Pre-policy egress window — **P3 · accepted risk** (cooperative mode; a limit, S44)
+
+*2026-10-15*: a cooperative-mode limit. Strict mode's view document holds only the policy and the library's script
+when it is parsed, and guest markup reaches it later, rendered under the policy.
+
 
 *From [Research 11.4](research/11_meta_csp_delivery/README.md).*
 
@@ -597,7 +606,7 @@ ones are dropped from `capabilities` with a warning and accepted only through `u
 which warns once per capability per instance. `allow-forms` stays safe: `form-action` defaults to
 `'none'` (S9) and a form submission is a navigation the wrapper blocks (S10).
 
-### S13 · No WebRTC egress guarantee — ✅ **done in strict mode**; default iframe mode: residual (frames the guest creates)
+### S13 · No WebRTC egress guarantee — ✅ **done in strict mode** (the default); cooperative mode: a limit (frames the guest creates, S44)
 
 **Done (strict mode, 2026-10-13, [ADR-005](ADR-005-strict-mode.md))**: guest code runs only in a worker, which
 has no peer-connection constructor, and the view runs no guest script; a frame in rendered markup is removed
@@ -811,7 +820,7 @@ Tests:
 - e2e: `test/e2e/empty-directive.spec.ts` — with `connectionsAllowed: { 'default-src': [] }` an image
   and a fetch to a non-allowlisted origin are refused, each with its violation, in all three engines.
 
-### S17 · WebKit shows a frame the guest creates the host page URL — ✅ **done in strict mode**; default iframe mode: open (P1 · M)
+### S17 · WebKit shows a frame the guest creates the host page URL — ✅ **done in strict mode** (the default); cooperative mode: a limit (S44)
 
 **Done (strict mode, 2026-10-13, [ADR-005](ADR-005-strict-mode.md))**: guest code runs only in the worker, which
 has no document and whose location is its own `blob:` URL, and the renderer removes every frame from rendered
@@ -837,7 +846,7 @@ S11 and the file tests before choosing; report upstream to WebKit in any case.
 
 **Acceptance**: in WebKit, no frame the guest can create reads the host page's path or query.
 
-### S18 · WebKit sends the host page URL to same-site origins when the guest asks — ✅ **closed in strict mode**; default iframe mode: residual
+### S18 · WebKit sends the host page URL to same-site origins when the guest asks — ✅ **closed in strict mode** (the default); cooperative mode: a limit (S44)
 
 *Found by [research 15](research/15_strict_mode/README.md), P8 (amendment A9).*
 
@@ -1112,7 +1121,7 @@ blocked listener, no violation). File sources' `blob:` reached `worker-src` thro
 **Done**: the default `worker-src` is `blob:`; a policy step removes `data:` from what governs worker loads; every
 step ends with `assertWidensOnly`. Upstream report text: [report appendix](security/BROAD-REVIEW-2026-10-14.md#appendix-upstream-reports).
 
-### S35 · Guest-realm hardening: keepalive, history traversal, `window.name`, DNS prefetch — ✅ **done in the guest realm**; residuals stated
+### S35 · Guest-realm hardening: keepalive, history traversal, `window.name`, DNS prefetch — ✅ **done in the guest realm**; residuals are cooperative-mode limits (S44)
 
 *From the broad review, PD2 (high, Firefox platform bug), PD3, PD4 (medium), PD6 (low).*
 
@@ -1123,7 +1132,7 @@ host page); `window.name` is inert (host named targets reached the guest frame);
 keepalive; history traversal in Firefox and WebKit; named targets); WebKit opens a connection for
 `<link rel=preconnect>`. Strict mode runs no guest script in a document.
 
-### S36 · Focus, clipboard and messages to the host window — **documented** (residual)
+### S36 · Focus, clipboard and messages to the host window — **documented** (a cooperative-mode limit, S44)
 
 *From the broad review, PD5 (medium) and PD7 (low).*
 
@@ -1169,7 +1178,14 @@ view, counted over the resulting document; a refused render is dropped, acknowle
 build. *I1*: the renderer's link kinds come from load-kinds.ts. Tests: as S40, plus `test/unit/strict.test.ts`,
 `src/lib/load-kinds.test.ts`.
 
-### S42 · CSS paint cost in the strict view can stall the host page — ⏳ **open**
+### S42 · CSS paint cost in the strict view can stall the host page — ✅ **accepted** (documented; 2026-10-15)
+
+**Accepted** (owner's decision with S48): in WebKit, strict mode protects confidentiality and egress, not the host
+page's availability. Cooperative mode is no better there: a guest `while (true) {}` already freezes WebKit's host page
+(S6). Stated in the README ("What strict mode does not cover"), API.md and the
+[ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen).
+Options (a)–(c) below stay on record; (c), an out-of-process view, is ADR-005's "Revisit if".
+
 
 *Found while measuring ST2.* The renderer does not read CSS, and the view runs on the host page's thread (Firefox,
 WebKit, and Chromium in the measured configuration). A filter list on many elements costs their product: in WebKit,
@@ -1196,18 +1212,23 @@ more. Residual: a worker the guest creates in iframe mode (S44). Upstream report
 [broad review appendix](security/BROAD-REVIEW-2026-10-14.md#v1--firefox-bugzilla-core--dom-security-security-sensitive).
 Tests: `test/e2e/verification.spec.ts` ("V1"), `src/lib/worker-globals.test.ts`.
 
-### S44 · Default-mode residuals, one list: user actions, history, guest workers — **documented** (residual)
+### S44 · Cooperative-mode limits, one frozen list — **documented** (limits)
 
-*From the independent verification, V3 and H1 (measured), with the earlier residuals gathered here.* The one list,
-the same in [README](../README.md#default-mode-residuals) and the
-[broad review](security/BROAD-REVIEW-2026-10-14.md#residuals-with-rationale); strict mode closes every item but S8,
-S15 and the cookies (its rendered markup loads from allowed origins too):
+*From the independent verification, V3 and H1 (measured), with the earlier residuals gathered here; frozen on
+2026-10-15 with S48.* The one list, the same in the [README](../README.md#cooperative-mode-limits) and
+[API.md](API.md#modes).
 
+**Policy**: cooperative mode is for cooperative content. No new guest-realm patch is made there; a new finding in
+cooperative mode is added to this list as a limit (the hardening already in the guest realm, S35, stays). None of these
+applies in strict mode, the default; worker mode shares only the reports item.
+
+- same-thread execution: where the frame shares the host page's thread (WebKit always, Chromium in some environments),
+  a guest loop freezes the host page and no watchdog can stop it (S6);
 - a frame the guest creates is a realm of its own: WebRTC (S13), WebKit's host URL as referrer (S17), Firefox's
   keepalive fetch (S35), history traversal (S35), a frame name the host targets (S35); `frame-src 'none'` refuses
   frames that load a URL, not frames made from markup;
-- a worker the guest creates (iframe mode): Firefox sends its `EventSource` and loads its `FontFace` past the policy
-  (S43);
+- a worker the guest creates (from its document or a frame it creates): Firefox sends its `EventSource` and loads its
+  `FontFace` past the policy (S43);
 - WebKit opens a connection for `<link rel=preconnect>` (S35);
 - focus (Chromium, Firefox) and, in a user's click, the clipboard (`writeText()` in Firefox and, in the click's own
   handler, WebKit; `execCommand('copy')` in Chromium and Firefox) (S36);
@@ -1217,15 +1238,21 @@ S15 and the cookies (its rendered markup loads from allowed origins too):
   measurement limit);
 - the guest's fragment navigations add entries to the tab's session history (every engine), and a navigation the
   wrapper refuses adds one in Chromium;
-- Firefox's `<meta refresh>` replaces the guest with a document that announces nothing: a silent channel, ended by
-  the watchdog where it is on (S32);
-- Firefox and WebKit attach the host site's cookies to a guest request to an allowed origin same-site with the host
-  page (observed by the verification);
-- the pre-policy window of a `<meta>` policy (S8), the host origin in `ancestorOrigins` and image `Referer` (S15), and
-  WebKit's full host URL to same-site origins when asked (S18).
+- guest-only stalls (the CB3 class): a guest that never finishes its document stays `ready` and its calls time out;
+  Firefox's `<meta refresh>` replaces the guest with a document that announces nothing (S32); the watchdog ends either
+  where it is on;
+- forgeable reports: every `violation` report comes from the guest's realm, and a frame the guest creates reports to
+  itself (S5);
+- the host page's URL and origin: the pre-policy window of a `<meta>` policy over guest markup (S8), the host origin in
+  `ancestorOrigins` and image `Referer` (S15), and WebKit's full host URL to same-site origins when asked (S18).
+
+**What strict mode, the default, does not cover** (every default user; the same list in the README and API.md): host-page
+availability in WebKit (S42, accepted), CSS within the policy, worker violation reports per engine and guest-influenced,
+a worker that closes itself (only the watchdog notices), memory, and the host site's cookies on requests to allowed
+origins that are same-site with the host page (Firefox and WebKit, observed by the verification; every mode).
 
 Tests: `verification.spec.ts` ("V1 … residual", "V3", "H1"), `broad-review.spec.ts` (PD2–PD8), `webrtc.spec.ts`,
-`host-url.spec.ts`.
+`host-url.spec.ts`, `watchdog.spec.ts`.
 
 ### S45 · Verification gaps: the policy steps' input, a strict entry's first log lines, tests that could not fail, CI — ✅ **done**
 
@@ -1291,6 +1318,40 @@ the types with `@ts-expect-error`), `src/lib/csp/csp-generator.test.ts` (golden 
 directives exactly the template's, fixed ones byte-identical, every other token an origin; cooperative `script-src`
 always admits the bootstrap), `test/unit/host.test.ts` (removal warning), and the e2e specs migrated on all engines.
 Dropped specs, now unrepresentable: the `-elem` directive cases of the A3 class (`review-policy.spec.ts`).
+
+### S48 · Strict is the default; `'iframe'` is renamed `'cooperative'`; cooperative mode's limits are frozen — ✅ **done**
+
+*From the [independent verification](security/VERIFICATION-2026-10-14.md#decisions-after-the-verification), decision 2;
+owner-approved design; [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen).*
+
+**Why**: every review found its new issues in the document mode (frames and workers the guest creates, user actions,
+platform gaps), and each fix was another guest-realm patch. Strict mode closes that class by construction.
+
+**Done**:
+- `DEFAULT_SANDBOX_CONFIG.mode = 'strict'`; the types agree (`StrictSandboxConfig.mode` optional,
+  `CooperativeSandboxConfig.mode` required), and `origins` is parsed for the merged mode, so a config without `mode`
+  drops `scripts`. A default element with only `html` renders the cleaned html and runs no guest script.
+- Modes `'strict' | 'cooperative' | 'worker'`; `'iframe'` fails closed like any unknown mode (A4), the reason and the
+  warning saying `('iframe' was renamed 'cooperative')`. Every internal branch, the bootstrap's `<mode> Ready` line,
+  the presets, the playground and the specs follow.
+- One warning per element when strict `html` holds a script element or an `on…` handler attribute (any namespace or
+  case, template contents included), read with the host's inert `DOMParser` (`src/lib/markup-scripts.ts`).
+- Every existing preset names the mode it was written for (`PresetRules.mode` is required); a strict demo is the
+  playground's default. The e2e baseline config is cooperative, so the existing specs keep their meaning.
+- Cooperative mode's limits frozen (S44); S42 accepted.
+
+Tests: `test/unit/strict-default.test.ts`, `test/unit/policy-guarantees.test.ts` (A4, the rename),
+`test/unit/presets.test.ts`, `test/unit/api-docs.test.ts`, `test/e2e/strict-default.spec.ts` (all three engines),
+each failing at `8b561d1`.
+
+### S49 · Fold worker mode into strict mode with `entry` — ⏳ **open** (P3 · M)
+
+Worker mode is frozen as it is (S48). It duplicates strict mode without a view: a worker inside the frame, the same
+worker-globals allowlist (S43), code only through `execute()`. What differs, and what folding has to decide:
+`importScripts` from origins in `origins.scripts` (strict mode takes no `scripts`); nested workers, which worker mode
+lost with the allowlist (S43), so nothing to keep; `WebAssembly`, which worker mode keeps (WebKit compiles it without
+`'unsafe-eval'`) and strict mode keeps only with `scriptUnsafe`; and a headless strict build (no view, or a hidden
+one). Until then worker mode gets no new features.
 
 ## B · API Surface & DX
 
