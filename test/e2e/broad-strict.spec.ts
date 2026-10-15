@@ -27,7 +27,7 @@ const MAX_ELEMENTS = VIEW_MAX_ELEMENTS; // 50 000
 const MAX_DEPTH = VIEW_MAX_DEPTH; // 256
 const MAX_DETAIL = VIEW_EVENT_LIMITS.maxTotal; // 262 144
 
-const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): SandboxConfig => ({ mode: 'strict', ...config });
+const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): StrictSandboxConfig & { mode: 'strict' } => ({ mode: 'strict', ...config });
 
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done', into: string | null = null, timeout = 8000) {
     await sandbox.run(`sandboxView.render(${JSON.stringify(html + `<p id="${doneId}">done</p>`)}, ${JSON.stringify(into)})`);
@@ -312,15 +312,16 @@ test(`ST3: a submitted form's detail carries at most ${MAX_DETAIL} characters in
     test.setTimeout(60000);
     await sandbox.page.evaluate(() => { (window as any).details = []; });
     await sandbox.exposeHost('report', `(d) => { const strings = [d.target.tag, d.target.id, d.target.name, d.target.value, ...d.ids, ...(d.form || []).flat()]; window.details.push({ chars: strings.join('').length, fields: (d.form || []).length, truncated: d.truncated === true, keys: Object.keys(d).sort().join(' ') }); return true; }`);
-    const slots = Array.from({ length: 30 }, (_, i) => `<span id="slot-${i}"></span>`).join('');
+    // 15 fields of 60 000 characters: past the detail's budget, within the view's (VIEW_MAX_CHARACTERS, review round 1, R1-1)
+    const slots = Array.from({ length: 15 }, (_, i) => `<span id="slot-${i}"></span>`).join('');
     await sandbox.registerFiles({ 'main.js': `
         sandboxView.render('<form id="big">${slots}<button id="send" style="position:absolute;left:0;top:0;width:80px;height:30px">send</button></form><form id="small" style="position:absolute;left:0;top:60px"><button id="send2" style="width:80px;height:30px">send</button><input name="q" value="hello"></form><span id="tail"></span>');
-        for (let i = 0; i < 30; i++) sandboxView.render('<input name="f' + i + '" value="' + 'v'.repeat(60000) + '">', 'slot-' + i);
+        for (let i = 0; i < 15; i++) sandboxView.render('<input name="f' + i + '" value="' + 'v'.repeat(60000) + '">', 'slot-' + i);
         sandboxView.render('<i id="filled"></i>', 'tail');
         sandboxView.on('submit', null, (d) => bridge.call('report', d));
     ` });
     expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
-    await waitInView(page, browserName, `!!document.getElementById('filled') && document.querySelectorAll('#big input').length === 30`, 20000);
+    await waitInView(page, browserName, `!!document.getElementById('filled') && document.querySelectorAll('#big input').length === 15`, 20000);
     await clickInSandbox(page, 40, 15);
     await expect.poll(() => page.evaluate(() => (window as any).details.length), { timeout: 10000 }).toBe(1);
     await clickInSandbox(page, 40, 75);

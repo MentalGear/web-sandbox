@@ -54,6 +54,9 @@
   reviews by five verifiers (mutations, black box, claims and CI, decisions): a guest worker keeps only allowlisted
   globals (Firefox let a worker's `EventSource` and `FontFace` pass the policy), the cooperative-mode limits in one list,
   test gaps closed, the strict-mode design probes in CI.
+- [**security/REVIEW-ROUND-1-2026-10-15.md**](security/REVIEW-ROUND-1-2026-10-15.md) — fresh review round 1 under the
+  stopping rule (four completed reviewers, four methods): the host page's policy, one console relay with byte budgets,
+  the strict view's character and rate budget, the low findings; not clean, so the count stays 0.
 
 - [research/](research/README.md) — fourteen documented attack vectors with reproductions, design probes
   (blob delivery, strict mode), plus the CSP and virtual-files architecture analyses.

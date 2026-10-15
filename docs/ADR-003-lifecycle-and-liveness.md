@@ -1,6 +1,6 @@
 # ADR-003: How does the host observe and control a sandbox's lifecycle?
 
-**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)), 2026-10-14 ([one rule per budget, build and missing environment](#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)), 2026-10-14 ([the execution budget is a free event loop at the deadline](#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline)), 2026-10-14 ([loading is bounded; one answer per build; one document](#amendment-2026-10-14-loading-is-bounded-one-answer-per-build-one-document)), 2026-10-14 ([`ready` is the guest's check-in](#amendment-2026-10-14-ready-is-the-guests-check-in))
+**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)), 2026-10-14 ([one rule per budget, build and missing environment](#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)), 2026-10-14 ([the execution budget is a free event loop at the deadline](#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline)), 2026-10-14 ([loading is bounded; one answer per build; one document](#amendment-2026-10-14-loading-is-bounded-one-answer-per-build-one-document)), 2026-10-14 ([`ready` is the guest's check-in](#amendment-2026-10-14-ready-is-the-guests-check-in)), 2026-10-15 ([review round 1](#amendment-2026-10-15-review-round-1-strict-ready-refused-builds-in-a-task-no-rebuild-for-the-same-config))
 
 ## Why this ADR exists
 
@@ -301,3 +301,18 @@ before guest code (ADR-002, B2), so guest code cannot open the gate early; it ca
 
 Proof: `test/e2e/ready.spec.ts`, `test/e2e/broad-review.spec.ts` ("CB3"), `src/lib/in-sandbox-script.test.ts` ("the
 startup gate").
+
+## Amendment (2026-10-15): review round 1: strict `ready`, refused builds in a task, no rebuild for the same config
+
+**When**: [review round 1](security/REVIEW-ROUND-1-2026-10-15.md) (R3-1, R3-2, R3-7); backlog S50, S53.
+
+- **Strict mode is `ready` on the view's check-in** (`VIEW_READY` on the view port), never on the frame's load alone:
+  a view whose bootstrap the host page's policy refused never checks in, and the build ends at `LOAD_TIMEOUT_MS` with a
+  reason that names the host page's policy (ADR-005 amendment of the same day). The load deadline tells the two cases
+  apart: a frame that did not load, or a frame that loaded whose startup script did not run.
+- **A refused build's `terminated` comes in a task**, like `ready`: `state` is `terminated` when `setConfig()`,
+  `reset()` or `load()` returns, and a listener added right after hears the event. An answer that is no longer the
+  state (another build or the element's removal before the task) is never dispatched. CB5's guard is unchanged: a
+  listener that builds again from the same inputs during the dispatch gets the same answer, once.
+- **`setConfig()` of the configuration the standing environment was built from is no change**: no rebuild, while the
+  environment is `loading` or `ready` and nothing else a build reads (`load()`, the files) changed since.

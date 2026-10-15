@@ -259,7 +259,7 @@ describe("inSandboxScript", () => {
         delete (globalThis as any).__ranByCaptured;
         const frames = port.posted.mock.calls.map(call => call[0]);
         expect(frames.filter((f: any) => f.type === 'EXECUTED')).toEqual([]);
-        expect(frames.filter((f: any) => f.type === 'LOG' && typeof f.args[0] === 'string').map((f: any) => f.args[0])).toEqual(['Boom']);
+        expect(frames.filter((f: any) => f.type === 'LOG' && typeof f.args[0] === 'string').map((f: any) => f.args[0])).toEqual(['Boom', '[object Object]']); // a thrown value whose message is not a string: named by its kind (review round 1, R4-7)
         port.deliver({ type: 'PING', n: -3 }); // a probe's ping: answered like any ping
         expect(port.posted.mock.calls.at(-1)![0]).toEqual({ type: 'PONG', n: -3 });
     });
@@ -555,9 +555,11 @@ describe("inSandboxScript", () => {
             return { requests, answer };
         };
 
-        it("exists only when the host turned the bridge on, as a separate global: fetch is not the bridge", () => {
-            start();
-            expect((globalThis as any).sandboxFetch).toBeUndefined();
+        it("exists in every environment (review round 1, R4-8: the host refuses it while the bridge is off), as a separate global: fetch is not the bridge", () => {
+            const { requests } = start();
+            expect(typeof (globalThis as any).sandboxFetch).toBe('function');
+            void (globalThis as any).sandboxFetch('https://api.example/').catch(() => {});
+            expect(requests()[0].method).toBe('sandbox:fetch'); // the host decides: FETCH_NOT_ALLOWED (host.ts, _handleFetch)
             start({ fetchBridge: { timeoutMs: 1000 } });
             expect(typeof (globalThis as any).sandboxFetch).toBe('function');
             expect(globalThis.fetch).not.toBe((globalThis as any).sandboxFetch);

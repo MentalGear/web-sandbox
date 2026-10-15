@@ -1,0 +1,165 @@
+import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
+import { inFrames, waitInView } from './strict-view';
+import type { Page } from '@playwright/test';
+
+/**
+ * The host page's own policy (review round 1, R2-1 = R3-1; docs/API.md#host-page-policy). The sandbox's frames are srcdoc
+ * documents, which inherit the policies of the page that made them: a copy of its CSP list (CSP3), its Trusted Types
+ * requirement and its Cross-Origin-Embedder-Policy. Each test serves the e2e harness with one host policy
+ * (vite.config.ts, /__host-policy) and asserts, per engine, what the embedder is told:
+ *   - strict mode is `ready` only once its view's bootstrap checked in (at 5ede7ba it was `ready` on the frame's load,
+ *     and 5 s later "the sandbox view stopped responding");
+ *   - a startup script the host page refuses, a worker it refuses, a Trusted Types policy name it refuses: each ends
+ *     the build with a reason that names the host page's policy (at 5ede7ba: "did not finish loading", "the guest
+ *     entry failed to start", "could not be built (TypeError)");
+ *   - with what docs/API.md says to allow, the same page works (positive controls), and with no host policy at all.
+ * Evidence: the element's events in order (host-policy-harness.ts), what the view's DOM holds and how big each frame
+ * is, read from outside (strict-view.ts), and the host page's console.
+ */
+
+const STARTUP_BLOCKED = "the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)";
+const WORKER_REFUSED = "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)";
+const TRUSTED_TYPES = "the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)";
+const WRAPPER_STYLE_HASH = "'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='";
+
+const ENTRY = `sandboxView.render('<p id="hello">hi</p>'); console.log('ENTRY RAN');`;
+const COOPERATIVE = { mode: 'cooperative', capabilities: ['allow-scripts'], html: '<p>x</p><script>console.log("COOPERATIVE RAN")</script>' };
+
+type HostEvent = { type: 'ready' | 'terminated'; reason: string | null };
+
+/** Opens the harness with the given host policy headers; the element is inserted (a default, strict build). */
+async function openWithPolicy(page: Page, policy: { csp?: string; coep?: string }) {
+    const query = new URLSearchParams();
+    if (policy.csp) query.set('csp', policy.csp);
+    if (policy.coep) query.set('coep', policy.coep);
+    await page.goto(`${ORIGIN}/__host-policy?${query}`);
+    await page.waitForFunction(() => (window as any).harnessReady === true);
+}
+
+/** setConfig() and the events from then on, once it settled. */
+async function configure(sandbox: SandboxDriver, config: object): Promise<HostEvent[]> {
+    await sandbox.page.evaluate(() => { (window as any).sandboxEvents.length = 0; });
+    await sandbox.page.evaluate((c) => whenSettled(s => s.setConfig(c)), config as any);
+    await sandbox.page.waitForTimeout(300); // a termination right after 'ready' (the old strict path) would show here
+    return sandbox.page.evaluate(() => [...(window as any).sandboxEvents]);
+}
+
+async function strictEntry(sandbox: SandboxDriver): Promise<HostEvent[]> {
+    await sandbox.registerFiles({ 'main.js': ENTRY });
+    return configure(sandbox, { entry: 'main.js' });
+}
+
+/** The view's bootstrap hash, read the way docs/API.md says: from the wrapper's srcdoc. */
+async function viewHash(sandbox: SandboxDriver): Promise<string> {
+    await openWithPolicy(sandbox.page, {});
+    expect(await strictEntry(sandbox)).toEqual([{ type: 'ready', reason: null }]);
+    return sandbox.page.evaluate(() => {
+        const srcdoc = (document.querySelector('web-sandbox') as HTMLElement).shadowRoot!.querySelector('iframe')!.srcdoc;
+        return `'${/script-src '(sha256-[A-Za-z0-9+/=]+)'/.exec(srcdoc)![1]}'`;
+    });
+}
+
+/** Heights of the wrapper and of the frame inside it, read from outside. */
+async function frameHeights(page: Page, browserName: string): Promise<number[]> {
+    const values = await inFrames<number>(page, browserName, 'innerHeight', (path) => path === 'main/wrapper' || path === 'main/wrapper/view');
+    // a frame of a build that was torn down can still be listed, with no context
+    return values.filter(v => v.value !== 'no-context').map(v => v.value as number);
+}
+
+test.describe('host page policy', () => {
+    test('positive control, no host policy: strict renders, cooperative runs its script, the frames fill the element', async ({ sandbox, page, browserName }) => {
+        await openWithPolicy(page, {});
+        expect(await strictEntry(sandbox)).toEqual([{ type: 'ready', reason: null }]);
+        await waitInView(page, browserName, `!!document.getElementById('hello')`);
+        expect(await frameHeights(page, browserName)).toEqual([300, 300]);
+        expect(await configure(sandbox, COOPERATIVE)).toEqual([{ type: 'ready', reason: null }]);
+        await sandbox.waitForLog('COOPERATIVE RAN');
+    });
+
+    test("script-src 'self': strict is never ready and ends with the startup reason; so does cooperative mode", async ({ sandbox, page }) => {
+        await openWithPolicy(page, { csp: "script-src 'self'" });
+        expect(await strictEntry(sandbox)).toEqual([{ type: 'terminated', reason: STARTUP_BLOCKED }]);
+        expect(await configure(sandbox, COOPERATIVE)).toEqual([{ type: 'terminated', reason: STARTUP_BLOCKED }]);
+    });
+
+    test("script-src 'self' with the view's hash and worker-src blob: (what docs/API.md says to allow): strict renders", async ({ sandbox, page, browserName }) => {
+        const hash = await viewHash(sandbox);
+        await openWithPolicy(page, { csp: `script-src 'self' ${hash}; worker-src blob:` });
+        expect(await strictEntry(sandbox)).toEqual([{ type: 'ready', reason: null }]);
+        await waitInView(page, browserName, `!!document.getElementById('hello')`);
+        await sandbox.waitForLog('ENTRY RAN');
+    });
+
+    test('a worker-src without blob: (here through script-src): strict ends with the worker reason, never "the guest entry failed to start"', async ({ sandbox, page }) => {
+        const hash = await viewHash(sandbox);
+        await openWithPolicy(page, { csp: `script-src 'self' ${hash}` });
+        await strictEntry(sandbox);
+        await expect.poll(() => page.evaluate(() => (window as any).sandboxEvents.length)).toBe(2);
+        expect(await page.evaluate(() => (window as any).sandboxEvents)).toEqual([{ type: 'ready', reason: null }, { type: 'terminated', reason: WORKER_REFUSED }]);
+        expect(await sandbox.logs()).toContain(`[Sandbox] ${WORKER_REFUSED}`);
+        expect((await sandbox.logs()).filter(line => line.includes('entry failed'))).toEqual([]);
+    });
+
+    test("require-trusted-types-for 'script': strict renders (Chromium and WebKit through the 'web-sandbox' policy; Firefox has no Trusted Types)", async ({ sandbox, page, browserName }) => {
+        for (const csp of ["require-trusted-types-for 'script'", "require-trusted-types-for 'script'; trusted-types web-sandbox"]) {
+            await openWithPolicy(page, { csp });
+            expect(await strictEntry(sandbox), csp).toEqual([{ type: 'ready', reason: null }]);
+            await waitInView(page, browserName, `!!document.getElementById('hello')`);
+        }
+    });
+
+    test("require-trusted-types-for 'script', worker mode: the frame starts its worker through the policy, so the worker answers (before: ready, and nothing behind it)", async ({ sandbox, page }) => {
+        await openWithPolicy(page, { csp: "require-trusted-types-for 'script'" });
+        expect(await configure(sandbox, { mode: 'worker' })).toEqual([{ type: 'ready', reason: null }]);
+        // UNKNOWN_METHOD is the worker's broker answering; TIMEOUT would mean no worker ran
+        expect(await sandbox.callWithTimeoutOutcome(4000, 'nothing-exposed')).toMatchObject({ status: 'rejected', code: 'UNKNOWN_METHOD' });
+    });
+
+    test("a trusted-types directive that does not name 'web-sandbox': the build ends with the reason naming it (Firefox: no Trusted Types, ready)", async ({ sandbox, page, browserName }) => {
+        await openWithPolicy(page, { csp: "require-trusted-types-for 'script'; trusted-types other" });
+        const expected = browserName === 'firefox' ? [{ type: 'ready', reason: null }] : [{ type: 'terminated', reason: TRUSTED_TYPES }];
+        expect(await strictEntry(sandbox)).toEqual(expected);
+        expect(await configure(sandbox, COOPERATIVE)).toEqual(expected);
+    });
+
+    test(`style-src 'self': the frame is 150 px high and the element warns once, naming the hash; with ${WRAPPER_STYLE_HASH} it fills the element, no warning`, async ({ sandbox, page, browserName }) => {
+        const warnings: string[] = [];
+        page.on('console', (message) => { if (message.type() === 'warning' && message.text().includes('style-src')) warnings.push(message.text()); });
+        await openWithPolicy(page, { csp: "style-src 'self'" });
+        expect(await strictEntry(sandbox)).toEqual([{ type: 'ready', reason: null }]);
+        expect(await frameHeights(page, browserName)).toEqual([300, 150]);
+        await expect.poll(() => warnings.length).toBe(1);
+        expect(warnings[0]).toContain(WRAPPER_STYLE_HASH);
+
+        warnings.length = 0;
+        await openWithPolicy(page, { csp: `style-src 'self' ${WRAPPER_STYLE_HASH}` });
+        expect(await strictEntry(sandbox)).toEqual([{ type: 'ready', reason: null }]);
+        expect(await frameHeights(page, browserName)).toEqual([300, 300]);
+        await page.waitForTimeout(300);
+        expect(warnings).toEqual([]);
+    });
+
+    test("R4-12: the element is a block by default, also under style-src 'self' (a constructed stylesheet); the embedder's CSS still wins", async ({ page }) => {
+        await openWithPolicy(page, { csp: "style-src 'self'" });
+        const displays = await page.evaluate(() => {
+            const fresh = document.createElement('web-sandbox');
+            document.body.appendChild(fresh);
+            const byDefault = getComputedStyle(fresh).display;
+            fresh.style.display = 'inline-block'; // the embedder's own (CSSOM, which no style-src governs either)
+            return [byDefault, getComputedStyle(fresh).display];
+        });
+        expect(displays).toEqual(['block', 'inline-block']);
+    });
+
+    test('Cross-Origin-Embedder-Policy: require-corp: strict renders in Chromium and Firefox; WebKit refuses the blob: worker, and the reason says so', async ({ sandbox, page, browserName }) => {
+        await openWithPolicy(page, { coep: 'require-corp' });
+        const events = await strictEntry(sandbox);
+        if (browserName === 'webkit') {
+            await expect.poll(() => page.evaluate(() => (window as any).sandboxEvents.length)).toBe(2);
+            expect(await page.evaluate(() => (window as any).sandboxEvents)).toEqual([{ type: 'ready', reason: null }, { type: 'terminated', reason: WORKER_REFUSED }]);
+            return;
+        }
+        expect(events).toEqual([{ type: 'ready', reason: null }]);
+        await waitInView(page, browserName, `!!document.getElementById('hello')`);
+    });
+});

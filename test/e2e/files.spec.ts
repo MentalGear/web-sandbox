@@ -222,7 +222,8 @@ test.describe('3. isolation between sandboxes and from the host page', () => {
                 r.byUrl = await sandboxFiles.text(${JSON.stringify(url)}).then(() => 'resolved', shape);
                 console.log('SECOND ' + JSON.stringify(r));
             })();`), a.url);
-        const second = JSON.parse((await sandbox.waitForLog('SECOND ')).slice('SECOND '.length));
+        // anchored: the first line's markup holds the bootstrap's source, whose text may contain "SECOND "
+        const second = JSON.parse((await sandbox.waitForLog(/^SECOND /)).slice('SECOND '.length));
         expect(second).toEqual({ list: ['other.txt'], own: 'B-own', fetchOther: 'error:TypeError', byName: NOT_FOUND, byUrl: NOT_FOUND });
 
         const host = await page.evaluate((url) => fetch(url).then(x => x.text()).then(t => 'loaded:' + t, e => 'error:' + e.name), a.url);

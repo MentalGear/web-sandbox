@@ -269,10 +269,10 @@ test('the guest policy is unchanged: with the bridge on, a direct fetch and WebS
     expect(recorder.paths('allowed')).toEqual(['/bridged']);
 });
 
-test('off by default: no sandboxFetch, and calling the reserved method directly is refused without a request', async ({ sandbox }) => {
+test('off by default: sandboxFetch, and calling the reserved method directly, are refused without a request (review round 1, R4-8: sandboxFetch exists in every environment)', async ({ sandbox }) => {
     expect(await sandbox.mount()).toBe('ready');
 
-    expect(await sandbox.inGuest(`return typeof sandboxFetch`)).toBe('undefined');
+    expect(await sandbox.guestOutcome(`sandboxFetch('${recorder.blocked}/via-global')`)).toMatchObject({ status: 'rejected', code: 'FETCH_NOT_ALLOWED' });
     const outcome = await sandbox.guestOutcome(`bridge.call('sandbox:fetch', { url: '${recorder.blocked}/direct-call' })`);
     expect(outcome).toMatchObject({ status: 'rejected', code: 'FETCH_NOT_ALLOWED' });
     await sandbox.page.waitForTimeout(300);

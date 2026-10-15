@@ -1,5 +1,6 @@
 import { test as base, expect, type Page } from '@playwright/test';
-import type { CooperativeSandboxConfig, SandboxConfig, StrictSandboxConfig } from '@src/host';
+import type { SandboxConfig, SandboxConfigOptions } from '@src/host';
+import type { SandboxOrigins } from '@src/lib/csp/origins';
 import type { SandboxViolation } from '@src/lib/violation';
 import type { FetchRecord } from '@src/lib/fetch-bridge';
 
@@ -18,9 +19,11 @@ export const BASELINE_CONFIG: SandboxConfig = {
 /**
  * A config for mount(): applied over BASELINE_CONFIG, so one that names no mode is a cooperative config (the baseline's
  * mode), as the specs were written; a strict or worker config names its mode. To apply a config as an embedder would,
- * with the library's defaults (strict mode), call setConfig() itself (strict-default.spec.ts).
+ * with the library's defaults (strict mode), call setConfig() itself (strict-default.spec.ts). Deliberately looser than
+ * SandboxConfig, which narrows each mode's options (review round 1, R3-6): specs also mount what a mode drops at run
+ * time, to assert that it is dropped.
  */
-export type MountConfig = (StrictSandboxConfig & { mode: 'strict' }) | (Omit<CooperativeSandboxConfig, 'mode'> & { mode?: CooperativeSandboxConfig['mode'] });
+export type MountConfig = SandboxConfigOptions & { mode?: 'strict' | 'cooperative' | 'worker'; origins?: SandboxOrigins };
 
 export type MountResult = 'ready' | 'terminated';
 
@@ -281,7 +284,12 @@ export const test = base.extend<{ sandbox: SandboxDriver }>({
                 };
                 sandbox.addEventListener('ready', settle);
                 sandbox.addEventListener('terminated', settle);
+                const frame = () => sandbox.shadowRoot?.querySelector('iframe') ?? null;
+                const before = frame();
                 action(sandbox);
+                // setConfig() of the configuration a ready environment stands on builds nothing and dispatches
+                // nothing (review round 1, R3-7): the same frame, still ready, is the answer
+                if (before !== null && frame() === before && sandbox.state === 'ready') settle(new Event('ready'));
             });
             (window as any).settleOutcome = (promise: Promise<unknown>) => promise.then(
                 (value) => ({ status: 'resolved', value }),

@@ -8,11 +8,24 @@
  * host) as the one SANDBOX_PORT message the host accepts from this frame's window, and hands port1 to the worker as
  * its one INIT_PORT. No port is ever received here, so there is nothing for another frame on the host page to
  * race (review B1), and no guest code runs in this frame (worker mode has no guest markup).
+ *
+ * Under a host page's Trusted Types requirement (review round 1, R3-1), which this srcdoc frame inherits, the Worker
+ * constructor refuses a string (Chromium, WebKit): the worker never started, and the sandbox stayed `ready` with nothing
+ * behind it. The URL is tried as a string first, then through a policy of this frame's own named like the element's
+ * (trusted-types.ts; the host page's trusted-types directive admits it already), whose rule passes the worker's URL.
  */
-export function workerBootstrap(workerSource: string) {
+export function workerBootstrap(workerSource: string, trustedTypesPolicy?: string) {
     const channel = new MessageChannel();
     parent.parent.postMessage({ type: 'SANDBOX_PORT' }, '*', [channel.port2]);
     const workerUrl = URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' }));
-    const worker = new Worker(workerUrl);
+    let worker: Worker;
+    try {
+        worker = new Worker(workerUrl);
+    } catch (error) {
+        const factory = (globalThis as any).trustedTypes;
+        if (!(error instanceof TypeError) || !factory || !trustedTypesPolicy) throw error;
+        const policy = factory.createPolicy(trustedTypesPolicy, { createScriptURL: (url: string) => url });
+        worker = new Worker(policy.createScriptURL(workerUrl));
+    }
     worker.postMessage({ type: 'INIT_PORT' }, [channel.port1]);
 }

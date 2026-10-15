@@ -46,13 +46,22 @@ const strict: SandboxConfig = { html: '<p>hi</p>', origins: { images: ['https://
 const config: SandboxConfig = { mode: 'cooperative', capabilities: ['allow-scripts'], unsafeCapabilities: ['fullscreen'] };
 // @ts-expect-error 'iframe' was renamed 'cooperative'
 const renamed: SandboxConfig = { mode: 'iframe' };
+// @ts-expect-error strict mode's origins have no scripts: were the package's types `any`, this line would not be an error
+const scripted: SandboxConfig = { mode: 'strict', origins: { scripts: ['https://cdn.example'] } };
 const element: typeof WebSandbox = defineWebSandbox('consumer-sandbox');
-console.log(element.name, SAFE_CAPABILITIES.length, strict, config, renamed);
+console.log(element.name, SAFE_CAPABILITIES.length, strict, config, renamed, scripted);
 TS
 cat > tsconfig.json <<'JSON'
 { "compilerOptions": { "target": "ESNext", "module": "Preserve", "moduleResolution": "bundler", "lib": ["ESNext", "DOM"], "strict": true, "noEmit": true, "skipLibCheck": false }, "include": ["consumer.ts"] }
 JSON
 
 bunx tsc -p .
+# The same consumer under Node's own resolution (review round 1, R4-3): the declarations' relative imports must carry
+# their .js extensions (scripts/declaration-specifiers.ts), else TS2834 here; skipLibCheck is off, and the
+# @ts-expect-error lines fail the check if the package's types ever read as `any`.
+cat > tsconfig.nodenext.json <<'JSON'
+{ "compilerOptions": { "target": "ESNext", "module": "NodeNext", "moduleResolution": "NodeNext", "lib": ["ESNext", "DOM"], "strict": true, "noEmit": true, "skipLibCheck": false }, "include": ["consumer.ts"] }
+JSON
+bunx tsc -p tsconfig.nodenext.json
 bun build consumer.ts --target browser --outdir out >/dev/null
 echo "package smoke test passed: $(basename "$tarball")"

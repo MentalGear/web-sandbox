@@ -2,6 +2,7 @@ import { rewriteInlineModule } from "./module-specifiers";
 import { cssUrlReferences, replaceRanges } from "./css-references";
 import { srcsetCandidates } from "./srcset";
 import { admitsAll, linkKinds, type LoadKindName } from "./load-kinds";
+import { parseInert } from "./trusted-types";
 
 /**
  * Markup references to registered files (ADR-004, PR2). Host-only: nothing here is stringified into
@@ -215,7 +216,7 @@ export function rewriteGuestMarkup(markup: string, files: FileTypes, options: Gu
     let nonce = givenNonce; // drawn at the first match: a build that rewrites nothing draws none
 
     // Inert: no script runs and nothing is fetched (see the comment at the top of this file).
-    const doc = new DOMParser().parseFromString(markup, 'text/html');
+    const doc = parseInert(markup);
 
     const slots: (string | CssSlot)[] = [];
     for (const element of doc.querySelectorAll(REFERENCE_SELECTOR)) {

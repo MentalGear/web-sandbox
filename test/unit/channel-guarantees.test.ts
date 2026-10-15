@@ -162,6 +162,16 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
                 return { el, force: () => el._onViewMessage(view, { type: 'GUEST_ERROR', message: 'SyntaxError' }), done: () => view.close() };
             },
         },
+        {
+            name: "a worker the host page's policy refused (strict mode, review round 1 R3-1)",
+            reason: "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)",
+            start: async () => {
+                const el = await mount({ mode: 'strict' });
+                const { port1: view } = new MessageChannel();
+                el._viewPort = view;
+                return { el, force: () => el._onViewMessage(view, { type: 'WORKER_REFUSED' }), done: () => view.close() };
+            },
+        },
     ];
 
     describe.each(PATHS)('$name', ({ reason, start }) => {

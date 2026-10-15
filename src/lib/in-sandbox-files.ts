@@ -55,7 +55,11 @@ import type { FileSnapshotEntry } from './files';
  *   - removing a path the host holds in neither its store nor the guest's writes rejects NOT_FOUND, minted
  *     here from the host's answer.
  */
-export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((request: unknown) => Promise<unknown>) | null) {
+// `urlTypes` (strict mode's worker, review round 1 R2-4): the only types url() mints a URL for, VIEW_FILE_TYPES. A URL
+// the worker minted reaches the view only as a string in rendered markup, and the view admits it as an image only for
+// a type it would show itself: a URL for any other type (an SVG) is one the view could be made to load as CSS. Any other
+// file is read() and text() only; url() of it is NOT_FOUND. Null or absent: every file gets one (cooperative, worker).
+export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((request: unknown) => Promise<unknown>) | null, urlTypes?: readonly string[] | null) {
     // `url` is null for a path the guest wrote: never minted (see above)
     const files = new Map<string, { blob: Blob; url: string | null }>();
     // Uint8Array.fromBase64 where the engine has it (much faster), else atob and a copy loop
@@ -85,7 +89,7 @@ export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((requ
                     text = replacement;
                 } else {
                     const target = files.get((replacement as [string])[0]);
-                    if (!target) continue; // not made yet: the reference keeps its registered bytes
+                    if (!target || target.url === null) continue; // not made yet, or given no URL: the reference keeps its registered bytes
                     text = cssString(target.url as string); // every snapshot file has one: only written files do not
                 }
                 parts.push(blob.slice(at, edits[i] as number), text);
@@ -94,7 +98,8 @@ export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((requ
             parts.push(blob.slice(at));
             loaded = new Blob(parts, { type: entry[1] });
         }
-        files.set(entry[0], { blob, url: URL.createObjectURL(loaded) });
+        const minted = !urlTypes || urlTypes.indexOf(entry[1]) >= 0;
+        files.set(entry[0], { blob, url: minted ? URL.createObjectURL(loaded) : null });
     }
 
     const notFound = () => {

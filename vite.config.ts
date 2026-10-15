@@ -48,6 +48,22 @@ export default defineConfig({
         res.setHeader('cache-control', 'no-store');
         res.end(JSON.stringify({ method: req.method, headers: req.headers }));
       });
+      // Test endpoint (host-policy.spec.ts, review round 1 R3-1): the e2e harness served with the policy headers a
+      // spec names, `?csp=<Content-Security-Policy>` and `&coep=<Cross-Origin-Embedder-Policy>`, so a spec can mount
+      // the sandbox on a host page whose own policy the sandbox's frames inherit. The page's one script is external
+      // (host-policy-harness.ts), so a host policy without 'unsafe-inline' still runs it.
+      server.middlewares.use('/__host-policy', (req, res) => {
+        const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
+        const csp = query.get('csp');
+        const coep = query.get('coep');
+        res.setHeader('content-type', 'text/html; charset=utf-8');
+        res.setHeader('cache-control', 'no-store');
+        if (csp) res.setHeader('content-security-policy', csp);
+        if (coep) res.setHeader('cross-origin-embedder-policy', coep);
+        res.end('<!DOCTYPE html><html><head><meta charset="utf-8"><title>host policy harness</title>'
+          + '<script type="module" src="/test/e2e/host-policy-harness.ts"></script></head>'
+          + '<body></body></html>');
+      });
       server.httpServer?.once('listening', () => {
         const { port, host } = server.config.server;
         const protocol = server.config.server.https ? 'https' : 'http';

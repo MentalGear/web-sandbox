@@ -111,10 +111,13 @@ describe('CB4: a guest write is answered from the build the guest has, never fro
 // ---- CB5 ------------------------------------------------------------------------------------------------
 
 describe('CB5: a terminated listener that builds again from the same inputs is answered once', () => {
+    // a build's 'terminated' comes in a task of its own (review round 1, R3-2)
+    const settled = () => new Promise(resolve => setTimeout(resolve, 0));
     it.each([
         ['an unknown mode (a refusal)', { mode: 'Strict' }, false],
         ['origins that cannot be read (a refusal)', { origins: { images: 'x; script-src *' } }, false],
-        ['a build that throws (a build failure)', { capabilities: ['allow-scripts'] }, true],
+        // a config other than the mount's: the same one again would be no change, and build nothing (review round 1, R3-7)
+        ['a build that throws (a build failure)', { capabilities: ['allow-scripts'], html: '<p>other</p>' }, true],
     ])('%s: one termination, one warning, no recursion; the state stays terminated', async (_, config, breakBuild) => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount({ capabilities: ['allow-scripts'] });
@@ -125,11 +128,13 @@ describe('CB5: a terminated listener that builds again from the same inputs is a
             if (heard < 2000) el.reset();
         });
         expect(() => el.setConfig(config)).not.toThrow();
+        await settled();
         expect(heard).toBe(1);
         expect(el.state).toBe('terminated');
         expect(warn.mock.calls.filter(call => String(call[0]).startsWith('[Sandbox] terminated:'))).toHaveLength(1);
         // later, outside the listener, reset() says again why it cannot start (unchanged)
         el.reset();
+        await settled();
         expect(heard).toBe(2);
     });
 
@@ -142,6 +147,7 @@ describe('CB5: a terminated listener that builds again from the same inputs is a
             if (heard < 2000) el.load(`<p>${heard}</p>`);
         });
         el.setConfig({ mode: 'Strict' });
+        await settled();
         expect([heard, el.state]).toEqual([1, 'terminated']);
     });
 
@@ -154,6 +160,7 @@ describe('CB5: a terminated listener that builds again from the same inputs is a
             states.push(el.state);
         }, { once: true });
         el.setConfig({ mode: 'Strict' });
+        await settled();
         expect(states).toEqual(['loading']);
         expect(el.state).toBe('loading');
     });

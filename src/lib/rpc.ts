@@ -90,6 +90,23 @@ export type RpcErrorCode =
 export const MAX_INBOUND_IN_FLIGHT = 256;
 
 /**
+ * The byte budget of one RPC message (review round 1, R3-3), measured with structured-size.ts: a call's arguments and
+ * a result. The largest message the library itself sends is a fetch bridge body at its largest `maxBytes` (32 MiB)
+ * with its headers, so 33 MiB. A call past it is refused before anything is sent (ARGS_NOT_TRANSFERABLE), a result
+ * past it is answered RESULT_NOT_TRANSFERABLE, and a frame past it that arrives anyway is not acted on. Mirrored inside
+ * createBroker (a test keeps them equal).
+ */
+export const RPC_MAX_BYTES = 34603008;
+
+/**
+ * Most bytes of arguments a broker holds in inbound calls running at once, per channel (review round 1, R3-3): a call
+ * that would take it past this is answered BUSY and its method does not run. With MAX_INBOUND_IN_FLIGHT alone, 256
+ * calls of 32 MiB each to a method that never settles held 8 GiB on the host (measured in WebKit). Mirrored inside
+ * createBroker (a test keeps them equal).
+ */
+export const RPC_MAX_INBOUND_BYTES = 67108864;
+
+/**
  * Codes a library-reserved method (a `sandbox:` name) reports, from one closed set, disjoint from
  * RpcErrorCode: the fetch bridge's FETCH_* (backlog B5, src/lib/fetch-bridge.ts) and the guest writes' file
  * codes (backlog C5, src/lib/guest-writes.ts; the same FileErrorCode strings registerFiles() throws, files.ts).
@@ -114,6 +131,10 @@ export interface BrokerOptions {
     // Accept a library code (RpcLibraryCode) in a refusal of a call to a reserved method. Only the guest's
     // broker sets it; the host's never does, so a host call can never be refused with a library code.
     acceptLibraryCodes?: boolean;
+    // The byte measure (createSizeOf() of structured-size.ts) the budgets RPC_MAX_BYTES and RPC_MAX_INBOUND_BYTES are
+    // measured with. Both brokers the library makes pass one (host.ts, in-sandbox-script.ts); passed in rather than
+    // closed over because this function is stringified.
+    sizeOf?: (value: unknown, limit: number) => number;
 }
 
 export interface Broker {
@@ -163,6 +184,11 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const RESERVED_PREFIX = 'sandbox:';
     // Mirrors the exported MAX_INBOUND_IN_FLIGHT, for the same reason.
     const MAX_IN_FLIGHT = 256;
+    // Mirror RPC_MAX_BYTES and RPC_MAX_INBOUND_BYTES, for the same reason.
+    const MAX_BYTES = 34603008;
+    const MAX_INBOUND_BYTES = 67108864;
+    const sizeOf = typeof options.sizeOf === 'function' ? options.sizeOf : null;
+    const bytesOf = (value: unknown, limit: number) => (sizeOf ? sizeOf(value, limit) : 0);
 
     // The one source of truth for the code strings (see RpcErrorCode for meanings). Inside the function
     // for the same reason as everything else; the type makes it exhaustive and exact.
@@ -205,6 +231,8 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // host passes one per port, so the count belongs to one environment and a channel that is gone takes its
     // count with it once its calls settle. An entry is removed when its count returns to 0.
     const inFlight = new Map<RpcSend, number>();
+    // The bytes of those calls' arguments, per reply channel (RPC_MAX_INBOUND_BYTES), kept and released with the count.
+    const inFlightBytes = new Map<RpcSend, number>();
 
     // Normalizes anything thrown/rejected into a plain string for the wire. Wrapped in try/catch so a
     // value with a throwing toString can never take the message handler down with it.
@@ -271,6 +299,10 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // catch it, so the caller would sit out its whole timeout. Answer with an error frame instead — a
     // string error always clones — so the caller fails promptly and nothing else is affected.
     function sendResult(respond: RpcSend, id: string | number, value: unknown): void {
+        if (bytesOf(value, MAX_BYTES) > MAX_BYTES) {
+            respond({ type: 'RPC_RES', id, ok: false, error: `result is larger than the RPC byte budget (${MAX_BYTES})`, code: CODE.RESULT_NOT_TRANSFERABLE });
+            return;
+        }
         try {
             respond({ type: 'RPC_RES', id, ok: true, value });
         } catch (error) {
@@ -309,11 +341,27 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             respond({ type: 'RPC_RES', id, ok: false, error: `too many calls in flight (${MAX_IN_FLIGHT})`, code: CODE.BUSY });
             return;
         }
+        // The bytes too (R3-3): a request past RPC_MAX_BYTES (the other side's broker never sends one), or one that
+        // would take this channel's running calls past RPC_MAX_INBOUND_BYTES, does not run. Measured on the clone that
+        // arrived, so the other side's measure is not trusted.
+        const holding = inFlightBytes.get(respond) ?? 0;
+        const bytes = bytesOf(data.args, MAX_BYTES);
+        if (bytes > MAX_BYTES || holding + bytes > MAX_INBOUND_BYTES) {
+            respond({ type: 'RPC_RES', id, ok: false, error: bytes > MAX_BYTES ? `the call is larger than the RPC byte budget (${MAX_BYTES})` : `too many bytes in calls in flight (${MAX_INBOUND_BYTES})`, code: CODE.BUSY });
+            return;
+        }
         inFlight.set(respond, running + 1);
+        inFlightBytes.set(respond, holding + bytes);
         const release = () => {
             const left = (inFlight.get(respond) ?? 1) - 1;
-            if (left > 0) inFlight.set(respond, left);
-            else inFlight.delete(respond);
+            const leftBytes = (inFlightBytes.get(respond) ?? bytes) - bytes;
+            if (left > 0) {
+                inFlight.set(respond, left);
+                inFlightBytes.set(respond, leftBytes > 0 ? leftBytes : 0);
+            } else {
+                inFlight.delete(respond);
+                inFlightBytes.delete(respond);
+            }
         };
 
         // We CALL a pre-registered function reference with the cloned args — we never eval / new Function
@@ -342,6 +390,13 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         const entry = takePending(id);
         if (!entry) return; // unknown, stale, or already-settled id
         if (data.ok) {
+            // a result past the byte budget (R3-3; the other side's broker never sends one) is not handed over
+            if (bytesOf(data.value, MAX_BYTES) > MAX_BYTES) {
+                const refusal = new Error(`the result is larger than the RPC byte budget (${MAX_BYTES})`) as RpcError;
+                refusal.code = CODE.RESULT_NOT_TRANSFERABLE;
+                entry.reject(refusal);
+                return;
+            }
             // undefined is represented natively: an absent `value` reads back as undefined, and a
             // handler that returns nothing therefore resolves to undefined — no sentinel needed.
             entry.resolve(data.value);
@@ -379,6 +434,10 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             sendableArgs = structuredClone(args);
         } catch (error) {
             return Promise.reject(localRefusal(CODE.ARGS_NOT_TRANSFERABLE, `RPC arguments are not transferable: ${errorMessage(error)}`));
+        }
+        // The byte budget (R3-3), measured on the clone that will be sent: past it, nothing is sent.
+        if (bytesOf(sendableArgs, MAX_BYTES) > MAX_BYTES) {
+            return Promise.reject(localRefusal(CODE.ARGS_NOT_TRANSFERABLE, `RPC arguments are larger than the RPC byte budget (${MAX_BYTES})`));
         }
 
         const id = ++nextId;

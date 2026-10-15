@@ -29,7 +29,7 @@ const escapeAttribute = (value: string) => value.replaceAll('&', '&amp;').replac
 const srcdoc = (doc: string) => `srcdoc="${escapeAttribute(doc)}"`;
 const at = (left: number, top: number) => `position:absolute;left:${left}px;top:${top}px;width:80px;height:40px;display:block;margin:0`;
 
-const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): SandboxConfig => ({ mode: 'strict', ...config });
+const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): StrictSandboxConfig & { mode: 'strict' } => ({ mode: 'strict', ...config });
 
 /** Renders from the worker (execute() runs there) and waits until the view shows `doneId`. */
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done', into: string | null = null) {
@@ -396,8 +396,10 @@ test.describe('files', () => {
         })`);
         // the view holds only the files it may show: no JavaScript, no JSON (VIEW_FILE_TYPES, broad review ST1)
         expect(r).toEqual({ logo: 'blob:null/', sheet: 'blob:null/', styled: '7px', unregistered: 'img/missing.png', viewFiles: ['css/site.css', 'img/logo.png'] });
-        const worker = await sandbox.inGuest(`return { list: sandboxFiles.list(), json: JSON.parse(await sandboxFiles.text('data.json')).answer, url: sandboxFiles.url('lib.js').slice(0, 10) }`);
-        expect(worker).toEqual({ list: ['css/site.css', 'data.json', 'img/logo.png', 'lib.js'], json: 42, url: 'blob:null/' });
+        // the worker reads every file; it mints URLs only for the types the view shows (review round 1, R2-4)
+        const worker = await sandbox.inGuest(`let js; try { js = sandboxFiles.url('lib.js'); } catch (error) { js = error.code; }
+            return { list: sandboxFiles.list(), json: JSON.parse(await sandboxFiles.text('data.json')).answer, js, png: sandboxFiles.url('img/logo.png').slice(0, 10) }`);
+        expect(worker).toEqual({ list: ['css/site.css', 'data.json', 'img/logo.png', 'lib.js'], json: 42, js: 'NOT_FOUND', png: 'blob:null/' });
         expect((await sandbox.violations()).filter(v => v.source === 'view')).toEqual([]);
     });
 
@@ -425,7 +427,9 @@ test.describe('configuration', () => {
         const warnings: string[] = [];
         page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
         expect(await sandbox.mount(strict({
-            capabilities: ['allow-pointer-lock'], unsafeCapabilities: ['allow-popups', 'fullscreen'],
+            capabilities: ['allow-pointer-lock'],
+            // @ts-expect-error not in strict mode (review round 1, R3-6); a config from JSON can still carry them
+            unsafeCapabilities: ['allow-popups', 'fullscreen'],
             // @ts-expect-error strict mode has no scripts kind; a config from JSON can still carry one
             origins: { scripts: ['https://cdn.example'] },
         }))).toBe('ready');

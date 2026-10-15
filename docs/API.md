@@ -14,6 +14,7 @@ is built the way it is, follow the links to the decision records (ADRs).
 - [Guest globals](#guest-globals)
 - [Modes](#modes)
 - [Limits](#limits)
+- [Host page policy](#host-page-policy)
 - [Exports](#exports)
 - [Examples](#examples)
 
@@ -47,15 +48,19 @@ other methods. It has one property:
 | :--- | :--- | :--- |
 | `state` | `SandboxState` (read-only) | `'idle'`, `'loading'`, `'ready'` or `'terminated'`; see [Lifecycle](#lifecycle). |
 
-The frame lives in an open shadow root and fills the element (`width: 100%; height: 100%`). Custom elements are
-inline by default, so give the element a block display and a size:
+The frame lives in an open shadow root and fills the element (`width: 100%; height: 100%`). The element is a block
+(`:host { display: block }`, a constructed stylesheet your page's `style-src` does not govern; your own CSS for the
+element wins); give it a height:
 
 ```css
-web-sandbox { display: block; height: 320px; }
+web-sandbox { height: 320px; }
 ```
 
-With [`autoResize`](#configuration) the element sets its own `style.height`; it still needs a non-inline
-`display`. In worker mode the frame is hidden (`display: none`).
+With [`autoResize`](#configuration) the element sets its own `style.height`, and gives your inline height back when a
+later build turns auto-sizing off. In worker mode the frame is hidden (`display: none`).
+
+TypeScript: `document.createElement('web-sandbox')` is a `WebSandbox`, and `addEventListener` types each event's
+`detail` (`WebSandboxEventMap`).
 
 The element builds an environment only in the document of the window that defined it. Moved into another document
 (`adoptNode()`, an iframe's document), it tears its environment down and stays `idle` there, with one warning; moved
@@ -80,12 +85,20 @@ a config without `mode` is a strict config (strict mode is the default).
 - The argument is copied (structured clone) before anything reads it: changing your objects or arrays afterwards
   changes nothing, not even at the next `reset()`.
 - Values are validated before they are applied; what cannot be used is dropped with one `console.warn` per
-  element, never applied half-way.
+  element, never applied half-way: an entry that is not allowed, a list option that is not a list, `html` that is not
+  a string.
+- The configuration the environment already stands on, set again, changes nothing: no rebuild and no event, so read
+  `state` rather than wait for `ready` (anything a build reads
+  that changed since, `load()` or the files, rebuilds as usual).
 - A config that cannot be used at all (not an object, not cloneable: a `Proxy`, a function value; an `origins` that
   is not an object, or a kind of it that is not a list) applies nothing, and the sandbox terminates with the reason
   `the configuration could not be used (…)`, as for an unknown mode, until a usable config is set; the previous
   config stays. A build that fails terminates with `the environment could not be built (…)`. `setConfig()` never
-  throws.
+  throws. `state` is `terminated` when it returns; the `terminated` event of a refused build comes in a task, like
+  `ready`, and not at all if another build started meanwhile.
+- `SandboxConfig` narrows each mode: `entry` only in strict mode, `workerExecutionTimeout` not in cooperative mode,
+  `html` and `autoResize` not in worker mode, `unsafeCapabilities` not in strict mode. A config from JSON is held to
+  the same rules at run time.
 
 | Option | Type | Default | Modes | What it does |
 | :--- | :--- | :--- | :--- | :--- |
@@ -99,7 +112,7 @@ a config without `mode` is a strict config (strict mode is the default).
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in strict and worker mode on every browser, and in cooperative mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
 | `autoResize` | `boolean` | `false` | strict, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
-| `fetchBridge` | `FetchBridgeConfig` | off | all | Gives the guest [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off. [ADR-006](ADR-006-fetch-bridge.md) |
+| `fetchBridge` | `FetchBridgeConfig` | off | all | Opens [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md) |
 | `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
 
 ### `origins`
@@ -124,6 +137,8 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   for `localhost` and `127.0.0.1` (local development: an engine that upgrades insecure requests, as WebKit does, asks
   over https). Case is folded and a default port dropped. The host must be written as it is meant: no IPv6 literal (a
   policy cannot name one), IPv4 shorthand, percent-encoding, non-ASCII name (write its `xn--` form) or trailing dot.
+  An `xn--` label is checked by the browser's own URL parser, and engines differ on invalid Punycode: one that an engine
+  refuses is dropped there, so write the form your registrar gives.
 - **Anything else is dropped** with one warning per entry: `https:` and other schemes, `*` and `*.example.com`,
   `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
   narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
@@ -161,7 +176,7 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upg
 
 | Field | Type | Default | Bounds | What it does |
 | :--- | :--- | :--- | :--- | :--- |
-| `allow` | `string[]` | (required) | — | Exact origins the guest may reach: scheme, host, optional port (`https://api.example`, `http://localhost:8080`). An entry with a path, query, fragment, credentials or `*` is dropped with a warning. An empty list refuses everything. |
+| `allow` | `string[]` | (required) | — | Exact origins the guest may reach: scheme, host, optional port (`https://api.example`, `http://localhost:8080`). An entry with a path, query, fragment, credentials or `*` is dropped with a warning; so is a value that is not a list. An empty list refuses everything. Listing the host page's own origin or a loopback, private or link-local host works, with one warning each. |
 | `maxBytes` | `number` | `1048576` (1 MiB) | at most `33554432` (32 MiB) | Most bytes of one response body, and of one request body. |
 | `timeoutMs` | `number` | `10000` | at most `120000` | Most time for one request, body included. |
 | `methods` | `string[]` | `GET`, `HEAD`, `POST` | from `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` | Methods the guest may use. Replaces the default list. |
@@ -232,20 +247,24 @@ before any guest code ran. Nothing reaches the host: no return value, no report 
 
 `expose(name: string, fn: (...args: any[]) => unknown): void` — publishes a host method the guest calls with
 `bridge.call(name, ...args)`. The guest receives `fn`'s return value (awaited if it is a promise); a throw or
-rejection reaches the guest as `HANDLER_ERROR` with the error's message.
+rejection reaches the guest as `HANDLER_ERROR` with the error's message, verbatim: throw errors whose message you
+would show the guest, or wrap the handler.
 
 - Methods belong to the element: they survive `reset()`, `load()`, `setConfig()` and `terminate()`.
-- Exposing a name again replaces its handler. A non-string name or a non-function is ignored.
+- Exposing a name again replaces its handler. A name that is not a string, or a handler that is not a function,
+  throws a `TypeError`.
 - Names starting with `sandbox:` are reserved for the library: refused with a warning.
 - Treat arguments as untrusted data from the guest: validate them, and copy objects with spread rather than
-  `Object.assign` (an own `__proto__` key survives the copy).
+  `Object.assign` or a `for…in` loop (an own `__proto__` key survives the copy, and `for…in` visits it).
 
 ### `call(method, ...args)`
 
 `call<T = unknown>(method: string, ...args: unknown[]): Promise<T>` — calls a method the guest exposed with
 `bridge.expose()` and resolves with its result. Works without `scriptUnsafe`: it never evaluates code.
 
-- Arguments and results are copied by structured clone (no functions, DOM nodes or symbols).
+- Arguments and results are copied by structured clone (no functions, DOM nodes or symbols), at most
+  `RPC_MAX_BYTES` (33 MiB) per message, measured on both sides: past it a call is refused before anything is sent
+  (`ARGS_NOT_TRANSFERABLE`) and a result is answered `RESULT_NOT_TRANSFERABLE`.
 - Default timeout: 30 s.
 - Calls made while `loading` are queued and sent when the guest is ready; one that settles while queued (its
   timeout) leaves the queue and never runs. In cooperative mode a call reaches the guest's method once the guest
@@ -330,8 +349,8 @@ All events are `CustomEvent`s dispatched on the element. None is `composed`.
 
 | Event | `detail` | Bubbles | When |
 | :--- | :--- | :--- | :--- |
-| `ready` | none | no | The guest checked in: its startup script announced itself, and `state` is now `ready` (see [the startup gate](#ready-and-the-startup-gate)). Once per environment. In cooperative mode its document may still be loading. (Without `allow-scripts` no guest script runs: `ready` comes with the frame's load, and calls time out.) |
-| `terminated` | `{ reason: string }` | no | The sandbox was terminated: `state` is now `terminated`. Once per termination. |
+| `ready` | none | no | The guest checked in: its startup script announced itself (strict mode: the view's bootstrap, on its port), and `state` is now `ready` (see [the startup gate](#ready-and-the-startup-gate)). Once per environment. In cooperative mode its document may still be loading. (Without `allow-scripts` no guest script runs: `ready` comes with the frame's load, and calls time out.) |
+| `terminated` | `{ reason: string }` | no | The sandbox was terminated: `state` is `terminated`. Once per termination; a refused build's in a task of its own. |
 | `sandbox-log` | `SandboxLog` | yes | A log line from the guest or from the element. |
 | `violation` | `SandboxViolation` | yes | The guest policy refused a load. |
 | `fetch` | `FetchRecord` | yes | A `sandboxFetch()` request settled (including refusals). |
@@ -340,7 +359,10 @@ All events are `CustomEvent`s dispatched on the element. None is `composed`.
 
 The bubbling events reach a listener on `window` for every sandbox on the page; `event.target` says which one.
 Every `detail` is frozen. Fields that come from the guest are validated and clamped, but they remain the
-guest's data: read them, don't merge them into your objects.
+guest's data: read them, don't merge them into your objects. The element's own startup message, the guest frame's
+port announcement (`{ type: 'SANDBOX_PORT' }` from the guest frame's window), is taken by a capture listener the
+element adds to your window at each build; a `message` listener of yours added before it, in the capture phase, sees
+it first. Act on a message only by `event.source` (above), never by its shape.
 
 ### `sandbox-log` — `SandboxLog`
 
@@ -348,15 +370,27 @@ guest's data: read them, don't merge them into your objects.
 | :--- | :--- | :--- |
 | `type` | `'LOG'` | Always `'LOG'`. |
 | `level` | `'log' \| 'info' \| 'warn' \| 'error'` | Anything else reads as `'log'`. |
-| `args` | `readonly unknown[]` | What was logged, structured-cloned; at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING`. |
+| `args` | `readonly unknown[]` | What was logged, structured-cloned; at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING`, all of them together at most `LOG_MAX_BYTES` (1 MiB); an argument past it is a string saying so. |
 | `source` | `'guest' \| 'host'` | Set by the element from where the line came from, never from the line. |
 
-Lines with `source: 'guest'`: the guest's `console.log`, `console.info`, `console.warn` and `console.error`; a throw from
-`execute()`; one `info` line `<mode> Ready` per environment; in strict mode, `Uncaught …` for an uncaught error
-after the entry ran. Guest code can post anything here. Guest lines are limited to `LOG_EVENTS_PER_SECOND` in any
-one-second window per environment (one warning; lines past it are dropped). Lines logged before the guest is
-connected (a strict entry's top level runs before the worker has its port) are kept, at most 1000, and arrive in
-order once it is; past that, one `warn` line says how many were dropped.
+Lines with `source: 'guest'`, from one relay in every mode: the guest's `console` (`log`, `info`, `warn`, `error`;
+`debug`, `dir`, `dirxml`, `table`, `group` and `groupCollapsed` as `log`; `trace` as `log` after `console.trace()`; a
+failed `assert` as `error` after `Assertion failed:`); `Uncaught …` for an uncaught error (strict mode: after the entry
+ran) and `Uncaught (in promise) …` for an unhandled rejection; a throw from `execute()`; one `info` line
+`<mode> Ready` per environment. Guest code can post anything here. The guest's console never throws: a value
+structured clone refuses (a function, a Symbol, a DOM node, an `Event`, a `Response`, a `Proxy`, a `WeakMap`, a
+`Promise`) arrives as a string naming its kind (`[function]`, `[object HTMLDivElement]`), and an `Error` or
+`DOMException` as `{ name, message, stack }`. WebKit mutes the errors of a cooperative guest's inline scripts and
+handlers and of worker mode's worker: they arrive as `Uncaught Script error.`, all the browser gives.
+
+The bounds: `LOG_MAX_ARGS` and `LOG_MAX_STRING` bound the strings; `LOG_MAX_BYTES` bounds all arguments of a line
+together, whatever they are (a typed array, an object of 100 000 keys). The guest applies them before a line is
+posted, and sends at most `LOG_EVENTS_PER_SECOND` lines and 4 MiB per second (one `warn` line when it starts dropping),
+so a flood never reaches the host page's thread; the browser's own console gets a dropped line not at all and a cut
+line cut. The element measures every line again on receipt, and dispatches at most `LOG_EVENTS_PER_SECOND` guest
+lines in any one-second window per environment (one warning). Lines logged before the guest is connected (a strict
+entry's top level runs before the worker has its port) are kept, at most 1000 and 4 MiB, and arrive in order once it
+is; past that, one `warn` line says how many were dropped.
 
 Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`), and
 `[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
@@ -399,6 +433,9 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | `terminated by the host` | `terminate()` without a reason (or with your own text instead). |
 | `the guest stopped responding (watchdog)` | `watchdogTimeout` expired. |
 | `the guest entry failed to start` | Strict mode: the entry threw or did not parse. |
+| `the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)` | The frame loaded but the library's startup script (strict mode's view bootstrap, cooperative and worker mode's bootstrap) never checked in: the host page's policy refused it. See [Host page policy](#host-page-policy). |
+| `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)` | Strict mode: the worker's script could not be loaded at all; nothing of the guest's ran. |
+| `the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)` | The host page enforces Trusted Types and its `trusted-types` directive does not name `web-sandbox`. |
 | `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
 | `unknown mode …` | `mode` is not `strict`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`. |
@@ -407,7 +444,7 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | `the executed code ran longer than workerExecutionTimeout` | The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline. |
 | `the sandbox frame loaded a second time` | Something navigated or reloaded the library's frame (also before its first load, once the guest had checked in). |
 | `the guest frame announced itself again (it reloaded or rewrote its document)` | Cooperative and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. |
-| `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time: in cooperative and worker mode the guest had not checked in (announced its port); without `allow-scripts`, and in strict mode, the frame had not loaded (subresources included). |
+| `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time and its frame had not loaded (without `allow-scripts`: subresources included). |
 | `the guest frame is missing` | The library's frame has no guest frame. |
 
 Branch on `state` and the event, not on these texts. A reason never carries the text of an error the element
@@ -440,9 +477,15 @@ and resets the per-environment caps (log rate, violations). Listeners run synchr
 ### `ready` and the startup gate
 
 `ready` means the guest's startup script checked in: the bootstrap, the first script of the guest document (cooperative
-mode) or of the worker's frame (worker mode), announced its port. It does not wait for the guest's images or its own
-scripts, so `LOAD_TIMEOUT_MS` bounds only that check-in; a page with slow images, or one that never finishes its
-document, is `ready`. Strict mode is `ready` when its view has loaded, as before.
+mode) or of the worker's frame (worker mode), announced its port; in strict mode the view's bootstrap posted its
+check-in on the port only it holds. It does not wait for the guest's images or its own scripts, so `LOAD_TIMEOUT_MS`
+bounds only that check-in; a page with slow images, or one that never finishes its document, is `ready`. A frame
+that loaded but whose startup script never checked in was refused by the host page's policy, and the reason says so.
+
+A plugin or guest whose own initialisation outlives `ready` (an `async` setup, a module that awaits) should say when it
+is done: expose a method once it is (`bridge.expose('ready', () => true)` in the guest) and have the host retry
+`callWithTimeout()` on `UNKNOWN_METHOD`, or call a host method the host exposed for that purpose
+(`bridge.call('pluginReady')`).
 
 In cooperative mode the guest document can still be loading at `ready`. Calls and `execute()` code that arrive while it is
 being parsed wait in the guest, in one queue in the order they were sent, until it is parsed: `DOMContentLoaded` has
@@ -476,13 +519,13 @@ From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.
 | :--- | :--- | :--- | :--- |
 | `TIMEOUT` | local | No answer within the call's timeout. | yes |
 | `TERMINATED` | local | The environment was reset, terminated or removed. | after the next `ready` |
-| `ARGS_NOT_TRANSFERABLE` | local | The arguments cannot be structured-cloned; nothing was sent. | no |
+| `ARGS_NOT_TRANSFERABLE` | local | The arguments cannot be structured-cloned, or measure more than `RPC_MAX_BYTES`; nothing was sent. | no |
 | `SEND_FAILED` | local | The transport threw while sending. | no |
 | `INVALID_CALL` | local | The method name is not a string. | no |
 | `UNKNOWN_METHOD` | reported | No method of that name is exposed on the other side. | no |
 | `HANDLER_ERROR` | reported | The handler threw or rejected; the message is its text. | depends on the handler |
-| `RESULT_NOT_TRANSFERABLE` | reported | The handler's result cannot be structured-cloned. | no |
-| `BUSY` | reported | The other side already runs `MAX_INBOUND_IN_FLIGHT` of your calls; the method did not run. | yes |
+| `RESULT_NOT_TRANSFERABLE` | reported | The handler's result cannot be structured-cloned, or measures more than `RPC_MAX_BYTES`. | no |
+| `BUSY` | reported | The other side already runs `MAX_INBOUND_IN_FLIGHT` of your calls, or 64 MiB of their arguments, or the call measures more than `RPC_MAX_BYTES`; the method did not run. | yes |
 
 **Local** codes are set only by the side that made the call, from its own state, so the other side can never
 produce them. **Reported** codes come from the other side, and their message is its text; any other code the
@@ -530,13 +573,14 @@ runs; in cooperative mode that needs `allow-scripts` (the policy always admits i
 | :--- | :--- | :--- | :--- |
 | `bridge` | ✓ | ✓ | ✓ |
 | `sandboxFiles` | ✓ | ✓ | ✓ |
-| `sandboxFetch` | with `fetchBridge` | with `fetchBridge` | with `fetchBridge` |
+| `sandboxFetch` | ✓ (refused without `fetchBridge`) | ✓ (refused without `fetchBridge`) | ✓ (refused without `fetchBridge`) |
 | `sandboxView` | ✓ | — | — |
-| `console` relayed | `log`, `info`, `warn`, `error` | `log`, `info`, `warn`, `error` | `log`, `info`, `warn`, `error` |
+| `console` relayed | every method ([`sandbox-log`](#sandbox-log--sandboxlog)) | every method | every method |
 
-Removed before guest code runs: `RTCPeerConnection` (and prefixed variants) in every mode. In strict mode also
-`URL.createObjectURL`, and `WebAssembly` unless `scriptUnsafe`. In strict mode the view document runs no guest code
-at all.
+Removed before guest code runs: `RTCPeerConnection` (and prefixed variants) in every mode. In strict and worker mode
+also `WebAssembly` unless `scriptUnsafe` (WebKit compiles it without `'wasm-unsafe-eval'`, so the policy alone does not
+keep it out; cooperative mode keeps it, a frozen limit), and in strict mode `URL.createObjectURL`. In strict mode the view document
+runs no guest code at all, and acts only on trusted events: a synthetic event is never forwarded to `sandboxView.on`.
 
 **The worker's globals are an allowlist** (worker and strict mode): before anything else runs in it, the worker keeps
 only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WORKER_NAVIGATOR_MEMBERS` for
@@ -564,7 +608,7 @@ Usable at once: calls and exposes made before the channel is connected are buffe
 | Member | Signature | Description |
 | :--- | :--- | :--- |
 | `list` | `() => string[]` | The registered paths, sorted. |
-| `url` | `(path: string) => string` | The file's `blob:` URL, minted in the guest's own realm. Throws `NOT_FOUND`. |
+| `url` | `(path: string) => string` | The file's `blob:` URL, minted in the guest's own realm. Throws `NOT_FOUND`. In strict mode's worker, only for the types the view shows (below); any other file is `read()` and `text()` only. |
 | `read` | `(path: string) => Promise<Uint8Array>` | The bytes as registered, a fresh copy per call. Rejects `NOT_FOUND`. |
 | `text` | `(path: string) => Promise<string>` | The content decoded as UTF-8. Rejects `NOT_FOUND`. |
 | `write` | `(path: string, entry) => Promise<void>` | Asks the element to record a write ([`guestWrites`](#configuration)). `entry`: a string, `Blob`, `ArrayBuffer` or typed array, or `{ content, type }`; copied when called. Rejects with a [files code](#files-fileerrorcode-and-not_found). |
@@ -596,7 +640,8 @@ with `TIMEOUT`, and the change is listed all the same). A listener's `reset()` d
 ### `sandboxFetch`
 
 `sandboxFetch(url: string, init?: { method?, headers?, body? }): Promise<Response>` — asks the host to make the
-request under the [`fetchBridge`](#fetchbridge) rules. Only `method`, `headers` and `body` are read from `init`;
+request under the [`fetchBridge`](#fetchbridge) rules; without `fetchBridge` every request rejects with
+`FETCH_NOT_ALLOWED`. Only `method`, `headers` and `body` are read from `init`;
 the body is a string, an `ArrayBuffer` or a typed array. Resolves with a whole `Response` (no streaming, no
 `AbortSignal`); rejects with a [`FetchErrorCode`](#sandboxfetch-fetcherrorcode). `fetch` itself is untouched;
 assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](ADR-006-fetch-bridge.md)
@@ -613,13 +658,13 @@ The renderer is an allowlist: what it does not list is gone before insertion.
 **HTML**: `address`, `article`,
 `aside`, `footer`, `header`, `h1`, `h2`, `h3`, `h4`, `h5`, `h6`, `hgroup`, `main`, `nav`, `section`, `search`,
 `blockquote`, `dd`, `div`, `dl`, `dt`, `figcaption`, `figure`, `hr`, `li`, `menu`, `ol`, `p`, `pre`, `ul`, `a`,
-`abbr`, `b`, `bdi`, `bdo`, `br`, `cite`, `code`, `data`, `dfn`, `em`, `i`, `kbd`, `mark`, `q`, `rp`, `rt`, `ruby`,
-`s`, `samp`, `small`, `span`, `strong`, `sub`, `sup`, `time`, `u`, `var`, `wbr`, `del`, `ins`, `img`, `picture`,
+`abbr`, `b`, `bdi`, `bdo`, `br`, `cite`, `code`, `data`, `dfn`, `em`, `i`, `kbd`, `mark`, `q`,
+`s`, `samp`, `small`, `span`, `strong`, `sub`, `sup`, `time`, `u`, `var`, `del`, `ins`, `img`, `picture`,
 `source`, `video`, `audio`, `track`, `map`, `area`, `table`, `caption`, `colgroup`, `col`, `tbody`, `thead`,
 `tfoot`, `tr`, `td`, `th`, `form`, `label`, `input`, `button`, `select`, `datalist`, `optgroup`, `option`,
 `textarea`, `output`, `progress`, `meter`, `fieldset`, `legend`, `details`, `summary`, `dialog`, `style`, `link`.
-Any other HTML element is unwrapped (its content takes its place and is checked in turn); a custom element name with
-a hyphen (`my-card`) is kept as an inert element; `iframe`, `frame`, `frameset`, `object`, `embed`, `applet`,
+Any other HTML element is unwrapped (its content takes its place and is checked in turn: `wbr`, `ruby`, `rt` and `rp`
+are, for what their layout costs); a custom element name with a hyphen (`my-card`) is kept as an inert element; `iframe`, `frame`, `frameset`, `object`, `embed`, `applet`,
 `portal`, `fencedframe`, `script`, `noscript`, `noembed`, `noframes`, `template`, `meta`, `base` and `title` go with
 their content.
 
@@ -643,9 +688,13 @@ Not available in strict mode: `use`, markers, SVG filters, SVG `image`, `foreign
 `target` and `download` on links; SVG gradient and pattern templates (`href`). CSS filters, HTML images and inline
 SVG cover most of it.
 
-The view holds at most 50000 elements, nested at most 256 deep below its body, counted over the document a render
-would leave (the elements outside the target stay): a render past either is dropped as a whole, the next one still
-applies, and the guest's log says `[Sandbox] sandboxView.render: the view refused a render: …`.
+Text is kept, each run of adjacent text joined into one node; comments are dropped. The view holds
+at most 50000 elements, nested at most 256 deep below its body, and at most 1048576 characters (its body's
+serialization: text, attributes and markup alike), counted over the document a render would leave (what is outside the target stays): a render past
+any of them is dropped as a whole, the next one still applies, and the guest's log says
+`[Sandbox] sandboxView.render: the view refused a render: …`. The view parses at most 1048576 characters of markup
+per second, renders it refused included: a render past that waits, and so does the worker's next one (one render in
+flight), so a flood of renders is slowed, not dropped.
 
 Registered files are named by path in `src`, `href` and `poster`. The view shows only files that never open as a
 document: CSS, PNG, JPEG, GIF, WebP, AVIF, APNG, BMP and ICO images, WOFF, WOFF2, TTF and OTF fonts, MP3, WAV, Ogg,
@@ -700,15 +749,19 @@ logged and does not stop the others. [ADR-005](ADR-005-strict-mode.md)
 A config without `mode` is strict. `'iframe'` was renamed `'cooperative'`; it starts nothing, like any value that is not
 a mode. [ADR-005](ADR-005-strict-mode.md)
 
-**What strict mode does not cover**: the host page's availability in WebKit (the view paints on the host page's
-thread, and CSS paint cost is not bounded; cooperative mode is no better there), CSS within what the policy allows,
-the worker's `violation` reports (per engine, guest-influenced), a worker that closes itself (only the watchdog
-notices), memory, and the host site's cookies on requests to allowed same-site origins (every mode).
+**What strict mode does not cover**: the host page's availability wherever the view shares the host page's thread
+(WebKit always, Firefox, Chromium depending on its process model): the view's budgets bound the common cases, but not
+layout and paint costs beyond what the markup weighs (CSS filters; bidirectional text in one paragraph), and
+cooperative mode is no better there. Also CSS within what the policy allows, the worker's `violation` reports (per
+engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the host site's
+cookies on requests to allowed same-site origins (every mode).
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;
-focus and the clipboard; messages to the host window; the user's link actions; session history; guest-only stalls;
-forgeable reports; the host page's URL and origin. Each is described in the
+focus and the clipboard; messages to the host window; the user's link actions and modifier clicks the guest's script
+synthesizes (a new top-level tab without `allow-popups`; Chromium submits a form that way past `form-action`); session
+history; guest-only stalls; forgeable reports; the host page's URL and origin; the host page's Trusted Types
+requirement. Each is described in the
 [README](../README.md#cooperative-mode-limits). Worker mode shares only the reports: the worker's are per engine, as
 in strict mode.
 
@@ -721,15 +774,21 @@ in strict mode.
 | Inbound calls running at once, per side and environment | 256 | `MAX_INBOUND_IN_FLIGHT` |
 | Default call timeout (ms) | 30000 | — |
 | Guest log lines per second, per environment | 1000 | `LOG_EVENTS_PER_SECOND` |
-| Guest log lines kept until the guest is connected | 1000 | — |
+| Guest log lines kept until the guest is connected | 1000 (and 4 MiB) | — |
 | Arguments kept per log line | 64 | `LOG_MAX_ARGS` |
 | Characters kept per string log argument | 65536 | `LOG_MAX_STRING` |
+| Bytes per log line, all arguments together | 1048576 (1 MiB) | — |
+| Bytes of guest log lines sent per second | 4194304 (4 MiB) | — |
+| Bytes per RPC message (arguments, or a result) | 34603008 (33 MiB) | — |
+| Bytes of arguments in inbound calls running at once, per side and environment | 67108864 (64 MiB) | — |
 | `violation` events per environment (strict mode: per source, and per directive for the view) | 100 | `VIOLATION_EVENT_LIMIT` |
 | Auto-size: tallest height (px) | 100000 | `AUTO_RESIZE_MAX_HEIGHT` |
 | Auto-size: height changes per second (and at most one per frame) | 30 | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` |
 | Strict: characters per `sandboxView.render()` | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
 | Strict: elements in the view | 50000 | — |
+| Strict: characters in the view (its body's serialization) | 1048576 | — |
+| Strict: characters of markup the view parses per second | 1048576 | — |
 | Strict: nesting depth below the view's body | 256 | — |
 | Strict: characters of one event detail, all strings together | 262144 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
@@ -749,6 +808,44 @@ in strict mode.
 
 ---
 
+## Host page policy
+
+The sandbox's frames are `srcdoc` documents, and a `srcdoc` document inherits the policies of the page that made it:
+a copy of its Content-Security-Policy list, its Trusted Types requirement and its Cross-Origin-Embedder-Policy. Every
+policy in the list must allow a load, so your page's policy narrows the sandbox's, never widens it. What your page's
+policy must allow:
+
+| Your page's | strict (default) | cooperative | worker |
+| :--- | :--- | :--- | :--- |
+| `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; `'unsafe-eval'` for `execute()` | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
+| `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
+| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; `'unsafe-inline'` for the guest's own inline styles | the same | the same |
+| `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` | the same | the same |
+| `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
+| Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox`, which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
+| `Cross-Origin-Embedder-Policy: require-corp` | works in Chromium and Firefox; WebKit refuses the view's `blob:` worker | works; resources from `origins` need CORP or CORS headers | as strict |
+
+- **What a refusal looks like**: the build ends with a reason that names your page's policy: `the sandbox's startup
+  script did not run …` (a refused bootstrap), `the sandbox's worker could not be loaded …` (a refused `blob:` worker),
+  `… does not allow the policy name 'web-sandbox' …` (Trusted Types). A refused wrapper style leaves the frame 150 px
+  high, and the element warns with the hash to allow.
+- **Your `connect-src`, `img-src` and the other fetch directives narrow `origins` silently**: an origin listed in
+  `origins` that your page's policy does not allow is refused in the sandbox too. The refusal happens in the sandbox's
+  documents, so it arrives as the element's `violation` event (where the browser reports it), never as a
+  `securitypolicyviolation` on your page, and nothing warns at `setConfig()`.
+- **The view bootstrap's hash** is constant for one build of the library (it is the hash of the library's own
+  function text, which a bundler or minifier can change), so it cannot be listed here. Read it once from the view's
+  policy, which the wrapper's `srcdoc` carries, and put it in your page's policy (for example in a build step):
+
+  ```js
+  const srcdoc = sandbox.shadowRoot.querySelector('iframe').srcdoc;   // a strict build, any config
+  const hash = /script-src '(sha256-[A-Za-z0-9+/=]+)'/.exec(srcdoc)[1]; // 'sha256-…' for your script-src
+  ```
+
+  A dedicated export of the hash is pending the owner's decision.
+
+---
+
 ## Exports
 
 Values:
@@ -761,6 +858,9 @@ Values:
 | `SAFE_CAPABILITIES`, `UNSAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS`, `UNSAFE_PERMISSIONS` | The capability lists accepted by `capabilities` and `unsafeCapabilities`. |
 | `FETCH_ERROR_CODES` | Every `FetchErrorCode`. |
 | `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS`, `LOAD_TIMEOUT_MS`, `EXECUTION_TIMEOUT_GRACE_MS`, `GUEST_WRITES_PER_SECOND`, `GUEST_WRITE_BYTES_PER_SECOND` | See [Limits](#limits). |
+
+`document.createElement('web-sandbox')` is typed as a `WebSandbox` (`HTMLElementTagNameMap`), and its
+`addEventListener` types each event's `detail`.
 
 Types: `SandboxConfig`, `SandboxState`, `RpcError`, `RpcErrorCode`, `SandboxLog`, `SandboxLogLevel`,
 `SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,
@@ -810,7 +910,9 @@ sandbox.registerFiles({
         sandboxView.render('<button id="load">Load</button><ul id="list"></ul>');
         sandboxView.on('click', 'load', async () => {
             const items = await (await sandboxFetch('https://api.example/items')).json();
-            sandboxView.render(items.map(i => '<li>' + i.name + '</li>').join(''), 'list');
+            // escape what the API returns: text, not markup (the renderer would keep a <b> or an <img> it carries)
+            const text = (s) => String(s).replace(/[&<>"']/g, (c) => '&#' + c.charCodeAt(0) + ';');
+            sandboxView.render(items.map(i => '<li>' + text(i.name) + '</li>').join(''), 'list');
         });`,
 });
 sandbox.setConfig({

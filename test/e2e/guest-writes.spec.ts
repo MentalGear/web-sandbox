@@ -1,5 +1,5 @@
 import { deflateSync } from 'node:zlib';
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type MountConfig, type SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
 import { waitInView, inView } from './strict-view';
 import { MAX_FILES, MAX_TOTAL_BYTES } from '@src/lib/files';
@@ -40,7 +40,7 @@ const OUTCOME = `const outcome = (run) => Promise.resolve().then(run).then(
 const inGuest = <T = any>(sandbox: SandboxDriver, body: string, timeout?: number) => sandbox.inGuest<T>(`${OUTCOME}\n${body}`, timeout);
 
 // a config every mode can take: origins without scripts (strict mode has none)
-const writesOn = (mode: Mode, config: SandboxConfigOptions & { origins?: StrictSandboxOrigins } = {}): SandboxConfig => ({ mode, guestWrites: true, ...config });
+const writesOn = (mode: Mode, config: SandboxConfigOptions & { origins?: StrictSandboxOrigins } = {}): MountConfig => ({ mode, guestWrites: true, ...config });
 
 // What the host page sees, read outside the guest.
 async function hostView(sandbox: SandboxDriver, selector = 'web-sandbox') {

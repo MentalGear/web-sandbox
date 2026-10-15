@@ -29,6 +29,7 @@
  */
 import type { RpcLibraryCode } from './rpc';
 import { parseOrigin, type Origin, type OriginRules } from './origin';
+import { shown } from './csp/origins';
 
 /** The method name the bridge is exposed under: reserved, so no exposed method can collide with it. */
 export const FETCH_METHOD = 'sandbox:fetch';
@@ -158,37 +159,50 @@ export const FETCH_ORIGIN_RULES: OriginRules = { anyHost: ['https:', 'http:'], l
 /**
  * Validates a `fetchBridge` config into a policy, or returns null when there is none to apply (not an
  * object). Entries that cannot be used are dropped and reported through `warn`; an empty allowlist is a
- * valid policy that refuses everything.
+ * valid policy that refuses everything. A list field that is not a list is dropped with a warning, as a whole: `allow`
+ * then admits nothing, `methods` and `headers` keep their defaults. Every value shown in a warning is clamped
+ * (`shown`, review round 1 R1-3: JSON.stringify of a BigInt or a cyclic entry threw, and refused the whole config).
+ * An allowlist that names the host page's own origin (`hostOrigin`) or a loopback, private or link-local host is
+ * honoured, as configured, with one warning each (R3-5): it lets the guest reach what the bridge otherwise refuses.
  */
-export function toFetchPolicy(config: unknown, warn: (message: string) => void): FetchPolicy | null {
+export function toFetchPolicy(config: unknown, warn: (message: string) => void, hostOrigin = ''): FetchPolicy | null {
     if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
     const source = config as Record<string, unknown>;
+    const listOf = (field: 'allow' | 'methods' | 'headers', fallback: readonly unknown[]): readonly unknown[] => {
+        const value = source[field];
+        if (value === undefined) return fallback;
+        if (Array.isArray(value)) return value;
+        warn(`[Sandbox] fetchBridge.${field} must be a list; ${shown(value)} was dropped.`);
+        return fallback;
+    };
 
     const allow = new Set<Origin>();
-    for (const entry of Array.isArray(source.allow) ? source.allow : []) {
+    for (const entry of listOf('allow', [])) {
         const origin = parseOrigin(entry, FETCH_ORIGIN_RULES);
         if (origin === null) {
-            warn(`[Sandbox] fetchBridge.allow entry ${JSON.stringify(entry)} was dropped: list exact origins like "https://api.example" (scheme, host, optional port).`);
+            warn(`[Sandbox] fetchBridge.allow entry ${shown(entry)} was dropped: list exact origins like "https://api.example" (scheme, host, optional port).`);
             continue;
         }
+        if (origin === hostOrigin) warn(`[Sandbox] fetchBridge.allow lists the host page's own origin (${origin}): the guest can send requests to it through the bridge (without credentials).`);
+        else if (isPrivateHost(new URL(origin).hostname)) warn(`[Sandbox] fetchBridge.allow lists ${origin}, a loopback, private or link-local host: the guest can reach it through the bridge.`);
         allow.add(origin);
     }
 
     const methods = new Set<string>();
-    for (const entry of Array.isArray(source.methods) ? source.methods : DEFAULT_METHODS) {
+    for (const entry of listOf('methods', DEFAULT_METHODS)) {
         const method = typeof entry === 'string' ? entry.toUpperCase() : '';
         if (!ALLOWED_METHODS.includes(method)) {
-            warn(`[Sandbox] fetchBridge.methods entry ${JSON.stringify(entry)} was dropped: one of ${ALLOWED_METHODS.join(', ')}.`);
+            warn(`[Sandbox] fetchBridge.methods entry ${shown(entry)} was dropped: one of ${ALLOWED_METHODS.join(', ')}.`);
             continue;
         }
         methods.add(method);
     }
 
     const headers = new Set<string>(SAFE_HEADERS);
-    for (const entry of Array.isArray(source.headers) ? source.headers : []) {
+    for (const entry of listOf('headers', [])) {
         const name = typeof entry === 'string' ? entry.toLowerCase() : '';
         if (!HEADER_NAME.test(name) || FORBIDDEN_HEADER.test(name)) {
-            warn(`[Sandbox] fetchBridge.headers entry ${JSON.stringify(entry)} was dropped: not a header name the guest may set.`);
+            warn(`[Sandbox] fetchBridge.headers entry ${shown(entry)} was dropped: not a header name the guest may set.`);
             continue;
         }
         headers.add(name);

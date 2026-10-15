@@ -21,7 +21,7 @@ import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
  */
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="5"></svg>';
-const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): SandboxConfig => ({ mode: 'strict', ...config });
+const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): StrictSandboxConfig & { mode: 'strict' } => ({ mode: 'strict', ...config });
 
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done') {
     await sandbox.run(`sandboxView.render(${JSON.stringify(html + `<p id="${doneId}">done</p>`)})`);
@@ -50,11 +50,12 @@ test.describe('C1: the view renders no blob: content but registered files', () =
         expect(r).toEqual({ fetched: 'TypeError', image: 'error', ruleApplied: false, escapedKept: true });
     });
 
-    test("a worker's copies of registered files resolve in the view: a copy of a JavaScript file is refused as a stylesheet (its type), a copy of a stylesheet applies (positive control): neither shows more than the registered content", async ({ sandbox, page, browserName }) => {
+    test("a worker's copies of registered files resolve in the view: the worker mints none for a JavaScript file (review round 1, R2-4: only the view's types), a copy of a stylesheet applies (positive control) and shows no more than the registered content", async ({ sandbox, page, browserName }) => {
         await sandbox.registerFiles({ 'rule.js': '#viaJs { width: 77px }', 'rule.css': '#viaCss { width: 55px }' });
         expect(await sandbox.mount(strict())).toBe('ready');
-        const urls = await sandbox.inGuest(`return { js: sandboxFiles.url('rule.js'), css: sandboxFiles.url('rule.css') }`);
-        await render(sandbox, browserName, `<style>@import url("${urls.js}"); @import url("${urls.css}");</style><i id="viaJs" style="display:block"></i><i id="viaCss" style="display:block"></i>`);
+        const urls = await sandbox.inGuest(`let js; try { js = sandboxFiles.url('rule.js'); } catch (error) { js = error.code; } return { js, css: sandboxFiles.url('rule.css') }`);
+        expect(urls.js).toBe('NOT_FOUND');
+        await render(sandbox, browserName, `<style>@import url("${urls.css}");</style><i id="viaJs" style="display:block"></i><i id="viaCss" style="display:block"></i>`);
         await waitInView(page, browserName, `getComputedStyle(document.getElementById('viaCss')).width === '55px'`, 8000);
         expect(await inView(page, browserName, `getComputedStyle(document.getElementById('viaJs')).width`)).not.toBe('77px');
     });
@@ -63,20 +64,21 @@ test.describe('C1: the view renders no blob: content but registered files', () =
         const bytes = Buffer.from([0, 1, 2, 250, 255]).toString('base64');
         // lateThrow is code of the revoked script: in WebKit its uncaught errors read "Script error." inside the
         // worker after the revocation, so the view logs them with the text it still has (in-sandbox-view.ts)
-        await sandbox.registerFiles({ 'main.js': 'globalThis.entryRan = true; globalThis.lateThrow = () => setTimeout(() => { throw new Error("entry-late"); }, 0);', 'note.txt': 'héllo', 'data.bin': { base64: bytes } });
+        // files of the view's types (review round 1, R2-4: the worker mints URLs only for those)
+        await sandbox.registerFiles({ 'main.js': 'globalThis.entryRan = true; globalThis.lateThrow = () => setTimeout(() => { throw new Error("entry-late"); }, 0);', 'note.css': 'héllo', 'data.png': { base64: bytes } });
         expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
         const workerUrl: string = await sandbox.inGuest('return location.href');
         // the evidence that the revocation happened: the view, read from outside, can no longer fetch the source
         await waitInView(page, browserName, `fetch(${JSON.stringify(workerUrl)}).then(() => false, () => true)`, 8000);
         const r = await sandbox.inGuest(`
-            const url = sandboxFiles.url('note.txt');
+            const url = sandboxFiles.url('note.css');
             return {
                 entryRan: globalThis.entryRan === true,
                 viaUrl: await (await fetch(url)).text(),
-                text: await sandboxFiles.text('note.txt'),
-                read: Array.from(await sandboxFiles.read('data.bin')),
+                text: await sandboxFiles.text('note.css'),
+                read: Array.from(await sandboxFiles.read('data.png')),
                 blob: await new Blob(['abc']).text(),
-                again: await (await fetch(sandboxFiles.url('data.bin'))).arrayBuffer().then(b => b.byteLength),
+                again: await (await fetch(sandboxFiles.url('data.png'))).arrayBuffer().then(b => b.byteLength),
             };
         `);
         expect(r).toEqual({ entryRan: true, viaUrl: 'héllo', text: 'héllo', read: [0, 1, 2, 250, 255], blob: 'abc', again: 5 });
