@@ -44,6 +44,23 @@ export const VIEW_TARGET_MAX_LENGTH = 1024;
 export const VIEW_MAX_ELEMENTS = 50000;
 export const VIEW_MAX_DEPTH = 256;
 
+/**
+ * The most characters the view's body may hold, counted like its elements over the document a render would leave
+ * (review round 1, R1-1): the length of the body's serialization, so text, comments, attributes and markup alike. Text
+ * was outside every budget before: renders of 261 Ki characters of text into 200 targets every 20 ms kept the host
+ * page busy 95–100% on all three engines, and the document grew without bound (50 000 targets × 256 Ki characters).
+ * A render past it is refused before anything is inserted, and acknowledged, like one past VIEW_MAX_ELEMENTS.
+ */
+export const VIEW_MAX_CHARACTERS = 4 * VIEW_RENDER_MAX_LENGTH;
+
+/**
+ * The most characters of markup the view parses per second, renders refused included (review round 1, R1-1): flow
+ * control alone (one render in flight) let a worker keep the host busy with renders that each fit every budget. A
+ * render past it waits until the budget has refilled, and the worker's next render waits for that one's VIEW_ACK, so
+ * nothing is dropped: renders are slowed to this rate. At least VIEW_RENDER_MAX_LENGTH, so every render is applied.
+ */
+export const VIEW_RENDER_CHARACTERS_PER_SECOND = 4 * VIEW_RENDER_MAX_LENGTH;
+
 /** The events sandboxView.on() can subscribe to (ADR-005). */
 export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'] as const;
 
@@ -122,6 +139,14 @@ export const VIEW_LOAD_KINDS: Readonly<Record<string, KindRule>> = Object.fromEn
  *   MathML  the MathML Core presentation elements; others are removed with their content (annotation-xml can hold
  *           HTML).
  *
+ * Not listed for what their layout costs (review round 1, R1-2; measured from render to layout, one render within every
+ * budget): wbr, whose line breaking Firefox does in super-linear time (43 000 in one paragraph stalled its host page
+ * 23 s), and ruby with rt and rp (10 000 rubies: WebKit 10.7 s, Chromium 1.4 s). They are unwrapped, so their text
+ * stays. Every other listed element measured linear (br, span, bdi, bdo, nested inline formatting 200 deep, tables of
+ * 25 000 cells, inline blocks: under 0.4 s per render on all three engines, br 1.4 s in Firefox for 43 000 lines).
+ * Text itself is not bounded by layout cost: one paragraph of 240 000 characters alternating left-to-right and
+ * right-to-left took 10 s in Chromium and 20 s in WebKit (ADR-005: host-page availability is not protected).
+ *
  * Attributes: the global ones of each namespace, data-* and aria-*, and per HTML element the ones it needs. Never an
  * event handler, a form target (action, formaction, method, target), popover or command invokers, autofocus, or a
  * URL attribute other than the ones below; SVG paint and clip references (fill, stroke, clip-path, mask) name only
@@ -133,8 +158,8 @@ export const RENDER_ELEMENTS = {
     html: [
         'address', 'article', 'aside', 'footer', 'header', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hgroup', 'main', 'nav', 'section', 'search',
         'blockquote', 'dd', 'div', 'dl', 'dt', 'figcaption', 'figure', 'hr', 'li', 'menu', 'ol', 'p', 'pre', 'ul',
-        'a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'dfn', 'em', 'i', 'kbd', 'mark', 'q', 'rp', 'rt', 'ruby',
-        's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var', 'wbr', 'del', 'ins',
+        'a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'dfn', 'em', 'i', 'kbd', 'mark', 'q',
+        's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var', 'del', 'ins',
         'img', 'picture', 'source', 'video', 'audio', 'track', 'map', 'area',
         'table', 'caption', 'colgroup', 'col', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th',
         'form', 'label', 'input', 'button', 'select', 'datalist', 'optgroup', 'option', 'textarea', 'output', 'progress', 'meter',
@@ -286,6 +311,8 @@ export interface RenderRules {
     /** VIEW_MAX_ELEMENTS and VIEW_MAX_DEPTH: the view's body never holds more, nor nests deeper. */
     maxElements: number;
     maxDepth: number;
+    /** VIEW_MAX_CHARACTERS: the view's body never serializes to more (checked by the view, after the renderer). */
+    maxCharacters: number;
 }
 
 export const RENDER_RULES: RenderRules = {
@@ -308,6 +335,7 @@ export const RENDER_RULES: RenderRules = {
     virtualRoot: VIRTUAL_ROOT,
     maxElements: VIEW_MAX_ELEMENTS,
     maxDepth: VIEW_MAX_DEPTH,
+    maxCharacters: VIEW_MAX_CHARACTERS,
 };
 
 /**
@@ -332,6 +360,8 @@ export const RENDER_RULES: RenderRules = {
  *      a URL the view minted (A8), a URL attribute (rules.urls) whose URL is not http(s), minted or relative, and an
  *      SVG paint or clip reference that is not a fragment; referrerpolicy becomes no-referrer, and is set on
  *      rules.referrerElements; rel on <a>/<area> keeps only rules.anchorRelations (A1).
+ * Text is kept, each run of adjacent text joined into one node; comments and processing instructions are dropped. The
+ * walk is linear in the fragment's size on every engine (review round 1, R1-2; see the walk below).
  * Kept elements are counted against `room` (what is left of VIEW_MAX_ELEMENTS and VIEW_MAX_DEPTH once the elements
  * outside the target and the target's own depth are accounted for): past either it throws, before anything was
  * inserted, a RangeError whose message names the limit (VIEW_MAX_ELEMENTS or VIEW_MAX_DEPTH). Returns the number of
@@ -352,10 +382,6 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     const getter = (proto: object, name: string) => Object.getOwnPropertyDescriptor(proto, name)!.get!;
     const localNameOf = getter(E, 'localName');
     const namespaceOf = getter(E, 'namespaceURI');
-    const firstElementOf = getter(E, 'firstElementChild');
-    const firstElementOfFragment = getter(DocumentFragment.prototype, 'firstElementChild');
-    const nextElementOf = getter(E, 'nextElementSibling');
-    const parentOf = getter(N, 'parentNode');
     const firstChildOf = getter(N, 'firstChild');
     const has = (element: Element, name: string): boolean => call(E.hasAttribute, element, [name]);
     const get = (element: Element, name: string): string | null => call(E.getAttribute, element, [name]);
@@ -500,53 +526,74 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         return true;
     };
 
-    // The walk: depth first, in document order, through element children only (text needs no decision). `depth` is
-    // the current element's depth below the fragment.
-    let kept = 0;
-    let depth = 1;
-    let node: Element | null = call(firstElementOfFragment, fragment, []);
-    // the next element after `from` and its subtree, climbing out of finished parents
-    const after = (from: Element): Element | null => {
-        for (let n: Element = from; ;) {
-            const next = call(nextElementOf, n, []);
-            if (next) return next;
-            const parent = call(parentOf, n, []);
-            if (!parent || parent === fragment) return null;
-            n = parent;
-            depth--;
+    // The walk (review round 1, R1-2: linear by construction): each parent's children are taken out from the front
+    // (`drain`: removing a first child costs the same at any size in every engine), decided in document order, and the
+    // kept ones appended back at the end. Removing children one by one from the middle, as the walk did, costs time in
+    // the number of siblings in Chromium and WebKit (measured: 38 000 removals among 86 000 siblings, Chromium 13 s,
+    // WebKit over 3 s, on the host page's thread where the view shares it). A kept element is appended and its own
+    // children walked next, one level deeper; an unwrapped element's children are walked in its place, at its depth,
+    // into the same parent; a removed element is dropped with its subtree. Text between them is joined into one node
+    // (the first of the run, its data set once): unwrapping or removing elements leaves runs of adjacent text, which
+    // WebKit lays out in super-linear time (43 000 one-letter nodes stalled its host page). Comments and processing
+    // instructions are dropped: nothing in a view needs them. `depth` is an element's depth below the fragment.
+    const nodeTypeOf = getter(N, 'nodeType');
+    const dataOf = getter(CharacterData.prototype, 'data');
+    const setData = Object.getOwnPropertyDescriptor(CharacterData.prototype, 'data')!.set!;
+    const list = <T>(): T[] => Object.setPrototypeOf([], null); // read by index and length only (review C3)
+    const joinList = Array.prototype.join;
+    const drain = (parent: Node): Node[] => {
+        const out = list<Node>();
+        for (let child: Node | null = call(firstChildOf, parent, []); child; child = call(firstChildOf, parent, [])) {
+            call(N.removeChild, parent, [child]);
+            out[out.length] = child;
         }
+        return out;
     };
-    while (node) {
-        const element: Element = node;
+    // One sequence of nodes being walked into `parent`. An unwrapped element's sequence shares its parent's text run.
+    type Run = { parent: Node; input: Node[]; index: number; depth: number; text: { first: Node | null; parts: string[] }; own: boolean };
+    const flushText = (run: Run) => {
+        const text = run.text;
+        if (!text.first) return;
+        if (text.parts.length > 1) call(setData, text.first, [call(joinList, text.parts, [''])]);
+        call(N.appendChild, run.parent, [text.first]);
+        text.first = null;
+        text.parts = list<string>();
+    };
+    let kept = 0;
+    const runs = list<Run>();
+    runs[0] = { parent: fragment, input: drain(fragment), index: 0, depth: 1, text: { first: null, parts: list<string>() }, own: true };
+    while (runs.length > 0) {
+        const run = runs[runs.length - 1]!;
+        if (run.index >= run.input.length) {
+            if (run.own) flushText(run);
+            runs.length = runs.length - 1;
+            continue;
+        }
+        const node = run.input[run.index]!;
+        run.index++;
+        const type = call(nodeTypeOf, node, []);
+        if (type === 3 || type === 4) { // text, and CDATA in SVG or MathML: its text
+            if (!run.text.first) run.text.first = node;
+            run.text.parts[run.text.parts.length] = call(dataOf, node, []);
+            continue;
+        }
+        if (type !== 1) continue; // a comment or a processing instruction: dropped
+        const element = node as Element;
         const namespace = call(namespaceOf, element, []);
         const name = String(call(localNameOf, element, []));
         let decision = verdict(namespace, name);
         if (decision === KEEP && !clean(element, namespace, name)) decision = REMOVE;
-        if (decision === KEEP) {
-            kept++;
-            if (kept > limit.elements) throw new RangeError('VIEW_MAX_ELEMENTS');
-            if (depth > limit.depth) throw new RangeError('VIEW_MAX_DEPTH');
-            const child = call(firstElementOf, element, []);
-            if (child) {
-                node = child;
-                depth++;
-            } else {
-                node = after(element);
-            }
+        if (decision === REMOVE) continue;
+        if (decision === UNWRAP) {
+            runs[runs.length] = { parent: run.parent, input: drain(element), index: 0, depth: run.depth, text: run.text, own: false };
             continue;
         }
-        if (decision === REMOVE) {
-            node = after(element);
-            call(E.remove, element, []);
-            continue;
-        }
-        // UNWRAP: the children take the element's place (moved, never cloned) and are walked next, at its depth
-        const first = call(firstElementOf, element, []);
-        const next = first ? null : after(element);
-        const parent = call(parentOf, element, []);
-        for (let child = call(firstChildOf, element, []); child; child = call(firstChildOf, element, [])) call(N.insertBefore, parent, [child, element]);
-        call(E.remove, element, []);
-        node = first || next;
+        kept++;
+        if (kept > limit.elements) throw new RangeError('VIEW_MAX_ELEMENTS');
+        if (run.depth > limit.depth) throw new RangeError('VIEW_MAX_DEPTH');
+        flushText(run);
+        call(N.appendChild, run.parent, [element]);
+        runs[runs.length] = { parent: element, input: drain(element), index: 0, depth: run.depth + 1, text: { first: null, parts: list<string>() }, own: true };
     }
     return kept;
 }
@@ -556,6 +603,8 @@ export interface ViewOptions {
     render: RenderRules;
     maxRender: number;
     maxTarget: number;
+    /** VIEW_RENDER_CHARACTERS_PER_SECOND */
+    renderRate: number;
     violationLimit: number;
     events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
     /** The Trusted Types policy name the view creates where the host page enforces them (trusted-types.ts). */
@@ -764,17 +813,41 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         let depth = 0;
         for (let n = target; n !== body; n = call(parentOf, n, [])) depth++;
         sanitize(template.content, fileOf, isMinted, options.render, { elements: options.render.maxElements - outside, depth: options.render.maxDepth - depth });
+        // The characters the body would hold (R1-1): its serialization outside the target, plus the cleaned fragment's
+        // (which is what the target's serialization becomes: the same nodes, moved). Measured on the browser's own
+        // serializer, after the renderer, so attributes it dropped and elements it unwrapped never count.
+        const bodyLength = call(innerHTMLOf, body, []).length as number;
+        const charactersOutside = target === body ? 0 : bodyLength - (call(innerHTMLOf, target, []).length as number);
+        if (charactersOutside + (call(innerHTMLOf, template, []).length as number) > options.render.maxCharacters) throw new RangeError('VIEW_MAX_CHARACTERS');
         call(E.replaceChildren, target, [template.content]);
     };
+    const innerHTMLOf = getter(Element.prototype, 'innerHTML');
+
 
     // At most one render applied per animation frame (a timer stands in where frames are throttled), the
-    // latest per target; one VIEW_ACK per flush releases the worker's next render (A4).
+    // latest per target; one VIEW_ACK per flush releases the worker's next render (A4). And at most
+    // VIEW_RENDER_CHARACTERS_PER_SECOND characters of markup per second (R1-1), a token bucket charged with each
+    // render's length when it is applied, refused or not: a flush that the budget does not cover yet waits until it does.
     let pending: [string | null, string][] = [];
     let scheduled = false;
+    let tokens = options.renderRate;
+    let refilled = performance.now();
+    const refill = () => {
+        const now = performance.now();
+        tokens = Math.min(options.renderRate, tokens + ((now - refilled) / 1000) * options.renderRate);
+        refilled = now;
+    };
+    const costOf = (jobs: [string | null, string][]) => {
+        let cost = 0;
+        for (let i = 0; i < jobs.length; i++) cost += jobs[i]![1].length;
+        return cost;
+    };
     const flush = () => {
         const jobs = pending;
         pending = [];
         scheduled = false;
+        refill();
+        tokens -= costOf(jobs);
         const refused: string[] = [];
         for (let i = 0; i < jobs.length; i++) {
             try {
@@ -783,7 +856,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 // the renderer threw before anything was inserted: this render is dropped, and the ack below
                 // still releases the next one; one past the view's budget is named to the worker, which says so
                 const message = error && error.message;
-                if (message === 'VIEW_MAX_ELEMENTS' || message === 'VIEW_MAX_DEPTH') refused.push(message);
+                if (message === 'VIEW_MAX_ELEMENTS' || message === 'VIEW_MAX_DEPTH' || message === 'VIEW_MAX_CHARACTERS') refused.push(message);
             }
         }
         if (renderPort) renderPort.postMessage(refused.length > 0 ? { type: 'VIEW_ACK', refused } : { type: 'VIEW_ACK' });
@@ -797,8 +870,15 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             ran = true;
             flush();
         };
-        requestAnimationFrame(run);
-        setTimeout(run, 100);
+        refill();
+        const short = costOf(pending) - tokens; // what the budget lacks now, in characters
+        const wait = short > 0 ? Math.ceil((short / options.renderRate) * 1000) : 0;
+        const start = () => {
+            requestAnimationFrame(run);
+            setTimeout(run, 100);
+        };
+        if (wait > 0) setTimeout(start, wait);
+        else start();
     };
     const onRender = (event: MessageEvent) => {
         const data = event.data;
@@ -969,6 +1049,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
         if (typeof data.html === 'string' && data.html !== '') {
             try {
+                tokens -= data.html.length; // the initial view is charged like any render (R1-1)
                 apply(data.html, null);
             } catch {
                 // past the budget, or anything else the renderer refused: the initial view stays empty
@@ -998,7 +1079,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * the next only after the view's VIEW_ACK, and `sandboxView.on`, which registers handlers for the events
  * the view forwards (the port itself is never handed to a handler).
  */
-export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; entryDoneName: string; eventTypes: readonly string[] }) {
+export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; entryDoneName: string; eventTypes: readonly string[] }) {
     const g = globalThis as any;
     const apply = Reflect.apply;
     // The prelude's own lists have no prototype (review C3): an index written to them never reaches an inherited
@@ -1147,7 +1228,9 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
             for (let i = 0; refused && i < refused.length; i++) {
                 log('warn', ['[Sandbox] sandboxView.render: the view refused a render: ' + (refused[i] === 'VIEW_MAX_DEPTH'
                     ? 'it would nest elements more than ' + options.maxDepth + ' deep'
-                    : 'the view would hold more than ' + options.maxElements + ' elements') + '; nothing of it was applied.']);
+                    : refused[i] === 'VIEW_MAX_CHARACTERS'
+                        ? 'the view would hold more than ' + options.maxCharacters + ' characters'
+                        : 'the view would hold more than ' + options.maxElements + ' elements') + '; nothing of it was applied.']);
             }
             inFlight = false;
             sendNext();
@@ -1240,6 +1323,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     render: RENDER_RULES,
     maxRender: VIEW_RENDER_MAX_LENGTH,
     maxTarget: VIEW_TARGET_MAX_LENGTH,
+    renderRate: VIEW_RENDER_CHARACTERS_PER_SECOND,
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
     events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,

@@ -566,3 +566,26 @@ describe('the view bootstrap: budgets (broad review ST2, ST3)', () => {
         render.close();
     });
 });
+
+describe('review round 1: R1-2, the renderer is linear and keeps no element whose layout is super-linear', () => {
+    it('wbr, ruby, rt and rp are unwrapped: their text stays, joined into one text node per run', () => {
+        const fragment = sanitize('<p id="p">' + 'x<wbr>'.repeat(5) + '<ruby>漢<rp>(</rp><rt>kan</rt><rp>)</rp></ruby></p>');
+        const p = fragment.querySelector('#p')!;
+        expect(p.childNodes).toHaveLength(1);
+        expect(p.textContent).toBe('xxxxx漢(kan)');
+        for (const name of ['wbr', 'ruby', 'rt', 'rp']) expect((RENDER_ELEMENTS.html as readonly string[]).includes(name), name).toBe(false);
+    });
+
+    it('text around unwrapped and removed elements is one node; comments are dropped; kept elements stay in order', () => {
+        const fragment = sanitize('a<!-- c --><center>b<font>c</font></center><script>x</script>d<span>e</span>f<!--g-->');
+        expect(serialise(fragment)).toBe('abcd<span>e</span>f');
+        expect(Array.from(fragment.childNodes).map(n => n.nodeType)).toEqual([3, 1, 3]);
+    });
+
+    it('many siblings to drop or unwrap: the walk takes linear time (20 000 of each)', () => {
+        const started = performance.now();
+        const fragment = sanitize('<p>' + 'x<wbr>'.repeat(20000) + '<font>y</font>'.repeat(20000) + '<script></script>'.repeat(20000) + '</p>');
+        expect(fragment.querySelector('p')!.childNodes).toHaveLength(1);
+        expect(performance.now() - started).toBeLessThan(15000); // jsdom; the browsers' own measure: test/e2e/view-budget.spec.ts
+    });
+});

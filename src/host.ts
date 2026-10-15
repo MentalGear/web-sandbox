@@ -23,7 +23,7 @@ import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type Fetc
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH } from "./lib/in-sandbox-view";
 
 /**
  * The element's configuration, passed to setConfig(): every option left out takes its default
@@ -1540,7 +1540,7 @@ export class WebSandbox extends HTMLElement {
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)
-        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
+        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
         const prelude = '(function (g) {'
             + `(${assertEntryScoped.toString()})(g);`
             + workerGlobalsStatement('g')
