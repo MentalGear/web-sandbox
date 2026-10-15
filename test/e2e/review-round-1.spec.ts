@@ -1,5 +1,8 @@
 import { test, expect, type SandboxDriver } from './fixture';
 import type { MountConfig } from './fixture';
+import { useRecorder } from './recorder';
+
+const recorder = useRecorder();
 
 /**
  * Fresh review round 1 (docs/security/REVIEW-ROUND-1-2026-10-15.md): the findings where the browser decides, on
@@ -125,6 +128,50 @@ test.describe('R3-3: byte budgets on log lines and RPC messages', () => {
         await sandbox.waitForLog('R33 flood done', 10000);
         console.log(`MEASURED ${browserName} host ticks (10 ms interval) in 2.5 s: idle ${idle}, during a log flood ${ticks}`);
         expect(ticks).toBeGreaterThan(idle * 0.8); // at 5ede7ba: Firefox 47 of 242, WebKit never finished; now within a few ticks of idle on all three
+    });
+});
+
+test.describe('R2-2 (cooperative-mode limit, measured): a script-synthesized modifier click opens a new top-level window', () => {
+    // The guest's own script dispatches a click with a modifier on its link or on its form's submit button: Chromium
+    // opens a new tab at the guest's URL (no user gesture needed while its popup blocker is off, as in Playwright), and
+    // for the form it skips form-action 'none', so the form's fields reach the listener; Firefox opens the link only
+    // within a user's transient activation (after any click in the guest), never the form; Playwright's WebKit opens
+    // none (it opens no tab for a user's own Ctrl+click either: verification.spec.ts, V3's control, a measurement
+    // limit). No capability is involved: neither allow-popups nor (for the link) allow-forms. Strict mode has no guest
+    // script in its view, so nothing can synthesize a click there; the view also ignores synthetic events (ADR-005).
+    const LINK = (origin: string) => `<a id="l" href="${origin}/r22-link">l</a><div id="g" style="width:300px;height:100px;background:#ccc">g</div>`;
+    const FORM = (origin: string) => `<form action="${origin}/r22-form" method="get"><input name="q" value="secret"><button id="b">b</button></form><div id="g" style="width:300px;height:100px;background:#ccc">g</div>`;
+    const modifierClick = (id: string) => `document.getElementById('${id}').dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true, cancelable: true }))`;
+
+    async function measure(sandbox: SandboxDriver, html: string, capabilities: string[], script: string, gesture: boolean) {
+        expect(await sandbox.mount({ mode: 'cooperative', capabilities: capabilities as any, html })).toBe('ready');
+        const page = sandbox.page;
+        let opened = 0;
+        page.context().on('page', () => { opened++; });
+        if (gesture) {
+            const box = (await page.locator('web-sandbox').boundingBox())!;
+            await page.mouse.click(box.x + 100, box.y + 60); // the user clicks the guest's plain <div>
+        }
+        recorder.clear();
+        await sandbox.run(script);
+        await page.waitForTimeout(2000);
+        return { opened, heard: recorder.paths('blocked').filter(path => path.startsWith('/r22-')) };
+    }
+
+    for (const gesture of [false, true]) {
+        test(`a link, ${gesture ? 'after a user click' : 'with no user gesture'}: ${gesture ? 'Chromium and Firefox open it' : 'Chromium opens it'}`, async ({ sandbox, browserName }) => {
+            const opens = browserName === 'chromium' || (gesture && browserName === 'firefox');
+            expect(await measure(sandbox, LINK(recorder.blocked), ['allow-scripts'], modifierClick('l'), gesture)).toEqual(opens ? { opened: 1, heard: ['/r22-link'] } : { opened: 0, heard: [] });
+        });
+
+        test(`a form submit with allow-forms, ${gesture ? 'after a user click' : 'with no user gesture'}: Chromium submits it in a new tab past form-action 'none'`, async ({ sandbox, browserName }) => {
+            const opens = browserName === 'chromium';
+            expect(await measure(sandbox, FORM(recorder.blocked), ['allow-scripts', 'allow-forms'], modifierClick('b'), gesture)).toEqual(opens ? { opened: 1, heard: ['/r22-form?q=secret'] } : { opened: 0, heard: [] });
+        });
+    }
+
+    test("control: the same form submitted without a modifier is refused by form-action 'none' on every engine", async ({ sandbox }) => {
+        expect(await measure(sandbox, FORM(recorder.blocked), ['allow-scripts', 'allow-forms'], `document.getElementById('b').click()`, false)).toEqual({ opened: 0, heard: [] });
     });
 });
 
