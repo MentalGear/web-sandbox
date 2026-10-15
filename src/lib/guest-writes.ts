@@ -98,6 +98,12 @@ export interface GuestWrites {
      * for a non-inert write without `code`, or the store's refusal; then nothing changes.
      */
     commit(paths: readonly string[], code: boolean): string[];
+    /**
+     * The pending change at `path`, as recorded: the written file (its store type and bytes, not a copy: read them, never
+     * change them), null for a removal mark, undefined for none. Strict mode reads it right after handle() to show the
+     * view what the guest wrote (R4-4).
+     */
+    change(path: string): Readonly<CheckedFile> | null | undefined;
     /** Its environment ended: every later request is refused. What was recorded stays listable and committable. */
     close(): void;
 }
@@ -205,7 +211,7 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         return changed;
     };
 
-    return { handle, list, commit, close: () => { closed = true; } };
+    return { handle, list, commit, change: (path: string) => overlay.get(path), close: () => { closed = true; } };
 }
 
 /**

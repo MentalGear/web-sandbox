@@ -104,8 +104,8 @@ a config without `mode` is a strict config (strict mode is the default).
 | :--- | :--- | :--- | :--- | :--- |
 | `mode` | `'strict' \| 'cooperative' \| 'worker'` | `'strict'` | — | Where guest code runs; see [Modes](#modes). Any other value starts no environment: the sandbox terminates with the reason `unknown mode …` until a valid mode is configured. `'iframe'` was renamed `'cooperative'`: refused the same way, and the reason says so. |
 | `html` | `string` | `''` | strict, cooperative | The initial view (strict mode) or the guest document (cooperative mode). In strict mode its `<script>` elements and `on…` handler attributes never run, and markup that holds any warns once per element: ``strict mode (the default) runs no script in `html`; …``. Empty means `<div id="root"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml). |
-| `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-scripts`, `allow-forms`, `allow-pointer-lock`, `allow-orientation-lock`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms`. |
-| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-popups`, `allow-modals`, `allow-downloads`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). |
+| `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-scripts`, `allow-pointer-lock`, `allow-orientation-lock`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms` (listing either there changes nothing). |
+| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-forms`, `allow-popups`, `allow-modals`, `allow-downloads`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). |
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
 | `origins` | `SandboxOrigins` | none | all (strict: no `scripts`) | The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. See [below](#origins). |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
@@ -148,7 +148,8 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   `StrictSandboxOrigins`.
 - **Registered files** add `blob:` to the directive of each kind of load their types are for (JavaScript: `scripts`;
   `text/css`: `styles`; `image/*`: `images`; `font/*`: `fonts`; `audio/*`, `video/*`, `text/vtt`: `media`; every
-  file: `connect`), whatever `origins` lists. Strict mode never adds it to `script-src`.
+  file: `connect`), whatever `origins` lists. Strict mode never adds it to `script-src`, and with `guestWrites` adds it
+  to `img-src` (the view shows the raster images the guest writes).
 - **`'unsafe-eval'`** is added to `script-src` by `scriptUnsafe` only.
 - A `connectionsAllowed` key is ignored, with one warning: the policy is built from `origins` alone.
 
@@ -621,8 +622,8 @@ return what you registered. [ADR-004](ADR-004-files-as-blob-urls.md)
 ### Guest writes
 
 With `guestWrites: true`, `sandboxFiles.write()` and `remove()` change the guest's own view once the element
-has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` (nothing
-the guest writes gets a URL). The element checks each request as `registerFiles()` would (path, entry, type, the
+has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` (the guest
+gets no URL for anything it wrote). The element checks each request as `registerFiles()` would (path, entry, type, the
 quota with every pending change applied) and at most `GUEST_WRITES_PER_SECOND` requests and
 `GUEST_WRITE_BYTES_PER_SECOND` bytes in any one-second window; a refused request changes nothing on either side. Nothing the
 guest writes reaches the files, a policy or another environment until the host calls
@@ -630,6 +631,13 @@ guest writes reaches the files, a policy or another environment until the host c
 [`listGuestWrites()`](#listguestwrites) and announced by `fileswritten`. Without `guestWrites`, both methods
 reject with `FILES_NOT_ALLOWED`, and so does the element for any request that reaches it. Treat written
 content as the guest's data. [ADR-004](ADR-004-files-as-blob-urls.md)
+
+In strict mode the view shows the raster images the guest writes: a write whose type is `image/png`, `image/jpeg`,
+`image/gif`, `image/webp` or `image/avif` (as the files would give it, never SVG) can be named by path in `img`,
+`poster` or an icon link of the next render, with no rebuild. The element sends the view the bytes it recorded, the
+view makes its own URL from them, and the image is only decoded; `write()` resolves once the view has it. A later
+write to the path replaces the image; a removal, or a write of any other type, leaves the path naming nothing in the
+view (a registered file the guest replaced or removed included). A rebuild starts from the registered files again.
 
 The element records a change before it announces it, and `listGuestWrites()` is the truth; the guest's view
 changes only when the element's answer arrives. They disagree by design in two cases: a `fileswritten` listener
@@ -650,7 +658,9 @@ assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](
 
 | Member | Signature | Description |
 | :--- | :--- | :--- |
-| `render` | `(html: string, into?: string \| null) => void` | Replaces the view's body, or the children of the element with id `into`. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). The latest render per target wins; one render is in flight at a time. |
+| `render` | `(html: string, into?: string \| null) => void` | Replaces the view's body, or the children of the element with id `into`. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). The latest render per target wins; one operation is in flight at a time. |
+| `text` | `(id: string, text: string) => void` | Makes `text` the only content of the element with that id, as text: the view assigns it and parses nothing, so nothing needs escaping. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). Shares its slot with `render`: the latest of the two per target wins. |
+| `set` | `(id: string, fields: { value?: string, checked?: boolean, focus?: boolean }) => void` | Sets the value of an `input`, `textarea`, `select` or `output` (not a file input), the checked state of an `input`, or focuses the element. Any other key, or a field of another type, is a `TypeError`; a value past `VIEW_RENDER_MAX_LENGTH` characters a `RangeError`. |
 | `on` | `(type, id: string \| null, handler: (detail) => void) => () => void` | Subscribes to `click`, `input`, `change`, `submit` or `keydown` on the element with that id (or inside it), or anywhere with `null`. Returns `off`. |
 
 The renderer is an allowlist: what it does not list is gone before insertion.
@@ -698,9 +708,9 @@ flight), so a flood of renders is slowed, not dropped.
 
 Registered files are named by path in `src`, `href` and `poster`. The view shows only files that never open as a
 document: CSS, PNG, JPEG, GIF, WebP, AVIF, APNG, BMP and ICO images, WOFF, WOFF2, TTF and OTF fonts, MP3, WAV, Ogg,
-MP4, FLAC, WebM and AAC audio, MP4, WebM and Ogg video, and WebVTT. Any other file (SVG, HTML, XML, JSON …) is the
-worker's through `sandboxFiles` only; a reference to it stays as written and loads nothing. Show vector graphics as
-inline `<svg>`.
+MP4, FLAC, WebM and AAC audio, MP4, WebM and Ogg video, and WebVTT; and the raster images the guest wrote (see
+[Guest writes](#guest-writes)). Any other file (SVG, HTML, XML, JSON …) is the worker's through `sandboxFiles` only; a
+reference to it stays as written and loads nothing. Show vector graphics as inline `<svg>`.
 
 Links are inert: every link's `href` (HTML `a` and `area`, SVG `a` with `href` or `xlink:href`, MathML) becomes
 `about:blank#` before insertion, so a rendered link stays a focusable link with the role `link`, its clicks and
@@ -728,6 +738,17 @@ An event handler receives:
 Never a URL. Strings are cut at 65536 characters, `ids` at 32 entries, `form` at 1000 fields, and all strings of
 one detail together at 262144 characters; a detail that was cut has `truncated: true`. A handler that throws is
 logged and does not stop the others. [ADR-005](ADR-005-strict-mode.md)
+
+`render`, `text` and `set` go to the view in order, one at a time: an id that names no element in the view's body is
+dropped, and the next one applies. What `text` and `set` leave in the view counts against its characters and the
+characters it handles per second, as a render does (an input's value as its `value` attribute, a textarea's and an
+output's as their text); past the budget the operation is dropped and the guest's log says
+`[Sandbox] sandboxView.text: the view refused it: …`. `set({ focus: true })` moves focus within the sandbox only while
+the user's focus is in it (the view's `document.hasFocus()`: the user last clicked or tabbed into the sandbox, and the
+window is focused). Otherwise it is refused, the host page keeps its focused element and its keystrokes, and the log
+says `[Sandbox] sandboxView.set: the view refused focus: …`; a `value` or `checked` in the same call still applies. A
+non-focusable element is left as it is. Without this rule a sandboxed frame's `focus()` takes focus from the host
+page in Chromium and Firefox, with no user activation (measured; cooperative mode's limit).
 
 ---
 
@@ -759,9 +780,9 @@ cookies on requests to allowed same-site origins (every mode).
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;
 focus and the clipboard; messages to the host window; the user's link actions and modifier clicks the guest's script
-synthesizes (a new top-level tab without `allow-popups`; Chromium submits a form that way past `form-action`); session
-history; guest-only stalls; forgeable reports; the host page's URL and origin; the host page's Trusted Types
-requirement. Each is described in the
+synthesizes (a new top-level tab without `allow-popups`; with `allow-forms`, Chromium submits a form that way past
+`form-action`); session history; guest-only stalls; forgeable reports; the host page's URL and origin; the host page's
+Trusted Types requirement. Each is described in the
 [README](../README.md#cooperative-mode-limits). Worker mode shares only the reports: the worker's are per engine, as
 in strict mode.
 
@@ -784,7 +805,7 @@ in strict mode.
 | `violation` events per environment (strict mode: per source, and per directive for the view) | 100 | `VIOLATION_EVENT_LIMIT` |
 | Auto-size: tallest height (px) | 100000 | `AUTO_RESIZE_MAX_HEIGHT` |
 | Auto-size: height changes per second (and at most one per frame) | 30 | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` |
-| Strict: characters per `sandboxView.render()` | 262144 | `VIEW_RENDER_MAX_LENGTH` |
+| Strict: characters per `sandboxView.render()`, `text()` or `set()` value | 262144 | `VIEW_RENDER_MAX_LENGTH` |
 | Strict: characters of a render or event target id | 1024 | — |
 | Strict: elements in the view | 50000 | — |
 | Strict: characters in the view (its body's serialization) | 1048576 | — |
@@ -833,16 +854,17 @@ policy must allow:
   `origins` that your page's policy does not allow is refused in the sandbox too. The refusal happens in the sandbox's
   documents, so it arrives as the element's `violation` event (where the browser reports it), never as a
   `securitypolicyviolation` on your page, and nothing warns at `setConfig()`.
-- **The view bootstrap's hash** is constant for one build of the library (it is the hash of the library's own
-  function text, which a bundler or minifier can change), so it cannot be listed here. Read it once from the view's
-  policy, which the wrapper's `srcdoc` carries, and put it in your page's policy (for example in a build step):
+- **The view bootstrap's hash** is `viewScriptHash()`, the very value the element puts in the view's `script-src`.
+  It is constant for one build of the library (it is the hash of the library's own function text, which a bundler or
+  minifier can change), so it cannot be listed here: read it from the build you serve, for example in a build step,
+  and put it in your page's policy:
 
   ```js
-  const srcdoc = sandbox.shadowRoot.querySelector('iframe').srcdoc;   // a strict build, any config
-  const hash = /script-src '(sha256-[A-Za-z0-9+/=]+)'/.exec(srcdoc)[1]; // 'sha256-…' for your script-src
+  import { viewScriptHash } from 'web-sandbox';
+  const policy = `script-src 'self' ${viewScriptHash()}; worker-src blob:`; // viewScriptHash() is 'sha256-…', quoted
   ```
 
-  A dedicated export of the hash is pending the owner's decision.
+  The wrapper style's hash is a constant of the library, listed in the table above.
 
 ---
 
@@ -855,6 +877,7 @@ Values:
 | `defineWebSandbox` | Registers the element; see [above](#registering-the-element). |
 | `WebSandbox` | The element class. |
 | `SandboxDevTools` | `new SandboxDevTools(element)`, then `activate()`, `deactivate()` or `toggle()`: prints the element's `sandbox-log` lines to the host console. |
+| `viewScriptHash` | `viewScriptHash(): string`: the strict view bootstrap's hash source, `'sha256-…'`, for your page's policy; see [Host page policy](#host-page-policy). |
 | `SAFE_CAPABILITIES`, `UNSAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS`, `UNSAFE_PERMISSIONS` | The capability lists accepted by `capabilities` and `unsafeCapabilities`. |
 | `FETCH_ERROR_CODES` | Every `FetchErrorCode`. |
 | `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS`, `LOAD_TIMEOUT_MS`, `EXECUTION_TIMEOUT_GRACE_MS`, `GUEST_WRITES_PER_SECOND`, `GUEST_WRITE_BYTES_PER_SECOND` | See [Limits](#limits). |
@@ -910,9 +933,9 @@ sandbox.registerFiles({
         sandboxView.render('<button id="load">Load</button><ul id="list"></ul>');
         sandboxView.on('click', 'load', async () => {
             const items = await (await sandboxFetch('https://api.example/items')).json();
-            // escape what the API returns: text, not markup (the renderer would keep a <b> or an <img> it carries)
-            const text = (s) => String(s).replace(/[&<>"']/g, (c) => '&#' + c.charCodeAt(0) + ';');
-            sandboxView.render(items.map(i => '<li>' + text(i.name) + '</li>').join(''), 'list');
+            sandboxView.render(items.map((_, n) => '<li id="item-' + n + '"></li>').join(''), 'list');
+            // what the API returns is text, never markup: text() assigns it, so nothing needs escaping
+            items.forEach((item, n) => sandboxView.text('item-' + n, String(item.name)));
         });`,
 });
 sandbox.setConfig({

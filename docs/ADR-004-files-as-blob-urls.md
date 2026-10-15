@@ -1,6 +1,6 @@
 # ADR-004: Files are guest-realm blob URLs
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-13 (markup references, module graph, CSS references, strict mode), 2026-10-14 ([`blob:` by governing directive](#amendment-2026-10-14-blob-goes-to-the-directive-that-governs-the-load), [guest writes](#amendment-guest-writes-2026-10-14), [load kinds](#amendment-2026-10-14-a-reference-names-a-file-only-for-the-kind-of-load-its-type-is-for)), 2026-10-14 ([broad review: answers from the build; file sources widen only their kinds](#amendment-2026-10-14-broad-review-answers-from-the-build-file-sources-widen-only-their-kinds)), 2026-10-14 ([typed origins: file sources are the generator's](#amendment-2026-10-14-typed-origins-file-sources-are-the-generators))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-13 (markup references, module graph, CSS references, strict mode), 2026-10-14 ([`blob:` by governing directive](#amendment-2026-10-14-blob-goes-to-the-directive-that-governs-the-load), [guest writes](#amendment-guest-writes-2026-10-14), [load kinds](#amendment-2026-10-14-a-reference-names-a-file-only-for-the-kind-of-load-its-type-is-for)), 2026-10-14 ([broad review: answers from the build; file sources widen only their kinds](#amendment-2026-10-14-broad-review-answers-from-the-build-file-sources-widen-only-their-kinds)), 2026-10-14 ([typed origins: file sources are the generator's](#amendment-2026-10-14-typed-origins-file-sources-are-the-generators)), 2026-10-15 ([the strict view shows raster-image guest writes](#amendment-2026-10-15-the-strict-view-shows-raster-image-guest-writes))
 
 ## Why this ADR exists
 
@@ -739,7 +739,8 @@ writes is kept, loaded or run until the host says so.
   `url()` of a written path is `NOT_FOUND` in every mode, and no `blob:` URL is minted for one. The strict view
   never sees the overlay. So C1's guarantee, "the view renders no `blob:` content but registered files", holds
   with written files present, by construction: a written file reaches a URL only as a committed, registered
-  file of a later build, which the view mints itself.
+  file of a later build, which the view mints itself. *Amended 2026-10-15 (below): the view shows raster-image
+  writes from URLs it mints itself, decoded only.*
 - **Commit needs an explicit list, and code needs a second opt-in.** `commitGuestWrites(paths, options?)`;
   there is no commit-all and no discard (`reset()` discards). A write whose type is not on a fixed inert list —
   the image, font, audio and video types of the extension table without SVG, `text/plain`, `application/json`,
@@ -861,3 +862,41 @@ directive of each kind of load the build's registered types are for, read from t
 by construction, and a property test over random origins and file types says so). Strict mode never adds it to
 `script-src`. An embedder can no longer set a directive to `'none'` to keep a registered type from loading: an empty
 kind admits no origin, and the files registered are what the embedder chose to give the guest.
+
+## Amendment (2026-10-15): the strict view shows raster-image guest writes
+
+**When**: the owner's decision on [review round 1](security/REVIEW-ROUND-1-2026-10-15.md)'s R4-4; backlog S54.
+**Why**: "No URL for anything written" (the guest-writes amendment above) left a strict plugin no way to show an image it
+made, such as a chart drawn on an `OffscreenCanvas`: it could write the PNG but not name it in a render until the host
+committed it and rebuilt.
+
+**Decision**: the strict view shows the guest's pending or committed writes whose store type is a raster image, by path,
+in the same environment. It replaces the guest-writes amendment's "the strict view never sees the overlay" for those types.
+
+- **One chokepoint, one constant.** `VIEW_WRITE_TYPES` (`src/lib/in-sandbox-view.ts`) is `VIEW_FILE_TYPES` ∩
+  `RASTER_IMAGE_TYPES`: `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/avif`. Never `image/svg+xml` or any
+  other type: a raster image opened on its own is an image, never a document. The view checks it before it mints
+  (`showWrite`); the host reads the same constant only to decide whether to send the bytes at all.
+- **The URL is the view's, made from the bytes the host holds.** When the element records a write or a removal in strict
+  mode, it posts `VIEW_WRITE { id, path, mime, bytes }` on the view port: the store type and, for those types only, a copy
+  of the recorded bytes, transferred. The guest never supplies a URL or a type the store did not give, and its worker
+  still cannot mint one (`sandboxFiles.url()` of a written path stays `NOT_FOUND`).
+- **Decoded only.** The view's load kinds admit these types for image loads alone (`img`, `poster`, icon links; the
+  renderer's table), so a written PNG named by `<video>`, a stylesheet `<link>` or `<track>` stays as written. With
+  `guestWrites`, the view's `img-src` gains `blob:`.
+- **The path resolves as the guest's own `sandboxFiles` lists it.** A later write replaces the URL and revokes the old
+  one; a removal, or a write of another type, revokes it and leaves the path naming nothing (a registered file the guest
+  replaced or removed included). A revoked URL is no longer the view's, so markup naming it keeps no `src` (A8). A
+  rebuild starts from the registered files.
+- **Ordered by construction.** The view answers `VIEW_WRITTEN { id }` once it holds the change, and only then is the
+  guest's `write()` answered: a render after `await sandboxFiles.write()` finds the URL, whatever the order of two
+  ports would be. A teardown before the answer ends the wait. The overlay's caps (bytes, rate, quota) bound what the
+  view holds.
+
+**C1's guarantee, as widened**: the view renders no `blob:` content but registered files and raster-image guest
+writes, decoded only.
+
+Tests: `test/unit/owner-decisions.test.ts` ("R4-4": the type set, the host-to-view transfer and its wait, minting,
+replacement and revocation, the policy), `test/e2e/owner-decisions.spec.ts` ("R4-4", three engines: an
+`OffscreenCanvas` PNG by its natural size read from outside, replace and remove, SVG, HTML and JavaScript writes that
+do not resolve beside a PNG that does, the recorder silent but for its control), `test/e2e/guest-writes.spec.ts` ("8").

@@ -15,6 +15,8 @@ import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_EVENT_LIMITS, VIEW_EVENT
 import { LOG_BYTES_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { WORKER_GLOBALS } from '@src/lib/worker-globals';
+import { scriptHashSource } from '@src/lib/csp/script-hash';
+import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 
 /**
  * docs/API.md is the consumer's reference (backlog D3): this test fails when the public surface and the
@@ -301,6 +303,13 @@ describe('docs/API.md lists the public surface', () => {
         expect(viewSection).toContain(`at most ${VIEW_RENDER_CHARACTERS_PER_SECOND} characters of markup`);
         expect(VIEW_FILE_TYPES.length).toBe(27); // a new type is a new line of prose in the section, too
         expect(viewSection.replace(/\s+/g, ' ')).toContain(`Strings are cut at ${VIEW_EVENT_LIMITS.maxString} characters, \`ids\` at ${VIEW_EVENT_LIMITS.maxIds} entries, \`form\` at ${VIEW_EVENT_LIMITS.maxFields} fields, and all strings of one detail together at ${VIEW_EVENT_LIMITS.maxTotal} characters`);
+    });
+
+    it('the host page policy: the view bootstrap\'s hash through viewScriptHash(), the wrapper style\'s hash as the code computes it', () => {
+        const policy = section('## Host page policy');
+        expect(policy).toContain('`viewScriptHash()`');
+        expect(policy).toContain(scriptHashSource(WRAPPER_STYLE));
+        expect(policy).not.toContain('srcdoc;'); // no reading the hash out of the wrapper's document any more
     });
 
     it('describes the current design only: no backlog ids or history', () => {

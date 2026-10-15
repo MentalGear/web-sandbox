@@ -226,16 +226,18 @@ sandbox.setConfig({ entry: 'main.js', autoResize: true });
 ## Capabilities
 
 `capabilities` takes the sandbox flags that keep the guest inside the frame: `allow-scripts`,
-`allow-forms`, `allow-pointer-lock`, `allow-orientation-lock`.
+`allow-pointer-lock`, `allow-orientation-lock`.
 
-Capabilities that let the guest act outside the frame — `allow-popups`, `allow-modals`,
+Capabilities that let the guest act outside the frame — `allow-forms`, `allow-popups`, `allow-modals`,
 `allow-downloads`, `allow-presentation` and `fullscreen` — are dropped from `capabilities` with a
 warning. If you really need one, pass it in `unsafeCapabilities` (cooperative and worker mode; strict mode drops
 them); the sandbox logs a warning for each one enabled. A popup, for example, is a new top-level window that no CSP
 governs, so its URL is an exfiltration channel ([research 13](docs/research/13_popup_exfiltration/README.md)). Without
 `allow-popups` guest code opens no window, but in cooperative mode the user still can: a Ctrl-, Shift- or
 middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox, as for any sandboxed
-frame (strict mode's links are inert).
+frame (strict mode's links are inert). `allow-forms` is among them because a submission opened in a new tab that way
+is not checked against `form-action` in Chromium. Strict mode's view always has `allow-scripts allow-forms`: no guest
+script runs there, and it cancels every submit.
 
 ```js
 sandbox.setConfig({
@@ -465,7 +467,11 @@ sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the fl
     every pending write counted) and at most 100 writes and 8 MiB in any one second; a refusal has the same codes,
     plus `FILES_BUSY` past the rate and `FILES_NOT_ALLOWED` when writes are off.
 *   **The guest sees its own writes** in `list()`, `read()` and `text()` once the host accepted them, but
-    `url()` of a written path is `NOT_FOUND`: nothing the guest writes gets a URL or loads anywhere.
+    `url()` of a written path is `NOT_FOUND`: the guest gets no URL for anything it wrote.
+*   **Strict mode shows written images**: a PNG, JPEG, GIF, WebP or AVIF the guest wrote (a chart drawn on an
+    `OffscreenCanvas`) can be named by path in an `<img>` of the next render, without a rebuild. The view makes the URL
+    from the bytes the host holds, and only decodes it; a later write replaces it, a removal ends it. Nothing else the
+    guest writes loads anywhere.
 *   **Nothing is kept unless you commit it.** Pending writes belong to the environment: `reset()`, `load()`,
     `setConfig()` and removing the element discard them; `terminate()` keeps them so you can still inspect and
     commit them. `commitGuestWrites(paths)` takes an explicit list.
@@ -494,9 +500,12 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
 
 *   **Guest API (in the worker)**: `sandboxView.render(html, into?)` replaces the view's body, or the children of
     the element with id `into` (at most 256 Ki characters; the latest render per target wins);
-    `sandboxView.on(type, id | null, handler)` returns `off` and receives `click`, `input`, `change`, `submit`
-    and `keydown` as `{ type, ids, target: { tag, id, name, value, checked }, key?, form?, truncated? }`. `bridge`,
-    `sandboxFiles` and `sandboxFetch` work as in worker mode.
+    `sandboxView.text(id, text)` sets an element's text (assigned, never parsed: nothing to escape);
+    `sandboxView.set(id, { value?, checked?, focus? })` sets a form control, or focuses an element while the user's focus
+    is in the sandbox (never taking it from the host page); `sandboxView.on(type, id | null, handler)` returns `off`
+    and receives `click`, `input`, `change`, `submit` and `keydown` as
+    `{ type, ids, target: { tag, id, name, value, checked }, key?, form?, truncated? }`. `bridge`, `sandboxFiles` and
+    `sandboxFetch` work as in worker mode.
 *   **Host API**: `entry` names a registered JavaScript file the worker runs first (a classic script, in a
     function scope of its own: its top-level declarations stay local, so assign `globalThis.x` to share; `this`
     is the global object); `html` and `load()` set the initial view (without an `entry` the worker runs only the
@@ -515,8 +524,8 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     the browser's own link actions (copy, open in a new tab, drag) carry no guest URL (open external URLs through
     a method you `expose()`); the watchdog stops a looping guest on every
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
-    directive apart, and cannot be forged; the view renders no `blob:` content but registered files (the worker's
-    own source URL is revoked once its script ran).
+    directive apart, and cannot be forged; the view renders no `blob:` content but registered files and raster-image
+    guest writes, decoded only (the worker's own source URL is revoked once its script ran).
 *   **What it does not**: [below](#what-strict-mode-does-not-cover), with the host page's availability first.
 *   **Programming model**: no inline `<script>`, nested frames or the elements listed in API.md as unavailable (popovers,
     invoker commands, `canvas`, SVG `use`/filters/`image`) in rendered markup; files are named by path in
@@ -596,7 +605,8 @@ the default. Measured per engine and asserted by tests; worker mode shares the r
 *   **The user's link actions**: Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens a new tab at
     the guest's URL in Chromium and Firefox, without `allow-popups`. So does a modifier click the guest's own script
     synthesizes: in Chromium with no user gesture (where its popup blocker lets it), in Firefox within a user's
-    activation; on a submit button (with `allow-forms`) Chromium opens the submission in a new tab past `form-action`.
+    activation; on a submit button (with `allow-forms`, an unsafe capability) Chromium opens the submission in a new
+    tab past `form-action`.
 *   **Trusted Types**: under a host page's `require-trusted-types-for 'script'` the guest inherits the requirement, so
     its own scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too
     (strict mode renders as usual: its view assigns through its own policy; in every mode `execute()` is refused).

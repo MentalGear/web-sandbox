@@ -39,6 +39,13 @@ test('the built package runs strict mode: the view bootstrap is admitted by its 
     await page.waitForFunction(() => (window as any).sandboxLogs.includes('rendered'));
     await expect.poll(() => page.evaluate(() => (document.querySelector('packaged-sandbox') as HTMLElement).style.height)).toMatch(/^3[45]\d?px$/);
     expect(violations).toEqual([]);
+    // viewScriptHash() (review round 1, R4-5) is the bundle's own hash: the one in the view's policy, for a host page's policy
+    const [exported, built] = await page.evaluate(() => {
+        const srcdoc = (document.querySelector('packaged-sandbox') as HTMLElement).shadowRoot!.querySelector('iframe')!.srcdoc;
+        return [(window as any).viewScriptHash(), `'${/script-src '(sha256-[A-Za-z0-9+/=]+)'/.exec(srcdoc)![1]}'`];
+    });
+    expect(exported).toMatch(/^'sha256-[A-Za-z0-9+/]{43}='$/);
+    expect(exported).toBe(built);
 });
 
 // Review A8 (docs/security/ADVERSARIAL-REVIEW-2026-10.md): the default bootstrap is asserted parser-safe when the

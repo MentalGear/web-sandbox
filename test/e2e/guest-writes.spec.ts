@@ -21,7 +21,7 @@ import type { StrictSandboxOrigins } from '@src/lib/csp/origins';
  *   6. a commit of anything but an inert type needs { code: true }; the type is the store's
  *   7. a flood is refused with FILES_BUSY and 'fileswritten' stays bounded; a listener's reset() mid-flood leaves
  *      the next environment untouched (only the current port is heard)
- *   8. strict mode: the view renders no blob: content but registered files, with written files present
+ *   8. strict mode: the view renders no blob: content but registered files and raster-image guest writes, decoded only
  *   9. writing adds no egress; two sandboxes keep their writes apart
  * Evidence (backlog T5): read from the host page, outside the guest: listFiles(), listGuestWrites(), the
  * 'fileswritten' events the harness records, the view's DOM (strict-view.ts) and the recorder's listeners. The
@@ -419,25 +419,25 @@ for (const mode of MODES) {
 }
 
 test.describe('strict mode: the view and the overlay', () => {
-    test('8. C1 holds with written files present: the worker mints no URL for them, the view renders none of their content (the path stays unresolved), while a registered file renders (positive control)', async ({ sandbox, page, browserName }) => {
+    test('8. C1, as the owner widened it (R4-4): the view renders no blob: content but registered files and raster-image guest writes, decoded only. The worker mints no URL for a written file; the view shows a written PNG from its own URL and never a written SVG; a registered file renders (positive control)', async ({ sandbox, page, browserName }) => {
         await sandbox.registerFiles({ 'registered.png': { base64: Buffer.from(PNG_3x5).toString('base64') } });
         expect(await sandbox.mount(writesOn('strict'))).toBe('ready');
         const r = await inGuest(sandbox, `
             await sandboxFiles.write('written.png', new Uint8Array(${JSON.stringify(PNG_3x5)}));
-            await sandboxFiles.write('registered.png', new Uint8Array(${JSON.stringify(PNG_3x5)}));
+            await sandboxFiles.write('written.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="5"></svg>');
             return {
-                urls: await Promise.all(['written.png', 'registered.png'].map((p) => outcome(() => sandboxFiles.url(p)))),
+                urls: await Promise.all(['written.png', 'written.svg'].map((p) => outcome(() => sandboxFiles.url(p)))),
                 mint: typeof URL.createObjectURL,
             };`);
         expect(r).toEqual({ urls: new Array(2).fill({ code: 'NOT_FOUND', isError: true, keys: ['code'] }), mint: 'undefined' });
-        await sandbox.run(`sandboxView.render('<img id="w" src="written.png"><img id="r" src="registered.png"><p id="done">done</p>')`);
-        await waitInView(page, browserName, `!!document.getElementById('done') && document.getElementById('r').complete && document.getElementById('r').naturalWidth === 3`, 8000);
+        await sandbox.run(`sandboxView.render('<img id="w" src="written.png"><img id="s" src="written.svg"><img id="r" src="registered.png"><p id="done">done</p>')`);
+        await waitInView(page, browserName, `!!document.getElementById('done') && document.getElementById('r').complete && document.getElementById('r').naturalWidth === 3 && document.getElementById('w').naturalWidth === 3`, 8000);
         const view = await inView<any>(page, browserName, `({
-            written: document.getElementById('w').getAttribute('src'),
-            writtenSize: document.getElementById('w').naturalWidth,
+            written: document.getElementById('w').getAttribute('src').slice(0, 5) + ' ' + document.getElementById('w').naturalWidth,
+            svg: document.getElementById('s').getAttribute('src') + ' ' + document.getElementById('s').naturalWidth,
             registered: document.getElementById('r').getAttribute('src').slice(0, 5),
         })`);
-        expect(view).toEqual({ written: 'written.png', writtenSize: 0, registered: 'blob:' });
+        expect(view).toEqual({ written: 'blob: 3', svg: 'written.svg 0', registered: 'blob:' });
     });
 
     test('5b. a committed image is a registered file at the next build: the view renders it from its own URL', async ({ sandbox, page, browserName }) => {

@@ -39,7 +39,7 @@ conditional "continue".
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2), and the strict-mode design probes (research 15) on all three (S45) |
 | CSP delivery | 🟡 `<meta>` only, now always first in `<head>` (S2 fixed); 3 directives discarded (S7); pre-policy egress window over guest markup (S8, cooperative mode) |
 | Default policy | ✅ the template: `base-uri`, `form-action`, `frame-src`, `object-src`, `manifest-src` always `'none'` (S9), every fetch directive `'none'` unless `origins` lists an origin (S16); no `'self'`, `data:`, wildcard or scheme can be configured (S14, S47); `blob:` only with registered files, only for their types' kinds ([ADR-004](ADR-004-files-as-blob-urls.md)) |
-| Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`), each only for a load its type is for (S27); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); guest writes opt-in (`guestWrites`): checked by the store's own rules into a per-environment overlay, never given a URL, kept only by an explicit `commitGuestWrites(paths)`, code only with `{ code: true }` (C5) |
+| Files | ✅ guest-realm `blob:` URLs through `sandboxFiles` (`list`/`url`/`read`/`text`), both modes, typed by extension, capped at 8 MiB / 1000 files (C1–C3, S3, [ADR-004](ADR-004-files-as-blob-urls.md)); guest markup names files by path (`<script src>`, `<link href>`, media `src`, `srcset`), each only for a load its type is for (S27); modules import each other by relative path through one import map (es-module-lexer, bundled); stylesheets and inline styles by `url()` and `@import` (host-side CSS tokenizer, dependency-ordered slots, cycles fail closed); guest writes opt-in (`guestWrites`): checked by the store's own rules into a per-environment overlay, never given a URL in the guest (the strict view shows the raster images among them from URLs it mints, S54), kept only by an explicit `commitGuestWrites(paths)`, code only with `{ code: true }` (C5) |
 | Host page URL | ✅ in strict mode, the default: guest code sees only its worker's `blob:` URL and no request carries a `Referer`. Cooperative mode (limits, S44): hidden from the guest's document (base URL `about:blank`, no-referrer frames, S15), but the host origin stays visible where engines expose it (`ancestorOrigins`, image `Referer`); in WebKit a frame the guest creates reads the host URL as its referrer (S17) and a guest asking for `unsafe-url` sends it to same-site origins (S18) |
 | API reference | ✅ [`API.md`](API.md): the whole public surface, checked against the code by a unit test (D3); framework adapters out of scope |
 | Installable package | 🟡 typed ESM build in `dist/`, packed and smoke-tested in CI; `private: true` until H5's licence is chosen (D1) |
@@ -47,7 +47,7 @@ conditional "continue".
 | Broad review 2026-10-14 | ✅ reviewers A, B, D (S32–S37): the guest announces its port (CB1, PD8), bounded loading (CB3), no `data:` workers (PD1), guest-realm hardening for keepalive, history, `window.name`, DNS prefetch (PD2–PD4, PD6) with residuals stated (S35, S36); reviewer C's strict-mode findings (ST1–ST4) are reported separately; [report](security/BROAD-REVIEW-2026-10-14.md) |
 | Independent verification 2026-10-14 | ✅ five verifiers (63 of 66 mutations caught): a Firefox worker's `EventSource` and `FontFace` passed the policy, closed by an allowlist of worker globals (S43); a strict entry's synchronous console lines arrive (S45); the cooperative-mode limits in one list, user actions and history added (S44); 9 test gaps closed and the design probes in CI (S45); decision 1, `ready` on the guest's check-in (S46); decision 2, strict mode the default (S48); [report](security/VERIFICATION-2026-10-14.md) |
 | Focused review 2026-10-14 | ✅ 11 findings and one hardening, all closed (S27–S31): a reference names a file only for the kind of load its type is for (W1), rates hold in any one-second window (W2), the strict renderer removes SVG animation (F1), `workerExecutionTimeout` is a free event loop at the deadline (F2), no error text in reasons (F3), no assigned config keys (F4), one eval writer (F5), refused configs never stored (F6); [report](security/FOCUSED-REVIEW-2026-10-14.md) |
-| Review round 1 2026-10-15 | 🟡 not clean (the stopping rule's count stays 0): 8 medium and 22 low or info findings from four reviewers (R5 did not complete), all fixed or documented (S50–S53): the host page's policy (S50), one console relay with byte budgets (S51), the strict view's character and rate budget and a linear renderer (S52), the low findings and the cooperative modifier-click residual (S53); three items await the owner; [report](security/REVIEW-ROUND-1-2026-10-15.md) |
+| Review round 1 2026-10-15 | 🟡 not clean (the stopping rule's count stays 0): 8 medium and 22 low or info findings from four reviewers (R5 did not complete), all fixed or documented (S50–S53): the host page's policy (S50), one console relay with byte budgets (S51), the strict view's character and rate budget and a linear renderer (S52), the low findings and the cooperative modifier-click residual (S53); the owner's three decisions done (S54); [report](security/REVIEW-ROUND-1-2026-10-15.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -70,7 +70,7 @@ unrepresentable states.
 On 2026-10-15 strict mode became the default and `'iframe'` was renamed `'cooperative'` (S48): cooperative mode's
 limits are a frozen list (S44: no new guest-realm patches), S42 was accepted and documented, and S49 records folding
 worker mode into strict mode. Review round 1 the same day ([report](security/REVIEW-ROUND-1-2026-10-15.md)) added and
-closed S50–S53 (R2-2 a cooperative-mode limit; three items await the owner).
+closed S50–S53 (R2-2 a cooperative-mode limit); the owner's three decisions on it were done the same day (S54).
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1243,7 +1243,7 @@ applies in strict mode, the default; worker mode shares only the reports item.
   in Chromium and Firefox, without `allow-popups`, as for any sandboxed frame (Playwright's WebKit opens none, a
   measurement limit); so does a modifier click the guest's script synthesizes (Chromium with no gesture where its
   popup blocker lets it, Firefox within a user's activation), and Chromium submits a form that way past `form-action`
-  (S53, R2-2);
+  (S53, R2-2), so `allow-forms` is an unsafe capability (S54);
 - the host page's Trusted Types requirement reaches the guest: its scripts, the import map and the markup the bootstrap
   writes for registered files need Trusted Types too (S50);
 - the guest's fragment navigations add entries to the tab's session history (every engine), and a navigation the
@@ -1386,7 +1386,7 @@ hash today, and that the host's fetch directives narrow `origins` silently. **Re
 CSS (`'unsafe-inline'` or the hash: a `srcdoc` document is never in quirks mode, and the wrapper runs no script);
 WebKit refuses the view's `blob:` worker under COEP; cooperative mode inherits the Trusted Types requirement (a
 cooperative-mode limit; worker mode's frame starts its worker through the policy), and under it no mode evaluates
-strings (`execute()` is refused). **Awaiting the owner**: an exported view-hash function (R4-5).
+strings (`execute()` is refused). The exported view-hash function, `viewScriptHash()`, was decided and done in S54 (R4-5).
 Tests: `test/e2e/host-policy.spec.ts`, `test/unit/review-round-1.test.ts` (Trusted Types), `test/unit/channel-guarantees.test.ts`.
 
 ### S51 · One console relay; byte budgets on log lines and RPC messages — ✅ **done**
@@ -1432,8 +1432,35 @@ TypeError (R3-9); `sandboxFetch` always exists and is refused without the bridge
 handler messages, the element's own announcement, synthetic events, and plugins whose init outlives `ready` (R3-10–12,
 R4-9, R4-11). **R2-2, a cooperative-mode limit (S44)**: a modifier click the guest's script synthesizes opens a new
 top-level tab (Chromium with no gesture where its popup blocker lets it, Firefox within a user's activation) and
-Chromium submits a form that way past `form-action`; measured and asserted per engine; moving `allow-forms` between the
-capability lists awaits the owner. Tests: `test/unit/review-round-1.test.ts`, `test/e2e/review-round-1.spec.ts`.
+Chromium submits a form that way past `form-action`; measured and asserted per engine; `allow-forms` became an unsafe
+capability (S54). Tests: `test/unit/review-round-1.test.ts`, `test/e2e/review-round-1.spec.ts`.
+
+### S54 · The owner's decisions after review round 1: images the guest writes, `text()`/`set()`, the view's hash, `allow-forms` — ✅ **done**
+
+*From [review round 1](security/REVIEW-ROUND-1-2026-10-15.md), "Awaiting the owner" (R4-4, R4-5, R2-2);
+[ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-15-the-owners-decisions-after-review-round-1),
+[ADR-004 amendment](ADR-004-files-as-blob-urls.md#amendment-2026-10-15-the-strict-view-shows-raster-image-guest-writes).*
+
+**Done**:
+- **R4-4**: the strict view shows the raster images the guest writes (PNG, JPEG, GIF, WebP, AVIF; `VIEW_WRITE_TYPES` =
+  `VIEW_FILE_TYPES` ∩ the raster types, one constant the view checks), named by path in a render, without a rebuild.
+  The host sends the view the bytes it recorded, the view mints its own URL and only decodes it; `write()` resolves
+  once the view holds it; a later write replaces it, a removal or another type ends it, a rebuild starts fresh. The
+  guarantee now reads: the view renders no `blob:` content but registered files and raster-image guest writes, decoded
+  only.
+- **R4-5**: `viewScriptHash()` (the view bootstrap's hash source, the one the element uses) replaces reading the hash
+  from the wrapper's `srcdoc`; `sandboxView.text(id, text)` (assigned, never parsed) and `sandboxView.set(id, { value?,
+  checked?, focus? })`, over the render port's flow control and inside the view's character budget and rate. Focus
+  moves only while the user's focus is in the sandbox (`document.hasFocus()` in the view), so a guest never takes it
+  from the host page; measured: a sandboxed frame's `focus()` does so in Chromium and Firefox (PD5). No name was added
+  for the wrapper style's hash: it is a constant, listed in API.md.
+- **R2-2**: `allow-forms` is an unsafe capability in cooperative and worker mode (dropped from `capabilities` with a
+  warning, granted by `unsafeCapabilities` with one); strict mode's view keeps it, unchanged. The `form-action-exfil`
+  preset opts in.
+
+Tests: `test/unit/owner-decisions.test.ts`, `test/unit/view-api.test.ts`, `test/unit/api-docs.test.ts`,
+`test/e2e/owner-decisions.spec.ts`, `test/e2e/guest-writes.spec.ts` ("8"), `test/e2e/review-round-1.spec.ts` ("R2-2"),
+`test/e2e/host-policy.spec.ts`, `test/e2e/package.spec.ts`.
 
 ## B · API Surface & DX
 

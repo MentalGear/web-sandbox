@@ -1,29 +1,28 @@
 // The capabilities (sandbox flags and Permissions Policy features) an embedder can grant the guest. Its network
 // policy is `origins` (src/lib/csp/origins.ts).
-// allow-forms keeps a submission inside the frame: form-action is 'none' and the wrapper frame blocks the guest frame
-// from navigating (which is what a form submission does). Not a top-level one: in cooperative mode a submit button
-// clicked with a modifier, by the user or by a click the guest's script synthesizes, opens the submission in a new
-// tab, and Chromium checks no form-action for it (measured; review round 1, R2-2). Without allow-popups too, as for a
-// modifier click on a guest link (Chromium; Firefox within a user's activation). A cooperative-mode limit (README,
-// "Cooperative-mode limits"); strict mode runs no guest script in its view, and its links and forms navigate nowhere.
 /** The values `capabilities` accepts: sandbox flags that keep the guest inside the frame. */
 export const SAFE_CAPABILITIES = [
-    "allow-forms",
     "allow-orientation-lock",
     "allow-pointer-lock",
     "allow-scripts",
 ] as const;
 
 // Capabilities that reach outside the frame, so they need an explicit opt-in via `unsafeCapabilities`:
+// - allow-forms: a submission is a navigation, and inside the frame form-action 'none' and the wrapper frame stop it.
+//   But a submit button clicked with a modifier, by the user or by a click the guest's own script synthesizes, opens
+//   the submission in a new top-level tab, and Chromium checks no form-action for it: the form's fields reach any URL
+//   (measured; review round 1, R2-2). The owner moved it here; strict mode always sets it on its view, where no guest
+//   script runs and every submit is cancelled (host.ts, _getSandboxFlags), so strict mode is unchanged.
 // - allow-popups: a popup is a new top-level window, untouched by the frame's CSP -> URL exfiltration. Leaving it
-//   out does not stop every new window in cooperative mode: a modifier click on a guest link or submit button opens
-//   one (above, R2-2)
+//   out does not stop every new window in cooperative mode: a modifier click on a guest link opens one (R2-2, a
+//   cooperative-mode limit)
 // - allow-modals: alert/confirm/prompt can imitate host UI and block the host's main thread
 // - allow-downloads: writes files to the user's disk
 // - allow-presentation: the Presentation API opens a URL on a second screen, outside the frame's CSP
 /** The sandbox flags among UNSAFE_CAPABILITIES. */
 export const UNSAFE_SANDBOX_FLAGS = [
     "allow-downloads",
+    "allow-forms",
     "allow-modals",
     "allow-popups",
     "allow-presentation",
