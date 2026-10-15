@@ -42,9 +42,12 @@ bun add -d typescript >/dev/null
 cat > consumer.ts <<'TS'
 import { defineWebSandbox, WebSandbox, SAFE_CAPABILITIES, type SandboxConfig } from 'web-sandbox';
 
-const config: Partial<SandboxConfig> = { capabilities: ['allow-scripts'], unsafeCapabilities: ['fullscreen'] };
+const strict: SandboxConfig = { html: '<p>hi</p>', origins: { images: ['https://cdn.example'] } }; // no mode: strict, the default
+const config: SandboxConfig = { mode: 'cooperative', capabilities: ['allow-scripts'], unsafeCapabilities: ['fullscreen'] };
+// @ts-expect-error 'iframe' was renamed 'cooperative'
+const renamed: SandboxConfig = { mode: 'iframe' };
 const element: typeof WebSandbox = defineWebSandbox('consumer-sandbox');
-console.log(element.name, SAFE_CAPABILITIES.length, config);
+console.log(element.name, SAFE_CAPABILITIES.length, strict, config, renamed);
 TS
 cat > tsconfig.json <<'JSON'
 { "compilerOptions": { "target": "ESNext", "module": "Preserve", "moduleResolution": "bundler", "lib": ["ESNext", "DOM"], "strict": true, "noEmit": true, "skipLibCheck": false }, "include": ["consumer.ts"] }

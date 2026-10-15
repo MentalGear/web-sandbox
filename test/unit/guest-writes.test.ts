@@ -59,7 +59,7 @@ describe('the config: only a literal true turns guest writes on', () => {
 
     it('guestWrites: true → an overlay, and the feature reaches the bootstrap (positive control)', async () => {
         const heard = events(document.body);
-        const el = await mount({ capabilities: ['allow-scripts'], guestWrites: true });
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], guestWrites: true });
         expect(el._config.guestWrites).toBe(true);
         expect(el.shadowRoot.querySelector('iframe').srcdoc).toContain('guestWrites&quot;:true'); // inside the guest srcdoc attribute
         const { answers, send, close } = connect(el);

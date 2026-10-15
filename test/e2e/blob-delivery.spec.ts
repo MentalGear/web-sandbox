@@ -9,10 +9,10 @@ import { useRecorder, wss } from './recorder';
  * plus an import map so module specifiers resolve to those URLs. These specs pin, per engine, what
  * that design relies on:
  *   1. today's default CSP refuses every guest-created blob: subresource (only worker-src lists blob:)
- *   2. adding `blob:` to five directives admits them, in iframe and worker mode
+ *   2. adding `blob:` to five directives admits them, in cooperative and worker mode
  *   3. which module-resolution scheme works in all three engines
  *   4. a blob: URL never crosses realms (host -> guest, guest -> host, guest -> guest)
- *   5a. the guest policy never contains 'self' (backlog S14), in iframe and worker mode
+ *   5a. the guest policy never contains 'self' (backlog S14), in cooperative and worker mode
  *   5. `blob:` adds no egress: blob-loaded code runs under the same CSP, and a blob: document can
  *      neither replace the guest frame nor open a new browsing context
  *   6. strict MIME checking applies to blob responses (replaces C2's MIME defect)
@@ -191,7 +191,7 @@ const WORKER_LOADS: Probe[] = [
 const moduleWorker = (browserName: string) => (browserName === 'chromium' ? 'error' : 'ok');
 
 test.describe('1. default CSP: guest-created blob: subresources are refused', () => {
-    test('iframe mode: every load except a classic worker is refused, each by its own directive', async ({ sandbox, browserName }) => {
+    test('cooperative mode: every load except a classic worker is refused, each by its own directive', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount()).toBe('ready');
         expect(await runProbes(sandbox, IFRAME_LOADS)).toEqual({
             'classic <script src>': 'error csp=script-src-elem',
@@ -225,7 +225,7 @@ test.describe('1. default CSP: guest-created blob: subresources are refused', ()
 });
 
 test.describe('2. with blob: added, guest-created blob: subresources load', () => {
-    test('iframe mode: script, module, import(), stylesheet, image, font, fetch and classic worker all load', async ({ sandbox, browserName }) => {
+    test('cooperative mode: script, module, import(), stylesheet, image, font, fetch and classic worker all load', async ({ sandbox, browserName }) => {
         expect(await mountWithBlob(sandbox)).toBe('ready');
         expect(await runProbes(sandbox, IFRAME_LOADS)).toEqual({
             'classic <script src>': 'ok',
@@ -466,7 +466,7 @@ test.describe('4. blob: URLs do not cross realms', () => {
         };
     };
 
-    test('iframe mode: a blob: URL created by the host page loads as nothing in the guest, and not because of CSP', async ({ sandbox, page, browserName }) => {
+    test('cooperative mode: a blob: URL created by the host page loads as nothing in the guest, and not because of CSP', async ({ sandbox, page, browserName }) => {
         // blob: is allowed in every directive here, so a refusal is the blob store's origin check, not the policy
         expect(await mountWithBlob(sandbox)).toBe('ready');
         const u = await page.evaluate(hostBlobs);
@@ -558,12 +558,12 @@ const outboundAttempts = (target: string) => `
     try { const ws = new WebSocket('${wss(target)}/ws'); ws.onopen = () => report('websocket', 'reached'); ws.onerror = () => report('websocket', 'refused'); } catch (e) { report('websocket', 'refused'); }
 `;
 
-// The violations each engine reports on the host for outboundAttempts(target), in iframe or worker mode.
-function outboundViolations(target: string, mode: 'iframe' | 'worker', browserName: string): string[] {
+// The violations each engine reports on the host for outboundAttempts(target), in cooperative or worker mode.
+function outboundViolations(target: string, mode: 'cooperative' | 'worker', browserName: string): string[] {
     const fetch = `connect-src ${target}/fetch`;
     const websocket = `connect-src ${wss(target)}/ws`;
     const imported = `script-src-elem ${target}/module.js`;
-    if (mode === 'iframe') return [fetch, websocket, `img-src ${target}/img.svg`, imported].sort();
+    if (mode === 'cooperative') return [fetch, websocket, `img-src ${target}/img.svg`, imported].sort();
     if (browserName === 'chromium') return [fetch, websocket, imported, `script-src-elem ${target}/script.js`].sort();
     if (browserName === 'firefox') return [fetch, websocket].sort();
     return []; // WebKit raises no violations in workers
@@ -684,7 +684,7 @@ test.describe('5. blob: in the policy adds no egress', () => {
             for (const channel of ['fetch', 'import', 'img', 'websocket']) {
                 expect(await sandbox.waitForLog(`OUTBOUND ${channel} `)).toBe(`OUTBOUND ${channel} refused`);
             }
-            expect(await reportedViolations(sandbox)).toEqual(outboundViolations(recorder.blocked, 'iframe', browserName));
+            expect(await reportedViolations(sandbox)).toEqual(outboundViolations(recorder.blocked, 'cooperative', browserName));
             expect(recorder.hits.filter(hit => hit.server === 'blocked')).toEqual([]);
         });
     }
@@ -710,21 +710,21 @@ test.describe('5. blob: in the policy adds no egress', () => {
         expect(recorder.hits.filter(hit => hit.server === 'blocked')).toEqual([]);
     });
 
-    test('positive control: the same attempts to an allowlisted origin all succeed and reach the listener, in iframe and worker mode, with no violation', async ({ sandbox }) => {
+    test('positive control: the same attempts to an allowlisted origin all succeed and reach the listener, in cooperative and worker mode, with no violation', async ({ sandbox }) => {
         const allowed = recorder.allowed;
         await withBlob(sandbox);
         const origins = { scripts: [allowed], styles: [allowed], images: [allowed], connect: [allowed, wss(allowed)] };
-        const expectedPaths = { iframe: ['/fetch', '/img.svg', '/module.js', '/ws'], worker: ['/fetch', '/module.js', '/script.js', '/ws'] };
-        for (const mode of ['iframe', 'worker'] as const) {
+        const expectedPaths = { cooperative: ['/fetch', '/img.svg', '/module.js', '/ws'], worker: ['/fetch', '/module.js', '/script.js', '/ws'] };
+        for (const mode of ['cooperative', 'worker'] as const) {
             recorder.clear();
             await sandbox.clearLogs();
             await sandbox.clearViolations();
             expect(await sandbox.mount({ mode, origins })).toBe('ready');
             const attempts = JSON.stringify(outboundAttempts(allowed));
-            await sandbox.run(mode === 'iframe'
+            await sandbox.run(mode === 'cooperative'
                 ? `import(URL.createObjectURL(new Blob([${attempts}], { type: 'text/javascript' })));`
                 : `importScripts(URL.createObjectURL(new Blob([${attempts}], { type: 'text/javascript' })));`);
-            for (const channel of mode === 'iframe' ? ['fetch', 'import', 'img', 'websocket'] : ['importScripts', 'fetch', 'import', 'websocket']) {
+            for (const channel of mode === 'cooperative' ? ['fetch', 'import', 'img', 'websocket'] : ['importScripts', 'fetch', 'import', 'websocket']) {
                 expect(await sandbox.waitForLog(`OUTBOUND ${channel} `), `${mode} ${channel}`).toBe(`OUTBOUND ${channel} reached`);
             }
             for (const path of expectedPaths[mode]) await recorder.waitFor('allowed', path);
@@ -798,7 +798,7 @@ test.describe('5. blob: in the policy adds no egress', () => {
 // ---- 6: MIME ---------------------------------------------------------------------------------
 
 test.describe('6. blob: MIME types', () => {
-    test('iframe mode: modules and stylesheets need the right type; classic scripts, fonts and images are lenient as measured', async ({ sandbox, browserName }) => {
+    test('cooperative mode: modules and stylesheets need the right type; classic scripts, fonts and images are lenient as measured', async ({ sandbox, browserName }) => {
         expect(await mountWithBlob(sandbox)).toBe('ready');
         expect(await runProbes(sandbox, [
             ['module text/javascript', 'script', { module: true, type: 'text/javascript' }],

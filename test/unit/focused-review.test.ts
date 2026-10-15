@@ -259,7 +259,7 @@ describe('F4: no config transform writes a config-derived key by assignment', ()
     // An own "__proto__" key, as JSON.parse and structured clone produce it (review B8), at the top level.
     const injected = () => JSON.parse('{"__proto__": {"scripts": ["https://evil.example"], "images": ["https://evil.example"]}, "images": ["https://a.example"], "img-src": ["https://evil.example"]}');
     const steps: [string, (input: any) => unknown][] = [
-        ['parseOrigins', (d) => parseOrigins(d, 'iframe', () => {})],
+        ['parseOrigins', (d) => parseOrigins(d, 'cooperative', () => {})],
         ['parseOrigins (strict)', (d) => parseOrigins(d, 'strict', () => {})],
         ['deepMerge', (d) => deepMerge({ images: [] } as any, d)],
     ];
@@ -277,7 +277,7 @@ describe('F4: no config transform writes a config-derived key by assignment', ()
 
     it('the policies made from them hold no inherited origin', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        for (const mode of ['iframe', 'strict']) {
+        for (const mode of ['cooperative', 'strict']) {
             const origins = parseOrigins(injected(), mode, () => {});
             const input = { origins, fileKinds: new Set<never>(), scriptUnsafe: true };
             const policy = mode === 'strict' ? strictViewPolicy({ ...input, bootstrapHash: `'sha256-${'A'.repeat(43)}='` }) : cooperativePolicy(input);
@@ -332,7 +332,7 @@ describe('F6: a refused config is never stored', () => {
         const el = await mount();
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
-        for (const mode of ['iframe', 'worker', 'strict']) {
+        for (const mode of ['cooperative', 'worker', 'strict']) {
             for (const value of [null, 'https://a.example', ['x'], 5, { images: 'https://a.example' }, { connect: null }]) el.setConfig({ mode, origins: value });
         }
         expect(reasons).toEqual(new Array(18).fill('the configuration could not be used (TypeError)'));
@@ -380,7 +380,7 @@ describe('W1: a reference names a file only for the kind of load its type is for
 
     it('a guest-written app.js committed as text/plain (no { code: true } needed) gets no script slot in the next build; JavaScript committed with { code: true } does (positive control)', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'], guestWrites: true, html: '<script src="app.js"></script><script src="ok.js"></script>' });
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], guestWrites: true, html: '<script src="app.js"></script><script src="ok.js"></script>' });
         el._guestWrites.handle({ change: 'write', path: 'app.js', entry: { content: new TextEncoder().encode('globalThis.ran = 1'), type: 'text/plain' } });
         el._guestWrites.handle({ change: 'write', path: 'ok.js', entry: { content: new TextEncoder().encode('globalThis.ok = 1'), type: 'text/javascript' } });
         el.commitGuestWrites(['app.js']);
@@ -393,7 +393,7 @@ describe('W1: a reference names a file only for the kind of load its type is for
 
     it('the same for host-registered files: x.js registered as text/plain is not a script; a stylesheet link never names a text file, an image never a stylesheet; an image does (positive control)', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'], html: '<script src="host.js"></script><link rel="stylesheet" href="style.txt"><img src="pic.css"><img src="pic.png">' });
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], html: '<script src="host.js"></script><link rel="stylesheet" href="style.txt"><img src="pic.css"><img src="pic.png">' });
         el.registerFiles({ 'host.js': { content: 'globalThis.ran = 1', type: 'text/plain' }, 'style.txt': 'a {}', 'pic.css': 'a {}', 'pic.png': new Uint8Array([137, 80]) });
         el.reset();
         expect(slotsOf(el)).toEqual(['pic.png']);

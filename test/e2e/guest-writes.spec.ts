@@ -8,7 +8,7 @@ import type { SandboxConfig, SandboxConfigOptions } from '@src/host';
 import type { StrictSandboxOrigins } from '@src/lib/csp/origins';
 
 /**
- * Guest writes (backlog C5, src/lib/guest-writes.ts, ADR-004 amendment "guest writes"), in iframe, worker and
+ * Guest writes (backlog C5, src/lib/guest-writes.ts, ADR-004 amendment "guest writes"), in cooperative, worker and
  * strict mode. Each test names the guarantee it proves:
  *   1. off (the default), a write is refused by both routes (sandboxFiles and a forged bridge call), and no raw
  *      frame records anything; the store, the overlay and the events stay empty (positive control: on)
@@ -30,7 +30,7 @@ import type { StrictSandboxOrigins } from '@src/lib/csp/origins';
 
 const recorder = useRecorder();
 
-const MODES = ['iframe', 'worker', 'strict'] as const;
+const MODES = ['cooperative', 'worker', 'strict'] as const;
 type Mode = typeof MODES[number];
 
 // One guest-side helper: how a promise (or a function returning one) settled, by exact code.
@@ -331,7 +331,7 @@ for (const mode of MODES) {
                 url: (() => { try { return sandboxFiles.url('pic.png').slice(0, 5); } catch (e) { return e.code; } })(),
                 image: typeof Image === 'function' ? await new Promise((resolve) => { const i = new Image(); i.onload = () => resolve(i.naturalWidth + 'x' + i.naturalHeight); i.onerror = () => resolve('error'); i.src = sandboxFiles.url('pic.png'); }) : 'no Image here',
             }`);
-            expect(r).toEqual({ list: ['note.txt', 'pic.png'], text: 'kept', png: PNG_3x5.length, url: 'blob:', image: mode === 'iframe' ? '3x5' : 'no Image here' });
+            expect(r).toEqual({ list: ['note.txt', 'pic.png'], text: 'kept', png: PNG_3x5.length, url: 'blob:', image: mode === 'cooperative' ? '3x5' : 'no Image here' });
         });
 
         test('6. a commit of a non-inert type needs { code: true }: JavaScript, HTML, SVG, XML, wasm, unknown and an override; the type is the store\'s, so a renamed file does not pass', async ({ sandbox }) => {

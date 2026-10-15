@@ -1,16 +1,16 @@
 import { test, expect } from './fixture';
 
 /**
- * The opt-in liveness watchdog (backlog S6, default mode; ADR-003). With `watchdogTimeout` set, a guest
+ * The opt-in liveness watchdog (backlog S6, cooperative and worker mode; ADR-003). With `watchdogTimeout` set, a guest
  * whose event loop stops answering is terminated within the budget, while the host page stays
  * responsive; a guest that keeps answering is never terminated; and the watchdog stops with the
  * environment it watches.
  *
  * Where it holds: the guest must run on a different thread or process from the host, so that its loop
- * cannot block the host's timers. Worker mode is that on every browser. Iframe mode is that only where
+ * cannot block the host's timers. Worker mode is that on every browser. Cooperative mode is that only where
  * the browser runs the sandboxed frame out of process, which is browser policy rather than something the
  * page controls: it varies by browser and even by environment (Chromium ran the frame out of process in
- * one test environment and on the host's thread in CI). So the iframe-mode test measures it first and
+ * one test environment and on the host's thread in CI). So the cooperative-mode test measures it first and
  * asserts whichever contract applies. Same-thread is a platform limit; strict mode (S6, ADR-005) is the
  * answer to it: guest code runs only in a worker there, so the bound holds on every engine — asserted
  * below for a loop at the entry's top level and through execute(). Where the view shares the host's
@@ -71,7 +71,7 @@ async function frameSharesHostThread(sandbox: any, page: any): Promise<boolean> 
     return stalled;
 }
 
-test('iframe mode: a guest stuck in a loop is stopped by the watchdog where the frame has its own thread, and never charged for host stalls where it shares the host thread', async ({ sandbox, page }, testInfo) => {
+test('cooperative mode: a guest stuck in a loop is stopped by the watchdog where the frame has its own thread, and never charged for host stalls where it shares the host thread', async ({ sandbox, page }, testInfo) => {
     expect(await sandbox.mount({ watchdogTimeout: BUDGET })).toBe('ready');
 
     if (!(await frameSharesHostThread(sandbox, page))) {
@@ -103,7 +103,7 @@ test('worker mode: a worker stuck in an endless loop is terminated by the watchd
     await expectWatchdogStopsLoop(sandbox, page);
 });
 
-for (const mode of ['iframe', 'worker'] as const) {
+for (const mode of ['cooperative', 'worker'] as const) {
     test(`${mode} mode: a responsive guest is never terminated by the watchdog, across a reset, and guest methods named PING/PONG are unaffected`, async ({ sandbox, page }) => {
         const budget = 600;
         expect(await sandbox.mount({ mode, watchdogTimeout: budget })).toBe('ready');

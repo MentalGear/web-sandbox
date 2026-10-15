@@ -165,7 +165,7 @@ test.describe('ST1: nothing the strict view shows opens in a new tab as a docume
             'x.woff2': { base64: doc },
             'x.jpg': { base64: doc }, 'x.gif': { base64: doc }, 'x.webp': { base64: doc }, 'x.ico': { base64: doc },
             'x.mp3': { base64: doc }, 'x.mp4': { base64: doc }, 'x.vtt': { base64: doc },
-            // the prefix rules of the default-mode table admit these types, and an engine renders a +xml type as XML
+            // the prefix rules of the cooperative-mode table admit these types, and an engine renders a +xml type as XML
             'xml.mp4': { base64: doc, type: 'video/x-st1+xml' },
             'xml.png': { base64: doc, type: 'image/x-st1+xml' },
             'html.mp3': { base64: doc, type: 'audio/x-st1+html' },

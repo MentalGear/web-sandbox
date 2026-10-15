@@ -1,5 +1,5 @@
 /**
- * Content auto-sizing, host side (backlog B6). Opt-in with `autoResize: true`, iframe mode only.
+ * Content auto-sizing, host side (backlog B6). Opt-in with `autoResize: true`, cooperative mode only.
  *
  * The guest bootstrap (in-sandbox-script.ts) observes the guest's root element with a ResizeObserver and
  * reports the content height over the port as a first-class RESIZE frame, outside the broker, so no

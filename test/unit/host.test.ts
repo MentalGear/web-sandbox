@@ -44,16 +44,16 @@ const mount = async (config?: Record<string, unknown>) => {
 };
 
 describe('the guest policy built by the element: `origins` (ADR-007)', () => {
-  it('the default guest policy, in iframe and worker mode: the cooperative template, every directive explicit', async () => {
-    for (const mode of ['iframe', 'worker']) {
+  it('the default guest policy, in cooperative and worker mode: the cooperative template, every directive explicit', async () => {
+    for (const mode of ['cooperative', 'worker']) {
       const el = await mount({ mode });
       expect(frames(el).policy, mode).toBe(COOPERATIVE_DEFAULT);
       el.remove();
     }
   });
 
-  it('each kind fills its directive and no other, in iframe and worker mode, across reset()', async () => {
-    for (const mode of ['iframe', 'worker']) {
+  it('each kind fills its directive and no other, in cooperative and worker mode, across reset()', async () => {
+    for (const mode of ['cooperative', 'worker']) {
       const el = await mount({ mode, origins: { scripts: ['https://cdn.example'], images: ['https://img.example'], connect: ['https://api.example', 'wss://ws.example'] } });
       el.reset();
       expect(frames(el).policy, mode).toBe(COOPERATIVE_DEFAULT
@@ -66,7 +66,7 @@ describe('the guest policy built by the element: `origins` (ADR-007)', () => {
 
   it("backlog S14, S16: 'self', a scheme, a wildcard or data: is dropped with one warning each across resets; a kind left with nothing is 'none'", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    for (const mode of ['iframe', 'worker']) {
+    for (const mode of ['cooperative', 'worker']) {
       warn.mockClear();
       const el = await mount({ mode, origins: { scripts: ["'SELF'", 'https://a.example'], connect: ["'self'", 'https:', '*'], images: ['data:'] } });
       el.reset();
@@ -84,9 +84,9 @@ describe('the guest policy built by the element: `origins` (ADR-007)', () => {
 
   it('connectionsAllowed was removed: one warning per instance, ignored (no origin from it), the rest of the config applied', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const el = await mount({ connectionsAllowed: { 'img-src': ['https://img.example'], 'default-src': ['*'] }, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
+    const el = await mount({ mode: 'cooperative', connectionsAllowed: { 'img-src': ['https://img.example'], 'default-src': ['*'] }, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
     el.reset();
-    el.setConfig({ connectionsAllowed: null, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
+    el.setConfig({ mode: 'cooperative', connectionsAllowed: null, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
     expect(el.state).toBe('loading');
     expect(frames(el).policy).toBe(COOPERATIVE_DEFAULT.replace("connect-src 'none'", 'connect-src https://api.example'));
     expect(el._config.html).toBe('<p id="kept">');
@@ -96,8 +96,8 @@ describe('the guest policy built by the element: `origins` (ADR-007)', () => {
     warn.mockRestore();
   });
 
-  it('in iframe and worker mode, both frames are no-referrer, the guest inherits an inert base, and base-uri stays none', async () => {
-    for (const mode of ['iframe', 'worker']) {
+  it('in cooperative and worker mode, both frames are no-referrer, the guest inherits an inert base, and base-uri stays none', async () => {
+    for (const mode of ['cooperative', 'worker']) {
       const el = await mount({ mode });
       el.reset();
       const { outer, wrapper, inner, policy } = frames(el);
@@ -166,7 +166,7 @@ describe('the scriptUnsafe guard rail (backlog S4)', () => {
 describe('no directive a <meta> policy discards is ever emitted (backlog S7)', () => {
   it('a config cannot name one: as a key of origins it is an unknown kind, dropped with one warning per instance; the policy is the template', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    for (const mode of ['iframe', 'worker']) {
+    for (const mode of ['cooperative', 'worker']) {
       warn.mockClear();
       const origins = { 'frame-ancestors': ["'none'"], 'report-uri': ['https://r.example/'], 'report-to': ['group'], 'sandbox': ['allow-scripts'] };
       const el = await mount({ mode, origins });
@@ -216,7 +216,7 @@ describe("the element's 'violation' event (backlog S5)", () => {
 describe('the guest bootstrap always runs where scripts are allowed (backlog S13, S5)', () => {
   it("the cooperative policy always admits the inline bootstrap, so the element always expects its announcement with allow-scripts, and only then", async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    for (const mode of ['iframe', 'worker']) {
+    for (const mode of ['cooperative', 'worker']) {
       const el = await mount({ mode, capabilities: ['allow-scripts'], origins: { scripts: ['https://cdn.example'] } });
       expect(frames(el).policy, mode).toMatch(/script-src 'unsafe-inline'[ ;]/);
       expect(el._expectAnnouncement, mode).toBe(true);
@@ -234,7 +234,7 @@ describe('content auto-sizing reaches the guest bootstrap only when asked for (b
     return new DOMParser().parseFromString(wrapper, 'text/html').querySelector('iframe')!.getAttribute('srcdoc')!;
   };
 
-  it('passes { autoResize: true } in iframe mode with autoResize: true, and nothing otherwise', async () => {
+  it('passes { autoResize: true } in cooperative mode with autoResize: true, and nothing otherwise', async () => {
     const { defineWebSandbox } = await import('@src/host');
     defineWebSandbox();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -242,11 +242,11 @@ describe('content auto-sizing reaches the guest bootstrap only when asked for (b
     document.body.appendChild(el);
     const FEATURE = '{"autoResize":true}';
 
-    el.setConfig({ capabilities: ['allow-scripts'] });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
     expect(guestDocument(el)).not.toContain(FEATURE);
-    el.setConfig({ capabilities: ['allow-scripts'], autoResize: 'yes' });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], autoResize: 'yes' });
     expect(guestDocument(el)).not.toContain(FEATURE);
-    el.setConfig({ capabilities: ['allow-scripts'], autoResize: true });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], autoResize: true });
     expect(guestDocument(el)).toContain(FEATURE);
     el.setConfig({ mode: 'worker', autoResize: true });
     expect(guestDocument(el)).not.toMatch(/autoResize\\*":true/); // the worker source is a string literal: escaped quotes
@@ -270,13 +270,13 @@ describe('the fetch bridge reaches the guest only when configured (backlog B5)',
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
 
-    el.setConfig({ capabilities: ['allow-scripts'] });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
     expect(guestDocument(el)).not.toMatch(/fetchBridge\\*":/);
-    el.setConfig({ capabilities: ['allow-scripts'], fetchBridge: { allow: ['https://api.example'], timeoutMs: 2500 } });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: { allow: ['https://api.example'], timeoutMs: 2500 } });
     expect(guestDocument(el)).toContain('{"fetchBridge":{"timeoutMs":2500}}');
     el.setConfig({ mode: 'worker', fetchBridge: { allow: [] } });
     expect(guestDocument(el)).toMatch(/fetchBridge\\*":\{\\*"timeoutMs\\*":10000\}/);
-    el.setConfig({ capabilities: ['allow-scripts'], fetchBridge: 'on' });
+    el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: 'on' });
     expect(guestDocument(el)).not.toMatch(/fetchBridge\\*":/);
 
     el.expose('sandbox:fetch', () => 'forged');

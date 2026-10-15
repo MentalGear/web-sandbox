@@ -194,7 +194,7 @@ describe('PD1: no worker loads from data: in the guest policy', () => {
 
     it('a config cannot reach worker-src at all (no kind names it), and data: is not an origin for any kind: one warning each across builds', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'], origins: { 'worker-src': ['data:'], scripts: ['data:'], images: ['data:'] } });
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { 'worker-src': ['data:'], scripts: ['data:'], images: ['data:'] } });
         el.reset();
         expect(policyOf(el)).toContain('worker-src blob:;');
         expect(policyOf(el)).not.toContain('data:');
@@ -235,7 +235,7 @@ function urlSources(policy: string, kind: string): Set<string> {
 
 describe('PA1: blob: for files widens only the kinds of load they are for', () => {
     it('a JavaScript file: blob: reaches scripts, not workers', () => {
-        const origins = parseOrigins({ scripts: ['https://cdn.example'] }, 'iframe', () => {});
+        const origins = parseOrigins({ scripts: ['https://cdn.example'] }, 'cooperative', () => {});
         const before = cooperativePolicy({ origins, fileKinds: new Set(), scriptUnsafe: false });
         const after = cooperativePolicy({ origins, fileKinds: fileKinds(['text/javascript']), scriptUnsafe: false });
         expect(urlSources(after, 'script-src-elem')).toContain('blob:'); // what the files are for
@@ -259,7 +259,7 @@ describe('PA1: blob: for files widens only the kinds of load they are for', () =
             for (const kind of KINDS) if (random() < 0.5) config[kind] = ENTRIES.filter(() => random() < 0.4);
             const types = TYPES.filter(() => random() < 0.35);
             const needed = new Set(types.flatMap(type => NEEDED[type]!));
-            for (const mode of ['iframe', 'strict']) {
+            for (const mode of ['cooperative', 'strict']) {
                 const origins = parseOrigins(config, mode, () => {});
                 const make = (kinds: Set<never> | ReturnType<typeof fileKinds>) => (mode === 'strict'
                     ? strictViewPolicy({ origins, fileKinds: kinds, scriptUnsafe: false, bootstrapHash: hash })

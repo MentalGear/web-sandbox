@@ -138,7 +138,7 @@ test.describe('G1 rendered markup', () => {
         expect(await markers(sandbox, browserName)).toEqual([]);
     });
 
-    test('positive control for the marker channel: the same inline script in a default iframe-mode sandbox runs and is read from outside', async ({ sandbox, page, browserName }) => {
+    test('positive control for the marker channel: the same inline script in a cooperative-mode sandbox runs and is read from outside', async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ html: `<script>${M('control')}</script>` })).toBe('ready');
         await expect.poll(() => markers(sandbox, browserName)).toEqual(['main/wrapper/view:control']);
     });

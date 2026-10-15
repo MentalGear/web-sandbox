@@ -8,11 +8,11 @@ Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the 
 
 **Key Features:**
 *   **Local-First:** No server round-trips for code execution.
-*   **Secure:** The guest runs in an opaque origin: no access to the host origin's storage, Service Workers, DOM or
-    scripts (Firefox and WebKit still attach the host site's cookies to a guest request to an allowed origin that is
-    same-site with the host page). It can still post messages to the host window, as any frame can (check
-    `event.source` in your `message` listeners), and default mode has the [residuals listed
-    below](#default-mode-residuals); strict mode closes most of them.
+*   **Secure by default:** [strict mode](#strict-mode), the default, runs guest code only in a worker; the visible
+    frame runs no guest script. Every guest runs in an opaque origin: no access to the host origin's storage, Service
+    Workers, DOM or scripts (Firefox and WebKit still attach the host site's cookies to a guest request to an allowed
+    origin that is same-site with the host page). [Cooperative mode](#modes) runs guest script in a document, for
+    content that cooperates, with the [limits listed below](#limits).
 *   **Unified:** Use the same "Preset" definitions for both manual testing (Playground) and automated regression testing.
 
 ## Getting Started
@@ -52,7 +52,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full workflow.
 
 Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/playground/index.html).
 
-*   **Presets:** Select a scenario from the dropdown to load pre-configured code and security rules. The regression specs run the very same presets (`fromPreset()` in `test/e2e/presets.ts`), and a unit test fails if a security preset has no spec. A preset says whether to use "Run Code" or "Run as HTML".
+*   **Presets:** Select a scenario from the dropdown to load pre-configured code and security rules; the playground opens on a strict-mode demo, the default mode. Every preset names the mode it was written for. The regression specs run the very same presets (`fromPreset()` in `test/e2e/presets.ts`), and a unit test fails if a security preset has no spec. A preset says whether to use "Run Code" or "Run as HTML".
 *   **Code Editor:** Modify the JavaScript code to test different behaviors.
 *   **Rules Editor:** The configuration as JSON: execution mode, capabilities, the `origins` the guest may load from.
 *   **Logs:** View `console.log` output and security events from within the sandbox.
@@ -81,25 +81,37 @@ import { defineWebSandbox } from 'web-sandbox';   // or './src/index.ts' from a 
 
 defineWebSandbox();                 // registers <web-sandbox>; pass a name to use your own tag
 const sandbox = document.querySelector('web-sandbox');
-sandbox.setConfig({ capabilities: ['allow-scripts'] });
-sandbox.load('<h1>Hello</h1>');
+sandbox.load('<h1>Hello</h1>');     // strict mode, the default: shown, and no script in it runs
 ```
 
 Importing the module registers nothing, so you choose the tag name.
+
+### Modes
+
+| Mode | Guest code runs in | For |
+| :--- | :--- | :--- |
+| `strict` (default) | a worker; the view runs only the library's own script, admitted by its hash, and shows what the worker renders | content you do not trust ([Strict mode](#strict-mode)) |
+| `cooperative` | the guest document: its scripts, handlers and `execute()` | cooperative content: code that does not attack the page, such as your own, within the [cooperative-mode limits](#cooperative-mode-limits) |
+| `worker` | a worker inside a hidden frame; no markup, code through `execute()` | headless code; frozen, to be folded into strict mode |
+
+In strict mode `html` (and `load()`) is the initial view: its `<script>` elements and `on…` handlers never run, and
+the element says so once (`strict mode (the default) runs no script in html; …`). Put the code in a registered file
+named by `entry`, or choose `mode: 'cooperative'`. `mode: 'iframe'` was renamed `'cooperative'`: it starts nothing,
+and the `terminated` reason says so.
 
 **The guest reaches nothing by default.** List the exact origins it may load each kind from in `origins`
 (`connect`, `images`, `styles`, `fonts`, `media`, `scripts`); everything else in its policy is fixed:
 
 ```js
 sandbox.setConfig({
-    capabilities: ['allow-scripts'],
+    entry: 'main.js',
     origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] },
 });
 ```
 
 An entry is one origin (`https://host[:port]`, `wss://` for `connect`, plain `http://` only for `localhost` and
-`127.0.0.1`); a scheme, wildcard, keyword, `data:` or path is dropped with a warning. Strict mode takes no `scripts`
-([API](docs/API.md#origins), [ADR-007](docs/ADR-007-typed-origins.md)).
+`127.0.0.1`); a scheme, wildcard, keyword, `data:` or path is dropped with a warning. Strict mode takes no `scripts`,
+so `scripts` needs `mode: 'cooperative'` or `'worker'` ([API](docs/API.md#origins), [ADR-007](docs/ADR-007-typed-origins.md)).
 
 **API reference**: [`docs/API.md`](docs/API.md) lists every option, method, event, refusal code, guest global
 and limit. The sections below walk through each feature.
@@ -158,28 +170,27 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 
 **Watchdog** (opt-in): with `watchdogTimeout: ms`, the host checks that the guest's event loop keeps
 answering and terminates a guest that falls silent for that long (reason: `the guest stopped
-responding (watchdog)`). It works in worker mode on every browser, and in iframe mode where the browser
-runs the sandboxed frame in its own process. That is the browser's choice, not the page's: Chromium
-often does, but not in every environment, and Safari does not. Where the frame shares the host
-page's thread, a guest stuck in a loop freezes the host page too, and no watchdog can run until it
-stops; the watchdog then only guarantees that the host's own stall is never blamed on the guest. It is off by default because a guest doing long synchronous work on
-purpose would be stopped as well. It checks liveness only; `terminate()` is how the host stops a
-guest at will. In [strict mode](#strict-mode) guest code runs only in a worker, so the watchdog's bound holds
-on every browser.
+responding (watchdog)`). In strict and worker mode guest code runs only in a worker, so the bound holds on every
+browser. In cooperative mode it holds only where the browser runs the sandboxed frame in its own process. That is
+the browser's choice, not the page's: Chromium often does, but not in every environment, and Safari does not. Where
+the frame shares the host page's thread, a guest stuck in a loop freezes the host page too, and no watchdog can run
+until it stops; the watchdog then only guarantees that the host's own stall is never blamed on the guest. It is off
+by default because a guest doing long synchronous work on purpose would be stopped as well. It checks liveness only;
+`terminate()` is how the host stops a guest at will.
 
 ```js
-sandbox.setConfig({ capabilities: ['allow-scripts'], watchdogTimeout: 2000 });
+sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
 ```
 
 Why it is built this way: [ADR-003](docs/ADR-003-lifecycle-and-liveness.md).
 
 ## Auto-sizing
 
-With `autoResize: true` (iframe mode, off by default) the element's height follows the guest's content,
-growing and shrinking with it, a frame or two after the content changes.
+With `autoResize: true` (strict and cooperative mode, off by default) the element's height follows the guest's
+content, growing and shrinking with it, a frame or two after the content changes.
 
 ```js
-sandbox.setConfig({ capabilities: ['allow-scripts'], autoResize: true });
+sandbox.setConfig({ entry: 'main.js', autoResize: true });
 ```
 
 *   **How**: the guest bootstrap watches the guest's root element with a `ResizeObserver` and reports its
@@ -205,14 +216,16 @@ sandbox.setConfig({ capabilities: ['allow-scripts'], autoResize: true });
 
 Capabilities that let the guest act outside the frame — `allow-popups`, `allow-modals`,
 `allow-downloads`, `allow-presentation` and `fullscreen` — are dropped from `capabilities` with a
-warning. If you really need one, pass it in `unsafeCapabilities`; the sandbox logs a warning for each
-one enabled. A popup, for example, is a new top-level window that no CSP governs, so its URL is an
-exfiltration channel ([research 13](docs/research/13_popup_exfiltration/README.md)). Without `allow-popups` guest
-code opens no window, but the user still can: a Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link
-opens it in a new tab in Chromium and Firefox, as for any sandboxed frame (strict mode's links are inert).
+warning. If you really need one, pass it in `unsafeCapabilities` (cooperative and worker mode; strict mode drops
+them); the sandbox logs a warning for each one enabled. A popup, for example, is a new top-level window that no CSP
+governs, so its URL is an exfiltration channel ([research 13](docs/research/13_popup_exfiltration/README.md)). Without
+`allow-popups` guest code opens no window, but in cooperative mode the user still can: a Ctrl-, Shift- or
+middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox, as for any sandboxed
+frame (strict mode's links are inert).
 
 ```js
 sandbox.setConfig({
+    mode: 'cooperative',
     capabilities: ['allow-scripts'],
     unsafeCapabilities: ['allow-popups', 'fullscreen'], // explicit opt-in, warns
 });
@@ -240,16 +253,17 @@ the same message. On the host these are methods of the element; in the guest the
 global `bridge`.
 
 ```js
-sandbox.setConfig({ capabilities: ['allow-scripts'] });
 sandbox.expose('ping', () => 'pong');                       // host method, callable by the guest
-
-sandbox.load(`<script>
+sandbox.registerFiles({ 'main.js': `
     bridge.expose('sum', (a, b) => a + b);                  // guest method, callable by the host
     bridge.call('ping').then(reply => console.log(reply));  // logs "pong"
-</script>`);
+` });
+sandbox.setConfig({ entry: 'main.js' });                    // strict mode runs the entry in its worker
 
 const total = await sandbox.call('sum', 1, 2);              // 3, once the sandbox is ready
 ```
+
+In cooperative mode the same code can sit in a `<script>` of the guest's markup.
 
 *   **Only exposed methods can be called.** Any other name, built-in ones like `toString` or
     `__proto__` included, rejects with `unknown method`. Exposing a name again replaces its handler.
@@ -323,7 +337,7 @@ const items = await response.json();
 *   **CORS applies for the host page's origin**, since the host makes the request: the target sees your
     page's origin in `Origin` (never its URL) and must allow it, or `*`.
 *   `sandboxFetch` is a separate global; `fetch` itself is untouched (assign `globalThis.fetch = sandboxFetch`
-    in the guest if you want that). It works in iframe and worker mode. The name `sandbox:fetch`, like every
+    in the guest if you want that). It works in every mode. The name `sandbox:fetch`, like every
     method name starting with `sandbox:`, is reserved: `expose()` refuses it on both sides.
 
 Why it is built this way: [ADR-006](docs/ADR-006-fetch-bridge.md).
@@ -344,6 +358,7 @@ sandbox.registerFiles({
     'css/site.css': '@import "base.css"; body { background: url(../logo.png); }',  // stylesheets too
     'css/base.css': 'p { margin: 0; }',
 });
+sandbox.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
 sandbox.load(`
     <script type="module" src="app.js"></script>             <!-- markup names files by path -->
     <link rel="stylesheet" href="css/site.css">
@@ -372,7 +387,7 @@ sandbox.load(`
 *   **Types** come from the extension (`.js` is `text/javascript`, `.css` is `text/css`, …; unknown is
     `application/octet-stream`). The policy gains `blob:` only for the kinds of load the registered types are for
     (`.js` scripts, `.css` styles, `image/*` images, …; every file for `connect`).
-*   **Markup references just work** (iframe mode, when the bootstrap runs: with `allow-scripts`): `<script src>` (classic or
+*   **Markup references just work** (cooperative mode, when the bootstrap runs: with `allow-scripts`; strict mode's view names files in `src`, `href` and `poster`): `<script src>` (classic or
     module), stylesheet, icon and preload `<link href>`, and `src` of `img`, `source`, `video`,
     `audio`, `track` plus `video[poster]`, when the URL resolves to a registered path — `app.js`,
     `./app.js`, `/app.js`, `img/logo.svg`. Scripts keep their order (`defer`, `async`, modules and
@@ -450,8 +465,9 @@ Why it is built this way: [ADR-004](docs/ADR-004-files-as-blob-urls.md).
 
 ## Strict mode
 
-`mode: 'strict'` takes guest script out of every document. Guest code runs only in a worker; the visible frame
-(the *view*) runs one script, the library's own, admitted by its hash, and shows what the worker renders.
+Strict mode, the default (`mode: 'strict'`, or no `mode`), takes guest script out of every document. Guest code runs
+only in a worker; the visible frame (the *view*) runs one script, the library's own, admitted by its hash, and shows
+what the worker renders.
 
 ```js
 sandbox.registerFiles({
@@ -459,7 +475,7 @@ sandbox.registerFiles({
                 sandboxView.on('click', 'go', () => sandboxView.render('clicked', 'out'));`,
     'logo.png': pngBytes,
 });
-sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
+sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
 ```
 
 *   **Guest API (in the worker)**: `sandboxView.render(html, into?)` replaces the view's body, or the children of
@@ -469,7 +485,8 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     `sandboxFiles` and `sandboxFetch` work as in worker mode.
 *   **Host API**: `entry` names a registered JavaScript file the worker runs first (a classic script, in a
     function scope of its own: its top-level declarations stay local, so assign `globalThis.x` to share; `this`
-    is the global object); `html` and `load()` set the initial view; `execute()` runs in the worker (needs
+    is the global object); `html` and `load()` set the initial view (without an `entry` the worker runs only the
+    library's own code: the view shows the cleaned `html`, and nothing of the guest's runs); `execute()` runs in the worker (needs
     `scriptUnsafe`); `call()`/`expose()` talk to the worker. An entry that fails to start ends the sandbox
     (`the guest entry failed to start`).
 *   **What it guarantees**, on Chromium, Firefox and WebKit: no guest script runs in any document — the renderer
@@ -485,12 +502,8 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js', watchdogTimeout: 2000 });
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
     directive apart, and cannot be forged; the view renders no `blob:` content but registered files (the worker's
     own source URL is revoked once its script ran).
-*   **What it does not**: rendering is host-thread work in Firefox and WebKit, and in Chromium where it keeps the
-    view in the page's process (one render at a time, but heavy markup takes hundreds of milliseconds, and CSS
-    filters on many elements can take seconds in WebKit); CSS within what the policy allows;
-    memory; worker `violation` reports (`source: 'logic'`) are per engine and guest-influenced; a worker that
-    closes itself is noticed only by the watchdog.
-*   **Limits**: no inline `<script>`, nested frames or the elements listed in API.md as unavailable (popovers,
+*   **What it does not**: [below](#what-strict-mode-does-not-cover), with WebKit's host-page availability first.
+*   **Programming model**: no inline `<script>`, nested frames or the elements listed in API.md as unavailable (popovers,
     invoker commands, `canvas`, SVG `use`/filters/`image`) in rendered markup; files are named by path in
     `src`/`href`/`poster` (not `srcset` or inline styles; a registered stylesheet's own `url()` works), and
     JavaScript files reach only the worker; no modules or `importScripts`; `unsafeCapabilities` and
@@ -508,7 +521,7 @@ existing solution is argued in [`docs/ADR-001-continue-or-adopt.md`](docs/ADR-00
 
 The sandbox implements several layers of defense:
 1.  **Opaque Origin**: Runs in `about:srcdoc`, creating a unique null origin that isolates storage.
-2.  **Strict CSP, from a typed config**: One fixed template per mode, every directive emitted (`'none'` when it admits nothing), so no browser falls back to `default-src`. The embedder adds only exact origins, per kind of load (`origins`), parsed by the same origin parser as `fetchBridge.allow`; everything else is dropped with a warning, so no value can add a directive or a source expression: no `'self'` (browsers disagree on what it matches for the guest's opaque origin; WebKit admitted any https origin), no `data:`, no wildcard or scheme. Frames that load a URL are refused (`frame-src 'none'`; frames the guest makes from markup, `srcdoc` or `about:blank`, still exist and are realms of their own: see the residuals below); `base-uri`, `form-action`, `object-src` and `manifest-src` are `'none'`; `'unsafe-eval'` comes only from `scriptUnsafe`. ([ADR-007](docs/ADR-007-typed-origins.md))
+2.  **Strict CSP, from a typed config**: One fixed template per mode, every directive emitted (`'none'` when it admits nothing), so no browser falls back to `default-src`. The embedder adds only exact origins, per kind of load (`origins`), parsed by the same origin parser as `fetchBridge.allow`; everything else is dropped with a warning, so no value can add a directive or a source expression: no `'self'` (browsers disagree on what it matches for the guest's opaque origin; WebKit admitted any https origin), no `data:`, no wildcard or scheme. Frames that load a URL are refused (`frame-src 'none'`; frames the guest makes from markup, `srcdoc` or `about:blank`, still exist in cooperative mode and are realms of their own: see the [limits](#cooperative-mode-limits) below); `base-uri`, `form-action`, `object-src` and `manifest-src` are `'none'`; `'unsafe-eval'` comes only from `scriptUnsafe`. ([ADR-007](docs/ADR-007-typed-origins.md))
 3.  **CSP First**: The CSP `<meta>` is prepended before any user markup, so it is always the first element of the parsed `<head>`; user content cannot precede or swallow it.
 4.  **Wrapper Frame**: The guest frame is nested in a library-owned frame whose policy is `frame-src 'none'`. That blocks the guest from navigating itself to carry data out in a URL ([research 14](docs/research/14_self_navigation/README.md)).
 5.  **One Channel, Announced by the Bootstrap**: The guest bootstrap's first statement makes the private `MessageChannel`, keeps one end in its closure and posts the other to the host page; the host accepts exactly one such announcement per environment, from the guest frame's own window, and ends the environment on a second (a guest that reloads or rewrites itself). No listener in the guest realm ever carries a port of the library's, and guest code can never reach the bootstrap's end (it uses only primitives captured before guest code runs), so it cannot answer the watchdog for a looping guest. The host hears only the current environment's port. If the wrapper frame ever loads a second document, the sandbox is torn down and fires `terminated`.
@@ -519,20 +532,46 @@ The sandbox implements several layers of defense:
 10. **No WebRTC in the Guest**: The bootstrap removes `RTCPeerConnection` from the guest's global scope before guest code runs (workers never have it), since no CSP directive governs ICE traffic. A frame the guest creates is a realm of its own and keeps it, and its ICE traffic leaves the sandbox ([backlog S13](docs/BACKLOG.md)); strict mode closes this.
 11. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer, and WebKit sends the full host URL to a same-site origin ([backlog S18](docs/BACKLOG.md)); WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)). Strict mode closes S17 and S18.
 12. **Mediated Network, Opt-In**: With `fetchBridge`, the host makes the guest's requests itself, to exact listed origins only, without credentials, referrer or redirects, with capped bodies, time and concurrency, and logs each one. The guest policy stays as strict as configured ([ADR-006](docs/ADR-006-fetch-bridge.md)).
-13. **Strict Mode, Opt-In**: Guest code only in a worker; a view whose one script is the library's, admitted by its hash, with rendered markup cleaned before it is inserted and moved, never cloned ([ADR-005](docs/ADR-005-strict-mode.md)).
-14. **Fail Closed on Configuration**: A `mode` the element does not know starts no environment (the sandbox terminates with a reason) rather than falling back to iframe mode.
-15. **Guest-Realm Hardening (default modes)**: Gaps no CSP directive covers are closed in the guest's realm before guest code runs: `fetch()` with `keepalive` is refused (Firefox sends it past `connect-src`); `history.back()`, `forward()`, `go()` and the Navigation API's traversal do nothing (Firefox and WebKit let them move the host page); `window.name` is inert (a named guest frame received the host's named navigations and `window.open()` handles); DNS prefetching is off; no worker loads from `data:` (WebKit runs a `data:` SharedWorker outside the policy). [Broad review](docs/security/BROAD-REVIEW-2026-10-14.md).
+13. **Strict Mode, the Default**: Guest code only in a worker; a view whose one script is the library's, admitted by its hash, with rendered markup cleaned before it is inserted and moved, never cloned ([ADR-005](docs/ADR-005-strict-mode.md)).
+14. **Fail Closed on Configuration**: A `mode` the element does not know starts no environment (the sandbox terminates with a reason) rather than falling back to the default (`'iframe'`, renamed `'cooperative'`, is refused like any unknown mode).
+15. **Guest-Realm Hardening (cooperative and worker mode)**: Gaps no CSP directive covers are closed in the guest's realm before guest code runs: `fetch()` with `keepalive` is refused (Firefox sends it past `connect-src`); `history.back()`, `forward()`, `go()` and the Navigation API's traversal do nothing (Firefox and WebKit let them move the host page); `window.name` is inert (a named guest frame received the host's named navigations and `window.open()` handles); DNS prefetching is off; no worker loads from `data:` (WebKit runs a `data:` SharedWorker outside the policy). [Broad review](docs/security/BROAD-REVIEW-2026-10-14.md). This list is frozen: a new gap in cooperative mode is a [limit](#cooperative-mode-limits), not a new patch.
 
-### Default-mode residuals
+## Limits
 
-What iframe mode (and, where it applies, worker mode) does not close, measured per engine and asserted by tests; the
-same list as the [backlog's S44](docs/BACKLOG.md). Strict mode closes all of them but the last two items.
+One list, the same in [API.md](docs/API.md#modes) and the [backlog](docs/BACKLOG.md#s44--cooperative-mode-limits-one-frozen-list--documented-limits).
 
+### What strict mode does not cover
+
+What remains for the default:
+
+*   **Host-page availability in WebKit**: the view renders on the host page's thread (always in Firefox and WebKit;
+    in Chromium where it keeps the view in the page's process). One render is in flight at a time, and the DOM it
+    builds is bounded, but CSS paint cost is not: a filter list on many elements stalled WebKit's host thread for
+    seconds (10 `blur()`s on 1 000 elements, 3.7 s). In WebKit, strict mode protects confidentiality and egress, not
+    the host page's availability. Cooperative mode is no better: there a guest `while (true) {}` already freezes
+    WebKit's host page.
+*   **CSS within what the policy allows**: style-based probing of the view's own content, and loads from the origins
+    you allow.
+*   **Worker `violation` reports** (`source: 'logic'`): per engine (WebKit raises none in workers) and influenced by
+    guest code. The view's reports are complete and unforgeable up to the cap.
+*   **A worker that closes itself** is noticed only by the watchdog; **memory** is not bounded.
+*   **Cookies**: Firefox and WebKit attach the host site's cookies to a request to an allowed origin that is same-site
+    with the host page (every mode).
+
+### Cooperative-mode limits
+
+Cooperative mode is for cooperative content. Its limits are a frozen list: the library adds no new guest-realm
+patches there, and a new finding in cooperative mode is added here as a limit. None of them applies in strict mode,
+the default. Measured per engine and asserted by tests; worker mode shares the reporting item, and nothing else here.
+
+*   **Same-thread execution**: where the browser runs the guest frame on the host page's thread (WebKit always,
+    Chromium in some environments), a guest loop freezes the host page and no watchdog can stop it.
 *   **A frame the guest creates** (from markup: `srcdoc`, `about:blank`) is a realm of its own, with the platform's
     WebRTC (its ICE leaves), `fetch` (Firefox sends its `keepalive` past `connect-src`), history traversal (moves the
     host page in Firefox and WebKit) and naming (do not use named targets on a host page that embeds sandboxes); in
-    WebKit it reads the host page URL as its referrer.
-*   **A worker the guest creates** (iframe mode): in Firefox its `EventSource` and `FontFace` pass the policy.
+    WebKit it reads the host page URL as its referrer. `frame-src 'none'` refuses only frames that load a URL.
+*   **A worker the guest creates** (from the guest document or a frame it creates): in Firefox its `EventSource` and
+    `FontFace` pass the policy.
 *   **WebKit's preconnect**: `<link rel=preconnect>` opens a connection to any origin.
 *   **Focus and the clipboard**: guest code takes focus from the host page (Chromium, Firefox) and, in a user's click,
     writes the clipboard (`writeText()` in Firefox and, in the click's own handler, WebKit; `execCommand('copy')` in
@@ -542,11 +581,14 @@ same list as the [backlog's S44](docs/BACKLOG.md). Strict mode closes all of the
     the guest's URL in Chromium and Firefox, without `allow-popups`.
 *   **Session history**: the guest's fragment navigations add entries to the tab's history (the back button walks
     them first), and in Chromium so does a navigation the wrapper refuses.
-*   **A silent reload**: Firefox replaces a guest's `<meta refresh>` with a document that announces nothing; the
-    watchdog ends that environment where it is on.
-*   **Cookies**: Firefox and WebKit attach the host site's cookies to a guest request to an allowed origin that is
-    same-site with the host page.
-*   **Platform limits**: the pre-policy window of a `<meta>` policy (S8); the host origin in `ancestorOrigins` and
-    image `Referer` (S15); WebKit's full host URL to same-site origins on request (S18, closed in strict mode).
+*   **Guest-only stalls**: a guest that never finishes its document stays `ready`, and its calls time out; Firefox
+    replaces a guest's `<meta refresh>` with a document that announces nothing. The watchdog ends either where it
+    is on.
+*   **Forgeable reports**: every `violation` report comes from the guest's realm, so guest code can forge or suppress
+    it; a frame the guest creates reports to itself (worker mode: per engine, as in strict mode's worker).
+*   **The host page's URL and origin**: the pre-policy window of a `<meta>` policy over guest markup; the host origin
+    in `ancestorOrigins` and, when the guest asks, in image `Referer` (Firefox, WebKit); WebKit's full host URL to
+    same-site origins when the guest asks. Strict mode's view holds no guest markup when its policy arrives, and no
+    guest request carries a `Referer`.
 
 The guarantees above were tested adversarially on 2026-10-14, with every finding fixed, asserted or stated as a residual, then checked by an independent verification: [adversarial review report](docs/security/ADVERSARIAL-REVIEW-2026-10.md), [focused review](docs/security/FOCUSED-REVIEW-2026-10-14.md), [broad review](docs/security/BROAD-REVIEW-2026-10-14.md), [independent verification](docs/security/VERIFICATION-2026-10-14.md).

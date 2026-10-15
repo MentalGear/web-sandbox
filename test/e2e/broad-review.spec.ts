@@ -151,7 +151,7 @@ test.describe('CB3: calls while loading, and the load deadline', () => {
             const until = performance.now() + 300;
             while (performance.now() < until) { /* hold the host's thread */ }
             el.addEventListener('ready', async () => resolve({ timedOut: await timedOut, waiting: await waiting }), { once: true });
-        }), { html, config: { capabilities: ['allow-scripts'], scriptUnsafe: true } });
+        }), { html, config: { mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true } });
         expect(outcome).toEqual({ timedOut: { outcome: 'TIMEOUT', state: 'loading' }, waiting: 0 });
         await page.waitForTimeout(200);
         expect(await sandbox.call('counted')).toBe(0);
@@ -233,7 +233,7 @@ test.describe('PD1: no worker loads from data:', () => {
 // ---- PD2 ------------------------------------------------------------------------------------------------
 
 test.describe('PD2: fetch() with keepalive is refused in the guest realm', () => {
-    for (const mode of ['iframe', 'worker'] as const) {
+    for (const mode of ['cooperative', 'worker'] as const) {
         test(`${mode} mode: keepalive to a listener the policy blocks is refused (Firefox sent it before); an ordinary fetch to the allowed one arrives (positive control)`, async ({ sandbox, browserName }) => {
             expect(await sandbox.mount({ mode, origins: { connect: [recorder.allowed] } })).toBe('ready');
             const outcome = await sandbox.inGuest(`

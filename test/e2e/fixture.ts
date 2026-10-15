@@ -1,5 +1,5 @@
 import { test as base, expect, type Page } from '@playwright/test';
-import type { SandboxConfig } from '@src/host';
+import type { CooperativeSandboxConfig, SandboxConfig, StrictSandboxConfig } from '@src/host';
 import type { SandboxViolation } from '@src/lib/violation';
 import type { FetchRecord } from '@src/lib/fetch-bridge';
 
@@ -7,11 +7,20 @@ import type { FetchRecord } from '@src/lib/fetch-bridge';
 export const ORIGIN = process.env.WEB_SANDBOX_E2E_ORIGIN || 'http://localhost:4444';
 export const HARNESS = `${ORIGIN}/test/e2e/harness.html`;
 
-// What the specs need to run anything at all: scripts in the frame and execute().
+// What the specs need to run anything at all: scripts in the frame and execute(), in cooperative mode (the mode most
+// specs were written for; a spec for another mode names it).
 export const BASELINE_CONFIG: SandboxConfig = {
+    mode: 'cooperative',
     capabilities: ['allow-scripts'],
     scriptUnsafe: true,
 };
+
+/**
+ * A config for mount(): applied over BASELINE_CONFIG, so one that names no mode is a cooperative config (the baseline's
+ * mode), as the specs were written; a strict or worker config names its mode. To apply a config as an embedder would,
+ * with the library's defaults (strict mode), call setConfig() itself (strict-default.spec.ts).
+ */
+export type MountConfig = (StrictSandboxConfig & { mode: 'strict' }) | (Omit<CooperativeSandboxConfig, 'mode'> & { mode?: CooperativeSandboxConfig['mode'] });
 
 export type MountResult = 'ready' | 'terminated';
 
@@ -48,7 +57,7 @@ export class SandboxDriver {
     }
 
     /** Applies BASELINE_CONFIG merged with `config`, and waits for the sandbox to become ready. */
-    async mount(config: SandboxConfig = {}): Promise<MountResult> {
+    async mount(config: MountConfig = {}): Promise<MountResult> {
         return this.page.evaluate((merged) => whenSettled(s => s.setConfig(merged)), { ...BASELINE_CONFIG, ...config } as any);
     }
 
@@ -71,7 +80,7 @@ export class SandboxDriver {
      * Mounts a second <web-sandbox id="second"> next to the harness's, with BASELINE_CONFIG merged with
      * `config`, and waits for it to become ready. Its log lines land in sandboxLogs too (they bubble to window).
      */
-    async mountSecond(config: SandboxConfig = {}): Promise<MountResult> {
+    async mountSecond(config: MountConfig = {}): Promise<MountResult> {
         return this.page.evaluate((merged) => new Promise<MountResult>(resolve => {
             const second = document.createElement('web-sandbox') as any;
             second.id = 'second';

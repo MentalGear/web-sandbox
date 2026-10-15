@@ -28,7 +28,7 @@ async function readyAndLoad(page: Page, config: Record<string, unknown>) {
         let terminated: string | null = null;
         el.addEventListener('ready', () => { readyAt = performance.now() - started; }, { once: true });
         el.addEventListener('terminated', (e: CustomEvent) => { terminated = e.detail.reason; }, { once: true });
-        el.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
         el.shadowRoot.querySelector('iframe').addEventListener('load', () => {
             resolve({ readyAt, loadedAt: performance.now() - started, stateAtLoad: el.state, terminated });
         }, { once: true });
@@ -58,7 +58,7 @@ test.describe('S46: ready when the guest checks in', () => {
         const report = await page.evaluate((config) => new Promise<any>((resolve) => {
             const el = document.querySelector('web-sandbox') as any;
             const started = performance.now();
-            el.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
+            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
             const queued = settleOutcome(el.call('late'));
             el.execute(`console.log('EXECUTED_AFTER ' + typeof globalThis.__recorderRan + ' ' + (globalThis.__late === true))`);
             el.addEventListener('ready', async () => {
@@ -83,7 +83,7 @@ test.describe('S46: ready when the guest checks in', () => {
             + `<script>globalThis.__order = []; bridge.expose('note', (tag) => { __order.push(tag); return __order.slice(); });</script>`;
         const order = await page.evaluate((config) => new Promise<unknown>((resolve) => {
             const el = document.querySelector('web-sandbox') as any;
-            el.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
+            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
             el.addEventListener('ready', async () => {
                 el.execute(`__order.push('exec1')`);
                 el.call('note', 'call1');
@@ -98,7 +98,7 @@ test.describe('S46: ready when the guest checks in', () => {
         const html = `<img src="${recorder.allowed}/delay?ms=2000">`;
         const outcome = await page.evaluate((config) => new Promise<unknown>((resolve) => {
             const el = document.querySelector('web-sandbox') as any;
-            el.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
+            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, ...config });
             el.addEventListener('ready', () => {
                 el.addEventListener('terminated', (e: CustomEvent) => resolve({ reason: e.detail.reason, state: el.state }), { once: true });
                 el.shadowRoot.querySelector('iframe').srcdoc = '<p>a document the host did not write</p>';
@@ -140,7 +140,7 @@ test.describe('S46: ready when the guest checks in', () => {
             el.addEventListener('ready', () => resolve('ready'), { once: true });
             el.addEventListener('terminated', (e: CustomEvent) => resolve({ reason: e.detail.reason, after: performance.now() - started }), { once: true });
             el.setConfig(config);
-        }), { html, capabilities: [], origins: { images: [recorder.allowed] } });
+        }), { mode: 'cooperative', html, capabilities: [], origins: { images: [recorder.allowed] } });
         expect(outcome).toMatchObject({ reason: LOAD_TIMEOUT });
         expect((outcome as { after: number }).after).toBeGreaterThanOrEqual(4900);
     });

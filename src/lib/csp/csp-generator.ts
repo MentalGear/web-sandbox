@@ -10,7 +10,7 @@ import type { OriginKind, OriginPolicy } from "./origins";
  * consults a fallback chain and no input can change which directives exist or what the fixed ones say. An embedder
  * can only add Origins to the six directives of `origins`; everything else here is the library's:
  *
- *   cooperative (iframe and worker mode)              strict view (ADR-005; its worker inherits it)
+ *   cooperative and worker mode                        strict view (ADR-005; its worker inherits it)
  *   default-src 'none'                                 default-src 'none'
  *   script-src 'unsafe-inline' <scripts> [blob:]       script-src 'sha256-<bootstrap>' ['unsafe-eval']
  *              ['unsafe-eval']                         script-src-attr 'none'
@@ -88,7 +88,7 @@ export function fileKinds(types: Iterable<string>): Set<OriginKind> {
     return kinds;
 }
 
-/** iframe and worker mode: the guest document's policy, which worker mode's worker inherits. */
+/** cooperative and worker mode: the guest document's policy, which worker mode's worker inherits. */
 export function cooperativePolicy(input: PolicyInput): string {
     return format([
         ['default-src', []],

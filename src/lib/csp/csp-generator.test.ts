@@ -12,7 +12,7 @@ import { parseLikeABrowser, prng, randomInjection } from '../../../test/unit/pol
 const HASH = `'sha256-${'A'.repeat(43)}='`;
 const NOTHING: ReadonlySet<OriginKind> = new Set();
 const input = (overrides: Partial<PolicyInput> = {}): PolicyInput => ({ origins: NO_ORIGINS, fileKinds: NOTHING, scriptUnsafe: false, ...overrides });
-const origins = (config: Record<string, unknown>, mode = 'iframe') => parseOrigins(config, mode, () => {});
+const origins = (config: Record<string, unknown>, mode = 'cooperative') => parseOrigins(config, mode, () => {});
 const ALL = origins({
     scripts: ['https://cdn.example'], styles: ['https://css.example'], images: ['https://img.example', 'http://localhost:5173'],
     fonts: ['https://fonts.example'], media: ['https://media.example:8443'], connect: ['https://api.example', 'wss://ws.example'],
@@ -22,7 +22,7 @@ const COOPERATIVE_DEFAULT = "default-src 'none'; script-src 'unsafe-inline'; sty
 const STRICT_DEFAULT = `default-src 'none'; script-src ${HASH}; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests`;
 
 describe('the templates: golden policies', () => {
-    it('cooperative (iframe and worker mode), the default: every directive emitted, nothing admitted beyond the inline bootstrap and inline styles', () => {
+    it('cooperative (cooperative and worker mode): every directive emitted, nothing admitted beyond the inline bootstrap and inline styles', () => {
         expect(cooperativePolicy(input())).toBe(COOPERATIVE_DEFAULT);
     });
 
@@ -117,7 +117,7 @@ describe('properties over any `origins` input', () => {
         const strictFixed = fixedOf(STRICT_DEFAULT, CONFIGURABLE);
         for (let run = 0; run < 3000; run++) {
             const config = randomConfig(random);
-            const mode = random() < 0.5 ? 'strict' : 'iframe';
+            const mode = random() < 0.5 ? 'strict' : 'cooperative';
             const parsed = parseOrigins(config, mode, () => {});
             const kinds = new Set(ORIGIN_KINDS.filter(() => random() < 0.3));
             const scriptUnsafe = random() < 0.5;
@@ -150,7 +150,7 @@ describe('properties over any `origins` input', () => {
     it("cooperative script-src always holds 'unsafe-inline' and never a nonce, a hash or 'strict-dynamic' (each would make a browser ignore it): the inline bootstrap always runs", () => {
         const random = prng(0xb007);
         for (let run = 0; run < 1000; run++) {
-            const parsed = parseOrigins(randomConfig(random), 'iframe', () => {});
+            const parsed = parseOrigins(randomConfig(random), 'cooperative', () => {});
             const kinds = new Set(ORIGIN_KINDS.filter(() => random() < 0.5));
             const scriptSrc = parseLikeABrowser(cooperativePolicy({ origins: parsed, fileKinds: kinds, scriptUnsafe: random() < 0.5 })).directives.get('script-src')!;
             expect(scriptSrc[0]).toBe("'unsafe-inline'");

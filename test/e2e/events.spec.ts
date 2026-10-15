@@ -7,7 +7,7 @@ import { test, expect } from './fixture';
  * sandbox's logs and no other's.
  */
 
-const MODES = ['iframe', 'worker', 'strict'] as const;
+const MODES = ['cooperative', 'worker', 'strict'] as const;
 
 for (const mode of MODES) {
     test(`each sandbox element receives only its own logs; a window listener receives both, targeted at their element (${mode})`, async ({ sandbox, page }) => {

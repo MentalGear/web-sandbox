@@ -14,7 +14,7 @@ import { useRecorder, wss } from './recorder';
  *   6. worker mode builds its own blobs and sandboxFiles
  *   7. size: the cap loads in every engine, one byte more is refused on the host
  *   8. markup references: guest markup that names a registered file loads it with parser order intact,
- *      and every other reference fails closed (iframe mode only: worker mode has no markup)
+ *      and every other reference fails closed (cooperative mode only: worker mode has no markup)
  *   9. module graph: registered modules import each other by relative path through one import map,
  *      a module is evaluated once however it is reached, and every unsupported form fails closed
  *  10. CSS references and srcset: stylesheets and inline styles name files by url() and @import,
@@ -210,7 +210,7 @@ test.describe('3. isolation between sandboxes and from the host page', () => {
             second.id = 'second';
             second.addEventListener('ready', () => resolve('ready'), { once: true });
             second.registerFiles({ 'other.txt': 'B-own' });
-            second.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true });
+            second.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
             document.body.appendChild(second);
         }))).toBe('ready');
         await page.evaluate((url) => (document.querySelector('#second') as any).execute(`
@@ -363,7 +363,7 @@ test.describe('5. lifecycle: files belong to the element, a guest sees the snaps
             .toEqual({ list: [], b: NOT_FOUND, read: NOT_FOUND });
     });
 
-    for (const mode of ['iframe', 'worker'] as const) {
+    for (const mode of ['cooperative', 'worker'] as const) {
         test(`${mode} mode: a guest built without any file has the same API: list() is empty and every lookup is NOT_FOUND`, async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             expect(await inGuest(sandbox, `
@@ -408,7 +408,7 @@ test.describe('6. worker mode', () => {
 });
 
 test.describe('7. size: the cap is what every engine loads', () => {
-    for (const mode of ['iframe', 'worker'] as const) {
+    for (const mode of ['cooperative', 'worker'] as const) {
         test(`${mode} mode: files totalling exactly the cap load byte-exact; one byte more is refused on the host with FILES_QUOTA_EXCEEDED`, async ({ sandbox, page }) => {
             test.setTimeout(120000);
             // Pseudo-random bytes (incompressible), generated in the page so 8 MiB never crosses the
@@ -456,7 +456,7 @@ test.describe('7. size: the cap is what every engine loads', () => {
     }
 });
 
-test.describe('8. markup references: guest markup that names a registered file loads it (iframe mode; worker mode has no markup)', () => {
+test.describe('8. markup references: guest markup that names a registered file loads it (cooperative mode; worker mode has no markup)', () => {
     const MARKUP_FILES: Record<string, FileSpec> = {
         'a.js': "__order.push('a:' + document.currentScript.id);",
         'b.js': "__order.push('b:' + document.currentScript.id);",
@@ -632,7 +632,7 @@ test.describe('8. markup references: guest markup that names a registered file l
     });
 });
 
-test.describe('9. module graph: relative imports between registered modules resolve through one import map (iframe mode)', () => {
+test.describe('9. module graph: relative imports between registered modules resolve through one import map (cooperative mode)', () => {
     // A graph across directories: './', '../' and '/' specifiers, export * from, export { } from, a
     // side-effect import, a literal import(), '..' above the root, and import-like text the rewrite must
     // not touch. counter.js counts its evaluations: it is reached from markup (by blob: URL) and from
@@ -842,7 +842,7 @@ test.describe('9. module graph: relative imports between registered modules reso
     });
 });
 
-test.describe('10. CSS references and srcset: stylesheets and inline styles name files by url() and @import, srcset by candidate (iframe mode)', () => {
+test.describe('10. CSS references and srcset: stylesheets and inline styles name files by url() and @import, srcset by candidate (cooperative mode)', () => {
     const FONT = { base64: FONT_WOFF2_B64 };
     const SVG = (w: number, h: number) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"></svg>`;
 
@@ -1009,15 +1009,19 @@ test.describe('10. CSS references and srcset: stylesheets and inline styles name
             <img id="s3" srcset="missing.svg 1x, img/bg.svg?v=2 2x">`;
         expect(await sandbox.mount({ html })).toBe('ready');
         const r = await inGuest(sandbox, `${LOADED}
-            const img = (id) => { const i = document.getElementById(id); return { event: __events[id], current: i.currentSrc, size: i.naturalWidth + 'x' + i.naturalHeight }; };
+            const img = (id) => { const i = document.getElementById(id); return { event: __events[id], complete: i.complete, current: i.currentSrc, size: i.naturalWidth + 'x' + i.naturalHeight }; };
             return {
                 s1: img('s1'), s2: img('s2'), s3: { ...img('s3'), srcset: document.getElementById('s3').getAttribute('srcset') },
                 urls: { bg: sandboxFiles.url('img/bg.svg'), x: sandboxFiles.url('img/x.svg') },
                 violations: await settle([]),
             };
         `);
-        expect(r.s1).toEqual({ event: 'load', current: r.urls.bg, size: '7x9' });
-        expect(r.s2).toEqual({ event: 'load', current: r.urls.x, size: '5x3' });
+        // A file-named candidate loaded: after the document's load (which waits for every image) the element is
+        // complete, shows the file's blob: URL and has its decoded size. Not its `load` event: on a CI runner Firefox once
+        // reported the <picture> image complete at the right URL and size without the document-level listener having
+        // recorded the event (not reproduced locally in 60 runs, quiet and under load), so the event is not evidence here.
+        expect(r.s1).toMatchObject({ complete: true, current: r.urls.bg, size: '7x9' });
+        expect(r.s2).toMatchObject({ complete: true, current: r.urls.x, size: '5x3' });
         // the document's load event waits for every image, so 0x0 after it means the load failed
         expect(r.s3.event).toBe(UNRESOLVED_SRCSET_EVENT[browserName]);
         expect(r.s3).toMatchObject({ size: '0x0', srcset: 'missing.svg 1x, img/bg.svg?v=2 2x' });

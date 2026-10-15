@@ -9,7 +9,7 @@ import { test, expect, type CallOutcome } from './fixture';
  * The one case proving the call path needs no eval (scriptUnsafe:false) lives at the bottom.
  */
 
-const MODES = ['iframe', 'worker', 'strict'] as const;
+const MODES = ['cooperative', 'worker', 'strict'] as const;
 
 // The host's own refusal texts (src/host.ts). A guest can produce the very same text; the code tells them apart.
 const TERMINATION_TEXT = '[Sandbox] call() rejected: the sandbox was terminated. Call reset(), setConfig() or load() to start a new one.';
@@ -414,13 +414,13 @@ for (const mode of MODES) {
 }
 
 test.describe('broker transferability (iframe): calls made by guest markup before the port exists', () => {
-    // iframe only: a worker guest has no markup, so none of its code can run before the port arrives.
+    // cooperative mode only: a worker guest has no markup, so none of its code can run before the port arrives.
     test('a non-transferable call from guest markup is refused with ARGS_NOT_TRANSFERABLE and a valid call queued after it still resolves', async ({ sandbox, page }) => {
         await sandbox.exposeHost('echo', '(x) => { window.__hostEchoRuns = (window.__hostEchoRuns || 0) + 1; return x; }');
         // Both calls run at parse time, before INIT_PORT. The outcome is logged from the valid call's
         // .then, which only runs once the port (and with it the console relay) is up.
         expect(await sandbox.mount({
-            mode: 'iframe',
+            mode: 'cooperative',
             html: `<script>
                 let bad = 'still pending';
                 bridge.call('echo', () => 1).catch(e => { bad = e.code; });
@@ -438,7 +438,7 @@ test.describe('broker without scriptUnsafe (iframe): the call path needs no eval
         // The guest registers its method from an inline <script> in its markup — allowed by
         // script-src 'unsafe-inline', NOT eval — so the whole call path runs with scriptUnsafe:false.
         expect(await sandbox.mount({
-            mode: 'iframe',
+            mode: 'cooperative',
             scriptUnsafe: false,
             html: `<script>bridge.expose('sum', (a, b) => a + b)</script>`,
         })).toBe('ready');

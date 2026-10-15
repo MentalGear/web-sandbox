@@ -7,7 +7,7 @@ import { inFrames, waitInView } from './strict-view';
  * Backlog S13: WebRTC. ICE gathering sends UDP to STUN/TURN servers that no CSP directive governs
  * (connect-src does not apply; `webrtc 'block'` and Chromium's local-network-access policy changed
  * nothing, measured 2026-10-13). Guarantees, per engine:
- *   1. the guest's own realm has no peer-connection constructor, from its first script on (iframe mode),
+ *   1. the guest's own realm has no peer-connection constructor, from its first script on (cooperative mode),
  *      and a worker never has one (worker mode);
  *   2. the guest cannot take it back from another realm: every frame it creates is cross-origin to it;
  * and the residual, asserted as measured so a change is noticed:
@@ -30,7 +30,7 @@ test.use({ launchOptions: { firefoxUserPrefs: { 'media.peerconnection.ice.loopba
 
 const PEER_CONNECTION_NAMES = `Object.getOwnPropertyNames(globalThis).filter(n => /^(webkit|moz)?RTCPeerConnection$/.test(n))`;
 
-test('iframe mode, shipping config: the first guest script finds no peer-connection constructor', async ({ sandbox, page }) => {
+test('cooperative mode, shipping config: the first guest script finds no peer-connection constructor', async ({ sandbox, page }) => {
     await sandbox.exposeHost('report', '(value) => { window.rtcReport = value; return true; }');
     expect(await sandbox.mount({ scriptUnsafe: false, html: `<script>
         bridge.call('report', { pc: typeof RTCPeerConnection, webkit: typeof webkitRTCPeerConnection, names: ${PEER_CONNECTION_NAMES} });
@@ -76,7 +76,7 @@ const iceProbe = (port: number, ms = 3000) => `(done) => {
     setTimeout(() => { pc.close(); done(r); }, ${ms});
 }`;
 
-// The probe in a frame a cooperative (iframe-mode) guest creates: the residual of section 3, and the positive control of
+// The probe in a frame a cooperative-mode guest creates: the residual of section 3, and the positive control of
 // section 4. Returns what the frame reported and how many UDP packets the listener heard while it ran.
 async function nestedProbe(sandbox: SandboxDriver, port: number, heard: () => number) {
     const before = heard();

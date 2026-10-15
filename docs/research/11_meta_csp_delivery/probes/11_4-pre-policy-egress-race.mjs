@@ -18,7 +18,7 @@ for (const [label, html] of Object.entries(SHAPES)) {
     await page.waitForSelector('web-sandbox');
     await page.evaluate((h) => {
       const s = document.querySelector('web-sandbox');
-      s.setConfig({ capabilities: ['allow-scripts'] });
+      s.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
       s.load(h);
     }, html);
     await page.waitForTimeout(2000);

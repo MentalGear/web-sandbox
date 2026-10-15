@@ -9,7 +9,7 @@ import { test, expect, HARNESS, ORIGIN } from './fixture';
 /**
  * Backlog S15: the guest cannot learn the host page's URL. The harness is opened at a URL with a
  * distinctive query and fragment, so any value that carries the host page's path, query or fragment is
- * detectable. Guarantees, per engine, iframe and worker mode:
+ * detectable. Guarantees, per engine, cooperative and worker mode:
  *   1. nothing the guest's own document or location exposes carries the host page URL: its base URL is
  *      the wrapper's inert about:blank (src/lib/frame-documents.ts), document.referrer is empty, and
  *      relative URLs in guest markup fail closed (no request at all);
@@ -139,7 +139,7 @@ const READ_EVERYTHING = `
     return r;
 `;
 
-test('iframe mode: nothing the guest document or location exposes carries the host page URL', async ({ sandbox, browserName }) => {
+test('cooperative mode: nothing the guest document or location exposes carries the host page URL', async ({ sandbox, browserName }) => {
     expect(await sandbox.mount()).toBe('ready');
     const r = await sandbox.inGuest(READ_EVERYTHING);
 
@@ -208,7 +208,7 @@ const KINDS = ['image', 'imageUnsafe', 'fetch', 'fetchUnsafe', 'nestedImage'];
 
 for (const guestMeta of [false, true]) {
     const label = guestMeta ? 'with the guest\'s own <meta name="referrer" content="unsafe-url">' : 'with the inherited policy';
-    test(`iframe mode, ${label}: no request carries the host page URL in Referer; at most the host origin, where the engine sends it`, async ({ sandbox, browserName }) => {
+    test(`cooperative mode, ${label}: no request carries the host page URL in Referer; at most the host origin, where the engine sends it`, async ({ sandbox, browserName }) => {
         const prefix = `t${++run}${guestMeta ? 'meta' : 'plain'}`;
         expect(await sandbox.mount({
             origins: { images: [REC], connect: [REC] },
@@ -236,7 +236,7 @@ for (const guestMeta of [false, true]) {
     });
 }
 
-test('iframe mode, residual S18: a guest asking for unsafe-url sends a same-site target the host ORIGIN in Firefox and the FULL host URL in WebKit (measured; strict mode closes it, section 4)', async ({ sandbox, browserName }) => {
+test('cooperative mode, residual S18: a guest asking for unsafe-url sends a same-site target the host ORIGIN in Firefox and the FULL host URL in WebKit (measured; strict mode closes it, section 4)', async ({ sandbox, browserName }) => {
     const prefix = `t${++run}samesite`;
     expect(await sandbox.mount({ origins: { images: [REC_SAME_SITE] } })).toBe('ready');
     const outcome = await sandbox.inGuest(`

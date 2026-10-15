@@ -16,7 +16,7 @@ test('an origins kind given a string instead of a list: setConfig() does not thr
         let thrown: unknown = null;
         s.addEventListener('terminated', (e: CustomEvent) => resolve({ reason: e.detail.reason, state: s.state, frames: s.shadowRoot.querySelectorAll('iframe').length, thrown }), { once: true });
         try {
-            s.setConfig({ capabilities: ['allow-scripts'], origins: { images: "x; script-src *" } });
+            s.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { images: "x; script-src *" } });
         } catch (error) {
             thrown = String(error);
         }
@@ -25,7 +25,7 @@ test('an origins kind given a string instead of a list: setConfig() does not thr
     expect(await sandbox.mount()).toBe('ready');
 });
 
-for (const mode of ['iframe', 'worker', 'strict'] as const) {
+for (const mode of ['cooperative', 'worker', 'strict'] as const) {
     test(`${mode} mode: console.info is relayed as level 'info' with source 'guest', like log, warn and error`, async ({ sandbox, page }) => {
         expect(await sandbox.mount({ mode })).toBe('ready');
         await page.evaluate(() => {
@@ -47,7 +47,7 @@ test('not in the document: call() rejects at once with TERMINATED and execute() 
     const report = await page.evaluate(async () => {
         const s = document.createElement('web-sandbox') as any;
         s.id = 'detached';
-        s.setConfig({ capabilities: ['allow-scripts'], scriptUnsafe: true });
+        s.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], scriptUnsafe: true });
         const early = await Promise.race([
             s.call('anything').then(() => 'resolved', (e: any) => e.code),
             new Promise(resolve => setTimeout(() => resolve('still pending'), 200)),

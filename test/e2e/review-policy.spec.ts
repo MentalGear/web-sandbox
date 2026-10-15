@@ -77,7 +77,7 @@ test.describe('A3 class: registered files load under the directive of their kind
     };
     const policyOf = async (page: Page, browserName: string) => directivesOf(await inView<string>(page, browserName, `document.querySelector('meta[http-equiv]').content`) as string);
 
-    test('iframe mode: the registered script runs and the stylesheet applies, no violation; blob: is in script-src, style-src and connect-src, nowhere else', async ({ sandbox, page, browserName }) => {
+    test('cooperative mode: the registered script runs and the stylesheet applies, no violation; blob: is in script-src, style-src and connect-src, nowhere else', async ({ sandbox, page, browserName }) => {
         await sandbox.registerFiles(FILES);
         expect(await sandbox.mount()).toBe('ready');
         expect(await sandbox.load(MARKUP)).toBe('ready');

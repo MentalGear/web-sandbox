@@ -79,7 +79,7 @@ describe('the renderer: file references, blob: URLs (A8), referrer and ping (A1)
         expect(['a', 'b', 'c', 'd'].map(id => src(id))).toEqual(Array(4).fill('blob:null/logo'));
         expect(['e', 'f', 'g'].map(id => src(id))).toEqual(['img/Logo.png', 'img/logo.png?v=2', 'https://cdn.example/img/logo.png']);
         expect([src('v'), src('v', 'poster'), src('s'), src('t'), src('au')]).toEqual(['blob:null/clip', 'blob:null/logo', 'blob:null/clip', 'blob:null/subs', 'blob:null/clip']);
-        // derived from the default-mode table, never a copy
+        // derived from the cooperative-mode table, never a copy
         expect(RENDER_RULES.references).toEqual(REFERENCES.filter(([element]) => element !== 'script'));
     });
 

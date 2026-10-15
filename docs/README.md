@@ -21,9 +21,9 @@
 - [**ADR-004 — Files are guest-realm blob URLs**](ADR-004-files-as-blob-urls.md) — why the
   virtual-files Service Worker was removed, how registered files reach the guest, and the
   alternatives rejected.
-- [**ADR-005 — Strict mode**](ADR-005-strict-mode.md) — guest logic in a worker, a view that runs only
-  the library's hash-admitted bootstrap: the guarantees, the renderer, flow control, the probe findings that
-  shaped it, and the residuals.
+- [**ADR-005 — Strict mode**](ADR-005-strict-mode.md) — the default mode: guest logic in a worker, a view that runs
+  only the library's hash-admitted bootstrap: the guarantees, the renderer, flow control, the probe findings that
+  shaped it, the residuals, and why cooperative mode's limits are a frozen list.
 - [**ADR-006 — A host-mediated fetch bridge**](ADR-006-fetch-bridge.md) — `sandboxFetch()`: why a
   reserved broker method, the bridge discipline (no credentials, no redirects, exact origins, caps), the
   `fetch` log and what the bridge cannot hide.
@@ -52,7 +52,7 @@
   paste-ready upstream reports for WebKit and Firefox.
 - [**security/VERIFICATION-2026-10-14.md**](security/VERIFICATION-2026-10-14.md) — an independent verification of the three
   reviews by five verifiers (mutations, black box, claims and CI, decisions): a guest worker keeps only allowlisted
-  globals (Firefox let a worker's `EventSource` and `FontFace` pass the policy), the default-mode residuals in one list,
+  globals (Firefox let a worker's `EventSource` and `FontFace` pass the policy), the cooperative-mode limits in one list,
   test gaps closed, the strict-mode design probes in CI.
 
 - [research/](research/README.md) — fourteen documented attack vectors with reproductions, design probes

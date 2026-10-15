@@ -6,6 +6,7 @@ import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, 
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
 import { kindMismatchMessage, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
+import { scriptInMarkup } from "./lib/markup-scripts";
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { deepMerge } from "./lib/utils";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
@@ -26,26 +27,32 @@ import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, is
  * (DEFAULT_SANDBOX_CONFIG), not its previous value. Reference with defaults and modes: docs/API.md#configuration.
  *
  * A union keyed by `mode` (ADR-007), so what a mode cannot use does not type-check: strict mode's `origins` has no
- * `scripts`. A config from JSON is held to the same rules at run time (dropped with a warning).
+ * `scripts`. A config from JSON is held to the same rules at run time (dropped with a warning). Strict mode is the
+ * default, so a config that names no mode is a strict config; cooperative and worker mode are named.
  */
-export type SandboxConfig = CooperativeSandboxConfig | StrictSandboxConfig;
+export type SandboxConfig = StrictSandboxConfig | CooperativeSandboxConfig;
 
-/** iframe mode (the default) and worker mode: guest code runs in the guest document, or in a worker inside it. */
-export interface CooperativeSandboxConfig extends SandboxConfigOptions {
-    /** Execution mode, default 'iframe'. Any value that is not a mode starts no environment (review A4). */
-    mode?: 'iframe' | 'worker';
-    /** The exact origins the guest may load each kind from (src/lib/csp/origins.ts). Default: none. */
-    origins?: SandboxOrigins;
+/**
+ * Strict mode (ADR-005), the default: guest code runs only in a worker spawned by a view document that runs no guest
+ * script; the worker draws into the view with sandboxView.render(). `html` is the initial view, rendered without its
+ * scripts and handlers.
+ */
+export interface StrictSandboxConfig extends SandboxConfigOptions {
+    /** Execution mode: strict when left out. Any value that is not a mode starts no environment (review A4). */
+    mode?: 'strict';
+    /** As in the other modes, without `scripts`: the view runs only the library's bootstrap. */
+    origins?: StrictSandboxOrigins;
 }
 
 /**
- * Strict mode (ADR-005): guest code runs only in a worker spawned by a view document that runs no guest script; the
- * worker draws into the view with sandboxView.render().
+ * Cooperative mode, for content that cooperates: guest code runs in the guest document, within a frozen list of
+ * documented limits (README, "Cooperative-mode limits"); 'iframe' was renamed 'cooperative'. Worker mode: guest code
+ * runs in a worker inside the frame (frozen; to be folded into strict mode).
  */
-export interface StrictSandboxConfig extends SandboxConfigOptions {
-    mode: 'strict';
-    /** As in the other modes, without `scripts`: the view runs only the library's bootstrap. */
-    origins?: StrictSandboxOrigins;
+export interface CooperativeSandboxConfig extends SandboxConfigOptions {
+    mode: 'cooperative' | 'worker';
+    /** The exact origins the guest may load each kind from (src/lib/csp/origins.ts). Default: none. */
+    origins?: SandboxOrigins;
 }
 
 /** The options every mode takes. */
@@ -64,8 +71,9 @@ export interface SandboxConfigOptions {
      */
     unsafeCapabilities?: UnsafeCapability[];
     /**
-     * Initial HTML content: the guest document in iframe mode, the initial view in strict mode. Ignored in
-     * worker mode. Empty (the default) means `<div id="root"></div>`. load() sets it too.
+     * Initial HTML content: the initial view in strict mode (its scripts and handlers do not run; one warning per
+     * element says so), the guest document in cooperative mode. Ignored in worker mode. Empty (the default) means
+     * `<div id="root"></div>`. load() sets it too.
      */
     html?: string;
     /**
@@ -85,7 +93,7 @@ export interface SandboxConfigOptions {
      */
     watchdogTimeout?: number;
     /**
-     * Content auto-sizing (iframe and strict mode, off by default): the element's height follows the guest's content
+     * Content auto-sizing (cooperative and strict mode, off by default): the element's height follows the guest's content
      * height, validated, clamped and rate-limited on the host (src/lib/auto-resize.ts). Only a literal true
      * enables it. No effect in worker mode, which has no document (one warning per instance).
      */
@@ -110,7 +118,7 @@ export interface SandboxConfigOptions {
  *   idle        constructed, or removed from the document: no frame
  *   loading     a frame was created; waiting for the guest to check in (its bootstrap announces its port, S46), or
  *               without a bootstrap (no allow-scripts) and in strict mode, for the frame's one load
- *   ready       the guest's port is this environment's and 'ready' dispatched; in iframe mode the guest document
+ *   ready       the guest's port is this environment's and 'ready' dispatched; in cooperative mode the guest document
  *               may still be loading (its calls and execute() wait in the guest until it is parsed)
  *   terminated  torn down by terminate(), a budget (watchdog, workerExecutionTimeout), a frame-integrity check
  *               or a build that failed; stays so until reset(), load() or setConfig() builds a new environment
@@ -120,9 +128,19 @@ export interface SandboxConfigOptions {
 export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 
 /** The execution modes. Anything else is refused: the sandbox does not start (review A4). */
-const SANDBOX_MODES = ['iframe', 'worker', 'strict'] as const;
+const SANDBOX_MODES = ['strict', 'cooperative', 'worker'] as const;
 type SandboxMode = (typeof SANDBOX_MODES)[number];
 const isSandboxMode = (mode: unknown): mode is SandboxMode => (SANDBOX_MODES as readonly unknown[]).includes(mode);
+
+// Old names of modes: refused like any other value that is not a mode, never an alias (nothing is published, so no
+// config needs one), and the refusal names the new one.
+const RENAMED_MODES: Readonly<Record<string, SandboxMode>> = Object.freeze({ iframe: 'cooperative' });
+
+// " ('iframe' was renamed 'cooperative')" for an old name, else ''.
+function renamedModeNote(mode: unknown): string {
+    if (typeof mode !== 'string' || !Object.hasOwn(RENAMED_MODES, mode)) return '';
+    return ` ('${mode}' was renamed '${RENAMED_MODES[mode]}')`;
+}
 
 /**
  * The configuration as the element keeps it: the options merged over the defaults. `origins` is not kept here: it is
@@ -136,7 +154,7 @@ const DEFAULT_SANDBOX_CONFIG: StoredConfig = {
     capabilities: [],
     unsafeCapabilities: [],
     html: '',
-    mode: 'iframe',
+    mode: 'strict',
     workerExecutionTimeout: 0,
     watchdogTimeout: 0,
     autoResize: false,
@@ -150,7 +168,7 @@ const TERMINATED_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was term
 const RESET_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox was reset or terminated.";
 const IDLE_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox is not in the document. Call it once the element is inserted.";
 
-// What the bootstrap writes and registers for one build's guest markup (iframe mode).
+// What the bootstrap writes and registers for one build's guest markup (cooperative mode).
 interface GuestMarkupPlan {
     // the markup cut into parts for the bootstrap to write (markup-references.ts), or null to embed it as written
     parts: MarkupParts | null;
@@ -160,6 +178,8 @@ interface GuestMarkupPlan {
 }
 
 const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
+
+const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 
 const DEFAULT_TERMINATE_REASON = 'terminated by the host';
 const WATCHDOG_REASON = 'the guest stopped responding (watchdog)';
@@ -229,7 +249,7 @@ export const VIEW_LIVENESS_TIMEOUT_MS = 5000;
 /**
  * How long a build may stay `loading` (broad review 2026-10-14, CB3): the liveness budget, counted in host ticks
  * (watchdog.ts), so a host stall never counts. It bounds the wait for the guest's check-in, the announcement its
- * bootstrap posts as its first statement (iframe and worker mode, S46), and, where no bootstrap runs (no
+ * bootstrap posts as its first statement (cooperative and worker mode, S46), and, where no bootstrap runs (no
  * allow-scripts) and in strict mode, the wait for the frame's one load. A build still `loading` then is terminated
  * with 'the sandbox did not finish loading'. Where a bootstrap checks in, the guest's own subresources and scripts
  * never count (the check-in comes before them): a guest page with slow images, or one that never finishes its
@@ -254,7 +274,7 @@ export class WebSandbox extends HTMLElement {
     private _frameLoaded = false;
     // The reversed handshake (broad review 2026-10-14, CB1): whether this build's guest runs a bootstrap that announces
     // its port; the guest frame's window whose announcement was accepted (S46: the wrapper's load must still hold it);
-    // and the listener on the host's window, removed by _teardown. Iframe and worker mode only.
+    // and the listener on the host's window, removed by _teardown. Cooperative and worker mode only.
     private _expectAnnouncement = false;
     private _guestWindow: Window | null = null;
     private _stopListening: (() => void) | null = null;
@@ -287,7 +307,7 @@ export class WebSandbox extends HTMLElement {
     // Why the last setConfig() argument could not be used, or null: while set, every build is refused with
     // this reason (initialize), as for an unknown mode.
     private _configRefusal: string | null = null;
-    private _port: MessagePort | null = null;     // the guest's port: the iframe's bootstrap, or the worker (logic port)
+    private _port: MessagePort | null = null;     // the guest's port: the guest document's bootstrap, or the worker (logic port)
     private _viewPort: MessagePort | null = null; // strict mode: the view's port (violations, resize, entry errors, liveness)
     private _viewWatchdog: Watchdog | null = null; // strict mode: the view liveness check (A5)
     private _strictInit: StrictInit | null = null; // strict mode: what the next frame load hands the view
@@ -416,14 +436,15 @@ export class WebSandbox extends HTMLElement {
         // config without it turns the bridge off.
         const fetchPolicy = toFetchPolicy(input.fetchBridge, (message) => this._warnFetchBridge(message));
         delete sanitizedConfig.fetchBridge;
-        // `origins` is parsed into the policy's origins here, once, and kept out of the merged config too
-        // (origins.ts): an entry that is not an origin is dropped with a warning; a value that cannot be read
-        // refuses the config. Parsed for the mode this config names, so strict mode drops `scripts`.
-        const origins = parseOrigins(input.origins, input.mode, (message) => this._warnOrigins(message));
+        // `origins` is kept out of the merged config too: it is parsed below, for the mode the merged config has.
         delete sanitizedConfig.origins;
         this._dropRemovedOptions(sanitizedConfig);
 
         const merged = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig as Partial<StoredConfig>);
+        // `origins` is parsed into the policy's origins here, once (origins.ts): an entry that is not an origin is
+        // dropped with a warning; a value that cannot be read refuses the config. Parsed for the mode the build will
+        // have, the default included, so strict mode drops `scripts` whether the config names it or not.
+        const origins = parseOrigins(input.origins, merged.mode, (message) => this._warnOrigins(message));
         // Only a literal true enables eval or auto-sizing: both values are interpolated into the guest bootstrap.
         merged.scriptUnsafe = merged.scriptUnsafe === true;
         merged.autoResize = merged.autoResize === true;
@@ -692,12 +713,12 @@ export class WebSandbox extends HTMLElement {
     }
 
     // A mode the element does not know is refused, never read as the default (review A4): strict mode is a
-    // security opt-in, so a misspelt 'Strict' must not quietly give the weaker iframe mode. initialize() then
+    // security opt-in, so a misspelt 'Strict' must not quietly give the weaker cooperative mode. initialize() then
     // terminates every build with a reason until a config names a valid mode; this says why, once per value.
     private _warnAboutUnknownMode(config: StoredConfig) {
         const mode = config.mode;
         if (isSandboxMode(mode)) return;
-        const message = `[Sandbox] mode ${this._describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}: the sandbox will not start until setConfig() names one of them.`;
+        const message = `[Sandbox] mode ${this._describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}${renamedModeNote(mode)}: the sandbox will not start until setConfig() names one of them.`;
         if (this._warnedStrict.has(message)) return;
         this._warnedStrict.add(message);
         console.warn(message);
@@ -743,7 +764,7 @@ export class WebSandbox extends HTMLElement {
     // started by any code ends the sandbox at the first deadline it blocks. Code that ran to its end and left the
     // loop free stays, whatever it scheduled for later; a loop that starts after the last deadline is the
     // watchdog's to bound (watchdogTimeout checks the loop continuously). The worker lives inside the frame, so
-    // tearing the frame down stops it. Iframe mode has no such budget: the guest document can share the host's
+    // tearing the frame down stops it. Cooperative mode has no such budget: the guest document can share the host's
     // thread, so no timer could fire meanwhile.
     private _armExecutionBudget() {
         if (this._config.mode !== 'worker' && this._config.mode !== 'strict') return;
@@ -860,7 +881,7 @@ export class WebSandbox extends HTMLElement {
         this._stopListening = () => host.removeEventListener('message', onMessage, true);
     }
 
-    // One frame from the guest's port: the iframe bootstrap's, or (worker and strict mode) the worker's.
+    // One frame from the guest's port: the guest document's bootstrap's, or (worker and strict mode) the worker's.
     // `source` labels its violation reports in strict mode ('logic'); null elsewhere.
     // Only the current environment's port is heard (review B4): teardown closes a port, and a closed port
     // delivers nothing more, but this does not rely on it — a frame from any other port changes nothing.
@@ -1026,7 +1047,7 @@ export class WebSandbox extends HTMLElement {
     // and a later refusal of another kind (a handler attribute: script-src-attr) went unreported. The directive
     // of a view report is the browser's own, so per-directive counts are sound there; the buckets are the known
     // directive names plus one for any other name, which bounds the view's events at
-    // (VIOLATION_DIRECTIVES + 1) × VIOLATION_EVENT_LIMIT per environment. The logic port, and iframe and worker mode,
+    // (VIOLATION_DIRECTIVES + 1) × VIOLATION_EVENT_LIMIT per environment. The logic port, and cooperative and worker mode,
     // keep one count: guest code writes the directive name there, so per-name counts would be guest-chosen.
     private _dispatchViolation(frame: unknown, source: 'view' | 'logic' | null = null) {
         const detail = toViolationDetail(frame, source ?? undefined);
@@ -1055,7 +1076,7 @@ export class WebSandbox extends HTMLElement {
         });
     }
 
-    // Auto-sizing applies to iframe and strict mode: a worker has no document to measure, a strict view does.
+    // Auto-sizing applies to cooperative and strict mode: a worker has no document to measure, a strict view does.
     private _autoResizeEnabled(): boolean {
         return this._config.autoResize === true && this._config.mode !== 'worker';
     }
@@ -1237,16 +1258,16 @@ export class WebSandbox extends HTMLElement {
     // the embedder did not ask for.
     private _buildRefusal(): string | null {
         if (this._configRefusal !== null) return this._configRefusal;
-        if (!isSandboxMode(this._config.mode)) return `unknown mode ${this._describeMode(this._config.mode)}`;
+        if (!isSandboxMode(this._config.mode)) return `unknown mode ${this._describeMode(this._config.mode)}${renamedModeNote(this._config.mode)}`;
         return null;
     }
 
-    private _getSandboxCommsScript(mode: 'iframe' | 'worker', files: FileSnapshotEntry[], plan: GuestMarkupPlan = NO_MARKUP_PLAN) {
+    private _getSandboxCommsScript(mode: 'cooperative' | 'worker', files: FileSnapshotEntry[], plan: GuestMarkupPlan = NO_MARKUP_PLAN) {
         // communication, logs and RPC bridge template that any content running in the sandbox uses.
         // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
         // Opt-in features as one literal, only when one is on (a sandbox without them keeps its bootstrap text).
         const features: { autoResize?: true; fetchBridge?: { timeoutMs: number }; guestWrites?: true } = {};
-        if (mode === 'iframe' && this._autoResizeEnabled()) features.autoResize = true;
+        if (mode === 'cooperative' && this._autoResizeEnabled()) features.autoResize = true;
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const featuresArgument = Object.keys(features).length > 0 ? `, ${toInlineScriptLiteral(features)}` : '';
@@ -1380,7 +1401,7 @@ export class WebSandbox extends HTMLElement {
             const plan = this._getMarkupPlan(html, files, sandboxFlags);
             guestDocument = buildGuestDocument({
                 csp: policy,
-                bootstrapScript: this._getSandboxCommsScript('iframe', files, plan),
+                bootstrapScript: this._getSandboxCommsScript('cooperative', files, plan),
                 content: plan.parts ? '' : html,
                 bootstrapWritesContent: plan.parts !== null,
             });
@@ -1425,12 +1446,14 @@ export class WebSandbox extends HTMLElement {
             entrySource = new TextDecoder().decode(Uint8Array.from(atob(file[2]), c => c.charCodeAt(0)));
         }
 
+        const html = this._config.html || '<div id="root"></div>';
+        this._warnAboutStrictHtml(html);
         const sandboxFlags = this._getSandboxFlags();
         const policy = this._guestPolicy(files);
         this._strictInit = {
             workerSource: this._getStrictWorkerSource(files, entrySource),
             viewFiles: files.filter(candidate => isViewFileType(candidate[1])), // never a type that opens as a document (broad review ST1)
-            html: this._config.html || '<div id="root"></div>',
+            html,
             autoResize: this._autoResizeEnabled(),
         };
         const view = buildViewDocument(policy, viewBootstrapText());
@@ -1481,6 +1504,15 @@ export class WebSandbox extends HTMLElement {
         }
         const unsafe = config.unsafeCapabilities || [];
         if (unsafe.length > 0) warn(`[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: ${unsafe.join(', ')}.`);
+    }
+
+    // Strict mode is the default, so markup written for cooperative mode reaches it unchanged: its scripts and
+    // handlers never run (the renderer drops them, and the view's policy admits only the bootstrap). Said once per
+    // element, read with an inert parser (markup-scripts.ts); not again once said, so a big view is parsed only until then.
+    private _warnAboutStrictHtml(html: string) {
+        if (this._warnedStrict.has(STRICT_HTML_SCRIPT_WARNING) || !scriptInMarkup(html)) return;
+        this._warnedStrict.add(STRICT_HTML_SCRIPT_WARNING);
+        console.warn(STRICT_HTML_SCRIPT_WARNING);
     }
 
     // The view liveness check (A5): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.
@@ -1535,7 +1567,7 @@ export class WebSandbox extends HTMLElement {
         this._finishBuild(null);
     }
 
-    // Iframe and worker mode: the build completes when the guest checks in, its bootstrap's announcement accepted
+    // Cooperative and worker mode: the build completes when the guest checks in, its bootstrap's announcement accepted
     // (CB1, S46), with the port it announced; where this build's guest runs no bootstrap (no allow-scripts), on the
     // wrapper's one load, with no port. Anything it throws ends the sandbox, as in _onFrameLoad.
     private _finishBuild(port: MessagePort | null) {

@@ -57,7 +57,7 @@ const isKind = (key: string): key is OriginKind => (ORIGIN_KINDS as readonly str
 const shown = (value: unknown) => (typeof value === 'string' ? JSON.stringify(value.slice(0, 64)) : `a value of type ${value === null ? 'null' : typeof value}`);
 
 /** The empty policy: no origin for any kind. */
-export const NO_ORIGINS: OriginPolicy = parseOrigins(undefined, 'iframe', () => {});
+export const NO_ORIGINS: OriginPolicy = parseOrigins(undefined, 'cooperative', () => {});
 
 /**
  * `input` (the config's `origins`, already a structured clone) as an OriginPolicy for `mode`. Throws a TypeError

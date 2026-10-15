@@ -53,16 +53,16 @@ describe('A1: no configured key or value adds a directive to a guest policy (ADR
         expect(new Set(names).size).toBe(names.length);
     });
 
-    it('iframe mode, an injected key: not a kind, dropped with one warning; the policy is the template', async () => {
+    it('cooperative mode, an injected key: not a kind, dropped with one warning; the policy is the template', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ capabilities: ['allow-scripts'], origins: { 'img-src https://a; script-src-elem': ["'self'", 'https://cdn.example'] } });
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { 'img-src https://a; script-src-elem': ["'self'", 'https://cdn.example'] } });
         const { names } = parseLikeABrowser(policyOf(el));
         expect(names).toEqual(COOPERATIVE_NAMES);
         expect(policyOf(el).toLowerCase()).not.toContain("'self'");
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('origins takes'))).toHaveLength(1);
     });
 
-    it('property, strict and iframe mode: 200 random configs; the directives are the template\'s, in order, the fixed ones keep their values, every other token is an origin or the library\'s', async () => {
+    it('property, strict and cooperative mode: 200 random configs; the directives are the template\'s, in order, the fixed ones keep their values, every other token is an origin or the library\'s', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const random = prng(14102026);
         const keys = [...ORIGIN_KINDS, 'img-src', 'script-src', 'default-src'];
@@ -81,10 +81,10 @@ describe('A1: no configured key or value adds a directive to a guest policy (ADR
             for (const [name, value] of Object.entries(fixed)) expect(strict.directives.get(name), `${name} in ${context}`).toEqual(value);
             expect(new Set(strict.names).size, context).toBe(strict.names.length);
 
-            el.setConfig({ capabilities: ['allow-scripts'], origins });
-            const iframe = parseLikeABrowser(policyOf(el));
-            expect(iframe.names, context).toEqual(COOPERATIVE_NAMES);
-            for (const { directives } of [strict, iframe]) {
+            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], origins });
+            const cooperative = parseLikeABrowser(policyOf(el));
+            expect(cooperative.names, context).toEqual(COOPERATIVE_NAMES);
+            for (const { directives } of [strict, cooperative]) {
                 for (const [name, tokens] of directives) {
                     if (name === 'script-src' && tokens[0] !== "'unsafe-inline'") continue; // the strict hash, checked above
                     for (const token of tokens) expect(LIBRARY_SOURCES.has(token) || ORIGIN_PATTERN.test(token), `${name} ${token} in ${context}`).toBe(true);
@@ -97,7 +97,7 @@ describe('A1: no configured key or value adds a directive to a guest policy (ADR
 describe("A2: the S14 'self' drop cannot be bypassed by punctuation", () => {
     it("\"'self';\", \"'self',\" and 'SELF' never reach the policy, in any kind, in any mode", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        for (const mode of ['iframe', 'worker', 'strict']) {
+        for (const mode of ['cooperative', 'worker', 'strict']) {
             const el = await mount({ mode, capabilities: ['allow-scripts'], origins: {
                 scripts: ["'unsafe-inline' 'self';"], images: ["'self',"], connect: ["'SELF'"], "fonts 'self'": ['https://f.example'],
             } });
@@ -120,17 +120,34 @@ describe('A4: an unknown mode fails closed', () => {
         el.reset();
         el.load('<p>x</p>');
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
-        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('is not one of iframe, worker, strict'))).toHaveLength(1);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('is not one of strict, cooperative, worker'))).toHaveLength(1);
         el.setConfig({ mode: 'strict' });
         expect(el.state).toBe('loading');
         expect(wrapperOf(el)).not.toBeNull();
+    });
+
+    it("mode 'iframe' was renamed 'cooperative': refused like any unknown mode, and the reason and the one warning say so", async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount();
+        const reasons: string[] = [];
+        el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
+        el.setConfig({ mode: 'iframe', capabilities: ['allow-scripts'] });
+        el.reset();
+        expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
+        expect(reasons).toEqual([`unknown mode "iframe" ('iframe' was renamed 'cooperative')`, `unknown mode "iframe" ('iframe' was renamed 'cooperative')`]);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.startsWith('[Sandbox] mode "iframe" is not one of strict, cooperative, worker (\'iframe\' was renamed \'cooperative\')'))).toHaveLength(1);
+        // only that old name gets the note, never one the prototype chain answers
+        el.setConfig({ mode: 'toString' });
+        expect(reasons.at(-1)).toBe('unknown mode "toString"');
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
+        expect([el.state, wrapperOf(el) !== null]).toEqual(['loading', true]);
     });
 });
 
 describe("A5: 'unsafe-eval' and 'wasm-unsafe-eval' come only from scriptUnsafe", () => {
     it('a configured eval keyword is not an origin: dropped with one warning each, in every mode', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        for (const mode of ['iframe', 'worker', 'strict']) {
+        for (const mode of ['cooperative', 'worker', 'strict']) {
             warn.mockClear();
             const el = await mount({ mode, capabilities: ['allow-scripts'], origins: {
                 connect: ["'unsafe-eval'"], images: ["'wasm-unsafe-eval'"], styles: ["'UNSAFE-EVAL'"],
@@ -143,7 +160,7 @@ describe("A5: 'unsafe-eval' and 'wasm-unsafe-eval' come only from scriptUnsafe",
 
     it("with scriptUnsafe the host's own 'unsafe-eval' is the only eval keyword, in script-src, with the S4 warning and no other", async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ scriptUnsafe: true, capabilities: ['allow-scripts'] });
+        const el = await mount({ mode: 'cooperative', scriptUnsafe: true, capabilities: ['allow-scripts'] });
         const { directives } = parseLikeABrowser(policyOf(el));
         expect(directives.get('script-src')).toEqual(["'unsafe-inline'", "'unsafe-eval'"]);
         expect(directives.get('default-src')).toEqual(["'none'"]);
@@ -156,13 +173,14 @@ describe('A6: the values interpolated into the bootstrap come from one copy of t
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         let reads = 0;
         const shifty = {
+            mode: 'cooperative',
             capabilities: ['allow-scripts'],
             get scriptUnsafe() { return ++reads === 1 ? '1, globalThis.__A6 = 1, 0' : true; },
         };
         const el = await mount(shifty as any);
         expect(reads).toBe(1);
         expect(bootstrapOf(el)).not.toContain('__A6');
-        expect(bootstrapOf(el)).toMatch(/^\(function inSandboxScript\(|\(false, 'iframe'/);
+        expect(bootstrapOf(el)).toMatch(/^\(function inSandboxScript\(|\(false, 'cooperative'/);
         expect(el._config.scriptUnsafe).toBe(false);
     });
 
@@ -237,7 +255,7 @@ describe('A7: a merge never writes prototypes, with no list of keys', () => {
         const el = await mount(config);
         expect(Object.getPrototypeOf(el._config)).toBe(Object.prototype);
         expect(Object.getPrototypeOf(el._origins)).toBe(Object.prototype);
-        expect([el._config.scriptUnsafe, el._config.mode, el._config.entry]).toEqual([false, 'iframe', undefined]);
+        expect([el._config.scriptUnsafe, el._config.mode, el._config.entry]).toEqual([false, 'strict', undefined]);
         expect(policyOf(el)).toContain("img-src 'none';");
     });
 });
@@ -295,7 +313,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const list = ['https://a.example'];
         const capabilities: string[] = ['allow-scripts'];
-        const el = await mount({ capabilities, origins: { connect: list } });
+        const el = await mount({ mode: 'cooperative', capabilities, origins: { connect: list } });
         list.push('https://later.example');
         capabilities.push('allow-forms');
         el.reset();
@@ -320,14 +338,14 @@ describe('A8: the default bootstrap is parser-safe', () => {
         }
     });
 
-    it('every bootstrap the element builds passes (iframe and worker mode, files, module graph, markup references, fetch bridge, auto-sizing)', async () => {
+    it('every bootstrap the element builds passes (cooperative and worker mode, files, module graph, markup references, fetch bridge, auto-sizing)', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const { defineWebSandbox } = await import('@src/host');
         defineWebSandbox();
         const el = document.createElement('web-sandbox') as any;
         el.registerFiles({ 'app.js': 'import "./lib.js"; </script><!--', 'lib.js': 'export {}', 'a.css': 'p{}', 'i.svg': '<svg/>' });
         document.body.appendChild(el);
-        for (const mode of ['iframe', 'worker']) {
+        for (const mode of ['cooperative', 'worker']) {
             el.setConfig({ mode, capabilities: ['allow-scripts'], autoResize: true, fetchBridge: { allow: ['https://api.example'] },
                 html: '<script type="module" src="app.js"></script><link rel="stylesheet" href="a.css"><img src="i.svg"><script type="importmap">{"imports":{"x":"./lib.js"}}</script><p>&lt;/script&gt;</p>' });
             expect(el.state, mode).toBe('loading');

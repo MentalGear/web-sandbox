@@ -1,6 +1,6 @@
 # ADR-007: Typed origins — the guest policy is a template, the embedder lists origins
 
-**Status**: Accepted · **Date**: 2026-10-14
+**Status**: Accepted · **Date**: 2026-10-14 · **Amended**: 2026-10-15 ([strict is the default](#amendment-2026-10-15-strict-is-the-default))
 
 ## Why this ADR exists
 
@@ -143,3 +143,12 @@ the grammar's list.
 | `{ 'default-src': ['https://a.example'] }` | list the origin under each kind that needs it |
 | `'self'`, `*`, `https:`, `data:`, `blob:` | not expressible: list origins; register files |
 | `base-uri`, `form-action`, `frame-src`, `worker-src`, … | fixed by the template |
+
+## Amendment (2026-10-15): strict is the default
+
+[ADR-005's amendment](ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen)
+made strict mode the default and renamed `'iframe'` `'cooperative'`. The union keeps its shape with the default on
+the strict side: `StrictSandboxConfig` (`mode?: 'strict'`) and `CooperativeSandboxConfig` (`mode: 'cooperative' |
+'worker'`, required). So a config without `mode` is a strict config, and `origins.scripts` there is a compile error;
+at run time `origins` is parsed for the mode the merged config has, the default included, so `scripts` is dropped with
+the strict warning. The cooperative template is unchanged.
