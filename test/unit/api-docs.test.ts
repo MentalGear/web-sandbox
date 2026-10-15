@@ -11,7 +11,7 @@ import { toFetchPolicy } from '@src/lib/fetch-bridge';
 import { INERT_TYPES } from '@src/lib/guest-writes';
 import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { cooperativePolicy, KIND_DIRECTIVES, strictViewPolicy } from '@src/lib/csp/csp-generator';
-import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_TARGET_MAX_LENGTH } from '@src/lib/in-sandbox-view';
+import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MS_PER_SECOND, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_TARGET_MAX_LENGTH } from '@src/lib/in-sandbox-view';
 import { LOG_BYTES_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { WORKER_GLOBALS } from '@src/lib/worker-globals';
@@ -114,7 +114,9 @@ describe('docs/API.md lists the public surface', () => {
         const fetchDefaults = toFetchPolicy({ allow: [] }, () => {})!;
         const fetchBounds = toFetchPolicy({ allow: [], maxBytes: 1e15, timeoutMs: 1e15, maxConcurrent: 1e15 }, () => {})!;
         const rpcDefault = Number(read('src/lib/rpc.ts').match(/const DEFAULT_TIMEOUT_MS = (\d+);/)![1]);
-        const logBuffer = Number(read('src/lib/in-sandbox-script.ts').match(/const LOG_BUFFER_LIMIT = (\d+);/)![1]);
+        // one window's worth (review round 2, M-2): the bootstrap derives it from its mirror of LOG_EVENTS_PER_SECOND
+        expect(read('src/lib/in-sandbox-script.ts')).toMatch(/const LOG_BUFFER_LIMIT = LOG_LINES_PER_SECOND;/);
+        const logBuffer = Number(read('src/lib/in-sandbox-script.ts').match(/const LOG_LINES_PER_SECOND = (\d+);/)![1]);
         const expected: [string, number][] = [
             ['Default call timeout', rpcDefault],
             ['Guest log lines kept until the guest is connected', logBuffer],
@@ -122,6 +124,7 @@ describe('docs/API.md lists the public surface', () => {
             ['Strict: elements in the view', VIEW_MAX_ELEMENTS],
             ['Strict: characters in the view', VIEW_MAX_CHARACTERS],
             ['Strict: characters of markup the view parses per second', VIEW_RENDER_CHARACTERS_PER_SECOND],
+            ['Strict: time the view spends applying operations per second', VIEW_APPLY_MS_PER_SECOND],
             ['Bytes per log line', LOG_MAX_BYTES],
             ['Bytes of guest log lines sent per second', LOG_BYTES_PER_SECOND],
             ['Bytes per RPC message', RPC_MAX_BYTES],
@@ -251,7 +254,7 @@ describe('docs/API.md lists the public surface', () => {
 
     it('every fetch code and every files code', () => {
         expect(sorted(rowKeys(section('### `sandboxFetch()`')))).toEqual(sorted(publicApi.FETCH_ERROR_CODES));
-        const fileCodes = [...unionMembers('src/lib/files.ts', 'FileErrorCode'), read('src/lib/in-sandbox-files.ts').match(/error\.code = '([A-Z_]+)'/)![1]!];
+        const fileCodes = [...unionMembers('src/lib/files.ts', 'FileErrorCode'), read('src/lib/in-sandbox-files.ts').match(/const notFound = \(\) => coded\('[^']*', '([A-Z_]+)'\)/)![1]!];
         expect(sorted(rowKeys(section('### Files')))).toEqual(sorted(fileCodes));
     });
 
@@ -261,8 +264,10 @@ describe('docs/API.md lists the public surface', () => {
         const removed: string[] = [];
         for (const file of files) {
             const source = read(file);
-            for (const match of source.matchAll(/(?:\(globalThis as any\)|\bg)\.([A-Za-z]\w*) = /g)) installed.push(match[1]!);
-            for (const match of source.matchAll(/remove\(g(?:\.\w+)?, '(\w+)'\)/g)) removed.push(match[1]!);
+            // published with the captured defineProperty (review round 2, C-1): `publish('x', …)` or `defineOwn(g, 'x', { value: … })`,
+            // but for the guard that replaces fetch and the inert window.name, which are no globals of the library's
+            for (const match of source.matchAll(/(?:\bpublish\(|defineOwn\(g, )'([A-Za-z]\w*)', (?!\{ get:|\{ value: guardedFetch)/g)) installed.push(match[1]!);
+            for (const match of source.matchAll(/remove\((?:g|\w+Statics), '(\w+)'\)/g)) removed.push(match[1]!);
             const peer = source.match(/PEER_CONNECTION_CONSTRUCTORS = \['(\w+)'/);
             if (peer) removed.push(peer[1]!);
         }
@@ -290,7 +295,7 @@ describe('docs/API.md lists the public surface', () => {
         delete (globalThis as any).sandboxFiles;
         expect(sorted(rowKeys(section('### `sandboxFiles`')))).toEqual(sorted(files));
 
-        const view = read('src/lib/in-sandbox-view.ts').match(/g\.sandboxView = Object\.freeze\(\{([^}]+)\}\)/)![1]!.split(',').map(name => name.trim());
+        const view = read('src/lib/in-sandbox-view.ts').match(/defineOwn\(g, 'sandboxView', \{ value: freeze\(\{([^}]+)\}\)/)![1]!.split(',').map(name => name.trim());
         const viewSection = section('### `sandboxView`');
         expect(sorted(rowKeys(viewSection))).toEqual(sorted(view));
         const viewSpans = spans(viewSection);

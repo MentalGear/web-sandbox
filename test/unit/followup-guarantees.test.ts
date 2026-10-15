@@ -134,7 +134,7 @@ describe('B8: execute() and call() follow one rule while there is no environment
         await Promise.resolve();
         expect(settled).toBe('TERMINATED');
         el.execute('console.log(1)');
-        expect(el._queuedMessages).toEqual([]);
+        expect(el._queue).toEqual([]);
         expect(warn.mock.calls.some(c => String(c[0]).includes('execute() ignored: the sandbox is not in the document'))).toBe(true);
     });
 
@@ -144,7 +144,7 @@ describe('B8: execute() and call() follow one rule while there is no environment
         el.terminate();
         await expect(el.call('x')).rejects.toMatchObject({ code: 'TERMINATED' });
         el.execute('1');
-        expect(el._queuedMessages).toEqual([]);
+        expect(el._queue).toEqual([]);
         expect(warn.mock.calls.some(c => String(c[0]).includes('execute() ignored: the sandbox was terminated'))).toBe(true);
     });
 
@@ -154,8 +154,7 @@ describe('B8: execute() and call() follow one rule while there is no environment
         expect(el.state).toBe('loading');
         el.execute('1');
         const pending = el.call('x');
-        expect(el._queuedMessages).toEqual([{ code: '1' }]);
-        expect(el._rpcQueue).toHaveLength(1);
+        expect(el._queue.map((item: any) => ('code' in item ? item.code : item.frame.method))).toEqual(['1', 'x']); // one queue, in order (L-3)
         el.reset();
         await expect(pending).rejects.toMatchObject({ code: 'TERMINATED' });
     });
@@ -164,7 +163,7 @@ describe('B8: execute() and call() follow one rule while there is no environment
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount({ scriptUnsafe: true });
         el.execute(() => 1);
-        expect(el._queuedMessages).toEqual([]);
+        expect(el._queue).toEqual([]);
         expect(warn.mock.calls.some(c => String(c[0]).includes('code must be a string'))).toBe(true);
     });
 });

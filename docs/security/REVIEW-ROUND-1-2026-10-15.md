@@ -8,6 +8,12 @@ browser decides) and then fixed or documented on branch `round1-fixes`. Backlog:
 
 Done = two consecutive independent rounds, each with at least four reviewers using different methods and model families, that find zero medium-or-higher issues in our own code; browser bugs and documented limits counted separately and do not reset the count; any medium-or-higher finding in our code resets the count to zero after it is fixed.
 
+*Adjusted by the owner after this round, from round 2 on: the black-box persona (R5) was stopped by a safety
+classifier, and the owner chose narrower, clearly defensive reviews. Each round is the same three reviews (model-based
+lifecycle testing, an audit of the code changed since the last round, each documented limit measured on Chromium,
+Firefox and WebKit), with at least two model families; the rest of the rule is unchanged. The rule as it reads now is
+in the [round 2 report](REVIEW-ROUND-2-2026-10-15.md#stopping-rule).*
+
 ## Reviewers
 
 | | Method | Model family | Completed |

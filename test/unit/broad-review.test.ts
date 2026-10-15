@@ -47,10 +47,10 @@ describe('CB3: the host queue holds only calls still waiting for their answer', 
         expect(el.state).toBe('loading');
         const timedOut = el.callWithTimeout(20, 'count').catch((error: any) => error.code);
         const waiting = el.call('later').catch(() => {}); // positive control: still pending, so still queued
-        expect(el._rpcQueue).toHaveLength(2);
+        expect(el._queue).toHaveLength(2);
         expect(await timedOut).toBe('TIMEOUT');
         await settle();
-        expect(el._rpcQueue.map((frame: any) => frame.method)).toEqual(['later']);
+        expect(el._queue.map((item: any) => item.frame.method)).toEqual(['later']);
         el.reset(); // teardown rejects the waiting one
         await waiting;
     });

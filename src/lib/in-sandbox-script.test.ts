@@ -104,7 +104,8 @@ describe("inSandboxScript", () => {
         expect(port.posted).toHaveBeenCalledWith({
             type: 'LOG',
             level: 'info',
-            args: ['cooperative Ready']
+            args: ['cooperative Ready'],
+            own: true, // the relay's own line (review round 2, M-1)
         });
         expect(typeof port.onmessage).toBe('function');
     });
@@ -119,13 +120,15 @@ describe("inSandboxScript", () => {
         const other = createMockPort();
         comms.attach(port as any);
         comms.attach(other as any);
-        expect(port.posted).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['strict Ready'] });
+        expect(port.posted).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['strict Ready'], own: true });
         expect(other.posted).not.toHaveBeenCalled();
         port.deliver({ type: 'PING', n: 1 });
         expect(port.posted).toHaveBeenCalledWith({ type: 'PONG', n: 1 });
     });
 
     it("console lines logged before the port is attached (a strict entry's top level) are relayed on attach, in order, before the ready line; past 1000 they are counted and one warning says so (independent verification 2026-10-14)", () => {
+        let now = 1000;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
         const sandboxConsole = createMockConsole();
         (globalThis as any).addEventListener = () => {};
         const comms = inSandboxScript(false, 'strict', sandboxConsole, createBroker, { externalPort: true });
@@ -137,8 +140,12 @@ describe("inSandboxScript", () => {
         const frames = port.posted.mock.calls.map(call => call[0]).filter((frame: any) => frame.type === 'LOG');
         expect(frames.slice(0, 2)).toEqual([{ type: 'LOG', level: 'log', args: ['first'] }, { type: 'LOG', level: 'warn', args: ['second'] }]);
         expect(frames).toHaveLength(1000 + 2);
-        expect(frames.at(-2)).toEqual({ type: 'LOG', level: 'warn', args: ['[Sandbox] 102 console line(s) logged before the sandbox was connected were dropped: at most 1000 are kept until then.'] });
-        expect(frames.at(-1)).toEqual({ type: 'LOG', level: 'info', args: ['strict Ready'] });
+        expect(frames.at(-2)).toEqual({ type: 'LOG', level: 'warn', args: ['[Sandbox] 102 console line(s) logged before the sandbox was connected were dropped (102 past 1000 lines): at most 1000 lines and 4194304 bytes are kept until then.'], own: true });
+        expect(frames.at(-1)).toEqual({ type: 'LOG', level: 'info', args: ['strict Ready'], own: true });
+        // the flushed lines filled this second's window (review round 2, M-2): a line right after waits for the next one
+        sandboxConsole.log('after');
+        expect(port.posted.mock.calls.at(-1)![0]).toMatchObject({ type: 'LOG', level: 'warn', own: true, args: [expect.stringContaining('lines past that are dropped')] });
+        now += 1000;
         sandboxConsole.log('after');
         expect(port.posted.mock.calls.at(-1)![0]).toEqual({ type: 'LOG', level: 'log', args: ['after'] });
     });
@@ -302,7 +309,7 @@ describe("inSandboxScript", () => {
 
         const calls = posted.filter(frame => frame.type === 'RPC_REQ');
         expect(calls.map(frame => frame.method)).toEqual(['later']);
-        expect(posted).toContainEqual({ type: 'LOG', level: 'info', args: ['worker Ready'] });
+        expect(posted).toContainEqual({ type: 'LOG', level: 'info', args: ['worker Ready'], own: true });
         const warnings = posted.filter(frame => frame.type === 'LOG' && frame.level === 'warn');
         expect(warnings).toHaveLength(1);
         expect(String(warnings[0].args[0])).toContain('could not be posted');
@@ -376,12 +383,14 @@ describe("inSandboxScript", () => {
             const genuine = initPort(port, { source: null });
             listener.cb(genuine);
             expect(genuine.stopped).toBe(true);
-            expect(port.posted).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['worker Ready'] });
+            expect(port.posted).toHaveBeenCalledWith({ type: 'LOG', level: 'info', args: ['worker Ready'], own: true });
             // and only once: a later INIT_PORT, even a valid-looking one, changes nothing
             const late = createMockPort();
             listener.cb(initPort(late, { source: null }));
             expect(late.posted).not.toHaveBeenCalled();
-            expect(announcements).toEqual([]); // a worker announces nothing: its frame does (worker-bootstrap.ts)
+            // a worker announces nothing: its frame does (worker-bootstrap.ts), once the worker told it, once, that it
+            // runs (review round 2, C-5; in jsdom the worker's postMessage to its frame is the window's)
+            expect(announcements).toEqual([{ data: { type: 'WORKER_STARTED' }, target: undefined, transfer: undefined }]);
         });
     });
 
@@ -508,13 +517,15 @@ describe("inSandboxScript", () => {
         };
         const resizeFrames = (port: FakePort) => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RESIZE');
 
+        // The bootstrap measures through Element.prototype's own methods and getters, captured before any guest code
+        // runs (review round 2, C-1), so the stand-ins are installed there, before it starts.
         it("observes the root element and reports a changed height as a RESIZE frame, outside the broker", () => {
             const observers = installObserver();
+            const box = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ height: 120.4 } as DOMRect);
             const port = start('cooperative', true);
             expect(observers).toHaveLength(1);
             expect(observers[0]!.targets).toEqual([document.documentElement]);
 
-            const box = vi.spyOn(document.documentElement, 'getBoundingClientRect').mockReturnValue({ height: 120.4 } as DOMRect);
             observers[0]!.callback();
             observers[0]!.callback(); // unchanged: nothing sent
             box.mockReturnValue({ height: 40 } as DOMRect);
@@ -524,10 +535,10 @@ describe("inSandboxScript", () => {
 
         it("reports the scroll height when content overflows the viewport", () => {
             const observers = installObserver();
+            vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ height: 100 } as DOMRect);
+            vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockReturnValue(900);
+            vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(300);
             const port = start('cooperative', true);
-            vi.spyOn(document.documentElement, 'getBoundingClientRect').mockReturnValue({ height: 100 } as DOMRect);
-            vi.spyOn(document.documentElement, 'scrollHeight', 'get').mockReturnValue(900);
-            vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(300);
             observers[0]!.callback();
             expect(resizeFrames(port)).toEqual([{ type: 'RESIZE', height: 900 }]);
         });

@@ -48,6 +48,7 @@ conditional "continue".
 | Independent verification 2026-10-14 | ✅ five verifiers (63 of 66 mutations caught): a Firefox worker's `EventSource` and `FontFace` passed the policy, closed by an allowlist of worker globals (S43); a strict entry's synchronous console lines arrive (S45); the cooperative-mode limits in one list, user actions and history added (S44); 9 test gaps closed and the design probes in CI (S45); decision 1, `ready` on the guest's check-in (S46); decision 2, strict mode the default (S48); [report](security/VERIFICATION-2026-10-14.md) |
 | Focused review 2026-10-14 | ✅ 11 findings and one hardening, all closed (S27–S31): a reference names a file only for the kind of load its type is for (W1), rates hold in any one-second window (W2), the strict renderer removes SVG animation (F1), `workerExecutionTimeout` is a free event loop at the deadline (F2), no error text in reasons (F3), no assigned config keys (F4), one eval writer (F5), refused configs never stored (F6); [report](security/FOCUSED-REVIEW-2026-10-14.md) |
 | Review round 1 2026-10-15 | 🟡 not clean (the stopping rule's count stays 0): 8 medium and 22 low or info findings from four reviewers (R5 did not complete), all fixed or documented (S50–S53): the host page's policy (S50), one console relay with byte budgets (S51), the strict view's character and rate budget and a linear renderer (S52), the low findings and the cooperative modifier-click residual (S53); the owner's three decisions done (S54); [report](security/REVIEW-ROUND-1-2026-10-15.md) |
+| Review round 2 2026-10-15 | 🟡 not clean (the count stays 0): 2 high and 8 medium findings in our code from three defensive reviews (lifecycle model, change audit, documented limits measured), all fixed (S55): intrinsics captured before guest code (C-1), the byte measure on a cloned snapshot with an allow-list (C-3), worker mode `ready` only with a running worker, the host page's Trusted Types reason, a DOM-free import with a build-time view hash, one build predicate, long timers; every documented limit held at its edge on all three engines; round 3 held by the owner (S56); [report](security/REVIEW-ROUND-2-2026-10-15.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -71,6 +72,8 @@ On 2026-10-15 strict mode became the default and `'iframe'` was renamed `'cooper
 limits are a frozen list (S44: no new guest-realm patches), S42 was accepted and documented, and S49 records folding
 worker mode into strict mode. Review round 1 the same day ([report](security/REVIEW-ROUND-1-2026-10-15.md)) added and
 closed S50–S53 (R2-2 a cooperative-mode limit); the owner's three decisions on it were done the same day (S54).
+Review round 2 the same day, under the owner's adjusted rule ([report](security/REVIEW-ROUND-2-2026-10-15.md)), added and
+closed S55; round 3 is held by the owner (S56).
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1417,7 +1420,7 @@ middle-child removals (Chromium 13 s for 38 000) and WebKit's layout of a word o
 and drops comments; `wbr`, `ruby`, `rt`, `rp` unwrapped. S42's statement is replaced: host-page availability is not
 protected wherever the view shares the host's thread (WebKit always, Firefox, Chromium depending on its process model);
 the budgets bound the common cases, CSS paint and bidirectional text layout are not bounded (240 000 characters
-alternating directions in one paragraph: Chromium 10 s, WebKit 20 s). Tests: `test/e2e/view-budget.spec.ts`,
+alternating directions in one paragraph: tens of seconds in Chromium and WebKit, engine and machine dependent). Tests: `test/e2e/view-budget.spec.ts`,
 `src/lib/in-sandbox-view.test.ts`.
 
 ### S53 · Review round 1, the low findings and the cooperative residual — ✅ **done** (R2-2 documented)
@@ -1461,6 +1464,44 @@ capability (S54). Tests: `test/unit/review-round-1.test.ts`, `test/e2e/review-ro
 Tests: `test/unit/owner-decisions.test.ts`, `test/unit/view-api.test.ts`, `test/unit/api-docs.test.ts`,
 `test/e2e/owner-decisions.spec.ts`, `test/e2e/guest-writes.spec.ts` ("8"), `test/e2e/review-round-1.spec.ts` ("R2-2"),
 `test/e2e/host-policy.spec.ts`, `test/e2e/package.spec.ts`.
+
+### S55 · Review round 2: captured intrinsics, a snapshot measure, host-page refusals, lifecycle gaps, the view's time — ✅ **done**
+
+*From [review round 2](security/REVIEW-ROUND-2-2026-10-15.md) (C-1 to C-12, L-1 to L-7, M-1 to M-6).*
+
+**Done**:
+- **Guest-mutable intrinsics (C-1, C-2)**: every function stringified into the guest captures what it uses in one list
+  ending at `CAPTURE_POINT` and reads nothing guest-mutable after it; a unit test scans their text. Console wrappers
+  forward nothing when relaying throws.
+- **The byte measure (C-3)**: senders clone with a captured `structuredClone`, measure the snapshot with an allow-list
+  of the types clone produces, and post the snapshot. Errors and platform objects are refused across RPC
+  (`ARGS_NOT_TRANSFERABLE` / `RESULT_NOT_TRANSFERABLE`); send `{ name, message, stack }`.
+- **Host-page refusals (C-5, C-6)**: worker mode is `ready` only once its worker runs; a refused worker or Trusted Types
+  policy ends the build with the documented reason.
+- **The view's hash (C-8)**: the view bootstrap is a literal baked in by `scripts/build-lib.ts`, so `viewScriptHash()`
+  is the same in Bun, Node, a minified app and the browser; importing the package needs no DOM.
+- **Lifecycle (L-1 to L-7)**: one `buildsHere()` predicate; one long-delay timer (`src/lib/long-timer.ts`, `Infinity` =
+  off); one queue in issue order; the entry refusal inside the re-entrancy guard; detached frame loads ignored; a blank
+  reason is the default; methods work after adoption into another document (Firefox).
+- **Budgets (C-4, C-7, M-1 to M-3, M-5)**: the view keeps running counts and has a 200 ms per second time budget; the
+  equal-config comparison is capped; the relay's own lines always arrive and its windows are the host's; worker and
+  strict logs no longer go to the worker's own console.
+
+Tests: `test/unit/review-round-2.test.ts`, `test/unit/review-round-2-lifecycle.test.ts`,
+`test/e2e/review-round-2.spec.ts`, `test/e2e/host-policy.spec.ts`, `test/e2e/package.spec.ts`,
+`scripts/smoke-package.sh`.
+
+### S56 · Review round 3 — ⏸️ **held by the owner**
+
+The next round under the stopping rule (the [round 2 report](security/REVIEW-ROUND-2-2026-10-15.md#stopping-rule) has it
+as it reads now; the count is 0 of 2). It runs the same three reviews as round 2, on the `main` that closes S55:
+- model-based lifecycle testing;
+- an audit of the code changed since round 2 (`31b8f0d..` the merge of S55);
+- each documented limit measured at its edge on Chromium, Firefox and WebKit.
+
+They use at least two model families.
+Round 2's highs both came from code added by round 1's fixes, so the change audit carries the most weight: S55 itself
+is the code under review.
 
 ## B · API Surface & DX
 

@@ -30,6 +30,7 @@
 import type { RpcLibraryCode } from './rpc';
 import { parseOrigin, type Origin, type OriginRules } from './origin';
 import { shown } from './csp/origins';
+import { setLongTimeout } from './long-timer';
 
 /** The method name the bridge is exposed under: reserved, so no exposed method can collide with it. */
 export const FETCH_METHOD = 'sandbox:fetch';
@@ -482,7 +483,7 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
             return refuse(fetchRefusal('FETCH_NOT_ALLOWED', `the browser refused the request (${error instanceof Error ? error.name : 'error'})`));
         }
         inFlight.add(controller);
-        const timer = setTimeout(() => controller.abort(TIMEOUT), policy.timeoutMs);
+        const timer = setLongTimeout(() => controller.abort(TIMEOUT), policy.timeoutMs);
         let bytes = 0;
         let status: number | undefined;
         try {
@@ -523,7 +524,7 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
             record(base, 'failed', { status, bytes, code: refusal.code });
             throw refusal;
         } finally {
-            clearTimeout(timer);
+            timer.cancel();
             inFlight.delete(controller);
         }
     };

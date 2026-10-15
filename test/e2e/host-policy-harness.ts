@@ -4,6 +4,13 @@
 import { defineWebSandbox } from '@src/host';
 import { viewScriptHash } from '@src/index';
 
+// `?tt-default`: the host page has a Trusted Types default policy of its own (review round 2, C-6), which every string
+// the page assigns to a sink passes through; created first, before the element assigns anything.
+if (new URLSearchParams(location.search).has('tt-default')) {
+    const pass = (input: string) => input;
+    (window as any).trustedTypes?.createPolicy('default', { createHTML: pass, createScript: pass, createScriptURL: pass });
+}
+
 defineWebSandbox();
 
 const w = window as any;

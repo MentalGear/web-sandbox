@@ -151,7 +151,8 @@ export const WRAPPER_STYLE = 'html,body,iframe{margin:0;width:100%;height:100%;b
  * The wrapper carries the same sandbox flags as the guest: nested sandbox flags only ever add up,
  * so a stricter wrapper would silently restrict the guest as well.
  * The same goes for `allow` (Permissions Policy): a feature reaches the guest only if every frame
- * on the way delegates it. * Sized by WRAPPER_STYLE, and by presentational attributes where a host page's style-src refuses it (see there).
+ * on the way delegates it.
+ * Sized by WRAPPER_STYLE, and by presentational attributes where a host page's style-src refuses it (see there).
  */
 export function buildWrapperDocument(guestDocument: string, sandboxFlags: string, permissions: readonly string[] = []): string {
 

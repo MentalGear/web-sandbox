@@ -28,8 +28,10 @@
  * timeouts rather than an interval, so two ticks can never run back to back.
  */
 
+import { setLongTimeout, type LongTimeout } from './long-timer';
+
 export interface WatchdogOptions {
-    /** How long the peer may stay silent, in ms. Must be a finite number > 0 (see watchdogBudget). */
+    /** How long the peer may stay silent, in ms. Must be a finite number > 0 (see watchdogBudget); any size (long-timer.ts). */
     timeoutMs: number;
     /** Posts `{ type: 'PING', n }` to the peer. */
     ping: (n: number) => void;
@@ -59,19 +61,19 @@ export function startWatchdog({ timeoutMs, ping, onExpire }: WatchdogOptions): W
     let lastAnswered = 0;   // n of the newest ping answered
     let heard = false;      // an answer arrived since the previous tick
     let silentTicks = 0;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let timer: LongTimeout | null = null;
     let stopped = false;
 
     const stop = () => {
         stopped = true;
-        if (timer !== null) clearTimeout(timer);
+        timer?.cancel();
         timer = null;
     };
 
     // The next tick is armed before posting, so a transport that throws cannot stop the watchdog: the
     // peer simply goes unheard and the budget runs out.
     const sendPing = () => {
-        timer = setTimeout(tick, interval);
+        timer = setLongTimeout(tick, interval);
         lastSent++;
         ping(lastSent);
     };

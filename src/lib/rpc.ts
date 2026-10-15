@@ -9,7 +9,9 @@
  *     in-sandbox bootstrap, exactly like `inSandboxScript`.
  * So it must close over nothing from module scope: every helper lives INSIDE the function and
  * it references only platform globals that exist in both Window and Worker scopes (Map, Promise,
- * Array, Error, String, setTimeout/clearTimeout, structuredClone). A top-level import or constant
+ * Array, Error, String, setTimeout/clearTimeout, structuredClone), each taken once, in the captured list at
+ * its top: in the guest that list runs before any guest code, and nothing after it reads a global or a
+ * prototype guest code can replace (review round 2, C-1). A top-level import or constant
  * would read as `undefined` once stringified into the guest. The upside is that both sides run
  * the very same dispatcher.
  * For the same reason it sticks to syntax the build emits verbatim: down-levelled syntax compiles to
@@ -59,8 +61,9 @@ export type RpcMethod = (...args: any[]) => unknown;
 
 // Posts one frame onto the transport. The host queues until its port exists; the guest buffers
 // until INIT_PORT. The broker itself never touches the port, which keeps it transport-agnostic
-// and unit-testable.
-export type RpcSend = (frame: unknown) => void;
+// and unit-testable. `transfer` is given only to a reply channel of a broker made with `transferResults`: the
+// ArrayBuffers of a result's snapshot, which no one else holds (sendResult).
+export type RpcSend = (frame: unknown, transfer?: Transferable[]) => void;
 
 /**
  * Why a call was refused. The set is closed and the strings are wire protocol (pinned by a test).
@@ -134,7 +137,10 @@ export interface BrokerOptions {
     // The byte measure (createSizeOf() of structured-size.ts) the budgets RPC_MAX_BYTES and RPC_MAX_INBOUND_BYTES are
     // measured with. Both brokers the library makes pass one (host.ts, in-sandbox-script.ts); passed in rather than
     // closed over because this function is stringified.
-    sizeOf?: (value: unknown, limit: number) => number;
+    sizeOf?: (value: unknown, limit: number, buffers?: unknown[]) => number;
+    // Post a result's snapshot with its ArrayBuffers transferred (sendResult): only the host's broker, whose reply
+    // channels take a transfer list. The guest's posts nothing but the frame.
+    transferResults?: boolean;
 }
 
 export interface Broker {
@@ -174,12 +180,41 @@ export interface Broker {
 }
 
 export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker {
+    // ---- The captured list (review round 2, C-1). In the guest this function runs in the bootstrap, before any guest
+    // code, and its closures run long after: so every global and every prototype method they use is taken here, and
+    // nothing below it reads one (a unit test scans the text). Before, `inFlight.get(respond)` called whatever
+    // Map.prototype.get was at that moment, and so handed the guest the bootstrap's `send`, which posts any frame on the
+    // port past the console relay's budgets. The host captures the same list from its own realm.
+    const apply = Reflect.apply;
+    const construct = Reflect.construct;
+    const defineOwn = Reflect.defineProperty;
+    const setPrototype = Object.setPrototypeOf;
+    const isArray = Array.isArray;
+    const clone = structuredClone;
+    const MapConstructor = Map;
+    const mapGet = Map.prototype.get;
+    const mapSet = Map.prototype.set;
+    const mapDelete = Map.prototype.delete;
+    const mapForEach = Map.prototype.forEach;
+    const PromiseConstructor = Promise;
+    const resolved = Promise.resolve;
+    const rejected = Promise.reject;
+    const then = Promise.prototype.then;
+    const ErrorConstructor = Error;
+    const StringConstructor = String;
+    const startsWith = String.prototype.startsWith;
+    const setTimer = setTimeout;
+    const clearTimer = clearTimeout;
     // Declared INSIDE the function so it survives stringification into the guest. A call whose
     // handler never answers would otherwise hang forever; 30s is generous for a local same-process
     // port yet still bounds an unresponsive other side.
     const DEFAULT_TIMEOUT_MS = 30000;
     const defaultTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const acceptLibraryCodes = options.acceptLibraryCodes === true;
+    const transferResults = options.transferResults === true;
+    const sizeOf = typeof options.sizeOf === 'function' ? options.sizeOf : null;
+    const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
+
     // Mirrors the exported RESERVED_METHOD_PREFIX (a test keeps them equal): declared here to survive stringification.
     const RESERVED_PREFIX = 'sandbox:';
     // Mirrors the exported MAX_INBOUND_IN_FLIGHT, for the same reason.
@@ -187,8 +222,30 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // Mirror RPC_MAX_BYTES and RPC_MAX_INBOUND_BYTES, for the same reason.
     const MAX_BYTES = 34603008;
     const MAX_INBOUND_BYTES = 67108864;
-    const sizeOf = typeof options.sizeOf === 'function' ? options.sizeOf : null;
-    const bytesOf = (value: unknown, limit: number) => (sizeOf ? sizeOf(value, limit) : 0);
+    const bytesOf = (value: unknown, limit: number, buffers?: unknown[]) => (sizeOf ? sizeOf(value, limit, buffers) : 0);
+    // Mirrors MAX_TIMER_DELAY (long-timer.ts; a test keeps them equal), for the same reason. A call's timeout is the
+    // caller's to choose, and setTimeout overflows at 2^31 ms and fires at once (review round 2, L-2): a longer timeout
+    // is waited out in steps of at most this, and Infinity never fires. Returns how to disarm it.
+    const MAX_TIMER_DELAY = 2147483647;
+    const armTimer = (onTimeout: () => void, ms: number): (() => void) => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        let disarmed = false;
+        const wait = (left: number) => {
+            const step = left > MAX_TIMER_DELAY ? MAX_TIMER_DELAY : left;
+            timer = setTimer(() => {
+                timer = null;
+                if (disarmed) return;
+                if (left > step) wait(left - step);
+                else onTimeout();
+            }, step);
+        };
+        if (ms !== Infinity) wait(ms);
+        return () => {
+            disarmed = true;
+            if (timer !== null) clearTimer(timer);
+            timer = null;
+        };
+    };
 
     // The one source of truth for the code strings (see RpcErrorCode for meanings). Inside the function
     // for the same reason as everything else; the type makes it exhaustive and exact.
@@ -204,45 +261,62 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         BUSY: 'BUSY',
     };
 
-    // The library codes (RpcLibraryCode), closed: what a reserved method may report.
+    // The library codes (RpcLibraryCode), closed: what a reserved method may report. Read by index only.
     const LIBRARY_CODES: readonly RpcLibraryCode[] = [
         'FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED',
         'INVALID_PATH', 'INVALID_FILE', 'FILES_QUOTA_EXCEEDED', 'FILES_NOT_ALLOWED', 'FILES_BUSY',
     ];
-    const isLibraryCode = (code: unknown): code is RpcLibraryCode => typeof code === 'string' && (LIBRARY_CODES as readonly string[]).includes(code);
-    const isReservedName = (name: string) => name.startsWith(RESERVED_PREFIX);
+    // The library code equal to `code`, as our own constant, or undefined.
+    const libraryCodeOf = (code: unknown): RpcLibraryCode | undefined => {
+        for (let i = 0; i < LIBRARY_CODES.length; i++) if (LIBRARY_CODES[i] === code) return LIBRARY_CODES[i];
+        return undefined;
+    };
+    const isReservedName = (name: string) => apply(startsWith, name, [RESERVED_PREFIX]) as boolean;
+    // Maps through the captured methods only.
+    const mapOf = <K, V>() => new MapConstructor() as Map<K, V>;
+    const get = <K, V>(map: Map<K, V>, key: K): V | undefined => apply(mapGet, map, [key]);
+    const set = <K, V>(map: Map<K, V>, key: K, value: V) => { apply(mapSet, map, [key, value]); };
+    const remove = <K, V>(map: Map<K, V>, key: K) => { apply(mapDelete, map, [key]); };
 
     // Methods WE expose. Using a Map (not a plain object) is the core of the hardening — see handleRequest.
     // Reserved names live in their own map, written only by exposeReserved: see the header.
-    const registry = new Map<string, RpcMethod>();
-    const reservedRegistry = new Map<string, RpcMethod>();
+    const registry = mapOf<string, RpcMethod>();
+    const reservedRegistry = mapOf<string, RpcMethod>();
 
     // Calls WE initiated, keyed by the id we chose.
     type Pending = {
         resolve: (value: unknown) => void;
         reject: (error: Error) => void;
-        timer: ReturnType<typeof setTimeout> | null;
+        disarm: (() => void) | null; // its timeout's, or null without one
         reserved: boolean; // a call to a reserved name: the only kind a library code may refuse
     };
-    const pending = new Map<number, Pending>();
+    const pending = mapOf<number, Pending>();
     let nextId = 0;
 
     // Inbound calls running now, per reply channel (review B7). Keyed by the channel an answer goes back on: the
     // host passes one per port, so the count belongs to one environment and a channel that is gone takes its
     // count with it once its calls settle. An entry is removed when its count returns to 0.
-    const inFlight = new Map<RpcSend, number>();
+    const inFlight = mapOf<RpcSend, number>();
     // The bytes of those calls' arguments, per reply channel (RPC_MAX_INBOUND_BYTES), kept and released with the count.
-    const inFlightBytes = new Map<RpcSend, number>();
+    const inFlightBytes = mapOf<RpcSend, number>();
 
     // Normalizes anything thrown/rejected into a plain string for the wire. Wrapped in try/catch so a
     // value with a throwing toString can never take the message handler down with it.
     function errorMessage(error: unknown): string {
         try {
             if (error && typeof (error as any).message === 'string') return (error as any).message;
-            return String(error);
+            return StringConstructor(error);
         } catch {
             return 'unknown error';
         }
+    }
+
+    // An Error with an own `code`, defined rather than assigned: an assignment would reach a setter guest code put on
+    // Error.prototype or Object.prototype.
+    function codedError(message: string, code: string): RpcError {
+        const error = new ErrorConstructor(message) as RpcError;
+        defineOwn(error, 'code', { value: code, writable: true, enumerable: true, configurable: true });
+        return error;
     }
 
     // Mints a refusal with a LOCAL code. Called only from this side's own state (its timer, teardown,
@@ -250,9 +324,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // makes a local code trustworthy: the other side has no path into this function. Its parameter type
     // admits only the local codes.
     function localRefusal(code: Exclude<RpcErrorCode, 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE' | 'BUSY'>, message: string): RpcError {
-        const error = new Error(message) as RpcError;
-        error.code = code;
-        return error;
+        return codedError(message, code);
     }
 
     // Turns a failure the other side reported into a rejection. The inbound frame is untrusted, so its
@@ -266,45 +338,54 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     function refusalFromResponse(data: any, reserved: boolean): RpcError {
         const reportedError = data.error;
         const reportedCode = data.code;
-        const error = new Error(typeof reportedError === 'string' ? reportedError : 'RPC call failed') as RpcError;
-        const libraryCode = reserved && acceptLibraryCodes ? LIBRARY_CODES.find(code => code === reportedCode) : undefined;
-        error.code = reportedCode === CODE.UNKNOWN_METHOD ? CODE.UNKNOWN_METHOD
+        const libraryCode = reserved && acceptLibraryCodes ? libraryCodeOf(reportedCode) : undefined;
+        const code = reportedCode === CODE.UNKNOWN_METHOD ? CODE.UNKNOWN_METHOD
             : reportedCode === CODE.RESULT_NOT_TRANSFERABLE ? CODE.RESULT_NOT_TRANSFERABLE
             : reportedCode === CODE.BUSY ? CODE.BUSY
-            : libraryCode !== undefined ? libraryCode as unknown as RpcErrorCode
+            : libraryCode !== undefined ? libraryCode
             : CODE.HANDLER_ERROR;
-        return error;
+        return codedError(typeof reportedError === 'string' ? reportedError : 'RPC call failed', code);
     }
 
     // The code an error thrown by a handler is reported with: a library code only from a reserved method.
     function handlerErrorCode(error: unknown, reserved: boolean): string {
         if (!reserved || !error || typeof error !== 'object') return CODE.HANDLER_ERROR;
-        const code = (error as any).code;
-        return isLibraryCode(code) ? code : CODE.HANDLER_ERROR;
+        return libraryCodeOf((error as any).code) ?? CODE.HANDLER_ERROR;
     }
 
     // Removes a pending call and disarms its timer, returning it once (or null if already settled).
     // Routing every settle path through here makes a second settle for the same id a no-op, which is
     // what keeps a stale or duplicate response from resolving a later call that reused nothing.
     function takePending(id: number): Pending | null {
-        const entry = pending.get(id);
+        const entry = get(pending, id);
         if (!entry) return null;
-        pending.delete(id);
-        if (entry.timer !== null) clearTimeout(entry.timer);
+        remove(pending, id);
+        if (entry.disarm !== null) entry.disarm();
         return entry;
     }
 
-    // Answers a request with its handler's result. A value structured clone cannot carry (a function, a
-    // DOM node, a Symbol) makes the send throw a DataCloneError; inside the promise callback nothing would
-    // catch it, so the caller would sit out its whole timeout. Answer with an error frame instead — a
-    // string error always clones — so the caller fails promptly and nothing else is affected.
+    // Answers a request with its handler's result (review round 2, C-3): a snapshot of it is taken first, with the
+    // captured structuredClone, measured, and posted; the live value is read once, by that clone. Measuring the live
+    // value and posting it let a getter answer the measure small and the post large. A value structured clone cannot
+    // carry (a function, a DOM node, a Symbol) is answered with an error frame — a string error always clones — so the
+    // caller fails promptly, as before. The snapshot is posted with its ArrayBuffers transferred where the transport
+    // takes a transfer list (the host's, `transferResults`), so a large binary result is copied once, by the snapshot,
+    // and not again by the post; its strings are copied twice, which the budget bounds.
     function sendResult(respond: RpcSend, id: string | number, value: unknown): void {
-        if (bytesOf(value, MAX_BYTES) > MAX_BYTES) {
+        let snapshot: unknown;
+        try {
+            snapshot = clone(value);
+        } catch (error) {
+            respond({ type: 'RPC_RES', id, ok: false, error: `result is not transferable: ${errorMessage(error)}`, code: CODE.RESULT_NOT_TRANSFERABLE });
+            return;
+        }
+        const buffers: unknown[] | undefined = transferResults ? [] : undefined;
+        if (bytesOf(snapshot, MAX_BYTES, buffers) > MAX_BYTES) {
             respond({ type: 'RPC_RES', id, ok: false, error: `result is larger than the RPC byte budget (${MAX_BYTES})`, code: CODE.RESULT_NOT_TRANSFERABLE });
             return;
         }
         try {
-            respond({ type: 'RPC_RES', id, ok: true, value });
+            respond({ type: 'RPC_RES', id, ok: true, value: snapshot }, buffers as Transferable[] | undefined);
         } catch (error) {
             respond({ type: 'RPC_RES', id, ok: false, error: `result is not transferable: ${errorMessage(error)}`, code: CODE.RESULT_NOT_TRANSFERABLE });
         }
@@ -318,8 +399,10 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // id may be a string or number, method must be a string, args must be an array.
         const id = data.id;
         if (typeof id !== 'string' && typeof id !== 'number') return;
-        if (typeof data.method !== 'string') return;
-        if (!Array.isArray(data.args)) return;
+        const name = data.method;
+        if (typeof name !== 'string') return;
+        const args = data.args;
+        if (!isArray(args)) return;
 
         // Lookup is allowlist-only: registry.get(name), NEVER registry[name]. A Map has no prototype
         // chain, so the only names that resolve are ones we explicitly exposed. Names such as
@@ -327,16 +410,16 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // keys here; on a plain object they would instead resolve to inherited functions and let the
         // caller reach or mutate the prototype chain. So unknown and inherited names alike resolve to
         // nothing and invoke nothing.
-        const reserved = isReservedName(data.method);
-        const method = reserved ? reservedRegistry.get(data.method) : registry.get(data.method);
+        const reserved = isReservedName(name);
+        const method = get(reserved ? reservedRegistry : registry, name);
         if (!method) {
-            respond({ type: 'RPC_RES', id, ok: false, error: `unknown method: ${data.method}`, code: CODE.UNKNOWN_METHOD });
+            respond({ type: 'RPC_RES', id, ok: false, error: `unknown method: ${name}`, code: CODE.UNKNOWN_METHOD });
             return;
         }
 
         // At most MAX_IN_FLIGHT calls run at once per channel (review B7): beyond that the call is refused at
         // once, before its method runs, so a flood of calls to a method that never settles holds a bounded amount.
-        const running = inFlight.get(respond) ?? 0;
+        const running = get(inFlight, respond) ?? 0;
         if (running >= MAX_IN_FLIGHT) {
             respond({ type: 'RPC_RES', id, ok: false, error: `too many calls in flight (${MAX_IN_FLIGHT})`, code: CODE.BUSY });
             return;
@@ -344,43 +427,61 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // The bytes too (R3-3): a request past RPC_MAX_BYTES (the other side's broker never sends one), or one that
         // would take this channel's running calls past RPC_MAX_INBOUND_BYTES, does not run. Measured on the clone that
         // arrived, so the other side's measure is not trusted.
-        const holding = inFlightBytes.get(respond) ?? 0;
-        const bytes = bytesOf(data.args, MAX_BYTES);
+        const holding = get(inFlightBytes, respond) ?? 0;
+        const bytes = bytesOf(args, MAX_BYTES);
         if (bytes > MAX_BYTES || holding + bytes > MAX_INBOUND_BYTES) {
             respond({ type: 'RPC_RES', id, ok: false, error: bytes > MAX_BYTES ? `the call is larger than the RPC byte budget (${MAX_BYTES})` : `too many bytes in calls in flight (${MAX_INBOUND_BYTES})`, code: CODE.BUSY });
             return;
         }
-        inFlight.set(respond, running + 1);
-        inFlightBytes.set(respond, holding + bytes);
+        set(inFlight, respond, running + 1);
+        set(inFlightBytes, respond, holding + bytes);
         const release = () => {
-            const left = (inFlight.get(respond) ?? 1) - 1;
-            const leftBytes = (inFlightBytes.get(respond) ?? bytes) - bytes;
+            const left = (get(inFlight, respond) ?? 1) - 1;
+            const leftBytes = (get(inFlightBytes, respond) ?? bytes) - bytes;
             if (left > 0) {
-                inFlight.set(respond, left);
-                inFlightBytes.set(respond, leftBytes > 0 ? leftBytes : 0);
+                set(inFlight, respond, left);
+                set(inFlightBytes, respond, leftBytes > 0 ? leftBytes : 0);
             } else {
-                inFlight.delete(respond);
-                inFlightBytes.delete(respond);
+                remove(inFlight, respond);
+                remove(inFlightBytes, respond);
             }
+        };
+        const succeeded = (value: unknown) => {
+            release();
+            sendResult(respond, id, value);
+        };
+        const failed = (error: unknown) => {
+            release();
+            respond({ type: 'RPC_RES', id, ok: false, error: errorMessage(error), code: handlerErrorCode(error, reserved) });
         };
 
         // We CALL a pre-registered function reference with the cloned args — we never eval / new Function
         // the method name or the args, and the args arrived as inert structured-clone data, so nothing
-        // the other side sends is ever interpreted as code. Funnelling through Promise.resolve().then(...) makes
-        // a sync return, a sync throw, an async resolve and an async reject all settle the same way.
+        // the other side sends is ever interpreted as code. The method runs in a microtask, and what it returns is
+        // settled with Promise.resolve, so a sync return, a sync throw, an async resolve and an async reject all settle
+        // the same way. Both reactions are registered on promises made by the captured Promise, and no promise a `then`
+        // returned is used: that one would be made by whatever constructor guest code put on Promise.prototype.
         // A throw is reported as HANDLER_ERROR: a `code` the handler put on its error is not forwarded (and
         // the caller would clamp it anyway — see refusalFromResponse). The one exception is a library code
         // from a reserved method (handlerErrorCode).
-        Promise.resolve().then(() => method(...data.args)).then(
-            value => {
-                release();
-                sendResult(respond, id, value);
-            },
-            error => {
-                release();
-                respond({ type: 'RPC_RES', id, ok: false, error: errorMessage(error), code: handlerErrorCode(error, reserved) });
-            },
-        );
+        const started = apply(resolved, PromiseConstructor, [undefined]) as Promise<void>;
+        apply(then, started, [() => {
+            let value: unknown;
+            try {
+                value = apply(method, undefined, args);
+            } catch (error) {
+                failed(error);
+                return;
+            }
+            let settled: Promise<unknown>;
+            try {
+                settled = apply(resolved, PromiseConstructor, [value]) as Promise<unknown>;
+            } catch (error) {
+                failed(error); // a thenable whose `then` getter throws
+                return;
+            }
+            apply(then, settled, [succeeded, failed]);
+        }]);
     }
 
     function handleResponse(data: any): void {
@@ -391,15 +492,14 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         if (!entry) return; // unknown, stale, or already-settled id
         if (data.ok) {
             // a result past the byte budget (R3-3; the other side's broker never sends one) is not handed over
-            if (bytesOf(data.value, MAX_BYTES) > MAX_BYTES) {
-                const refusal = new Error(`the result is larger than the RPC byte budget (${MAX_BYTES})`) as RpcError;
-                refusal.code = CODE.RESULT_NOT_TRANSFERABLE;
-                entry.reject(refusal);
+            const value = data.value;
+            if (bytesOf(value, MAX_BYTES) > MAX_BYTES) {
+                entry.reject(codedError(`the result is larger than the RPC byte budget (${MAX_BYTES})`, CODE.RESULT_NOT_TRANSFERABLE));
                 return;
             }
             // undefined is represented natively: an absent `value` reads back as undefined, and a
             // handler that returns nothing therefore resolves to undefined — no sentinel needed.
-            entry.resolve(data.value);
+            entry.resolve(value);
             return;
         }
         entry.reject(refusalFromResponse(data, entry.reserved));
@@ -412,17 +512,18 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         if (isReservedName(name)) return;
         // Re-exposing a name REPLACES the previous handler (last registration wins): the least
         // surprising choice, it mirrors Map.set and lets a handler be hot-swapped.
-        registry.set(name, fn);
+        set(registry, name, fn);
     }
 
     function exposeReserved(name: string, fn: RpcMethod): void {
         if (typeof name !== 'string' || typeof fn !== 'function' || !isReservedName(name)) return;
-        reservedRegistry.set(name, fn);
+        set(reservedRegistry, name, fn);
     }
 
-    function callWithTimeout(timeoutMs: number, method: string, ...args: unknown[]): Promise<unknown> {
+    // One call: `args` is the caller's own list (a rest parameter), read by index.
+    function request(timeoutMs: number, method: string, args: unknown[]): Promise<unknown> {
         // Sanitize before applying: a non-string method can never match a registered name.
-        if (typeof method !== 'string') return Promise.reject(localRefusal(CODE.INVALID_CALL, 'RPC method name must be a string'));
+        if (typeof method !== 'string') return apply(rejected, PromiseConstructor, [localRefusal(CODE.INVALID_CALL, 'RPC method name must be a string')]) as Promise<unknown>;
 
         // Check transferability up front, before recording anything or sending. A value structured clone
         // cannot carry would otherwise throw from postMessage — or, for a call queued before the port
@@ -431,26 +532,23 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // arguments to their call-time values (as postMessage does), and the check has already paid for it.
         let sendableArgs: unknown[];
         try {
-            sendableArgs = structuredClone(args);
+            sendableArgs = clone(args);
         } catch (error) {
-            return Promise.reject(localRefusal(CODE.ARGS_NOT_TRANSFERABLE, `RPC arguments are not transferable: ${errorMessage(error)}`));
+            return apply(rejected, PromiseConstructor, [localRefusal(CODE.ARGS_NOT_TRANSFERABLE, `RPC arguments are not transferable: ${errorMessage(error)}`)]) as Promise<unknown>;
         }
         // The byte budget (R3-3), measured on the clone that will be sent: past it, nothing is sent.
         if (bytesOf(sendableArgs, MAX_BYTES) > MAX_BYTES) {
-            return Promise.reject(localRefusal(CODE.ARGS_NOT_TRANSFERABLE, `RPC arguments are larger than the RPC byte budget (${MAX_BYTES})`));
+            return apply(rejected, PromiseConstructor, [localRefusal(CODE.ARGS_NOT_TRANSFERABLE, `RPC arguments are larger than the RPC byte budget (${MAX_BYTES})`)]) as Promise<unknown>;
         }
 
         const id = ++nextId;
-        return new Promise<unknown>((resolve, reject) => {
-            let timer: ReturnType<typeof setTimeout> | null = null;
-            if (timeoutMs > 0) {
-                timer = setTimeout(() => {
-                    const entry = takePending(id);
-                    if (entry) entry.reject(localRefusal(CODE.TIMEOUT, `RPC timeout after ${timeoutMs}ms: ${method}`));
-                }, timeoutMs);
-            }
+        return construct(PromiseConstructor, [(resolve: (value: unknown) => void, reject: (error: Error) => void) => {
+            const disarm = timeoutMs > 0 ? armTimer(() => {
+                const entry = takePending(id);
+                if (entry) entry.reject(localRefusal(CODE.TIMEOUT, `RPC timeout after ${timeoutMs}ms: ${method}`));
+            }, timeoutMs) : null;
             // Record the pending promise BEFORE sending, so a response can never arrive first.
-            pending.set(id, { resolve, reject, timer, reserved: isReservedName(method) });
+            set(pending, id, { resolve, reject, disarm, reserved: isReservedName(method) });
             try {
                 send({ type: 'RPC_REQ', id, method, args: sendableArgs });
             } catch (error) {
@@ -458,11 +556,15 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
                 takePending(id);
                 reject(localRefusal(CODE.SEND_FAILED, `RPC call could not be sent: ${errorMessage(error)}`));
             }
-        });
+        }]) as Promise<unknown>;
+    }
+
+    function callWithTimeout(timeoutMs: number, method: string, ...args: unknown[]): Promise<unknown> {
+        return request(timeoutMs, method, args);
     }
 
     function call(method: string, ...args: unknown[]): Promise<unknown> {
-        return callWithTimeout(defaultTimeoutMs, method, ...args);
+        return request(defaultTimeoutMs, method, args);
     }
 
     function handleMessage(data: unknown, reply?: RpcSend): void {
@@ -487,9 +589,10 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // Settle every outstanding call so no promise hangs when the transport goes away (teardown,
         // re-init, terminate). Snapshot the ids first, since takePending mutates the map as we go.
         // Each call gets its own Error, so one caller cannot mutate the reason another one sees.
-        const ids = [...pending.keys()];
-        for (const id of ids) {
-            const entry = takePending(id);
+        const ids: number[] = setPrototype([], null);
+        apply(mapForEach, pending, [(_entry: Pending, id: number) => { ids[ids.length] = id; }]);
+        for (let i = 0; i < ids.length; i++) {
+            const entry = takePending(ids[i]!);
             if (entry) entry.reject(terminationError(message));
         }
     }

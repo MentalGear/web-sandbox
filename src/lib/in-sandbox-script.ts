@@ -20,6 +20,15 @@ export const ANNOUNCEMENT_TYPE = 'SANDBOX_PORT';
  * published as `globalThis.bridge`: a descriptive name chosen to be very unlikely to clash with
  * guest identifiers (unlike `rpc`, `broker` or `channel`). Guest code calls `bridge.expose(name, fn)`
  * to publish a method and `bridge.call(method, ...args)` to invoke a host method.
+ *
+ * Everything this function will ever use is taken in one captured list near its top, before any guest code runs, and
+ * nothing after that list reads a global, a property of the global object, or a prototype method or getter guest code
+ * can replace: every call goes through a captured function and the captured Reflect.apply, no spread or iteration
+ * (they consult Array.prototype[Symbol.iterator]), no instanceof (Symbol.hasInstance). Its closures run long after
+ * guest code started (every console call, every frame), and each of them enforces something the host relies on: the
+ * relay's budgets, the port's secrecy, the startup gate. Before (review round 2, C-1), the relay's token bucket called
+ * Math.min when a line was logged, so a guest that set `Math.min = () => Infinity` lifted the per-second caps. A unit
+ * test scans the text after the list (`CAPTURE_POINT`), so a regression fails CI.
  */
 export function inSandboxScript(
     scriptUnsafe: boolean,
@@ -50,37 +59,101 @@ export function inSandboxScript(
     const announced = mode === 'cooperative' ? new MessageChannel() : null;
     if (announced) parent.parent.postMessage({ type: 'SANDBOX_PORT' }, '*', [announced.port2]);
 
-    // The port never reaches guest code (review B2). Every operation on it, and on the events that carry it,
-    // goes through a primitive captured here, before any guest code runs, and is called through the captured
-    // Reflect.apply: patching MessagePort.prototype (postMessage, onmessage), MessageEvent.prototype (data,
-    // ports, source), Event.prototype or Function.prototype afterwards changes nothing this script does, and
-    // never hands a patched function the port as `this` or as an argument. (A guest that held the port could
-    // hand it to a nested worker that answers the watchdog's pings while the guest loops.) The internal lists
-    // are written with a captured defineProperty and read by index, so inherited setters or iterators on
-    // Array.prototype see none of it either (review C3).
+    // ---- The captured list (review B2, C3; review round 2, C-1). The port never reaches guest code (review B2): every
+    // operation on it, and on the events that carry it, goes through a primitive captured here and is called through the
+    // captured Reflect.apply, so patching MessagePort.prototype (postMessage, onmessage), MessageEvent.prototype (data,
+    // ports, source), Event.prototype or Function.prototype afterwards changes nothing this script does, and never hands
+    // a patched function the port as `this` or as an argument. (A guest that held the port could hand it to a nested
+    // worker that answers the watchdog's pings while the guest loops.) The internal lists are written with a captured
+    // defineProperty, or have no prototype, and are read by index, so inherited setters or iterators on Array.prototype
+    // see none of it either (review C3). The list only captures: anything that runs later is written below it.
     const g = globalThis as any;
     const apply = Reflect.apply;
+    const construct = Reflect.construct;
     const defineOwn = Reflect.defineProperty;
-    const accessor = (proto: object, name: string) => Object.getOwnPropertyDescriptor(proto, name)!;
+    const deleteOwn = Reflect.deleteProperty;
+    const getOwn = Object.getOwnPropertyDescriptor;
+    const protoOf = Object.getPrototypeOf;
+    const setPrototype = Object.setPrototypeOf;
     const postOnPort = MessagePort.prototype.postMessage;
-    const setOnMessage = accessor(MessagePort.prototype, 'onmessage').set!;
-    const dataOf = accessor(MessageEvent.prototype, 'data').get!;
-    const portsOf = accessor(MessageEvent.prototype, 'ports').get!;
+    const setOnMessage = getOwn(MessagePort.prototype, 'onmessage')!.set!;
+    const dataOf = getOwn(MessageEvent.prototype, 'data')!.get!;
+    const portsOf = getOwn(MessageEvent.prototype, 'ports')!.get!;
     const stopImmediate = Event.prototype.stopImmediatePropagation;
+    const listen = EventTarget.prototype.addEventListener;
+    const addGlobalListener = g.addEventListener;
     const PromiseConstructor = Promise;
     const rejected = Promise.reject;
+    const then = Promise.prototype.then;
+    const promiseCatch = Promise.prototype.catch;
+    const StringConstructor = String;
+    const TypeErrorConstructor = TypeError;
+    const DOMExceptionConstructor = typeof DOMException === 'function' ? DOMException : null;
     // What execute() compiles with (focused review 2026-10-14, F2): captured now, so guest code that replaces
     // globalThis.Function (or Reflect) later cannot choose what an EXECUTE frame runs, or when.
     const FunctionConstructor = Function;
-    const construct = Reflect.construct;
-    const append = (list: unknown[], value: unknown) => defineOwn(list, list.length, { value, writable: true, enumerable: true, configurable: true });
+    const clone = g.structuredClone;
+    const toTag = Object.prototype.toString;
+    const symbolText = Symbol.prototype.toString;
+    const slice = String.prototype.slice;
+    const startsWith = String.prototype.startsWith;
+    const clock = g.performance;
+    const nowOf = clock && typeof clock.now === 'function' ? clock.now : null;
+    const DateConstructor = Date;
+    const dateNow = Date.now;
+    const queueMicrotaskFn = g.queueMicrotask;
+    const postToFrame = mode === 'worker' && typeof g.postMessage === 'function' ? g.postMessage : null;
+    // Bytes (the fetch bridge's request body): copied with set(), which consults no species constructor.
+    const Uint8ArrayConstructor = Uint8Array;
+    const typedArrayPrototype = protoOf(Uint8Array.prototype);
+    const typedSet = typedArrayPrototype.set;
+    const bufferBytes = getOwn(ArrayBuffer.prototype, 'byteLength')!.get!;
+    const typedBuffer = getOwn(typedArrayPrototype, 'buffer')!.get!;
+    const typedOffset = getOwn(typedArrayPrototype, 'byteOffset')!.get!;
+    const typedLength = getOwn(typedArrayPrototype, 'byteLength')!.get!;
+    const viewBuffer = getOwn(DataView.prototype, 'buffer')!.get!;
+    const viewOffset = getOwn(DataView.prototype, 'byteOffset')!.get!;
+    const viewLength = getOwn(DataView.prototype, 'byteLength')!.get!;
+    const HeadersConstructor = g.Headers;
+    const headersForEach = typeof HeadersConstructor === 'function' ? HeadersConstructor.prototype.forEach : null;
+    const ResponseConstructor = g.Response;
+    // PD2 (below): the platform's fetch and Request, and Request.prototype's keepalive getter.
+    const nativeFetch = g.fetch;
+    const RequestConstructor = g.Request;
+    let keepaliveOf: (() => unknown) | undefined;
+    for (let proto = typeof RequestConstructor === 'function' ? RequestConstructor.prototype : null; proto && !keepaliveOf; proto = protoOf(proto)) {
+        keepaliveOf = getOwn(proto, 'keepalive')?.get; // own on Request.prototype in every engine measured
+    }
+    // PD4 (below): the traversal methods' owners.
+    const historyPrototype = mode === 'cooperative' && typeof g.History === 'function' ? g.History.prototype : null;
+    const navigationPrototype = mode === 'cooperative' && typeof g.Navigation === 'function' ? g.Navigation.prototype : null;
+    // Auto-sizing (B6, below): the document and what is measured, through the prototypes' own getters.
+    const doc: Document | null = mode === 'cooperative' ? document : null;
+    const ResizeObserverConstructor = mode === 'cooperative' && typeof g.ResizeObserver === 'function' ? g.ResizeObserver : null;
+    const observe = ResizeObserverConstructor ? ResizeObserverConstructor.prototype.observe : null;
+    const rootOf = doc ? getOwn(Document.prototype, 'documentElement')!.get! : null;
+    const bodyOf = doc ? getOwn(Document.prototype, 'body')!.get! : null;
+    const boundingBox = doc ? Element.prototype.getBoundingClientRect : null;
+    const scrollHeightOf = doc ? getOwn(Element.prototype, 'scrollHeight')!.get! : null;
+    const clientHeightOf = doc ? getOwn(Element.prototype, 'clientHeight')!.get! : null;
+    // The startup gate (below): the document's readyState getter, from its prototype chain.
+    let readyStateOf: (() => unknown) | undefined;
+    for (let proto = doc ? protoOf(doc) : null; proto && !readyStateOf; proto = protoOf(proto)) {
+        readyStateOf = getOwn(proto, 'readyState')?.get; // on Document.prototype in every engine
+    }
     const sizeOf = createSizeOfFn ? createSizeOfFn() : null;
+    const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
+
+    // Lists of our own: an index written to them never reaches an inherited setter, and they are read by index only.
+    const list = <T>(): T[] => setPrototype([], null);
+    const append = (target: unknown[], value: unknown) => defineOwn(target, target.length, { value, writable: true, enumerable: true, configurable: true });
+    const publish = (name: string, value: unknown) => defineOwn(g, name, { value, writable: true, enumerable: true, configurable: true });
 
     // The port does not exist until INIT_PORT, but guest content scripts parse BEFORE that and may
     // call bridge.expose()/bridge.call() straight away. So the bridge is created now with a send that
     // buffers frames until the port arrives — mirroring how the host queues calls made before ready.
     let port: MessagePort | null = null;
-    const outbox: unknown[] = [];
+    const outbox: unknown[] = list();
     const post = (frame: unknown) => apply(postOnPort, port, [frame]);
     const send = (frame: any) => {
         if (port) {
@@ -98,8 +171,8 @@ export function inSandboxScript(
     // allow-same-origin) and workers have no RTCPeerConnection. A frame the guest creates is a realm of
     // its own, though, and keeps the constructor: the residual stated in backlog S13.
     const PEER_CONNECTION_CONSTRUCTORS = ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection'];
-    for (const name of PEER_CONNECTION_CONSTRUCTORS) {
-        if (name in globalThis) Reflect.deleteProperty(globalThis, name);
+    for (let i = 0; i < PEER_CONNECTION_CONSTRUCTORS.length; i++) {
+        if (PEER_CONNECTION_CONSTRUCTORS[i]! in g) deleteOwn(g, PEER_CONNECTION_CONSTRUCTORS[i]!);
     }
 
     // Hardening of the guest realm against platform gaps CSP does not cover (broad review 2026-10-14), each made
@@ -112,14 +185,8 @@ export function inSandboxScript(
     // the init, or a Request made with keepalive, cannot answer twice), refuses a keepalive request, and hands
     // only that Request to the platform's fetch. Writable, so guest code can still wrap fetch; not configurable,
     // so the guard stays underneath any wrapper. Every engine, every mode: the rule is the same everywhere.
-    const nativeFetch = g.fetch;
-    const RequestConstructor = g.Request;
-    let keepaliveOf: (() => unknown) | undefined;
-    for (let proto = typeof RequestConstructor === 'function' ? RequestConstructor.prototype : null; proto && !keepaliveOf; proto = Object.getPrototypeOf(proto)) {
-        keepaliveOf = Object.getOwnPropertyDescriptor(proto, 'keepalive')?.get; // own on Request.prototype in every engine measured
-    }
     if (typeof nativeFetch === 'function' && keepaliveOf) {
-        const TypeErrorConstructor = TypeError;
+        const keepalive = keepaliveOf;
         const guardedFetch = function fetch(input: unknown, init?: unknown) {
             let request;
             try {
@@ -127,44 +194,39 @@ export function inSandboxScript(
             } catch (error) {
                 return apply(rejected, PromiseConstructor, [error]);
             }
-            if (apply(keepaliveOf, request, []) === true) {
+            if (apply(keepalive, request, []) === true) {
                 return apply(rejected, PromiseConstructor, [construct(TypeErrorConstructor, ['fetch() with keepalive is not available in the sandbox'])]);
             }
             return apply(nativeFetch, g, [request]);
         };
         defineOwn(g, 'fetch', { value: guardedFetch, writable: true, enumerable: true, configurable: false });
     }
-    if (mode === 'cooperative') {
-        // PD4, history traversal. history.back(), forward() and go() traverse the whole tab's session history, so a
-        // guest's history.back() navigated the HOST page in Firefox and WebKit; the Navigation API's back(),
-        // forward() and traverseTo() reach the same history where it exists. In the guest realm they do nothing
-        // (the Navigation API's resolve nothing and reject as when there is no entry to go to): not configurable,
-        // so guest code cannot put them back, and no other same-origin realm holds the originals.
-        const nothing = function () {};
-        for (const name of ['back', 'forward', 'go']) {
-            if (typeof History === 'function') defineOwn(History.prototype, name, { value: nothing, writable: false, enumerable: true, configurable: false });
-        }
-        const NavigationConstructor = g.Navigation;
-        if (typeof NavigationConstructor === 'function') {
-            const DOMExceptionConstructor = DOMException;
-            const catchOf = Promise.prototype.catch;
-            const refused = function () {
-                const result = apply(rejected, PromiseConstructor, [construct(DOMExceptionConstructor, ['history traversal is not available in the sandbox', 'InvalidStateError'])]);
-                apply(catchOf, result, [nothing]); // handled here: a guest that ignores it sees no unhandled rejection
-                return { committed: result, finished: result };
-            };
-            for (const name of ['back', 'forward', 'traverseTo']) {
-                defineOwn(NavigationConstructor.prototype, name, { value: refused, writable: false, enumerable: true, configurable: false });
-            }
-        }
-        // PD6, window.name. A frame's name is a target the host page's links, forms and window.open() look up, so a
-        // guest that named itself received the host's navigations and window.open() handles meant for a window of
-        // the host's own. Here window.name reads '' and ignores writes. The platform's accessor is an own property of
-        // the window and nothing else holds it, so once it is replaced no guest code can reach it: redefining or
-        // deleting this one leaves the frame's name as it is (left configurable, as the platform's was). A frame the
-        // guest creates can still be named (`<iframe name>`): host pages should not use named targets (README).
-        defineOwn(g, 'name', { get: function () { return ''; }, set: nothing, enumerable: true, configurable: true });
+    // PD4, history traversal (cooperative mode). history.back(), forward() and go() traverse the whole tab's session
+    // history, so a guest's history.back() navigated the HOST page in Firefox and WebKit; the Navigation API's back(),
+    // forward() and traverseTo() reach the same history where it exists. In the guest realm they do nothing
+    // (the Navigation API's resolve nothing and reject as when there is no entry to go to): not configurable,
+    // so guest code cannot put them back, and no other same-origin realm holds the originals.
+    const nothing = function () {};
+    if (historyPrototype) {
+        const TRAVERSALS = ['back', 'forward', 'go'];
+        for (let i = 0; i < TRAVERSALS.length; i++) defineOwn(historyPrototype, TRAVERSALS[i]!, { value: nothing, writable: false, enumerable: true, configurable: false });
     }
+    if (navigationPrototype && DOMExceptionConstructor) {
+        const refused = function () {
+            const result = apply(rejected, PromiseConstructor, [construct(DOMExceptionConstructor, ['history traversal is not available in the sandbox', 'InvalidStateError'])]);
+            apply(promiseCatch, result, [nothing]); // handled here: a guest that ignores it sees no unhandled rejection
+            return { committed: result, finished: result };
+        };
+        const TRAVERSALS = ['back', 'forward', 'traverseTo'];
+        for (let i = 0; i < TRAVERSALS.length; i++) defineOwn(navigationPrototype, TRAVERSALS[i]!, { value: refused, writable: false, enumerable: true, configurable: false });
+    }
+    // PD6, window.name (cooperative mode). A frame's name is a target the host page's links, forms and window.open()
+    // look up, so a guest that named itself received the host's navigations and window.open() handles meant for a window
+    // of the host's own. Here window.name reads '' and ignores writes. The platform's accessor is an own property of
+    // the window and nothing else holds it, so once it is replaced no guest code can reach it: redefining or
+    // deleting this one leaves the frame's name as it is (left configurable, as the platform's was). A frame the
+    // guest creates can still be named (`<iframe name>`): host pages should not use named targets (README).
+    if (mode === 'cooperative') defineOwn(g, 'name', { get: function () { return ''; }, set: nothing, enumerable: true, configurable: true });
 
     // CSP violation reports (backlog S5, src/lib/violation.ts). Installed here, in the bootstrap, so it is
     // in place before any guest code runs: a capture listener on the global object is the first listener on
@@ -177,18 +239,20 @@ export function inSandboxScript(
     // and is the authoritative bound); declared here because this function is stringified.
     const VIOLATION_LIMIT = 100;
     let violationsSent = 0;
-    globalThis.addEventListener('securitypolicyviolation', (event: any) => {
-        if (!event.isTrusted || violationsSent >= VIOLATION_LIMIT) return;
-        violationsSent++;
-        send({
-            type: 'VIOLATION',
-            directive: event.effectiveDirective || event.violatedDirective,
-            blockedURI: event.blockedURI,
-            sourceFile: event.sourceFile,
-            lineNumber: event.lineNumber,
-            columnNumber: event.columnNumber,
-        });
-    }, true);
+    if (typeof addGlobalListener === 'function') {
+        apply(addGlobalListener, g, ['securitypolicyviolation', (event: any) => {
+            if (!event.isTrusted || violationsSent >= VIOLATION_LIMIT) return;
+            violationsSent++;
+            send({
+                type: 'VIOLATION',
+                directive: event.effectiveDirective || event.violatedDirective,
+                blockedURI: event.blockedURI,
+                sourceFile: event.sourceFile,
+                lineNumber: event.lineNumber,
+                columnNumber: event.columnNumber,
+            });
+        }, true]);
+    }
 
     // Content auto-sizing (backlog B6, src/lib/auto-resize.ts), opt-in and cooperative mode only: a worker has no
     // document. A ResizeObserver on the root element reports the content height as a RESIZE frame, outside
@@ -199,29 +263,33 @@ export function inSandboxScript(
     // overflow the root's box does not contain still grows the frame. The body is observed as well once it
     // exists, for guests whose root is pinned to the viewport (html { height: 100% }). The host validates,
     // clamps and rate-limits every report: guest code can reach the port and post its own.
-    if (features?.autoResize === true && mode === 'cooperative' && typeof ResizeObserver === 'function') {
+    if (features?.autoResize === true && doc && ResizeObserverConstructor && observe && rootOf && bodyOf && boundingBox && scrollHeightOf && clientHeightOf) {
         let lastHeight = -1;
         const measure = () => {
-            const root = document.documentElement;
+            const root = apply(rootOf, doc, []);
             if (!root) return;
-            const box = Math.ceil(root.getBoundingClientRect().height);
-            const height = root.scrollHeight > root.clientHeight ? Math.max(box, root.scrollHeight) : box;
+            const box = (apply(boundingBox, root, []) as DOMRect).height;
+            const whole = box - (box % 1);
+            const rounded = whole < box ? whole + 1 : whole; // Math.ceil, without Math
+            const scrolled = apply(scrollHeightOf, root, []) as number;
+            const height = scrolled > (apply(clientHeightOf, root, []) as number) && scrolled > rounded ? scrolled : rounded;
             if (height === lastHeight) return;
             lastHeight = height;
             send({ type: 'RESIZE', height });
         };
-        const resizeObserver = new ResizeObserver(measure);
-        resizeObserver.observe(document.documentElement);
-        document.addEventListener('DOMContentLoaded', () => {
-            if (document.body) resizeObserver.observe(document.body);
-        });
+        const resizeObserver = construct(ResizeObserverConstructor, [measure]);
+        apply(observe, resizeObserver, [apply(rootOf, doc, [])]);
+        apply(listen, doc, ['DOMContentLoaded', () => {
+            const body = apply(bodyOf, doc, []);
+            if (body) apply(observe, resizeObserver, [body]);
+        }]);
     }
 
     // The guest's broker accepts a library code (FETCH_*) in the refusal of a call to a reserved method, so
     // sandboxFetch() rejects with the host's code; the host's broker never accepts one (see rpc.ts).
     const bridge = createBrokerFn ? createBrokerFn(send, { acceptLibraryCodes: true, sizeOf: sizeOf ?? undefined }) : null;
     const handleBridgeMessage = bridge ? bridge.handleMessage : null;
-    if (bridge) (globalThis as any).bridge = bridge;
+    if (bridge) publish('bridge', bridge);
 
     // The host-mediated fetch bridge (backlog B5, src/lib/fetch-bridge.ts, ADR-006), opt-in, both modes. A
     // separate global, never a replacement for fetch: guest code that wants it as fetch assigns it itself.
@@ -236,30 +304,63 @@ export function inSandboxScript(
         const callWithTimeout = bridge.callWithTimeout;
         const callTimeoutMs = (features?.fetchBridge ? features.fetchBridge.timeoutMs : 10000) + 5000;
         const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
+        const isNullBody = (status: unknown) => {
+            for (let i = 0; i < NULL_BODY_STATUSES.length; i++) if (NULL_BODY_STATUSES[i] === status) return true;
+            return false;
+        };
+        // A copy of the bytes an ArrayBuffer, a typed array or a DataView holds, or null for anything else.
+        const VIEW_GETTERS = [[typedBuffer, typedOffset, typedLength], [viewBuffer, viewOffset, viewLength]];
+        const bytesCopy = (value: unknown): Uint8Array | null => {
+            let source: Uint8Array | null = null;
+            try {
+                source = construct(Uint8ArrayConstructor, [value, 0, apply(bufferBytes, value, [])]);
+            } catch {
+                for (let i = 0; i < VIEW_GETTERS.length && !source; i++) {
+                    const getters = VIEW_GETTERS[i]!;
+                    try {
+                        source = construct(Uint8ArrayConstructor, [apply(getters[0]!, value, []), apply(getters[1]!, value, []), apply(getters[2]!, value, [])]);
+                    } catch {
+                        source = null;
+                    }
+                }
+            }
+            if (!source) return null;
+            const copy = construct(Uint8ArrayConstructor, [apply(typedLength, source, [])]);
+            apply(typedSet, copy, [source]);
+            return copy;
+        };
         const toBody = (body: any) => {
             if (body === undefined || body === null) return undefined;
             if (typeof body === 'string') return body;
-            if (body instanceof ArrayBuffer) return body.slice(0);
-            if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength).slice();
-            throw new TypeError('sandboxFetch: the body must be a string, an ArrayBuffer or a typed array');
+            const bytes = bytesCopy(body);
+            if (bytes) return bytes;
+            throw construct(TypeErrorConstructor, ['sandboxFetch: the body must be a string, an ArrayBuffer or a typed array']);
         };
-        (globalThis as any).sandboxFetch = (input: unknown, init?: any) => {
+        publish('sandboxFetch', (input: unknown, init?: any) => {
             let request;
             try {
                 const options = init || {};
-                const headers: [string, string][] = [];
-                new Headers(options.headers).forEach((value, name) => headers.push([name, value]));
-                request = { url: String(input), method: options.method === undefined ? 'GET' : String(options.method), headers, body: toBody(options.body) };
+                const headers: [string, string][] = list();
+                if (HeadersConstructor && headersForEach) {
+                    apply(headersForEach, construct(HeadersConstructor, [options.headers]), [(value: string, name: string) => append(headers, [name, value])]);
+                }
+                request = { url: StringConstructor(input), method: options.method === undefined ? 'GET' : StringConstructor(options.method), headers, body: toBody(options.body) };
             } catch (error) {
-                return Promise.reject(error);
+                return apply(rejected, PromiseConstructor, [error]);
             }
-            return callWithTimeout(callTimeoutMs, 'sandbox:fetch', request).then((result: any) => {
-                const status = result.status;
-                const response = new Response(NULL_BODY_STATUSES.includes(status) ? null : result.body, { status, statusText: result.statusText, headers: result.headers });
-                Object.defineProperty(response, 'url', { value: result.url });
-                return response;
-            });
-        };
+            return construct(PromiseConstructor, [(resolve: (value: unknown) => void, reject: (error: unknown) => void) => {
+                apply(then, callWithTimeout(callTimeoutMs, 'sandbox:fetch', request), [(result: any) => {
+                    try {
+                        const status = result.status;
+                        const response: object = construct(ResponseConstructor, [isNullBody(status) ? null : result.body, { status, statusText: result.statusText, headers: result.headers }]);
+                        defineOwn(response, 'url', { value: result.url });
+                        resolve(response);
+                    } catch (error) {
+                        reject(error);
+                    }
+                }, reject]);
+            }]);
+        });
     }
 
     // Guest writes (backlog C5, src/lib/guest-writes.ts), opt-in, every mode: the one way to send a write or a
@@ -285,32 +386,25 @@ export function inSandboxScript(
     //   - all arguments of one line together measure at most LOG_MAX_BYTES (structured-size.ts, with primitives
     //     captured now): an argument past what is left of it becomes a string saying so, so
     //     `console.log(new Uint8Array(64 MiB))` crosses as a few bytes;
-    //   - at most LOG_LINES_PER_SECOND lines and LOG_BYTES_PER_SECOND bytes leave per second (token buckets): the
-    //     host dispatches no more than that anyway, and a line dropped here is never cloned onto the host's thread,
+    //   - at most LOG_LINES_PER_SECOND lines and LOG_BYTES_PER_SECOND bytes leave in any one-second window (the host's
+    //     own rule and constant, below): the host dispatches no more than that anyway, and a line dropped here is never cloned onto the host's thread,
     //     which is what a flood within the per-line caps cost (Firefox's host ran ~7 ticks per second). The first
     //     dropped line sends one warning, once per environment.
-    // The arguments are cloned once here (the captured structuredClone), so a line buffered before the port is
-    // attached holds its values as they were when logged, as postMessage would, and is known to post.
-    // Mirrors of LOG_MAX_ARGS, LOG_MAX_STRING, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES and LOG_BYTES_PER_SECOND
-    // (sandbox-log.ts; a test keeps them equal): declared here to survive stringification.
+    // Each argument is cloned once here, with the captured structuredClone (review round 2, C-3), and the clone, the
+    // snapshot, is what is measured and what the line carries: a getter cannot answer the measure one way and the post
+    // another, and a line buffered before the port is attached holds its values as they were when logged, as postMessage
+    // would, and is known to post. Mirrors of LOG_MAX_ARGS, LOG_MAX_STRING, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES and
+    // LOG_BYTES_PER_SECOND (sandbox-log.ts; a test keeps them equal): declared here to survive stringification.
     const LOG_MAX_ARGS = 64;
     const LOG_MAX_STRING = 65536;
     const LOG_MAX_BYTES = 1048576;
     const LOG_LINES_PER_SECOND = 1000;
     const LOG_BYTES_PER_SECOND = 4194304;
-    // At most LOG_BUFFER_LIMIT lines wait for the port (a strict entry's top level runs before the view hands the
-    // worker its ports: independent verification 2026-10-14); past that they are counted, and one warning on attach
-    // says how many were dropped.
-    const LOG_BUFFER_LIMIT = 1000;
-    const clone = g.structuredClone;
-    const toTag = Object.prototype.toString;
-    const symbolText = Symbol.prototype.toString;
-    const slice = String.prototype.slice;
-    const startsWith = String.prototype.startsWith;
-    const clock = g.performance;
-    const nowOf = clock && typeof clock.now === 'function' ? clock.now : null;
-    const DateConstructor = Date;
-    const dateNow = Date.now;
+    // At most LOG_BUFFER_LIMIT lines (and LOG_BYTES_PER_SECOND bytes) wait for the port (a strict entry's top level runs
+    // before the view hands the worker its ports: independent verification 2026-10-14): one window's worth, so they fit
+    // the host's window when they are flushed (M-2). Past either they are counted, and one warning on attach says how
+    // many were dropped, and for which cap.
+    const LOG_BUFFER_LIMIT = LOG_LINES_PER_SECOND;
     const now = (): number => (nowOf ? apply(nowOf, clock, []) : apply(dateNow, DateConstructor, []));
     const cut = (text: string) => (text.length > LOG_MAX_STRING ? apply(slice, text, [0, LOG_MAX_STRING]) as string : text);
     const tagOf = (value: unknown): string => {
@@ -361,12 +455,22 @@ export function inSandboxScript(
     };
     // "Uncaught …" once: Chromium's ErrorEvent message already starts with it, Firefox's and WebKit's do not.
     const uncaught = (text: string) => (apply(startsWith, text, ['Uncaught ']) ? text : 'Uncaught ' + text);
+    // One argument's snapshot (C-3): its clone, or, for a value clone refuses deeper in (a function in an object, a
+    // Proxy), its kind.
+    const snapshot = (value: unknown): unknown => {
+        try {
+            return clone(value);
+        } catch {
+            return describe(value);
+        }
+    };
 
-    // The line to post, and whether it is smaller than what was logged (an argument, a string or a byte budget cut).
-    const safeArgs = (args: unknown[]): { line: unknown[]; cut: boolean } => {
+    // The line to post, its bytes, and whether it is smaller than what was logged (an argument, a string or a byte
+    // budget cut). Its arguments are snapshots, strings, and primitives.
+    const safeArgs = (args: unknown[]): { line: unknown[]; bytes: number; cut: boolean } => {
         let reduced = args.length > LOG_MAX_ARGS;
         const count = reduced ? LOG_MAX_ARGS : args.length;
-        const out: unknown[] = [];
+        const out: unknown[] = list();
         let left = LOG_MAX_BYTES;
         for (let i = 0; i < count; i++) {
             let value = args[i];
@@ -375,6 +479,7 @@ export function inSandboxScript(
                 if (value !== args[i]) reduced = true;
             } else if (typeof value === 'symbol' || typeof value === 'function') value = describe(value);
             else if (isErrorLike(value)) value = errorForm(value);
+            else if (typeof value === 'object' && value !== null) value = snapshot(value);
             const bytes = sizeOf ? sizeOf(value, left) : 0;
             if (bytes > left) {
                 reduced = true;
@@ -383,139 +488,178 @@ export function inSandboxScript(
             } else {
                 left -= bytes;
             }
-            append(out, value);
+            out[out.length] = value;
         }
-        return { line: cloned(out), cut: reduced };
-    };
-    const cloned = (out: unknown[]): unknown[] => {
-        try {
-            return clone(out);
-        } catch {
-            // something clone refuses deeper in (a function in an object, a Proxy): those arguments by kind
-            const each: unknown[] = [];
-            for (let i = 0; i < out.length; i++) {
-                let value = out[i];
-                try {
-                    value = clone(value);
-                } catch {
-                    value = describe(value);
-                }
-                append(each, value);
-            }
-            return each;
-        }
+        return { line: out, bytes: LOG_MAX_BYTES - left + 16, cut: reduced };
     };
 
-    // Token buckets: at most `rate` per second, in bursts of at most `rate`.
-    const bucket = (rate: number) => {
-        let tokens = rate;
-        let last = now();
-        return (cost: number): boolean => {
+    // The per-second budgets: at most `limit` in any one-second window, the host's own rule for guest lines
+    // (LOG_EVENTS_PER_SECOND, rate-limit.ts) with the same constant (review round 2, M-1): each admitted weight is kept
+    // with its time until it leaves the window. A token bucket, as before, let a full bucket and its refill through in
+    // one window, twice what the host dispatches, so the host dropped lines the guest had relayed, among them the
+    // relay's own warning that it had started dropping. Inline arithmetic and lists of our own only (C-1: Math.min, which
+    // the bucket called, is the guest's to replace). `admit(weight, true)` records a weight already spent (the lines
+    // flushed on attach, below) whatever the window holds.
+    const slidingWindow = (limit: number) => {
+        const times: number[] = list();
+        const weights: number[] = list();
+        let head = 0; // entries before head have left the window
+        let total = 0;
+        return (weight: number, spent?: boolean): boolean => {
             const at = now();
-            tokens = Math.min(rate, tokens + ((at - last) / 1000) * rate);
-            last = at;
-            if (tokens < cost) return false;
-            tokens -= cost;
+            while (head < times.length && times[head]! <= at - 1000) {
+                total -= weights[head]!;
+                head++;
+            }
+            if (head > 64 && head * 2 > times.length) { // drop what left the window, now and then
+                let kept = 0;
+                for (let i = head; i < times.length; i++, kept++) {
+                    times[kept] = times[i]!;
+                    weights[kept] = weights[i]!;
+                }
+                times.length = kept;
+                weights.length = kept;
+                head = 0;
+            }
+            if (!spent && total + weight > limit) return false;
+            if (weight > 0) {
+                times[times.length] = at;
+                weights[weights.length] = weight;
+                total += weight;
+            }
             return true;
         };
     };
-    const lineBudget = bucket(LOG_LINES_PER_SECOND);
-    const byteBudget = bucket(LOG_BYTES_PER_SECOND);
+    const lineBudget = slidingWindow(LOG_LINES_PER_SECOND);
+    const byteBudget = slidingWindow(LOG_BYTES_PER_SECOND);
     let logsBuffered = 0;
-    let logsDropped = 0;     // before the port: past LOG_BUFFER_LIMIT
+    let droppedForLines = 0; // before the port: past LOG_BUFFER_LIMIT lines
+    let droppedForBytes = 0; // before the port: past LOG_BYTES_PER_SECOND bytes
     let rateDropped = false; // past the per-second budgets: warned once per environment
-    // Before the port is attached a line waits in the outbox, at most LOG_BUFFER_LIMIT of them (the bound there: they
-    // are flushed in one go on attach); once attached the per-second budgets apply.
-    // Relays one line; says whether it was relayed (null: dropped) and what the browser's own console may be given:
-    // the line as logged when it was relayed whole, else the bounded line. The browser's console is the other way a
-    // line reaches the host page's thread: Chromium and Firefox hand a worker's console arguments to the page
-    // (measured: a worker logging 64 strings of 64 Ki characters in a loop cost Firefox's host page half its ticks
-    // with only 21 lines relayed), so a dropped line goes nowhere and a cut one goes there cut.
+    let bufferedBytes = 0;
+    // The relay's own lines ('<mode> Ready' and its warnings, each at most once per environment) are marked `own`: the
+    // host dispatches up to LOG_OWN_LINES of them per environment besides the guest's lines (sandbox-log.ts), so the
+    // warning that lines were dropped arrives even when the lines before it filled the host's window (M-1, M-2). Only the
+    // bootstrap posts on the port (guest code never holds it, review B2), so no guest line is ever marked.
+    const ownLine = (level: 'warn', text: string) => {
+        try {
+            post({ type: 'LOG', level, args: [text], own: true });
+        } catch {
+            // nothing a guest logs can make the relay throw at its console call
+        }
+    };
+    // Relays one line, and says what the browser's own console may be given: the line as logged when it was relayed
+    // whole, else the bounded line; null when it was dropped. `level` null: a console call that relays nothing to the
+    // host (count, time, …) but reaches the browser's console, bounded and budgeted the same way. The browser's console
+    // is the other way a line reaches the host page's thread: Chromium and Firefox hand a worker's console arguments to
+    // the page (measured: a worker logging 64 strings of 64 Ki characters in a loop cost Firefox's host page half its
+    // ticks with only 21 lines relayed), so a dropped line goes nowhere and a cut one goes there cut.
     // Before the port is attached a line waits in the outbox: at most LOG_BUFFER_LIMIT lines and LOG_BYTES_PER_SECOND
     // bytes (they are flushed in one go on attach); once attached the per-second budgets apply.
-    let bufferedBytes = 0;
-    const relayLine = (level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): unknown[] | null => {
+    const relayLine = (level: 'log' | 'info' | 'warn' | 'error' | null, args: unknown[]): unknown[] | null => {
         if (port && !lineBudget(1)) return dropped();
         let line: unknown[];
+        let bytes = 0;
         let reduced = true;
         try {
             const safe = safeArgs(args);
             line = safe.line;
+            bytes = safe.bytes;
             reduced = safe.cut;
         } catch {
-            line = ['[Sandbox] a console line could not be relayed'];
+            line = list();
+            line[0] = '[Sandbox] a console line could not be relayed';
+            bytes = 128;
         }
-        const bytes = sizeOf ? sizeOf(line, LOG_MAX_BYTES) : 0;
         if (!port) {
-            if (logsBuffered >= LOG_BUFFER_LIMIT || bufferedBytes + bytes > LOG_BYTES_PER_SECOND) {
-                logsDropped++;
+            if (logsBuffered >= LOG_BUFFER_LIMIT) {
+                droppedForLines++;
+                return null;
+            }
+            if (bufferedBytes + bytes > LOG_BYTES_PER_SECOND) {
+                droppedForBytes++;
                 return null;
             }
             logsBuffered++;
             bufferedBytes += bytes;
-            append(outbox, { type: 'LOG', level, args: line });
+            if (level !== null) append(outbox, { type: 'LOG', level, args: line });
             return reduced ? line : args;
         }
         if (!byteBudget(bytes)) return dropped();
-        try {
-            post({ type: 'LOG', level, args: line });
-        } catch {
-            // nothing a guest logs can make the relay throw at its console call
+        if (level !== null) {
+            try {
+                post({ type: 'LOG', level, args: line });
+            } catch {
+                // nothing a guest logs can make the relay throw at its console call
+            }
         }
         return reduced ? line : args;
     };
     const dropped = (): null => {
         if (rateDropped) return null;
         rateDropped = true;
-        try {
-            post({ type: 'LOG', level: 'warn', args: [`[Sandbox] the guest logged more than ${LOG_LINES_PER_SECOND} lines or ${LOG_BYTES_PER_SECOND} bytes in one second; lines past that are dropped in the sandbox.`] });
-        } catch {
-            // as above
-        }
+        ownLine('warn', `[Sandbox] the guest logged more than ${LOG_LINES_PER_SECOND} lines or ${LOG_BYTES_PER_SECOND} bytes in one second; lines past that are dropped in the sandbox.`);
         return null;
     };
     const log = (level: 'log' | 'info' | 'warn' | 'error', args: unknown[]) => {
         relayLine(level, args);
     };
 
-    // Every console method a line can come from, mapped to a 'sandbox-log' level (sandbox-log.ts has four): debug,
-    // dir, dirxml, table, group and groupCollapsed are 'log' lines, trace says so, a failed assert is an 'error'
-    // line. groupEnd and the counters and timers relay nothing. Each still reaches the browser's own console, as
-    // relayLine() allows.
+    // Every console method that takes arguments (review round 2, C-2): each is a wrapper of ours, built here with index
+    // loops only (no spread, no slice, no iterator: a patched Array.prototype[Symbol.iterator] made the old trace and
+    // assert wrappers throw, and the catch then gave the browser's console the raw arguments). A wrapper relays its line
+    // and hands the browser's console only what relayLine() allows; if anything throws, it hands it nothing: a line
+    // that could not be relayed goes nowhere. log, info, warn and error relay at their level; debug, dir, dirxml, table,
+    // group and groupCollapsed as 'log' lines; trace as a 'log' line that says so; a failed assert as an 'error' line
+    // (a passing one does nothing, here and in the browser). count, countReset, time, timeLog, timeEnd, timeStamp,
+    // profile and profileEnd relay nothing to the host, but take arguments to the browser's console: they are bounded
+    // and budgeted like a line (before, they reached it unbounded, past every budget). groupEnd and clear take none.
     type Level = 'log' | 'info' | 'warn' | 'error';
-    type Relay = (args: unknown[]) => [Level, unknown[]] | null;
-    const relays: [string, Relay][] = [
-        ['log', (args) => ['log', args]],
-        ['info', (args) => ['info', args]],
-        ['warn', (args) => ['warn', args]],
-        ['error', (args) => ['error', args]],
-        ['debug', (args) => ['log', args]],
-        ['dir', (args) => ['log', args]],
-        ['dirxml', (args) => ['log', args]],
-        ['table', (args) => ['log', args]],
-        ['group', (args) => ['log', args]],
-        ['groupCollapsed', (args) => ['log', args]],
-        ['trace', (args) => ['log', ['console.trace()', ...args]]],
-        ['assert', (args) => (args[0] ? null : ['error', ['Assertion failed:', ...(args.length > 1 ? args.slice(1) : ['console.assert'])]])],
-    ];
-    for (let i = 0; i < relays.length; i++) {
-        const [name, relay] = relays[i]!;
+    const CONSOLE_METHODS = ['log', 'info', 'warn', 'error', 'debug', 'dir', 'dirxml', 'table', 'group', 'groupCollapsed', 'trace', 'assert',
+        'count', 'countReset', 'time', 'timeLog', 'timeEnd', 'timeStamp', 'profile', 'profileEnd'];
+    const LEVELS: (Level | null)[] = ['log', 'info', 'warn', 'error', 'log', 'log', 'log', 'log', 'log', 'log', 'log', 'error',
+        null, null, null, null, null, null, null, null];
+    // What one console call relays and what the browser's console is given (null: nothing).
+    const consoleCall = (name: string, level: Level | null, args: unknown[]): unknown[] | null => {
+        if (name === 'assert' && args.length > 0 && args[0]) return null; // a passing assert: nothing, anywhere
+        // The relayed line: our own words first (trace, assert), then the call's arguments (an assert's after its condition).
+        const line: unknown[] = list();
+        const from = name === 'assert' ? 1 : 0;
+        if (name === 'trace') line[0] = 'console.trace()';
+        if (name === 'assert') line[0] = 'Assertion failed:';
+        const ours = line.length;
+        for (let i = from; i < args.length; i++) line[line.length] = args[i];
+        if (name === 'assert' && line.length === ours) line[line.length] = 'console.assert';
+        const shown = relayLine(level, line);
+        if (shown === null) return null;
+        if (shown === line) return args; // relayed whole: the browser's console gets the call as it was made
+        // cut: the bounded arguments, after our own words, behind a failed assert's condition
+        const given: unknown[] = list();
+        if (name === 'assert') given[0] = false;
+        for (let i = ours; i < shown.length; i++) given[given.length] = shown[i];
+        return given;
+    };
+    // The browser's own console is given a line only in cooperative mode, for debugging the guest document in its frame
+    // (review round 2, M-5). In a worker (worker and strict mode) the relay is the only sink: Chromium keeps a worker's
+    // console arguments in the page's memory (measured: +445 MiB in 90 s of lines within the 4 MiB/s budget), and the
+    // host's 'sandbox-log' is the documented place to read them.
+    const toBrowserConsole = mode === 'cooperative';
+    for (let i = 0; i < CONSOLE_METHODS.length; i++) {
+        const name = CONSOLE_METHODS[i]!;
+        const level = LEVELS[i]!;
         const original = (sandboxConsole as any)[name];
         (sandboxConsole as any)[name] = (...args: any[]) => {
-            let mapped: [Level, unknown[]] | null = null;
+            let given: unknown[] | null = null;
             try {
-                mapped = relay(args);
+                given = consoleCall(name, level, args);
             } catch {
-                mapped = null;
+                given = null; // a line that could not be relayed goes nowhere
             }
-            const shown = mapped ? relayLine(mapped[0], mapped[1]) : args;
-            // Log to the actual browser console for easier debugging: what relayLine() allows (above)
-            if (typeof original === 'function' && shown !== null) {
-                try {
-                    apply(original, sandboxConsole, shown === mapped?.[1] ? args : shown);
-                } catch {
-                    // the browser's console refused it: the relayed line stands
-                }
+            if (given === null || !toBrowserConsole || typeof original !== 'function') return;
+            try {
+                apply(original, sandboxConsole, given); // for easier debugging: what relayLine() allows
+            } catch {
+                // the browser's console refused it: the relayed line stands
             }
         };
     }
@@ -528,7 +672,6 @@ export function inSandboxScript(
     // (workers) dispatch the platform's own with isTrusted false (measured), and a forged one makes only a line the
     // guest could log itself. What the browser gives is all there is: WebKit mutes the errors of the guest
     // document's inline scripts and of a worker's blob: script ("Script error.", no error object; measured).
-    const addGlobalListener = g.addEventListener;
     if (typeof addGlobalListener === 'function') {
         if (mode !== 'strict') {
             apply(addGlobalListener, g, ['error', (event: any) => {
@@ -601,27 +744,20 @@ export function inSandboxScript(
     // (a no-op while it is registered), so the reopened document's own DOMContentLoaded drains the queue too. Held
     // frames run one per microtask, so a call's method runs before the next frame, as it would have on arrival. At
     // most MAX_HELD wait: past that a call is answered BUSY at once and an execute() is dropped with a log line.
-    // Every primitive is captured here, before guest code (review B2): a guest that replaces
+    // Every primitive is captured above, before guest code (review B2): a guest that replaces
     // Document.prototype.readyState, shadows document.readyState or dispatches its own DOMContentLoaded cannot open
     // the gate early. A guest can only keep it closed for itself (document.open(), or stopping the event in a
     // listener of its window): its own calls then wait for 'complete' or time out. Worker and strict mode have no
     // gate: their guest code runs only in a worker, which has no document.
     // Mirrors the exported MAX_INBOUND_IN_FLIGHT (rpc.ts; a test keeps them equal): declared here to survive stringification.
     const MAX_HELD = 256;
-    const gatedDocument = mode === 'cooperative' ? document : null;
-    let readyStateOf: (() => unknown) | undefined;
-    for (let proto = gatedDocument ? Object.getPrototypeOf(gatedDocument) : null; proto && !readyStateOf; proto = Object.getPrototypeOf(proto)) {
-        readyStateOf = Object.getOwnPropertyDescriptor(proto, 'readyState')?.get; // on Document.prototype in every engine
-    }
-    const listen = EventTarget.prototype.addEventListener;
-    const queueMicrotaskFn = g.queueMicrotask;
-    const held: unknown[] = [];
+    const held: unknown[] = list();
     let nextHeld = 0;     // index of the next frame to run; held.length - nextHeld frames wait
     let parsed = false;   // a trusted DOMContentLoaded has fired
     let draining = false; // a drain is running, one frame per microtask
     const gateOpen = () => {
-        if (!gatedDocument || !readyStateOf) return true;
-        const state = apply(readyStateOf, gatedDocument, []);
+        if (!doc || !readyStateOf) return true;
+        const state = apply(readyStateOf, doc, []);
         return state === 'complete' || (parsed && state !== 'loading');
     };
     const drainStep = () => {
@@ -634,7 +770,7 @@ export function inSandboxScript(
             return;
         }
         const frame = held[nextHeld];
-        defineOwn(held, nextHeld, { value: undefined, writable: true, enumerable: true, configurable: true });
+        held[nextHeld] = undefined;
         nextHeld++;
         try {
             run(frame);
@@ -654,8 +790,8 @@ export function inSandboxScript(
     };
     const hold = (data: any) => {
         if (held.length - nextHeld < MAX_HELD) {
-            append(held, data);
-            apply(listen, gatedDocument, ['DOMContentLoaded', onParsed, true]);
+            held[held.length] = data;
+            apply(listen, doc, ['DOMContentLoaded', onParsed, true]);
             return;
         }
         if (data.type === 'EXECUTE') {
@@ -666,7 +802,7 @@ export function inSandboxScript(
         if (typeof id !== 'string' && typeof id !== 'number') return; // malformed: dropped, as the broker drops it
         post({ type: 'RPC_RES', id, ok: false, error: `too many calls waiting for the guest document to be parsed (${MAX_HELD})`, code: 'BUSY' });
     };
-    if (gatedDocument) apply(listen, gatedDocument, ['DOMContentLoaded', onParsed, true]);
+    if (doc) apply(listen, doc, ['DOMContentLoaded', onParsed, true]);
 
     const attach = (handedPort: MessagePort) => {
         if (port) return;
@@ -703,10 +839,21 @@ export function inSandboxScript(
             }
         }
         outbox.length = 0;
-        if (skipped > 0) sandboxConsole.warn(`[bridge] skipped ${skipped} queued bridge frame(s) that could not be posted (not transferable).`);
-        if (logsDropped > 0) post({ type: 'LOG', level: 'warn', args: [`[Sandbox] ${logsDropped} console line(s) logged before the sandbox was connected were dropped: at most ${LOG_BUFFER_LIMIT} are kept until then.`] });
+        // The lines buffered before the port count against this second's budgets as they leave now (M-2): at most
+        // LOG_BUFFER_LIMIT (= LOG_LINES_PER_SECOND) lines and LOG_BYTES_PER_SECOND bytes, what one window holds, so the
+        // guest's lines that follow at once wait for the window like any others, and the host dispatches all of them.
+        lineBudget(logsBuffered, true);
+        byteBudget(bufferedBytes, true);
+        if (skipped > 0) ownLine('warn', `[bridge] skipped ${skipped} queued bridge frame(s) that could not be posted (not transferable).`);
+        if (droppedForLines + droppedForBytes > 0) {
+            const caps = (droppedForLines > 0 ? `${droppedForLines} past ${LOG_BUFFER_LIMIT} lines` : '')
+                + (droppedForLines > 0 && droppedForBytes > 0 ? ', ' : '')
+                + (droppedForBytes > 0 ? `${droppedForBytes} past ${LOG_BYTES_PER_SECOND} bytes` : '');
+            ownLine('warn', `[Sandbox] ${droppedForLines + droppedForBytes} console line(s) logged before the sandbox was connected were dropped (${caps}): at most ${LOG_BUFFER_LIMIT} lines and ${LOG_BYTES_PER_SECOND} bytes are kept until then.`);
+        }
 
-        post({ type: 'LOG', level: 'info', args: [`${mode} Ready`] });
+        // posted as it is, never swallowed: a port that cannot carry it is no port, and attach() throws (onInit)
+        post({ type: 'LOG', level: 'info', args: [`${mode} Ready`], own: true });
     };
 
     // Cooperative mode: the bootstrap's own end of the channel it announced, attached now, before any guest code runs.
@@ -715,10 +862,12 @@ export function inSandboxScript(
         return { attach, writeFiles, log };
     }
 
-    // Worker mode: the one INIT_PORT (review B1), the port1 the frame made and announced (worker-bootstrap.ts): a
-    // trusted message with exactly one port. In a dedicated worker only the frame that made it can post to it, and
-    // no guest code runs here before the port is attached (guest code arrives only as EXECUTE frames on it). A
-    // capture listener that stops the event; anything else is ignored and the listener stays. It never throws.
+    // Worker mode: the one INIT_PORT (review B1), the port1 the frame made (worker-bootstrap.ts): a trusted message with
+    // exactly one port. In a dedicated worker only the frame that made it can post to it, and no guest code runs here
+    // before the port is attached (guest code arrives only as EXECUTE frames on it). A capture listener that stops the
+    // event; anything else is ignored and the listener stays. It never throws. Once the port is attached, the worker
+    // tells the frame it runs (WORKER_STARTED, review round 2, C-5): the frame announces the port to the host only then,
+    // so the host is never `ready` with no worker behind the port.
     // Strict mode (externalPort): the strict prelude hands the logic port to attach() itself.
     const onInit = (event: MessageEvent) => {
         if (port || event.isTrusted !== true) return; // isTrusted is an own, unforgeable property
@@ -735,8 +884,14 @@ export function inSandboxScript(
             attach(ports[0]);
         } catch {
             port = null; // not a port after all: keep listening for the frame's
+            return;
+        }
+        try {
+            if (postToFrame) apply(postToFrame, g, [{ type: 'WORKER_STARTED' }]);
+        } catch {
+            // no frame to tell (a unit test's stand-in): the port is attached all the same
         }
     };
-    if (!features?.externalPort) g.addEventListener('message', onInit, true);
+    if (!features?.externalPort && typeof addGlobalListener === 'function') apply(addGlobalListener, g, ['message', onInit, true]);
     return { attach, writeFiles, log };
 }

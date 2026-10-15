@@ -188,7 +188,8 @@ describe('W4: sandboxFiles.write() and remove() always return a promise', () => 
         expect(() => { result = api.write('a.txt', proxy); }).not.toThrow();
         expect(result).toBeInstanceOf(Promise);
         await expect(result).rejects.toMatchObject({ name: 'TypeError' });
-        const hostile = new Proxy({}, { getPrototypeOf() { throw new Error('trap'); } });
+        // sandboxFiles tells content apart by brand checks (review round 2, C-1), which run no trap; reading the entry does
+        const hostile = new Proxy({}, { get() { throw new Error('trap'); } });
         await expect(api.write('b.txt', hostile)).rejects.toThrow('trap');
         expect(sent).toEqual([]);
         // positive control: a plain entry is sent

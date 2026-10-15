@@ -64,4 +64,26 @@ cat > tsconfig.nodenext.json <<'JSON'
 JSON
 bunx tsc -p tsconfig.nodenext.json
 bun build consumer.ts --target browser --outdir out >/dev/null
-echo "package smoke test passed: $(basename "$tarball")"
+
+# The view bootstrap's hash, the way docs/API.md says to read it for a host page's policy (review round 2, C-8): importing
+# the package in a build step needs no DOM, and gives the same value from a consumer's minified bundle, because the
+# bootstrap is a string literal of the package. The browser's side (the hash in the view's policy) is
+# test/e2e/package.spec.ts.
+cat > hash.ts <<'TS'
+export { viewScriptHash } from 'web-sandbox';
+TS
+bun build hash.ts --target browser --minify --outdir out-min >/dev/null
+plain="$(bun -e "import { viewScriptHash } from 'web-sandbox'; console.log(viewScriptHash())")"
+minified="$(bun -e "import { viewScriptHash } from './out-min/hash.js'; console.log(viewScriptHash())")"
+if ! grep -Eq "^'sha256-[A-Za-z0-9+/]{43}='$" <<<"$plain" || [ "$plain" != "$minified" ]; then
+    echo "package smoke test failed: viewScriptHash() is \"$plain\" from the package and \"$minified\" from a minified bundle of it" >&2
+    exit 1
+fi
+if command -v node >/dev/null; then
+    in_node="$(node --input-type=module -e "import { viewScriptHash } from 'web-sandbox'; console.log(viewScriptHash())")"
+    if [ "$in_node" != "$plain" ]; then
+        echo "package smoke test failed: viewScriptHash() in Node is \"$in_node\", in Bun \"$plain\"" >&2
+        exit 1
+    fi
+fi
+echo "package smoke test passed: $(basename "$tarball"), view bootstrap $plain"

@@ -582,10 +582,26 @@ describe('review round 1: R1-2, the renderer is linear and keeps no element whos
         expect(Array.from(fragment.childNodes).map(n => n.nodeType)).toEqual([3, 1, 3]);
     });
 
-    it('many siblings to drop or unwrap: the walk takes linear time (20 000 of each)', () => {
-        const started = performance.now();
-        const fragment = sanitize('<p>' + 'x<wbr>'.repeat(20000) + '<font>y</font>'.repeat(20000) + '<script></script>'.repeat(20000) + '</p>');
-        expect(fragment.querySelector('p')!.childNodes).toHaveLength(1);
-        expect(performance.now() - started).toBeLessThan(15000); // jsdom; the browsers' own measure: test/e2e/view-budget.spec.ts
+    // Scaling, not wall-clock time (review round 2, C-12: a fixed bound failed once under a loaded full suite): the walk
+    // over 8 times as many siblings takes at most ~8 times as long, the best of 3 runs of each size against noise. A walk
+    // quadratic in the siblings (R1-2) takes ~64 times as long. jsdom; the browsers' own measure: view-budget.spec.ts.
+    it('many siblings to drop or unwrap: the walk takes time linear in their number (1 000 against 8 000 of each)', { timeout: 60000 }, () => {
+        const markup = (n: number) => '<p>' + 'x<wbr>'.repeat(n) + '<font>y</font>'.repeat(n) + '<script></script>'.repeat(n) + '</p>';
+        const best = (n: number) => {
+            const text = markup(n);
+            let fastest = Infinity;
+            for (let run = 0; run < 3; run++) {
+                const template = document.createElement('template');
+                template.innerHTML = text;
+                const started = performance.now();
+                sanitizeRender(template.content, () => null, () => false, RENDER_RULES);
+                fastest = Math.min(fastest, performance.now() - started);
+                expect(template.content.querySelector('p')!.childNodes).toHaveLength(1);
+            }
+            return fastest;
+        };
+        const small = best(1000);
+        const large = best(8000);
+        expect(large / small, `best of 3: ${small.toFixed(1)} ms for 1 000, ${large.toFixed(1)} ms for 8 000`).toBeLessThan(24); // linear: ~8; quadratic: ~64
     });
 });

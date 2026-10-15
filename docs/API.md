@@ -64,7 +64,8 @@ TypeScript: `document.createElement('web-sandbox')` is a `WebSandbox`, and `addE
 
 The element builds an environment only in the document of the window that defined it. Moved into another document
 (`adoptNode()`, an iframe's document), it tears its environment down and stays `idle` there, with one warning; moved
-back, it builds again.
+back, it builds again. Its methods work there as anywhere (in every engine): `reset()`, `load()` and `setConfig()` keep
+what they are given for its return and build nothing, calls reject at once with `TERMINATED`.
 
 The guest can post messages to the host page's window (any frame can; it reaches your own `message` listeners).
 Act on a message only from a sender you know, by `event.source`, never by the message's shape. Do not give host
@@ -216,7 +217,8 @@ pending calls reject with `TERMINATED`. Wait for `ready` before relying on the n
 ### `terminate(reason?)`
 
 `terminate(reason: string = 'terminated by the host'): void` — removes the frame now, sets `state` to
-`terminated` and fires `terminated` with `{ reason }` (a non-string reason uses the default). Pending calls
+`terminated` and fires `terminated` with `{ reason }` (a reason that is not a string, or is empty or blank, uses the
+default). Pending calls
 reject with `TERMINATED`; later calls reject at once. Calling it while terminated does nothing. The sandbox stays
 terminated until `reset()`, `load()` or `setConfig()`.
 
@@ -264,8 +266,12 @@ would show the guest, or wrap the handler.
 `bridge.expose()` and resolves with its result. Works without `scriptUnsafe`: it never evaluates code.
 
 - Arguments and results are copied by structured clone (no functions, DOM nodes or symbols), at most
-  `RPC_MAX_BYTES` (33 MiB) per message, measured on both sides: past it a call is refused before anything is sent
-  (`ARGS_NOT_TRANSFERABLE`) and a result is answered `RESULT_NOT_TRANSFERABLE`.
+  `RPC_MAX_BYTES` (33 MiB) per message, measured on both sides on the copy that is sent: past it a call is refused
+  before anything is sent (`ARGS_NOT_TRANSFERABLE`) and a result is answered `RESULT_NOT_TRANSFERABLE`. The measure
+  knows primitives, plain objects and arrays, `Map`, `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and
+  `DataView`, `Blob` and `File`, and `String`, `Number`, `Boolean` and `BigInt` objects; any other value (an `Error`,
+  an `ImageData` or another platform object) counts as past the budget. Send what you need of it instead: an error's
+  `{ name, message, stack }`, an image's `data`, `width` and `height`.
 - Default timeout: 30 s.
 - Calls made while `loading` are queued and sent when the guest is ready; one that settles while queued (its
   timeout) leaves the queue and never runs. In cooperative mode a call reaches the guest's method once the guest
@@ -276,7 +282,8 @@ would show the guest, or wrap the handler.
 ### `callWithTimeout(timeoutMs, method, ...args)`
 
 `callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T>` — like
-`call()` with a timeout for this one call; `0` (or any value that is not `> 0`) disables it.
+`call()` with a timeout for this one call; `0` (or any value that is not `> 0`) disables it, and so does `Infinity`.
+Every other timeout is waited out in full, however long (`watchdogTimeout` and `workerExecutionTimeout` too).
 
 ### `registerFiles(files)`
 
@@ -381,17 +388,22 @@ ran) and `Uncaught (in promise) …` for an unhandled rejection; a throw from `e
 `<mode> Ready` per environment. Guest code can post anything here. The guest's console never throws: a value
 structured clone refuses (a function, a Symbol, a DOM node, an `Event`, a `Response`, a `Proxy`, a `WeakMap`, a
 `Promise`) arrives as a string naming its kind (`[function]`, `[object HTMLDivElement]`), and an `Error` or
-`DOMException` as `{ name, message, stack }`. WebKit mutes the errors of a cooperative guest's inline scripts and
+`DOMException` as `{ name, message, stack }`. `count`, `countReset`, `time`, `timeLog`, `timeEnd`, `timeStamp`,
+`profile` and `profileEnd` relay nothing, and reach the browser's own console bounded like a line. WebKit mutes the errors of a cooperative guest's inline scripts and
 handlers and of worker mode's worker: they arrive as `Uncaught Script error.`, all the browser gives.
 
 The bounds: `LOG_MAX_ARGS` and `LOG_MAX_STRING` bound the strings; `LOG_MAX_BYTES` bounds all arguments of a line
-together, whatever they are (a typed array, an object of 100 000 keys). The guest applies them before a line is
-posted, and sends at most `LOG_EVENTS_PER_SECOND` lines and 4 MiB per second (one `warn` line when it starts dropping),
-so a flood never reaches the host page's thread; the browser's own console gets a dropped line not at all and a cut
-line cut. The element measures every line again on receipt, and dispatches at most `LOG_EVENTS_PER_SECOND` guest
-lines in any one-second window per environment (one warning). Lines logged before the guest is connected (a strict
-entry's top level runs before the worker has its port) are kept, at most 1000 and 4 MiB, and arrive in order once it
-is; past that, one `warn` line says how many were dropped.
+together, whatever they are (a typed array, an object of 100 000 keys), measured as [`call()`](#callmethod-args)
+measures a message: an argument the measure does not know (an `ImageData`) is a string saying so. The guest applies them before a line is
+posted, and sends at most `LOG_EVENTS_PER_SECOND` lines and 4 MiB in any one-second window (one `warn` line when it
+starts dropping), so a flood never reaches the host page's thread. In cooperative mode the browser's own console gets a
+dropped line not at all and a cut line cut; in worker and strict mode it gets none (the worker's console is not a sink:
+`sandbox-log` is). The element measures every line again on receipt, and dispatches at most `LOG_EVENTS_PER_SECOND`
+guest lines in any one-second window per environment (one warning); the relay's own lines (`<mode> Ready` and its
+`warn` lines) are not counted there, so they always arrive. Lines logged before the guest is connected (a strict
+entry's top level runs before the worker has its port) are kept, at most 1000 and 4 MiB (one window's worth), and
+arrive in order once it is, counted in that second's window; past either cap, one `warn` line says how many were
+dropped and for which cap.
 
 Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`), and
 `[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
@@ -431,12 +443,12 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 
 | Reason | Cause |
 | :--- | :--- |
-| `terminated by the host` | `terminate()` without a reason (or with your own text instead). |
+| `terminated by the host` | `terminate()` without a reason, or with an empty one (or with your own text instead). |
 | `the guest stopped responding (watchdog)` | `watchdogTimeout` expired. |
 | `the guest entry failed to start` | Strict mode: the entry threw or did not parse. |
 | `the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)` | The frame loaded but the library's startup script (strict mode's view bootstrap, cooperative and worker mode's bootstrap) never checked in: the host page's policy refused it. See [Host page policy](#host-page-policy). |
-| `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)` | Strict mode: the worker's script could not be loaded at all; nothing of the guest's ran. |
-| `the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)` | The host page enforces Trusted Types and its `trusted-types` directive does not name `web-sandbox`. |
+| `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)` | Strict and worker mode: the worker's script could not be loaded at all; nothing of the guest's ran. Worker mode is never `ready` then. |
+| `the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)` | The host page enforces Trusted Types and its `trusted-types` directive does not name `web-sandbox`, also when the host page's own default policy takes the element's strings (the view and worker mode's frame need the policy themselves). |
 | `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
 | `unknown mode …` | `mode` is not `strict`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`. |
@@ -478,8 +490,8 @@ and resets the per-environment caps (log rate, violations). Listeners run synchr
 ### `ready` and the startup gate
 
 `ready` means the guest's startup script checked in: the bootstrap, the first script of the guest document (cooperative
-mode) or of the worker's frame (worker mode), announced its port; in strict mode the view's bootstrap posted its
-check-in on the port only it holds. It does not wait for the guest's images or its own scripts, so `LOAD_TIMEOUT_MS`
+mode), announced its port; in worker mode the worker's frame announced it once its worker runs; in strict mode the
+view's bootstrap posted its check-in on the port only it holds. It does not wait for the guest's images or its own scripts, so `LOAD_TIMEOUT_MS`
 bounds only that check-in; a page with slow images, or one that never finishes its document, is `ready`. A frame
 that loaded but whose startup script never checked in was refused by the host page's policy, and the reason says so.
 
@@ -520,12 +532,12 @@ From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.
 | :--- | :--- | :--- | :--- |
 | `TIMEOUT` | local | No answer within the call's timeout. | yes |
 | `TERMINATED` | local | The environment was reset, terminated or removed. | after the next `ready` |
-| `ARGS_NOT_TRANSFERABLE` | local | The arguments cannot be structured-cloned, or measure more than `RPC_MAX_BYTES`; nothing was sent. | no |
+| `ARGS_NOT_TRANSFERABLE` | local | The arguments cannot be structured-cloned, or measure more than `RPC_MAX_BYTES` (a value the measure does not know counts as more; see [`call()`](#callmethod-args)); nothing was sent. | no |
 | `SEND_FAILED` | local | The transport threw while sending. | no |
 | `INVALID_CALL` | local | The method name is not a string. | no |
 | `UNKNOWN_METHOD` | reported | No method of that name is exposed on the other side. | no |
 | `HANDLER_ERROR` | reported | The handler threw or rejected; the message is its text. | depends on the handler |
-| `RESULT_NOT_TRANSFERABLE` | reported | The handler's result cannot be structured-cloned, or measures more than `RPC_MAX_BYTES`. | no |
+| `RESULT_NOT_TRANSFERABLE` | reported | The handler's result cannot be structured-cloned, or measures more than `RPC_MAX_BYTES` (as above). | no |
 | `BUSY` | reported | The other side already runs `MAX_INBOUND_IN_FLIGHT` of your calls, or 64 MiB of their arguments, or the call measures more than `RPC_MAX_BYTES`; the method did not run. | yes |
 
 **Local** codes are set only by the side that made the call, from its own state, so the other side can never
@@ -703,8 +715,10 @@ at most 50000 elements, nested at most 256 deep below its body, and at most 1048
 serialization: text, attributes and markup alike), counted over the document a render would leave (what is outside the target stays): a render past
 any of them is dropped as a whole, the next one still applies, and the guest's log says
 `[Sandbox] sandboxView.render: the view refused a render: …`. The view parses at most 1048576 characters of markup
-per second, renders it refused included: a render past that waits, and so does the worker's next one (one render in
-flight), so a flood of renders is slowed, not dropped.
+per second, renders it refused included, and spends at most 200 ms of its own time per second on them, measured
+(their layout and the rendering that follows included): an operation past either waits, and so does the worker's next
+one (one in flight), so a flood of renders is slowed, not dropped. One operation's own cost is not bounded by them (one
+textarea of 250 000 characters took WebKit 1.3–1.7 s); what follows it waits for the budget.
 
 Registered files are named by path in `src`, `href` and `poster`. The view shows only files that never open as a
 document: CSS, PNG, JPEG, GIF, WebP, AVIF, APNG, BMP and ICO images, WOFF, WOFF2, TTF and OTF fonts, MP3, WAV, Ogg,
@@ -810,6 +824,7 @@ in strict mode.
 | Strict: elements in the view | 50000 | — |
 | Strict: characters in the view (its body's serialization) | 1048576 | — |
 | Strict: characters of markup the view parses per second | 1048576 | — |
+| Strict: time the view spends applying operations per second, their layout and rendering included (ms) | 200 | — |
 | Strict: nesting depth below the view's body | 256 | — |
 | Strict: characters of one event detail, all strings together | 262144 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
@@ -855,9 +870,9 @@ policy must allow:
   documents, so it arrives as the element's `violation` event (where the browser reports it), never as a
   `securitypolicyviolation` on your page, and nothing warns at `setConfig()`.
 - **The view bootstrap's hash** is `viewScriptHash()`, the very value the element puts in the view's `script-src`.
-  It is constant for one build of the library (it is the hash of the library's own function text, which a bundler or
-  minifier can change), so it cannot be listed here: read it from the build you serve, for example in a build step,
-  and put it in your page's policy:
+  It is constant for one version of the package (the bootstrap is a string literal of the package's bundle, so your
+  bundler or minifier does not change it), and it changes with the package's version, so it is not listed here: read
+  it in a build step (importing the package needs no DOM, in Node or Bun) and put it in your page's policy:
 
   ```js
   import { viewScriptHash } from 'web-sandbox';
