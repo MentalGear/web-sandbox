@@ -18,9 +18,15 @@
  *   - an ArrayBuffer: its byteLength; a typed array or a DataView: its whole buffer, which clone copies, once per buffer;
  *   - a Blob or a File: 64 (clone copies a handle, not its bytes).
  * Anything else measures Infinity, past every limit: an Error (its stack is the engine's to serialize), a platform
- * object (ImageData, ImageBitmap, FileList, CryptoKey, …), a function or a symbol (never in a snapshot), or a value
- * whose reading throws. A sender that wants an error across sends what it needs of it: the console relay sends an
- * Error argument as { name, message, stack } (in-sandbox-script.ts).
+ * object (ImageData, ImageBitmap, FileList, CryptoKey, …), a SharedArrayBuffer, a function or a symbol (never in a
+ * snapshot), or a value whose reading throws. A sender that wants an error across sends what it needs of it: the console
+ * relay sends every Error in a line as { name, message, stack } (in-sandbox-script.ts).
+ *
+ * Infinity says two things, and a sender's message must not confuse them (review round 3, C-3): a value really past the
+ * limit, or a value the measure does not know, whatever its size. `unsupported`, when given, tells them apart: the walk
+ * writes the kind it stopped at into `unsupported.kind` ('Error', 'ImageData', 'SharedArrayBuffer', from the value's
+ * Object.prototype.toString tag), and leaves it alone when the limit was what it passed. So "past the byte budget" is
+ * said only of a value that was, and an Error nested in a call's arguments reads "unsupported value: Error".
  *
  * `createSizeOf()` captures everything it uses when it is called, and returns the measure. The bootstrap calls it before
  * any guest code runs (it is stringified into the guest like createBroker, so it closes over nothing), so guest code that
@@ -30,7 +36,7 @@
  * never throws. `buffers`, when given, receives every ArrayBuffer the walk counted, once each: what a sender may transfer
  * when it posts the snapshot, so its bytes are not copied a second time.
  */
-export type SizeOf = (value: unknown, limit: number, buffers?: unknown[]) => number;
+export type SizeOf = (value: unknown, limit: number, buffers?: unknown[], unsupported?: { kind: string }) => number;
 
 export function createSizeOf(): SizeOf {
     // ---- The captured list (review round 2, C-1): everything the measure uses, taken now, before any guest code runs.
@@ -61,6 +67,8 @@ export function createSizeOf(): SizeOf {
     const bigintValue = BigInt.prototype.valueOf;
     const bigintText = BigInt.prototype.toString;
     const bigintFits = BigInt.asIntN;
+    const toTag = Object.prototype.toString;
+    const slice = String.prototype.slice;
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
     const brand = (read: ((this: unknown) => unknown) | null, value: unknown): unknown => {
@@ -88,8 +96,25 @@ export function createSizeOf(): SizeOf {
         return typeof big === 'bigint' ? bigintBytes(big, limit) : undefined;
     };
 
-    return (value: unknown, limit: number, buffers?: unknown[]): number => {
+    // The kind of a value the measure does not know: its tag's name, `Error` of `[object Error]`; its type for a primitive.
+    // At most 64 characters: a tag is guest code's to choose (Symbol.toStringTag), and a sender's message names it.
+    const kindOf = (value: unknown): string => {
+        if (typeof value !== 'object' || value === null) return typeof value;
+        try {
+            const tag = apply(toTag, value, []) as string;
+            return apply(slice, tag, [8, tag.length - 1 < 72 ? tag.length - 1 : 72]) as string;
+        } catch {
+            return 'object';
+        }
+    };
+
+    return (value: unknown, limit: number, buffers?: unknown[], unsupported?: { kind: string }): number => {
         let total = 0;
+        // Infinity for a value the measure does not know, its kind noted for the sender's message.
+        const unknown = (item: unknown): number => {
+            if (unsupported) unsupported.kind = kindOf(item);
+            return Infinity;
+        };
         try {
             // A list without a prototype (review C3): an index written to it never reaches an inherited setter.
             const stack: unknown[] = setPrototype([], null);
@@ -101,7 +126,7 @@ export function createSizeOf(): SizeOf {
                 apply(setAdd, seen, [buffer]);
                 const bytes = brand(bufferBytes, buffer);
                 if (typeof bytes !== 'number') {
-                    total = Infinity; // a SharedArrayBuffer: clone shares it, or refuses it; never measured
+                    total = unknown(buffer); // a SharedArrayBuffer: clone shares it, or refuses it; never measured
                     return;
                 }
                 total += bytes;
@@ -123,7 +148,7 @@ export function createSizeOf(): SizeOf {
                     total += 8;
                     continue;
                 }
-                if (type !== 'object') return Infinity; // a function or a symbol: never in a snapshot
+                if (type !== 'object') return unknown(item); // a function or a symbol: never in a snapshot
                 const object = item as object;
                 if (apply(setHas, seen, [object])) {
                     total += 8;
@@ -179,10 +204,11 @@ export function createSizeOf(): SizeOf {
                     continue;
                 }
                 const primitive = wrapped(object, limit);
-                if (primitive === undefined) return Infinity; // outside the allow-list: an Error, a platform object
+                if (primitive === undefined) return unknown(object); // outside the allow-list: an Error, a platform object
                 total += primitive;
             }
         } catch {
+            if (unsupported) unsupported.kind = 'unreadable value';
             return Infinity;
         }
         return total;

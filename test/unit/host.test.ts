@@ -240,7 +240,7 @@ describe('content auto-sizing reaches the guest bootstrap only when asked for (b
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const el = document.createElement('web-sandbox') as any;
     document.body.appendChild(el);
-    const FEATURE = '{"autoResize":true}';
+    const FEATURE = '"autoResize":true'; // in the features literal, next to the call budget every bootstrap carries
 
     el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
     expect(guestDocument(el)).not.toContain(FEATURE);
@@ -273,7 +273,7 @@ describe('the fetch bridge reaches the guest only when configured (backlog B5)',
     el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
     expect(guestDocument(el)).not.toMatch(/fetchBridge\\*":/);
     el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: { allow: ['https://api.example'], timeoutMs: 2500 } });
-    expect(guestDocument(el)).toContain('{"fetchBridge":{"timeoutMs":2500}}');
+    expect(guestDocument(el)).toContain('"fetchBridge":{"timeoutMs":2500}');
     el.setConfig({ mode: 'worker', fetchBridge: { allow: [] } });
     expect(guestDocument(el)).toMatch(/fetchBridge\\*":\{\\*"timeoutMs\\*":10000\}/);
     el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: 'on' });

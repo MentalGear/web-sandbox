@@ -209,7 +209,7 @@ describe('createFetchBridge (backlog B5)', () => {
         const { bridge, records } = bridgeWith(async () => new Response('x'));
         await bridge.handle({ url: 'x'.repeat(10000), method: '<script>' }).catch(() => {});
         await bridge.handle({ url: 'https://other.example/a#secret-fragment', method: 'get' }).catch(() => {});
-        expect(records[0]).toMatchObject({ url: 'x'.repeat(2048), method: '' });
+        expect(records[0]).toMatchObject({ url: 'x'.repeat(8192), method: '' }); // MAX_URL
         expect(records[1]).toMatchObject({ url: 'https://other.example/a', method: 'GET' });
         expect(Object.isFrozen(records[0])).toBe(true);
     });

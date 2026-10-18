@@ -107,7 +107,7 @@ test.describe('R3-3: byte budgets on log lines and RPC messages', () => {
             console.log('R33', new Uint8Array(64 * 1024 * 1024));
             try { await bridge.call('sink', new Uint8Array(34 * 1024 * 1024)); return 'sent'; } catch (error) { return error.code; }`);
         expect(outcome).toBe('ARGS_NOT_TRANSFERABLE');
-        expect(await sandbox.waitForLog(/^R33 /)).toMatch(/^R33 \[\[object Uint8Array\]: past the log line's byte budget/);
+        expect(await sandbox.waitForLog(/^R33 /)).toMatch(/^R33 \[Uint8Array: past the log line's byte budget/);
         // a positive control: a call within the budget is answered
         expect(await sandbox.inGuest(`return bridge.call('sink', new Uint8Array(1024 * 1024), 2)`)).toBe(2);
     });

@@ -172,8 +172,8 @@ describe('R3-3: one byte budget per log line, and per second', () => {
         console.log('big', new Uint8Array(64 * 1024 * 1024), wide, { small: 1 });
         const [line] = lines();
         expect(line.args[0]).toBe('big');
-        expect(line.args[1]).toMatch(/^\[\[object Uint8Array\]: past the log line's byte budget/);
-        expect(line.args[2]).toMatch(/^\[\[object Object\]: past the log line's byte budget/);
+        expect(line.args[1]).toMatch(/^\[Uint8Array: past the log line's byte budget/);
+        expect(line.args[2]).toMatch(/^\[Object: past the log line's byte budget/);
         expect(line.args[3]).toEqual({ small: 1 });
         expect(createSizeOf()(line.args, Infinity)).toBeLessThanOrEqual(LOG_MAX_BYTES);
     });
