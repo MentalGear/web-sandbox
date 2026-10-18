@@ -26,7 +26,7 @@ import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type Fetc
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
  * The element's configuration, passed to setConfig(): every option left out takes its default
@@ -62,6 +62,10 @@ export interface CooperativeSandboxConfig extends SandboxConfigOptions {
     origins?: SandboxOrigins;
     /** Strict mode only (review round 1, R3-6); ignored with a warning at run time. */
     entry?: never;
+    /** Strict mode only: the guest document is the guest's own; ignored with a warning at run time. */
+    allowAnimations?: never;
+    /** Strict mode only; ignored with a warning at run time. */
+    allowAutoplay?: never;
     /** Worker and strict mode only: the guest document may share the host's thread, so no timer could fire (R3-6). */
     workerExecutionTimeout?: never;
 }
@@ -73,6 +77,10 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions {
     origins?: SandboxOrigins;
     /** Strict mode only (review round 1, R3-6); ignored with a warning at run time. */
     entry?: never;
+    /** Strict mode only: a worker has no document; ignored with a warning at run time. */
+    allowAnimations?: never;
+    /** Strict mode only; ignored with a warning at run time. */
+    allowAutoplay?: never;
     /** A worker has no document (R3-6): ignored. */
     html?: never;
     /** A worker has no document to measure (R3-6): no effect, with a warning at run time. */
@@ -131,6 +139,30 @@ export interface SandboxConfigOptions {
      * Ignored (with a warning) in other modes.
      */
     entry?: string;
+    /**
+     * Strict mode: whether CSS animations and transitions run in the view. Default `true`. Only a literal `false` turns
+     * them off; any other value that is not a boolean is taken as `false`, with one warning. Ignored, with a warning, in
+     * the other modes.
+     *
+     * **Warning**: while `true` (the default), CSS animations and transitions in the view run on the host page's main
+     * thread wherever the browser runs the view there: Firefox, Safari and every WebKit browser, Android (Android WebView
+     * always), and Chromium without sandboxed-iframe isolation; desktop Chromium 127+ isolates the view in a process of
+     * its own. A guest can then keep the host page busy (measured: 80–98% of its main thread) for as long as they run:
+     * the view's time budget does not bound them. Set `false` to remove animations and transitions from the view
+     * (elements show their end state), which restores the bound. With `false`, a host page whose `style-src` refuses
+     * inline styles must allow the view's stylesheet by its hash (docs/API.md#host-page-policy).
+     */
+    allowAnimations?: boolean;
+    /**
+     * Strict mode: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Default `false`: the
+     * `autoplay` attribute is removed, and media plays only when the user starts it. Only a literal `true` keeps it; any
+     * other value that is not a boolean is taken as `false`, with one warning. Ignored, with a warning, in the other modes.
+     *
+     * **Warning**: with `true`, autoplaying media decodes and paints on the host page's main thread wherever the view
+     * runs there (see `allowAnimations`), for as long as it plays, and the view's time budget does not bound it
+     * (measured: up to +6 points of the host page's main thread for 20 looping videos).
+     */
+    allowAutoplay?: boolean;
     /**
      * A budget in ms for each execute() (worker and strict mode); 0 (the default) is off. At the deadline the guest's
      * event loop must be free: the host pings it, and a guest that does not answer within
@@ -225,6 +257,8 @@ const DEFAULT_SANDBOX_CONFIG: StoredConfig = {
     watchdogTimeout: 0,
     autoResize: false,
     guestWrites: false,
+    allowAnimations: true,
+    allowAutoplay: false,
 };
 
 // Texts of the host's own refusals, for people reading them. Code branches on the error's `code`
@@ -431,7 +465,19 @@ interface StrictInit {
     viewFiles: FileSnapshotEntry[];
     html: string;
     autoResize: boolean;
+    allowAnimations: boolean;
+    allowAutoplay: boolean;
 }
+
+// The strict view's two switches and the value each takes when it is left out. A value that is a boolean is itself; one
+// left out (or undefined) takes its default; anything else is false, the safe side of both (animations removed, no
+// autoplay), with a warning.
+const VIEW_SWITCHES = { allowAnimations: true, allowAutoplay: false } as const;
+type ViewSwitch = keyof typeof VIEW_SWITCHES;
+const VIEW_SWITCH_OFF: Readonly<Record<ViewSwitch, string>> = {
+    allowAnimations: 'animations and transitions are removed from the view',
+    allowAutoplay: 'media in the view does not autoplay',
+};
 
 /**
  * The `<web-sandbox>` element: one sandboxed environment for untrusted web content, rebuilt by setConfig(),
@@ -694,6 +740,8 @@ export class WebSandbox extends ElementBase {
         // Guest writes too: the build reads only this normalised copy.
         merged.guestWrites = merged.guestWrites === true;
         if (typeof merged.entry !== 'string') delete merged.entry;
+        // The view's switches: always a boolean in the stored config (VIEW_SWITCHES).
+        for (const name of Object.keys(VIEW_SWITCHES) as ViewSwitch[]) merged[name] = this._viewSwitch(input, name, merged.mode);
 
         // Every check and warning reads the candidate, and only a config that passed them all is stored, last
         // (focused review 2026-10-14, F6: the warnings ran after the assignment, so a config one of them refused
@@ -702,7 +750,7 @@ export class WebSandbox extends ElementBase {
         this._warnAboutUnsafeCapabilities(merged);
         this._warnAboutScriptUnsafe(merged);
         this._warnAboutAutoResizeInWorker(merged);
-        this._warnAboutStrictConfig(merged);
+        this._warnAboutStrictConfig(merged, input);
         this._config = merged;
         this._fetchPolicy = fetchPolicy;
         this._origins = origins;
@@ -1256,6 +1304,7 @@ export class WebSandbox extends ElementBase {
             // The view's check-in, the first frame on the port only its bootstrap holds (R3-1): the strict build is ready.
             if (this._state !== 'loading') return;
             this._checkViewSize(data.height);
+            if (data.stillStyleRefused === true) this._warnStillStyleRefused();
             this._enterReady();
             return;
         }
@@ -1317,6 +1366,13 @@ export class WebSandbox extends ElementBase {
         if (this._warnedWrapperStyle || typeof height !== 'number' || height > 150 || frame <= height + 1) return;
         this._warnedWrapperStyle = true;
         console.warn(`[Sandbox] the sandbox's view is ${height} px high in a frame of ${frame} px: the host page's style-src refuses the wrapper's style. Allow 'unsafe-inline' or '${scriptHashSource(WRAPPER_STYLE)}' in style-src (see docs/API.md#host-page-policy).`);
+    }
+
+    // allowAnimations: false, and the host page's style-src refused the view's still stylesheet (in-sandbox-view.ts,
+    // VIEW_STILL_STYLE), which a srcdoc document inherits: the view checked, and drops the guest's stylesheets instead, so
+    // no guest animation runs either way. Said once per element, with the hash to allow.
+    private _warnStillStyleRefused() {
+        this._warnStrictOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or '${scriptHashSource(VIEW_STILL_STYLE)}' in style-src (see docs/API.md#host-page-policy).`);
     }
 
     // Flushes what was queued before the guest's port existed onto it, in the order it was issued (L-3): execute() code
@@ -1906,6 +1962,8 @@ export class WebSandbox extends ElementBase {
             viewFiles: files.filter(candidate => isViewFileType(candidate[1])), // never a type that opens as a document (broad review ST1)
             html,
             autoResize: this._autoResizeEnabled(),
+            allowAnimations: this._config.allowAnimations !== false,
+            allowAutoplay: this._config.allowAutoplay === true,
         };
         const view = buildViewDocument(policy, viewBootstrapText());
 
@@ -1942,15 +2000,30 @@ export class WebSandbox extends ElementBase {
         return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${marker}();\n`;
     }
 
+    // One of the view's switches as the config gives it (VIEW_SWITCHES): its default when left out, the boolean it is,
+    // else false, with a warning in strict mode (in the other modes it is ignored, which _warnAboutStrictConfig says).
+    private _viewSwitch(input: object, name: ViewSwitch, mode: unknown): boolean {
+        const value = (input as Record<string, unknown>)[name];
+        if (value === undefined) return VIEW_SWITCHES[name];
+        if (typeof value === 'boolean') return value;
+        if (mode === 'strict') this._warnStrictOnce(`[Sandbox] ${name} must be a boolean; ${shown(value)} was taken as false: ${VIEW_SWITCH_OFF[name]}.`);
+        return false;
+    }
+
+    private _warnStrictOnce(message: string) {
+        if (this._warnedStrict.has(message)) return;
+        this._warnedStrict.add(message);
+        console.warn(message);
+    }
+
     // Strict-mode configuration the element will not honour, said once per instance each.
-    private _warnAboutStrictConfig(config: StoredConfig) {
-        const warn = (message: string) => {
-            if (this._warnedStrict.has(message)) return;
-            this._warnedStrict.add(message);
-            console.warn(message);
-        };
+    private _warnAboutStrictConfig(config: StoredConfig, input: object) {
+        const warn = (message: string) => this._warnStrictOnce(message);
         if (config.mode !== 'strict') {
             if (config.entry) warn('[Sandbox] "entry" is used only in strict mode and was ignored.');
+            for (const name of Object.keys(VIEW_SWITCHES) as ViewSwitch[]) {
+                if ((input as Record<string, unknown>)[name] !== undefined) warn(`[Sandbox] "${name}" is used only in strict mode and was ignored.`);
+            }
             return;
         }
         const unsafe = config.unsafeCapabilities || [];

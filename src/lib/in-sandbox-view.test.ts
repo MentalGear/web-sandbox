@@ -1,16 +1,20 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, RENDER_RULES, RENDER_URL_ATTRIBUTES, sanitizeRender, VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, viewBootstrapText } from './in-sandbox-view';
+import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, RENDER_RULES, RENDER_URL_ATTRIBUTES, type RenderSwitches, sanitizeRender, VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, viewBootstrapText } from './in-sandbox-view';
 import { REFERENCES } from './markup-references';
+
 import { inSandboxFiles } from './in-sandbox-files';
 import { VIOLATION_EVENT_LIMIT } from './violation';
 import { mimeTypeFor } from './files';
+
+// the renderer with every switch on (RenderSwitches): the tests that do not test a switch keep what the switches govern
+const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
 
 /** Parses `html` into an inert fragment the way the view does, and runs the renderer on it. `files`: path → the URL the view minted, typed by extension. */
 function sanitize(html: string, files: Record<string, string> = {}) {
     const template = document.createElement('template');
     template.innerHTML = html;
     const minted = new Set(Object.values(files));
-    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), RENDER_RULES);
+    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), RENDER_RULES, KEEP_ALL);
     return template.content;
 }
 const serialise = (fragment: DocumentFragment) => {
@@ -168,7 +172,7 @@ describe('A2: the fragment is moved, never cloned or imported', () => {
         const adoptNode = vi.spyOn(Document.prototype, 'adoptNode');
         const template = document.createElement('template');
         template.innerHTML = '<svg><script>x</script></svg><div><img src="a"><p>t</p></div>';
-        sanitizeRender(template.content, () => null, () => false, RENDER_RULES);
+        sanitizeRender(template.content, () => null, () => false, RENDER_RULES, KEEP_ALL);
         expect([clone.mock.calls.length, importNode.mock.calls.length, adoptNode.mock.calls.length]).toEqual([0, 0, 0]);
     });
 
@@ -476,7 +480,7 @@ describe('broad review ST2: the renderer counts what it keeps against the room i
         const run = (html: string, room: { elements: number; depth: number }) => {
             const template = document.createElement('template');
             template.innerHTML = html;
-            return sanitizeRender(template.content, () => null, () => false, RENDER_RULES, room);
+            return sanitizeRender(template.content, () => null, () => false, RENDER_RULES, KEEP_ALL, room);
         };
         expect(run('<p></p>'.repeat(10), { elements: 10, depth: 5 })).toBe(10);
         expect(() => run('<p></p>'.repeat(11), { elements: 10, depth: 5 })).toThrowError(new RangeError('VIEW_MAX_ELEMENTS'));
@@ -594,7 +598,7 @@ describe('review round 1: R1-2, the renderer is linear and keeps no element whos
                 const template = document.createElement('template');
                 template.innerHTML = text;
                 const started = performance.now();
-                sanitizeRender(template.content, () => null, () => false, RENDER_RULES);
+                sanitizeRender(template.content, () => null, () => false, RENDER_RULES, KEEP_ALL);
                 fastest = Math.min(fastest, performance.now() - started);
                 expect(template.content.querySelector('p')!.childNodes).toHaveLength(1);
             }

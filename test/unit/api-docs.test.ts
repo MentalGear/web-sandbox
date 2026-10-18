@@ -11,7 +11,7 @@ import { toFetchPolicy } from '@src/lib/fetch-bridge';
 import { INERT_TYPES } from '@src/lib/guest-writes';
 import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { cooperativePolicy, KIND_DIRECTIVES, strictViewPolicy } from '@src/lib/csp/csp-generator';
-import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MS_PER_SECOND, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_TARGET_MAX_LENGTH } from '@src/lib/in-sandbox-view';
+import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MAX_DEBT_MS, VIEW_APPLY_MS_PER_SECOND, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH } from '@src/lib/in-sandbox-view';
 import { LOG_BYTES_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { WORKER_GLOBALS } from '@src/lib/worker-globals';
@@ -132,6 +132,7 @@ describe('docs/API.md lists the public surface', () => {
             ['Strict: characters in the view', VIEW_MAX_CHARACTERS],
             ['Strict: characters of markup the view parses per second', VIEW_RENDER_CHARACTERS_PER_SECOND],
             ['Strict: time the view spends applying operations per second', VIEW_APPLY_MS_PER_SECOND],
+            ["Strict: most time the view's time budget may owe", VIEW_APPLY_MAX_DEBT_MS],
             ['Bytes per log line', LOG_MAX_BYTES],
             ['Bytes of guest log lines sent per second', LOG_BYTES_PER_SECOND],
             ['Bytes per RPC message', RPC_MAX_BYTES],
@@ -321,6 +322,7 @@ describe('docs/API.md lists the public surface', () => {
         const policy = section('## Host page policy');
         expect(policy).toContain('`viewScriptHash()`');
         expect(policy).toContain(scriptHashSource(WRAPPER_STYLE));
+        expect(policy).toContain(scriptHashSource(VIEW_STILL_STYLE)); // allowAnimations: false
         expect(policy).not.toContain('srcdoc;'); // no reading the hash out of the wrapper's document any more
     });
 
