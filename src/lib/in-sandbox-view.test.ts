@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, RENDER_RULES, RENDER_URL_ATTRIBUTES, type RenderSwitches, sanitizeRender, VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, viewBootstrapText } from './in-sandbox-view';
+import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, RENDER_RULES, RENDER_URL_ATTRIBUTES, type RenderContext, type RenderSwitches, sanitizeRender, VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, viewBootstrapText } from './in-sandbox-view';
 import { REFERENCES } from './markup-references';
 
 import { inSandboxFiles } from './in-sandbox-files';
@@ -9,12 +9,17 @@ import { mimeTypeFor } from './files';
 // the renderer with every switch on (RenderSwitches): the tests that do not test a switch keep what the switches govern
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
 
-/** Parses `html` into an inert fragment the way the view does, and runs the renderer on it. `files`: path → the URL the view minted, typed by extension. */
-function sanitize(html: string, files: Record<string, string> = {}) {
+/**
+ * Parses `html` into an inert fragment the way the view does, and runs the renderer on it. `files`: path → the URL the
+ * view minted, typed by extension. `origins`: what the view's policy admits per kind key (review round 4, M-2); none
+ * by default, as without `origins`.
+ */
+function sanitize(html: string, files: Record<string, string> = {}, origins: Record<string, string[]> = {}) {
     const template = document.createElement('template');
     template.innerHTML = html;
     const minted = new Set(Object.values(files));
-    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), RENDER_RULES, KEEP_ALL);
+    const context: RenderContext = { target: 'body', animating: RENDER_RULES.still.known, origins, refused: [], urls: 0 };
+    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), RENDER_RULES, KEEP_ALL, undefined, context);
     return template.content;
 }
 const serialise = (fragment: DocumentFragment) => {
@@ -78,7 +83,7 @@ describe('the renderer: file references, blob: URLs (A8), referrer and ping (A1)
             '<img id="a" src="img/logo.png"><img id="b" src="./img/logo.png"><img id="c" src="/img/logo.png"><img id="d" src="x/../img/logo.png">',
             '<img id="e" src="img/Logo.png"><img id="f" src="img/logo.png?v=2"><img id="g" src="https://cdn.example/img/logo.png">',
             '<video id="v" src="clip.mp4" poster="img/logo.png"><source id="s" src="clip.mp4"><track id="t" src="subs.vtt"></video><audio id="au" src="clip.mp4"></audio>',
-        ].join(''), files);
+        ].join(''), files, { images: ['https://cdn.example'] });
         const src = (id: string, attribute = 'src') => fragment.getElementById(id)!.getAttribute(attribute);
         expect(['a', 'b', 'c', 'd'].map(id => src(id))).toEqual(Array(4).fill('blob:null/logo'));
         expect(['e', 'f', 'g'].map(id => src(id))).toEqual(['img/Logo.png', 'img/logo.png?v=2', 'https://cdn.example/img/logo.png']);
@@ -445,7 +450,7 @@ describe('broad review 2026-10-14: the renderer is an allowlist', () => {
             '<img id="data" src="data:image/png;base64,AA=="><img id="js" src=" \u0001java\tscript:x"><img id="blob" src="blob:null/other"><img id="other" src="ftp://x.example/i.png">',
             '<video id="poster" poster="data:image/svg+xml,x"></video><audio id="audio" src="javascript:x"></audio><video><source id="source" srcset="https://x.example/a.png 1x,https://x.example/b.png 2x" src="data:,x"></video>',
             '<img id="set-ok" srcset="https://x.example/a.png 1x, https://x.example/b,c.png 2x"><img id="set-data" srcset="https://x.example/a.png 1x,data:image/svg+xml,x 2x"><img id="set-js" srcset=" javascript:x 1x">',
-        ].join(''), files);
+        ].join(''), files, { images: ['https://x.example'], media: ['https://x.example'] });
         const src = (id: string, name = 'src') => fragment.getElementById(id)!.getAttribute(name);
         expect(['https', 'http', 'relative', 'file'].map(id => src(id))).toEqual(['https://x.example/i.png', 'HTTP://x.example/i.png', 'nope.png', 'blob:null/minted']);
         expect(['data', 'js', 'blob', 'other', 'audio', 'source'].map(id => src(id))).toEqual(Array(6).fill(null));

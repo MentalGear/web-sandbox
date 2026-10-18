@@ -26,7 +26,7 @@ import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type Fetc
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
  * The element's configuration, passed to setConfig(): every option left out takes its default
@@ -140,9 +140,9 @@ export interface SandboxConfigOptions {
      */
     entry?: string;
     /**
-     * Strict mode: whether CSS animations and transitions run in the view. Default `true`. Only a literal `false` turns
-     * them off; any other value that is not a boolean is taken as `false`, with one warning. Ignored, with a warning, in
-     * the other modes.
+     * Strict mode: whether CSS animations and transitions run in the view. Default `true`. Left out (or `undefined`) or
+     * `true` keeps them; any other value turns them off: `false`, and anything that is not a boolean, with one warning.
+     * Ignored, with a warning, in the other modes.
      *
      * **Warning**: while `true` (the default), CSS animations and transitions in the view run on the host page's main
      * thread wherever the browser runs the view there: Firefox, Safari and every WebKit browser, Android (Android WebView
@@ -155,8 +155,9 @@ export interface SandboxConfigOptions {
     allowAnimations?: boolean;
     /**
      * Strict mode: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Default `false`: the
-     * `autoplay` attribute is removed, and media plays only when the user starts it. Only a literal `true` keeps it; any
-     * other value that is not a boolean is taken as `false`, with one warning. Ignored, with a warning, in the other modes.
+     * `autoplay` attribute is removed, and media plays only when the user starts it. Only a literal `true` keeps it: left
+     * out (or `undefined`) or `false` removes it, and so does any other value, with one warning when it is not a boolean.
+     * Ignored, with a warning, in the other modes.
      *
      * **Warning**: with `true`, autoplaying media decodes and paints on the host page's main thread wherever the view
      * runs there (see `allowAnimations`), for as long as it plays, and the view's time budget does not bound it
@@ -197,14 +198,14 @@ export interface SandboxConfigOptions {
      * The per-second budget of the calls the guest makes (every mode): `maxPerSecond` calls and `maxBytesPerSecond`
      * bytes of them in any one-second window, per environment. The guest's bridge refuses a call past it with BUSY,
      * and the element answers BUSY to one that arrives anyway. A field left out takes its default; one that is not a
-     * finite number > 0 takes its default with one warning. There is no "off".
+     * finite number >= 1 takes its default with one warning. There is no "off".
      */
     callLimits?: CallLimits;
 }
 
 /** `callLimits` (docs/API.md#calllimits): the per-second budget of the calls the guest makes. */
 export interface CallLimits {
-    /** Calls per second. Default 5000. */
+    /** Calls per second. Default 1000. */
     maxPerSecond?: number;
     /** Bytes of calls per second, each call's whole message measured as RPC_MAX_BYTES is. Default 67108864 (64 MiB). */
     maxBytesPerSecond?: number;
@@ -292,7 +293,11 @@ const STRICT_CAPABILITIES = [...SAFE_CAPABILITIES, ...STRICT_VIEW_FLAGS] as cons
 // frames, in any one-second window. The defaults of `callLimits`; the configuration gives the budget in callBudgetOf(),
 // the one place both ends take it from (the host's window, _admitGuestCall; the guest's broker, through the bootstrap's
 // features).
-const GUEST_CALLS_PER_SECOND = 5000;
+// 1000 calls (review round 4, M-6, the owner's decision): the reviewers measured Firefox's host page 32–37% busy at 4900
+// calls per second, with gaps of 1.8 s in bursts. At 1000, a strict guest calling paced at the budget and one sending
+// a second's worth at once each second left Firefox's host page its idle ticks, longest gap 15–27 ms
+// (test/e2e/review-round-4.spec.ts, "M-6").
+const GUEST_CALLS_PER_SECOND = 1000;
 const GUEST_CALL_BYTES_PER_SECOND = 67108864;
 
 interface CallBudget {
@@ -302,10 +307,11 @@ interface CallBudget {
 
 const DEFAULT_CALL_BUDGET: Readonly<CallBudget> = Object.freeze({ calls: GUEST_CALLS_PER_SECOND, bytes: GUEST_CALL_BYTES_PER_SECOND });
 
-// The call budget `callLimits` asks for (from the copy setConfig() took). Each field is a finite number > 0, else its
-// default: left out, silently; anything else (Infinity, 0, a negative number, NaN, a string), with a warning. There is no
-// "off": a budget that can be lifted is one a config typo lifts. Never throws: a callLimits that is not an object is
-// warned about and gives the defaults.
+// The call budget `callLimits` asks for (from the copy setConfig() took). Each field is a finite number >= 1, else its
+// default: left out, silently; anything else (Infinity, a number below 1, NaN, a string), with a warning. There is no
+// "off": a budget that can be lifted is one a config typo lifts. Nor a budget that admits nothing (review round 4, C-6):
+// below 1, every call was BUSY forever, without a word, since no call weighs less than 1. Never throws: a callLimits that
+// is not an object is warned about and gives the defaults.
 function callBudgetOf(callLimits: unknown, warn: (message: string) => void): Readonly<CallBudget> {
     if (callLimits === undefined) return DEFAULT_CALL_BUDGET;
     if (!callLimits || typeof callLimits !== 'object' || Array.isArray(callLimits)) {
@@ -316,8 +322,8 @@ function callBudgetOf(callLimits: unknown, warn: (message: string) => void): Rea
     const field = (name: keyof CallLimits, fallback: number): number => {
         const value = limits[name];
         if (value === undefined) return fallback;
-        if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
-        warn(`[Sandbox] callLimits.${name} must be a finite number > 0; ${typeof value === 'number' ? String(value) : shown(value)} was ignored: the default ${fallback} applies.`);
+        if (typeof value === 'number' && Number.isFinite(value) && value >= 1) return value;
+        warn(`[Sandbox] callLimits.${name} must be a finite number >= 1; ${typeof value === 'number' ? String(value) : shown(value)} was ignored: the default ${fallback} applies.`);
         return fallback;
     };
     return Object.freeze({ calls: field('maxPerSecond', DEFAULT_CALL_BUDGET.calls), bytes: field('maxBytesPerSecond', DEFAULT_CALL_BUDGET.bytes) });
@@ -416,8 +422,11 @@ function errorName(error: unknown): string {
 // 2026-10-14, V1): the worker keeps only the allowlisted globals (worker-globals.ts) before any other script of the
 // library or the guest runs there, so every request guest code can make goes through an API the policy governs on
 // every engine. `global` is the expression for the global object in that source.
-const workerGlobalsStatement = (global: string) =>
-    `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(WORKER_GLOBALS)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)});`;
+// The call is an expression whose value is the worker's postMessage, which it deleted (worker-globals.ts); strict mode
+// runs it as a statement and keeps nothing of it.
+const workerGlobalsCall = (global: string) =>
+    `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(WORKER_GLOBALS)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)})`;
+const workerGlobalsStatement = (global: string) => `${workerGlobalsCall(global)};`;
 
 // The guest frame's window: the wrapper's frames[0], or null. Read by length first: the wrapper is cross-origin to
 // the host, and reading an index a cross-origin window does not have throws a SecurityError.
@@ -430,6 +439,14 @@ function guestWindowOf(iframe: HTMLIFrameElement | null): Window | null {
 // A worker's uncaught error as a guest line, prefixed once: Chromium's ErrorEvent message already starts with
 // "Uncaught", Firefox's and WebKit's do not.
 const uncaughtLine = (message: string) => (message.startsWith('Uncaught ') ? message : `Uncaught ${message}`);
+
+// The guest line of an error text the strict view relays (GUEST_ERROR, GUEST_UNCAUGHT): composed, then cut once, to the
+// length the view cuts the text to (review round 4, M-4: the text was cut and "Uncaught " added after, so the line
+// reached 2056–2057 characters in Firefox and WebKit, whose messages carry no prefix of their own).
+const viewErrorLine = (message: unknown) => uncaughtLine(typeof message === 'string' ? message : '').slice(0, VIEW_OPTIONS.guestText.maxLength);
+
+// What the element says when the view dropped guest error texts past its window (review round 4, M-5).
+const VIEW_TEXT_DROPPED_LINE = `[Sandbox] the guest raised more than ${VIEW_OPTIONS.guestText.perSecond} uncaught errors in one second that only the view could describe; errors past that are dropped in the view.`;
 
 /**
  * workerExecutionTimeout's grace (focused review 2026-10-14, F2): at an execute()'s deadline the host pings the
@@ -467,6 +484,9 @@ interface StrictInit {
     autoResize: boolean;
     allowAnimations: boolean;
     allowAutoplay: boolean;
+    // The origins the view's policy admits for the loads its markup makes, by kind key (review round 4, M-2): the
+    // renderer drops an http(s) URL outside them, so the browser never processes a refusal.
+    origins: { images: readonly string[]; media: readonly string[] };
 }
 
 // The strict view's two switches and the value each takes when it is left out. A value that is a boolean is itself; one
@@ -498,10 +518,11 @@ export class WebSandbox extends ElementBase {
     private _guestWindow: Window | null = null;
     private _stopListening: (() => void) | null = null;
     private _loadDeadline: Watchdog | null = null; // LOAD_TIMEOUT_MS until the guest checks in, or a frame with no bootstrap loads (CB3, S46)
-    // The reason of the build termination being dispatched, while it is, or null (CB5; see _terminateBuild).
-    private _buildTermination: string | null = null;
+    // The reason of the 'terminated' being dispatched, while it is, or null (CB5; see _terminateBuild). Every 'terminated'
+    // is dispatched through _dispatchTerminated, which sets it (review round 4, L-3).
+    private _terminationDispatched: string | null = null;
     private _buildInputs = 0; // counts changes to what a build reads: setConfig(), load(), the files
-    private _buildWithin: string | null = null; // the build termination being dispatched when this build started (L-4)
+    private _buildWithin: string | null = null; // the 'terminated' being dispatched when this build started (L-4)
     private _state: SandboxState = 'idle'; // changed only by _enterState()
     private _watchdog: Watchdog | null = null;
     private _resizer: AutoResizer | null = null; // this environment's auto-sizing (B6), or null when off
@@ -526,6 +547,7 @@ export class WebSandbox extends ElementBase {
     private _warnedLogLimit = false;          // the log rate limit warned for the current environment
     private _ownLines = 0;                    // the guest relay's own lines dispatched for the current environment (LOG_OWN_LINES)
     private _warnedLogBytes = false;          // a guest line past LOG_MAX_BYTES warned for the current environment
+    private _warnedViewTextDropped = false;   // the view's notice that it dropped guest error texts, for the current environment (M-5)
     // Counts environments: every teardown increments it. Read by _notifyThenAct, the one path for a host action that
     // dispatches an event and then acts on the environment, so a listener that reset or terminated the sandbox in between
     // is never undone (review B5); and by _postRpc, so a call is sent only to the environment it was made in (L-2).
@@ -845,18 +867,23 @@ export class WebSandbox extends ElementBase {
     // In strict mode the change goes to the view as well (R4-4), and the guest is answered once the view has it.
     private _handleGuestWrite(writes: GuestWrites | null, request: unknown): Promise<GuestWriteAnswer> {
         if (!writes) return refuseGuestWrite();
+        // What the list holds at the path before (the request is the guest's structured-cloned data, read once): a change is
+        // announced only when the list changed (review round 4, L-4), so 'fileswritten' never names what listGuestWrites()
+        // does not show. A removal of a path the host unregistered after the build changes the guest's view only.
+        const requested = request !== null && typeof request === 'object' ? (request as { path?: unknown }).path : undefined;
+        const before = typeof requested === 'string' ? writes.change(requested) : undefined;
         let answer: GuestWriteAnswer;
         try {
             answer = writes.handle(request);
         } catch (error) {
             return Promise.reject(error);
         }
-        if (answer.change === 'none') return Promise.resolve(answer); // nothing recorded, nothing to announce
+        if (answer.change === 'none' || writes.change(answer.path) === before) return Promise.resolve(answer); // nothing to announce
         // What the view is told, taken now: a 'fileswritten' listener may commit the change and empty its place.
         const shown = this._viewPort ? viewWriteOf(answer.path, writes.change(answer.path)) : null;
         return new Promise((resolve, reject) => {
             let acted = false;
-            this._notifyThenAct(() => this._dispatchFilesWritten(answer.path), () => {
+            this._notifyThenAct([() => this._dispatchFilesWritten(answer.path)], () => {
                 acted = true;
                 this._showInView(shown, () => resolve(answer), reject);
             });
@@ -1155,7 +1182,7 @@ export class WebSandbox extends ElementBase {
     }
 
     private _onExecutionTimeout() {
-        this._notifyThenAct(() => this._dispatchHostLog('error', 'Execution Timeout'), () => this._terminate(EXECUTION_TIMEOUT_REASON));
+        this._notifyThenAct([() => this._dispatchHostLog('error', 'Execution Timeout')], () => this._terminate(EXECUTION_TIMEOUT_REASON));
     }
 
     /**
@@ -1165,18 +1192,25 @@ export class WebSandbox extends ElementBase {
      * what it just built). So the action runs only if no teardown happened in between: every teardown counts up
      * _generation, and this is the only place that compares it. A path that dispatches and then acts goes through
      * here; none compares the count by hand (test/unit/channel-guarantees.test.ts enumerates them).
+     *
+     * Each notice dispatches ONE event, and the next one is dispatched only if no teardown happened during the one before
+     * (review round 4, L-2): an entry failure announces a host line and then the guest's own line, and the guest line,
+     * dispatched from the same callback after a listener of the host line had reset or removed the element, reached the
+     * next environment's listeners, or an idle element's. The same test checks that each notice dispatches one event.
      */
-    private _notifyThenAct(notify: () => void, act: () => void) {
+    private _notifyThenAct(notices: readonly (() => void)[], act: () => void) {
         const generation = this._generation;
-        notify();
-        if (generation !== this._generation) return;
+        for (const notice of notices) {
+            notice();
+            if (generation !== this._generation) return;
+        }
         act();
     }
 
     // A frame of ours that the host page's policy refused, as it reported (R3-1; review round 2, C-5 and C-6): one host
     // line, then the termination with the reason that names the policy (unless a listener of that line acted first).
     private _refusedByHostPage(reason: string) {
-        this._notifyThenAct(() => this._dispatchHostLog('error', `[Sandbox] ${reason}`), () => this._terminate(reason));
+        this._notifyThenAct([() => this._dispatchHostLog('error', `[Sandbox] ${reason}`)], () => this._terminate(reason));
     }
 
     // The guest's port, announced by the guest frame itself (CB1), becomes this environment's port. Null when this
@@ -1343,19 +1377,26 @@ export class WebSandbox extends ElementBase {
         if (data?.type === 'GUEST_UNCAUGHT') {
             // a later uncaught error of the worker's that only the view could still describe (in-sandbox-view.ts,
             // review C1): a guest line like the worker's own 'Uncaught …' lines, rate-limited the same way. The view cut
-            // it and rate-limited it before posting (review round 3, C-4); cut again here, as every frame is checked again.
-            const message = typeof data.message === 'string' ? data.message.slice(0, VIEW_OPTIONS.guestText.maxLength) : '';
-            this._dispatchGuestLog({ level: 'error', args: [uncaughtLine(message)] });
+            // it and rate-limited it before posting (review round 3, C-4); the line is cut again here (viewErrorLine).
+            this._dispatchGuestLog({ level: 'error', args: [viewErrorLine(data.message)] });
+            return;
+        }
+        if (data?.type === 'GUEST_TEXT_DROPPED') {
+            // The view dropped a guest error text past its per-second window (review round 4, M-5): said once per
+            // environment, as the console relay says its own drops, in a line of the relay's (not counted in the window).
+            if (this._warnedViewTextDropped) return;
+            this._warnedViewTextDropped = true;
+            this._dispatchLog({ level: 'warn', args: [VIEW_TEXT_DROPPED_LINE] }, 'guest');
             return;
         }
         if (data?.type === 'GUEST_ERROR') {
             // The entry's own error text is the guest's (it wrote the code, or threw the value): a 'guest' line,
             // clamped and rate-limited like every guest line, never part of the host line or the reason (F3).
-            const message = typeof data.message === 'string' ? data.message.slice(0, VIEW_OPTIONS.guestText.maxLength) : '';
-            this._notifyThenAct(() => {
-                this._dispatchHostLog('error', `[Sandbox] ${ENTRY_FAILED_REASON}`);
-                this._dispatchGuestLog({ level: 'error', args: [uncaughtLine(message)] });
-            }, () => this._terminate(ENTRY_FAILED_REASON));
+            const line = viewErrorLine(data.message);
+            this._notifyThenAct([
+                () => this._dispatchHostLog('error', `[Sandbox] ${ENTRY_FAILED_REASON}`),
+                () => this._dispatchGuestLog({ level: 'error', args: [line] }),
+            ], () => this._terminate(ENTRY_FAILED_REASON));
         }
     }
 
@@ -1581,7 +1622,7 @@ export class WebSandbox extends ElementBase {
         if (next === 'ready') this.dispatchEvent(new CustomEvent('ready'));
         if (next !== 'terminated' || dispatch === 'none') return;
         if (dispatch === 'now') {
-            this.dispatchEvent(new CustomEvent('terminated', { detail: { reason } }));
+            this._dispatchTerminated(reason ?? '');
             return;
         }
         const token = {};
@@ -1599,6 +1640,7 @@ export class WebSandbox extends ElementBase {
         this._guestCallBytes = createRateLimiter(this._callBudget.bytes);
         this._ownLines = 0;
         this._warnedLogBytes = false;
+        this._warnedViewTextDropped = false;
         this._queue = []; // what was queued for the old environment
         this._violationCounts.clear(); // the violation cap is per environment
         this._strictInit = null;
@@ -1646,7 +1688,7 @@ export class WebSandbox extends ElementBase {
     private initialize() {
         // Every build runs, from a 'terminated' listener too: CB5's rule is in _terminateBuild (the answer it gives is
         // not dispatched again), never a build skipped here (review round 3, L-1).
-        this._buildWithin = this._buildTermination;
+        this._buildWithin = this._terminationDispatched;
         this._teardown();
         this._discardGuestWrites(); // every build starts without the last environment's uncommitted writes
         // Where the element may build is one rule (review round 2, L-1: buildsHere, below), asked by every build, however
@@ -1703,12 +1745,20 @@ export class WebSandbox extends ElementBase {
     private _dispatchBuildTermination(reason: string, token: object) {
         if (this._pendingTermination !== token || this._state !== 'terminated') return;
         this._pendingTermination = null;
-        const outer = this._buildTermination;
-        this._buildTermination = reason;
+        this._dispatchTerminated(reason);
+    }
+
+    // The one place 'terminated' is dispatched (review round 4, L-3): CB5's rule holds for every termination, not only a
+    // build's. A listener that rebuilt after terminate(reason), and whose build was refused with that very reason, used to
+    // get a second 'terminated' with it (and, with a listener that rebuilt again, one per task, without end): the marker was
+    // set only around a build's deferred dispatch.
+    private _dispatchTerminated(reason: string) {
+        const outer = this._terminationDispatched;
+        this._terminationDispatched = reason;
         try {
             this.dispatchEvent(new CustomEvent('terminated', { detail: { reason } }));
         } finally {
-            this._buildTermination = outer;
+            this._terminationDispatched = outer;
         }
     }
 
@@ -1750,7 +1800,9 @@ export class WebSandbox extends ElementBase {
         return null;
     }
 
-    private _getSandboxCommsScript(mode: 'cooperative' | 'worker', files: FileSnapshotEntry[], plan: GuestMarkupPlan = NO_MARKUP_PLAN) {
+    // `postToFrame` (worker mode): the expression that names the worker's platform postMessage, which the globals
+    // allowlist handed over (worker-globals.ts, review round 4, M-1); the bootstrap's one WORKER_STARTED uses it.
+    private _getSandboxCommsScript(mode: 'cooperative' | 'worker', files: FileSnapshotEntry[], plan: GuestMarkupPlan = NO_MARKUP_PLAN, postToFrame = 'null') {
         // communication, logs and RPC bridge template that any content running in the sandbox uses.
         // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
         // The features as one literal: the opt-in ones only when on, and the call budget always (M-2).
@@ -1760,7 +1812,7 @@ export class WebSandbox extends ElementBase {
         if (this._config.guestWrites === true) features.guestWrites = true;
         const featuresArgument = `, ${toInlineScriptLiteral(features)}`;
         // Only literals are interpolated: `=== true` here as well, whatever setConfig() stored (review A6).
-        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, '${mode}', console, ${createBroker.toString()}${featuresArgument}, ${createSizeOf.toString()})`;
+        const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, '${mode}', console, ${createBroker.toString()}${featuresArgument}, ${createSizeOf.toString()}, ${postToFrame})`;
         // Guest writes (C5): sandboxFiles gets the comms script's captured write call through `comms`, a constant
         // of a block the whole bootstrap then runs in: block-scoped, so never a global guest code could read.
         // Without them the bootstrap keeps its text: the comms statement, then sandboxFiles without a write call
@@ -1786,8 +1838,10 @@ export class WebSandbox extends ElementBase {
         // own blobs and sandboxFiles from the same literal; the frame only spawns it and forwards the port
         // No WebAssembly unless scriptUnsafe (review round 1, R2-5), as in strict mode: WebKit compiles it without
         // 'wasm-unsafe-eval', so the policy alone does not keep it out. Removed before the comms script, like the globals.
-        const noWasm = this._config.scriptUnsafe === true ? '' : `(${removeWebAssembly.toString()})(this);`;
-        const workerSource = `${workerGlobalsStatement('this')}${noWasm}${this._getSandboxCommsScript('worker', files)}`;
+        // The allowlist runs first, as the argument of the function the rest runs in: it returns the worker's postMessage,
+        // which it deleted (review round 4, M-1), and only the comms script is given it, for its one WORKER_STARTED.
+        const noWasm = this._config.scriptUnsafe === true ? '' : `(${removeWebAssembly.toString()})(g);`;
+        const workerSource = `(function (g, postToFrame) {${noWasm}${this._getSandboxCommsScript('worker', files, NO_MARKUP_PLAN, 'postToFrame')}})(this, ${workerGlobalsCall('this')});`;
         return `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)}, ${toInlineScriptLiteral(TRUSTED_TYPES_POLICY)});`;
     }
 
@@ -1964,6 +2018,7 @@ export class WebSandbox extends ElementBase {
             autoResize: this._autoResizeEnabled(),
             allowAnimations: this._config.allowAnimations !== false,
             allowAutoplay: this._config.allowAutoplay === true,
+            origins: { images: [...this._origins.images], media: [...this._origins.media] },
         };
         const view = buildViewDocument(policy, viewBootstrapText());
 
@@ -1989,7 +2044,7 @@ export class WebSandbox extends ElementBase {
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)
-        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
+        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
         const prelude = '(function (g) {'
             + `(${assertEntryScoped.toString()})(g);`
             + workerGlobalsStatement('g')
@@ -2055,10 +2110,21 @@ export class WebSandbox extends ElementBase {
     // while both are in the document. Chromium and WebKit fire a frame's load when it is detached, from inside remove()
     // or appendChild() and before the element's disconnectedCallback: a cooperative build without a bootstrap became
     // 'ready' there, dispatched synchronously from the embedder's own remove().
+    //
+    // Never from inside the load event itself (review round 4, L-1): the check above held in a load that Chromium and
+    // WebKit fire during the embedder's appendChild() of the element (a move), for the frame being moved, since the frame
+    // and the element still read as connected there, and 'ready' was dispatched from inside the embedder's own call. The
+    // build completes in a microtask instead, after the element's own lifecycle reactions (disconnectedCallback, then
+    // connectedCallback), which run before appendChild() or remove() returns: a frame that the move tore down is no
+    // longer the element's then, and its load completes nothing. The microtask asks again: the same frame, both still
+    // connected, and the same environment.
     private _frameLoadHandler(iframe: HTMLIFrameElement) {
         return () => {
-            if (iframe !== this._iframe || !iframe.isConnected || !this.isConnected) return;
-            this._onFrameLoad();
+            const generation = this._generation;
+            queueMicrotask(() => {
+                if (iframe !== this._iframe || generation !== this._generation || !iframe.isConnected || !this.isConnected) return;
+                this._onFrameLoad();
+            });
         };
     }
 

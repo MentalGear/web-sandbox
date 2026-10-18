@@ -298,14 +298,15 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
 *   **A reset settles every pending call.** When `reset()`, `load()` or `setConfig()` recreates the
     frame, the element is removed, or the sandbox is terminated, pending calls reject; calls made
     after termination reject at once.
-*   **Every rejection has a `code`; branch on it, not on the message.** `TIMEOUT`, `TERMINATED`,
-    `ARGS_NOT_TRANSFERABLE`, `SEND_FAILED` and `INVALID_CALL` are set only by the side that made the
-    call, so the other side can never produce them. `UNKNOWN_METHOD`, `HANDLER_ERROR`,
-    `RESULT_NOT_TRANSFERABLE` and `BUSY` come from the other side, and their message is its text. Only `TIMEOUT`
-    and `BUSY` are worth retrying, and `TERMINATED` only after the next `ready` event (types: `RpcErrorCode`, `RpcError`).
+*   **Every rejection has a `code`; branch on it, not on the message.** `TIMEOUT`, `TERMINATED`, `SEND_FAILED`
+    and `INVALID_CALL` are set only by the side that made the call, so the other side can never produce them.
+    `UNKNOWN_METHOD`, `HANDLER_ERROR`, `RESULT_NOT_TRANSFERABLE` and `BUSY` come from the other side, and their
+    message is its text. `ARGS_NOT_TRANSFERABLE` comes from either: arguments that can never be carried are refused
+    before sending, and answered so by the other side if they arrive. Only `TIMEOUT` and `BUSY` are worth retrying,
+    and `TERMINATED` only after the next `ready` event (types: `RpcErrorCode`, `RpcError`).
 *   **At most 256 calls run at once** on each side for one environment (`MAX_INBOUND_IN_FLIGHT`): a further
     call is refused at once with `BUSY`, before its method runs, so calls to a slow method cannot pile up
-    without bound. The guest makes at most 5000 calls and 64 MiB of calls in any one second (`callLimits` sets
+    without bound. The guest makes at most 1000 calls and 64 MiB of calls in any one second (`callLimits` sets
     other values); past that its `bridge` refuses a call with `BUSY` before sending it, and the element answers `BUSY`
     to one that arrives anyway.
 *   **Every message is bounded as a whole**: a method name is at most 256 characters, an error message at most
@@ -521,12 +522,15 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
 *   **What it guarantees**, on Chromium, Firefox and WebKit: no guest script runs in any document — the renderer
     keeps only allowlisted elements and attributes (no handlers, frames, `object`/`embed`, `meta`, `base`,
     `template`, SVG `use`, markers, filters or animation), so no nested frame exists and no checked attribute
-    changes afterwards; the view holds at most 50 000 elements, 256 deep and 1 Mi characters, parses at most 1 Mi
-    characters of markup per second, and shows only files that never open as
-    a document (no SVG, HTML or XML; no `data:` images); guest code has no
+    changes afterwards; the view holds at most 50 000 elements, 256 deep, 1 Mi characters and 1 000 URL-bearing
+    attributes, parses at most 1 Mi characters of markup and takes at most 200 URL-bearing attributes per second, and
+    shows only files that never open as
+    a document (no SVG, HTML or XML; no `data:` images); a URL in rendered markup that the view's policy would refuse is
+    dropped before the browser sees it, and reported as the browser would have; guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
     `Referer`); the worker keeps only allowlisted globals, so it can request only through `fetch`, `XMLHttpRequest`,
-    `WebSocket` and `importScripts`, which the policy governs on every engine; links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
+    `WebSocket` and `importScripts`, which the policy governs on every engine, and reaches its parent only through
+    the library's port (it has no `postMessage` of its own); links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
     the browser's own link actions (copy, open in a new tab, drag) carry no guest URL (open external URLs through
     a method you `expose()`); the watchdog stops a looping guest on every
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
@@ -593,12 +597,17 @@ What remains for the default:
         1 000 elements, 3.7 s), bidirectional text in one paragraph (240 000 characters alternating directions: tens of
         seconds in Chromium and WebKit, engine and machine dependent), and small CSS changes over many elements, which
         cost style recalculation and layout (Firefox: a 31-character `text()` into a `<style>` over 46 000 elements,
-        7 s);
+        7 s), and `<img>` elements in Chromium, which cost far more than their markup (6 500 `<img alt>` with no
+        source: 1.9–2.6 s; Firefox and WebKit about 150 ms);
     *   what runs without the view doing anything: CSS animations and transitions while `allowAnimations` is `true`
         (the default; 5 000 animated elements kept the host page 80–98% busy), `:hover` restyles over many elements
         while the user's pointer moves (80–100% while it moves), animated images (WebKit: +22 points for 2 000),
         indeterminate `<progress>` (up to +4 points for 5 000), and autoplaying media with `allowAutoplay: true` (up to
-        +6 points for 20 videos).
+        +6 points for 20 videos);
+    *   loads named in CSS: a URL a `<style>` or a `style` attribute names (`url()`, `image-set()`) is left to the
+        browser, outside the view's URL budget, and a refused one costs the browser its refusal (renders of 3 000
+        elements each with a background from a refused source, as fast as the view acknowledged them: Firefox 33%
+        busy; Chromium 18% and WebKit 9%, about what renders without a URL cost them).
 
     Cooperative mode is no better: there a guest `while (true) {}` freezes the host page wherever the frame shares its
     thread.

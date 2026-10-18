@@ -116,11 +116,12 @@ only a message, and a guest handler's message reached the host verbatim. A guest
 exact text of the host's termination refusal, so host code that matched messages to decide "stop"
 or "retry" was acting on a reason the guest chose.
 
-**Decision**: every rejection is an `Error` with a single string `code` from a closed set of eight,
-in two disjoint groups. `TIMEOUT`, `TERMINATED`, `ARGS_NOT_TRANSFERABLE`, `SEND_FAILED` and
-`INVALID_CALL` are minted only by the side whose call is refused, from its own state.
-`UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are the only codes a response from the
-other side can produce. The response frame gains an optional `code`; both sides run the same
+**Decision**: every rejection is an `Error` with a single string `code` from a closed set. `TIMEOUT`,
+`TERMINATED`, `SEND_FAILED` and `INVALID_CALL` are minted only by the side whose call is refused, from its
+own state, and no response can produce them. `UNKNOWN_METHOD`, `HANDLER_ERROR`, `RESULT_NOT_TRANSFERABLE`,
+`BUSY` and `ARGS_NOT_TRANSFERABLE` are the only codes a response from the other side can produce; the last two
+are also minted by the calling side for the same condition seen before sending (the other side's per-second
+budget; arguments that could never be carried). The response frame gains an optional `code`; both sides run the same
 dispatcher, so the two ends cannot disagree about it.
 
 - **A property, not an `Error` subclass.** The dispatcher is stringified into the guest and closes
@@ -309,7 +310,7 @@ or small ones, 44 000 a second) kept the host page busy without bound.
 at most 256 characters (longer: `INVALID_CALL` at the caller, `UNKNOWN_METHOD` without the name at the receiver, never
 registered by `expose`), an id that is a number or a short string, an error text cut to 65 536 characters with a marker
 (cut again on receipt), and a snapshot whose whole frame is measured when it is posted and when it arrives. The calls
-the guest makes have a per-second budget per environment, by default 5000 calls and 64 MiB (`callLimits` in the
+the guest makes have a per-second budget per environment, by default 1000 calls and 64 MiB (`callLimits` in the
 config sets others; it cannot be turned off), a sliding one-second window like the log relay's: the guest's broker, the
 only code that holds the port, refuses a call past it with `BUSY` before sending it, and the host counts the same
 window on receipt and answers `BUSY`. `BUSY` stays a code the other side reports; the guest's broker mints it only for

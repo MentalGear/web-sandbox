@@ -297,8 +297,11 @@ export interface ValidRequest {
     body: string | Uint8Array | undefined;
 }
 
+// The URL a record names. One longer than MAX_URL is refused anyway and reported cut, without being parsed (review round
+// 4, C-8): parsing a guest's string of any length only to cut its result was work the guest chose the size of.
 const reportedUrl = (value: unknown): string => {
     if (typeof value !== 'string') return '';
+    if (value.length > MAX_URL) return value.slice(0, MAX_URL);
     try {
         const url = new URL(value);
         url.hash = '';

@@ -78,8 +78,9 @@ is the only way out unless the embedder also allows direct connections.
    `outcome` one of `ok`, `refused` (no request made), `failed` (`fetch()` was called, no response handed over;
    amended 2026-10-14, below) and
    `aborted` (torn down). No path to the network skips the record, refusals included. The record is
-   built by the host from validated fields, and guest-supplied strings are clamped (the URL to 2048
-   characters, a method that is not a method reported as `''`).
+   built by the host from validated fields, and guest-supplied strings are clamped: the URL is the whole
+   URL without its fragment, up to `MAX_URL` (8192 characters; a longer one is refused, and reported cut
+   to that, unparsed), and a method that is not a method is reported as `''`.
 6. **The request comes from the host page.** So the target sees the host page's origin in `Origin` (never
    its URL: no `Referer`), and the response must pass CORS for that origin; `*` works, since no
    credentials are sent. This is more than a direct guest request reveals (`Origin: null`), and is

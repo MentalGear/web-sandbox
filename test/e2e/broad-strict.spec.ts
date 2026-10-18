@@ -48,7 +48,8 @@ const b64 = (text: string) => Buffer.from(text, 'utf8').toString('base64');
 
 test.describe('the renderer is an allowlist', () => {
     test('elements and attributes outside the allowlist are gone before insertion, in every namespace: unknown HTML elements are unwrapped, unknown SVG and MathML elements removed with their content', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount(strict())).toBe('ready');
+        // x.example admitted for images: an image URL the policy refuses is dropped before insertion (review round 4, M-2)
+        expect(await sandbox.mount(strict({ origins: { images: ['https://x.example'] } }))).toBe('ready');
         const corpus = [
             '<svg id="s" width="10" height="10"><use id="use" href="#r"/><rect id="r" width="5" height="5" fill="url(https://x.example/p.svg#p)" stroke="url(#g)" cursor="url(https://x.example/c.png), auto"/>'
                 + '<marker id="mk"><rect/></marker><filter id="flt"><feGaussianBlur stdDeviation="1"/></filter><feImage href="#r"/>'

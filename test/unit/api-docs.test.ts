@@ -11,7 +11,7 @@ import { toFetchPolicy } from '@src/lib/fetch-bridge';
 import { INERT_TYPES } from '@src/lib/guest-writes';
 import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { cooperativePolicy, KIND_DIRECTIVES, strictViewPolicy } from '@src/lib/csp/csp-generator';
-import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MAX_DEBT_MS, VIEW_APPLY_MS_PER_SECOND, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH } from '@src/lib/in-sandbox-view';
+import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MAX_DEBT_MS, VIEW_APPLY_MS_PER_SECOND, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_MAX_URLS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 import { LOG_BYTES_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { WORKER_GLOBALS } from '@src/lib/worker-globals';
@@ -133,6 +133,8 @@ describe('docs/API.md lists the public surface', () => {
             ['Strict: characters of markup the view parses per second', VIEW_RENDER_CHARACTERS_PER_SECOND],
             ['Strict: time the view spends applying operations per second', VIEW_APPLY_MS_PER_SECOND],
             ["Strict: most time the view's time budget may owe", VIEW_APPLY_MAX_DEBT_MS],
+            ['Strict: URL-bearing attributes in the view', VIEW_MAX_URLS],
+            ['Strict: URL-bearing attributes the view takes per second', VIEW_URLS_PER_SECOND],
             ['Bytes per log line', LOG_MAX_BYTES],
             ['Bytes of guest log lines sent per second', LOG_BYTES_PER_SECOND],
             ['Bytes per RPC message', RPC_MAX_BYTES],
@@ -251,12 +253,17 @@ describe('docs/API.md lists the public surface', () => {
 
     it('every call code, with who sets it', () => {
         const table = section('### Calls');
+        const source = read('src/lib/rpc.ts');
         const codes = unionMembers('src/lib/rpc.ts', 'RpcErrorCode');
-        const reported = read('src/lib/rpc.ts').match(/Exclude<RpcErrorCode, ([^>]+)>/)![1]!.match(/'[A-Z_]+'/g)!.map(code => code.slice(1, -1));
+        // local: what localRefusal() mints; reported: what the clamp of a response lets through (refusalFromResponse),
+        // and HANDLER_ERROR, its fallback
+        const notLocal = source.match(/Exclude<RpcErrorCode, ([^>]+)>/)![1]!.match(/'[A-Z_]+'/g)!.map(code => code.slice(1, -1));
+        const reported = [...source.matchAll(/reportedCode === CODE\.([A-Z_]+) \? CODE\.\1/g)].map(match => match[1]!).concat('HANDLER_ERROR');
         expect(sorted(rowKeys(table))).toEqual(sorted(codes));
         for (const code of codes) {
             const setBy = row(table, `\`${code}\``).split('|')[2]!.trim();
-            expect(setBy, code).toBe(reported.includes(code) ? 'reported' : 'local');
+            const local = !notLocal.includes(code);
+            expect(setBy, code).toBe(local && reported.includes(code) ? 'local, reported' : local ? 'local' : 'reported');
         }
     });
 
