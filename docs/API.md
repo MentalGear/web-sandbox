@@ -786,12 +786,14 @@ at most 50000 elements, nested at most 256 deep below its body, and at most 1048
 serialization: text, attributes and markup alike), counted over the document a render would leave (what is outside the target stays): a render past
 any of them is dropped as a whole, the next one still applies, and the guest's log says
 `[Sandbox] sandboxView.render: the view refused a render: …`. The view parses at most 1048576 characters of markup
-per second, renders it refused included, and spends at most 200 ms of its own time per second on them, measured
+per second, renders it refused included, and spends on average at most 200 ms of its own time per second on them, measured
 (their layout and the rendering update that shows them included; never time in which the view, hidden or off-screen,
 rendered nothing): an operation past either waits, and so does the worker's next one (one in flight), so a flood of
 renders is slowed, not dropped. One operation's own cost is not bounded by them (one textarea of 250 000 characters
 took WebKit 1.3–1.7 s); what follows it waits for the budget, at most 5 s (the budget owes at most one second of the
-view's time). CSS animations and transitions, once rendered, are outside this budget: see
+view's time). The time budget bounds the long-run share, not each second: since it may owe up to one second, a single
+second can hold more (simulated: up to 553 ms with operations of at most 200 ms), and an operation longer than that is
+charged only up to it ([research 17](research/17_formal_methods/README.md)). CSS animations and transitions, once rendered, are outside this budget: see
 [`allowAnimations`](#allowanimations-and-allowautoplay).
 
 Registered files are named by path in `src`, `href` and `poster`. The view shows only files that never open as a

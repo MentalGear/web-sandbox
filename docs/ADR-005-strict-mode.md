@@ -643,7 +643,10 @@ indeterminate `<progress>` up to +4.
   rendering update after it, measured as the time from the end of a frame callback to the first task after it: the
   frame the flush ran in, or the next frame for a flush the timer ran. At most one measurement is outstanding, nothing
   is requested without a flush, and no wall time is charged in which no frame ran. The debt is capped at one second of
-  the view's time (`VIEW_APPLY_MAX_DEBT_MS`, repaid in 5 s). This replaces the frame callback per flush that charged its
+  the view's time (`VIEW_APPLY_MAX_DEBT_MS`, repaid in 5 s). So the budget is a long-run average, not a bound on each
+  second: a single second can hold more (simulated: 398–553 ms with operations of at most 200 ms), and an operation longer
+  than the debt cap is charged only up to it (repeated 20-second operations reached an 82% share)
+  ([research 17](research/17_formal_methods/README.md)). This replaces the frame callback per flush that charged its
   own age past one frame: hidden 5 s with one render applied meanwhile, the next render waited 18.3 s (C-2, Chromium,
   Firefox `display:none`, WebKit off-screen); and a frame per flush went uncharged, so a flood took 22–25% (M-5). Now:
   the next render applies within 70 ms, and the flood takes 15–23% of the host page's ticks.
