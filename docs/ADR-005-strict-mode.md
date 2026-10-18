@@ -1,6 +1,6 @@
 # ADR-005: Strict mode — guest logic in a worker, a view that runs no guest script
 
-**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view); [independent verification](#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist); [typed origins](#amendment-2026-10-14-typed-origins-the-view-policy-is-a-template)) · 2026-10-15 ([strict is the default](#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen); [review round 1](#amendment-2026-10-15-review-round-1-the-views-check-in-its-character-budget-host-page-availability); [the owner's decisions](#amendment-2026-10-15-the-owners-decisions-after-review-round-1))
+**Status**: Accepted · **Date**: 2026-10-13 · **Amended**: 2026-10-14 ([adversarial review](#amendment-2026-10-14-adversarial-review); [follow-up audit](#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction); [focused review](#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer); [broad review](#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view); [independent verification](#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist); [typed origins](#amendment-2026-10-14-typed-origins-the-view-policy-is-a-template)) · 2026-10-15 ([strict is the default](#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen); [review round 1](#amendment-2026-10-15-review-round-1-the-views-check-in-its-character-budget-host-page-availability); [the owner's decisions](#amendment-2026-10-15-the-owners-decisions-after-review-round-1)) · 2026-10-17 ([the view's running counts and time budget](#amendment-2026-10-17-the-views-running-counts-and-time-budget))
 
 ## Why this ADR exists
 
@@ -571,3 +571,23 @@ Tests: `test/e2e/host-policy.spec.ts` (each host policy on all three engines, wi
 Tests: `test/unit/view-api.test.ts`, `test/unit/owner-decisions.test.ts`, `test/e2e/owner-decisions.spec.ts`,
 `test/e2e/host-policy.spec.ts` (the exported hash admits strict mode under `script-src 'self'`), `test/e2e/package.spec.ts`
 (the bundle's hash), `test/e2e/review-round-1.spec.ts` ("R2-2").
+
+## Amendment (2026-10-17): the view's running counts and time budget
+
+**When**: review round 2 (C-4, M-3), recorded at review round 3 (C-5). The time budget's design may change after
+research that is under way; this records what the view does now.
+
+- **Running counts.** The view keeps its body's serialized length (`VIEW_MAX_CHARACTERS`) and element count
+  (`VIEW_MAX_ELEMENTS`) as running counts, updated from what each operation changes (the target's old and new content,
+  a value attribute), not by serializing the whole body per operation. A `MutationObserver` on the body reports any
+  change no operation made (the user opening a `<details>`, find-in-page, an extension); the counts are then dropped
+  and the next operation counts the whole body again. What an operation serializes is charged to the per-second
+  character budget (`VIEW_RENDER_CHARACTERS_PER_SECOND`) on top of its own text.
+- **Time budget.** The view spends at most `VIEW_APPLY_MS_PER_SECOND` (200 ms) of its own time per second applying
+  operations: each flush is timed with its forced layout, and the rendering update that follows it is charged as
+  measured (the time to the next animation frame, past one frame's length). An operation past the budget waits; nothing
+  is dropped. It bounds the slow operations the character budget cannot see (a large control's value, layout of many
+  elements), on the machine the view runs on, but not a single operation's own cost
+  ([Consequences](#consequences)).
+- **The guest's error texts.** The view cuts each `GUEST_ERROR` and `GUEST_UNCAUGHT` text to 2048 characters and sends
+  at most `LOG_EVENTS_PER_SECOND` of them per second before posting (review round 3, C-4); the host cuts them again.

@@ -250,12 +250,13 @@ before any guest code ran. Nothing reaches the host: no return value, no report 
 
 `expose(name: string, fn: (...args: any[]) => unknown): void` — publishes a host method the guest calls with
 `bridge.call(name, ...args)`. The guest receives `fn`'s return value (awaited if it is a promise); a throw or
-rejection reaches the guest as `HANDLER_ERROR` with the error's message, verbatim: throw errors whose message you
-would show the guest, or wrap the handler.
+rejection reaches the guest as `HANDLER_ERROR` with the error's message, verbatim up to 65536 characters (a longer one
+is cut, and ends `[… cut at 65536 characters]`): throw errors whose message you would show the guest, or wrap the
+handler.
 
 - Methods belong to the element: they survive `reset()`, `load()`, `setConfig()` and `terminate()`.
-- Exposing a name again replaces its handler. A name that is not a string, or a handler that is not a function,
-  throws a `TypeError`.
+- Exposing a name again replaces its handler. A name that is not a string or is longer than 256 characters, or a
+  handler that is not a function, throws a `TypeError`.
 - Names starting with `sandbox:` are reserved for the library: refused with a warning.
 - Treat arguments as untrusted data from the guest: validate them, and copy objects with spread rather than
   `Object.assign` or a `for…in` loop (an own `__proto__` key survives the copy, and `for…in` visits it).
@@ -270,9 +271,12 @@ would show the guest, or wrap the handler.
   before anything is sent (`ARGS_NOT_TRANSFERABLE`) and a result is answered `RESULT_NOT_TRANSFERABLE`. The measure
   knows primitives, plain objects and arrays, `Map`, `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and
   `DataView`, `Blob` and `File`, and `String`, `Number`, `Boolean` and `BigInt` objects; any other value (an `Error`,
-  an `ImageData` or another platform object) counts as past the budget. Send what you need of it instead: an error's
-  `{ name, message, stack }`, an image's `data`, `width` and `height`.
-- Default timeout: 30 s.
+  an `ImageData` or another platform object, a `SharedArrayBuffer`) is refused the same way, with a message that names
+  it (`RPC arguments hold an unsupported value: Error`) rather than the budget. Send what you need of it instead: an
+  error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole message is measured, the
+  method name included: a name is at most 256 characters (`INVALID_CALL`).
+- Default timeout: 30 s. The element's timers and its copy of the arguments use the `setTimeout` and `structuredClone`
+  it took when it was constructed: fake timers installed after that (a test's) do not control a call's timeout.
 - Calls made while `loading` are queued and sent when the guest is ready; one that settles while queued (its
   timeout) leaves the queue and never runs. In cooperative mode a call reaches the guest's method once the guest
   document is parsed (see [the startup gate](#ready-and-the-startup-gate)). Calls made while `idle` (not in the
@@ -394,8 +398,11 @@ handlers and of worker mode's worker: they arrive as `Uncaught Script error.`, a
 
 The bounds: `LOG_MAX_ARGS` and `LOG_MAX_STRING` bound the strings; `LOG_MAX_BYTES` bounds all arguments of a line
 together, whatever they are (a typed array, an object of 100 000 keys), measured as [`call()`](#callmethod-args)
-measures a message: an argument the measure does not know (an `ImageData`) is a string saying so. The guest applies them before a line is
-posted, and sends at most `LOG_EVENTS_PER_SECOND` lines and 4 MiB in any one-second window (one `warn` line when it
+measures a message: an argument past what is left of it is a string saying so (`[Uint8Array: past the log line's byte
+budget (1048576)]`), and one holding a value the measure does not know (an `ImageData`) a string naming it
+(`[unsupported value: ImageData]`). An `Error` anywhere in an argument (in an object, an array, a `Map`, a `Set`,
+`Promise.allSettled`'s results; within 64 levels and 10 000 objects) is sent as `{ name, message, stack }` first.
+The guest applies them before a line is posted, and sends at most `LOG_EVENTS_PER_SECOND` lines and 4 MiB in any one-second window (one `warn` line when it
 starts dropping), so a flood never reaches the host page's thread. In cooperative mode the browser's own console gets a
 dropped line not at all and a cut line cut; in worker and strict mode it gets none (the worker's console is not a sink:
 `sandbox-log` is). The element measures every line again on receipt, and dispatches at most `LOG_EVENTS_PER_SECOND`
@@ -405,9 +412,12 @@ entry's top level runs before the worker has its port) are kept, at most 1000 an
 arrive in order once it is, counted in that second's window; past either cap, one `warn` line says how many were
 dropped and for which cap.
 
-Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`), and
+Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`);
 `[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
-`Uncaught …`).
+`Uncaught …`, at most 2048 characters); and one `warn` line per environment when the element first drops guest lines
+past `LOG_EVENTS_PER_SECOND` (lines delivered late, while your page was busy, can arrive closer together than the guest
+sent them): `[Sandbox] the guest logged more than 1000 lines in one second; lines past that rate are not dispatched as
+'sandbox-log' events.`
 
 ### `violation` — `SandboxViolation`
 
@@ -431,7 +441,7 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | Field | Type | Meaning |
 | :--- | :--- | :--- |
 | `method` | `string` | Upper case; `''` when the guest sent no valid method. |
-| `url` | `string` | Without fragment; the guest's string cut to 2048 characters when it is not a URL. |
+| `url` | `string` | Without fragment, whole: a request's URL is at most 8192 characters, as written and as parsed (a longer one is refused). The guest's string, cut to 8192 characters, when it is not a URL. |
 | `outcome` | `'ok' \| 'refused' \| 'failed' \| 'aborted'` | `ok`: a response was handed over (any HTTP status). `refused`: no request was made (the bridge's rules, or the browser's `Request` refused it). `failed`: the browser's `fetch` rejected or no whole response was handed over; not proof that a request left the page, since `fetch` also rejects before sending (the host page's own `connect-src`, mixed content, local-network blocking). `aborted`: the environment was torn down meanwhile. |
 | `status` | `number?` | The HTTP status, when a response arrived. |
 | `code` | `FetchErrorCode?` | Why it was refused, failed or aborted. |
@@ -479,7 +489,7 @@ There is no `running` state: nothing reports that guest code is running or that 
 
 | From | Action | To |
 | :--- | :--- | :--- |
-| any | inserted into the document; `setConfig()`, `load()` or `reset()` while in it | `loading`, then `ready` (or `terminated` if the build is refused or fails, once per attempt) |
+| any | inserted into the document; `setConfig()`, `load()` or `reset()` while in it | `loading`, then `ready`, or `terminated` if the build is refused or fails: one `terminated` per attempt, except for an attempt made from a `terminated` listener that ends with the very reason being dispatched (the same refusal again), which ends `terminated` without another event |
 | any | removed from the document | `idle`, no event |
 | any but `terminated` | `terminate()`, watchdog, `workerExecutionTimeout`, integrity check | `terminated` |
 
@@ -532,18 +542,19 @@ From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.
 | :--- | :--- | :--- | :--- |
 | `TIMEOUT` | local | No answer within the call's timeout. | yes |
 | `TERMINATED` | local | The environment was reset, terminated or removed. | after the next `ready` |
-| `ARGS_NOT_TRANSFERABLE` | local | The arguments cannot be structured-cloned, or measure more than `RPC_MAX_BYTES` (a value the measure does not know counts as more; see [`call()`](#callmethod-args)); nothing was sent. | no |
+| `ARGS_NOT_TRANSFERABLE` | local | The arguments cannot be structured-cloned, measure more than `RPC_MAX_BYTES`, or hold a value the measure does not know (the message names it; see [`call()`](#callmethod-args)); nothing was sent. | no |
 | `SEND_FAILED` | local | The transport threw while sending. | no |
-| `INVALID_CALL` | local | The method name is not a string. | no |
+| `INVALID_CALL` | local | The method name is not a string, or is longer than 256 characters. | no |
 | `UNKNOWN_METHOD` | reported | No method of that name is exposed on the other side. | no |
-| `HANDLER_ERROR` | reported | The handler threw or rejected; the message is its text. | depends on the handler |
-| `RESULT_NOT_TRANSFERABLE` | reported | The handler's result cannot be structured-cloned, or measures more than `RPC_MAX_BYTES` (as above). | no |
-| `BUSY` | reported | The other side already runs `MAX_INBOUND_IN_FLIGHT` of your calls, or 64 MiB of their arguments, or the call measures more than `RPC_MAX_BYTES`; the method did not run. | yes |
+| `HANDLER_ERROR` | reported | The handler threw or rejected; the message is its text, at most 65536 characters. | depends on the handler |
+| `RESULT_NOT_TRANSFERABLE` | reported | The handler's result cannot be structured-cloned, measures more than `RPC_MAX_BYTES`, or holds a value the measure does not know (as above). | no |
+| `BUSY` | reported | The other side already runs `MAX_INBOUND_IN_FLIGHT` of your calls, or 64 MiB of their arguments, or the call measures more than `RPC_MAX_BYTES`; the method did not run. Guest calls only: the guest made more than 5000 calls, or 64 MiB of calls, in the last second (the guest's `bridge` refuses such a call before sending it, and the element answers one that arrives anyway). | yes |
 
 **Local** codes are set only by the side that made the call, from its own state, so the other side can never
-produce them. **Reported** codes come from the other side, and their message is its text; any other code the
-other side claims reads as `HANDLER_ERROR`. `state === 'terminated'` confirms `TERMINATED` from the element's
-own state. [ADR-002](ADR-002-host-guest-broker.md)
+produce them. **Reported** codes come from the other side, and their message is its text (at most 65536
+characters); any other code the other side claims reads as `HANDLER_ERROR`. The guest's `bridge` also refuses with
+`BUSY` itself, for the element's per-second budget, so that a call past it never crosses. `state === 'terminated'`
+confirms `TERMINATED` from the element's own state. [ADR-002](ADR-002-host-guest-broker.md)
 
 ### `sandboxFetch()`: `FetchErrorCode`
 
@@ -609,8 +620,8 @@ Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`.
 
 | Member | Signature | Description |
 | :--- | :--- | :--- |
-| `expose` | `(name: string, fn: (...args) => unknown) => void` | Publishes a guest method the host calls with `sandbox.call(name, ...)`. Last registration wins; `sandbox:` names are ignored. |
-| `call` | `(method: string, ...args) => Promise<unknown>` | Calls a host method exposed with `sandbox.expose()`. 30 s timeout. |
+| `expose` | `(name: string, fn: (...args) => unknown) => void` | Publishes a guest method the host calls with `sandbox.call(name, ...)`. Last registration wins; `sandbox:` names, and names longer than 256 characters, are ignored. |
+| `call` | `(method: string, ...args) => Promise<unknown>` | Calls a host method exposed with `sandbox.expose()`. 30 s timeout. At most 5000 calls and 64 MiB of calls in any one second, per environment: past that a call is refused with `BUSY` and not sent. |
 | `callWithTimeout` | `(timeoutMs: number, method: string, ...args) => Promise<unknown>` | With a timeout for this call; `0` disables it. |
 
 Usable at once: calls and exposes made before the channel is connected are buffered. Rejections carry the
@@ -786,9 +797,9 @@ a mode. [ADR-005](ADR-005-strict-mode.md)
 
 **What strict mode does not cover**: the host page's availability wherever the view shares the host page's thread
 (WebKit always, Firefox, Chromium depending on its process model): the view's budgets bound the common cases, but not
-layout and paint costs beyond what the markup weighs (CSS filters; bidirectional text in one paragraph), and
-cooperative mode is no better there. Also CSS within what the policy allows, the worker's `violation` reports (per
-engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the host site's
+layout and paint costs beyond what the markup weighs (CSS filters; bidirectional text in one paragraph; small CSS
+changes over many elements, which cost style recalculation and layout), and cooperative mode is no better there. Also
+CSS within what the policy allows, the worker's `violation` reports (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the host site's
 cookies on requests to allowed same-site origins (every mode).
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
@@ -807,7 +818,11 @@ in strict mode.
 | Limit | Value | Exported constant |
 | :--- | :--- | :--- |
 | Inbound calls running at once, per side and environment | 256 | `MAX_INBOUND_IN_FLIGHT` |
+| Guest calls per second, per environment (any one-second window) | 5000 | — |
+| Bytes of guest calls per second, per environment (any one-second window) | 67108864 (64 MiB) | — |
 | Default call timeout (ms) | 30000 | — |
+| Characters of a method name | 256 | — |
+| Characters of an error message a call carries | 65536 | — |
 | Guest log lines per second, per environment | 1000 | `LOG_EVENTS_PER_SECOND` |
 | Guest log lines kept until the guest is connected | 1000 (and 4 MiB) | — |
 | Arguments kept per log line | 64 | `LOG_MAX_ARGS` |
@@ -839,6 +854,7 @@ in strict mode.
 | Fetch: largest `timeoutMs` | 120000 | — |
 | Fetch: default `maxConcurrent` | 4 | — |
 | Fetch: largest `maxConcurrent` | 16 | — |
+| Fetch: characters of a URL, as written and as parsed | 8192 | — |
 | Guest writes: requests per second, per environment | 100 | `GUEST_WRITES_PER_SECOND` |
 | Guest writes: bytes per second, per environment | 8388608 (8 MiB) | `GUEST_WRITE_BYTES_PER_SECOND` |
 

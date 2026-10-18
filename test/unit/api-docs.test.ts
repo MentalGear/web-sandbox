@@ -117,7 +117,14 @@ describe('docs/API.md lists the public surface', () => {
         // one window's worth (review round 2, M-2): the bootstrap derives it from its mirror of LOG_EVENTS_PER_SECOND
         expect(read('src/lib/in-sandbox-script.ts')).toMatch(/const LOG_BUFFER_LIMIT = LOG_LINES_PER_SECOND;/);
         const logBuffer = Number(read('src/lib/in-sandbox-script.ts').match(/const LOG_LINES_PER_SECOND = (\d+);/)![1]);
+        // internal constants, read where they are declared (review round 3: no new exports)
+        const constant = (file: string, name: string) => Number(read(file).match(new RegExp(`const ${name} = (\\d+);`))![1]);
         const expected: [string, number][] = [
+            ['Guest calls per second', constant('src/host.ts', 'GUEST_CALLS_PER_SECOND')],
+            ['Bytes of guest calls per second', constant('src/host.ts', 'GUEST_CALL_BYTES_PER_SECOND')],
+            ['Characters of a method name', constant('src/lib/rpc.ts', 'MAX_NAME_LENGTH')],
+            ['Characters of an error message a call carries', constant('src/lib/rpc.ts', 'MAX_TEXT_LENGTH')],
+            ['Fetch: characters of a URL', constant('src/lib/fetch-bridge.ts', 'MAX_URL')],
             ['Default call timeout', rpcDefault],
             ['Guest log lines kept until the guest is connected', logBuffer],
             ['Strict: characters of a render or event target id', VIEW_TARGET_MAX_LENGTH],
