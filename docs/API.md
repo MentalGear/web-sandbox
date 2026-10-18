@@ -689,7 +689,8 @@ encoding, streams, `crypto`, `Blob`, `File`, `URL`, IndexedDB, `OffscreenCanvas`
 and `fonts`, `caches`, `Notification`, `Worker` and `SharedWorker` (no nested workers), the Service Worker, Push, RTC,
 MediaSource and Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`; and the worker's own
 `postMessage`, `onmessage` and `onmessageerror`: the library's port, with its budgets, is the only way from the worker
-to its parent (worker mode's frame, strict mode's view).
+to its parent (worker mode's frame, strict mode's view). Its uncaught errors leave it the same way, as
+[`sandbox-log`](#sandbox-log--sandboxlog) lines.
 
 ### `bridge`
 

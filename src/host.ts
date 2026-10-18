@@ -293,8 +293,10 @@ const STRICT_CAPABILITIES = [...SAFE_CAPABILITIES, ...STRICT_VIEW_FLAGS] as cons
 // frames, in any one-second window. The defaults of `callLimits`; the configuration gives the budget in callBudgetOf(),
 // the one place both ends take it from (the host's window, _admitGuestCall; the guest's broker, through the bootstrap's
 // features).
-// 1000 calls (review round 4, M-6): at 4900 calls per second Firefox's host page was 32–37% busy, with gaps of 1.8 s in
-// bursts; at 1000 it stays within the share the view's time budget allows (measured, test/e2e/review-round-4.spec.ts).
+// 1000 calls (review round 4, M-6, the owner's decision): the reviewers measured Firefox's host page 32–37% busy at 4900
+// calls per second, with gaps of 1.8 s in bursts. At 1000, a strict guest calling paced at the budget and one sending
+// a second's worth at once each second left Firefox's host page its idle ticks, longest gap 15–27 ms
+// (test/e2e/review-round-4.spec.ts, "M-6").
 const GUEST_CALLS_PER_SECOND = 1000;
 const GUEST_CALL_BYTES_PER_SECOND = 67108864;
 
