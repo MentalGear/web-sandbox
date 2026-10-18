@@ -49,6 +49,7 @@ conditional "continue".
 | Focused review 2026-10-14 | ✅ 11 findings and one hardening, all closed (S27–S31): a reference names a file only for the kind of load its type is for (W1), rates hold in any one-second window (W2), the strict renderer removes SVG animation (F1), `workerExecutionTimeout` is a free event loop at the deadline (F2), no error text in reasons (F3), no assigned config keys (F4), one eval writer (F5), refused configs never stored (F6); [report](security/FOCUSED-REVIEW-2026-10-14.md) |
 | Review round 1 2026-10-15 | 🟡 not clean (the stopping rule's count stays 0): 8 medium and 22 low or info findings from four reviewers (R5 did not complete), all fixed or documented (S50–S53): the host page's policy (S50), one console relay with byte budgets (S51), the strict view's character and rate budget and a linear renderer (S52), the low findings and the cooperative modifier-click residual (S53); the owner's three decisions done (S54); [report](security/REVIEW-ROUND-1-2026-10-15.md) |
 | Review round 2 2026-10-15 | 🟡 not clean (the count stays 0): 2 high and 8 medium findings in our code from three defensive reviews (lifecycle model, change audit, documented limits measured), all fixed (S55): intrinsics captured before guest code (C-1), the byte measure on a cloned snapshot with an allow-list (C-3), worker mode `ready` only with a running worker, the host page's Trusted Types reason, a DOM-free import with a build-time view hash, one build predicate, long timers; every documented limit held at its edge on all three engines; round 3 held by the owner (S56); [report](security/REVIEW-ROUND-2-2026-10-15.md) |
+| Review round 3 2026-10-18 | 🟡 not clean (the count stays 0): 2 high and 6 medium findings in our code from the same three reviews, all fixed (S57): whole RPC frames and a guest call budget (`callLimits`), the view's time budget charges only measured rendering, `allowAnimations` (default `true`; `false` removes animations and transitions from the view) and `allowAutoplay` (default `false`); where the view runs per engine measured ([research 16](research/16_view_isolation/README.md)); round 4 held by the owner (S58); [report](security/REVIEW-ROUND-3-2026-10-18.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -73,7 +74,9 @@ limits are a frozen list (S44: no new guest-realm patches), S42 was accepted and
 worker mode into strict mode. Review round 1 the same day ([report](security/REVIEW-ROUND-1-2026-10-15.md)) added and
 closed S50–S53 (R2-2 a cooperative-mode limit); the owner's three decisions on it were done the same day (S54).
 Review round 2 the same day, under the owner's adjusted rule ([report](security/REVIEW-ROUND-2-2026-10-15.md)), added and
-closed S55; round 3 is held by the owner (S56).
+closed S55. Round 3 (S56, [report](security/REVIEW-ROUND-3-2026-10-18.md)) ran 2026-10-15 to 2026-10-18 and added and closed
+S57; round 4 is held by the owner (S58), the Lean evaluation is next (S59), and the clean-up with independent
+reviews follows when the rounds end (S60).
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1491,17 +1494,64 @@ Tests: `test/unit/review-round-2.test.ts`, `test/unit/review-round-2-lifecycle.t
 `test/e2e/review-round-2.spec.ts`, `test/e2e/host-policy.spec.ts`, `test/e2e/package.spec.ts`,
 `scripts/smoke-package.sh`.
 
-### S56 · Review round 3 — ⏸️ **held by the owner**
+### S56 · Review round 3 — ✅ **done** (not clean: S57)
 
-The next round under the stopping rule (the [round 2 report](security/REVIEW-ROUND-2-2026-10-15.md#stopping-rule) has it
-as it reads now; the count is 0 of 2). It runs the same three reviews as round 2, on the `main` that closes S55:
-- model-based lifecycle testing;
-- an audit of the code changed since round 2 (`31b8f0d..` the merge of S55);
-- each documented limit measured at its edge on Chromium, Firefox and WebKit.
+Ran on `main` at `16c545b` with the same three reviews as round 2 (lifecycle model, change audit, documented limits
+measured); the owner reviewed the findings before any fix. [Report](security/REVIEW-ROUND-3-2026-10-18.md).
+
+### S57 · Review round 3: whole RPC frames, a call budget, the view's time, animations and autoplay — ✅ **done**
+
+*From [review round 3](security/REVIEW-ROUND-3-2026-10-18.md) and [research 16](research/16_view_isolation/README.md).*
+
+**Done**:
+- **Part 1** (`32ee7fd`):
+  - every RPC frame is built by one set of builders and measured whole, with method names capped at 256 characters and error text at 64 Ki characters (C-1);
+  - a guest call budget, `callLimits: { maxPerSecond, maxBytesPerSecond }` (M-2);
+  - honest refusal texts (C-3, M-7);
+  - the strict view's error text bounded before posting (C-4);
+  - re-insertion after a teardown rebuilds (L-1);
+  - every call settles (L-2);
+  - dropped guest lines reported (L-4);
+  - the whole fetch URL (M-4);
+  - docs (C-5, C-6, M-3).
+- **Part 2**:
+  - The view's time budget charges only the rendering it measured, never time without a frame, with debt capped at 1000 ms (C-2, M-5).
+  - `allowAnimations` (default `true`; `false` removes CSS animations and transitions from the view, measured back to the idle baseline on all three engines; M-1/L-3).
+  - `allowAutoplay` (default `false`: the view drops `autoplay`).
+  - Where the view runs per engine, and the residuals the switches do not remove, are documented (research 16, ADR-005 amendment, README).
+
+Tests: `test/unit/review-round-3.test.ts`, `test/e2e/review-round-3.spec.ts`, `test/unit/view-switches.test.ts`,
+`test/e2e/view-switches.spec.ts`, `test/e2e/view-budget.spec.ts`.
+
+### S58 · Review round 4 — ⏸️ **held by the owner**
+
+The next round under the stopping rule (count 0 of 2). It runs the same three reviews on the `main` that closes S57:
+- model-based lifecycle testing, including `callLimits`, `allowAnimations` and `allowAutoplay`;
+- an audit of the code changed since round 3 (`16c545b..` the merge of S57);
+- each documented limit measured at its edge on Chromium, Firefox and WebKit, including the call budget, the view's debt cap and the animation switch.
 
 They use at least two model families.
-Round 2's highs both came from code added by round 1's fixes, so the change audit carries the most weight: S55 itself
-is the code under review.
+
+### S59 · Evaluate machine-checked proofs (Lean) — ⏳ **next, after S57**
+
+The owner asked whether Lean proofs should be used. Decide where a proof would remove a class of finding that tests and
+reviews keep finding, and where it would not: what the browser does is outside any model. Candidates to assess:
+- the lifecycle state machine and its no-loop rule (CB5);
+- the sliding-window budgets (log relay, call budget, guest writes) and their agreement between guest and host;
+- the size measure's allow-list (a bound on what crosses);
+- the RPC frame builders (every frame measured).
+
+The output is a recommendation with its cost, and a small proof of concept if it pays off.
+
+### S60 · Repository and docs clean-up, then independent adversarial reviews — ⏸️ **after we are done**
+
+Once the review rounds end: a proper clean-up of the repository and the docs:
+- stale files and branches;
+- docs that grew by amendment, consolidated into their current state;
+- research notes indexed;
+- the backlog compacted.
+
+Then independent adversarial reviews of the cleaned-up repository and docs by sub-agents of other model families (Sonnet and Haiku), with their findings verified and fixed the same way as the review rounds.
 
 ## B · API Surface & DX
 

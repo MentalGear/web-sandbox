@@ -72,3 +72,66 @@ test('R1-2: 43 000 <wbr> elements (within the element budget) leave the host pag
     expect(await inView<number>(page, browserName, `document.getElementsByTagName('wbr').length`)).toBe(0);
     expect(await inView<number>(page, browserName, `document.getElementById('w').textContent.length`)).toBe(43000); // unwrapped: the text stays
 });
+
+// Review round 3, C-2: the time budget charged a view's rendering as the wall time to the next animation frame, from a
+// callback queued per flush. A hidden or off-screen view runs no frame, so every flush meanwhile left a callback that,
+// once the view showed again, charged its whole age: hidden 5 s with one render applied meanwhile, the next render
+// waited 18.3 s at 16c545b (Chromium under display:none and off-screen, Firefox under display:none, WebKit off-screen).
+// The budget now charges only the rendering it measured after a flush (in-sandbox-view.ts, the gap meter).
+const HIDINGS: [string, string, string][] = [
+    ['display:none', `el.style.display = 'none'`, `el.style.display = ''`],
+    ['off-screen', `el.style.marginTop = '20000px'`, `el.style.marginTop = ''`],
+];
+
+test.describe('C-2: a view hidden for 5 s, with a render applied meanwhile, applies the next render at once when shown', () => {
+    for (const [name, hide, show] of HIDINGS) {
+        test(name, async ({ sandbox, page, browserName }) => {
+            test.setTimeout(60000);
+            await mountEntry(sandbox, `sandboxView.render('<p id="a">0</p>'); globalThis.show = (n) => sandboxView.text('a', String(n));`);
+            await waitInView(page, browserName, `document.getElementById('a') && document.getElementById('a').textContent === '0'`);
+            const style = (code: string) => page.evaluate((source) => new Function('el', source)(document.querySelector('web-sandbox')), code);
+            await style(hide);
+            const hidden = Date.now();
+            await page.waitForTimeout(300);
+            await sandbox.run('show(1)');
+            await waitInView(page, browserName, `document.getElementById('a').textContent === '1'`, 3000); // applied while hidden
+            await page.waitForTimeout(Math.max(0, 5000 - (Date.now() - hidden)));
+            await style(show);
+            await page.waitForTimeout(500); // the frames resume
+            const started = Date.now();
+            await sandbox.run('show(2)');
+            await waitInView(page, browserName, `document.getElementById('a').textContent === '2'`, 30000);
+            const applied = Date.now() - started;
+            console.log(`MEASURED ${browserName} C-2 ${name}: the render after showing applied in ${applied} ms`);
+            expect(applied).toBeLessThan(1500);
+        });
+    }
+});
+
+// Review round 3, M-5: the time budget left one frame's length per flush uncharged (it charged the wait to the next
+// frame past 16.7 ms), so under a flood of operations whose rendering takes long the view took 22–25% of the host page's
+// thread against its 20% budget. It now charges the rendering it measured, in full. Re-rendering 37 449 empty elements
+// without pause, as in review-round-2.spec.ts (M-3): the host page keeps at least 70% of its idle ticks (the budget is
+// 20%; the margin is for the measure, a 10 ms interval on a shared machine).
+test('M-5: under a flood of re-renders the view takes about its budget of the host page, not more', async ({ sandbox, page, browserName }) => {
+    test.setTimeout(90000);
+    await mountEntry(sandbox, `
+        sandboxView.render('<div id="a"></div>');
+        globalThis.flood = () => {
+            const html = '<i></i>'.repeat(37449);
+            const end = Date.now() + 14000;
+            const timer = setInterval(() => {
+                sandboxView.render(html, 'a');
+                if (Date.now() > end) { clearInterval(timer); console.log('M5 flood done'); }
+            }, 5);
+        };`);
+    await page.waitForTimeout(300);
+    const idle = await countTicks(page, 8000);
+    await sandbox.run('flood()');
+    await page.waitForTimeout(2000);
+    const loaded = await countTicks(page, 8000);
+    await sandbox.waitForLog('M5 flood done', 30000);
+    const busy = Math.round((1 - loaded / idle) * 100);
+    console.log(`MEASURED ${browserName} M-5 host ticks in 8 s: idle ${idle}, under the flood ${loaded} (the view took ${busy}% of the host page's idle ticks)`);
+    expect(loaded).toBeGreaterThan(idle * 0.7);
+});
