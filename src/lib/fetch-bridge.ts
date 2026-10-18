@@ -85,7 +85,7 @@ export type FetchRefusal = Error & { code: FetchErrorCode; reason?: string };
 export interface FetchRecord {
     /** The method, upper case ('' when the guest sent no valid one). */
     method: string;
-    /** The URL without its fragment, or the guest's string clamped to 2048 characters when it is not a URL. */
+    /** The URL without its fragment, or the guest's string when it is not a URL; at most MAX_URL (8192) characters. */
     url: string;
     /**
      * ok        a response was handed to the guest (any HTTP status)
@@ -133,7 +133,9 @@ const FORBIDDEN_HEADER = /^(accept-charset|accept-encoding|access-control-reques
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]{1,64}$/;
 const MAX_HEADERS = 64;
 const MAX_HEADER_VALUE = 8192;
-const MAX_REPORTED_URL = 2048;
+// The longest URL the bridge takes, as the guest wrote it and as parsed (percent-encoding can make the parsed one
+// longer): past it a request is refused. A record reports the whole URL, so it is never longer than this either (review
+// round 3, M-4: records were cut to 2048 characters, so a valid request's URL was reported cut).
 const MAX_URL = 8192;
 const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
 
@@ -300,9 +302,9 @@ const reportedUrl = (value: unknown): string => {
     try {
         const url = new URL(value);
         url.hash = '';
-        return url.href.slice(0, MAX_REPORTED_URL);
+        return url.href.slice(0, MAX_URL);
     } catch {
-        return value.slice(0, MAX_REPORTED_URL);
+        return value.slice(0, MAX_URL);
     }
 };
 
@@ -345,7 +347,8 @@ export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigi
     const source = request as Record<string, unknown>;
 
     const rawUrl = source.url;
-    if (typeof rawUrl !== 'string' || rawUrl.length > MAX_URL) return fetchRefusal('FETCH_NOT_ALLOWED', 'the URL must be an absolute URL string');
+    if (typeof rawUrl !== 'string') return fetchRefusal('FETCH_NOT_ALLOWED', 'the URL must be an absolute URL string');
+    if (rawUrl.length > MAX_URL) return fetchRefusal('FETCH_NOT_ALLOWED', `the URL is longer than ${MAX_URL} characters`);
     let url: URL;
     try {
         url = new URL(rawUrl);
@@ -355,6 +358,7 @@ export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigi
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return fetchRefusal('FETCH_NOT_ALLOWED', `${url.protocol} URLs are not fetched`);
     if (url.username || url.password) return fetchRefusal('FETCH_NOT_ALLOWED', 'URLs with credentials are not fetched');
     url.hash = '';
+    if (url.href.length > MAX_URL) return fetchRefusal('FETCH_NOT_ALLOWED', `the URL is longer than ${MAX_URL} characters`);
 
     if (!(policy.allow as readonly string[]).includes(url.origin)) {
         // One text to the guest for every origin that is not listed (broad review 2026-10-14, CB6): a refusal that

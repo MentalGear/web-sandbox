@@ -79,7 +79,8 @@ describe('B3: every sandbox-log detail is normalised and labelled', () => {
         for (let i = 0; i < LOG_EVENTS_PER_SECOND + 500; i++) el._onGuestMessage(port1, () => {}, { type: 'LOG', level: 'log', args: [i] }, null);
         el._dispatchHostLog('error', 'a line of the host');
         expect(heard.filter(d => d.source === 'guest')).toHaveLength(LOG_EVENTS_PER_SECOND);
-        expect(heard.filter(d => d.source === 'host')).toHaveLength(1);
+        // the host's own lines: the one notice that guest lines were dropped (review round 3, L-4), and the line above
+        expect(heard.filter(d => d.source === 'host').map(d => [d.level, d.args[0]])).toEqual([['warn', expect.stringContaining('lines in one second')], ['error', 'a line of the host']]);
         expect(warn.mock.calls.filter(c => String(c[0]).includes('lines in one second'))).toHaveLength(1);
 
         el.reset();
@@ -200,13 +201,21 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
         });
     });
 
-    it('the source: _generation is compared only inside _notifyThenAct, and every call of it is a row of PATHS', () => {
+    it('the source: _generation is compared only inside _notifyThenAct (and, for a call, _issue and _postRpc), and every call of _notifyThenAct is a row of PATHS', () => {
         const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/host.ts'), 'utf8');
-        const start = source.indexOf('private _notifyThenAct(');
-        const end = source.indexOf('\n    }\n', start);
+        const bodyOf = (name: string) => {
+            const start = source.indexOf(`private ${name}(`);
+            return [start, source.indexOf('\n    }\n', start)] as const;
+        };
         const reads = [...source.matchAll(/this\._generation(?!\+\+)/g)].map(match => match.index!);
-        expect(reads).toHaveLength(2); // `const generation = this._generation` and the comparison after notify()
-        for (const index of reads) expect(index > start && index < end, source.slice(index - 80, index + 40)).toBe(true);
+        // `const generation = this._generation` and the comparison after notify(); the environment a host call is made
+        // in, and the one check that its frame is sent there (review round 3, L-2)
+        const READERS: [string, number][] = [['_notifyThenAct', 2], ['_issue', 1], ['_postRpc', 1]];
+        expect(reads).toHaveLength(4);
+        for (const [name, count] of READERS) {
+            const [start, end] = bodyOf(name);
+            expect(reads.filter(index => index > start && index < end), name).toHaveLength(count);
+        }
         // Paths whose action is not a termination are forced where their feature is tested: the guest-write announcement
         // ('fileswritten', then the acknowledgement; test/unit/guest-writes.test.ts, "review B5").
         const OTHER_PATHS = ['_handleGuestWrite'];

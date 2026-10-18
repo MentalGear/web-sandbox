@@ -161,11 +161,13 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
 *   **Events** are dispatched on the element. `sandbox-log` (guest `console` output and errors) bubbles,
     so a listener on `window` hears every sandbox on the page and `event.target` says which one. Its detail
     is `{ type: 'LOG', level, args, source }` (type `SandboxLog`): `level` is `log`, `info`, `warn` or
-    `error`; `source` is `'host'` for the element's own lines (an execution timeout, an entry that failed) and
+    `error`; `source` is `'host'` for the element's own lines (an execution timeout, an entry that failed, guest lines
+    it dropped past its per-second window) and
     `'guest'` for everything from the guest, whatever it claims. Guest lines carry the guest's `console` calls (every
     method), uncaught errors and unhandled rejections (`Uncaught …`), in every mode; the guest's console never throws:
     a function, a DOM node or anything else structured clone refuses arrives as a string naming its kind, an `Error`
-    as `{ name, message, stack }`. Bounded in the guest before anything is posted: 64 arguments, strings cut at
+    (also inside an object, an array or `Promise.allSettled`'s results) as `{ name, message, stack }`. Bounded in the
+    guest before anything is posted: 64 arguments, strings cut at
     64 Ki characters, 1 MiB per line (`LOG_MAX_BYTES`), 1000 lines and 4 MiB per second; the element measures each
     line again. Lines logged before the guest is connected (a strict entry's top level) are kept, up to 1000, and
     arrive once it is. `args` are the guest's data: read them, don't merge them into your objects with
@@ -303,7 +305,11 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
     and `BUSY` are worth retrying, and `TERMINATED` only after the next `ready` event (types: `RpcErrorCode`, `RpcError`).
 *   **At most 256 calls run at once** on each side for one environment (`MAX_INBOUND_IN_FLIGHT`): a further
     call is refused at once with `BUSY`, before its method runs, so calls to a slow method cannot pile up
-    without bound.
+    without bound. The guest makes at most 5000 calls and 64 MiB of calls in any one second (`callLimits` sets
+    other values); past that its `bridge` refuses a call with `BUSY` before sending it, and the element answers `BUSY`
+    to one that arrives anyway.
+*   **Every message is bounded as a whole**: a method name is at most 256 characters, an error message at most
+    65536 (cut, with a marker), and arguments or a result at most 33 MiB (`RPC_MAX_BYTES`), measured on both sides.
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never
     evaluates code. A worker-mode guest has no markup, though, so it can only expose methods
     through `execute()`, which does need `scriptUnsafe`.
@@ -573,8 +579,10 @@ What remains for the default:
     depending on its process model. The view's budgets bound the common cases (one render in flight; elements,
     depth and characters held; characters parsed per second; 200 ms of the view's own time per second, measured),
     but not what one operation's layout and paint cost beyond what the markup weighs: CSS filters (WebKit: 10
-    `blur()`s on 1 000 elements, 3.7 s) and bidirectional text in one paragraph (240 000 characters alternating
-    directions: tens of seconds in Chromium and WebKit, engine and machine dependent). Cooperative mode is no better:
+    `blur()`s on 1 000 elements, 3.7 s), bidirectional text in one paragraph (240 000 characters alternating
+    directions: tens of seconds in Chromium and WebKit, engine and machine dependent), and small CSS changes over many
+    elements, which cost style recalculation and layout (Firefox: a 31-character `text()` into a `<style>` over 46 000
+    elements, 7 s). Cooperative mode is no better:
     there a guest `while (true) {}` freezes the host page wherever the frame shares its thread.
 *   **CSS within what the policy allows**: style-based probing of the view's own content, and loads from the origins
     you allow.

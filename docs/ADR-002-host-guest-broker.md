@@ -1,6 +1,6 @@
 # ADR-002: How should host and guest call each other?
 
-**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes)), 2026-10-13 ([strict mode renders bypass the host](#amendment-2026-10-13-strict-mode-renders-bypass-the-host)), 2026-10-14 ([adversarial review: the channel](#amendment-2026-10-14-adversarial-review-the-channel)), 2026-10-14 ([broad review: the guest announces its port](#amendment-2026-10-14-broad-review-the-guest-announces-its-port)), 2026-10-14 ([the announcement completes the build](#amendment-2026-10-14-the-announcement-completes-the-build)), 2026-10-15 ([byte budgets](#amendment-2026-10-15-review-round-1-byte-budgets-on-every-message))
+**Status**: Accepted · **Date**: 2026-10-10 · **Amended**: 2026-10-11 ([refusal codes](#amendment-2026-10-11-refusals-carry-a-code)), 2026-10-13 ([reserved methods](#amendment-2026-10-13-reserved-methods-and-library-codes)), 2026-10-13 ([strict mode renders bypass the host](#amendment-2026-10-13-strict-mode-renders-bypass-the-host)), 2026-10-14 ([adversarial review: the channel](#amendment-2026-10-14-adversarial-review-the-channel)), 2026-10-14 ([broad review: the guest announces its port](#amendment-2026-10-14-broad-review-the-guest-announces-its-port)), 2026-10-14 ([the announcement completes the build](#amendment-2026-10-14-the-announcement-completes-the-build)), 2026-10-15 ([byte budgets](#amendment-2026-10-15-review-round-1-byte-budgets-on-every-message)), 2026-10-17 ([whole frames and a call budget](#amendment-2026-10-17-review-round-3-whole-frames-and-a-budget-on-the-guests-calls))
 
 ## Why this ADR exists
 
@@ -296,3 +296,22 @@ guest's console relay is the one chokepoint for log lines in every mode: it neve
 as a string naming its kind), bounds each line to `LOG_MAX_BYTES` and the lines it sends to `LOG_EVENTS_PER_SECOND`
 and `LOG_BYTES_PER_SECOND` per second, so a flood never reaches the host's thread; the host measures every line again.
 No new code: the existing ones say it.
+
+## Amendment (2026-10-17): review round 3: whole frames, and a budget on the guest's calls
+
+**When**: review round 3 (C-1, M-2). **Why**: only a call's arguments and a result were measured. A method name of
+2^27 characters came back whole in `unknown method: …`, and a handler's error text of 2^28 characters crossed as it
+was, each stalling the host page for most of a second per call. And calls within every cap (32 MiB each, back to back;
+or small ones, 44 000 a second) kept the host page busy without bound.
+
+**Decision**: every RPC frame is made by one builder inside `createBroker` (`requestFrame`, `resultFrame`,
+`refusalFrame`; a unit test keeps every frame of `src/` there) from parts bounded before it is called: a method name of
+at most 256 characters (longer: `INVALID_CALL` at the caller, `UNKNOWN_METHOD` without the name at the receiver, never
+registered by `expose`), an id that is a number or a short string, an error text cut to 65 536 characters with a marker
+(cut again on receipt), and a snapshot whose whole frame is measured when it is posted and when it arrives. The calls
+the guest makes have a per-second budget per environment, by default 5000 calls and 64 MiB (`callLimits` in the
+config sets others; it cannot be turned off), a sliding one-second window like the log relay's: the guest's broker, the
+only code that holds the port, refuses a call past it with `BUSY` before sending it, and the host counts the same
+window on receipt and answers `BUSY`. `BUSY` stays a code the other side reports; the guest's broker mints it only for
+the host's budget, applied early. A value the byte measure does not know (an `Error`) is refused with a message that
+names it, never as past the budget.

@@ -18,6 +18,7 @@ import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from 
 import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { setLongTimeout, type LongTimeout } from "./lib/long-timer";
+import { createRateLimiter, type RateLimiter } from "./lib/rate-limit";
 import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT, type SandboxViolation } from "./lib/violation";
 import { createLogLimiter, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, LOG_OWN_LINES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
@@ -25,7 +26,7 @@ import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type Fetc
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
  * The element's configuration, passed to setConfig(): every option left out takes its default
@@ -160,6 +161,21 @@ export interface SandboxConfigOptions {
      * src/lib/guest-writes.ts.
      */
     guestWrites?: boolean;
+    /**
+     * The per-second budget of the calls the guest makes (every mode): `maxPerSecond` calls and `maxBytesPerSecond`
+     * bytes of them in any one-second window, per environment. The guest's bridge refuses a call past it with BUSY,
+     * and the element answers BUSY to one that arrives anyway. A field left out takes its default; one that is not a
+     * finite number > 0 takes its default with one warning. There is no "off".
+     */
+    callLimits?: CallLimits;
+}
+
+/** `callLimits` (docs/API.md#calllimits): the per-second budget of the calls the guest makes. */
+export interface CallLimits {
+    /** Calls per second. Default 5000. */
+    maxPerSecond?: number;
+    /** Bytes of calls per second, each call's whole message measured as RPC_MAX_BYTES is. Default 67108864 (64 MiB). */
+    maxBytesPerSecond?: number;
 }
 
 /**
@@ -237,6 +253,44 @@ const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
 // owner's move of allow-forms leaves strict mode as it was.
 const STRICT_VIEW_FLAGS = ['allow-scripts', 'allow-forms'] as const;
 const STRICT_CAPABILITIES = [...SAFE_CAPABILITIES, ...STRICT_VIEW_FLAGS] as const;
+
+// The per-second budget of the calls the guest makes, per environment (review round 3, M-2): calls, and bytes of their
+// frames, in any one-second window. The defaults of `callLimits`; the configuration gives the budget in callBudgetOf(),
+// the one place both ends take it from (the host's window, _admitGuestCall; the guest's broker, through the bootstrap's
+// features).
+const GUEST_CALLS_PER_SECOND = 5000;
+const GUEST_CALL_BYTES_PER_SECOND = 67108864;
+
+interface CallBudget {
+    calls: number;
+    bytes: number;
+}
+
+const DEFAULT_CALL_BUDGET: Readonly<CallBudget> = Object.freeze({ calls: GUEST_CALLS_PER_SECOND, bytes: GUEST_CALL_BYTES_PER_SECOND });
+
+// The call budget `callLimits` asks for (from the copy setConfig() took). Each field is a finite number > 0, else its
+// default: left out, silently; anything else (Infinity, 0, a negative number, NaN, a string), with a warning. There is no
+// "off": a budget that can be lifted is one a config typo lifts. Never throws: a callLimits that is not an object is
+// warned about and gives the defaults.
+function callBudgetOf(callLimits: unknown, warn: (message: string) => void): Readonly<CallBudget> {
+    if (callLimits === undefined) return DEFAULT_CALL_BUDGET;
+    if (!callLimits || typeof callLimits !== 'object' || Array.isArray(callLimits)) {
+        warn(`[Sandbox] callLimits must be an object; ${shown(callLimits)} was ignored: the defaults apply (${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes} bytes per second).`);
+        return DEFAULT_CALL_BUDGET;
+    }
+    const limits = callLimits as Record<string, unknown>;
+    const field = (name: keyof CallLimits, fallback: number): number => {
+        const value = limits[name];
+        if (value === undefined) return fallback;
+        if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+        warn(`[Sandbox] callLimits.${name} must be a finite number > 0; ${typeof value === 'number' ? String(value) : shown(value)} was ignored: the default ${fallback} applies.`);
+        return fallback;
+    };
+    return Object.freeze({ calls: field('maxPerSecond', DEFAULT_CALL_BUDGET.calls), bytes: field('maxBytesPerSecond', DEFAULT_CALL_BUDGET.bytes) });
+}
+
+// Why a guest call past the budget is refused (BUSY): the same words in the guest's broker (in-sandbox-script.ts).
+const callBudgetText = (budget: Readonly<CallBudget>) => `more than ${budget.calls} calls or ${budget.bytes} bytes of calls in one second`;
 
 const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 
@@ -398,9 +452,8 @@ export class WebSandbox extends ElementBase {
     private _guestWindow: Window | null = null;
     private _stopListening: (() => void) | null = null;
     private _loadDeadline: Watchdog | null = null; // LOAD_TIMEOUT_MS until the guest checks in, or a frame with no bootstrap loads (CB3, S46)
-    // A build termination being dispatched from initialize(), and the build inputs it was for (CB5): a 'terminated'
-    // listener that builds again from the same inputs gets the same answer, so it is not dispatched again.
-    private _buildTermination: { reason: string; inputs: number } | null = null;
+    // The reason of the build termination being dispatched, while it is, or null (CB5; see _terminateBuild).
+    private _buildTermination: string | null = null;
     private _buildInputs = 0; // counts changes to what a build reads: setConfig(), load(), the files
     private _buildWithin: string | null = null; // the build termination being dispatched when this build started (L-4)
     private _state: SandboxState = 'idle'; // changed only by _enterState()
@@ -412,19 +465,28 @@ export class WebSandbox extends ElementBase {
     private _warnedOrigins = new Set<string>();  // origins warnings (an entry dropped, connectionsAllowed), once each per instance
     private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
     private _warnedFetchBridge = new Set<string>();  // fetchBridge config warnings, once each per instance
+    private _warnedCallLimits = new Set<string>();   // callLimits config warnings, once each per instance
     // The guest-write overlay (C5): created by each build when guestWrites is on, else null. It outlives its
     // environment's termination (closed, still listable and committable) and is discarded by the next build and on
     // removal (_discardGuestWrites).
     private _guestWrites: GuestWrites | null = null;
     private _violationCounts = new Map<string, number>(); // 'violation' events dispatched per source for the current environment (capped, violation.ts)
     private _logLimiter = createLogLimiter(); // guest 'sandbox-log' events per second for the current environment (sandbox-log.ts)
+    // The per-second budget of the guest's calls (M-2): what the config gives (callBudgetOf), and this environment's
+    // windows, made again by every teardown.
+    private _callBudget: Readonly<CallBudget> = DEFAULT_CALL_BUDGET;
+    private _guestCalls: RateLimiter = createRateLimiter(DEFAULT_CALL_BUDGET.calls);
+    private _guestCallBytes: RateLimiter = createRateLimiter(DEFAULT_CALL_BUDGET.bytes);
     private _warnedLogLimit = false;          // the log rate limit warned for the current environment
     private _ownLines = 0;                    // the guest relay's own lines dispatched for the current environment (LOG_OWN_LINES)
     private _warnedLogBytes = false;          // a guest line past LOG_MAX_BYTES warned for the current environment
-    // Counts environments: every teardown increments it. Read only by _notifyThenAct, the one path for a host
-    // action that dispatches an event and then acts on the environment, so a listener that reset or terminated
-    // the sandbox in between is never undone (review B5).
+    // Counts environments: every teardown increments it. Read by _notifyThenAct, the one path for a host action that
+    // dispatches an event and then acts on the environment, so a listener that reset or terminated the sandbox in between
+    // is never undone (review B5); and by _postRpc, so a call is sent only to the environment it was made in (L-2).
     private _generation = 0;
+    // The environment (its _generation) of the host call being made now, while the broker copies its arguments and
+    // sends it (_issue), or null outside one.
+    private _issuedIn: number | null = null;
     private _config: StoredConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
     // Why the last setConfig() argument could not be used, or null: while set, every build is refused with
     // this reason (initialize), as for an unknown mode.
@@ -468,7 +530,12 @@ export class WebSandbox extends ElementBase {
     // ever carries the host's own requests: it queues them until a port exists, then setupChannel
     // flushes them. Answers to the guest never use it — they go back on the port the request arrived on.
     // Results go back with their snapshot's ArrayBuffers transferred (review round 2, C-3: rpc.ts, sendResult).
-    private _broker = createBroker((frame) => this._postRpc(frame), { sizeOf: createSizeOf(), transferResults: true });
+    // A guest's request past its environment's per-second budget is answered BUSY (M-2: _admitGuestCall).
+    private _broker = createBroker((frame) => this._postRpc(frame), {
+        sizeOf: createSizeOf(),
+        transferResults: true,
+        admitInbound: (bytes) => this._admitGuestCall(bytes),
+    });
 
     constructor() {
         super();
@@ -609,6 +676,9 @@ export class WebSandbox extends ElementBase {
         // config without it turns the bridge off.
         const fetchPolicy = toFetchPolicy(input.fetchBridge, (message) => this._warnFetchBridge(message), globalThis.location?.origin ?? '');
         delete sanitizedConfig.fetchBridge;
+        // `callLimits` too: parsed into the call budget both ends take (M-2), kept out of the merged config.
+        const callBudget = callBudgetOf(input.callLimits, (message) => this._warnCallLimits(message));
+        delete sanitizedConfig.callLimits;
         // `origins` is kept out of the merged config too: it is parsed below, for the mode the merged config has.
         delete sanitizedConfig.origins;
         this._dropRemovedOptions(sanitizedConfig);
@@ -636,6 +706,7 @@ export class WebSandbox extends ElementBase {
         this._config = merged;
         this._fetchPolicy = fetchPolicy;
         this._origins = origins;
+        this._callBudget = callBudget;
     }
 
     /**
@@ -846,6 +917,8 @@ export class WebSandbox extends ElementBase {
         // A name that is not a string, or a handler that is not a function, is a mistake to say at once (review round
         // 1, R3-9): it used to be ignored, and the guest's call failed with UNKNOWN_METHOD far from the cause.
         if (typeof name !== 'string') throw new TypeError('[Sandbox] expose(): the name must be a string');
+        // the broker's longest method name (rpc.ts, review round 3, C-1): a longer one could never be called
+        if (name.length > 256) throw new TypeError(`[Sandbox] expose(): the name "${name.slice(0, 64)}…" is longer than 256 characters`);
         if (typeof fn !== 'function') throw new TypeError(`[Sandbox] expose(): the handler for "${name.slice(0, 64)}" must be a function`);
         if (name.startsWith(RESERVED_METHOD_PREFIX)) {
             console.warn(`[Sandbox] expose(): names starting with "${RESERVED_METHOD_PREFIX}" are reserved for the library; "${name}" was not exposed.`);
@@ -866,14 +939,30 @@ export class WebSandbox extends ElementBase {
     call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
         const refusal = this._noEnvironmentError();
         if (refusal) return Promise.reject(refusal);
-        return this._queuedWhilePending(() => this._broker.call(method, ...args)) as Promise<T>;
+        return this._issue(() => this._broker.call(method, ...args)) as Promise<T>;
     }
 
     /** Like call(), but with an explicit timeout in ms for this one call (0 disables the timeout). */
     callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T> {
         const refusal = this._noEnvironmentError();
         if (refusal) return Promise.reject(refusal);
-        return this._queuedWhilePending(() => this._broker.callWithTimeout(timeoutMs, method, ...args)) as Promise<T>;
+        return this._issue(() => this._broker.callWithTimeout(timeoutMs, method, ...args)) as Promise<T>;
+    }
+
+    // One host call, made in the current environment (review round 3, L-2). The broker copies the arguments with
+    // structuredClone before it sends them, and a getter among them runs then: one that called terminate(), remove() or
+    // reset() ended the environment before the frame was sent, and _postRpc queued it for an environment that no longer
+    // existed (after terminate() or remove(): never sent, never settled), or sent it to the next one. So the call carries
+    // the environment it was made in, nested calls included, and _postRpc sends a frame only there: any other is refused
+    // TERMINATED, at once (RpcSend in rpc.ts). Every call settles, whatever runs while its arguments are copied.
+    private _issue(makeCall: () => Promise<unknown>): Promise<unknown> {
+        const outer = this._issuedIn;
+        this._issuedIn = this._generation;
+        try {
+            return this._queuedWhilePending(makeCall);
+        } finally {
+            this._issuedIn = outer;
+        }
     }
 
     // The queue holds only calls still waiting for their answer (broad review 2026-10-14, CB3). A call made while
@@ -882,10 +971,12 @@ export class WebSandbox extends ElementBase {
     // timed out, and a caller that retried ran it twice. The broker posts a call's one request synchronously from
     // call(), so the frame queued during `makeCall` is this call's.
     private _queuedWhilePending(makeCall: () => Promise<unknown>): Promise<unknown> {
-        const queued = this._queue.length;
+        const queue = this._queue;
+        const queued = queue.length;
         const promise = makeCall();
-        if (this._queue.length === queued) return promise; // sent at once, or refused before sending
-        const entry = this._queue[this._queue.length - 1];
+        // sent at once, or refused before sending (a teardown meanwhile replaced the queue: L-2, _issue)
+        if (this._queue !== queue || queue.length === queued) return promise;
+        const entry = queue[queue.length - 1];
         const drop = () => {
             const index = this._queue.indexOf(entry!);
             if (index >= 0) this._queue.splice(index, 1);
@@ -904,7 +995,10 @@ export class WebSandbox extends ElementBase {
     }
 
     // Sends one of the host's own RPC requests over the port, or queues it until setupChannel flushes (mirrors execute()).
-    private _postRpc(frame: unknown) {
+    // Only for the environment the call was made in, while it stands (L-2, _issue): otherwise nothing is sent, and the
+    // text returned refuses the call TERMINATED.
+    private _postRpc(frame: unknown): string | undefined {
+        if (this._issuedIn !== this._generation || this._state === 'idle' || this._state === 'terminated') return RESET_CALL_MESSAGE;
         if (this._port) {
             this._port.postMessage(frame);
             return;
@@ -1199,15 +1293,16 @@ export class WebSandbox extends ElementBase {
         }
         if (data?.type === 'GUEST_UNCAUGHT') {
             // a later uncaught error of the worker's that only the view could still describe (in-sandbox-view.ts,
-            // review C1): a guest line like the worker's own 'Uncaught …' lines, rate-limited the same way
-            const message = typeof data.message === 'string' ? data.message.slice(0, 2048) : '';
+            // review C1): a guest line like the worker's own 'Uncaught …' lines, rate-limited the same way. The view cut
+            // it and rate-limited it before posting (review round 3, C-4); cut again here, as every frame is checked again.
+            const message = typeof data.message === 'string' ? data.message.slice(0, VIEW_OPTIONS.guestText.maxLength) : '';
             this._dispatchGuestLog({ level: 'error', args: [uncaughtLine(message)] });
             return;
         }
         if (data?.type === 'GUEST_ERROR') {
             // The entry's own error text is the guest's (it wrote the code, or threw the value): a 'guest' line,
             // clamped and rate-limited like every guest line, never part of the host line or the reason (F3).
-            const message = typeof data.message === 'string' ? data.message.slice(0, 2048) : '';
+            const message = typeof data.message === 'string' ? data.message.slice(0, VIEW_OPTIONS.guestText.maxLength) : '';
             this._notifyThenAct(() => {
                 this._dispatchHostLog('error', `[Sandbox] ${ENTRY_FAILED_REASON}`);
                 this._dispatchGuestLog({ level: 'error', args: [uncaughtLine(message)] });
@@ -1275,10 +1370,27 @@ export class WebSandbox extends ElementBase {
         if (!this._logLimiter.admit()) {
             if (this._warnedLogLimit) return;
             this._warnedLogLimit = true;
-            console.warn(`[Sandbox] the guest logged more than ${LOG_EVENTS_PER_SECOND} lines in one second; lines past that rate are not dispatched as 'sandbox-log' events.`);
+            // Said where the lines are read, once per environment (review round 3, L-4): the guest's relay keeps the same
+            // window, but lines delivered late (the host was busy) arrive bunched, past this window though the relay sent
+            // them within its own, and only a console warning said they were gone.
+            const notice = `[Sandbox] the guest logged more than ${LOG_EVENTS_PER_SECOND} lines in one second; lines past that rate are not dispatched as 'sandbox-log' events.`;
+            console.warn(notice);
+            this._dispatchHostLog('warn', notice);
             return;
         }
         this._dispatchLog(frame, 'guest');
+    }
+
+    // One request from the guest against this environment's per-second budget (M-2), before its method is looked up (the
+    // broker asks, rpc.ts): null when it fits, and is counted against both windows; else why it is refused BUSY, and
+    // nothing is counted. The guest's broker refuses a call past the same budget before sending it, so this refuses only
+    // what did not come through that check, or arrived bunched (delivered late while the host page was busy).
+    private _admitGuestCall(bytes: number): string | null {
+        const now = performance.now();
+        if (!this._guestCalls.fits(now) || !this._guestCallBytes.fits(now, bytes)) return callBudgetText(this._callBudget);
+        this._guestCalls.admit(now);
+        this._guestCallBytes.admit(now, bytes);
+        return null;
     }
 
     // A line the element writes itself: labelled 'host', never rate-limited.
@@ -1392,6 +1504,13 @@ export class WebSandbox extends ElementBase {
         this.dispatchEvent(new CustomEvent('fetch', { detail: record, bubbles: true }));
     }
 
+    // What setConfig() did not take of `callLimits`: once per element and message, as the same config is set again and again.
+    private _warnCallLimits(message: string) {
+        if (this._warnedCallLimits.has(message)) return;
+        this._warnedCallLimits.add(message);
+        console.warn(message);
+    }
+
     private _warnFetchBridge(message: string) {
         if (this._warnedFetchBridge.has(message)) return;
         this._warnedFetchBridge.add(message);
@@ -1411,8 +1530,7 @@ export class WebSandbox extends ElementBase {
         }
         const token = {};
         this._pendingTermination = token;
-        const inputs = this._buildInputs;
-        setTimeout(() => this._dispatchBuildTermination(reason ?? '', token, inputs), 0);
+        setTimeout(() => this._dispatchBuildTermination(reason ?? '', token), 0);
     }
 
     private _teardown() {
@@ -1421,6 +1539,8 @@ export class WebSandbox extends ElementBase {
         this._guestWrites?.close(); // its writes stay listable and committable until the next build (initialize)
         this._logLimiter = createLogLimiter(); // the log rate limit is per environment
         this._warnedLogLimit = false;
+        this._guestCalls = createRateLimiter(this._callBudget.calls); // and so is the call budget (M-2)
+        this._guestCallBytes = createRateLimiter(this._callBudget.bytes);
         this._ownLines = 0;
         this._warnedLogBytes = false;
         this._queue = []; // what was queued for the old environment
@@ -1468,15 +1588,9 @@ export class WebSandbox extends ElementBase {
     // could not be used, an unknown mode) and anything the build throws end the same way: state 'terminated',
     // one 'terminated' event with the reason, nothing half-built (_teardown).
     private initialize() {
-        // A 'terminated' listener that builds again (reset(), load()) while the build termination it hears is still
-        // being dispatched, from the same inputs, would get the same refusal or failure, and dispatch it again, and
-        // recurse until the stack ran out (broad review 2026-10-14, CB5: about 590 dispatches, then a RangeError).
-        // That nested build is the same answer: it changes nothing and dispatches nothing. The same answer is known
-        // without building when the inputs did not change, or when the refusal they give is the one being dispatched
-        // (load() of other markup under an unknown mode). A listener that changes what decides the answer
-        // (setConfig() with a usable config, the files for a build that failed) builds normally.
-        if (this._buildTermination !== null && (this._buildTermination.inputs === this._buildInputs || this._buildRefusal() === this._buildTermination.reason)) return;
-        this._buildWithin = this._buildTermination?.reason ?? null;
+        // Every build runs, from a 'terminated' listener too: CB5's rule is in _terminateBuild (the answer it gives is
+        // not dispatched again), never a build skipped here (review round 3, L-1).
+        this._buildWithin = this._buildTermination;
         this._teardown();
         this._discardGuestWrites(); // every build starts without the last environment's uncommitted writes
         // Where the element may build is one rule (review round 2, L-1: buildsHere, below), asked by every build, however
@@ -1508,24 +1622,33 @@ export class WebSandbox extends ElementBase {
     // in a task of its own, like 'ready' (review round 1, R3-2): a listener added right after setConfig(), reset() or
     // load() hears it, where it used to be dispatched inside the call. Not at all if the environment changed meanwhile
     // (another build, the element's removal): that answer is no longer the sandbox's state. While it is dispatched, a
-    // listener that builds again from the same inputs gets the same answer, so it is not dispatched again (CB5).
-    // A build started from a listener of that dispatch, and refused or failed for a reason initialize() only learns by
-    // building (the host page's Trusted Types policy, a build that threw), ends with the same answer: it dispatches
-    // nothing either (review round 2, L-4), where it used to schedule the same event again and loop.
+    // listener that builds again gets the same answer, which is not dispatched again (CB5), in one rule: a build started
+    // while a build termination is dispatched, and refused or failed with that same reason, ends 'terminated' and
+    // dispatches nothing. Without it a 'terminated' listener that built again (reset(), load()) from the same inputs got
+    // the same refusal, dispatched it again, and recursed until the stack ran out (broad review 2026-10-14: about 590
+    // dispatches, then a RangeError); with it, every such build ends at once, so no listener can loop.
+    // The rule is on the answer, so it covers alike a refusal known before building (an unknown mode, an unregistered
+    // entry), and a reason initialize() only learns by building (the host page's Trusted Types policy, a build that
+    // threw: review round 2, L-4). It used to be a check that skipped the build when its inputs had not changed, which
+    // also skipped the state the build stands for (review round 3, L-1): a listener that moved the element (appendChild
+    // elsewhere: disconnected, so 'idle', then connected) left it connected and 'idle', with no frame. Now that build runs,
+    // and ends 'terminated' with the reason being dispatched. A listener that changes what decides the answer (a usable
+    // config, the files for a build that failed) builds normally.
     private _terminateBuild(reason: string) {
         if (this._state === 'terminated') return;
-        console.warn(`[Sandbox] terminated: ${reason}`);
+        const repeated = this._buildWithin === reason; // the answer being dispatched now: said once, already
+        if (!repeated) console.warn(`[Sandbox] terminated: ${reason}`);
         this._teardown();
-        this._enterState('terminated', reason, this._buildWithin === reason ? 'none' : 'task');
+        this._enterState('terminated', reason, repeated ? 'none' : 'task');
     }
 
     // The deferred 'terminated' of a build (above), dispatched only if nothing tore the environment down since: every
     // teardown clears _pendingTermination, so a token that is no longer the pending one is a stale answer.
-    private _dispatchBuildTermination(reason: string, token: object, inputs: number) {
+    private _dispatchBuildTermination(reason: string, token: object) {
         if (this._pendingTermination !== token || this._state !== 'terminated') return;
         this._pendingTermination = null;
         const outer = this._buildTermination;
-        this._buildTermination = { reason, inputs };
+        this._buildTermination = reason;
         try {
             this.dispatchEvent(new CustomEvent('terminated', { detail: { reason } }));
         } finally {
@@ -1574,12 +1697,12 @@ export class WebSandbox extends ElementBase {
     private _getSandboxCommsScript(mode: 'cooperative' | 'worker', files: FileSnapshotEntry[], plan: GuestMarkupPlan = NO_MARKUP_PLAN) {
         // communication, logs and RPC bridge template that any content running in the sandbox uses.
         // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
-        // Opt-in features as one literal, only when one is on (a sandbox without them keeps its bootstrap text).
-        const features: { autoResize?: true; fetchBridge?: { timeoutMs: number }; guestWrites?: true } = {};
+        // The features as one literal: the opt-in ones only when on, and the call budget always (M-2).
+        const features: { autoResize?: true; fetchBridge?: { timeoutMs: number }; guestWrites?: true; callBudget: CallBudget } = { callBudget: { ...this._callBudget } };
         if (mode === 'cooperative' && this._autoResizeEnabled()) features.autoResize = true;
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
-        const featuresArgument = Object.keys(features).length > 0 ? `, ${toInlineScriptLiteral(features)}` : ', undefined';
+        const featuresArgument = `, ${toInlineScriptLiteral(features)}`;
         // Only literals are interpolated: `=== true` here as well, whatever setConfig() stored (review A6).
         const comms = `(${inSandboxScript.toString()})(${this._config.scriptUnsafe === true}, '${mode}', console, ${createBroker.toString()}${featuresArgument}, ${createSizeOf.toString()})`;
         // Guest writes (C5): sandboxFiles gets the comms script's captured write call through `comms`, a constant
@@ -1804,7 +1927,7 @@ export class WebSandbox extends ElementBase {
     // (globalThis.x = …). `this` inside is the global object, as at a script's top level. The scope check
     // (assertEntryScoped) refuses to start a worker whose entry escaped that scope.
     private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string): string {
-        const features: { fetchBridge?: { timeoutMs: number }; externalPort: true; guestWrites?: true } = { externalPort: true };
+        const features: { fetchBridge?: { timeoutMs: number }; externalPort: true; guestWrites?: true; callBudget: CallBudget } = { externalPort: true, callBudget: { ...this._callBudget } };
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)
