@@ -75,8 +75,8 @@ worker mode into strict mode. Review round 1 the same day ([report](security/REV
 closed S50–S53 (R2-2 a cooperative-mode limit); the owner's three decisions on it were done the same day (S54).
 Review round 2 the same day, under the owner's adjusted rule ([report](security/REVIEW-ROUND-2-2026-10-15.md)), added and
 closed S55. Round 3 (S56, [report](security/REVIEW-ROUND-3-2026-10-18.md)) ran 2026-10-15 to 2026-10-18 and added and closed
-S57; round 4 is held by the owner (S58), the Lean evaluation is next (S59), and the clean-up with independent
-reviews follows when the rounds end (S60).
+S57; round 4 is held by the owner (S58), the Lean evaluation (S59) found no case for Lean and planned cheaper tests for
+later (S61), and the clean-up with independent reviews follows when the rounds end (S60).
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1532,16 +1532,13 @@ The next round under the stopping rule (count 0 of 2). It runs the same three re
 
 They use at least two model families.
 
-### S59 · Evaluate machine-checked proofs (Lean) — ⏳ **next, after S57**
+### S59 · Evaluate machine-checked proofs (Lean) — ✅ **done** (no Lean; S61)
 
-The owner asked whether Lean proofs should be used. Decide where a proof would remove a class of finding that tests and
-reviews keep finding, and where it would not: what the browser does is outside any model. Candidates to assess:
-- the lifecycle state machine and its no-loop rule (CB5);
-- the sliding-window budgets (log relay, call budget, guest writes) and their agreement between guest and host;
-- the size measure's allow-list (a bound on what crosses);
-- the RPC frame builders (every frame measured).
-
-The output is a recommendation with its cost, and a small proof of concept if it pays off.
+[Research 17](research/17_formal_methods/README.md): of 48 medium-or-higher findings, none only a proof would have
+caught; the 12 a proof could reach are caught as well by cheaper tests once the property is written down, and the rest
+are about the JavaScript runtime or the browser, outside any model. A Lean and a fast-check proof of concept on the
+rate limiter are kept there (not in CI). Decided by the owner: no Lean; the cheaper tests later (S61); the view's time
+budget restated as a long-run average (API.md, README, ADR-005).
 
 ### S60 · Repository and docs clean-up, then independent adversarial reviews — ⏸️ **after we are done**
 
@@ -1552,6 +1549,26 @@ Once the review rounds end: a proper clean-up of the repository and the docs:
 - the backlog compacted.
 
 Then independent adversarial reviews of the cleaned-up repository and docs by sub-agents of other model families (Sonnet and Haiku), with their findings verified and fixed the same way as the review rounds.
+
+### S61 · Property, model-based and structural tests (from research 17) — ⏸️ **later** (owner)
+
+The tests [research 17](research/17_formal_methods/README.md) found would have caught most of rounds 1–3's findings in
+our own logic. Estimated about two weeks of work; about 20–60 s more unit CI, plus a nightly job.
+1. **Property tests** (fast-check as a dev dependency):
+   - the sliding-window limiter, porting research 17's properties, and refusing a weight that is not a finite number ≥ 0;
+   - the guest's copy of the rule against the host's (a differential test);
+   - the view's time-budget arithmetic moved into a pure function and tested.
+2. **A permanent model-based lifecycle suite** (`fc.commands`), from reviewer L's reference model (rounds 2 and 3; not in
+   the repo today):
+   - re-entrant listeners, argument getters and a worker that fails to start;
+   - round 2's "What held" invariants;
+   - about 200 sequences per unit run, thousands nightly, and a Playwright subset per engine.
+3. **Structural checks:**
+   - a branded `RpcFrame` type and a source scan that only the builders make frames and that every string the guest sends is cut;
+   - the size measure against the real `structuredClone` (`fc.anything()`);
+   - a differential test of the console relay against the measure.
+4. **A budgets table** in the docs: every channel against its count, byte and time bound, and the test for each, so that
+   a bound is written down before a review has to find it missing.
 
 ## B · API Surface & DX
 
