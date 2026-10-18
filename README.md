@@ -305,8 +305,9 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
     and `BUSY` are worth retrying, and `TERMINATED` only after the next `ready` event (types: `RpcErrorCode`, `RpcError`).
 *   **At most 256 calls run at once** on each side for one environment (`MAX_INBOUND_IN_FLIGHT`): a further
     call is refused at once with `BUSY`, before its method runs, so calls to a slow method cannot pile up
-    without bound. The guest makes at most 5000 calls and 64 MiB of calls in any one second; past that its
-    `bridge` refuses a call with `BUSY` before sending it, and the element answers `BUSY` to one that arrives anyway.
+    without bound. The guest makes at most 5000 calls and 64 MiB of calls in any one second (`callLimits` sets
+    other values); past that its `bridge` refuses a call with `BUSY` before sending it, and the element answers `BUSY`
+    to one that arrives anyway.
 *   **Every message is bounded as a whole**: a method name is at most 256 characters, an error message at most
     65536 (cut, with a marker), and arguments or a result at most 33 MiB (`RPC_MAX_BYTES`), measured on both sides.
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never

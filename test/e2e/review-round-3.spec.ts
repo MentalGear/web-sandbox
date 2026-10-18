@@ -79,3 +79,22 @@ test.describe("L-2: a call whose argument's getter ends the environment settles"
         });
     }
 });
+
+test.describe('M-2: callLimits, a lower budget than the default', () => {
+    for (const [mode, config] of Object.entries(MODES)) {
+        test(`${mode} mode: maxPerSecond 10: the guest's 11th call in one second is refused BUSY before it is sent; the host method ran 10 times`, async ({ sandbox, page }) => {
+            expect(await sandbox.mount({ ...config, callLimits: { maxPerSecond: 10 } })).toBe('ready');
+            await page.evaluate(() => {
+                (window as any).hostRuns = 0;
+                (document.querySelector('web-sandbox') as any).expose('count', () => ++(window as any).hostRuns);
+            });
+            const outcomes = await sandbox.inGuest(`
+                const calls = [];
+                for (let i = 0; i < 11; i++) calls.push(bridge.call('count').then(() => 'ok', (error) => error.code));
+                return Promise.all(calls);
+            `);
+            expect(outcomes).toEqual([...Array(10).fill('ok'), 'BUSY']);
+            expect(await page.evaluate(() => (window as any).hostRuns)).toBe(10);
+        });
+    }
+});

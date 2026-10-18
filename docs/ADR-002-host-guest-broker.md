@@ -309,8 +309,9 @@ or small ones, 44 000 a second) kept the host page busy without bound.
 at most 256 characters (longer: `INVALID_CALL` at the caller, `UNKNOWN_METHOD` without the name at the receiver, never
 registered by `expose`), an id that is a number or a short string, an error text cut to 65 536 characters with a marker
 (cut again on receipt), and a snapshot whose whole frame is measured when it is posted and when it arrives. The calls
-the guest makes have a per-second budget per environment, 5000 calls and 64 MiB, a sliding one-second window like the
-log relay's: the guest's broker, the only code that holds the port, refuses a call past it with `BUSY` before sending
-it, and the host counts the same window on receipt and answers `BUSY`. `BUSY` stays a code the other side reports; the
-guest's broker mints it only for the host's budget, applied early. A value the byte measure does not know (an `Error`)
-is refused with a message that names it, never as past the budget.
+the guest makes have a per-second budget per environment, by default 5000 calls and 64 MiB (`callLimits` in the
+config sets others; it cannot be turned off), a sliding one-second window like the log relay's: the guest's broker, the
+only code that holds the port, refuses a call past it with `BUSY` before sending it, and the host counts the same
+window on receipt and answers `BUSY`. `BUSY` stays a code the other side reports; the guest's broker mints it only for
+the host's budget, applied early. A value the byte measure does not know (an `Error`) is refused with a message that
+names it, never as past the budget.

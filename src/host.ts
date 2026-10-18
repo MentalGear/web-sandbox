@@ -161,6 +161,21 @@ export interface SandboxConfigOptions {
      * src/lib/guest-writes.ts.
      */
     guestWrites?: boolean;
+    /**
+     * The per-second budget of the calls the guest makes (every mode): `maxPerSecond` calls and `maxBytesPerSecond`
+     * bytes of them in any one-second window, per environment. The guest's bridge refuses a call past it with BUSY,
+     * and the element answers BUSY to one that arrives anyway. A field left out takes its default; one that is not a
+     * finite number > 0 takes its default with one warning. There is no "off".
+     */
+    callLimits?: CallLimits;
+}
+
+/** `callLimits` (docs/API.md#calllimits): the per-second budget of the calls the guest makes. */
+export interface CallLimits {
+    /** Calls per second. Default 5000. */
+    maxPerSecond?: number;
+    /** Bytes of calls per second, each call's whole message measured as RPC_MAX_BYTES is. Default 67108864 (64 MiB). */
+    maxBytesPerSecond?: number;
 }
 
 /**
@@ -240,8 +255,9 @@ const STRICT_VIEW_FLAGS = ['allow-scripts', 'allow-forms'] as const;
 const STRICT_CAPABILITIES = [...SAFE_CAPABILITIES, ...STRICT_VIEW_FLAGS] as const;
 
 // The per-second budget of the calls the guest makes, per environment (review round 3, M-2): calls, and bytes of their
-// frames, in any one-second window. The defaults; the configuration gives the budget in callBudgetOf(), the one place
-// both ends take it from (the host's window, _admitGuestCall; the guest's broker, through the bootstrap's features).
+// frames, in any one-second window. The defaults of `callLimits`; the configuration gives the budget in callBudgetOf(),
+// the one place both ends take it from (the host's window, _admitGuestCall; the guest's broker, through the bootstrap's
+// features).
 const GUEST_CALLS_PER_SECOND = 5000;
 const GUEST_CALL_BYTES_PER_SECOND = 67108864;
 
@@ -252,10 +268,25 @@ interface CallBudget {
 
 const DEFAULT_CALL_BUDGET: Readonly<CallBudget> = Object.freeze({ calls: GUEST_CALLS_PER_SECOND, bytes: GUEST_CALL_BYTES_PER_SECOND });
 
-// The call budget a setConfig() argument (already copied and checked) asks for: the defaults, until the option that sets
-// it has its name.
-function callBudgetOf(_config: SandboxConfig): Readonly<CallBudget> {
-    return DEFAULT_CALL_BUDGET;
+// The call budget `callLimits` asks for (from the copy setConfig() took). Each field is a finite number > 0, else its
+// default: left out, silently; anything else (Infinity, 0, a negative number, NaN, a string), with a warning. There is no
+// "off": a budget that can be lifted is one a config typo lifts. Never throws: a callLimits that is not an object is
+// warned about and gives the defaults.
+function callBudgetOf(callLimits: unknown, warn: (message: string) => void): Readonly<CallBudget> {
+    if (callLimits === undefined) return DEFAULT_CALL_BUDGET;
+    if (!callLimits || typeof callLimits !== 'object' || Array.isArray(callLimits)) {
+        warn(`[Sandbox] callLimits must be an object; ${shown(callLimits)} was ignored: the defaults apply (${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes} bytes per second).`);
+        return DEFAULT_CALL_BUDGET;
+    }
+    const limits = callLimits as Record<string, unknown>;
+    const field = (name: keyof CallLimits, fallback: number): number => {
+        const value = limits[name];
+        if (value === undefined) return fallback;
+        if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+        warn(`[Sandbox] callLimits.${name} must be a finite number > 0; ${typeof value === 'number' ? String(value) : shown(value)} was ignored: the default ${fallback} applies.`);
+        return fallback;
+    };
+    return Object.freeze({ calls: field('maxPerSecond', DEFAULT_CALL_BUDGET.calls), bytes: field('maxBytesPerSecond', DEFAULT_CALL_BUDGET.bytes) });
 }
 
 // Why a guest call past the budget is refused (BUSY): the same words in the guest's broker (in-sandbox-script.ts).
@@ -434,6 +465,7 @@ export class WebSandbox extends ElementBase {
     private _warnedOrigins = new Set<string>();  // origins warnings (an entry dropped, connectionsAllowed), once each per instance
     private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
     private _warnedFetchBridge = new Set<string>();  // fetchBridge config warnings, once each per instance
+    private _warnedCallLimits = new Set<string>();   // callLimits config warnings, once each per instance
     // The guest-write overlay (C5): created by each build when guestWrites is on, else null. It outlives its
     // environment's termination (closed, still listable and committable) and is discarded by the next build and on
     // removal (_discardGuestWrites).
@@ -644,6 +676,9 @@ export class WebSandbox extends ElementBase {
         // config without it turns the bridge off.
         const fetchPolicy = toFetchPolicy(input.fetchBridge, (message) => this._warnFetchBridge(message), globalThis.location?.origin ?? '');
         delete sanitizedConfig.fetchBridge;
+        // `callLimits` too: parsed into the call budget both ends take (M-2), kept out of the merged config.
+        const callBudget = callBudgetOf(input.callLimits, (message) => this._warnCallLimits(message));
+        delete sanitizedConfig.callLimits;
         // `origins` is kept out of the merged config too: it is parsed below, for the mode the merged config has.
         delete sanitizedConfig.origins;
         this._dropRemovedOptions(sanitizedConfig);
@@ -671,7 +706,7 @@ export class WebSandbox extends ElementBase {
         this._config = merged;
         this._fetchPolicy = fetchPolicy;
         this._origins = origins;
-        this._callBudget = callBudgetOf(input);
+        this._callBudget = callBudget;
     }
 
     /**
@@ -1467,6 +1502,13 @@ export class WebSandbox extends ElementBase {
     // 'violation'. The record is built by the host from validated fields (fetch-bridge.ts).
     private _dispatchFetch(record: FetchRecord) {
         this.dispatchEvent(new CustomEvent('fetch', { detail: record, bubbles: true }));
+    }
+
+    // What setConfig() did not take of `callLimits`: once per element and message, as the same config is set again and again.
+    private _warnCallLimits(message: string) {
+        if (this._warnedCallLimits.has(message)) return;
+        this._warnedCallLimits.add(message);
+        console.warn(message);
     }
 
     private _warnFetchBridge(message: string) {

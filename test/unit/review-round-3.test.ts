@@ -557,3 +557,84 @@ describe('M-4: a valid URL is reported in full in the fetch record, up to the UR
         expect(records.map(record => [record.outcome, record.url.length])).toEqual([['ok', long.length], ['refused', 8192]]);
     });
 });
+
+describe("M-2: callLimits, the call budget's option (the owner's name)", () => {
+    function element() {
+        realPlatform();
+        defineWebSandbox();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = document.createElement('web-sandbox') as any;
+        document.body.appendChild(el);
+        const warnings = () => warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('callLimits'));
+        return { el, warnings };
+    }
+    const literal = (budget: { calls: number; bytes: number }) => `"callBudget":${JSON.stringify(budget)}`;
+
+    it('the defaults: no callLimits, an empty one, or a field left out', () => {
+        const { el, warnings } = element();
+        for (const config of [{}, { callLimits: {} }, { callLimits: { maxPerSecond: undefined } }]) {
+            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], ...config });
+            expect(el._callBudget).toEqual(CALL_BUDGET);
+            expect(el._getSandboxCommsScript('cooperative', [])).toContain(literal(CALL_BUDGET));
+        }
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: 1024 } });
+        expect(el._callBudget).toEqual({ calls: CALL_BUDGET.calls, bytes: 1024 });
+        expect(warnings()).toEqual([]);
+    });
+
+    it('a value that is not a finite number > 0 takes its default, with one warning each (once per element); there is no "off"', () => {
+        const { el, warnings } = element();
+        const invalid = [Infinity, 0, -1, NaN, '10', null, true];
+        for (const value of invalid) {
+            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: value, maxBytesPerSecond: value } });
+            expect(el._callBudget, String(value)).toEqual(CALL_BUDGET);
+            expect(el.state).toBe('loading'); // the config is used, the rest of it applies
+        }
+        expect(warnings()).toHaveLength(2 * invalid.length);
+        expect(warnings()[0]).toBe('[Sandbox] callLimits.maxPerSecond must be a finite number > 0; Infinity was ignored: the default 5000 applies.');
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: Infinity } });
+        expect(warnings()).toHaveLength(2 * invalid.length); // the same message, said once
+        for (const value of [5, 'off', [1]]) {
+            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: value });
+            expect(el._callBudget).toEqual(CALL_BUDGET);
+        }
+        expect(warnings().filter(message => message.startsWith('[Sandbox] callLimits must be an object'))).toHaveLength(3);
+    });
+
+    it('a custom value takes effect at both ends, in every mode: the host answers BUSY at its edge, and the bootstrap carries it', async () => {
+        let now = 1000;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
+        const { el } = element();
+        const custom = { calls: 3, bytes: 1_000_000 };
+        el.setConfig({ mode: 'worker', callLimits: { maxPerSecond: 3, maxBytesPerSecond: 1_000_000 } });
+        expect(el._getSandboxCommsScript('worker', [])).toContain(literal(custom));
+        el.setConfig({ mode: 'strict', callLimits: { maxPerSecond: 3, maxBytesPerSecond: 1_000_000 } });
+        expect(el._getStrictWorkerSource([], '')).toContain(literal(custom));
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: 3, maxBytesPerSecond: 1_000_000 } });
+        const { port1 } = new MessageChannel();
+        el._port = port1;
+        const answers: any[] = [];
+        el.expose('noop', () => 'ok');
+        for (let i = 1; i <= 4; i++) el._onGuestMessage(port1, (answer: unknown) => answers.push(answer), request(i, 'noop'), null);
+        await settle();
+        expect(answers.map(answer => answer.code ?? answer.value)).toEqual(['BUSY', 'ok', 'ok', 'ok']); // BUSY at once, the others a microtask later
+        expect(answers[0]).toMatchObject({ id: 4, error: 'more than 3 calls or 1000000 bytes of calls in one second' });
+        now += 1000;
+        el._onGuestMessage(port1, (answer: unknown) => answers.push(answer), request(5, 'noop'), null);
+        await settle();
+        expect(answers.at(-1)).toMatchObject({ id: 5, ok: true });
+        port1.close();
+    });
+
+    it('a changed callLimits is a changed config: the same one rebuilds nothing, another rebuilds', () => {
+        const { el } = element();
+        const config = { mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: 10 } };
+        el.setConfig(config);
+        const frame = el.shadowRoot.querySelector('iframe');
+        el.setConfig(structuredClone(config));
+        expect(el.shadowRoot.querySelector('iframe')).toBe(frame);
+        el.setConfig({ ...config, callLimits: { maxPerSecond: 11 } });
+        expect(el.shadowRoot.querySelector('iframe')).not.toBe(frame);
+        expect(el._callBudget.calls).toBe(11);
+    });
+});

@@ -39,8 +39,8 @@ export function inSandboxScript(
     // listener of its own; the strict worker prelude takes the ports from the one trusted INIT message and hands the
     // logic port to attach().
     // `guestWrites`: the host records the guest's file writes (backlog C5); returned as `writeFiles` below.
-    // `callBudget`: the per-second budget of the calls the guest makes (review round 3, M-2), from the element's config;
-    // the host always passes it.
+    // `callBudget`: the per-second budget of the calls the guest makes (review round 3, M-2), from the element's config
+    // (`callLimits`); the host always passes it.
     features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean; callBudget?: { calls: number; bytes: number } },
     // The byte measure (structured-size.ts), stringified in like createBroker: the console relay's budget and the
     // broker's are measured with it, made before any guest code runs.

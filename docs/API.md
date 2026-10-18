@@ -114,6 +114,7 @@ a config without `mode` is a strict config (strict mode is the default).
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
 | `autoResize` | `boolean` | `false` | strict, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Opens [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md) |
+| `callLimits` | `CallLimits` | 5000 calls and 64 MiB per second | all | The per-second budget of the calls the guest makes, per environment; see [below](#calllimits). |
 | `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
 
 ### `origins`
@@ -191,6 +192,24 @@ What every request is pinned to: no credentials (`credentials: 'omit'`), no `Ref
 with `FETCH_REDIRECT`), `cache: 'no-store'`, CORS for the host page's origin. The host page's own origin and
 loopback, private and link-local hosts are refused unless listed. A listed public name that resolves to a
 private address cannot be detected from a page.
+
+### `callLimits`
+
+The per-second budget of the calls the guest makes (`bridge.call()`, and `sandboxFetch()` and guest writes, which are
+calls too), per environment, in every mode: in any one-second window (a sliding window), at most `maxPerSecond` calls
+and `maxBytesPerSecond` bytes of them, each call's whole message measured as [`call()`](#callmethod-args) measures it.
+The guest's `bridge` refuses a call past it with `BUSY` before sending it, and the element answers `BUSY` to one that
+arrives anyway (a guest's calls delivered late, while your page was busy, can arrive closer together than it sent
+them). Your own calls to the guest are not counted.
+
+| Field | Type | Default | What it does |
+| :--- | :--- | :--- | :--- |
+| `maxPerSecond` | `number` | `5000` | Most calls in any one second. |
+| `maxBytesPerSecond` | `number` | `67108864` (64 MiB) | Most bytes of calls in any one second. |
+
+A field left out, or `callLimits` left out, takes the default. A value that is not a finite number `> 0` (`Infinity`,
+`0`, a negative number, `NaN`, a string, `null`) takes the default with one warning, and a `callLimits` that is not an
+object takes both defaults with one warning; there is no way to turn the budget off.
 
 ---
 
@@ -548,7 +567,7 @@ From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.
 | `UNKNOWN_METHOD` | reported | No method of that name is exposed on the other side. | no |
 | `HANDLER_ERROR` | reported | The handler threw or rejected; the message is its text, at most 65536 characters. | depends on the handler |
 | `RESULT_NOT_TRANSFERABLE` | reported | The handler's result cannot be structured-cloned, measures more than `RPC_MAX_BYTES`, or holds a value the measure does not know (as above). | no |
-| `BUSY` | reported | The other side already runs `MAX_INBOUND_IN_FLIGHT` of your calls, or 64 MiB of their arguments, or the call measures more than `RPC_MAX_BYTES`; the method did not run. Guest calls only: the guest made more than 5000 calls, or 64 MiB of calls, in the last second (the guest's `bridge` refuses such a call before sending it, and the element answers one that arrives anyway). | yes |
+| `BUSY` | reported | The other side already runs `MAX_INBOUND_IN_FLIGHT` of your calls, or 64 MiB of their arguments, or the call measures more than `RPC_MAX_BYTES`; the method did not run. Guest calls only: the guest made more calls in the last second than [`callLimits`](#calllimits) allows (by default 5000 calls, or 64 MiB of calls); the guest's `bridge` refuses such a call before sending it, and the element answers one that arrives anyway. | yes |
 
 **Local** codes are set only by the side that made the call, from its own state, so the other side can never
 produce them. **Reported** codes come from the other side, and their message is its text (at most 65536
@@ -621,7 +640,7 @@ Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`.
 | Member | Signature | Description |
 | :--- | :--- | :--- |
 | `expose` | `(name: string, fn: (...args) => unknown) => void` | Publishes a guest method the host calls with `sandbox.call(name, ...)`. Last registration wins; `sandbox:` names, and names longer than 256 characters, are ignored. |
-| `call` | `(method: string, ...args) => Promise<unknown>` | Calls a host method exposed with `sandbox.expose()`. 30 s timeout. At most 5000 calls and 64 MiB of calls in any one second, per environment: past that a call is refused with `BUSY` and not sent. |
+| `call` | `(method: string, ...args) => Promise<unknown>` | Calls a host method exposed with `sandbox.expose()`. 30 s timeout. At most [`callLimits`](#calllimits) calls in any one second (by default 5000 calls and 64 MiB), per environment: past that a call is refused with `BUSY` and not sent. |
 | `callWithTimeout` | `(timeoutMs: number, method: string, ...args) => Promise<unknown>` | With a timeout for this call; `0` disables it. |
 
 Usable at once: calls and exposes made before the channel is connected are buffered. Rejections carry the
@@ -818,8 +837,8 @@ in strict mode.
 | Limit | Value | Exported constant |
 | :--- | :--- | :--- |
 | Inbound calls running at once, per side and environment | 256 | `MAX_INBOUND_IN_FLIGHT` |
-| Guest calls per second, per environment (any one-second window) | 5000 | — |
-| Bytes of guest calls per second, per environment (any one-second window) | 67108864 (64 MiB) | — |
+| Guest calls per second, per environment (any one-second window; default of `callLimits.maxPerSecond`) | 5000 | — |
+| Bytes of guest calls per second, per environment (any one-second window; default of `callLimits.maxBytesPerSecond`) | 67108864 (64 MiB) | — |
 | Default call timeout (ms) | 30000 | — |
 | Characters of a method name | 256 | — |
 | Characters of an error message a call carries | 65536 | — |
@@ -916,7 +935,7 @@ Values:
 `document.createElement('web-sandbox')` is typed as a `WebSandbox` (`HTMLElementTagNameMap`), and its
 `addEventListener` types each event's `detail`.
 
-Types: `SandboxConfig`, `SandboxState`, `RpcError`, `RpcErrorCode`, `SandboxLog`, `SandboxLogLevel`,
+Types: `SandboxConfig`, `SandboxState`, `CallLimits`, `RpcError`, `RpcErrorCode`, `SandboxLog`, `SandboxLogLevel`,
 `SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,
 `FileInfo`, `FileError`, `FileErrorCode`, `SandboxFiles`, `GuestWrite`, `SandboxOrigins`, `StrictSandboxOrigins`,
 `SafeCapability`, `UnsafeCapability`, `UnsafePermission`, `SandboxCapability`.
