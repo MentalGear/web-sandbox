@@ -28,6 +28,20 @@ with `fromPreset('<id>')` from `test/e2e/presets.ts`, aiming the target at a rec
 All specs run on the shared harness in `test/e2e/fixture.ts`; drive the sandbox through
 `SandboxDriver`, not through the playground.
 
+## Fixing a finding
+
+Every fix names the class of its finding ([research 18](docs/research/18_finding_classes/README.md)), and extends
+that class's single list or chokepoint and its structural test. A fix for one instance only is not done. The classes
+that stopped producing findings were each closed by replacing a list of bad cases with a list of allowed ones, plus a
+test that enumerates the domain:
+- typed origins;
+- the worker-globals allowlist;
+- captured intrinsics with their source scan;
+- the snapshot measure and the frame builders.
+
+A new mitigation (a stylesheet, a rewrite, a listener) is a new cost: measure it on every engine, as the code it guards
+is measured.
+
 ## Style
 
 See [`agents.md`](agents.md) for the code style. `bun run format` applies Prettier; `bun run format:check`

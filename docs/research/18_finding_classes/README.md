@@ -8,11 +8,13 @@ there a better way to close all of them by construction?
 - review rounds 1 to 4.
 
 Also the S-items of the backlog, the code at `60814b5`, and
-[research 17](../17_formal_methods/README.md). Review round 5's findings so far (audit C: N-1 to N-7; lifecycle L: L-1
-to L-4) are not in the repository yet. Round 5's limits measurement (M) is still running and is not counted here (see
-[Round 5 M](#round-5-m-not-yet-folded-in)).
+[research 17](../17_formal_methods/README.md). Review round 5's audit (N-1 to N-7) and lifecycle findings (L-1 to L-4)
+are counted in the tables below. Its limits measurement (M-1 to M-4) reported after the tables were written and is
+placed in [Round 5's limits measurement](#round-5s-limits-measurement).
 
-**Draft.** Not committed and not reviewed by the owner.
+**Decided (owner, 2026-10-18).** All recommendations adopted: round 5's fixes are made as the first slices of their
+classes' designs; every fix names its class and extends that class's list or structural test; the plan after round 5
+is the order below (backlog S64–S69).
 
 ## Answer in brief
 
@@ -603,10 +605,26 @@ Cost: about 4–6 days beyond the per-instance fixes the batch would need anyway
   - The relay worker's benefit for 5:N-1 is unmeasured.
   - The estimates of cost are for one person who knows the code.
 
-## Round 5 M (not yet folded in)
+## Round 5's limits measurement
 
-Round 5's limits measurement had not reported when this was written. By the pattern of rounds 1–4, its findings will
-land mostly in P (a view cost the budget misses) or E-cpu (a surface outside the chokepoint). Each finding should be
-placed in the table above with its invariant. A P finding on the view supports recommendation 4. An E-cpu finding
-through a platform event should become a row of `egress.ts` and a failing case of its enumeration test, not a
-listener added by hand.
+The measurement reported after the tables above. Its four medium-or-higher findings fall into the classes already named:
+
+| Finding | Severity | Class | Invariant violated |
+| :--- | :--- | :--- | :--- |
+| M-1: with `allowAnimations: false`, replacing about 37,000 elements froze Firefox's host page for 22–25 s; the `*::first-letter` rule of the library's own still stylesheet took 20 s alone | high | P | The library's own mitigation adds browser work that no budget and no test measures. Round 4's C-2 was the same invariant, so this sub-class recurs too. |
+| M-2: the 1000 ms debt cap lets an operation that costs 7.5 s (Chromium layout) repeat every few seconds; host 53% busy | medium | P | A budget that charges a capped proxy of the cost, not the cost. |
+| M-3: CSS `url()` to an allowed origin is not counted by the URL budget (Firefox 1400 requests per second) | medium | E-net / P | A load the renderer cannot see is not budgeted: only what the renderer parses is counted. |
+| M-4: a long allowed-image flood within the URL budget ends in a 13–28 s WebKit stall | medium | P | A per-second rate stands in for a cumulative cost (memory, cache). |
+
+The measurement also found that `allowAnimations: false` makes every render 3–4 times as expensive in Chromium and
+WebKit (`*::scroll-button(*)` alone 3.5 times in Chromium; low), the same sub-class as M-1.
+
+This confirms the recommendation, with two additions:
+- **Observe and charge loads, not only violations (design 5).** Every load the view's document makes is reported by the
+  platform's resource timing in all three engines, CSS-borne ones included. Charging every observed load and every
+  violation to the URL budget covers allowed and refused URLs alike without parsing CSS.
+- **Measure the library's own mitigations.** The still stylesheet is generated per engine for the pseudo-elements that
+  can animate on the allowed elements, and an e2e times a large replacement with it on and off on every engine. A
+  mitigation whose cost is not measured is a new proxy.
+
+Round 5's totals: 1 high and 6 medium in our code, all in code an earlier per-instance fix added or changed.
