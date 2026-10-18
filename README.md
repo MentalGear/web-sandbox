@@ -588,7 +588,7 @@ What remains for the default:
     every WebKit browser, which have no site isolation; Android, where Chromium isolates partially and Android WebView
     not at all; and Chromium without sandboxed-iframe isolation (the headless shell). Desktop Chromium 127+ runs the
     view in a process of its own. The view's budgets bound the common cases (one render in flight; elements, depth and
-    characters held; characters parsed per second; 200 ms of the view's own time per second, measured), but not:
+    characters held; characters parsed per second; 200 ms of the view's own time per second on average, measured), but not:
     *   what one operation's layout and paint cost beyond what the markup weighs: CSS filters (WebKit: 10 `blur()`s on
         1 000 elements, 3.7 s), bidirectional text in one paragraph (240 000 characters alternating directions: tens of
         seconds in Chromium and WebKit, engine and machine dependent), and small CSS changes over many elements, which
