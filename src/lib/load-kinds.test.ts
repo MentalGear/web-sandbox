@@ -3,7 +3,10 @@ import { admits, admitsAll, linkKinds, LOAD_KIND_NAMES, LOAD_KINDS, type LoadKin
 import { fileKinds } from './csp/csp-generator';
 import { rewriteGuestMarkup, rewriteMarkupReferences, type KindMismatch } from './markup-references';
 import { FileStore, isJavaScriptType, isStylesheetType, mimeTypeFor } from './files';
-import { isViewFileType, RENDER_RULES, sanitizeRender, VIEW_FILE_TYPES, VIEW_LOAD_KINDS } from './in-sandbox-view';
+import { isViewFileType, RENDER_RULES, type RenderSwitches, sanitizeRender, VIEW_FILE_TYPES, VIEW_LOAD_KINDS } from './in-sandbox-view';
+
+// the renderer with every switch on: what it keeps besides its rules is not what this file tests
+const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
 
 /**
  * Focused review 2026-10-14, W1: one table decides which file types each kind of load may name, and the policy
@@ -164,7 +167,7 @@ describe('the strict view renderer reads a table derived from the same one', () 
         const template = document.createElement('template');
         template.innerHTML = html;
         const url = 'blob:null/00000000-0000-0000-0000-000000000001';
-        sanitizeRender(template.content, path => (path === 'f.bin' ? { url, type } : null), u => u === url, RENDER_RULES);
+        sanitizeRender(template.content, path => (path === 'f.bin' ? { url, type } : null), u => u === url, RENDER_RULES, KEEP_ALL);
         const div = document.createElement('div');
         div.append(template.content);
         return div.innerHTML.includes(url);

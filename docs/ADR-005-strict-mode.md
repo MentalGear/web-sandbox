@@ -203,9 +203,9 @@ configuration, fetch bridge, auto-sizing), `strict-render-flood.spec.ts` (A4),
 
 **What it does not guarantee (residuals):**
 
-- **Rendering cost on the host's thread.** Firefox and WebKit run the view on the host page's thread, and Chromium
-  may too: in the broad review's runs it kept the wrapper and the view in the host page's process (no iframe
-  target; both frames local), and the host stalled as in the other engines. So each apply is host-thread work.
+- **Rendering cost on the host's thread.** Firefox, WebKit, Android and Chromium without sandboxed-iframe isolation
+  run the view on the host page's thread; desktop Chromium 127+ isolates it (amendment 2026-10-18, research 16). So each
+  apply is host-thread work there, and so is every CSS animation it leaves running (`allowAnimations`).
   Flow control bounds it to one apply at a time; since the broad review the DOM one apply builds is linear in its
   markup, and since review round 1 the document is bounded in elements, depth and characters, and the markup parsed
   per second is bounded (amendments below), but what laying it out and painting it costs is not: CSS is not read by the
@@ -574,8 +574,8 @@ Tests: `test/unit/view-api.test.ts`, `test/unit/owner-decisions.test.ts`, `test/
 
 ## Amendment (2026-10-17): the view's running counts and time budget
 
-**When**: review round 2 (C-4, M-3), recorded at review round 3 (C-5). The time budget's design may change after
-research that is under way; this records what the view does now.
+**When**: review round 2 (C-4, M-3), recorded at review round 3 (C-5). Its rendering measure was replaced by the gap
+meter (amendment 2026-10-18).
 
 - **Running counts.** The view keeps its body's serialized length (`VIEW_MAX_CHARACTERS`) and element count
   (`VIEW_MAX_ELEMENTS`) as running counts, updated from what each operation changes (the target's old and new content,
@@ -591,3 +591,77 @@ research that is under way; this records what the view does now.
   ([Consequences](#consequences)).
 - **The guest's error texts.** The view cuts each `GUEST_ERROR` and `GUEST_UNCAUGHT` text to 2048 characters and sends
   at most `LOG_EVENTS_PER_SECOND` of them per second before posting (review round 3, C-4); the host cuts them again.
+
+## Amendment (2026-10-18): where the view runs, `allowAnimations`, `allowAutoplay`, the rendering meter
+
+**When**: review round 3 (C-2, M-5) and [research 16](research/16_view_isolation/README.md), measured on headless
+Playwright 1.58.1 on a 4-core VM; the owner's decisions on the two options.
+
+**Where the view runs.** The view (a sandboxed `srcdoc` frame in a sandboxed wrapper) runs on the host page's thread
+in Firefox (Fission isolates only cross-site frames; an opaque-origin sandboxed frame is placed with the site that
+created it, and Playwright's Firefox isolates nothing), in WebKit and Safari (no site isolation), on Android (Chromium
+isolates partially; Android WebView has no out-of-process frames) and in the Chromium headless shell. Desktop Chromium
+127+ runs it in a process of its own (`IsolateSandboxedIframes`; turning the feature off brings it back). Rendering
+always followed script. So the host-thread residual of [Consequences](#consequences) is the rule outside desktop
+Chromium, not an engine detail.
+
+**What the time budget does not bound.** The budget bounds what the view does when the guest renders. What runs
+without the view doing anything is outside it; with 5 000 animated elements, measured as host busy time against idle
+baselines of 1% (Chromium), 4% (Firefox) and 17% (WebKit): CSS animations of any property 81–92% (Firefox 21–89% by
+property), transitions 75–87%, scroll-driven animations 47–92%; a pointer moving over `:hover ~` rules 80–100% while
+it moves; 2 000 animated PNGs WebKit 39%, Firefox 12%; 20 autoplaying looping videos up to +6 points; 5 000
+indeterminate `<progress>` up to +4.
+
+**Decision**:
+
+- **`allowAnimations`** (strict mode, default `true`; a literal `false` turns it off, any other non-boolean is `false`
+  with one warning; ignored with a warning in the other modes; part of the equal-config comparison). **While `true`,
+  CSS animations and transitions in the view run on the host page's thread wherever the browser runs the view there,
+  and the time budget does not bound them: a guest can keep the host page 80–98% busy for as long as they run.** `false`
+  removes them, and the bound holds again:
+  - a stylesheet of the library's (`VIEW_STILL_STYLE`) becomes the view head's first element at `INIT_VIEW`, before
+    anything is rendered: one ANONYMOUS `@layer` with `animation:none!important;transition:none!important` on `*` and,
+    in a rule of its own each, every pseudo-element the engines animate on the elements the renderer keeps (a selector
+    list with one unknown pseudo-element drops the whole rule). A layered `!important` beats every later layer's and
+    every unlayered one; the layer is first because renders reach only the body; it is anonymous so no guest rule can
+    join it;
+  - the renderer takes every `animation*` and `transition*` declaration, prefixed ones included, out of every kept
+    `style` attribute, read through the element's own CSSOM declaration and written back as its serialization: an
+    inline `!important` beats any layer (without this, the host stayed 90–95% busy);
+  - the view checks that the sheet is in force (a probe element's inline transition and animation must compute to
+    none). A host page whose `style-src` refuses it (neither `'unsafe-inline'` nor its constant hash, API.md "Host page
+    policy") gets a view that drops the guest's `<style>` and stylesheet `<link>` elements instead, and one warning
+    with the hash.
+  Measured on all three engines: back to the idle baseline against unlayered `!important`, the guest's own anonymous
+  and named layers, pseudo-elements (form-control parts included), `@starting-style`, hover transitions, scroll-driven
+  animations, `@property`, registered stylesheets and their `@import`s, SVG `<style>` and `style`.
+- **`allowAutoplay`** (strict mode, default `false`; a literal `true` enables it, any other non-boolean is `false` with
+  one warning; ignored with a warning in the other modes; part of the equal-config comparison). While `false` the
+  renderer removes `autoplay` from every element (only `<video>` and `<audio>` keep it at all).
+- **The rendering meter (C-2, M-5).** The budget charges a flush's own time, its layout forced by hit testing
+  (`elementFromPoint`, which WebKit cannot answer without laying out a textarea's text, unlike `offsetHeight`), and the
+  rendering update after it, measured as the time from the end of a frame callback to the first task after it: the
+  frame the flush ran in, or the next frame for a flush the timer ran. At most one measurement is outstanding, nothing
+  is requested without a flush, and no wall time is charged in which no frame ran. The debt is capped at one second of
+  the view's time (`VIEW_APPLY_MAX_DEBT_MS`, repaid in 5 s). This replaces the frame callback per flush that charged its
+  own age past one frame: hidden 5 s with one render applied meanwhile, the next render waited 18.3 s (C-2, Chromium,
+  Firefox `display:none`, WebKit off-screen); and a frame per flush went uncharged, so a flood took 22–25% (M-5). Now:
+  the next render applies within 70 ms, and the flood takes 15–23% of the host page's ticks.
+- **What measuring costs**: no idle cost and nothing per frame while guest animations play (no frame callback is
+  requested without a flush, on all three engines); per flush 30–75 µs of accounting plus the forced layout (0.35–0.46
+  ms for a one-paragraph change, layout the rendering update would otherwise do), host busy time unchanged within noise
+  ([research 16](research/16_view_isolation/README.md#what-measuring-the-budget-costs)).
+
+**Rejected: a meter and an actuator** (measure the host's load, pause what animates). Pausing animations one by one
+(`getAnimations().forEach(a => a.pause())`) made it worse (Chromium reached 100% with a 9.7 s frame). A freeze stylesheet
+switched on by the meter held Chromium and Firefox only while the view was visible, held WebKit at 49–66% against a
+37% target, and was blind to off-screen views in Firefox and to hidden or off-screen views in WebKit. A switch the
+embedder sets, in force from the first render, has neither problem.
+
+**Not removed by the switch** (residuals, README "What strict mode does not cover"): `:hover` restyles over many
+elements while the user's pointer moves (one operation's cost, driven by the user), animated images, indeterminate
+`<progress>`, and autoplaying media with `allowAutoplay: true`.
+
+Tests: `test/e2e/view-switches.spec.ts` (every vector, the host's ticks with 5 000 animated elements and 300 animated
+form-control parts, the host page's `style-src`, autoplay), `test/e2e/view-budget.spec.ts` (C-2 hidden and off-screen,
+M-5), `test/unit/view-switches.test.ts`, `test/unit/review-round-3.test.ts` (C-2 and M-5), `test/unit/api-docs.test.ts`.

@@ -97,7 +97,7 @@ a config without `mode` is a strict config (strict mode is the default).
   config stays. A build that fails terminates with `the environment could not be built (…)`. `setConfig()` never
   throws. `state` is `terminated` when it returns; the `terminated` event of a refused build comes in a task, like
   `ready`, and not at all if another build started meanwhile.
-- `SandboxConfig` narrows each mode: `entry` only in strict mode, `workerExecutionTimeout` not in cooperative mode,
+- `SandboxConfig` narrows each mode: `entry`, `allowAnimations` and `allowAutoplay` only in strict mode, `workerExecutionTimeout` not in cooperative mode,
   `html` and `autoResize` not in worker mode, `unsafeCapabilities` not in strict mode. A config from JSON is held to
   the same rules at run time.
 
@@ -115,6 +115,8 @@ a config without `mode` is a strict config (strict mode is the default).
 | `autoResize` | `boolean` | `false` | strict, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Opens [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md) |
 | `callLimits` | `CallLimits` | 5000 calls and 64 MiB per second | all | The per-second budget of the calls the guest makes, per environment; see [below](#calllimits). |
+| `allowAnimations` | `boolean` | `true` | strict | Whether CSS animations and transitions run in the view. **While `true`, they run on your page's main thread wherever the browser runs the view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation), and the view's time budget does not bound them: a guest can keep your page 80–98% busy.** `false` removes them (elements show their end state). Only a literal `false` turns them off; any other value that is not a boolean is taken as `false`, with one warning. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
+| `allowAutoplay` | `boolean` | `false` | strict | Whether `<video autoplay>` and `<audio autoplay>` in the view start on their own; while `false` the `autoplay` attribute is removed and media plays only when the user starts it. With `true`, playing media costs your page's main thread where the view shares it (measured up to +6 points for 20 looping videos), outside the time budget. Only a literal `true` enables it; any other value that is not a boolean is taken as `false`, with one warning. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
 | `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
 
 ### `origins`
@@ -210,6 +212,45 @@ them). Your own calls to the guest are not counted.
 A field left out, or `callLimits` left out, takes the default. A value that is not a finite number `> 0` (`Infinity`,
 `0`, a negative number, `NaN`, a string, `null`) takes the default with one warning, and a `callLimits` that is not an
 object takes both defaults with one warning; there is no way to turn the budget off.
+
+### `allowAnimations` and `allowAutoplay`
+
+Strict mode's view runs on your page's main thread wherever the browser places it there, and then everything it
+renders is work on that thread:
+
+| Browser | Where the view runs |
+| :--- | :--- |
+| Firefox | Your page's thread. Fission isolates only cross-site frames, and the view (an opaque-origin sandboxed frame) is placed with the site that created it. |
+| Safari, every WebKit browser | Your page's thread: WebKit has no site isolation. |
+| Android | Chromium isolates partially; Android WebView has no out-of-process frames at all. |
+| Chromium on the desktop | A process of its own from Chromium 127 (sandboxed frames are isolated); your page's thread where that isolation is off, as in the headless shell. |
+
+Rendering follows script: wherever the view's script runs on your page's thread, so does its rendering.
+
+**`allowAnimations: true`, the default: CSS animations and transitions in the view run on your page's main thread
+wherever the browser runs the view there, and the view's time budget does not bound them.** A guest can keep your page
+busy for as long as they run (measured with 5 000 animated elements: 80–98% of its main thread; scroll-driven
+animations and transitions too). The budget bounds what the view does when the guest renders; an animation, once
+rendered, runs without the view doing anything. Set `false` to remove animations and transitions from the view: every
+element shows its end state, and the bound holds again. With `false` the view puts a stylesheet of its own before
+anything the guest renders, one anonymous cascade layer that sets `animation` and `transition` to `none !important` on
+every element and pseudo-element, and the renderer removes every `animation*` and `transition*` declaration from
+`style` attributes (an inline `!important` would beat any layer). Nothing the guest declares overrides it: its own
+`!important`, its own layers, `@starting-style`, `@property`, scroll-driven animations, registered stylesheets and
+their `@import`s. Your page's `style-src` must allow that stylesheet (`'unsafe-inline'`, or its hash: see
+[Host page policy](#host-page-policy)); where it does not, the view removes the guest's stylesheets instead
+(`<style>`, `<link rel="stylesheet">`), so no guest animation runs either way, and the element warns once with the
+hash to allow.
+
+**`allowAutoplay: false`, the default**: the renderer removes `autoplay` from `<video>` and `<audio>`, so media plays
+only when the user starts it with its controls. With `true`, autoplaying media decodes and paints on your page's main
+thread where the view shares it, for as long as it plays, outside the time budget (measured: up to +6 points of your
+page's main thread for 20 looping videos).
+
+What neither switch removes: a pointer moving over many elements with `:hover` rules restyles them on every move
+(80–100% of the thread while the pointer moves; one operation's cost, driven by the user); animated images (GIF,
+APNG, WebP: WebKit +22 points for 2 000); indeterminate `<progress>` (up to +4 points for 5 000). See
+[Modes](#modes).
 
 ---
 
@@ -746,9 +787,12 @@ serialization: text, attributes and markup alike), counted over the document a r
 any of them is dropped as a whole, the next one still applies, and the guest's log says
 `[Sandbox] sandboxView.render: the view refused a render: …`. The view parses at most 1048576 characters of markup
 per second, renders it refused included, and spends at most 200 ms of its own time per second on them, measured
-(their layout and the rendering that follows included): an operation past either waits, and so does the worker's next
-one (one in flight), so a flood of renders is slowed, not dropped. One operation's own cost is not bounded by them (one
-textarea of 250 000 characters took WebKit 1.3–1.7 s); what follows it waits for the budget.
+(their layout and the rendering update that shows them included; never time in which the view, hidden or off-screen,
+rendered nothing): an operation past either waits, and so does the worker's next one (one in flight), so a flood of
+renders is slowed, not dropped. One operation's own cost is not bounded by them (one textarea of 250 000 characters
+took WebKit 1.3–1.7 s); what follows it waits for the budget, at most 5 s (the budget owes at most one second of the
+view's time). CSS animations and transitions, once rendered, are outside this budget: see
+[`allowAnimations`](#allowanimations-and-allowautoplay).
 
 Registered files are named by path in `src`, `href` and `poster`. The view shows only files that never open as a
 document: CSS, PNG, JPEG, GIF, WebP, AVIF, APNG, BMP and ICO images, WOFF, WOFF2, TTF and OTF fonts, MP3, WAV, Ogg,
@@ -815,9 +859,13 @@ A config without `mode` is strict. `'iframe'` was renamed `'cooperative'`; it st
 a mode. [ADR-005](ADR-005-strict-mode.md)
 
 **What strict mode does not cover**: the host page's availability wherever the view shares the host page's thread
-(WebKit always, Firefox, Chromium depending on its process model): the view's budgets bound the common cases, but not
+(Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation; desktop Chromium 127+ runs it in a
+process of its own; [above](#allowanimations-and-allowautoplay)): the view's budgets bound the common cases, but not
 layout and paint costs beyond what the markup weighs (CSS filters; bidirectional text in one paragraph; small CSS
-changes over many elements, which cost style recalculation and layout), and cooperative mode is no better there. Also
+changes over many elements, which cost style recalculation and layout), nor what runs without the view doing anything:
+CSS animations and transitions while `allowAnimations` is `true` (the default; 80–98% of the thread), `:hover`
+restyles over many elements while the user's pointer moves (80–100% while it moves), animated images, indeterminate
+`<progress>`, and autoplaying media with `allowAutoplay: true`. Cooperative mode is no better there. Also
 CSS within what the policy allows, the worker's `violation` reports (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the host site's
 cookies on requests to allowed same-site origins (every mode).
 
@@ -859,6 +907,7 @@ in strict mode.
 | Strict: characters in the view (its body's serialization) | 1048576 | — |
 | Strict: characters of markup the view parses per second | 1048576 | — |
 | Strict: time the view spends applying operations per second, their layout and rendering included (ms) | 200 | — |
+| Strict: most time the view's time budget may owe (ms) | 1000 | — |
 | Strict: nesting depth below the view's body | 256 | — |
 | Strict: characters of one event detail, all strings together | 262144 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
@@ -890,7 +939,7 @@ policy must allow:
 | :--- | :--- | :--- | :--- |
 | `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; `'unsafe-eval'` for `execute()` | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
 | `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
-| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; `'unsafe-inline'` for the guest's own inline styles | the same | the same |
+| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; with `allowAnimations: false`, also the view's animation stylesheet's hash `'sha256-amm79io5EJ9SmPgoYE7s3LGBj1Gj7woAmcCh4e52iLo='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
 | `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` | the same | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
 | Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox`, which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
@@ -899,7 +948,8 @@ policy must allow:
 - **What a refusal looks like**: the build ends with a reason that names your page's policy: `the sandbox's startup
   script did not run …` (a refused bootstrap), `the sandbox's worker could not be loaded …` (a refused `blob:` worker),
   `… does not allow the policy name 'web-sandbox' …` (Trusted Types). A refused wrapper style leaves the frame 150 px
-  high, and the element warns with the hash to allow.
+  high, and the element warns with the hash to allow; so does a refused animation stylesheet (`allowAnimations: false`),
+  whose view then shows no guest stylesheet.
 - **Your `connect-src`, `img-src` and the other fetch directives narrow `origins` silently**: an origin listed in
   `origins` that your page's policy does not allow is refused in the sandbox too. The refusal happens in the sandbox's
   documents, so it arrives as the element's `violation` event (where the browser reports it), never as a
@@ -914,7 +964,7 @@ policy must allow:
   const policy = `script-src 'self' ${viewScriptHash()}; worker-src blob:`; // viewScriptHash() is 'sha256-…', quoted
   ```
 
-  The wrapper style's hash is a constant of the library, listed in the table above.
+  The wrapper style's and the animation stylesheet's hashes are constants of the library, listed in the table above.
 
 ---
 

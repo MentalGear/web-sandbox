@@ -532,6 +532,13 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
     directive apart, and cannot be forged; the view renders no `blob:` content but registered files and raster-image
     guest writes, decoded only (the worker's own source URL is revoked once its script ran).
+*   **Animations and autoplay (`allowAnimations`, `allowAutoplay`)**: **while `allowAnimations` is `true` (the
+    default), CSS animations and transitions in the view run on your page's main thread wherever the browser runs the
+    view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation; desktop Chromium 127+
+    isolates it), and the view's time budget does not bound them: a guest can keep your page 80–98% busy for as long as
+    they run.** Set `allowAnimations: false` to remove animations and transitions from the view (elements show their end
+    state), which restores the bound. `allowAutoplay` is `false` by default: media in the view plays only when the user
+    starts it. [API.md](docs/API.md#allowanimations-and-allowautoplay)
 *   **What it does not**: [below](#what-strict-mode-does-not-cover), with the host page's availability first.
 *   **Programming model**: no inline `<script>`, nested frames or the elements listed in API.md as unavailable (popovers,
     invoker commands, `canvas`, SVG `use`/filters/`image`) in rendered markup; files are named by path in
@@ -575,15 +582,26 @@ One list, the same in [API.md](docs/API.md#modes) and the [backlog](docs/BACKLOG
 What remains for the default:
 
 *   **The host page's availability**: strict mode protects confidentiality and egress. It does not protect the host
-    page's availability wherever the view shares the host page's thread: WebKit always, Firefox, and Chromium
-    depending on its process model. The view's budgets bound the common cases (one render in flight; elements,
-    depth and characters held; characters parsed per second; 200 ms of the view's own time per second, measured),
-    but not what one operation's layout and paint cost beyond what the markup weighs: CSS filters (WebKit: 10
-    `blur()`s on 1 000 elements, 3.7 s), bidirectional text in one paragraph (240 000 characters alternating
-    directions: tens of seconds in Chromium and WebKit, engine and machine dependent), and small CSS changes over many
-    elements, which cost style recalculation and layout (Firefox: a 31-character `text()` into a `<style>` over 46 000
-    elements, 7 s). Cooperative mode is no better:
-    there a guest `while (true) {}` freezes the host page wherever the frame shares its thread.
+    page's availability wherever the view shares the host page's thread. Where that is (measured on headless
+    Playwright 1.58.1, [research 16](docs/research/16_view_isolation/README.md)): Firefox, whose Fission isolates only
+    cross-site frames and places the view (an opaque-origin sandboxed frame) with the site that made it; Safari and
+    every WebKit browser, which have no site isolation; Android, where Chromium isolates partially and Android WebView
+    not at all; and Chromium without sandboxed-iframe isolation (the headless shell). Desktop Chromium 127+ runs the
+    view in a process of its own. The view's budgets bound the common cases (one render in flight; elements, depth and
+    characters held; characters parsed per second; 200 ms of the view's own time per second, measured), but not:
+    *   what one operation's layout and paint cost beyond what the markup weighs: CSS filters (WebKit: 10 `blur()`s on
+        1 000 elements, 3.7 s), bidirectional text in one paragraph (240 000 characters alternating directions: tens of
+        seconds in Chromium and WebKit, engine and machine dependent), and small CSS changes over many elements, which
+        cost style recalculation and layout (Firefox: a 31-character `text()` into a `<style>` over 46 000 elements,
+        7 s);
+    *   what runs without the view doing anything: CSS animations and transitions while `allowAnimations` is `true`
+        (the default; 5 000 animated elements kept the host page 80–98% busy), `:hover` restyles over many elements
+        while the user's pointer moves (80–100% while it moves), animated images (WebKit: +22 points for 2 000),
+        indeterminate `<progress>` (up to +4 points for 5 000), and autoplaying media with `allowAutoplay: true` (up to
+        +6 points for 20 videos).
+
+    Cooperative mode is no better: there a guest `while (true) {}` freezes the host page wherever the frame shares its
+    thread.
 *   **CSS within what the policy allows**: style-based probing of the view's own content, and loads from the origins
     you allow.
 *   **Worker `violation` reports** (`source: 'logic'`): per engine (WebKit raises none in workers) and influenced by
