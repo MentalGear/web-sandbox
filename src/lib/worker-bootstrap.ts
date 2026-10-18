@@ -53,9 +53,14 @@ export function workerBootstrap(workerSource: string, trustedTypesPolicy?: strin
     }
     const channel = new MessageChannel();
     let started = false;
+    // The worker's one message to this frame, WORKER_STARTED; once it arrived the frame stops listening (review round 4,
+    // M-1): the port it announces is the only channel from then on. The worker has no postMessage left for guest code
+    // anyway (worker-globals.ts), so nothing else is ever posted here.
     worker.onmessage = (event: MessageEvent) => {
-        if (started || !event.data || event.data.type !== 'WORKER_STARTED') return;
+        const data = event.data;
+        if (started || !data || data.type !== 'WORKER_STARTED') return;
         started = true;
+        worker.onmessage = null;
         parent.parent.postMessage({ type: 'SANDBOX_PORT' }, '*', [channel.port2]);
     };
     worker.onerror = (event: ErrorEvent) => {

@@ -1657,7 +1657,8 @@ nothing, so consumers can choose their own tag. The playground and the e2e harne
 not listed exactly, never sends the host page's credentials or URL, never follows a redirect, never holds
 more than the cap plus one chunk of a response or outlives its timeout or its environment, and every
 request — refused, failed, aborted or answered — is reported once as a `fetch` event. Off (the default),
-the guest has no `sandboxFetch` and the reserved method refuses. The guest policy is unchanged.
+the guest's `sandboxFetch` (always present) rejects every request with `FETCH_NOT_ALLOWED`, refused by the
+reserved method, and no `fetch` event is dispatched. The guest policy is unchanged.
 
 **Done**, decided in [ADR-006](ADR-006-fetch-bridge.md): a library method under the reserved broker name
 `sandbox:fetch` (ADR-002 amendment: `sandbox:` names live in their own registry, which `expose()` cannot

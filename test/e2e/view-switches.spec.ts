@@ -7,7 +7,7 @@ import type { Page } from '@playwright/test';
  * `allowAnimations: false` stops every animation and transition vector a guest has, what that leaves of the host page's
  * thread, what a host page's style-src that refuses the stylesheet does, and what `allowAutoplay` leaves on media. The
  * library's own logic is unit-tested in test/unit/view-switches.test.ts. Each test failed before the switches existed,
- * but the positive controls and, in Chromium, the form-control parts, which cost Chromium nothing either way.
+ * but the positive controls.
  *
  * Evidence is read from outside (strict-view.ts): the view's document.getAnimations(), which lists CSS animations and
  * transitions, those on pseudo-elements included, its computed styles, and the host page's own ticks.
@@ -16,7 +16,10 @@ import type { Page } from '@playwright/test';
 const SPIN = '@keyframes spin { from { margin-left: 0 } to { margin-left: 40px } }';
 
 // Every vector a guest has, in one render: unlayered !important, its own named and anonymous layers, pseudo-elements,
-// inline !important (plain, prefixed, through a custom property), SVG <style> and an SVG style attribute, @starting-style,
+// inline !important (plain, prefixed, through a custom property), and the inline declarations the renderer reads
+// (review round 4, C-2: an escaped name, upper case, a prefixed transition, var() in a longhand and in a shorthand,
+// `all` beside an animation, a keyword after a shorthand, `inherit` from an animated parent), SVG <style> and an SVG
+// style attribute, @starting-style,
 // a scroll-driven animation, a registered custom property, a registered stylesheet and one it @imports.
 const VECTORS = `
     <style>
@@ -47,6 +50,14 @@ const VECTORS = `
     <p style="-webkit-animation: spin 1s infinite">n</p>
     <p style="--a: spin 1s infinite; animation: var(--a) !important">o</p>
     <p style="transition: opacity 30s !important; opacity: 0.5" id="inline-transition">p</p>
+    <p style="anim\\61tion: spin 1s infinite !important">r</p>
+    <p style="ANIMATION: SPIN 1S INFINITE">s</p>
+    <p style="-webkit-transition: opacity 30s; opacity: 0.5">t</p>
+    <p style="--n: spin; animation-name: var(--n); animation-duration: 1s; animation-iteration-count: infinite">u</p>
+    <p style="all: unset; animation: spin 1s infinite !important">v</p>
+    <p style="--k: spin 1s infinite; all: unset; animation: var(--k) !important">w</p>
+    <p style="transition: all 30s; transition-property: revert-layer; opacity: 0.5">x</p>
+    <div style="animation: spin 1s infinite"><p style="animation: inherit">y</p></div>
     <svg width="40" height="40"><style>rect { animation: spin 1s infinite !important }</style>
         <rect width="10" height="10"/><circle r="5" cx="20" cy="20" style="animation: spin 1s infinite !important"/></svg>
     <math><mi style="animation: spin 1s infinite !important">q</mi></math>`;
@@ -117,31 +128,67 @@ test.describe('allowAnimations', () => {
 
     // The parts of form controls are pseudo-elements of the engines' own (::-webkit-slider-thumb, ::-moz-range-thumb,
     // ::file-selector-button), which document.getAnimations() does not list: what they cost is read on the host page.
-    test("form-control parts: 300 animated range thumbs and file buttons: false leaves the host page its ticks", async ({ sandbox, page, browserName }) => {
+    // The positive control reads the effect itself, in the view, with the most direct signal each engine gives (it used to
+    // read the host page's ticks with `true`, a margin that depends on the machine): the animation name the parts compute
+    // to where the engine computes style for them (Chromium: the file button; Firefox: the file button and the range
+    // thumb), and where it computes none for them (WebKit), the pixels of the element in six samples 90 ms apart, which
+    // change while the parts' colours and widths animate and do not when they cannot.
+    test("form-control parts: 300 animated range thumbs and file buttons: false leaves the host page its ticks, and no part animates", async ({ sandbox, page, browserName }) => {
         test.setTimeout(90000);
         const ticks = () => page.evaluate(() => new Promise<number>(resolve => {
             let count = 0;
             const timer = setInterval(() => count++, 10);
             setTimeout(() => { clearInterval(timer); resolve(count); }, 3000);
         }));
+        // the animation name the parts compute to, where the engine computes style for them
+        const COMPUTED_PARTS: Record<string, [string, string][]> = {
+            chromium: [['file', '::file-selector-button']],
+            firefox: [['file', '::file-selector-button'], ['range', '::-moz-range-thumb']],
+            webkit: [],
+        };
+        const partAnimations = () => inView<string[]>(page, browserName, `(() => {
+            const inputs = { range: document.querySelector('input[type=range]'), file: document.querySelector('input[type=file]') };
+            return ${JSON.stringify(COMPUTED_PARTS[browserName] ?? [])}.map(([input, part]) => getComputedStyle(inputs[input], part).animationName);
+        })()`);
+        // how many distinct pictures of the element six samples 90 ms apart show
+        const pictures = async () => {
+            const seen = new Set<string>();
+            for (let i = 0; i < 6; i++) {
+                seen.add((await page.locator('web-sandbox').screenshot({ animations: 'allow' })).toString('base64'));
+                await page.waitForTimeout(90);
+            }
+            return seen.size;
+        };
         const parts = '::-webkit-slider-thumb, ::-moz-range-thumb, ::file-selector-button';
         const style = `@keyframes paint { from { background-color: red; width: 10px } to { background-color: blue; width: 20px } } `
             + parts.split(', ').map(part => `input${part} { animation: paint 0.5s infinite alternate !important }`).join(' ');
         const entry = `sandboxView.render('<style>${style}</style>' + '<input type="range"><input type="file">'.repeat(150));`;
         await sandbox.registerFiles({ 'main.js': entry });
         const idle = await ticks();
-        const measured: Record<string, number> = {};
+        let ticksFalse = 0;
+        const computed: Record<string, string[]> = {};
+        const distinct: Record<string, number> = {};
         for (const allowAnimations of [false, true]) {
             expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', allowAnimations })).toBe('ready');
             await waitInView(page, browserName, `document.getElementsByTagName('input').length === 300`, 10000);
             await page.waitForTimeout(1000);
-            measured[String(allowAnimations)] = await ticks();
+            if (!allowAnimations) ticksFalse = await ticks();
+            computed[String(allowAnimations)] = await partAnimations() as string[];
+            if (browserName === 'webkit') distinct[String(allowAnimations)] = await pictures();
         }
-        console.log(`MEASURED ${browserName} host ticks in 3 s with 300 animated form-control parts: idle ${idle}, allowAnimations false ${measured.false}, true ${measured.true}`);
-        expect(measured.false).toBeGreaterThan(idle * 0.85);
-        // positive control where these parts cost the host page anything (measured: Firefox about half its ticks, WebKit a
-        // third; Chromium none)
-        if (browserName !== 'chromium') expect(measured.true).toBeLessThan(idle * 0.8);
+        console.log(`MEASURED ${browserName} 300 animated form-control parts: host ticks in 3 s idle ${idle}, allowAnimations false ${ticksFalse}; computed animation names false ${JSON.stringify(computed.false)}, true ${JSON.stringify(computed.true)}`
+            + (browserName === 'webkit' ? `; distinct pictures of 6: false ${distinct.false}, true ${distinct.true}` : ''));
+        // the guarantee
+        expect(ticksFalse).toBeGreaterThan(idle * 0.85);
+        // the positive control (true), and the same signal with false
+        if (browserName === 'webkit') {
+            expect(distinct.true, 'positive control: the parts animate with true').toBeGreaterThan(1);
+            expect(distinct.false).toBe(1);
+        } else {
+            expect(computed.true!.length).toBeGreaterThan(0);
+            expect(computed.true, 'positive control: the parts animate with true').toEqual(computed.true!.map(() => 'paint'));
+            expect(computed.false).toEqual(computed.true!.map(() => 'none'));
+        }
     });
 });
 

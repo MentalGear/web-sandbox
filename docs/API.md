@@ -114,9 +114,9 @@ a config without `mode` is a strict config (strict mode is the default).
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
 | `autoResize` | `boolean` | `false` | strict, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Opens [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md) |
-| `callLimits` | `CallLimits` | 5000 calls and 64 MiB per second | all | The per-second budget of the calls the guest makes, per environment; see [below](#calllimits). |
-| `allowAnimations` | `boolean` | `true` | strict | Whether CSS animations and transitions run in the view. **While `true`, they run on your page's main thread wherever the browser runs the view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation), and the view's time budget does not bound them: a guest can keep your page 80–98% busy.** `false` removes them (elements show their end state). Only a literal `false` turns them off; any other value that is not a boolean is taken as `false`, with one warning. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
-| `allowAutoplay` | `boolean` | `false` | strict | Whether `<video autoplay>` and `<audio autoplay>` in the view start on their own; while `false` the `autoplay` attribute is removed and media plays only when the user starts it. With `true`, playing media costs your page's main thread where the view shares it (measured up to +6 points for 20 looping videos), outside the time budget. Only a literal `true` enables it; any other value that is not a boolean is taken as `false`, with one warning. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
+| `callLimits` | `CallLimits` | 1000 calls and 64 MiB per second | all | The per-second budget of the calls the guest makes, per environment; see [below](#calllimits). |
+| `allowAnimations` | `boolean` | `true` | strict | Whether CSS animations and transitions run in the view. **While `true`, they run on your page's main thread wherever the browser runs the view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation), and the view's time budget does not bound them: a guest can keep your page 80–98% busy.** `false` removes them (elements show their end state). Left out or `true` keeps them; any other value turns them off, with one warning when it is not a boolean. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
+| `allowAutoplay` | `boolean` | `false` | strict | Whether `<video autoplay>` and `<audio autoplay>` in the view start on their own; while `false` the `autoplay` attribute is removed and media plays only when the user starts it. With `true`, playing media costs your page's main thread where the view shares it (measured up to +6 points for 20 looping videos), outside the time budget. Only a literal `true` enables it: left out or `false` keeps it off, and so does any other value, with one warning when it is not a boolean. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
 | `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
 
 ### `origins`
@@ -206,12 +206,13 @@ them). Your own calls to the guest are not counted.
 
 | Field | Type | Default | What it does |
 | :--- | :--- | :--- | :--- |
-| `maxPerSecond` | `number` | `5000` | Most calls in any one second. |
+| `maxPerSecond` | `number` | `1000` | Most calls in any one second. |
 | `maxBytesPerSecond` | `number` | `67108864` (64 MiB) | Most bytes of calls in any one second. |
 
-A field left out, or `callLimits` left out, takes the default. A value that is not a finite number `> 0` (`Infinity`,
-`0`, a negative number, `NaN`, a string, `null`) takes the default with one warning, and a `callLimits` that is not an
-object takes both defaults with one warning; there is no way to turn the budget off.
+A field left out, or `callLimits` left out, takes the default. A value that is not a finite number `>= 1` (`Infinity`,
+`0`, `0.5`, a negative number, `NaN`, a string, `null`) takes the default with one warning, and a `callLimits` that is not
+an object takes both defaults with one warning; there is no way to turn the budget off, nor to set one that admits no
+call.
 
 ### `allowAnimations` and `allowAutoplay`
 
@@ -234,8 +235,11 @@ animations and transitions too). The budget bounds what the view does when the g
 rendered, runs without the view doing anything. Set `false` to remove animations and transitions from the view: every
 element shows its end state, and the bound holds again. With `false` the view puts a stylesheet of its own before
 anything the guest renders, one anonymous cascade layer that sets `animation` and `transition` to `none !important` on
-every element and pseudo-element, and the renderer removes every `animation*` and `transition*` declaration from
-`style` attributes (an inline `!important` would beat any layer). Nothing the guest declares overrides it: its own
+every element and pseudo-element, and the renderer removes every animation and transition declaration that holds
+anything but a CSS-wide keyword from `style` attributes (an inline `!important` would beat any layer). A `style`
+attribute whose text names no animation or transition (no `anim`, `trans` or backslash in it) is left exactly as
+written; one that does, and declares more properties than it has characters (`all` beside an animation), is removed
+whole. Nothing the guest declares overrides it: its own
 `!important`, its own layers, `@starting-style`, `@property`, scroll-driven animations, registered stylesheets and
 their `@import`s. Your page's `style-src` must allow that stylesheet (`'unsafe-inline'`, or its hash: see
 [Host page policy](#host-page-policy)); where it does not, the view removes the guest's stylesheets instead
@@ -425,7 +429,7 @@ All events are `CustomEvent`s dispatched on the element. None is `composed`.
 | `terminated` | `{ reason: string }` | no | The sandbox was terminated: `state` is `terminated`. Once per termination; a refused build's in a task of its own. |
 | `sandbox-log` | `SandboxLog` | yes | A log line from the guest or from the element. |
 | `violation` | `SandboxViolation` | yes | The guest policy refused a load. |
-| `fetch` | `FetchRecord` | yes | A `sandboxFetch()` request settled (including refusals). |
+| `fetch` | `FetchRecord` | yes | With `fetchBridge`: a `sandboxFetch()` request settled (including refusals). Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
 | `fileschanged` | `{ paths: string[] }` | no | `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; synchronous. |
 | `fileswritten` | `{ paths: string[] }` | yes | The element recorded a guest write or removal (`guestWrites`); one path per event, at most `GUEST_WRITES_PER_SECOND` per environment. |
 
@@ -470,7 +474,10 @@ guest lines in any one-second window per environment (one warning); the relay's 
 `warn` lines) are not counted there, so they always arrive. Lines logged before the guest is connected (a strict
 entry's top level runs before the worker has its port) are kept, at most 1000 and 4 MiB (one window's worth), and
 arrive in order once it is, counted in that second's window; past either cap, one `warn` line says how many were
-dropped and for which cap.
+dropped and for which cap. In strict mode the view relays the later uncaught errors that only it can describe (WebKit
+raises them there) within the same `LOG_EVENTS_PER_SECOND` window; the first one it drops sends one `warn` line, also
+not counted: `[Sandbox] the guest raised more than 1000 uncaught errors in one second that only the view could
+describe; errors past that are dropped in the view.`
 
 Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`);
 `[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
@@ -508,6 +515,10 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | `reason` | `string?` | For a refusal of an origin that is not listed, what the host knows beyond the guest's text: the host page's own origin, or a loopback, private or link-local host. The guest is told the same for every unlisted origin. |
 | `bytes` | `number` | Response body bytes read. |
 | `durationMs` | `number` | From the request to its settlement. |
+
+A record belongs to the environment that made the request, and is dispatched when the request settles: an `aborted`
+record of an environment that `reset()`, `load()` or `setConfig()` tore down can arrive after that call, while the next
+build is loading.
 
 ### `terminated` reasons
 
@@ -602,18 +613,20 @@ From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.
 | :--- | :--- | :--- | :--- |
 | `TIMEOUT` | local | No answer within the call's timeout. | yes |
 | `TERMINATED` | local | The environment was reset, terminated or removed. | after the next `ready` |
-| `ARGS_NOT_TRANSFERABLE` | local | The arguments cannot be structured-cloned, measure more than `RPC_MAX_BYTES`, or hold a value the measure does not know (the message names it; see [`call()`](#callmethod-args)); nothing was sent. | no |
+| `ARGS_NOT_TRANSFERABLE` | local, reported | The arguments cannot be structured-cloned, measure more than `RPC_MAX_BYTES`, or hold a value the measure does not know (the message names it; see [`call()`](#callmethod-args)); nothing was sent. Reported by the other side for a call that arrived so: the method did not run. | no |
 | `SEND_FAILED` | local | The transport threw while sending. | no |
 | `INVALID_CALL` | local | The method name is not a string, or is longer than 256 characters. | no |
 | `UNKNOWN_METHOD` | reported | No method of that name is exposed on the other side. | no |
 | `HANDLER_ERROR` | reported | The handler threw or rejected; the message is its text, at most 65536 characters. | depends on the handler |
 | `RESULT_NOT_TRANSFERABLE` | reported | The handler's result cannot be structured-cloned, measures more than `RPC_MAX_BYTES`, or holds a value the measure does not know (as above). | no |
-| `BUSY` | reported | The other side already runs `MAX_INBOUND_IN_FLIGHT` of your calls, or 64 MiB of their arguments, or the call measures more than `RPC_MAX_BYTES`; the method did not run. Guest calls only: the guest made more calls in the last second than [`callLimits`](#calllimits) allows (by default 5000 calls, or 64 MiB of calls); the guest's `bridge` refuses such a call before sending it, and the element answers one that arrives anyway. | yes |
+| `BUSY` | reported | The other side already runs `MAX_INBOUND_IN_FLIGHT` of your calls, or 64 MiB of their arguments; the method did not run. Guest calls only: the guest made more calls in the last second than [`callLimits`](#calllimits) allows (by default 1000 calls, or 64 MiB of calls); the guest's `bridge` refuses such a call before sending it, and the element answers one that arrives anyway. | yes |
 
-**Local** codes are set only by the side that made the call, from its own state, so the other side can never
-produce them. **Reported** codes come from the other side, and their message is its text (at most 65536
-characters); any other code the other side claims reads as `HANDLER_ERROR`. The guest's `bridge` also refuses with
-`BUSY` itself, for the element's per-second budget, so that a call past it never crosses. `state === 'terminated'`
+**Local** codes are set by the side that made the call, from its own state; the other side can never produce
+`TIMEOUT`, `TERMINATED`, `SEND_FAILED` or `INVALID_CALL`. **Reported** codes come from the other side, and their
+message is its text (at most 65536 characters); any other code the other side claims reads as `HANDLER_ERROR`.
+`ARGS_NOT_TRANSFERABLE` is both: the side that made the call refuses such arguments before sending them, and the other
+side answers it for arguments that arrive anyway. The guest's `bridge` also refuses with `BUSY` itself, for the
+element's per-second budget, so that a call past it never crosses. `state === 'terminated'`
 confirms `TERMINATED` from the element's own state. [ADR-002](ADR-002-host-guest-broker.md)
 
 ### `sandboxFetch()`: `FetchErrorCode`
@@ -670,18 +683,21 @@ runs no guest code at all, and acts only on trusted events: a synthetic event is
 only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WORKER_NAVIGATOR_MEMBERS` for
 `navigator`) and deletes every other one, so a platform API that is not listed is absent. Four listed globals can make
 a request, each governed by the policy on every engine: `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`) and
-`importScripts` (`script-src`). Kept: the language's built-ins, timers, events and messages, encoding, streams,
-`crypto`, `Blob`, `File`, `URL`, IndexedDB, `OffscreenCanvas` with 2D and WebGL, WebCodecs, `performance`, `scheduler`,
-`BroadcastChannel`. Absent: `EventSource`, `WebTransport`, `WebSocketStream`, `FontFace` and `fonts`, `caches`,
-`Notification`, `Worker` and `SharedWorker` (no nested workers), the Service Worker, Push, RTC, MediaSource and
-Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`.
+`importScripts` (`script-src`). Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
+encoding, streams, `crypto`, `Blob`, `File`, `URL`, IndexedDB, `OffscreenCanvas` with 2D and WebGL, WebCodecs,
+`performance`, `scheduler`, `BroadcastChannel`. Absent: `EventSource`, `WebTransport`, `WebSocketStream`, `FontFace`
+and `fonts`, `caches`, `Notification`, `Worker` and `SharedWorker` (no nested workers), the Service Worker, Push, RTC,
+MediaSource and Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`; and the worker's own
+`postMessage`, `onmessage` and `onmessageerror`: the library's port, with its budgets, is the only way from the worker
+to its parent (worker mode's frame, strict mode's view). Its uncaught errors leave it the same way, as
+[`sandbox-log`](#sandbox-log--sandboxlog) lines.
 
 ### `bridge`
 
 | Member | Signature | Description |
 | :--- | :--- | :--- |
 | `expose` | `(name: string, fn: (...args) => unknown) => void` | Publishes a guest method the host calls with `sandbox.call(name, ...)`. Last registration wins; `sandbox:` names, and names longer than 256 characters, are ignored. |
-| `call` | `(method: string, ...args) => Promise<unknown>` | Calls a host method exposed with `sandbox.expose()`. 30 s timeout. At most [`callLimits`](#calllimits) calls in any one second (by default 5000 calls and 64 MiB), per environment: past that a call is refused with `BUSY` and not sent. |
+| `call` | `(method: string, ...args) => Promise<unknown>` | Calls a host method exposed with `sandbox.expose()`. 30 s timeout. At most [`callLimits`](#calllimits) calls in any one second (by default 1000 calls and 64 MiB), per environment: past that a call is refused with `BUSY` and not sent. |
 | `callWithTimeout` | `(timeoutMs: number, method: string, ...args) => Promise<unknown>` | With a timeout for this call; `0` disables it. |
 
 Usable at once: calls and exposes made before the channel is connected are buffered. Rejections carry the
@@ -771,9 +787,14 @@ goes with its content.
 **Attributes**: `id`, `class`, `style`, `title`, `lang`, `dir`, `hidden`, `tabindex`, `role`, `translate`, `inert`,
 `spellcheck`, `inputmode`, `enterkeyhint`, `autocapitalize`, `data-*` and `aria-*` everywhere, and per element the
 ones it needs (form controls, tables, lists, media, links; SVG geometry and presentation; MathML presentation).
-Never an event handler. `src`, `srcset` and `poster` keep an `https:` or `http:` URL, a registered file's path, or
-nothing (no `data:` or `javascript:`); SVG `fill`, `stroke`, `clip-path` and `mask` reference only `url(#id)`. Link
-clicks and form submissions navigate nowhere.
+Never an event handler. `src`, `srcset` and `poster` keep a registered file's path, a relative URL (which loads
+nothing), or an `https:` or `http:` URL of an origin [`origins`](#origins) lists for that load (`images` for `img`,
+`srcset` and `poster`, `media` for `audio`, `video`, their `source` and `track`), never `data:` or `javascript:`. A URL
+the view's policy would refuse is dropped before insertion, so the browser never loads or refuses it, and the view
+reports it as the browser would have: a `violation` with the directive and the URL (without credentials or fragment),
+within the same cap. CSS is not rewritten: a URL a stylesheet or a `style` attribute names (`url()`, `image-set()`)
+is left to the browser, which refuses and reports a refused one. SVG `fill`, `stroke`, `clip-path` and `mask`
+reference only `url(#id)`. Link clicks and form submissions navigate nowhere.
 
 Not available in strict mode: `use`, markers, SVG filters, SVG `image`, `foreignObject` and animation; `canvas`,
 `slot`, `selectedcontent` (customizable `select`); popovers (`popover`, `popovertarget`) and invoker commands
@@ -783,10 +804,13 @@ SVG cover most of it.
 
 Text is kept, each run of adjacent text joined into one node; comments are dropped. The view holds
 at most 50000 elements, nested at most 256 deep below its body, and at most 1048576 characters (its body's
-serialization: text, attributes and markup alike), counted over the document a render would leave (what is outside the target stays): a render past
+serialization: text, attributes and markup alike), and at most 1000 URL-bearing attributes (`src`, `srcset`, `poster`
+and a link's `href`, whatever they name), counted over the document a render would leave (what is outside the target stays): a render past
 any of them is dropped as a whole, the next one still applies, and the guest's log says
 `[Sandbox] sandboxView.render: the view refused a render: …`. The view parses at most 1048576 characters of markup
-per second, renders it refused included, and spends on average at most 200 ms of its own time per second on them, measured
+per second, renders it refused included, takes at most 200 URL-bearing attributes per second (what the browser does
+with a URL once it is rendered, loading and decoding it, is no work of the view's, so its time budget cannot see it),
+and spends on average at most 200 ms of its own time per second on them, measured
 (their layout and the rendering update that shows them included; never time in which the view, hidden or off-screen,
 rendered nothing): an operation past either waits, and so does the worker's next one (one in flight), so a flood of
 renders is slowed, not dropped. One operation's own cost is not bounded by them (one textarea of 250 000 characters
@@ -887,7 +911,7 @@ in strict mode.
 | Limit | Value | Exported constant |
 | :--- | :--- | :--- |
 | Inbound calls running at once, per side and environment | 256 | `MAX_INBOUND_IN_FLIGHT` |
-| Guest calls per second, per environment (any one-second window; default of `callLimits.maxPerSecond`) | 5000 | — |
+| Guest calls per second, per environment (any one-second window; default of `callLimits.maxPerSecond`) | 1000 | — |
 | Bytes of guest calls per second, per environment (any one-second window; default of `callLimits.maxBytesPerSecond`) | 67108864 (64 MiB) | — |
 | Default call timeout (ms) | 30000 | — |
 | Characters of a method name | 256 | — |
@@ -910,6 +934,8 @@ in strict mode.
 | Strict: characters of markup the view parses per second | 1048576 | — |
 | Strict: time the view spends applying operations per second, their layout and rendering included (ms) | 200 | — |
 | Strict: most time the view's time budget may owe (ms) | 1000 | — |
+| Strict: URL-bearing attributes in the view (`src`, `srcset`, `poster`, `href`) | 1000 | — |
+| Strict: URL-bearing attributes the view takes per second | 200 | — |
 | Strict: nesting depth below the view's body | 256 | — |
 | Strict: characters of one event detail, all strings together | 262144 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
@@ -941,7 +967,7 @@ policy must allow:
 | :--- | :--- | :--- | :--- |
 | `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; `'unsafe-eval'` for `execute()` | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
 | `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
-| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; with `allowAnimations: false`, also the view's animation stylesheet's hash `'sha256-amm79io5EJ9SmPgoYE7s3LGBj1Gj7woAmcCh4e52iLo='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
+| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; with `allowAnimations: false`, also the view's animation stylesheet's hash `'sha256-/5RpApu78aTdhG04IX6feIc7KP+1UuVtUKyPG2hoG9k='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
 | `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` | the same | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
 | Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox`, which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |

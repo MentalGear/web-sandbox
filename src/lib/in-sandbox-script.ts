@@ -45,6 +45,9 @@ export function inSandboxScript(
     // The byte measure (structured-size.ts), stringified in like createBroker: the console relay's budget and the
     // broker's are measured with it, made before any guest code runs.
     createSizeOfFn?: typeof createSizeOf,
+    // Worker mode: the platform's postMessage of the worker, which the globals allowlist took before deleting it
+    // (worker-globals.ts, review round 4, M-1), for the one WORKER_STARTED below. Nothing else in the worker holds it.
+    postToFrameFn?: ((message: unknown) => void) | null,
 ): { attach(port: MessagePort): void; writeFiles: ((request: unknown) => Promise<unknown>) | null; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void } {
     // The announcement (broad review 2026-10-14, CB1), the first statement, before anything else in the guest
     // document can run: in cooperative mode the bootstrap makes the channel itself, keeps port1 in this closure and
@@ -82,6 +85,7 @@ export function inSandboxScript(
     const dataOf = getOwn(MessageEvent.prototype, 'data')!.get!;
     const portsOf = getOwn(MessageEvent.prototype, 'ports')!.get!;
     const stopImmediate = Event.prototype.stopImmediatePropagation;
+    const cancelEvent = Event.prototype.preventDefault;
     const listen = EventTarget.prototype.addEventListener;
     const addGlobalListener = g.addEventListener;
     const PromiseConstructor = Promise;
@@ -123,11 +127,12 @@ export function inSandboxScript(
     const slice = String.prototype.slice;
     const startsWith = String.prototype.startsWith;
     const clock = g.performance;
-    const nowOf = clock && typeof clock.now === 'function' ? clock.now : null;
+    const clockNow = clock ? clock.now : undefined; // read once (review round 4, C-1)
+    const nowOf = typeof clockNow === 'function' ? clockNow : null;
     const DateConstructor = Date;
     const dateNow = Date.now;
     const queueMicrotaskFn = g.queueMicrotask;
-    const postToFrame = mode === 'worker' && typeof g.postMessage === 'function' ? g.postMessage : null;
+    const postToFrame = mode === 'worker' && typeof postToFrameFn === 'function' ? postToFrameFn : null;
     // Bytes (the fetch bridge's request body): copied with set(), which consults no species constructor.
     const Uint8ArrayConstructor = Uint8Array;
     const typedArrayPrototype = protoOf(Uint8Array.prototype);
@@ -150,11 +155,14 @@ export function inSandboxScript(
         keepaliveOf = getOwn(proto, 'keepalive')?.get; // own on Request.prototype in every engine measured
     }
     // PD4 (below): the traversal methods' owners.
-    const historyPrototype = mode === 'cooperative' && typeof g.History === 'function' ? g.History.prototype : null;
-    const navigationPrototype = mode === 'cooperative' && typeof g.Navigation === 'function' ? g.Navigation.prototype : null;
+    const HistoryConstructor = g.History;
+    const NavigationConstructor = g.Navigation;
+    const historyPrototype = mode === 'cooperative' && typeof HistoryConstructor === 'function' ? HistoryConstructor.prototype : null;
+    const navigationPrototype = mode === 'cooperative' && typeof NavigationConstructor === 'function' ? NavigationConstructor.prototype : null;
     // Auto-sizing (B6, below): the document and what is measured, through the prototypes' own getters.
     const doc: Document | null = mode === 'cooperative' ? document : null;
-    const ResizeObserverConstructor = mode === 'cooperative' && typeof g.ResizeObserver === 'function' ? g.ResizeObserver : null;
+    const ResizeObserverFound = g.ResizeObserver;
+    const ResizeObserverConstructor = mode === 'cooperative' && typeof ResizeObserverFound === 'function' ? ResizeObserverFound : null;
     const observe = ResizeObserverConstructor ? ResizeObserverConstructor.prototype.observe : null;
     const rootOf = doc ? getOwn(Document.prototype, 'documentElement')!.get! : null;
     const bodyOf = doc ? getOwn(Document.prototype, 'body')!.get! : null;
@@ -841,18 +849,28 @@ export function inSandboxScript(
     // (workers) dispatch the platform's own with isTrusted false (measured), and a forged one makes only a line the
     // guest could log itself. What the browser gives is all there is: WebKit mutes the errors of the guest
     // document's inline scripts and of a worker's blob: script ("Script error.", no error object; measured).
+    //
+    // Worker mode: once the port is attached, an error is cancelled after it is relayed (review round 4, the class of
+    // M-1). An uncaught error that is not cancelled reaches the Worker object in the frame, with its message, on the host
+    // page's thread in Firefox and WebKit, outside every budget: a worker that reported errors of 16 Mi characters in a
+    // loop kept Firefox's host page 99% busy and WebKit's 88%. The relay is the one sink, as for console lines. Before
+    // the port is attached an error still reaches the frame, which reads it as a worker that failed to start
+    // (worker-bootstrap.ts). Strict mode's prelude cancels the same errors (in-sandbox-view.ts).
     if (typeof addGlobalListener === 'function') {
         if (mode !== 'strict') {
             apply(addGlobalListener, g, ['error', (event: any) => {
                 if (event.isTrusted !== true) return;
                 let text = '';
                 try {
-                    text = event.error !== null && event.error !== undefined ? errorText(event.error) : textOf(event.message);
-                    if (!text) text = textOf(event.message) || 'an error';
+                    const error = event.error; // each read once (C-1)
+                    const message = event.message;
+                    text = error !== null && error !== undefined ? errorText(error) : textOf(message);
+                    if (!text) text = textOf(message) || 'an error';
                 } catch {
                     text = 'an error';
                 }
                 log('error', [uncaught(text)]);
+                if (mode === 'worker' && port) apply(cancelEvent, event, []);
             }, true]);
         }
         apply(addGlobalListener, g, ['unhandledrejection', (event: any) => {
@@ -886,7 +904,9 @@ export function inSandboxScript(
             } catch (e: any) {
                 let text = '';
                 try {
-                    text = e && typeof e.message === 'string' ? cut(e.message) : errorText(e);
+                    // the message read once (review round 4, C-1): a getter answers each read as it likes
+                    const message = e === null || e === undefined ? undefined : e.message;
+                    text = typeof message === 'string' ? cut(message) : errorText(e);
                 } catch {
                     text = 'an error'; // a thrown value whose message cannot be read
                 }

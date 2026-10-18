@@ -125,3 +125,27 @@ flush happened to hold its flushes to every other frame (31/s), where the host k
 
 **(c) While animations are allowed**: an idle view with 20 running CSS animations requests no animation frame (0 per
 second on all three engines, before and after) and runs nothing of the budget's: the meter runs only after a flush.
+
+## What the browser does with a render's URLs
+
+The time budget charges what the view does: its flush, the layout it forces and the rendering update that shows it.
+What the browser does afterwards with the URLs the render holds (fetching, decoding and laying out an image, or
+processing the refusal of one the policy refuses) is not the view's work, and runs on the host page's thread wherever
+the view does. Measured on headless Playwright 1.58.1, host ticks of a 10 ms interval over 8 s against idle, renders
+replacing the same target as fast as the view acknowledged them (`test/e2e/review-round-4.spec.ts`, M-2):
+
+| Renders of | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- |
+| 6 500 `<img alt>`, no source (control) | 19% | 14% | 10% |
+| 6 500 `<img>` of a refused source, before the renderer dropped them | 31% | 45% | 21% |
+| the same, dropped by the renderer | 17% | 21% | 14% |
+| one render of 4 000 new images from an admitted loopback origin (the 8 s after it) | 52% | 46% | 19%¹ |
+| 1 000 new images from an admitted origin, at `VIEW_MAX_URLS` 1 000 and `VIEW_URLS_PER_SECOND` 200 (loopback) | 14% | 19% | 5%¹ |
+| the same, served by the test | 12% | 9% | 8% |
+| 3 000 elements, each with a background from a refused source (CSS, not dropped) | 18% | 33% | 9% |
+
+¹ WebKit upgrades the loopback's `http:` to `https:` (`upgrade-insecure-requests`) and the request fails.
+
+An admitted image costs the host page about a millisecond, so the cap bounds what one render can make the browser do
+(about a second of the host page's thread) and the rate keeps the long-run share near the view's own 20%. Every kept
+URL is charged, a cached or relative one too: what one costs the browser is not known when it is rendered.

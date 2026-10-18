@@ -38,15 +38,17 @@
  * it was, each stalling the host 0.2–0.7 s per call.
  *
  * Refusals (backlog B7). Every rejection this broker produces is a plain Error with a string `code`
- * from one closed set (RpcErrorCode), split into two disjoint groups by who can cause them:
- *   - LOCAL codes (TIMEOUT, TERMINATED, ARGS_NOT_TRANSFERABLE, SEND_FAILED, INVALID_CALL) are minted
- *     only by the side whose call is refused, from its own state: its timer, its teardown, its clone
- *     check, its transport, its argument check;
- *   - codes REPORTED BY THE OTHER SIDE (UNKNOWN_METHOD, HANDLER_ERROR, RESULT_NOT_TRANSFERABLE, BUSY) are
- *     the only ones a response can produce: the wire `code` is clamped into this group on receipt.
- * Because the groups are disjoint and the clamp never leaves the second one, nothing the other side
- * sends can make a rejection look like one of the local side's own: a response that claims
- * `code: 'TERMINATED'`, or carries the exact termination text, rejects with code HANDLER_ERROR. For the
+ * from one closed set (RpcErrorCode), grouped by who can cause them:
+ *   - LOCAL-ONLY codes (TIMEOUT, TERMINATED, SEND_FAILED, INVALID_CALL) are minted only by the side whose
+ *     call is refused, from its own state: its timer, its teardown, its transport, its argument check;
+ *   - codes REPORTED BY THE OTHER SIDE (UNKNOWN_METHOD, HANDLER_ERROR, RESULT_NOT_TRANSFERABLE, BUSY,
+ *     ARGS_NOT_TRANSFERABLE) are the only ones a response can produce: the wire `code` is clamped into this
+ *     group on receipt. Two of them are also minted locally, for the same condition seen early: BUSY (the
+ *     other side's per-second budget) and ARGS_NOT_TRANSFERABLE (arguments the other side could never carry,
+ *     refused before sending; review round 4, C-5: the receiver answered them BUSY, retryable).
+ * Because the clamp never yields a local-only code, nothing the other side sends can make a rejection
+ * look like one of the local side's own: a response that claims `code: 'TERMINATED'`, or carries the
+ * exact termination text, rejects with code HANDLER_ERROR. For the
  * reported codes the message stays the other side's text verbatim, up to MAX_TEXT_LENGTH characters (a handler's
  * throw rejects with its original message) — the code, not the text, is the part a caller can branch on.
  * `code` is a plain own property rather than an Error subclass: a subclass would be a module-scope
@@ -87,15 +89,19 @@ export type RpcSend = (frame: unknown, transfer?: Transferable[]) => unknown;
  *   TIMEOUT                 the per-call timer fired before an answer arrived (the only code worth retrying)
  *   TERMINATED              the transport went away: the sandbox was reset or terminated (retry only
  *                           after the next 'ready')
- *   ARGS_NOT_TRANSFERABLE   the arguments cannot be structured-cloned; nothing was sent
+ *   ARGS_NOT_TRANSFERABLE   the arguments cannot be structured-cloned, measure past RPC_MAX_BYTES or hold a kind the
+ *                           measure does not know; nothing was sent. Also reported by the other side for a request
+ *                           that arrives so (its own broker never sends one); nothing ran there
  *   SEND_FAILED             the transport threw while sending; nothing was left pending
  *   INVALID_CALL            the method name is not a string, or is longer than 256 characters; nothing was sent
  * Reported by the other side (the message is its text; any other reported value reads as HANDLER_ERROR):
  *   UNKNOWN_METHOD          no method of that name is exposed there
  *   HANDLER_ERROR           the handler threw or rejected
- *   RESULT_NOT_TRANSFERABLE the handler's return value cannot be structured-cloned
- *   BUSY                    the other side already has MAX_INBOUND_IN_FLIGHT of your calls in flight on this
- *                           channel; nothing ran (retryable once earlier calls settle). The guest's own calls are also
+ *   RESULT_NOT_TRANSFERABLE the handler's return value cannot be structured-cloned, or an answer arrived past
+ *                           RPC_MAX_BYTES
+ *   BUSY                    the other side already has MAX_INBOUND_IN_FLIGHT of your calls (or RPC_MAX_INBOUND_BYTES
+ *                           of their arguments) in flight on this channel; nothing ran (retryable once earlier calls
+ *                           settle). The guest's own calls are also
  *                           refused BUSY past the per-second budget of the calls a guest makes (review round 3, M-2),
  *                           by the host on receipt and, before anything is sent, by the guest's broker itself: the
  *                           one reported code a broker also mints, for the other side's budget, applied early
@@ -242,10 +248,15 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const defaultTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const acceptLibraryCodes = options.acceptLibraryCodes === true;
     const transferResults = options.transferResults === true;
-    const sizeOf = typeof options.sizeOf === 'function' ? options.sizeOf : null;
-    const admitOutbound = typeof options.admitOutbound === 'function' ? options.admitOutbound : null;
-    const admitInbound = typeof options.admitInbound === 'function' ? options.admitInbound : null;
-    const takeBusyRefusal = typeof options.takeBusyRefusal === 'function' ? options.takeBusyRefusal : null;
+    // Each option read once (review round 4, C-1: a value checked on one read and used from another is two values).
+    const sizeOfOption = options.sizeOf;
+    const admitOutboundOption = options.admitOutbound;
+    const admitInboundOption = options.admitInbound;
+    const takeBusyRefusalOption = options.takeBusyRefusal;
+    const sizeOf = typeof sizeOfOption === 'function' ? sizeOfOption : null;
+    const admitOutbound = typeof admitOutboundOption === 'function' ? admitOutboundOption : null;
+    const admitInbound = typeof admitInboundOption === 'function' ? admitInboundOption : null;
+    const takeBusyRefusal = typeof takeBusyRefusalOption === 'function' ? takeBusyRefusalOption : null;
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
     // Mirrors the exported RESERVED_METHOD_PREFIX (a test keeps them equal): declared here to survive stringification.
@@ -261,6 +272,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // The longest error text a frame or a rejection carries, the marker included (C-1): 64 Ki characters, as a log string.
     const MAX_TEXT_LENGTH = 65536;
     const CUT_MARKER = ` [… cut at ${MAX_TEXT_LENGTH} characters]`;
+    const UNKNOWN_ERROR = 'unknown error';
     // The bytes of a value by the snapshot measure; a kind the measure does not know is written to `unsupported` (C-3).
     const bytesOf = (value: unknown, limit: number, buffers?: unknown[], unsupported?: { kind: string }) => (sizeOf ? sizeOf(value, limit, buffers, unsupported) : 0);
     // Mirrors MAX_TIMER_DELAY (long-timer.ts; a test keeps them equal), for the same reason. A call's timeout is the
@@ -320,9 +332,24 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // An id a response may echo: a number (ours are), or a short string (C-1).
     type RpcId = number | string;
     const isId = (id: unknown): id is RpcId => typeof id === 'number' || (typeof id === 'string' && id.length <= MAX_NAME_LENGTH);
-    // An error text, at most MAX_TEXT_LENGTH characters: a longer one keeps its start and ends with the marker. A text
-    // cut once is not cut again (it is exactly MAX_TEXT_LENGTH long), so a receiver that cuts what it got changes nothing.
-    const cutText = (text: string): string => (text.length > MAX_TEXT_LENGTH ? apply(slice, text, [0, MAX_TEXT_LENGTH - CUT_MARKER.length]) + CUT_MARKER : text);
+    // An error text, always a string of at most MAX_TEXT_LENGTH characters: a longer one keeps its start and ends with the
+    // marker. A text cut once is not cut again (it is exactly MAX_TEXT_LENGTH long), so a receiver that cuts what it got
+    // changes nothing. Total (review round 4, C-1): anything that is not a string becomes one first, through the captured
+    // String, or the fixed text when that throws. It used to return whatever it was given when its `length` was small,
+    // so a value that was not a string (a getter's second answer, below) was posted unmeasured inside a refusal frame.
+    const cutText = (value: unknown): string => {
+        let text: string;
+        if (typeof value === 'string') {
+            text = value;
+        } else {
+            try {
+                text = StringConstructor(value);
+            } catch {
+                text = UNKNOWN_ERROR;
+            }
+        }
+        return text.length > MAX_TEXT_LENGTH ? apply(slice, text, [0, MAX_TEXT_LENGTH - CUT_MARKER.length]) + CUT_MARKER : text;
+    };
     // What a measure past the budget says (C-3): the kind the measure did not know, if that is why, else the budget.
     const pastBudget = (holder: string, unsupported: { kind: string }, larger: string) => (unsupported.kind ? `${holder} an unsupported value: ${unsupported.kind}` : larger);
 
@@ -335,7 +362,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     function resultFrame(id: RpcId, value: unknown) {
         return { type: 'RPC_RES', id, ok: true, value };
     }
-    function refusalFrame(id: RpcId, error: string, code: string) {
+    function refusalFrame(id: RpcId, error: unknown, code: string) {
         return { type: 'RPC_RES', id, ok: false, error: cutText(error), code };
     }
 
@@ -361,14 +388,17 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // The bytes of those calls' arguments, per reply channel (RPC_MAX_INBOUND_BYTES), kept and released with the count.
     const inFlightBytes = mapOf<RpcSend, number>();
 
-    // Normalizes anything thrown/rejected into a plain string for the wire, cut to MAX_TEXT_LENGTH. Wrapped in try/catch
-    // so a value with a throwing toString can never take the message handler down with it.
+    // Normalizes anything thrown/rejected into a plain string for the wire, cut to MAX_TEXT_LENGTH: its `message` when that
+    // is a string, else the value itself as text (cutText). The message is read ONCE (review round 4, C-1): it used to be
+    // read to check its type and again to use it, and a getter answered a short string to the check and a 200 MiB object
+    // to the use, which cutText then passed on unmeasured (the host stalled 280–362 ms per refusal in Firefox and WebKit).
+    // Wrapped in try/catch so a getter that throws can never take the message handler down with it.
     function errorMessage(error: unknown): string {
         try {
-            if (error && typeof (error as any).message === 'string') return cutText((error as any).message);
-            return cutText(StringConstructor(error));
+            const message = error === null || error === undefined ? undefined : (error as { message?: unknown }).message;
+            return cutText(typeof message === 'string' ? message : error);
         } catch {
-            return 'unknown error';
+            return UNKNOWN_ERROR;
         }
     }
 
@@ -397,8 +427,9 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
 
     // Turns a failure the other side reported into a rejection. The inbound frame is untrusted, so its
     // `code` is clamped into the codes the other side may report: exactly UNKNOWN_METHOD,
-    // RESULT_NOT_TRANSFERABLE or BUSY pass through, and anything else (a local code, an unknown string, a
-    // non-string, nothing) becomes HANDLER_ERROR. So a response can never yield a local code. The
+    // RESULT_NOT_TRANSFERABLE, BUSY or ARGS_NOT_TRANSFERABLE pass through, and anything else (a local-only code, an
+    // unknown string, a non-string, nothing) becomes HANDLER_ERROR. So a response can never yield TIMEOUT, TERMINATED,
+    // SEND_FAILED or INVALID_CALL. The
     // message is the other side's text verbatim up to MAX_TEXT_LENGTH (codedError cuts it again, C-1), or a fixed
     // fallback when it sent none. Each field is
     // read once, and `code` is always one of our own constants rather than the inbound value.
@@ -411,6 +442,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         const code = reportedCode === CODE.UNKNOWN_METHOD ? CODE.UNKNOWN_METHOD
             : reportedCode === CODE.RESULT_NOT_TRANSFERABLE ? CODE.RESULT_NOT_TRANSFERABLE
             : reportedCode === CODE.BUSY ? CODE.BUSY
+            : reportedCode === CODE.ARGS_NOT_TRANSFERABLE ? CODE.ARGS_NOT_TRANSFERABLE
             : libraryCode !== undefined ? libraryCode
             : CODE.HANDLER_ERROR;
         return codedError(typeof reportedError === 'string' ? reportedError : 'RPC call failed', code);
@@ -481,11 +513,14 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             return;
         }
         // The bytes (R3-3), of the whole frame that arrived (C-1), so the other side's measure is not trusted: a request
-        // past RPC_MAX_BYTES (the other side's broker never sends one) does not run.
+        // past RPC_MAX_BYTES, or holding a kind the measure does not know (the other side's broker never sends either),
+        // does not run. Answered ARGS_NOT_TRANSFERABLE (review round 4, C-5), the code the caller's own broker refuses the
+        // same arguments with before sending: they will never be carried, so the answer is not one to retry. It was BUSY,
+        // which says "retry once earlier calls settle".
         const unsupported = { kind: '' };
         const bytes = bytesOf(data, MAX_BYTES, undefined, unsupported);
         if (bytes > MAX_BYTES) {
-            respond(refusalFrame(id, pastBudget('the call holds', unsupported, `the call is larger than the RPC byte budget (${MAX_BYTES})`), CODE.BUSY));
+            respond(refusalFrame(id, pastBudget('the call holds', unsupported, `the call is larger than the RPC byte budget (${MAX_BYTES})`), CODE.ARGS_NOT_TRANSFERABLE));
             return;
         }
         // The per-second budget of the calls the guest makes (M-2), counted before the method is looked up: a flood of
@@ -584,18 +619,20 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         if (typeof id !== 'number') return;
         const entry = takePending(id);
         if (!entry) return; // unknown, stale, or already-settled id
-        if (data.ok) {
-            // a result past the byte budget (R3-3; the other side's broker never sends one) is not handed over: the whole
-            // frame that arrived is measured (C-1)
-            const value = data.value;
-            const unsupported = { kind: '' };
-            if (bytesOf(data, MAX_BYTES, undefined, unsupported) > MAX_BYTES) {
-                entry.reject(codedError(pastBudget('the result holds', unsupported, `the result is larger than the RPC byte budget (${MAX_BYTES})`), CODE.RESULT_NOT_TRANSFERABLE));
-                return;
-            }
+        // An answer past the byte budget (R3-3; the other side's broker never sends one) is not handed over: the whole
+        // frame that arrived is measured (C-1), a refusal (ok: false) as much as a result (review round 4, C-1: a refusal
+        // was not measured at all), and refused with a text of our own.
+        const ok = data.ok;
+        const unsupported = { kind: '' };
+        if (bytesOf(data, MAX_BYTES, undefined, unsupported) > MAX_BYTES) {
+            const holder = ok ? 'the result' : 'the answer';
+            entry.reject(codedError(pastBudget(`${holder} holds`, unsupported, `${holder} is larger than the RPC byte budget (${MAX_BYTES})`), CODE.RESULT_NOT_TRANSFERABLE));
+            return;
+        }
+        if (ok) {
             // undefined is represented natively: an absent `value` reads back as undefined, and a
             // handler that returns nothing therefore resolves to undefined — no sentinel needed.
-            entry.resolve(value);
+            entry.resolve(data.value);
             return;
         }
         entry.reject(refusalFromResponse(data, entry.reserved));

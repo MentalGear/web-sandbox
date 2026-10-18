@@ -18,10 +18,13 @@
  *     if the host registered more in between; a refused commit changes neither the store nor the overlay.
  *   - The host is the single source of truth. A refused request changes nothing here; the guest's own view
  *     (in-sandbox-files.ts) changes only after this module's answer.
- *   - Removal marks are bounded by the build: a removal is recorded only for a path the build delivered (or one the
- *     overlay wrote, which is then simply forgotten); a path in neither is answered `change: 'none'` (the guest
- *     rejects NOT_FOUND) and records nothing. A mark whose path the host unregistered later is forgotten before
- *     the marks are listed or committed, so a listed mark always names a stored file.
+ *   - Removal marks are bounded by the build and by the store, with one predicate (`markable`) for recording and for
+ *     listing: a removal is recorded only for a path the build delivered and the store still holds (one the overlay
+ *     wrote is then simply forgotten); a path the guest cannot see is answered `change: 'none'` (the guest rejects
+ *     NOT_FOUND) and records nothing. A mark whose path the host unregistered later is forgotten before the marks are
+ *     listed or committed, so a listed mark always names a stored file. A removal of a path the build delivered and
+ *     the host unregistered since changes the guest's view and records nothing (review round 4, L-4: it was recorded,
+ *     announced, and never listed); the host announces a change only when the list changed (host.ts).
  *   - Code needs a second opt-in. A commit refuses any file whose type is not on INERT_TYPES unless
  *     `{ code: true }`: JavaScript, HTML, SVG, XML, WebAssembly and every type not listed (an override included).
  *     The type checked is the CheckedFile's, the one the store will load the file as, never the file name.
@@ -116,6 +119,11 @@ const COMMIT_CALLER = 'commitGuestWrites()';
 export function createGuestWrites({ store, built = store, now = () => performance.now() }: GuestWritesOptions): GuestWrites {
     // path → the write (a CheckedFile) or a removal mark (null). Never holds a refused request.
     const overlay = new Map<string, CheckedFile | null>();
+    // Paths of the build the guest removed from its own view (its answer said 'remove'), marked or not: a second removal
+    // is 'none', as the guest's sandboxFiles no longer lists the path. A write to the path brings it back.
+    const removedInView = new Set<string>();
+    // The one predicate a removal mark is recorded by and kept by (L-4): it names a file the store holds.
+    const markable = (path: string) => store.has(path);
     let closed = false;
     // Sliding one-second windows (rate-limit.ts, the limiter the log lines use too): at most the limit in ANY
     // one-second window, as documented. The fixed windows they replace let 199 requests (and twice the bytes)
@@ -130,10 +138,10 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         const put = new Map<string, CheckedFile>();
         const remove: string[] = [];
         for (const [pending, change] of overlay) {
-            if (pending === path) continue;
-            if (change === null) remove.push(pending);
-            else put.set(pending, change);
+            if (pending === path || change === null) continue;
+            put.set(pending, change);
         }
+        for (const removed of removedInView) if (removed !== path && !put.has(removed)) remove.push(removed);
         put.set(path, file);
         return { put, remove };
     };
@@ -151,11 +159,13 @@ export function createGuestWrites({ store, built = store, now = () => performanc
 
         if (change === 'remove') {
             if (!isValidPath(path)) throw fileError('INVALID_PATH', `${REMOVE_CALLER} refused the path ${describePath(path)}.`);
-            const pending = overlay.get(path);
-            const inStore = built.has(path);
-            if (pending === null || (pending === undefined && !inStore)) return { path, change: 'none' };
+            const written = overlay.get(path);
+            const inBuild = built.has(path);
+            // what the guest sees: what it wrote, else what the build delivered and it did not remove
+            if (!written && (!inBuild || removedInView.has(path))) return { path, change: 'none' };
+            if (inBuild) removedInView.add(path);
             // A file the overlay wrote over nothing is forgotten, not marked: a mark only ever names a stored path.
-            if (inStore) overlay.set(path, null);
+            if (inBuild && markable(path)) overlay.set(path, null);
             else overlay.delete(path);
             return { path, change: 'remove' };
         }
@@ -167,6 +177,7 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         // After the quota, so a write past the cap is FILES_QUOTA_EXCEEDED whatever the rate.
         if (!bytes.admit(time, file.bytes.length)) throw busy(`${WRITE_CALLER} refused`);
         overlay.set(valid, file);
+        removedInView.delete(valid);
         return { path: valid, change: 'write', type: file.type, size: file.bytes.length };
     };
 
@@ -175,7 +186,7 @@ export function createGuestWrites({ store, built = store, now = () => performanc
     // mislead whoever reads the list, so it is forgotten here, where marks are read: list() and commit() call
     // this first, and handle() needs no copy of it (a removal of such a path is answered 'none' anyway).
     const forgetStaleMarks = () => {
-        for (const [path, change] of [...overlay]) if (change === null && !store.has(path)) overlay.delete(path);
+        for (const [path, change] of [...overlay]) if (change === null && !markable(path)) overlay.delete(path);
     };
 
     const list = (): GuestWrite[] => {

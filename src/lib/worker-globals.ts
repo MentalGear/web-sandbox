@@ -22,6 +22,17 @@
  * `caches`, Notification (its icon), the Service Worker and Push interfaces, nested Worker and SharedWorker (a realm
  * this prelude never reaches), the RTC interfaces, MediaSource, BackgroundFetch, Reporting. On the navigator:
  * `serviceWorker` and `connection`.
+ *
+ * Absent too, the worker's own channel to its parent (review round 4, M-1): `postMessage`, `onmessage` and
+ * `onmessageerror`. A dedicated worker's postMessage reaches the Worker object in the document that made it (worker
+ * mode's hidden frame, strict mode's view), and that document runs on the host page's thread in Firefox and WebKit:
+ * every message is deserialized there, outside every budget the library keeps (measured with four 8 MiB messages per
+ * timer tick: Firefox's host page 77% busy, WebKit's 30–42%). The library's own MessagePort, behind the bootstrap's
+ * budgets, is the only path from the worker to its parent. The bootstrap of worker mode needs the platform's postMessage
+ * once, to tell its frame it runs (WORKER_STARTED): keepOnlyWorkerGlobals hands it the function it found, read before
+ * anything is deleted, and nothing else in the worker can reach it. Strict mode's prelude needs none. Messages INTO the
+ * worker (INIT_PORT, INIT_WORKER) still arrive: they are `message` events on the global, which the bootstraps listen to
+ * with addEventListener.
  */
 export const WORKER_GLOBALS: readonly string[] = [
     // ECMAScript
@@ -35,9 +46,9 @@ export const WORKER_GLOBALS: readonly string[] = [
     'Uint16Array', 'Int32Array', 'Uint32Array', 'Float16Array', 'Float32Array', 'Float64Array', 'BigInt64Array',
     'BigUint64Array', 'Map', 'Set', 'WeakMap', 'WeakSet', 'WeakRef', 'FinalizationRegistry', 'DisposableStack',
     'AsyncDisposableStack', 'WebAssembly',
-    // the worker's own scope: identity, timers, errors, messages to the frame that made it
+    // the worker's own scope: identity, timers, errors (no postMessage, onmessage or onmessageerror: above)
     'self', 'location', 'navigator', 'origin', 'isSecureContext', 'crossOriginIsolated', 'name', 'close',
-    'postMessage', 'onmessage', 'onmessageerror', 'onerror', 'onrejectionhandled', 'onunhandledrejection',
+    'onerror', 'onrejectionhandled', 'onunhandledrejection',
     'onlanguagechange', 'onoffline', 'ononline', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
     'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'structuredClone', 'reportError', 'atob', 'btoa',
     'console', 'performance', 'crypto', 'indexedDB', 'createImageBitmap', 'scheduler',
@@ -97,9 +108,15 @@ export const WORKER_NAVIGATOR_MEMBERS: readonly string[] = [
  * (a primitive value), throws, and the worker
  * script ends there, before the library's channel or any guest code exists: the worker never attaches its port
  * (worker mode) or its entry never starts (strict mode, "the guest entry failed to start").
+ *
+ * Returns the platform's postMessage of the worker, read before anything is deleted, or null: the one function of the
+ * worker's own channel to its parent (above), for the bootstrap that has a use for it (worker mode's, once). A caller
+ * that does not keep the value leaves nothing that holds it.
  */
-export function keepOnlyWorkerGlobals(g: object, allowed: readonly string[], navigatorMembers: readonly string[]) {
+export function keepOnlyWorkerGlobals(g: object, allowed: readonly string[], navigatorMembers: readonly string[]): ((message: unknown) => void) | null {
     const O = ({}).constructor as ObjectConstructor;
+    const found = (g as { postMessage?: unknown }).postMessage; // read once, before the pruning below deletes it
+    const postToParent = typeof found === 'function' ? found as (message: unknown) => void : null;
     // A WebIDL constant (Chromium's TEMPORARY and PERSISTENT on DedicatedWorkerGlobalScope.prototype) is a
     // non-configurable data property holding a number: it cannot be deleted, and a primitive makes no request.
     const isConstant = (descriptor: PropertyDescriptor) => 'value' in descriptor && (descriptor.value === null || (typeof descriptor.value !== 'object' && typeof descriptor.value !== 'function'));
@@ -122,4 +139,5 @@ export function keepOnlyWorkerGlobals(g: object, allowed: readonly string[], nav
     }
     const navigator = (g as { navigator?: object }).navigator;
     if (navigator) prune(O.getPrototypeOf(navigator), navigatorMembers, 'navigator.');
+    return postToParent;
 }
