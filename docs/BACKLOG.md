@@ -50,6 +50,7 @@ conditional "continue".
 | Review round 1 2026-10-15 | 🟡 not clean (the stopping rule's count stays 0): 8 medium and 22 low or info findings from four reviewers (R5 did not complete), all fixed or documented (S50–S53): the host page's policy (S50), one console relay with byte budgets (S51), the strict view's character and rate budget and a linear renderer (S52), the low findings and the cooperative modifier-click residual (S53); the owner's three decisions done (S54); [report](security/REVIEW-ROUND-1-2026-10-15.md) |
 | Review round 2 2026-10-15 | 🟡 not clean (the count stays 0): 2 high and 8 medium findings in our code from three defensive reviews (lifecycle model, change audit, documented limits measured), all fixed (S55): intrinsics captured before guest code (C-1), the byte measure on a cloned snapshot with an allow-list (C-3), worker mode `ready` only with a running worker, the host page's Trusted Types reason, a DOM-free import with a build-time view hash, one build predicate, long timers; every documented limit held at its edge on all three engines; round 3 held by the owner (S56); [report](security/REVIEW-ROUND-2-2026-10-15.md) |
 | Review round 3 2026-10-18 | 🟡 not clean (the count stays 0): 2 high and 6 medium findings in our code from the same three reviews, all fixed (S57): whole RPC frames and a guest call budget (`callLimits`), the view's time budget charges only measured rendering, `allowAnimations` (default `true`; `false` removes animations and transitions from the view) and `allowAutoplay` (default `false`); where the view runs per engine measured ([research 16](research/16_view_isolation/README.md)); round 4 held by the owner (S58); [report](security/REVIEW-ROUND-3-2026-10-18.md) |
+| Review round 4 2026-10-18 | 🟡 not clean (the count stays 0): no high finding for the first time, 5 medium in our code, all fixed (S62): the worker's own `postMessage` removed, values read once, the still-style rewrite bounded, build completion after a frame's load, the view's URL policy and budget (`VIEW_MAX_URLS`, `VIEW_URLS_PER_SECOND`); the default call rate 1000 per second; round 5 next (S63); [report](security/REVIEW-ROUND-4-2026-10-18.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -76,7 +77,8 @@ closed S50–S53 (R2-2 a cooperative-mode limit); the owner's three decisions on
 Review round 2 the same day, under the owner's adjusted rule ([report](security/REVIEW-ROUND-2-2026-10-15.md)), added and
 closed S55. Round 3 (S56, [report](security/REVIEW-ROUND-3-2026-10-18.md)) ran 2026-10-15 to 2026-10-18 and added and closed
 S57; round 4 is held by the owner (S58), the Lean evaluation (S59) found no case for Lean and planned cheaper tests for
-later (S61), and the clean-up with independent reviews follows when the rounds end (S60).
+later (S61), and the clean-up with independent reviews follows when the rounds end (S60). Review round 4
+(S58, [report](security/REVIEW-ROUND-4-2026-10-18.md)) added and closed S62; round 5 is next (S63).
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1523,14 +1525,10 @@ measured); the owner reviewed the findings before any fix. [Report](security/REV
 Tests: `test/unit/review-round-3.test.ts`, `test/e2e/review-round-3.spec.ts`, `test/unit/view-switches.test.ts`,
 `test/e2e/view-switches.spec.ts`, `test/e2e/view-budget.spec.ts`.
 
-### S58 · Review round 4 — ⏸️ **held by the owner**
+### S58 · Review round 4 — ✅ **done** (not clean: S62)
 
-The next round under the stopping rule (count 0 of 2). It runs the same three reviews on the `main` that closes S57:
-- model-based lifecycle testing, including `callLimits`, `allowAnimations` and `allowAutoplay`;
-- an audit of the code changed since round 3 (`16c545b..` the merge of S57);
-- each documented limit measured at its edge on Chromium, Firefox and WebKit, including the call budget, the view's debt cap and the animation switch.
-
-They use at least two model families.
+Ran on `main` at `c7672bb` with the same three reviews; the owner reviewed the findings before any fix.
+[Report](security/REVIEW-ROUND-4-2026-10-18.md).
 
 ### S59 · Evaluate machine-checked proofs (Lean) — ✅ **done** (no Lean; S61)
 
@@ -1569,6 +1567,36 @@ our own logic. Estimated about two weeks of work; about 20–60 s more unit CI, 
    - a differential test of the console relay against the measure.
 4. **A budgets table** in the docs: every channel against its count, byte and time bound, and the test for each, so that
    a bound is written down before a review has to find it missing.
+
+### S62 · Review round 4: the worker's only way out, values read once, the view's URL budget, build completion after load — ✅ **done**
+
+*From [review round 4](security/REVIEW-ROUND-4-2026-10-18.md).*
+
+**Done**:
+- **The worker's channel (M-1).** The worker keeps no `postMessage`, so the library's port is its only way out. Worker mode cancels uncaught errors after relaying them.
+- **Values read once (C-1).** Refusal texts are always strings and are measured on receipt.
+- **The still-style rewrite (C-2)** no longer expands shorthands.
+- **Build completion (L-1).** A frame's load completes a build in a microtask, with every check repeated there.
+- **The view's URL policy and budget (M-2).** Refused `src`, `srcset` and `poster` URLs are dropped at render time, with a synthetic violation. New limits, approved by the owner: `VIEW_MAX_URLS` (1000) and `VIEW_URLS_PER_SECOND` (200).
+- **Owner's decisions.** The default `callLimits.maxPerSecond` is 1000 (M-6). The "no repeat" rule is one rule for every `terminated` (L-3).
+- **Corrections:**
+  - L-2, L-4, M-4, M-5;
+  - `ARGS_NOT_TRANSFERABLE` for arguments that can never be carried (C-5);
+  - C-6, C-7, C-8;
+  - docs: M-3, C-3, C-4, I-1, I-2.
+- **Residual, documented:** URLs named in CSS are not dropped at render time.
+
+Tests: `test/unit/review-round-4.test.ts`, `test/e2e/review-round-4.spec.ts`, `test/e2e/view-switches.spec.ts`,
+`test/unit/channel-guarantees.test.ts`.
+
+### S63 · Review round 5 — ▶️ **next** (owner)
+
+The next round under the stopping rule (count 0 of 2). It runs the same three reviews on the `main` that closes S62:
+- model-based lifecycle testing;
+- an audit of the code changed since round 4 (`c7672bb..` the merge of S62);
+- each documented limit measured at its edge on Chromium, Firefox and WebKit, including `VIEW_MAX_URLS`, `VIEW_URLS_PER_SECOND` and the new call default.
+
+The owner reviews the findings before any fix. S61 may follow it.
 
 ## B · API Surface & DX
 
