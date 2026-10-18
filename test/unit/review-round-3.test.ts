@@ -638,3 +638,118 @@ describe("M-2: callLimits, the call budget's option (the owner's name)", () => {
         expect(el._callBudget.calls).toBe(11);
     });
 });
+
+describe("C-2 and M-5: the view's time budget charges only the rendering it measured after a flush", () => {
+    // The view's frames and clock, driven by the test: requestAnimationFrame callbacks wait in `frames` until `frame()`
+    // runs them (a hidden or off-screen view runs none), and performance.now() reads `clock.now`. Timers and the view's
+    // own tasks are real.
+    const originalWorker = (globalThis as any).Worker;
+    const originalFrame = { request: window.requestAnimationFrame, cancel: window.cancelAnimationFrame };
+    const clock = { now: 1000 };
+    let frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    afterEach(() => {
+        (globalThis as any).Worker = originalWorker;
+        window.requestAnimationFrame = originalFrame.request;
+        window.cancelAnimationFrame = originalFrame.cancel;
+        delete (globalThis as any).__sandboxViewRuns;
+    });
+
+    const frame = () => {
+        const due = [...frames.values()];
+        frames = new Map();
+        for (const callback of due) callback(clock.now);
+    };
+    const tasks = () => new Promise(resolve => setTimeout(resolve, 5));
+    const until = async (check: () => boolean, ms: number) => {
+        const deadline = Date.now() + ms;
+        while (!check() && Date.now() < deadline) await tasks();
+        return check();
+    };
+
+    function startView() {
+        realPlatform();
+        clock.now = 1000;
+        frames = new Map();
+        vi.spyOn(performance, 'now').mockImplementation(() => clock.now);
+        window.requestAnimationFrame = (callback: FrameRequestCallback) => { frames.set(nextFrame, callback); return nextFrame++; };
+        window.cancelAnimationFrame = (id: number) => { frames.delete(id); };
+        const workers: { transfer: MessagePort[] }[] = [];
+        (globalThis as any).Worker = class {
+            constructor() { workers.push(this as any); }
+            onerror: unknown = null;
+            transfer: MessagePort[] = [];
+            postMessage(_message: unknown, transfer: MessagePort[]) { this.transfer = transfer; }
+        };
+        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(VIEW_OPTIONS)});`)();
+        const logic = new MessageChannel(), view = new MessageChannel();
+        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<p id="a">0</p>', allowAnimations: true }, source: window, ports: [logic.port1, view.port1] }));
+        const render = workers[0]!.transfer[1]!;
+        const acks: unknown[] = [];
+        render.onmessage = (event) => { if (event.data?.type === 'VIEW_ACK') acks.push(event.data); };
+        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        const send = (value: string) => render.postMessage({ type: 'VIEW_TEXT', into: 'a', text: value });
+        const text = async (value: string) => {
+            const before = acks.length;
+            send(value);
+            return until(() => acks.length > before, 30000);
+        };
+        const shown = () => document.getElementById('a')?.textContent;
+        return { send, text, shown, close: () => { render.close(); view.port2.close(); logic.port2.close(); } };
+    }
+
+    // The view shows again: frames run every 16 ms of real time, and the clock follows.
+    const runFrames = () => {
+        const timer = setInterval(() => { clock.now += 16; frame(); }, 16);
+        return () => clearInterval(timer);
+    };
+
+    it('hidden 5 s with a render applied meanwhile: the next render after showing applies at once (18.3 s at 16c545b)', { timeout: 60000 }, async () => {
+        const { send, text, shown, close } = startView();
+        await tasks();
+        expect(await text('1')).toBe(true); // applied while hidden: by the timer that stands in for frames
+        expect(shown()).toBe('1');
+        clock.now += 5000; // hidden: no frame ran
+        frame(); // shown: the frames the view waited for run
+        clock.now += 5; // the rendering update they caused
+        await tasks();
+        const stop = runFrames();
+        const started = Date.now();
+        send('2');
+        const ok = await until(() => shown() === '2', 1500);
+        stop();
+        expect(ok, `applied after ${Date.now() - started} ms`).toBe(true);
+        close();
+    });
+
+    it('at most one measurement waits for a frame, however many flushes ran while no frame did', { timeout: 60000 }, async () => {
+        const { text, close } = startView();
+        await tasks();
+        frame(); // the initial render's measurement
+        await tasks();
+        for (let i = 1; i <= 5; i++) expect(await text(String(i))).toBe(true); // hidden: each flushed by the timer
+        expect(frames.size).toBe(1);
+        close();
+    });
+
+    it("a rendering update that took 20 s holds the next operation back for one second of the view's time, repaid in 5 s (the debt is capped)", { timeout: 60000 }, async () => {
+        const { send, text, shown, close } = startView();
+        await tasks();
+        frame();
+        await tasks();
+        expect(await text('1')).toBe(true);
+        frame(); // the frame that renders it
+        clock.now += 20000; // its rendering update took 20 s (uncapped, the next operation would wait 100 s)
+        await tasks();
+        const stop = runFrames();
+        const started = Date.now();
+        send('2');
+        const ok = await until(() => shown() === '2', 9000);
+        const waited = Date.now() - started;
+        stop();
+        expect(ok).toBe(true);
+        expect(waited, 'VIEW_APPLY_MAX_DEBT_MS at VIEW_APPLY_MS_PER_SECOND, and a frame').toBeGreaterThan(4000);
+        expect(waited).toBeLessThan(6500);
+        close();
+    });
+});

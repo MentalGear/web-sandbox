@@ -71,6 +71,14 @@ export const VIEW_RENDER_CHARACTERS_PER_SECOND = 4 * VIEW_RENDER_MAX_LENGTH;
  */
 export const VIEW_APPLY_MS_PER_SECOND = 200;
 
+/**
+ * The most the view's time budget may owe, in ms of the view's time (review round 3, C-2): one second of it, which the
+ * budget repays in 1000 / VIEW_APPLY_MS_PER_SECOND = 5 s. An operation that took longer is charged this much, so one
+ * operation's own cost (which no rate can bound: ADR-005) never holds the view back for longer than that; anything
+ * shorter is charged in full, so the budget holds for every operation up to it.
+ */
+export const VIEW_APPLY_MAX_DEBT_MS = 1000;
+
 /** The events sandboxView.on() can subscribe to (ADR-005). */
 export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'] as const;
 
@@ -631,6 +639,8 @@ export interface ViewOptions {
     renderRate: number;
     /** VIEW_APPLY_MS_PER_SECOND */
     applyTime: number;
+    /** VIEW_APPLY_MAX_DEBT_MS */
+    applyDebt: number;
     violationLimit: number;
     events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
     /** The Trusted Types policy name the view creates where the host page enforces them (trusted-types.ts). */
@@ -1057,21 +1067,44 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // serialized (C-4): a flush that the budget does not cover yet waits until it does.
     //
     // And at most VIEW_APPLY_MS_PER_SECOND ms of the view's own time per second (review round 2, M-3), a second token
-    // bucket charged with what each flush took, measured: its operations, and the layout they cause, forced at the end of
-    // the flush so that it is part of the measure (the browser lays out the view before its next frame anyway). Characters
-    // are a proxy of the work and the time is the work: within every character budget, re-rendering 37 449 empty
-    // elements without pause, or setting a 250 000-character textarea value four times a second (WebKit), kept the host
-    // page's thread 80–95% busy, where the view shares it. A time budget bounds the whole class, whatever makes an
-    // operation slow (elements, layout, a control's editor), on the machine it runs on. What the rendering update after a
-    // flush takes is charged too, as it is measured: the time from the flush's end to the next animation frame, past one
-    // frame's length (WebKit lays out and paints a 250 000-character textarea there, 1.3–1.7 s, not when layout is
-    // forced). Whether a flush may run is checked when it is about to run, so a charge that arrived after it was
-    // scheduled still holds it back. The rate is a share of one thread: what is left is the host page's.
+    // bucket charged with what the view's work took, measured. Characters are a proxy of the work and the time is the
+    // work: within every character budget, re-rendering 37 449 empty elements without pause, or setting a 250 000-character
+    // textarea value four times a second (WebKit), kept the host page's thread 80–95% busy, where the view shares it. A
+    // time budget bounds the whole class, whatever makes an operation slow (elements, layout, a control's editor), on the
+    // machine it runs on. The rate is a share of one thread: what is left is the host page's. Two measures are charged:
+    //   - the flush itself: its operations and the layout they cause, timed. Layout is forced at the end of the flush
+    //     (`layout`), so that it is in the measure: WebKit lays a 250 000-character textarea out in 1.3–1.7 s, and does
+    //     so before the next frame's callbacks, where the gap meter cannot see it. It is forced by hit testing
+    //     (elementFromPoint), which needs the whole document laid out in every engine; WebKit answers body.offsetHeight
+    //     and getBoundingClientRect() without laying out content that cannot change the body's box, such as a
+    //     textarea's text (measured: 0–1 ms against 1.6–2 s for elementFromPoint);
+    //   - the rendering update that shows them (style and paint), measured by the gap meter below.
+    // Whether a flush may run is checked when it is about to run, so a charge that arrived after it was scheduled still
+    // holds it back. The debt is capped at one second of the view's time (VIEW_APPLY_MAX_DEBT_MS, repaid in 5 s): one
+    // operation's own cost is not something a rate can bound (ADR-005), and an uncapped debt held every later operation
+    // back five times as long as that one took, however the time was counted (C-2, below).
+    //
+    // The gap meter (review round 3, C-2 and M-5). The rendering update that shows a flush runs after the animation-frame
+    // callbacks of the frame that follows it, and the first task after that frame's callbacks runs only once the update
+    // is done: the time from the end of a callback to that task is the update, measured on the machine the view runs on,
+    // and charged in full. A flush that ran inside a frame callback (the usual case: `schedule` runs it there) is
+    // rendered by that very frame, so the measure starts as the flush ends; one that ran from the timer (frames
+    // throttled) asks for the next frame, and the measure starts at the end of its callback. The task is a zero-delay
+    // timer, posted from the frame (no clamping applies at that depth). At most one measurement is outstanding:
+    // a flush while one is pending is measured by the next frame it asks for when it ends. Nothing runs while the view
+    // does nothing: no frame is requested without a flush, and nothing runs per frame while guest animations play
+    // (research 16 measured both). The meter never charges time in which no frame ran: a hidden or off-screen view runs
+    // no frame in most engines, so its one pending request runs once the view shows again, and measures that frame.
+    // Before, every flush queued a frame callback that charged the wall time from the flush to it, past one frame's
+    // length: a view hidden for 5 s, with one render applied meanwhile, made the next render wait 18.3 s (C-2); and one
+    // frame's length went uncharged per flush (M-5). Where the view shares the host page's renderer (an in-process
+    // frame), the update measured is the whole frame's: the host page's own rendering in that frame is charged to the
+    // view too, which only slows the guest.
     type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: { value?: string; checked?: boolean; focus?: boolean } | null };
     let pending: Job[] = [];
     let scheduled = false;
     let tokens = options.renderRate;
-    let time = options.applyTime; // ms of the view's time the budget holds now
+    let time = options.applyTime; // ms of the view's time the budget holds now; never below -applyDebt
     let refilled = performance.now();
     const refill = () => {
         const now = performance.now();
@@ -1079,19 +1112,48 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         time = Math.min(options.applyTime, time + ((now - refilled) / 1000) * options.applyTime);
         refilled = now;
     };
-    const offsetHeightOf = getter(HTMLElement.prototype, 'offsetHeight');
-    const FRAME_MS = 1000 / 60;
-    // Lays the view out now, so that what the operations cost there is in the measure (above).
+    const charge = (ms: number) => {
+        refill();
+        time = Math.max(-options.applyDebt, time - ms);
+    };
+    const IDLE = 0, FRAME = 1, GAP = 2;
+    let meter = IDLE; // FRAME: a frame is requested for the measure; GAP: the measure's task is pending
+    let meterFrame = 0;
+    let unmeasured = false; // a flush happened whose rendering no measure has covered yet
+    const startGap = () => {
+        unmeasured = false;
+        meter = GAP;
+        const gapStart = performance.now();
+        setTimeout(() => {
+            charge(performance.now() - gapStart);
+            meter = IDLE;
+            if (unmeasured) measureRendering(false); // a flush ran after the measure started: the next frame renders it
+        }, 0);
+    };
+    // After a flush: `inFrame` when it ran inside a frame callback, so this frame renders it.
+    const measureRendering = (inFrame: boolean) => {
+        unmeasured = true;
+        if (meter === GAP) return;
+        if (inFrame) {
+            if (meter === FRAME) cancelAnimationFrame(meterFrame); // this frame renders the earlier flush too
+            startGap();
+            return;
+        }
+        if (meter === FRAME) return;
+        meter = FRAME;
+        meterFrame = requestAnimationFrame(startGap);
+    };
+    // Lays the view out now, so that what the operations cost there is in the flush's measure (above).
+    const elementFromPoint = D.elementFromPoint; // every engine has it; jsdom does not, and lays nothing out anyway
     const layout = () => {
-        const body = call(bodyOf, document, []);
-        if (body) call(offsetHeightOf, body, []);
+        if (elementFromPoint) call(elementFromPoint, document, [0, 0]);
     };
     const costOf = (jobs: Job[]) => {
         let cost = 0;
         for (let i = 0; i < jobs.length; i++) cost += jobs[i]!.kind === 'set' ? (jobs[i]!.fields!.value || '').length : jobs[i]!.html.length;
         return cost;
     };
-    const flush = () => {
+    const flush = (inFrame: boolean) => {
         const jobs = pending;
         pending = [];
         scheduled = false;
@@ -1117,37 +1179,37 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         tokens -= work; // what the operations serialized (C-4): the next flush waits until the budget covers it
         work = 0;
         layout();
-        const ended = performance.now();
-        time -= ended - started; // what the flush took (M-3), likewise
-        requestAnimationFrame(() => {
-            const rendering = performance.now() - ended - FRAME_MS; // the rendering update that followed it, past a frame
-            if (rendering > 0) time -= rendering;
-        });
+        charge(performance.now() - started); // what the flush took (M-3), likewise
+        measureRendering(inFrame); // and what showing it takes
         if (renderPort) renderPort.postMessage(refused.length > 0 ? { type: 'VIEW_ACK', refused } : { type: 'VIEW_ACK' });
     };
     const schedule = () => {
         if (scheduled) return;
         scheduled = true;
         let ran = false;
-        const run = () => {
+        let frame = 0;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const run = (inFrame: boolean) => {
             if (ran) return;
             ran = true;
+            if (inFrame && timer !== null) clearTimeout(timer);
+            if (!inFrame) cancelAnimationFrame(frame);
             refill();
             if (time < 0) {
-                // charged since this was scheduled (the rendering update of the last flush): wait for the budget again
+                // charged since this was scheduled (the rendering of the last flush): wait for the budget again
                 scheduled = false;
                 schedule();
                 return;
             }
-            flush();
+            flush(inFrame);
         };
         refill();
         const short = costOf(pending) - tokens; // what the budget lacks now, in characters
         const late = -time; // and in ms of the view's time
         const wait = Math.max(short > 0 ? Math.ceil((short / options.renderRate) * 1000) : 0, late > 0 ? Math.ceil((late / options.applyTime) * 1000) : 0);
         const start = () => {
-            requestAnimationFrame(run);
-            setTimeout(run, 100);
+            frame = requestAnimationFrame(() => run(true));
+            timer = setTimeout(() => run(false), 100);
         };
         if (wait > 0) setTimeout(start, wait);
         else start();
@@ -1404,7 +1466,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             tokens -= work;
             work = 0;
             layout();
-            time -= performance.now() - started;
+            charge(performance.now() - started);
+            measureRendering(false);
         }
         if (data.autoResize === true) startAutoResize();
     }, true);
@@ -1741,6 +1804,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     maxTarget: VIEW_TARGET_MAX_LENGTH,
     renderRate: VIEW_RENDER_CHARACTERS_PER_SECOND,
     applyTime: VIEW_APPLY_MS_PER_SECOND,
+    applyDebt: VIEW_APPLY_MAX_DEBT_MS,
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
     events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,
