@@ -91,7 +91,8 @@ test.describe("M-1's class: the guest worker's uncaught errors reach its parent 
             const loaded = await countTicks(page, 4000);
             console.log(`MEASURED ${browserName} ${mode} mode, an error flood: host ticks in 4 s: idle ${idle}, under the flood ${loaded} (${Math.round((1 - loaded / idle) * 100)}% busy)`);
             expect(loaded).toBeGreaterThan(idle * 0.9);
-            const line = await sandbox.waitForLog(/^Uncaught (Error: )?x{100}/);
+            // WebKit mutes the errors of worker mode's blob: script ("Script error.", all the browser gives; docs/API.md)
+            const line = await sandbox.waitForLog(/^Uncaught ((Error: )?x{100}|Script error\.)/);
             expect(line.length).toBeLessThanOrEqual(65536);
         });
     }
@@ -295,7 +296,7 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
     });
 
     test('an admitted origin, and a relative URL, are kept; an http: URL of an admitted https: origin too (the policy upgrades it)', async ({ sandbox, page, browserName }) => {
-        await page.route('https://a.example/**', route => route.fulfill({ body: PNG, contentType: 'image/png' }));
+        await page.route(/^https?:\/\/a\.example(:\d+)?\//, route => route.fulfill({ body: PNG, contentType: 'image/png' })); // never the network
         await mountEntry(sandbox, `sandboxView.render('<img id="a" src="https://a.example/1.png"><img id="b" src="http://a.example/2.png"><img id="c" src="x.png"><img id="d" src="https://a.example:8443/3.png">');`, { origins: { images: ['https://a.example'] } });
         await waitInView(page, browserName, `!!document.getElementById('d')`);
         expect(await inView(page, browserName, `['a', 'b', 'c', 'd'].map(id => document.getElementById(id).getAttribute('src'))`)).toEqual(['https://a.example/1.png', 'http://a.example/2.png', 'x.png', null]);
@@ -313,7 +314,7 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
     ] as const) {
         test(`${name}: a flood of renders of ${perRender} <img> leaves the host page about its share`, async ({ sandbox, page, browserName }) => {
             test.setTimeout(90000);
-            await page.route('https://a.example/**', route => route.fulfill({ body: PNG, contentType: 'image/png' }));
+            await page.route(/^https?:\/\/a\.example(:\d+)?\//, route => route.fulfill({ body: PNG, contentType: 'image/png' })); // never the network
             await mountEntry(sandbox, imageFlood(prefix, perRender), config);
             await page.waitForTimeout(300);
             const idle = await countTicks(page, 8000);

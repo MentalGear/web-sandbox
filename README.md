@@ -607,7 +607,7 @@ What remains for the default:
     *   loads named in CSS: a URL a `<style>` or a `style` attribute names (`url()`, `image-set()`) is left to the
         browser, outside the view's URL budget, and a refused one costs the browser its refusal (renders of 3 000
         elements each with a background from a refused source, as fast as the view acknowledged them: Firefox 33%
-        busy against 17% without the backgrounds; Chromium and WebKit no more than without).
+        busy; Chromium 18% and WebKit 9%, about what renders without a URL cost them).
 
     Cooperative mode is no better: there a guest `while (true) {}` freezes the host page wherever the frame shares its
     thread.
