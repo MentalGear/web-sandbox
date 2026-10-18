@@ -72,7 +72,7 @@ afterEach(() => {
 });
 
 const SILENT_CONSOLE = new Proxy({}, { get: () => () => {} }) as Console;
-const CALL_BUDGET = { calls: 5000, bytes: 67108864 }; // the defaults (docs/API.md, Limits)
+const CALL_BUDGET = { calls: 1000, bytes: 67108864 }; // the defaults (docs/API.md, Limits; review round 4, M-6: 1000 calls)
 
 /** The bootstrap as the host builds it in strict mode (externalPort), attached to a cloning port. */
 function strictComms(console: Console = SILENT_CONSOLE, features: Record<string, unknown> = {}) {
@@ -153,7 +153,7 @@ describe('C-1: every RPC frame is built from bounded parts at the sender, and ch
         broker.expose('m', () => { ran++; });
         broker.handleMessage({ ...request(1, 'm'), padding: 'p'.repeat(18_000_000) });
         await settle();
-        expect([ran, frames[0].code]).toEqual([0, 'BUSY']);
+        expect([ran, frames[0].code]).toEqual([0, 'ARGS_NOT_TRANSFERABLE']); // review round 4, C-5: never carried, not retryable
         const call = broker.call('n');
         broker.handleMessage({ type: 'RPC_RES', id: frames[1].id, ok: true, value: 1, padding: 'p'.repeat(18_000_000) });
         expect(await outcome(call)).toMatchObject({ code: 'RESULT_NOT_TRANSFERABLE' });
@@ -305,7 +305,7 @@ describe('C-3: a value the measure does not know is named as such; a byte budget
 });
 
 describe('M-2: the calls the guest initiates have a per-second budget, in the guest and again on the host', () => {
-    it("the guest's broker refuses the call past 5000 in one second BUSY, locally, and posts nothing for it; a second later calls go again", async () => {
+    it("the guest's broker refuses the call past 1000 in one second BUSY, locally, and posts nothing for it; a second later calls go again", async () => {
         let now = 1000;
         vi.spyOn(performance, 'now').mockImplementation(() => now);
         const { comms, port } = strictComms(SILENT_CONSOLE, { callBudget: CALL_BUDGET });
@@ -314,7 +314,7 @@ describe('M-2: the calls the guest initiates have a per-second budget, in the gu
         for (let i = 0; i < CALL_BUDGET.calls; i++) void bridge.callWithTimeout(0, 'm');
         const requests = () => port.frames.filter(frame => frame.type === 'RPC_REQ').length;
         expect(requests()).toBe(CALL_BUDGET.calls);
-        expect(await outcome(bridge.callWithTimeout(0, 'm'))).toEqual({ code: 'BUSY', message: 'more than 5000 calls or 67108864 bytes of calls in one second' });
+        expect(await outcome(bridge.callWithTimeout(0, 'm'))).toEqual({ code: 'BUSY', message: 'more than 1000 calls or 67108864 bytes of calls in one second' });
         expect(requests()).toBe(CALL_BUDGET.calls);
         now += 1000;
         void bridge.callWithTimeout(0, 'm');
@@ -350,7 +350,7 @@ describe('M-2: the calls the guest initiates have a per-second budget, in the gu
         return { el, answers, deliver, done: () => port1.close() };
     }
 
-    it('the host answers BUSY to a call past 5000 in one second, before its method runs', async () => {
+    it('the host answers BUSY to a call past 1000 in one second, before its method runs', async () => {
         let now = 1000;
         vi.spyOn(performance, 'now').mockImplementation(() => now);
         const { el, answers, deliver, done } = hostWithPort();
@@ -359,7 +359,7 @@ describe('M-2: the calls the guest initiates have a per-second budget, in the gu
         for (let i = 1; i <= CALL_BUDGET.calls + 1; i++) deliver(request(i, 'noop'));
         await settle();
         expect(ran).toBe(CALL_BUDGET.calls);
-        expect(answers.filter(answer => answer.code === 'BUSY').map(answer => [answer.id, answer.error])).toEqual([[CALL_BUDGET.calls + 1, 'more than 5000 calls or 67108864 bytes of calls in one second']]);
+        expect(answers.filter(answer => answer.code === 'BUSY').map(answer => [answer.id, answer.error])).toEqual([[CALL_BUDGET.calls + 1, 'more than 1000 calls or 67108864 bytes of calls in one second']]);
         now += 1000;
         deliver(request(0, 'noop'));
         await settle();
@@ -582,7 +582,7 @@ describe("M-2: callLimits, the call budget's option (the owner's name)", () => {
         expect(warnings()).toEqual([]);
     });
 
-    it('a value that is not a finite number > 0 takes its default, with one warning each (once per element); there is no "off"', () => {
+    it('a value that is not a finite number >= 1 takes its default, with one warning each (once per element); there is no "off"', () => {
         const { el, warnings } = element();
         const invalid = [Infinity, 0, -1, NaN, '10', null, true];
         for (const value of invalid) {
@@ -591,7 +591,7 @@ describe("M-2: callLimits, the call budget's option (the owner's name)", () => {
             expect(el.state).toBe('loading'); // the config is used, the rest of it applies
         }
         expect(warnings()).toHaveLength(2 * invalid.length);
-        expect(warnings()[0]).toBe('[Sandbox] callLimits.maxPerSecond must be a finite number > 0; Infinity was ignored: the default 5000 applies.');
+        expect(warnings()[0]).toBe('[Sandbox] callLimits.maxPerSecond must be a finite number >= 1; Infinity was ignored: the default 1000 applies.');
         el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxPerSecond: Infinity } });
         expect(warnings()).toHaveLength(2 * invalid.length); // the same message, said once
         for (const value of [5, 'off', [1]]) {

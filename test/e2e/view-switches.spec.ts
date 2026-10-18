@@ -16,7 +16,10 @@ import type { Page } from '@playwright/test';
 const SPIN = '@keyframes spin { from { margin-left: 0 } to { margin-left: 40px } }';
 
 // Every vector a guest has, in one render: unlayered !important, its own named and anonymous layers, pseudo-elements,
-// inline !important (plain, prefixed, through a custom property), SVG <style> and an SVG style attribute, @starting-style,
+// inline !important (plain, prefixed, through a custom property), and the inline declarations the renderer reads
+// (review round 4, C-2: an escaped name, upper case, a prefixed transition, var() in a longhand and in a shorthand,
+// `all` beside an animation, a keyword after a shorthand, `inherit` from an animated parent), SVG <style> and an SVG
+// style attribute, @starting-style,
 // a scroll-driven animation, a registered custom property, a registered stylesheet and one it @imports.
 const VECTORS = `
     <style>
@@ -47,6 +50,14 @@ const VECTORS = `
     <p style="-webkit-animation: spin 1s infinite">n</p>
     <p style="--a: spin 1s infinite; animation: var(--a) !important">o</p>
     <p style="transition: opacity 30s !important; opacity: 0.5" id="inline-transition">p</p>
+    <p style="anim\\61tion: spin 1s infinite !important">r</p>
+    <p style="ANIMATION: SPIN 1S INFINITE">s</p>
+    <p style="-webkit-transition: opacity 30s; opacity: 0.5">t</p>
+    <p style="--n: spin; animation-name: var(--n); animation-duration: 1s; animation-iteration-count: infinite">u</p>
+    <p style="all: unset; animation: spin 1s infinite !important">v</p>
+    <p style="--k: spin 1s infinite; all: unset; animation: var(--k) !important">w</p>
+    <p style="transition: all 30s; transition-property: revert-layer; opacity: 0.5">x</p>
+    <div style="animation: spin 1s infinite"><p style="animation: inherit">y</p></div>
     <svg width="40" height="40"><style>rect { animation: spin 1s infinite !important }</style>
         <rect width="10" height="10"/><circle r="5" cx="20" cy="20" style="animation: spin 1s infinite !important"/></svg>
     <math><mi style="animation: spin 1s infinite !important">q</mi></math>`;

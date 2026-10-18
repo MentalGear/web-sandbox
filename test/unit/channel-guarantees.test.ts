@@ -208,10 +208,11 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
             return [start, source.indexOf('\n    }\n', start)] as const;
         };
         const reads = [...source.matchAll(/this\._generation(?!\+\+)/g)].map(match => match.index!);
-        // `const generation = this._generation` and the comparison after notify(); the environment a host call is made
-        // in, and the one check that its frame is sent there (review round 3, L-2)
-        const READERS: [string, number][] = [['_notifyThenAct', 2], ['_issue', 1], ['_postRpc', 1]];
-        expect(reads).toHaveLength(4);
+        // `const generation = this._generation` and the comparison after each notice; the environment a host call is made
+        // in, and the one check that its frame is sent there (review round 3, L-2); and the environment a frame's load
+        // belongs to, asked again in the microtask that completes the build (review round 4, L-1)
+        const READERS: [string, number][] = [['_notifyThenAct', 2], ['_issue', 1], ['_postRpc', 1], ['_frameLoadHandler', 2]];
+        expect(reads).toHaveLength(6);
         for (const [name, count] of READERS) {
             const [start, end] = bodyOf(name);
             expect(reads.filter(index => index > start && index < end), name).toHaveLength(count);
@@ -221,6 +222,33 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
         const OTHER_PATHS = ['_handleGuestWrite'];
         for (const name of OTHER_PATHS) expect(source.slice(source.indexOf(`private ${name}(`)).indexOf('this._notifyThenAct(')).toBeLessThan(2000);
         expect([...source.matchAll(/this\._notifyThenAct\(/g)]).toHaveLength(PATHS.length + OTHER_PATHS.length);
+    });
+
+    // Review round 4, L-2: an entry failure dispatched its host line and its guest line from one callback, and the
+    // generation was compared only before the action, so a listener of the first that reset or removed the element
+    // still got the second. Each notice is one dispatch now, and _notifyThenAct compares after each.
+    it('the source: every notice given to _notifyThenAct dispatches exactly one event', () => {
+        const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/host.ts'), 'utf8');
+        const calls = [...source.matchAll(/this\._notifyThenAct\(\[/g)];
+        expect(calls.length).toBe([...source.matchAll(/this\._notifyThenAct\(/g)].length); // always a list of notices
+        let notices = 0;
+        for (const call of calls) {
+            // the list, up to its closing bracket at the same depth
+            let depth = 0;
+            let end = call.index! + call[0].length - 1;
+            for (; end < source.length; end++) {
+                if (source[end] === '[' || source[end] === '(' || source[end] === '{') depth++;
+                if (source[end] === ']' || source[end] === ')' || source[end] === '}') depth--;
+                if (depth === 0) break;
+            }
+            const list = source.slice(call.index! + call[0].length, end);
+            for (const notice of list.split(/,\s*(?=\(\) =>)/)) {
+                notices++;
+                const dispatches = [...notice.matchAll(/this\.(?:_dispatch\w*|dispatchEvent)\(/g)].length;
+                expect(dispatches, notice.trim()).toBe(1);
+            }
+        }
+        expect(notices).toBe(PATHS.length + 2); // the entry failure's two, the others' one each
     });
 });
 

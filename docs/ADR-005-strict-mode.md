@@ -64,13 +64,18 @@ text stays constant) and hands the worker the logic and render ports.
   (amendment below), so it has no `Worker` or `SharedWorker` (a nested blob worker would be admitted by
   `worker-src blob:`, P3); the prelude deletes `WebAssembly` unless `scriptUnsafe` (WebKit compiles it without
   `'unsafe-eval'`, P3) and `URL.createObjectURL` (A8 below); a worker never has `RTCPeerConnection` or a document.
-  Its location is its own `blob:null/…` URL.
+  Its location is its own `blob:null/…` URL. It has no `postMessage`, `onmessage` or `onmessageerror` of its own
+  either: what it posted reached the view's `Worker` object, on the host page's thread wherever the view shares it,
+  outside every budget; the library's ports are its only way out.
 - **G3 — the host can always stop the guest.** The watchdog (`watchdogTimeout`) and `workerExecutionTimeout`
   watch the worker, which never shares the host's thread: the S6 bound holds on every engine
   ([ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)).
 - **G4 — egress is the policy, and nothing navigates.** The worker inherits the view policy exactly
   (`connect-src` governs it), and requests only through the four globals of its allowlist that the policy governs on
-  every engine (amendment below); the view's loads are governed by `img-src`, `style-src`, `font-src`, `media-src`.
+  every engine (amendment below); the view's loads are governed by `img-src`, `style-src`, `font-src`, `media-src`,
+  and a URL in rendered markup that the view policy refuses is dropped by the renderer before the browser sees it
+  (reported as the browser would have), while the ones it keeps are bounded in number and per second
+  (`VIEW_MAX_URLS`, `VIEW_URLS_PER_SECOND`).
   No WebRTC is reachable. The view cancels the default of every click on or inside a link (HTML and SVG `a`,
   `area`, anything with an `href`, including fragment links, which resolve against the inherited `about:blank`
   base and so are navigations) and of every submit; `form-action 'none'` and the wrapper's `frame-src 'none'`

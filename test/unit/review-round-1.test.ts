@@ -234,7 +234,7 @@ describe('R3-3: one byte budget per RPC message, and per channel in flight', () 
         expect(send).toHaveBeenCalledTimes(1);
     });
 
-    it(`inbound: a request past the budget does not run, and running calls hold at most RPC_MAX_INBOUND_BYTES (${RPC_MAX_INBOUND_BYTES}): BUSY`, async () => {
+    it(`inbound: a request past the budget does not run (ARGS_NOT_TRANSFERABLE), and running calls hold at most RPC_MAX_INBOUND_BYTES (${RPC_MAX_INBOUND_BYTES}): BUSY`, async () => {
         const { b } = broker();
         const method = vi.fn(() => new Promise(() => {})); // never settles: its arguments stay held
         b.expose('m', method);
@@ -245,7 +245,7 @@ describe('R3-3: one byte budget per RPC message, and per channel in flight', () 
         await Promise.resolve();
         await Promise.resolve();
         expect(method).toHaveBeenCalledTimes(2);
-        expect(answers.map(a => [a.id, a.code])).toEqual([[1, 'BUSY'], [4, 'BUSY']]);
+        expect(answers.map(a => [a.id, a.code])).toEqual([[1, 'ARGS_NOT_TRANSFERABLE'], [4, 'BUSY']]); // review round 4, C-5
     });
 
     it('a result past the budget is answered RESULT_NOT_TRANSFERABLE; a response past it is not handed over', async () => {
@@ -527,7 +527,10 @@ describe('R2-5: worker mode removes WebAssembly unless scriptUnsafe, as strict m
             const removal = source.indexOf('function removeWebAssembly');
             expect(removal >= 0, String(scriptUnsafe)).toBe(!scriptUnsafe);
             if (!scriptUnsafe) {
-                expect(removal).toBeGreaterThan(source.indexOf('keepOnlyWorkerGlobals'));
+                // the allowlist runs first, as the argument of the function the rest runs in (review round 4, M-1), whose
+                // first statement is the removal
+                expect(source.indexOf('(function (g, postToFrame) {(function removeWebAssembly')).toBeGreaterThan(0);
+                expect(source.indexOf('keepOnlyWorkerGlobals')).toBeGreaterThan(source.lastIndexOf('})(this, ('));
                 expect(removal).toBeLessThan(source.indexOf('function inSandboxScript'));
             }
             el.remove();

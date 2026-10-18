@@ -359,7 +359,8 @@ describe("inSandboxScript", () => {
         const start = () => {
             const registered: { type: string; cb: Function; options: unknown }[] = [];
             (globalThis as any).addEventListener = (type: string, cb: Function, options?: unknown) => { registered.push({ type, cb, options }); };
-            inSandboxScript(false, 'worker', createMockConsole(), createBroker);
+            // the worker's postMessage, which the globals allowlist hands the bootstrap (review round 4, M-1): here the window's
+            inSandboxScript(false, 'worker', createMockConsole(), createBroker, undefined, undefined, (message: unknown) => window.postMessage(message));
             return registered.find(r => r.type === 'message')!;
         };
 
@@ -389,7 +390,7 @@ describe("inSandboxScript", () => {
             listener.cb(initPort(late, { source: null }));
             expect(late.posted).not.toHaveBeenCalled();
             // a worker announces nothing: its frame does (worker-bootstrap.ts), once the worker told it, once, that it
-            // runs (review round 2, C-5; in jsdom the worker's postMessage to its frame is the window's)
+            // runs (review round 2, C-5), through the postMessage it was handed (in jsdom, the window's)
             expect(announcements).toEqual([{ data: { type: 'WORKER_STARTED' }, target: undefined, transfer: undefined }]);
         });
     });
