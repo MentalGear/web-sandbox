@@ -7,7 +7,7 @@ import { createBroker, RPC_MAX_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
-import { inSandboxView, inStrictWorker, sanitizeRender, VIEW_OPTIONS, VIEW_STILL_PSEUDO_ELEMENTS } from '@src/lib/in-sandbox-view';
+import { inSandboxView, inStrictWorker, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, VIEW_STILL_PSEUDO_ELEMENTS } from '@src/lib/in-sandbox-view';
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { workerBootstrap } from '@src/lib/worker-bootstrap';
 import { createGuestWrites } from '@src/lib/guest-writes';
@@ -423,6 +423,48 @@ describe("M-5: the view's guest-error rate limit says so the first time it drops
     });
 });
 
+describe('M-2: the renderer drops every URL the view policy refuses, reports it, and counts the URLs it keeps', () => {
+    const run = (html: string, origins: Record<string, string[]>, room?: { elements: number; depth: number; urls?: number }, target = 'body') => {
+        const template = document.createElement('template');
+        template.innerHTML = html;
+        const context = { target, animating: [] as string[], origins, refused: [] as [string, string][], urls: 0 };
+        sanitizeRender(template.content, () => null, () => false, RENDER_RULES, { animations: true, autoplay: true, stylesheets: true }, room, context);
+        return { fragment: template.content, context };
+    };
+    const attribute = (fragment: DocumentFragment, id: string, name: string) => fragment.getElementById(id)!.getAttribute(name);
+
+    it('by the kind of load each attribute makes: images (src, srcset, poster, a <picture> source), media (audio, video, their source and track)', () => {
+        const { fragment, context } = run([
+            '<img id="a" src="https://a.example/1.png"><img id="b" src="https://u:p@b.example:8443/2.png?q#f"><img id="c" srcset="https://a.example/3.png 1x, https://b.example/4.png 2x">',
+            '<video id="v" src="https://b.example/v.mp4" poster="https://a.example/p.png"><source id="vs" src="https://a.example/s.mp4"><track id="t" src="https://b.example/t.vtt"></video>',
+            '<picture><source id="ps" srcset="https://b.example/p.png"><img alt="x"></picture><div><source id="loose" src="https://b.example/l.mp4"></div>',
+            '<img id="up" src="http://a.example/5.png"><img id="rel" src="r.png"><audio id="au" src="https://a.example/a.mp3"></audio>',
+        ].join(''), { images: ['https://a.example'], media: ['https://b.example'] });
+        expect([['a', 'src'], ['b', 'src'], ['c', 'srcset'], ['v', 'src'], ['v', 'poster'], ['vs', 'src'], ['t', 'src'], ['ps', 'srcset'], ['loose', 'src'], ['up', 'src'], ['rel', 'src'], ['au', 'src']].map(([id, name]) => attribute(fragment, id!, name!))).toEqual([
+            'https://a.example/1.png', null, null, 'https://b.example/v.mp4', 'https://a.example/p.png', null, 'https://b.example/t.vtt', null, 'https://b.example/l.mp4', 'http://a.example/5.png', 'r.png', null,
+        ]);
+        expect(context.refused).toEqual([
+            ['img-src', 'https://b.example:8443/2.png?q'],
+            ['img-src', 'https://b.example/4.png'],
+            ['media-src', 'https://a.example/s.mp4'],
+            ['img-src', 'https://b.example/p.png'],
+            ['media-src', 'https://a.example/a.mp3'],
+        ]);
+        expect(context.urls).toBe(7); // a, v src, v poster, t, loose (a <source> outside media loads nothing), up, rel
+    });
+
+    it("a fragment's top-level <source> loads by the target it goes into", () => {
+        expect(run('<source id="s" src="https://b.example/s.mp4">', {}, undefined, 'video').context.refused).toEqual([['media-src', 'https://b.example/s.mp4']]);
+        expect(run('<source id="s" src="https://b.example/s.mp4">', {}, undefined, 'div').context.refused).toEqual([]);
+    });
+
+    it('past what is left of VIEW_MAX_URLS it throws before anything is inserted; up to it, it does not', () => {
+        expect(() => run('<img src="x"><img src="y">', {}, { elements: 10, depth: 10, urls: 2 })).not.toThrow();
+        expect(() => run('<img src="x"><img src="y"><img src="z">', {}, { elements: 10, depth: 10, urls: 2 })).toThrowError('VIEW_MAX_URLS');
+        expect(() => run('<img src="x"><img alt="no URL">', {}, { elements: 10, depth: 10, urls: 1 })).not.toThrow();
+    });
+});
+
 describe('C-7: the still stylesheet names the volume control parts of the media controls', () => {
     it.each(['-webkit-media-controls-volume-control-container', '-webkit-media-controls-volume-control-hover-background'])('%s', (name) => {
         expect(VIEW_STILL_PSEUDO_ELEMENTS as readonly string[]).toContain(name);
@@ -442,6 +484,18 @@ describe('the docs say what the code does', () => {
         for (const text of [host, api]) {
             expect(text).not.toMatch(/Only a literal `false` turns them off; any other value that is not a boolean is taken as `false`/);
         }
+    });
+
+    it("M-3: the README's residuals of one operation name Chromium's <img> cost", () => {
+        expect(read('README.md').replace(/\s+/g, ' ')).toContain('`<img>` elements in Chromium, which cost far more than their markup (6 500 `<img alt>` with no source: 1.9–2.6 s; Firefox and WebKit about 150 ms)');
+    });
+
+    it('I-1: API.md says an aborted record of a torn-down environment can arrive after reset(), while the next build loads', () => {
+        expect(read('docs/API.md').replace(/\s+/g, ' ')).toContain('an `aborted` record of an environment that `reset()`, `load()` or `setConfig()` tore down can arrive after that call, while the next build is loading');
+    });
+
+    it("I-2: API.md's events table qualifies the fetch event by fetchBridge", () => {
+        expect(read('docs/API.md')).toMatch(/^\| `fetch` \| `FetchRecord` \| yes \| With `fetchBridge`: /m);
     });
 
     it('I-2: the backlog does not say the guest has no sandboxFetch without the bridge', () => {
