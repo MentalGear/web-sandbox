@@ -96,3 +96,41 @@ update the model when it is committed.
 - It runs in the page through Playwright, because the real element needs a browser. fast-check's shrinking replaces the
   reviewer's delta debugging.
 - Keep round 4's L-1 loop (remove or move the element 12–30 ms into a rebuild) as its own e2e property.
+
+## Changes for `60814b5` (review round 5)
+
+Round 5's lifecycle reviewer updated the model to the element after round 4's fixes:
+- **The no-repeat rule.** `buildWithin` is the innermost `terminated` reason being dispatched, for every `terminated`,
+  not only a build's.
+- **Notices.** Each notice dispatches one event, and the next runs only if `gen` is unchanged. An entry failure gives
+  the host line, then the guest line, then the termination.
+- **Build completion.** A frame's load completes a build only in a microtask that re-checks the frame, `gen` and the
+  connections. `ready` inside any DOM operation is a divergence.
+- **The call budget.**
+  - The default `maxPerSecond` is 1000.
+  - Each field must be a finite number ≥ 1, otherwise its default with a warning; a `callLimits` that is not an object gives both defaults.
+  - The byte budget is modelled too: at `60814b5`, a guest call whose frame weighs more than `maxBytesPerSecond` is always `BUSY` (round 5's L-2).
+- **Call outcomes.** `ARGS_NOT_TRANSFERABLE` for a function, an Error, an unknown kind or a throwing getter in the
+  arguments. `TERMINATED` when a getter changes `gen`.
+- **The worker.** A probe checks that it has no `postMessage`, `onmessage` or `onmessageerror`, own or inherited.
+- **Guest writes.** The model applies a change when `fileswritten` arrives:
+  - exactly one event per change to the list;
+  - none for a removal of a build path the host has unregistered since;
+  - a withdrawn write is announced with nothing listed.
+- **The view.**
+  - Refused `src`, `srcset` and `poster` URLs are dropped and reported as `source: 'view'` violations, at most 100 per directive.
+  - Dropped URLs do not count toward `VIEW_MAX_URLS` (1000; a render past it is refused with the documented line).
+  - `VIEW_URLS_PER_SECOND` is 200.
+  - The error-text drop notice is a guest `warn` line, at most once per environment, in strict mode only.
+- **New checks.**
+  - Event details are frozen (round 5's L-3).
+  - A call made while loading that times out before `ready` never runs (round 5's L-1, failing in strict mode at `60814b5`).
+- **Generator additions.**
+  - Order and queued-timeout scenarios.
+  - A fetch aborted by a teardown.
+  - A `terminated` listener that rebuilds into the very reason.
+  - Moves to a foreign document from every state, counting frames through `childNodes`: WebKit's `querySelectorAll` on the shadow root lists a removed frame after an adoption round trip.
+- **Coverage.**
+  - 1,050 sequences (350 per engine), plus 12 sweeps and 6 tight loops per engine.
+  - 216 of 216 combinations reached on each engine.
+  - The round-4 L-1 loop: 1,438–1,448 iterations per engine, clean.

@@ -51,6 +51,7 @@ conditional "continue".
 | Review round 2 2026-10-15 | 🟡 not clean (the count stays 0): 2 high and 8 medium findings in our code from three defensive reviews (lifecycle model, change audit, documented limits measured), all fixed (S55): intrinsics captured before guest code (C-1), the byte measure on a cloned snapshot with an allow-list (C-3), worker mode `ready` only with a running worker, the host page's Trusted Types reason, a DOM-free import with a build-time view hash, one build predicate, long timers; every documented limit held at its edge on all three engines; round 3 held by the owner (S56); [report](security/REVIEW-ROUND-2-2026-10-15.md) |
 | Review round 3 2026-10-18 | 🟡 not clean (the count stays 0): 2 high and 6 medium findings in our code from the same three reviews, all fixed (S57): whole RPC frames and a guest call budget (`callLimits`), the view's time budget charges only measured rendering, `allowAnimations` (default `true`; `false` removes animations and transitions from the view) and `allowAutoplay` (default `false`); where the view runs per engine measured ([research 16](research/16_view_isolation/README.md)); round 4 held by the owner (S58); [report](security/REVIEW-ROUND-3-2026-10-18.md) |
 | Review round 4 2026-10-18 | 🟡 not clean (the count stays 0): no high finding for the first time, 5 medium in our code, all fixed (S62): the worker's own `postMessage` removed, values read once, the still-style rewrite bounded, build completion after a frame's load, the view's URL policy and budget (`VIEW_MAX_URLS`, `VIEW_URLS_PER_SECOND`); the default call rate 1000 per second; round 5 next (S63); [report](security/REVIEW-ROUND-4-2026-10-18.md) |
+| Review round 5 2026-10-18 | 🟡 not clean (the count stays 0): 1 high and 6 medium in our code, all in code earlier per-instance fixes added; [research 18](research/18_finding_classes/README.md) found the recurring classes; fixes as class slices (S64), then a lifecycle reducer (S65), a relay-worker probe (S66), one config schema (S67) and the view's cost bound (S68) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -79,6 +80,8 @@ closed S55. Round 3 (S56, [report](security/REVIEW-ROUND-3-2026-10-18.md)) ran 2
 S57; round 4 is held by the owner (S58), the Lean evaluation (S59) found no case for Lean and planned cheaper tests for
 later (S61), and the clean-up with independent reviews follows when the rounds end (S60). Review round 4
 (S58, [report](security/REVIEW-ROUND-4-2026-10-18.md)) added and closed S62; round 5 is next (S63).
+Round 5 (S63) found the recurring classes behind the findings ([research 18](research/18_finding_classes/README.md));
+its fixes are made as slices of those classes (S64), followed by S65–S68.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1589,14 +1592,60 @@ our own logic. Estimated about two weeks of work; about 20–60 s more unit CI, 
 Tests: `test/unit/review-round-4.test.ts`, `test/e2e/review-round-4.spec.ts`, `test/e2e/view-switches.spec.ts`,
 `test/unit/channel-guarantees.test.ts`.
 
-### S63 · Review round 5 — ▶️ **next** (owner)
+### S63 · Review round 5 — ✅ **done** (not clean: S64)
 
-The next round under the stopping rule (count 0 of 2). It runs the same three reviews on the `main` that closes S62:
-- model-based lifecycle testing;
-- an audit of the code changed since round 4 (`c7672bb..` the merge of S62);
-- each documented limit measured at its edge on Chromium, Firefox and WebKit, including `VIEW_MAX_URLS`, `VIEW_URLS_PER_SECOND` and the new call default.
+Ran on `main` at `60814b5` with the same three reviews. It found 1 high and 6 medium findings in our code, all in code
+an earlier per-instance fix added or changed. The owner reviewed them before any fix and adopted every recommendation
+of [research 18](research/18_finding_classes/README.md): the fixes are made as the first slices of their classes'
+designs (S64), and the structural work follows in phases (S65–S68), each merged on its own. Report: written with S64.
 
-The owner reviews the findings before any fix. S61 may follow it.
+### S64 · Review round 5's fixes, as slices of their classes — ▶️ **in progress** (phase 1)
+
+The owner's decisions, 2026-10-18:
+- **Egress (N-1).** Rejections are cancelled after relaying, as errors are. A per-second rejection budget ends the
+  sandbox past it, because cancelling does not stop Firefox's cost. This is the first row of one egress table with
+  its enumeration test.
+- **Config across fields (L-2 = N-5).** A call heavier than the byte budget is answered `ARGS_NOT_TRANSFERABLE` (not
+  retryable), and a `maxBytesPerSecond` below the largest call warns. This is the first rule of one config schema.
+- **Observe and charge loads (M-3, and the owner's earlier option 1).** Every load the view observes (resource timing,
+  CSS-borne loads included) and every violation counts against `VIEW_URLS_PER_SECOND`.
+- **The time budget (M-2).** The full measured cost is charged, with no 1 s cap, and the sandbox ends when one
+  operation takes longer than 2 s.
+- **The still stylesheet (M-1, and L-1 of the measurement).** `first-letter` and `first-line` are removed, the
+  stylesheet is generated per engine for the pseudo-elements that can animate on the allowed elements, and an e2e
+  times a large replacement with it on and off on every engine.
+- **Distinct URLs (M-4).** A cap on distinct image URLs per environment (measured), and the stall of about 1 s per
+  1000 new images documented.
+- **The other slices:**
+  - L-1: queued calls flush only at `ready`, in every mode;
+  - N-2, N-6: one reader for guest event and init values;
+  - N-3: a one-sided URL match that errs only toward refusing;
+  - N-4, L-4: one diff for guest-write projections;
+  - L-3: one frozen-detail constructor;
+  - the lows and docs.
+
+### S65 · One lifecycle reducer, with the model-based suite (S61.2) — ⏸️ phase 2
+
+Every transition becomes a pure function of state and event. Effects and event dispatch run only after the state
+settles, and `ready` is the only point where queued work flushes. It is tested by the permanent fast-check `commands`
+suite built from [the lifecycle model](research/17_formal_methods/lifecycle-model.md).
+
+### S66 · Probe a trusted relay worker — ⏸️ phase 3
+
+A library-only worker would spawn the guest's worker and hold its only port, so guest-generated events land off the host
+page's thread and all measuring happens in a trusted realm. Probe it first, like research 15: nested blob workers under
+the view's policy, WebKit under COEP, memory, latency, error muting, and host-page cost under the round-4 and round-5
+floods. The result decides between building it and finishing design 2 (one reader) everywhere.
+
+### S67 · One config schema — ⏸️ phase 4
+
+Defaults, clamps, cross-field invariants and warnings come from one declarative description, checked by a property test.
+
+### S68 · State the view's cost bound — ⏸️ phase 5
+
+State the view's cost bound per engine in a form that new measurements fall inside. It covers what the budgets bound,
+what one operation may cost, and what remains, so that review rounds measure against a stated bound rather than
+finding its edges.
 
 ## B · API Surface & DX
 
