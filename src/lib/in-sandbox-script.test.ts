@@ -708,7 +708,7 @@ describe("inSandboxScript", () => {
             (globalThis as any).addEventListener = (type: string, cb: Function) => { listeners[type] = cb; };
             const port = createMockPort();
             FakeMessageChannel.next = port;
-            inSandboxScript(scriptUnsafe, mode, createMockConsole(), (send) => createBroker(send, { timeoutMs: 0 }));
+            inSandboxScript(scriptUnsafe, mode, createMockConsole(), (send, options) => createBroker(send, { ...options, timeoutMs: 0 }));
             if (mode === 'worker') listeners['message']?.(initPort(port));
             port.posted.mockClear();
             const parsedListeners = () => {

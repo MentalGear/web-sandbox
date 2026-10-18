@@ -45,7 +45,10 @@ export const LOG_MAX_BYTES = 1048576;
  */
 export const LOG_BYTES_PER_SECOND = 4194304;
 
-/** What an argument past LOG_MAX_BYTES becomes on receipt. */
+/**
+ * What an argument past LOG_MAX_BYTES becomes on receipt. An argument holding a kind the measure does not know (an Error,
+ * an ImageData) says that instead, `[Sandbox] dropped: unsupported value: <kind>` (review round 3, C-3).
+ */
 export const LOG_DROPPED_ARGUMENT = "[Sandbox] dropped: past the log line's byte budget";
 
 /** Most arguments one line keeps; later ones are dropped. */
@@ -91,10 +94,11 @@ export function toLogDetail(frame: unknown, source: 'guest' | 'host', onDropped?
         let left = LOG_MAX_BYTES;
         for (let i = 0; i < count; i++) {
             const value = clampArgument(data.args[i]);
-            const bytes = sizeOf(value, left);
+            const unsupported = { kind: '' };
+            const bytes = sizeOf(value, left, undefined, unsupported);
             if (bytes > left) {
                 dropped = true;
-                args.push(LOG_DROPPED_ARGUMENT);
+                args.push(unsupported.kind ? `[Sandbox] dropped: unsupported value: ${unsupported.kind}` : LOG_DROPPED_ARGUMENT);
                 continue;
             }
             left -= bytes;

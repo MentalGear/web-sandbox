@@ -35,11 +35,13 @@ export function inSandboxScript(
     mode: 'cooperative' | 'worker' | 'strict',
     sandboxConsole: Console,
     createBrokerFn?: typeof createBroker,
-    // Opt-in features; the host passes this literal only when one is on, so the bootstrap text of a sandbox
-    // without them is unchanged. `externalPort` (strict mode): no INIT_PORT listener of its own; the strict
-    // worker prelude takes the ports from the one trusted INIT message and hands the logic port to attach().
+    // The features, one literal from the host: the opt-in ones only when on. `externalPort` (strict mode): no INIT_PORT
+    // listener of its own; the strict worker prelude takes the ports from the one trusted INIT message and hands the
+    // logic port to attach().
     // `guestWrites`: the host records the guest's file writes (backlog C5); returned as `writeFiles` below.
-    features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean },
+    // `callBudget`: the per-second budget of the calls the guest makes (review round 3, M-2), from the element's config
+    // (`callLimits`); the host always passes it.
+    features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean; callBudget?: { calls: number; bytes: number } },
     // The byte measure (structured-size.ts), stringified in like createBroker: the console relay's budget and the
     // broker's are measured with it, made before any guest code runs.
     createSizeOfFn?: typeof createSizeOf,
@@ -94,6 +96,29 @@ export function inSandboxScript(
     const FunctionConstructor = Function;
     const clone = g.structuredClone;
     const toTag = Object.prototype.toString;
+    const keysOf = Object.keys;
+    const isArray = Array.isArray;
+    const ObjectPrototype = Object.prototype;
+    const SetConstructor = Set;
+    const setHas = Set.prototype.has;
+    const setAdd = Set.prototype.add;
+    const setClear = Set.prototype.clear;
+    const setForEach = Set.prototype.forEach;
+    const setSize = getOwn(Set.prototype, 'size')!.get!;
+    const mapSet = Map.prototype.set;
+    const mapClear = Map.prototype.clear;
+    const mapForEach = Map.prototype.forEach;
+    const mapSize = getOwn(Map.prototype, 'size')!.get!;
+    const hasOwnProperty = Object.prototype.hasOwnProperty;
+    // What structured clone makes of an error, told apart by its prototype alone (C-3, below): the realm's own
+    // prototypes, and the platform's getters of what an error carries where it is not an own property of the clone
+    // (Firefox's `stack`; a DOMException's name and message).
+    const ERROR_PROTOTYPES = [Error.prototype, TypeError.prototype, RangeError.prototype, SyntaxError.prototype, ReferenceError.prototype, EvalError.prototype, URIError.prototype];
+    const ERROR_NAMES = ['Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'EvalError', 'URIError'];
+    const inheritedStack = getOwn(Error.prototype, 'stack')?.get ?? null;
+    const domExceptionPrototype = DOMExceptionConstructor ? DOMExceptionConstructor.prototype : null;
+    const domExceptionName = domExceptionPrototype ? getOwn(domExceptionPrototype, 'name')?.get ?? null : null;
+    const domExceptionMessage = domExceptionPrototype ? getOwn(domExceptionPrototype, 'message')?.get ?? null : null;
     const symbolText = Symbol.prototype.toString;
     const slice = String.prototype.slice;
     const startsWith = String.prototype.startsWith;
@@ -285,9 +310,71 @@ export function inSandboxScript(
         }]);
     }
 
+    // ---- Sliding one-second windows: the guest's per-second budgets (the console relay's, below, and the calls'), each
+    // the host's own rule (rate-limit.ts) with the host's constant: at most `limit` in any one-second window. Each
+    // admitted weight is kept with its time until it leaves the window (review round 2, M-1: a token bucket let a full
+    // bucket and its refill through in one window, twice what the host takes, so the host dropped lines the guest had
+    // relayed, among them the relay's own warning that it had started dropping). Inline arithmetic and lists of our own
+    // only (C-1: Math.min, which the bucket called, is the guest's to replace). `mode` 'spent' records a weight already
+    // spent (the lines flushed on attach, below) whatever the window holds; 'fits' only says whether it would be admitted.
+    const now = (): number => (nowOf ? apply(nowOf, clock, []) : apply(dateNow, DateConstructor, []));
+    const slidingWindow = (limit: number) => {
+        const times: number[] = list();
+        const weights: number[] = list();
+        let head = 0; // entries before head have left the window
+        let total = 0;
+        return (weight: number, mode?: 'spent' | 'fits'): boolean => {
+            const at = now();
+            while (head < times.length && times[head]! <= at - 1000) {
+                total -= weights[head]!;
+                head++;
+            }
+            if (head > 64 && head * 2 > times.length) { // drop what left the window, now and then
+                let kept = 0;
+                for (let i = head; i < times.length; i++, kept++) {
+                    times[kept] = times[i]!;
+                    weights[kept] = weights[i]!;
+                }
+                times.length = kept;
+                weights.length = kept;
+                head = 0;
+            }
+            const fits = total + weight <= limit;
+            if (mode === 'fits' || (mode !== 'spent' && !fits)) return fits;
+            if (weight > 0) {
+                times[times.length] = at;
+                weights[weights.length] = weight;
+                total += weight;
+            }
+            return true;
+        };
+    };
+
+    // The per-second budget of the calls the guest makes (review round 3, M-2): at most callBudget.calls calls and
+    // callBudget.bytes bytes of their frames in any one-second window, counted here, in the broker that holds the only
+    // way onto the port, so a call past it never crosses: the broker refuses it BUSY. The host counts the same window on
+    // receipt (host.ts) and answers BUSY past it. Before, calls of 32 MiB back to back kept the host 15–39% busy within
+    // every other cap, and small calls reached 44 000 per second. A call counts against both windows or neither.
+    const callBudget = features?.callBudget;
+    const callsWindow = callBudget ? slidingWindow(callBudget.calls) : null;
+    const callBytesWindow = callBudget ? slidingWindow(callBudget.bytes) : null;
+    const admitOutbound = callBudget && callsWindow && callBytesWindow ? (bytes: number): string | null => {
+        if (!callsWindow(1, 'fits') || !callBytesWindow(bytes, 'fits')) return 'more than ' + callBudget.calls + ' calls or ' + callBudget.bytes + ' bytes of calls in one second';
+        callsWindow(1, 'spent');
+        callBytesWindow(bytes, 'spent');
+        return null;
+    } : undefined;
+
     // The guest's broker accepts a library code (FETCH_*) in the refusal of a call to a reserved method, so
-    // sandboxFetch() rejects with the host's code; the host's broker never accepts one (see rpc.ts).
-    const bridge = createBrokerFn ? createBrokerFn(send, { acceptLibraryCodes: true, sizeOf: sizeOf ?? undefined }) : null;
+    // sandboxFetch() rejects with the host's code; the host's broker never accepts one (see rpc.ts). The startup gate
+    // (below) refuses through it a call it cannot hold: its builder makes every RPC frame (rpc.ts, C-1).
+    let refuseHeld: ((request: unknown, reason: string) => void) | null = null;
+    const bridge = createBrokerFn ? createBrokerFn(send, {
+        acceptLibraryCodes: true,
+        sizeOf: sizeOf ?? undefined,
+        admitOutbound,
+        takeBusyRefusal: (refuse) => { refuseHeld = refuse; },
+    }) : null;
     const handleBridgeMessage = bridge ? bridge.handleMessage : null;
     if (bridge) publish('bridge', bridge);
 
@@ -379,15 +466,17 @@ export function inSandboxScript(
     // goes through, in every mode (cooperative, worker, and strict, whose prelude logs through `log` below). It never
     // throws, whatever the guest logs, and what it posts is bounded before it is posted:
     //   - at most LOG_MAX_ARGS arguments, strings cut at LOG_MAX_STRING (the host cuts again on receipt);
-    //   - an Error or DOMException becomes { name, message, stack }, strings cut the same way;
+    //   - an Error or DOMException becomes { name, message, stack }, strings cut the same way, wherever it is in an
+    //     argument (review round 3, C-3: nested, it measured as past the byte budget, which it was not);
     //   - a value structured clone refuses (a function, a Symbol, a DOM node, an Event, a Response, a Proxy, a WeakMap,
     //     a Promise) becomes a string that names its kind, instead of a DataCloneError thrown at the guest's console
     //     call (before, `console.log(() => {})` threw in cooperative mode and in the worker, and the line was lost);
     //   - all arguments of one line together measure at most LOG_MAX_BYTES (structured-size.ts, with primitives
     //     captured now): an argument past what is left of it becomes a string saying so, so
-    //     `console.log(new Uint8Array(64 MiB))` crosses as a few bytes;
+    //     `console.log(new Uint8Array(64 MiB))` crosses as a few bytes, and an argument holding a kind the measure does
+    //     not know (an ImageData, a SharedArrayBuffer) crosses as a string that names it, never as past the budget;
     //   - at most LOG_LINES_PER_SECOND lines and LOG_BYTES_PER_SECOND bytes leave in any one-second window (the host's
-    //     own rule and constant, below): the host dispatches no more than that anyway, and a line dropped here is never cloned onto the host's thread,
+    //     own rule and constant, the sliding windows above): the host dispatches no more than that anyway, and a line dropped here is never cloned onto the host's thread,
     //     which is what a flood within the per-line caps cost (Firefox's host ran ~7 ticks per second). The first
     //     dropped line sends one warning, once per environment.
     // Each argument is cloned once here, with the captured structuredClone (review round 2, C-3), and the clone, the
@@ -405,7 +494,6 @@ export function inSandboxScript(
     // the host's window when they are flushed (M-2). Past either they are counted, and one warning on attach says how
     // many were dropped, and for which cap.
     const LOG_BUFFER_LIMIT = LOG_LINES_PER_SECOND;
-    const now = (): number => (nowOf ? apply(nowOf, clock, []) : apply(dateNow, DateConstructor, []));
     const cut = (text: string) => (text.length > LOG_MAX_STRING ? apply(slice, text, [0, LOG_MAX_STRING]) as string : text);
     const tagOf = (value: unknown): string => {
         try {
@@ -425,6 +513,15 @@ export function inSandboxScript(
         }
         if (typeof value === 'function') return '[function]';
         return tagOf(value);
+    };
+    // The name of a value's kind, for a line's own words: `Uint8Array` of `[object Uint8Array]` (M-7: the brackets were
+    // doubled), its type for a primitive.
+    // At most 64 characters: a tag is the guest's to choose (Symbol.toStringTag), and this text is posted unmeasured.
+    const kindOf = (value: unknown): string => {
+        if (typeof value !== 'object' || value === null) return typeof value;
+        const tag = tagOf(value);
+        const name = apply(slice, tag, [8, tag.length - 1 < 72 ? tag.length - 1 : 72]) as string;
+        return name || 'object';
     };
     const textOf = (value: unknown): string => (typeof value === 'string' ? cut(value) : '');
     const isErrorLike = (value: unknown) => {
@@ -465,6 +562,112 @@ export function inSandboxScript(
         }
     };
 
+    // Errors anywhere in a snapshot become { name, message, stack } (review round 3, C-3), in place, before the line is
+    // measured. Structured clone keeps an Error, and the byte measure counts one as past every budget (structured-size.ts:
+    // its stack is the engine's to serialize), so `console.log({ error })`, `[new TypeError()]` and Promise.allSettled's
+    // results crossed as "past the log line's byte budget", which was false. The walk visits plain objects, arrays, Maps
+    // and Sets, each object once, at most ERROR_WALK_NODES of them and ERROR_WALK_DEPTH deep. An error past those bounds
+    // stays, and the measure names it ("unsupported value: Error"): bounded, and true.
+    // It runs no guest code with a snapshot object at hand: the snapshot is posted after it (a line logged before the
+    // port is attached waits in the outbox), so guest code that held one could grow it past the budgets measured here.
+    // So an object's kind is read from its prototype (Object.getPrototypeOf has no hook on an ordinary object), never
+    // from Object.prototype.toString, which reads Symbol.toStringTag through the prototype chain, guest code's; a Map or
+    // a Set is told by the platform's own getters, captured; and an error's fields are its own properties (an own
+    // accessor of a clone is the engine's), or the platform's getters captured above.
+    const ERROR_WALK_NODES = 10000;
+    const ERROR_WALK_DEPTH = 64;
+    const brandOf = (read: (this: unknown) => unknown, value: unknown): unknown => {
+        try {
+            return apply(read, value, []);
+        } catch {
+            return undefined;
+        }
+    };
+    // An own property's value, through its own getter if it has one (on a clone, the engine's), else undefined.
+    const ownValue = (object: object, key: string): unknown => {
+        const descriptor = getOwn(object, key);
+        if (!descriptor) return undefined;
+        if (apply(hasOwnProperty, descriptor, ['value'])) return descriptor.value;
+        const read = apply(hasOwnProperty, descriptor, ['get']) ? descriptor.get : undefined;
+        return typeof read === 'function' ? brandOf(read, object) : undefined;
+    };
+    // The form of an error in a snapshot, or null for anything else.
+    const snapshotErrorForm = (object: object): { name: string; message: string; stack: string } | null => {
+        const proto = protoOf(object);
+        let name: string | null = null;
+        for (let i = 0; i < ERROR_PROTOTYPES.length && name === null; i++) if (ERROR_PROTOTYPES[i] === proto) name = ERROR_NAMES[i]!;
+        if (name !== null) {
+            const stack = ownValue(object, 'stack') ?? (inheritedStack ? brandOf(inheritedStack, object) : undefined);
+            return { name, message: textOf(ownValue(object, 'message')), stack: textOf(stack) };
+        }
+        if (proto === null || proto !== domExceptionPrototype) return null;
+        return {
+            name: textOf(domExceptionName ? brandOf(domExceptionName, object) : undefined),
+            message: textOf(domExceptionMessage ? brandOf(domExceptionMessage, object) : undefined),
+            stack: textOf(ownValue(object, 'stack')),
+        };
+    };
+    const withErrorForms = (root: unknown): unknown => {
+        if (!root || typeof root !== 'object') return root;
+        const rootForm = snapshotErrorForm(root);
+        if (rootForm) return rootForm;
+        const objects: object[] = list();
+        const depths: number[] = list();
+        const seen = construct(SetConstructor, []);
+        objects[0] = root;
+        depths[0] = 0;
+        let visited = 0;
+        while (objects.length > 0 && visited < ERROR_WALK_NODES) {
+            const object = objects[objects.length - 1]!;
+            const depth = depths[depths.length - 1]!;
+            objects.length = objects.length - 1;
+            depths.length = depths.length - 1;
+            if (apply(setHas, seen, [object])) continue;
+            apply(setAdd, seen, [object]);
+            visited++;
+            // A member as it stays: an error's form, or the member, walked later if it is an object and not too deep.
+            const formOf = (member: unknown): unknown => {
+                if (!member || typeof member !== 'object') return member;
+                const form = snapshotErrorForm(member);
+                if (form) return form;
+                if (depth + 1 < ERROR_WALK_DEPTH) {
+                    objects[objects.length] = member;
+                    depths[depths.length] = depth + 1;
+                }
+                return member;
+            };
+            if (isArray(object) || protoOf(object) === ObjectPrototype) {
+                const keys = keysOf(object);
+                for (let i = 0; i < keys.length; i++) {
+                    const member = (object as Record<string, unknown>)[keys[i]!];
+                    const form = formOf(member);
+                    if (form !== member) defineOwn(object, keys[i]!, { value: form, writable: true, enumerable: true, configurable: true });
+                }
+                continue;
+            }
+            // A Map or a Set: its entries again, in their order, when one of them changed.
+            const isMap = typeof brandOf(mapSize, object) === 'number';
+            if (!isMap && typeof brandOf(setSize, object) !== 'number') continue;
+            const keys: unknown[] = list();
+            const values: unknown[] = list();
+            let changed = false;
+            apply(isMap ? mapForEach : setForEach, object, [(value: unknown, key: unknown) => {
+                const keyForm = formOf(key);
+                const valueForm = isMap ? formOf(value) : keyForm;
+                if (keyForm !== key || valueForm !== value) changed = true;
+                keys[keys.length] = keyForm;
+                values[values.length] = valueForm;
+            }]);
+            if (!changed) continue;
+            apply(isMap ? mapClear : setClear, object, []);
+            for (let i = 0; i < keys.length; i++) {
+                if (isMap) apply(mapSet, object, [keys[i], values[i]]);
+                else apply(setAdd, object, [keys[i]]);
+            }
+        }
+        return root;
+    };
+
     // The line to post, its bytes, and whether it is smaller than what was logged (an argument, a string or a byte
     // budget cut). Its arguments are snapshots, strings, and primitives.
     const safeArgs = (args: unknown[]): { line: unknown[]; bytes: number; cut: boolean } => {
@@ -479,11 +682,13 @@ export function inSandboxScript(
                 if (value !== args[i]) reduced = true;
             } else if (typeof value === 'symbol' || typeof value === 'function') value = describe(value);
             else if (isErrorLike(value)) value = errorForm(value);
-            else if (typeof value === 'object' && value !== null) value = snapshot(value);
-            const bytes = sizeOf ? sizeOf(value, left) : 0;
+            else if (typeof value === 'object' && value !== null) value = withErrorForms(snapshot(value));
+            const unsupported = { kind: '' };
+            const bytes = sizeOf ? sizeOf(value, left, undefined, unsupported) : 0;
             if (bytes > left) {
                 reduced = true;
-                value = '[' + (typeof value === 'object' && value !== null ? tagOf(value) : typeof value) + ': past the log line\'s byte budget (' + LOG_MAX_BYTES + ')]';
+                // what it is: a kind the measure does not know, or a value past what is left of the budget (C-3)
+                value = unsupported.kind ? '[unsupported value: ' + unsupported.kind + ']' : '[' + kindOf(value) + ': past the log line\'s byte budget (' + LOG_MAX_BYTES + ')]';
                 left -= (value as string).length * 2 + 8;
             } else {
                 left -= bytes;
@@ -493,43 +698,7 @@ export function inSandboxScript(
         return { line: out, bytes: LOG_MAX_BYTES - left + 16, cut: reduced };
     };
 
-    // The per-second budgets: at most `limit` in any one-second window, the host's own rule for guest lines
-    // (LOG_EVENTS_PER_SECOND, rate-limit.ts) with the same constant (review round 2, M-1): each admitted weight is kept
-    // with its time until it leaves the window. A token bucket, as before, let a full bucket and its refill through in
-    // one window, twice what the host dispatches, so the host dropped lines the guest had relayed, among them the
-    // relay's own warning that it had started dropping. Inline arithmetic and lists of our own only (C-1: Math.min, which
-    // the bucket called, is the guest's to replace). `admit(weight, true)` records a weight already spent (the lines
-    // flushed on attach, below) whatever the window holds.
-    const slidingWindow = (limit: number) => {
-        const times: number[] = list();
-        const weights: number[] = list();
-        let head = 0; // entries before head have left the window
-        let total = 0;
-        return (weight: number, spent?: boolean): boolean => {
-            const at = now();
-            while (head < times.length && times[head]! <= at - 1000) {
-                total -= weights[head]!;
-                head++;
-            }
-            if (head > 64 && head * 2 > times.length) { // drop what left the window, now and then
-                let kept = 0;
-                for (let i = head; i < times.length; i++, kept++) {
-                    times[kept] = times[i]!;
-                    weights[kept] = weights[i]!;
-                }
-                times.length = kept;
-                weights.length = kept;
-                head = 0;
-            }
-            if (!spent && total + weight > limit) return false;
-            if (weight > 0) {
-                times[times.length] = at;
-                weights[weights.length] = weight;
-                total += weight;
-            }
-            return true;
-        };
-    };
+    // The per-second budgets of the lines (the sliding windows above, with the host's constants).
     const lineBudget = slidingWindow(LOG_LINES_PER_SECOND);
     const byteBudget = slidingWindow(LOG_BYTES_PER_SECOND);
     let logsBuffered = 0;
@@ -798,9 +967,8 @@ export function inSandboxScript(
             log('error', [`[Sandbox] execute() was dropped: ${MAX_HELD} calls and executions are already waiting for the guest document to be parsed.`]);
             return;
         }
-        const id = data.id;
-        if (typeof id !== 'string' && typeof id !== 'number') return; // malformed: dropped, as the broker drops it
-        post({ type: 'RPC_RES', id, ok: false, error: `too many calls waiting for the guest document to be parsed (${MAX_HELD})`, code: 'BUSY' });
+        // refused BUSY through the broker's builder (rpc.ts, C-1), which drops a malformed request as it drops any
+        if (refuseHeld) refuseHeld(data, `too many calls waiting for the guest document to be parsed (${MAX_HELD})`);
     };
     if (doc) apply(listen, doc, ['DOMContentLoaded', onParsed, true]);
 
@@ -842,8 +1010,8 @@ export function inSandboxScript(
         // The lines buffered before the port count against this second's budgets as they leave now (M-2): at most
         // LOG_BUFFER_LIMIT (= LOG_LINES_PER_SECOND) lines and LOG_BYTES_PER_SECOND bytes, what one window holds, so the
         // guest's lines that follow at once wait for the window like any others, and the host dispatches all of them.
-        lineBudget(logsBuffered, true);
-        byteBudget(bufferedBytes, true);
+        lineBudget(logsBuffered, 'spent');
+        byteBudget(bufferedBytes, 'spent');
         if (skipped > 0) ownLine('warn', `[bridge] skipped ${skipped} queued bridge frame(s) that could not be posted (not transferable).`);
         if (droppedForLines + droppedForBytes > 0) {
             const caps = (droppedForLines > 0 ? `${droppedForLines} past ${LOG_BUFFER_LIMIT} lines` : '')

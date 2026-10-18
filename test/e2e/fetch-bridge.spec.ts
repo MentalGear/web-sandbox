@@ -307,14 +307,14 @@ test('guest-supplied fields are validated before they are reported', async ({ sa
     expect(await sandbox.mount(bridgeTo(recorder.allowed))).toBe('ready');
 
     await sandbox.inGuest(`
-        for (const request of [{ url: 'x'.repeat(5000) }, { url: 42, method: 7 }, null, 'https://a.test/']) {
+        for (const request of [{ url: 'x'.repeat(9000) }, { url: 42, method: 7 }, null, 'https://a.test/']) {
             await bridge.call('sandbox:fetch', request).catch(() => {});
         }
         return true;
     `);
     const records = await sandbox.fetches();
     expect(records.map(r => r.outcome)).toEqual(['refused', 'refused', 'refused', 'refused']);
-    expect(records[0]!.url).toHaveLength(2048);
+    expect(records[0]!.url).toHaveLength(8192); // MAX_URL
     expect(records.slice(1).map(r => [r.url, r.method])).toEqual([['', ''], ['', 'GET'], ['', 'GET']]);
 });
 

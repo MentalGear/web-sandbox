@@ -4,6 +4,7 @@ import { escapeAttribute } from './frame-documents';
 import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './markup-references';
 import { admits, LINK_REL_KINDS, LOAD_KINDS, type KindRule } from './load-kinds';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
+import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
 
 /**
  * Strict mode (backlog S6, S13, S17; ADR-005): guest logic runs only in a worker, and the DOM frame — the
@@ -16,7 +17,7 @@ import { TRUSTED_TYPES_POLICY } from './trusted-types';
  *
  * Three ports, all MessageChannels created per environment:
  *   logic   host ↔ worker   RPC, LOG, PING/PONG, VIOLATION (source 'logic'), EXECUTE — as in worker mode
- *   view    host ↔ view     VIEW_READY (the check-in), VIOLATION (source 'view'), RESIZE, GUEST_ERROR, GUEST_UNCAUGHT,
+ *   view    host ↔ view     VIEW_READY (the check-in), VIOLATION (source 'view'), RESIZE, GUEST_ERROR, GUEST_UNCAUGHT (bounded),
  *                           WORKER_REFUSED, TRUSTED_TYPES_REFUSED, VIEW_PING/VIEW_PONG, VIEW_WRITE/VIEW_WRITTEN
  *   render  view ↔ worker   VIEW_STARTED, VIEW_RENDER, VIEW_TEXT, VIEW_SET, VIEW_ACK, VIEW_LISTEN, VIEW_EVENT — the host is not on this path
  * The render port is created by the view and handed to the library's worker prelude, which keeps it in a
@@ -636,6 +637,8 @@ export interface ViewOptions {
     trustedTypesPolicy: string;
     /** VIEW_WRITE_TYPES: the only types the view mints a URL for from a guest write. */
     writeTypes: readonly string[];
+    /** The guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT): longest, and most per second. */
+    guestText: { maxLength: number; perSecond: number };
 }
 
 /**
@@ -1292,6 +1295,31 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         // the worker can describe never reaches here, and a muted one needs the revocation, which follows
         // VIEW_STARTED); after it, VIEW_STARTED says how many of the Worker object's errors were the entry's, and
         // errors on one Worker object arrive in the order they were raised.
+        // The guest's error texts this document relays (review round 3, C-4): GUEST_ERROR, the entry's own error, and
+        // GUEST_UNCAUGHT, a later one the worker could not describe itself (above). Both are the guest's words, and every
+        // one of them leaves through here, bounded before it is posted, as the console relay bounds every other guest
+        // line in the guest before posting it (in-sandbox-script.ts): cut to guestText.maxLength characters, and at most
+        // guestText.perSecond in any one-second window (the host's window for guest lines), past which they are dropped
+        // here. Before, the text crossed whole and the host cut it after receiving it: an error thrown with a message of
+        // hundreds of millions of characters stalled the host page 0.6–1.4 s, and a worker throwing in a loop posted
+        // without bound. Not through the worker's relay, the same chokepoint otherwise: the entry's error can mean the
+        // worker never ran (it did not parse), and GUEST_UNCAUGHT exists for the errors the worker cannot describe.
+        // The window keeps the times of the last `perSecond` texts in a ring: the oldest of them is at `textsHead`.
+        const textTimes: number[] = [];
+        let textsHead = 0;
+        const toHostGuestText = (type: 'GUEST_ERROR' | 'GUEST_UNCAUGHT', text: string) => {
+            const now = performance.now();
+            const limit = options.guestText.perSecond;
+            if (textTimes.length < limit) {
+                textTimes.push(now);
+            } else {
+                if (textTimes[textsHead]! > now - 1000) return; // `limit` texts left in the last second already
+                textTimes[textsHead] = now;
+                textsHead = (textsHead + 1) % limit;
+            }
+            viewPort!.postMessage({ type, message: text.slice(0, options.guestText.maxLength) });
+        };
+
         let sourceUrl: string | null = null;
         let started = false;
         let entryErrors = 0; // from VIEW_STARTED: how many of the worker's first error events are the entry's
@@ -1315,7 +1343,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             trusted((value) => { worker = new Worker(value as string); }, url, 'createScriptURL');
         } catch (error: any) {
             // A SecurityError is the policy refusing the worker's URL (Chromium can throw it here): no guest code ran.
-            viewPort.postMessage(error && error.name === 'SecurityError' ? { type: 'WORKER_REFUSED' } : { type: 'GUEST_ERROR', message: String((error && error.message) || error) });
+            if (error && error.name === 'SecurityError') viewPort.postMessage({ type: 'WORKER_REFUSED' });
+            else toHostGuestText('GUEST_ERROR', String((error && error.message) || error));
             return;
         }
         // Errors the worker did not cancel: the entry's own (a syntax error, a throw at its top level), which end
@@ -1346,16 +1375,19 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         worker!.onerror = (error: ErrorEvent) => {
             const index = errorsSeen++;
             if (!started && !error.message) {
-                probe((refused) => viewPort!.postMessage(refused ? { type: 'WORKER_REFUSED' } : { type: 'GUEST_ERROR', message: 'the entry did not parse (this browser gives no detail)' }));
+                probe((refused) => {
+                    if (refused) viewPort!.postMessage({ type: 'WORKER_REFUSED' });
+                    else toHostGuestText('GUEST_ERROR', 'the entry did not parse (this browser gives no detail)');
+                });
                 return;
             }
             const message = String(error.message || 'the worker failed');
             if (!started || index < entryErrors) {
-                viewPort!.postMessage({ type: 'GUEST_ERROR', message });
+                toHostGuestText('GUEST_ERROR', message);
                 return;
             }
             error.preventDefault();
-            viewPort!.postMessage({ type: 'GUEST_UNCAUGHT', message });
+            toHostGuestText('GUEST_UNCAUGHT', message);
         };
         worker!.postMessage({ type: 'INIT_WORKER' }, [logicPort, channel.port2]);
 
@@ -1713,6 +1745,9 @@ export const VIEW_OPTIONS: ViewOptions = {
     events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,
     writeTypes: VIEW_WRITE_TYPES,
+    // the host cuts these texts to the same length again on receipt (host.ts), and dispatches at most
+    // LOG_EVENTS_PER_SECOND guest lines in any one second
+    guestText: { maxLength: 2048, perSecond: LOG_EVENTS_PER_SECOND },
 };
 
 let cachedText: string | null = null;

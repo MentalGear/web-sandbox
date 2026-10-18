@@ -62,8 +62,12 @@ import type { FileSnapshotEntry } from './files';
 export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((request: unknown) => Promise<unknown>) | null, urlTypes?: readonly string[] | null) {
     // ---- The captured list (review round 2, C-1): sandboxFiles' methods run whenever guest code calls them, so what they
     // use is taken here, before any guest code runs, and nothing below reads a global or a prototype guest code can
-    // replace (a unit test scans the text). Promises are made with the captured Promise, and no promise a `then`
-    // returned is used (it would be made by the constructor guest code put on Promise.prototype).
+    // replace (a unit test scans the text). Promises are made with the captured Promise and chained with the captured
+    // `then`, and this code never uses the promise a `then` returns. Two lookups of the realm stay reachable all the same
+    // (review round 3, C-5): `then` makes the promise it returns through the species constructor, read from
+    // `Promise.prototype.constructor[Symbol.species]`, and resolving with an object reads its `then`, inherited from
+    // `Object.prototype` when guest code put one there. Both run guest code that can change only what the guest's own
+    // sandboxFiles calls resolve with, in its own realm.
     const g = globalThis as any;
     const apply = Reflect.apply;
     const construct = Reflect.construct;

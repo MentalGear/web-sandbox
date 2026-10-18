@@ -1,6 +1,7 @@
 /**
  * The one rate limiter of the library's per-second limits that refuse (focused review 2026-10-14, W2): guest log
- * lines (sandbox-log.ts) and guest writes, by count and by bytes (guest-writes.ts).
+ * lines (sandbox-log.ts), guest writes, by count and by bytes (guest-writes.ts), and the calls the guest makes, by
+ * count and by bytes (host.ts; review round 3, M-2).
  *
  * The documented property is "at most `limit` in any one-second window", and a sliding window is what makes it
  * hold. The earlier limiters counted in fixed windows that a first event opened: a guest that filled the end of
@@ -27,6 +28,8 @@
 export interface RateLimiter {
     /** Admits `weight` (default 1) at `time` (ms, non-decreasing) if the window stays within the limit; records it then. */
     admit(time: number, weight?: number): boolean;
+    /** Whether admit() would admit `weight` at `time`, recording nothing: for one event counted by two limiters or neither. */
+    fits(time: number, weight?: number): boolean;
 }
 
 export function createRateLimiter(limit: number, windowMs = 1000): RateLimiter {
@@ -35,17 +38,26 @@ export function createRateLimiter(limit: number, windowMs = 1000): RateLimiter {
     let head = 0; // entries before head have left the window
     let total = 0; // the weights of entries[head..]
 
+    // Lets go of what left the window by `time`.
+    const advance = (time: number) => {
+        while (head < times.length && times[head]! <= time - windowMs) {
+            total -= weights[head]!;
+            head++;
+        }
+        if (head > 64 && head * 2 > times.length) { // drop what left the window, now and then
+            times.splice(0, head);
+            weights.splice(0, head);
+            head = 0;
+        }
+    };
+
     return {
+        fits(time: number, weight = 1): boolean {
+            advance(time);
+            return total + weight <= limit;
+        },
         admit(time: number, weight = 1): boolean {
-            while (head < times.length && times[head]! <= time - windowMs) {
-                total -= weights[head]!;
-                head++;
-            }
-            if (head > 64 && head * 2 > times.length) { // drop what left the window, now and then
-                times.splice(0, head);
-                weights.splice(0, head);
-                head = 0;
-            }
+            advance(time);
             if (total + weight > limit) return false;
             if (weight > 0) {
                 times.push(time);
