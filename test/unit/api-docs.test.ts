@@ -11,7 +11,7 @@ import { toFetchPolicy } from '@src/lib/fetch-bridge';
 import { INERT_TYPES } from '@src/lib/guest-writes';
 import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { cooperativePolicy, KIND_DIRECTIVES, strictViewPolicy } from '@src/lib/csp/csp-generator';
-import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_MAX_URLS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
+import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_OVERRUN_WINDOW_MS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_MAX_URLS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 import { LOG_BYTES_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { WORKER_GLOBALS } from '@src/lib/worker-globals';
@@ -138,6 +138,7 @@ describe('docs/API.md lists the public surface', () => {
             ['Strict: characters of markup the view parses per second', VIEW_RENDER_CHARACTERS_PER_SECOND],
             ['Strict: time the view spends applying operations per second', VIEW_APPLY_MS_PER_SECOND],
             ['Strict: longest operation of the view', VIEW_MAX_OPERATION_MS],
+            ["Strict: window of the view's repeated-overrun rule", VIEW_OVERRUN_WINDOW_MS],
             ['Strict: URL-bearing attributes in the view', VIEW_MAX_URLS],
             ['Strict: loads of the view per second', VIEW_URLS_PER_SECOND],
             ['Strict: distinct URLs one view loads', VIEW_MAX_DISTINCT_URLS],

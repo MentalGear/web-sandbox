@@ -525,7 +525,7 @@ describe('the view bootstrap: budgets (broad review ST2, ST3)', () => {
         const render = workers[0]!.transfer[1]!;
         const received: any[] = [];
         render.onmessage = (event) => received.push(event.data);
-        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        render.postMessage({ type: 'VIEW_STARTED' });
         return { render, received };
     };
     const until = async (check: () => boolean) => {

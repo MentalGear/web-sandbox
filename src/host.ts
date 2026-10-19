@@ -262,8 +262,11 @@ const DEFAULT_TERMINATE_REASON = 'terminated by the host';
 const WATCHDOG_REASON = 'the guest stopped responding (watchdog)';
 const ENTRY_FAILED_REASON = 'the guest entry failed to start';
 const VIEW_LOST_REASON = 'the sandbox view stopped responding';
-// VIEW_MAX_OPERATION_MS, in words (a unit test keeps them equal)
-const VIEW_OVERRUN_REASON = 'the view spent more than 2000 ms on one operation';
+// VIEW_MAX_OPERATION_MS and VIEW_OVERRUN_WINDOW_MS, in words (a unit test keeps them equal): the repeated-overrun rule
+// (in-sandbox-view.ts, viewBudget; backlog S72, class P). The reason, at the second overrun within the window; the warn
+// line, at the first overrun of an environment (VIEW_FIRST_OVERRUN, _onViewMessage).
+const VIEW_OVERRUN_REASON = 'the view spent more than 2000 ms on one operation twice within 5 minutes';
+const VIEW_FIRST_OVERRUN_LINE = '[Sandbox] the view spent more than 2000 ms on one operation; a second such operation within 5 minutes ends the sandbox.';
 const EXECUTION_TIMEOUT_REASON = 'the executed code ran longer than workerExecutionTimeout';
 const CONFIG_REFUSED_REASON = 'the configuration could not be used';
 const BUILD_FAILED_REASON = 'the environment could not be built';
@@ -421,6 +424,9 @@ interface BootstrapFeatures {
 // What the host posts to a strict view with its two ports (INIT_VIEW).
 interface StrictInit {
     workerSource: string;
+    // The build's marker (entryDoneName): the worker's source ends the entry with its error, which tells the view the
+    // entry ran to its end, in the order of the Worker object's errors (backlog S75; in-sandbox-view.ts).
+    entryDone: string;
     viewFiles: FileSnapshotEntry[];
     html: string;
     autoResize: boolean;
@@ -478,6 +484,7 @@ export class WebSandbox extends ElementBase {
     private _ownLines = 0;                    // the guest relay's own lines dispatched for the current environment (LOG_OWN_LINES)
     private _warnedLogBytes = false;          // a guest line past LOG_MAX_BYTES warned for the current environment
     private _warnedViewTextDropped = false;   // the view's notice that it dropped guest error texts, for the current environment (M-5)
+    private _warnedViewOverrun = false;       // the view's first overrun of the current environment was said (S72)
     // Counts environments: every teardown increments it. Read by _notifyThenAct, the one path for a host action that
     // dispatches an event and then acts on the environment, so a listener that reset or terminated the sandbox in between
     // is never undone (review B5); and by _postRpc, so a call is sent only to the environment it was made in (L-2).
@@ -1201,9 +1208,25 @@ export class WebSandbox extends ElementBase {
             this._viewWatchdog?.handlePong(data.n);
             return;
         }
+        if (data?.type === 'VIEW_FIRST_OVERRUN') {
+            // One operation of the view, a flush and the rendering that showed it, took longer than VIEW_MAX_OPERATION_MS,
+            // and no other overrun came within VIEW_OVERRUN_WINDOW_MS before it (backlog S72, class P; in-sandbox-view.ts,
+            // viewBudget): the view goes on. Said to the embedder, once per environment, as a host line on sandbox-log.
+            // Why say it at all: the next overrun within the window ends the sandbox, and the embedder whose sandbox then
+            // ends should be able to see that the first one came, and when (a load spike on its machine reads differently
+            // from a guest whose every operation is slow). Why this channel: it exists, with a closed list of host lines
+            // (docs/API.md, sandbox-log; the lifecycle model's whitelist), so no new event, field or name is public; and
+            // once per environment: a warning is news only the first time, and a sandbox that had one overrun per window
+            // for hours would otherwise log one line per window (the view posts one notice per first overrun, at most one
+            // per 9 s of debt; past the first, they are dropped here).
+            if (this._warnedViewOverrun) return;
+            this._warnedViewOverrun = true;
+            this._dispatchHostLog('warn', VIEW_FIRST_OVERRUN_LINE);
+            return;
+        }
         if (data?.type === 'VIEW_OVERRUN') {
-            // One operation of the view, a flush and the rendering that showed it, took longer than VIEW_MAX_OPERATION_MS
-            // (review round 5, M-2; in-sandbox-view.ts): the view has stopped applying operations.
+            // The second overrun of the view within VIEW_OVERRUN_WINDOW_MS (backlog S72, class P; review round 5, M-2;
+            // in-sandbox-view.ts, viewBudget): the view has stopped applying operations.
             this._terminate(VIEW_OVERRUN_REASON);
             return;
         }
@@ -1468,6 +1491,7 @@ export class WebSandbox extends ElementBase {
         this._ownLines = 0;
         this._warnedLogBytes = false;
         this._warnedViewTextDropped = false;
+        this._warnedViewOverrun = false;
         this._queue = []; // what was queued for the old environment
         this._violationCounts.clear(); // the violation cap is per environment
         this._strictInit = null;
@@ -1842,8 +1866,10 @@ export class WebSandbox extends ElementBase {
         this._warnAboutStrictHtml(html);
         const sandboxFlags = this._getSandboxFlags();
         const policy = this._guestPolicy(files);
+        const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)
         this._strictInit = {
-            workerSource: this._getStrictWorkerSource(files, entrySource),
+            workerSource: this._getStrictWorkerSource(files, entrySource, marker),
+            entryDone: marker,
             viewFiles: files.filter(candidate => isViewFileType(candidate[1])), // never a type that opens as a document (broad review ST1)
             html,
             autoResize: this._autoResizeEnabled(),
@@ -1866,15 +1892,15 @@ export class WebSandbox extends ElementBase {
     // The worker's source in strict mode: the scope check, the globals allowlist, the comms script (bridge, logs, violations, execute,
     // the fetch bridge), sandboxFiles with every registered file, the strict prelude (hardening, sandboxView, the
     // ports), then the guest's entry in a function scope of its own, then the line that marks the entry as having
-    // run to its end. The entry's own scope (review C2): its top-level declarations are local to it, so none can
+    // run to its end (it raises the marker error that tells the view so: in-sandbox-view.ts). The entry's own scope
+    // (review C2): its top-level declarations are local to it, so none can
     // replace a global before the prelude has captured or deleted it; an entry that wants a global assigns it
     // (globalThis.x = …). `this` inside is the global object, as at a script's top level. The scope check
     // (assertEntryScoped) refuses to start a worker whose entry escaped that scope.
-    private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string): string {
+    private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string, marker = entryDoneName()): string {
         const features: BootstrapFeatures = { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET } };
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
-        const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)
         const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
         const prelude = '(function (g) {'
             + `(${assertEntryScoped.toString()})(g);`

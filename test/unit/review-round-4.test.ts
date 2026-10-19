@@ -392,11 +392,12 @@ describe("M-5: the view's guest-error rate limit says so the first time it drops
         const logic = new MessageChannel(), view = new MessageChannel();
         const toHost: any[] = [];
         view.port2.onmessage = (event) => toHost.push(event.data);
-        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '' }, source: window, ports: [logic.port1, view.port1] }));
+        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', entryDone: '__testEntryDone', viewFiles: [], html: '' }, source: window, ports: [logic.port1, view.port1] }));
         const worker = workers[0]!;
         const render = worker.transfer[1]!;
-        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        render.postMessage({ type: 'VIEW_STARTED' });
         await new Promise(resolve => setTimeout(resolve, 20));
+        worker.onerror({ message: 'Uncaught Error: __testEntryDone', preventDefault() {} }); // the marker error (backlog S75)
         for (let i = 0; i < 2 * LOG_EVENTS_PER_SECOND; i++) worker.onerror({ message: 'u', preventDefault() {} });
         for (let i = 0; i < 20; i++) await new Promise(resolve => setTimeout(resolve, 5));
         const types = toHost.map(frame => frame.type).filter(type => type === 'GUEST_UNCAUGHT' || type === 'GUEST_TEXT_DROPPED');

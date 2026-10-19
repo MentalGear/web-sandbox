@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { inStrictWorker, RENDER_RULES, sanitizeRender, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_URLS_PER_SECOND, viewBootstrapSource, viewBudget, type ViewOptions } from '@src/lib/in-sandbox-view';
+import { inStrictWorker, RENDER_RULES, sanitizeRender, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_URLS_PER_SECOND, viewBootstrapSource, viewBudget, type ViewOptions } from '@src/lib/in-sandbox-view';
+import { defineWebSandbox } from '@src/host';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { vi } from 'vitest';
@@ -35,7 +36,9 @@ describe("N-2 (class G): the strict prelude's error listener reads the event onl
         } finally {
             EventTarget.prototype.addEventListener = add;
         }
-        w.__testEntryDone(); // the entry ran: every later error is the prelude's to cancel and log
+        // the entry ran: every later error is the prelude's to cancel and log. The marker raises the build's marker error
+        // (backlog S75); with no reportError on this stand-in global, by throwing it.
+        expect(() => w.__testEntryDone()).toThrow('__testEntryDone');
         return { onError: listeners['error']!, lines };
     };
     const raise = (onError: (event: Event) => void, message: string) => {
@@ -96,7 +99,7 @@ describe("M-2 (class P): the view's time budget charges every operation in full"
 
     it('an operation of 1.5 s, and one of 7.5 s, are charged all they took: the next waits five times their cost, less what the budget held', () => {
         for (const cost of [1500, 7500]) {
-            const budget = viewBudget(RATES, 0);
+            const budget = viewBudget(RATES, 0, VIEW_OPTIONS);
             budget.charge('time', cost, 0);
             expect(budget.held('time', 0)).toBe(RATES.time - cost); // no floor (it was -1000 at 60814b5)
             expect(budget.owes(0)).toBe(true);
@@ -108,7 +111,7 @@ describe("M-2 (class P): the view's time budget charges every operation in full"
     });
 
     it('a bucket holds at most one second of its rate, and refills at its rate', () => {
-        const budget = viewBudget(RATES, 0);
+        const budget = viewBudget(RATES, 0, VIEW_OPTIONS);
         expect(budget.held('urls', 60000)).toBe(RATES.urls);
         budget.charge('urls', 3 * RATES.urls, 60000);
         expect(budget.wait(0, 60000)).toBe(2000);
@@ -121,7 +124,7 @@ describe("M-2 (class P): the view's time budget charges every operation in full"
 
     // The view's loop, as arithmetic: an operation runs once the budget owes nothing, and is charged what it took.
     const share = (costs: number[]) => {
-        const budget = viewBudget(RATES, 0);
+        const budget = viewBudget(RATES, 0, VIEW_OPTIONS);
         let now = 0;
         let busy = 0;
         for (const cost of costs) {
@@ -152,9 +155,172 @@ describe("M-2 (class P): the view's time budget charges every operation in full"
         }
     });
 
-    it('the reason the host gives says the limit', () => {
+    it('the reason and the warn line the host gives say the limit and the window', () => {
         const host = readFileSync(join(__dirname, '../../src/host.ts'), 'utf8');
-        expect(host).toContain(`const VIEW_OVERRUN_REASON = 'the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation';`);
+        const minutes = VIEW_OVERRUN_WINDOW_MS / 60000;
+        expect(Number.isInteger(minutes)).toBe(true);
+        expect(host).toContain(`const VIEW_OVERRUN_REASON = 'the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation twice within ${minutes} minutes';`);
+        expect(host).toContain(`const VIEW_FIRST_OVERRUN_LINE = '[Sandbox] the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation; a second such operation within ${minutes} minutes ends the sandbox.';`);
+    });
+});
+
+describe("S72 (class P): the repeated-overrun rule, the owner's decision on VIEW_MAX_OPERATION_MS", () => {
+    const RATES = VIEW_OPTIONS.rates;
+    const MAX = VIEW_MAX_OPERATION_MS;
+    const WINDOW = VIEW_OVERRUN_WINDOW_MS;
+    // A budget with one overrun at `at` (its measure ended there), the view having been idle long before it.
+    const afterOverrun = (at: number) => {
+        const budget = viewBudget(RATES, 0, VIEW_OPTIONS);
+        expect(budget.measured(MAX + 1, MAX + 1, at, true)).toBe('overrun');
+        return budget;
+    };
+
+    it('the view is given the window, five minutes', () => {
+        expect(VIEW_OPTIONS.overrunWindow).toBe(VIEW_OVERRUN_WINDOW_MS);
+        expect(WINDOW).toBe(300000);
+    });
+
+    it('at the limit an operation is within it; one ms past, a first overrun: charged in full, and the view goes on', () => {
+        const budget = viewBudget(RATES, 0, VIEW_OPTIONS);
+        expect(budget.measured(MAX, MAX, 0, true)).toBe('within');
+        expect(budget.held('time', 0)).toBe(RATES.time - MAX);
+        const later = viewBudget(RATES, 0, VIEW_OPTIONS);
+        expect(later.measured(MAX + 1, MAX + 1, 0, true)).toBe('overrun');
+        expect(later.held('time', 0)).toBe(RATES.time - MAX - 1); // not capped
+        expect(later.wait(0, 0)).toBe(Math.ceil(((MAX + 1 - RATES.time) / RATES.time) * 1000)); // the next waits 9 s
+    });
+
+    it('a second overrun ends the sandbox one ms inside the window and exactly at it; one ms past it is a first overrun again', () => {
+        const first = 5000;
+        for (const [gap, verdict] of [[WINDOW - 1, 'second-overrun'], [WINDOW, 'second-overrun'], [WINDOW + 1, 'overrun']] as const) {
+            expect(afterOverrun(first).measured(MAX + 1, MAX + 1, first + gap, true), String(gap)).toBe(verdict);
+        }
+    });
+
+    it('the window runs from the first of the two: an overrun past the window starts a new one', () => {
+        const budget = afterOverrun(0);
+        expect(budget.measured(3000, 3000, WINDOW + 1, true)).toBe('overrun'); // a first overrun again
+        // 2 × WINDOW after the very first: outside its window, inside the new one
+        expect(budget.measured(3000, 3000, 2 * WINDOW + 1, true)).toBe('second-overrun');
+    });
+
+    it('a first overrun followed by many fast operations: none counts, each waits for the debt, and the next overrun within the window ends it', () => {
+        const budget = viewBudget(RATES, 0, VIEW_OPTIONS);
+        let now = 0;
+        expect(budget.measured(3000, 3000, now, true)).toBe('overrun');
+        const resumed = now + budget.wait(0, now);
+        expect(resumed).toBe(14000); // 2.8 s of debt at 200 ms per second
+        for (let i = 0; i < 1000; i++) {
+            now += budget.wait(0, now);
+            // a flush of 8 ms, then its rendering update of 4 ms: the operation, 12 ms
+            now += 8;
+            expect(budget.measured(8, 8, now, true)).toBe('within');
+            now += 4;
+            expect(budget.measured(4, 12, now, true)).toBe('within');
+        }
+        expect(now).toBeLessThan(WINDOW);
+        now += budget.wait(0, now);
+        expect(budget.measured(MAX + 1, MAX + 1, now, true)).toBe('second-overrun');
+        // and the same fast operations past the window leave the next overrun a first one
+        const quiet = viewBudget(RATES, 0, VIEW_OPTIONS);
+        expect(quiet.measured(3000, 3000, 0, true)).toBe('overrun');
+        let t = 0;
+        while (t <= WINDOW) {
+            t += quiet.wait(0, t) + 10;
+            expect(quiet.measured(10, 10, t, true)).toBe('within');
+        }
+        expect(quiet.measured(MAX + 1, MAX + 1, t + 1, true)).toBe('overrun');
+    });
+
+    it('a hidden-document measure is neither charged nor counted, however long', () => {
+        const budget = afterOverrun(0);
+        const held = budget.held('time', 1000);
+        expect(budget.measured(60000, 60000, 1000, false)).toBe('uncounted');
+        expect(budget.held('time', 1000)).toBe(held);
+        expect(budget.measured(MAX + 1, MAX + 1, 2000, true)).toBe('second-overrun'); // the overrun before it still counts
+        // and as the first: a hidden measure leaves no overrun behind it
+        const hidden = viewBudget(RATES, 0, VIEW_OPTIONS);
+        expect(hidden.measured(60000, 60000, 0, false)).toBe('uncounted');
+        expect(hidden.held('time', 0)).toBe(RATES.time);
+        expect(hidden.measured(MAX + 1, MAX + 1, 1000, true)).toBe('overrun');
+    });
+
+    it('one operation is one overrun: a measure of an operation already judged (operation 0) is charged, never counted', () => {
+        const budget = afterOverrun(0); // the flush alone overran
+        const held = budget.held('time', 0);
+        expect(budget.measured(2500, 0, 0, true)).toBe('within'); // its rendering update, as long again
+        expect(budget.held('time', 0)).toBe(held - 2500);
+    });
+
+    it('property: the second overrun ends the sandbox exactly when some earlier overrun ended at most a window before it', () => {
+        let seed = 7;
+        const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+        for (let run = 0; run < 300; run++) {
+            const budget = viewBudget(RATES, 0, VIEW_OPTIONS);
+            const overruns: number[] = []; // the reference: the times of every earlier overrun
+            let now = 0;
+            for (let step = 0; step < 60; step++) {
+                now += budget.wait(0, now) + Math.floor(random() * 4 * WINDOW * (random() < 0.9 ? 0.01 : 1));
+                const cost = random() < 0.2 ? MAX + 1 + Math.floor(random() * 6000) : Math.floor(random() * MAX);
+                const shown = random() < 0.9;
+                const verdict = budget.measured(cost, cost, now, shown);
+                const expected = !shown ? 'uncounted' : cost <= MAX ? 'within' : overruns.some(at => now - at <= WINDOW) ? 'second-overrun' : 'overrun';
+                expect(verdict, `run ${run}, step ${step}`).toBe(expected);
+                if (verdict === 'second-overrun') break;
+                if (verdict === 'overrun') overruns.push(now);
+            }
+            // the overruns that did not end the sandbox were each more than a window apart
+            for (let i = 1; i < overruns.length; i++) expect(overruns[i]! - overruns[i - 1]!).toBeGreaterThan(WINDOW);
+        }
+    });
+
+    it('the long-run share is the budget with overruns among the operations: each is charged in full', () => {
+        const budget = viewBudget(RATES, 0, VIEW_OPTIONS);
+        let now = 0;
+        let busy = 0;
+        for (let i = 0; i < 40; i++) {
+            now += budget.wait(0, now);
+            const cost = i % 10 === 0 ? 3 * MAX : 150;
+            now += cost;
+            busy += cost;
+            budget.measured(cost, cost, now, true);
+        }
+        const elapsed = now + budget.wait(0, now);
+        expect(busy).toBeLessThanOrEqual(RATES.time + (elapsed * RATES.time) / 1000);
+    });
+
+    it('the host: VIEW_FIRST_OVERRUN is one host warn line per environment, the sandbox standing; VIEW_OVERRUN ends it with the reason', () => {
+        defineWebSandbox();
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = document.createElement('web-sandbox') as any;
+        document.body.appendChild(el);
+        el.setConfig({ mode: 'strict' });
+        const heard: any[] = [];
+        el.addEventListener('sandbox-log', (e: Event) => heard.push((e as CustomEvent).detail));
+        const reasons: string[] = [];
+        el.addEventListener('terminated', (e: Event) => reasons.push((e as CustomEvent).detail.reason));
+        const minutes = WINDOW / 60000;
+        const line = ['host', 'warn', `[Sandbox] the view spent more than ${MAX} ms on one operation; a second such operation within ${minutes} minutes ends the sandbox.`];
+        const environment = () => {
+            const { port1: view } = new MessageChannel();
+            el._viewPort = view;
+            return view;
+        };
+        let view = environment();
+        el._onViewMessage(view, { type: 'VIEW_FIRST_OVERRUN' });
+        el._onViewMessage(view, { type: 'VIEW_FIRST_OVERRUN' }); // a first overrun again, a window later: not said again
+        expect(heard.map(detail => [detail.source, detail.level, detail.args[0]])).toEqual([line]);
+        expect(el.state).not.toBe('terminated');
+        el._teardown(); // a new environment says it again
+        view.close();
+        view = environment();
+        el._onViewMessage(view, { type: 'VIEW_FIRST_OVERRUN' });
+        expect(heard).toHaveLength(2);
+        el._onViewMessage(view, { type: 'VIEW_OVERRUN' });
+        expect(el.state).toBe('terminated');
+        expect(reasons).toEqual([`the view spent more than ${MAX} ms on one operation twice within ${minutes} minutes`]);
+        view.close();
+        el.remove();
     });
 });
 
@@ -235,7 +401,7 @@ describe('M-4 (class P): one view loads at most VIEW_MAX_DISTINCT_URLS distinct 
         const render = workers[0]!.transfer[1]!;
         const acks: any[] = [];
         render.onmessage = (event) => { if (event.data?.type === 'VIEW_ACK') acks.push(event.data); };
-        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        render.postMessage({ type: 'VIEW_STARTED' });
         const send = async (markup: string, into: string) => {
             const before = acks.length;
             render.postMessage({ type: 'VIEW_RENDER', html: markup, into });

@@ -513,7 +513,9 @@ Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerEx
 `Uncaught …`, at most 2048 characters); and one `warn` line per environment when the element first drops guest lines
 past `LOG_EVENTS_PER_SECOND` (lines delivered late, while your page was busy, can arrive closer together than the guest
 sent them): `[Sandbox] the guest logged more than 1000 lines in one second; lines past that rate are not dispatched as
-'sandbox-log' events.`
+'sandbox-log' events.`; and, in strict mode, one `warn` line per environment at the view's first overrun (an operation
+past 2000 ms that did not end the sandbox; see [`sandboxView`](#sandboxview)): `[Sandbox] the view spent more than
+2000 ms on one operation; a second such operation within 5 minutes ends the sandbox.`
 
 ### `violation` — `SandboxViolation`
 
@@ -562,7 +564,7 @@ already read, an error, a refusal), and they can arrive after the call that tore
 | `the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)` | The host page enforces Trusted Types and its `trusted-types` directive does not name `web-sandbox`, also when the host page's own default policy takes the element's strings (the view and worker mode's frame need the policy themselves). |
 | `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
-| `the view spent more than 2000 ms on one operation` | Strict mode: one operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it; see [`sandboxView`](#sandboxview). |
+| `the view spent more than 2000 ms on one operation twice within 5 minutes` | Strict mode: an operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it, and another one had, at most 5 minutes before it. The first such operation only logs a `warn` line (see [`sandbox-log`](#sandbox-log--sandboxlog)); see [`sandboxView`](#sandboxview). |
 | `unknown mode …` | `mode` is not `strict`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`. |
 | `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned, an `origins` that is not an object, or a kind of it that is not a list. |
 | `the environment could not be built (…)` | Building the frame failed. |
@@ -853,11 +855,13 @@ serialization: text, attributes and markup alike), and at most 1000 URL-bearing 
 and `<link>`'s `href`, whatever they name), counted over the document a render would leave (what is outside the target
 stays): a render past any of them is dropped as a whole, the next one still applies, and the guest's log says
 `[Sandbox] sandboxView.render: the view refused a render: …`. The view parses at most 1048576 characters of markup
-per second, renders it refused included. It makes at most 200 loads per second: every URL-bearing attribute a render keeps,
-charged when it is rendered, and every other load its document's resource timing reports (a CSS background, a font, a
-stylesheet, whatever named it: `url()`, `image-set()`, `@import`) or its policy refused, charged when the browser
-reports it, which is once a response has ended (a slow server lets the renders made meanwhile through first: Firefox
-made 1.8 times the rate under the tests' slow route). What the browser does with a URL once it is rendered, loading
+per second, renders it refused included. It makes at most 200 loads per second, each charged before the browser can
+start it: every URL-bearing attribute a render keeps, when it is rendered, and what the CSS an operation applies can
+load, when it is applied, counted from the text of its style attributes and `<style>` elements (each `url(`,
+`image-set(`, `image(`, `cross-fade(` and `src(`, in any case or escape, comments and strings included, and 200 for
+each `@import` and stylesheet `<link>`). A load its document's resource timing reports (a CSS background, a font, a
+stylesheet, whatever named it), or one its policy refused, that no URL attribute charged takes from what the CSS
+prepaid, of which at most a second's worth is kept, and is charged once that is spent. What the browser does with a URL once it is rendered, loading
 and decoding it, is no work of the view's, so its time budget cannot see it. Over its whole life one view loads at most
 10000 distinct URLs (each stays in the engine's caches while the view lives; WebKit's host page stalled 1.2 s near
 8 000 and 8.8 s near 43 000): a render whose URL attributes would take it past that is refused (`[Sandbox]
@@ -872,8 +876,11 @@ operation is charged all it took, so the budget bounds the view's long-run share
 holds the next back for about 6.5 s. It does not bound each second: the budget holds one second's worth, so a single
 second can hold more (simulated: up to 553 ms with operations of at most 200 ms;
 [research 17](research/17_formal_methods/README.md)). One operation's own cost is bounded by time alone: one that takes
-longer than 2000 ms ends the sandbox (`the view spent more than 2000 ms on one operation`): in WebKit the first
-`set()` of a 250 000-character textarea value does (its value and first paint), and slower machines reach it sooner. Where the view shares your
+longer than 2000 ms is an overrun, charged in full like any other (it holds the next operation back at least 9 s), and
+the view goes on, with one `warn` line per environment on `sandbox-log`; the second overrun within 5 minutes of the
+one before it ends the sandbox (`the view spent more than 2000 ms on one operation twice within 5 minutes`). The time
+is wall time, so a loaded machine reaches 2000 ms sooner: one overrun alone does not end the sandbox for that reason.
+In WebKit the first `set()` of a 250 000-character textarea value (its value and first paint) is an overrun. Where the view shares your
 page's thread, a task of your page's that runs while the view measures its rendering update is counted in it. CSS
 animations and transitions, once rendered, are outside this budget: see
 [`allowAnimations`](#allowanimations-and-allowautoplay).
@@ -989,7 +996,8 @@ in strict mode.
 | Strict: characters in the view (its body's serialization) | 1048576 | — |
 | Strict: characters of markup the view parses per second | 1048576 | — |
 | Strict: time the view spends applying operations per second, their layout and rendering included (ms) | 200 | — |
-| Strict: longest operation of the view, its layout and rendering included (ms; longer ends the sandbox) | 2000 | — |
+| Strict: longest operation of the view, its layout and rendering included (ms; a longer one is an overrun, and the second within the next row's window ends the sandbox) | 2000 | — |
+| Strict: window of the view's repeated-overrun rule (ms, from the first of two overruns) | 300000 | — |
 | Strict: URL-bearing attributes in the view (`src`, `srcset`, `poster`, `<link>`'s `href`) | 1000 | — |
 | Strict: loads of the view per second (URL-bearing attributes rendered, and every other load or refused load the browser reports) | 200 | — |
 | Strict: distinct URLs one view loads, over its life | 10000 | — |
@@ -1037,8 +1045,8 @@ the same page right before, the loaded figure the best of 2 windows once the flo
 
 ### (a) The long-run bound
 
-For operations (a `render()`, `text()` or `set()` applied) of at most `VIEW_MAX_OPERATION_MS` each, the view's share of
-the thread, averaged over runs long against a second, is at most
+For operations (a `render()`, `text()` or `set()` applied), whatever each costs (an overrun of (b) is charged in full
+like any other), the view's share of the thread, averaged over runs long against a second, is at most
 
 - **20%**: `VIEW_APPLY_MS_PER_SECOND` (200) ms per second of the view's own time: each operation's flush, the layout it
   forces and the rendering update after it, measured and charged in full, however long;
@@ -1051,8 +1059,28 @@ the thread, averaged over runs long against a second, is at most
 That is 20% for a view that loads nothing and 40% for one that loads at the rate, on every engine where the view shares
 the thread. It is an average, not a cap on each second: an operation is charged after it ran, so a single second can
 hold more (398–553 ms of operations of at most 200 ms, simulated: [research 17](research/17_formal_methods/README.md)).
-A load is charged when its response ends, so behind a slow server the renders made meanwhile get through first (Firefox
-made 1.8 times the rate under the tests' slow route, review round 5, M-3); the long-run rate holds.
+
+Every load is charged before the browser can start it: a render's URL attributes when it is rendered, and what the CSS
+an operation applies can load when the operation is applied, counted from that CSS's text (each `url(`, `image-set(`,
+`image(`, `cross-fade(` and `src(`, and a second's worth for each `@import` and stylesheet `<link>`); a load the
+platform reports later takes from that prepayment, kept up to a second's worth, and is charged only past it. An
+operation is applied only while the load budget is not in debt. So, with R the rate (`VIEW_URLS_PER_SECOND`, 200), the
+loads the view's document starts over any t seconds number at most
+
+- R·t + R: the rate, and the second's worth the budget holds;
+- plus one operation's own charge, which may take the budget into debt: at most `VIEW_MAX_URLS` attributes and its
+  CSS's count;
+- plus R: the prepayment carried into the interval, which loads reported in it take before they are charged;
+- plus what CSS already in the view loads past what was prepaid for it (a rule that matches only later: elements a
+  later render inserts, a media query, a state such as `:hover`; an `image-set()` that picks another image when the
+  resolution changes; a linked or imported sheet past its second's worth), charged once the platform reports it, and
+  bounded only by that CSS's text.
+
+The server's latency is in none of the first three: nothing an operation can load waits for its response to be charged
+(review round 5, M-3, where it did: behind a slow server every render applied meanwhile got through, and Firefox made
+5 000 loads over an 11.1 s flood). A load the browser itself defers (an image with `loading="lazy"` until it is
+scrolled to, media until it plays) is charged when it is rendered and starts later: at most what the body holds of
+them, `VIEW_MAX_URLS`.
 
 Measured, the canonical floods (busy share). The suite asserts each against the bound plus 10 points, the measure's own
 error: a 10 ms interval loses a tick for every slot a task straddles, so a stream of short tasks reads up to one tick
@@ -1076,30 +1104,42 @@ same time (load average 5–11 on 4 cores), which is why the suite asserts the b
 
 ### (b) The single-operation bound
 
-One operation costs at most `VIEW_MAX_OPERATION_MS` (2000) ms as the meter measures it (its flush, forced layout and
-rendering update); one that took longer ends the sandbox (`the view spent more than 2000 ms on one operation`) and no
-operation runs after it. **Plus what that one operation costs before the view can observe it**: an operation is not
-interruptible, so the view learns its cost only when it has ended, and the host page stalls for all of it. That cost is
-bounded only by the caps of (c) on what the document holds. Measured (`test/e2e/view-bound.spec.ts`, (b)): one render
-of 24 000 elements under a rule whose `:has()` looks at all their later siblings, an operation of 4.2 s (Chromium),
-9.2 s (Firefox) and 8.6 s (WebKit) on a page of its own, stalled the host page once, for 3.6 s, 12.0 s and 9.7 s (the
-view's own work on it included); the sandbox ended, and the same render, already queued for another target, never
-ran. What one operation within the caps can cost is listed in (d), the documented single-operation stalls.
+An operation that took longer than `VIEW_MAX_OPERATION_MS` (2000) ms as the meter measures it (its flush, forced layout
+and rendering update) is an **overrun**. The view charges it in full, like any other, so the next operation waits until
+the debt is repaid (at least 9 s, five times its cost less the 200 ms the budget held), and goes on; the first overrun of
+an environment is said in one `warn` line on `sandbox-log`. The **second overrun within `VIEW_OVERRUN_WINDOW_MS`
+(300000 ms, 5 minutes)** of the one before it ends the sandbox (`the view spent more than 2000 ms on one operation
+twice within 5 minutes`), and no operation runs after it; an overrun later than that is a first overrun again, and the
+window runs from it. Why not the first: the meter measures wall time on a thread the view shares with your page and the
+machine, so under load it passes 2000 ms for operations that are healthy ([ADR-005](ADR-005-strict-mode.md)).
 
-One render's loads add to it, after the operation: up to `VIEW_MAX_URLS` (1000) of them, about a second of the host
-page's thread at most, and the next operation waits until the load budget has repaid them. Measured at
+So the bound is: **at most one stall past 2000 ms per 5 minutes beyond the first**, and **each stall is what that one
+operation costs before the view can observe it**: an operation is not interruptible, so the view learns its cost only
+when it has ended, and the host page stalls for all of it. That cost is bounded only by the caps of (c) on what the
+document holds. The long-run share of (a) holds all the same, since every overrun is charged in full. Measured
+(`test/e2e/view-bound.spec.ts`, (b)): a render of elements under a rule whose `:has()` looks at all their later
+siblings (30 000 in Chromium, 24 000 in Firefox and WebKit), an operation of 3.9 s (Chromium), 9.0 s (Firefox) and
+6.5 s (WebKit) on a page of its own, stalled the host page for 3.9 s, 8.9 s and 7.2 s; the sandbox stood. The next such
+render, made at once, ran 18.3 s, 43.5 s and 34.7 s later (the debt: five times the first's cost, less the 200 ms the
+budget held) and stalled the host page for 4.0 s, 9.3 s and 6.5 s; the sandbox ended, and a third render queued behind
+it never ran. What one operation within the caps can cost is listed in (d), the documented single-operation stalls.
+
+One render's loads add to it, after the operation: up to `VIEW_MAX_URLS` (1000) URL attributes, about a second of the
+host page's thread at most, and what its CSS can load, which its count bounds ((a)); all of them are charged when the
+operation is applied, and the next operation waits until the load budget has repaid them. Measured at
 `VIEW_MAX_DISTINCT_URLS`, the host page's longest stall: Chromium 297 ms, Firefox 654 ms, WebKit 809 ms (review round 5,
 M-4).
 
 ### (c) The rates and caps that bound what the meter does not see
 
-The first two rows are (a)'s and (b)'s; the rest bound what the view's meter cannot see.
+The first three rows are (a)'s and (b)'s; the rest bound what the view's meter cannot see.
 
 | Constant | Value | Bounds |
 | :--- | :--- | :--- |
 | `VIEW_APPLY_MS_PER_SECOND` | 200 | (a): milliseconds of the view's own time per second, on average; an operation past it waits. |
-| `VIEW_MAX_OPERATION_MS` | 2000 | (b): milliseconds of one operation, as the meter measures it; past it the sandbox ends. |
-| `VIEW_URLS_PER_SECOND` | 200 | Loads per second: every URL-bearing attribute a render keeps, when it is rendered, and every load the document's resource timing reports and every violation the view observes that no render charged. A render past it applies; the next operation waits. |
+| `VIEW_MAX_OPERATION_MS` | 2000 | (b): milliseconds of one operation, as the meter measures it; past it the operation is an overrun, charged in full. |
+| `VIEW_OVERRUN_WINDOW_MS` | 300000 | (b): the second overrun within this many milliseconds of the one before it ends the sandbox. |
+| `VIEW_URLS_PER_SECOND` | 200 | Loads per second, each charged before it can start: every URL-bearing attribute a render keeps, and what the CSS an operation applies can load (its `url(`, `image-set(`, `image(`, `cross-fade(` and `src(` tokens, and a second's worth per `@import` and stylesheet `<link>`), when the operation is applied. A load the document's resource timing reports, or a violation the view observes, that no URL attribute charged takes from that prepayment (at most a second's worth is kept), and is charged once it is spent. An operation past it applies; the next one waits. The bound over any interval: (a). |
 | `VIEW_MAX_URLS` | 1000 | URL-bearing attributes the view's body holds: what one render can make the browser load. |
 | `VIEW_MAX_DISTINCT_URLS` | 10000 | Distinct URLs one view loads over its life: what stays in the engine's caches (WebKit's stalls grew with it: 1.2 s near 8 000, 8.8 s near 43 000). |
 | `VIEW_MAX_ELEMENTS` | 50000 | Elements the body holds: what any restyle, relayout or repaint, seen or not, covers. |
@@ -1124,7 +1164,7 @@ This list is closed: a cost of the view not listed here and not inside (a) or (b
 | CSS animations and transitions while `allowAnimations: true` (the default), and while they run | 5 000 animated elements: 81–92% busy (Firefox 21–89% by property); transitions 75–87%; scroll-driven animations 47–92%. `false` brings every vector back to idle. | [research 16](research/16_view_isolation/README.md#what-keeps-a-shared-thread-busy); [`allowAnimations`](#allowanimations-and-allowautoplay) |
 | What else runs on its own, which `allowAnimations: false` does not stop: animated images, indeterminate `<progress>`, autoplaying media with `allowAutoplay: true` | 2 000 animated PNGs: WebKit 39% (+22 points), Firefox 12%; 5 000 `<progress>`: up to +4 points; 20 looping videos: up to +6 points | research 16 |
 | Relayout after image decodes or font swaps: the browser's work after the frame the meter measured; only the load rate and the caps of (c) bound it | One render of 1 000 admitted images without dimensions above 15 000 paragraphs, the responses spread over 2 s, so that each arrival lays the paragraphs out again: over the 3 s after it, Chromium 40%, Firefox 22%, WebKit 37% busy, longest gap 226, 55 and 289 ms (the loads themselves included; (a)'s flood of images with dimensions, 3–8%). One `@font-face` swap over 15 000 paragraphs: 2%, 5% and 23% busy over the 3 s around it, longest gap 31, 54 and 214 ms. | [review round 5](security/REVIEW-ROUND-5-2026-10-19.md), "What remains"; `test/e2e/view-bound.spec.ts` (d), on demand |
-| The documented single-operation stalls, each one operation's own cost: CSS filters, bidirectional text, small CSS changes over many elements, selectors whose matching grows faster than the elements, `<img>` in Chromium, and WebKit's first value of a 250 000-character textarea | 10 `blur()`s on 1 000 elements: WebKit 3.7 s (100 on 1 000: over 180 s); 240 000 characters of bidirectional text in one paragraph: tens of seconds in Chromium and WebKit; a 31-character `text()` into a `<style>` over 46 000 elements: Firefox 7 s; a rule whose `:has()` looks at every later sibling, over 24 000 elements: Chromium 4.2 s, Firefox 8.9–9.2 s, WebKit 7.1–8.6 s; 6 500 `<img alt>`: Chromium 1.9–2.6 s (Firefox and WebKit about 150 ms); the first `set()` of a 250 000-character textarea: WebKit over 2 s, so the sandbox ends. Past `VIEW_MAX_OPERATION_MS` each ends the sandbox, after the stall. | [broad review](security/BROAD-REVIEW-2026-10-14.md), review rounds [1](security/REVIEW-ROUND-1-2026-10-15.md), [4](security/REVIEW-ROUND-4-2026-10-18.md) and [5](security/REVIEW-ROUND-5-2026-10-19.md) |
+| The documented single-operation stalls, each one operation's own cost: CSS filters, bidirectional text, small CSS changes over many elements, selectors whose matching grows faster than the elements, `<img>` in Chromium, and WebKit's first value of a 250 000-character textarea | 10 `blur()`s on 1 000 elements: WebKit 3.7 s (100 on 1 000: over 180 s); 240 000 characters of bidirectional text in one paragraph: tens of seconds in Chromium and WebKit; a 31-character `text()` into a `<style>` over 46 000 elements: Firefox 7 s; a rule whose `:has()` looks at every later sibling, over 24 000 elements: Chromium 4.2 s, Firefox 8.9–9.2 s, WebKit 7.1–8.6 s; 6 500 `<img alt>`: Chromium 1.9–2.6 s (Firefox and WebKit about 150 ms); the first `set()` of a 250 000-character textarea: WebKit over 2 s, an overrun the sandbox survives. Past `VIEW_MAX_OPERATION_MS` each is an overrun, after the stall: charged in full, and the second within `VIEW_OVERRUN_WINDOW_MS` ends the sandbox ((b)). | [broad review](security/BROAD-REVIEW-2026-10-14.md), review rounds [1](security/REVIEW-ROUND-1-2026-10-15.md), [4](security/REVIEW-ROUND-4-2026-10-18.md) and [5](security/REVIEW-ROUND-5-2026-10-19.md) |
 | Memory: not bounded | No budget counts it. The caps of (c) bound what the document holds, not what that costs in memory (decoded images, the caches of up to `VIEW_MAX_DISTINCT_URLS` URLs, layout structures); measured only where it ended a run: a flood of large rejections took Firefox's content process to 7 GB before the uncaught budget ended such floods | [review round 5](security/REVIEW-ROUND-5-2026-10-19.md), N-1 |
 | `:hover` restyles driven by the user's pointer over many elements | 80–100% busy while the pointer moves (5 000 elements under a `:hover ~` rule) | research 16 |
 | Firefox's cost of the worker's unhandled rejections, which it reports on the view's thread, cancelled or not | Within `UNCAUGHT_PER_SECOND`: 1 000 cancelled a second idle, 1 000 handled a tick later 4–7% busy, 1 Mi characters a second 6%; one rejection of 16 Mi characters about 0.5 s, after which the sandbox ends. A relay worker does not change it. | `src/lib/egress.ts`; [research 19](research/19_relay_worker/README.md) |

@@ -1,7 +1,7 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { inView, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
-import { VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
+import { cssLoadBound, RENDER_RULES, sanitizeRender, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 
 /**
  * Review round 5, the strict view's findings where the browser decides, on Chromium, Firefox and WebKit: loads that only
@@ -83,11 +83,14 @@ const backgroundFlood = (prefix: string, perRender: number) => `
 test.describe('M-3 (class E-net and P): every load the view makes is charged to its load budget, whatever named it', () => {
     const PER_RENDER = 500;
     const WINDOW_S = 8;
-    // What VIEW_URLS_PER_SECOND admits over the window: its rate, the second's worth the budget holds, and the renders
-    // applied while the charges of their loads were on their way. A CSS-borne load is charged when the platform reports
-    // it, once its response has ended, so the renders made in the meantime are not held back yet: under the test's
-    // route (a slow server) that let Firefox through 1.8 times the rate (364 per second; 1400 at 60814b5, unbounded).
-    // Twice the rate, over a window that starts once the flood is under way.
+    // The loads the view may start over any `seconds` (VIEW_URLS_PER_SECOND, "The bound"; backlog S73): the rate, the
+    // second's worth the budget holds, one operation's precharge (here a render's PER_RENDER url() tokens, its only
+    // loads), and the credit carried in, at most a second's worth. No stylesheet is in the view, so nothing else.
+    // Derived from the code, not measured: every load is charged before the browser can start it.
+    const bound = (seconds: number) => VIEW_URLS_PER_SECOND * seconds + VIEW_URLS_PER_SECOND + PER_RENDER + VIEW_URLS_PER_SECOND;
+    // Refusals the view's document reports over a window that starts once the flood is under way: twice the rate. Not
+    // the bound above, which is of loads: WebKit reports some refusals twice, and each report past the credit is charged
+    // only once it is made (measured at 1.8 times the rate at most, Firefox, before S73).
     const ADMITTED = 2 * VIEW_URLS_PER_SECOND * WINDOW_S;
 
     test(`CSS backgrounds to an admitted origin: at most VIEW_URLS_PER_SECOND loads per second, and the host page keeps about its share`, async ({ sandbox, page, browserName }) => {
@@ -103,16 +106,14 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         const from = Date.now();
         const loaded = await countTicks(page, WINDOW_S * 1000);
         const until = from + WINDOW_S * 1000;
-        // Counted over the whole flood, not over the window alone: a load is charged when its response has ended, so the
-        // first renders go through as a burst, and the budget then holds the next render back until the burst is repaid.
-        // On a fast runner that wait covered the whole window (0 loads in it, WebKit in CI), which is the budget working.
-        // What it promises is the long-run rate: at most twice VIEW_URLS_PER_SECOND over the flood (see ADMITTED), plus
-        // the one render whose loads start before any of them is charged.
+        // Counted over the whole flood, from the first render: a render's loads are charged when it is applied, so the
+        // budget holds the next one back until they are repaid. On a fast runner that wait can cover the whole window
+        // (0 loads in it, WebKit in CI), which is the budget working; the host-share check below is over the window.
         const loads = requested.filter(time => time >= started && time < until).length;
         const seconds = (until - started) / 1000;
-        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, admitted origin: ${(loads / seconds).toFixed(0)} loads per second over the flood (budget ${VIEW_URLS_PER_SECOND}); host ticks in ${WINDOW_S} s: idle ${idle}, under the flood ${loaded} (${Math.round((1 - loaded / idle) * 100)}% busy)`);
-        // at 60814b5: Firefox 1400 loads per second
-        expect(loads).toBeLessThanOrEqual(2 * VIEW_URLS_PER_SECOND * seconds + PER_RENDER);
+        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, admitted origin: ${loads} loads over the ${seconds.toFixed(1)} s flood, ${(loads / seconds).toFixed(0)} per second (budget ${VIEW_URLS_PER_SECOND}, bound ${bound(seconds).toFixed(0)}); host ticks in ${WINDOW_S} s: idle ${idle}, under the flood ${loaded} (${Math.round((1 - loaded / idle) * 100)}% busy)`);
+        // at 60814b5: Firefox 1400 loads per second; before S73, 5000 over an 11.1 s flood (PR #47 CI, Firefox)
+        expect(loads).toBeLessThanOrEqual(bound(seconds));
         expect(loads).toBeGreaterThan(0);
         expect(loaded).toBeGreaterThan(idle * 0.7);
     });
@@ -135,6 +136,114 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         expect(refusals).toBeLessThanOrEqual(ADMITTED);
         expect(refusals).toBeGreaterThan(0);
         expect(loaded).toBeGreaterThan(idle * 0.7);
+    });
+
+    test('S73: behind a slow server (every response 1 s late) the burst is the same bound: it no longer grows with the latency', async ({ sandbox, page, browserName }) => {
+        test.setTimeout(90000);
+        const FLOOD_S = 6;
+        const requested: number[] = [];
+        await page.route(A_EXAMPLE, async route => {
+            requested.push(Date.now());
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await route.fulfill({ body: PNG, contentType: 'image/png' }).catch(() => {}); // the page may be gone
+        });
+        await mountEntry(sandbox, backgroundFlood('https://a.example/', PER_RENDER), { origins: { images: ['https://a.example'] } });
+        await page.waitForTimeout(300);
+        const started = Date.now();
+        await sandbox.run(`flood(${FLOOD_S})`);
+        await page.waitForTimeout(FLOOD_S * 1000 + 1500);
+        const until = started + FLOOD_S * 1000;
+        const loads = requested.filter(time => time >= started && time < until).length;
+        // the first second: before S73 every render the view applied before the first response ended went through
+        const first = requested.filter(time => time >= started && time < started + 1000).length;
+        const seconds = (until - started) / 1000;
+        console.log(`MEASURED ${browserName} S73 CSS backgrounds behind a 1 s server: ${first} loads in the first second (bound ${bound(1)}), ${loads} over the ${seconds.toFixed(1)} s flood (bound ${bound(seconds).toFixed(0)})`);
+        expect(first).toBeLessThanOrEqual(bound(1));
+        expect(loads).toBeLessThanOrEqual(bound(seconds));
+        expect(loads).toBeGreaterThan(0);
+    });
+
+    test('S73: counting what CSS can load costs little next to parsing and cleaning it (a 256 KiB render full of CSS)', async ({ sandbox, page, browserName }) => {
+        test.setTimeout(60000);
+        await mountEntry(sandbox, `sandboxView.render('<div id="a"></div>');`);
+        await waitInView(page, browserName, `!!document.getElementById('a')`);
+        // In the view's own document: the parse the view does for every render (template.innerHTML), and the parse and
+        // the renderer's cleaning (sanitizeRender, with animations allowed, so that every style attribute is kept and
+        // counted), against what the count adds (what cssLoadsOf does: read every style attribute and every <style>'s
+        // text, and count them joined, through cssLoadBound). Half of the render is style attributes, half one
+        // stylesheet, every rule naming two URLs: without escapes, with one escape per rule, and with every code point of
+        // every name escaped, the most escapes such CSS holds (with animations not allowed, the default, the renderer
+        // drops every style attribute with a backslash: only the stylesheet's would be counted).
+        type Cost = { parse: number; clean: number; count: number; tokens: number; bound: number; length: number };
+        // run from a timer in the view, and read once done: one evaluation may take no more than 3 s (strict-view.ts)
+        await inView(page, browserName, `(window.__s73 = null, setTimeout(() => {
+            const count = (${cssLoadBound.toString()});
+            const sanitize = (${sanitizeRender.toString()});
+            const rules = ${JSON.stringify(RENDER_RULES)};
+            const half = ${VIEW_RENDER_MAX_LENGTH / 2};
+            const escape = (name) => name.split('').map(c => '\\\\' + c.charCodeAt(0).toString(16) + ' ').join('');
+            const render = (url, imageSet, color) => {
+                let attributes = '';
+                for (let i = 0; attributes.length < half - 300; i++) attributes += '<i style="background: ' + url + '(https://a.example/' + i + '.png), ' + imageSet + '(\\'x.png\\' 1x); ' + color + ': red"></i>';
+                let sheet = '';
+                for (let i = 0; sheet.length < half - 300; i++) sheet += '.c' + i + ' { background: ' + url + '(https://a.example/s' + i + '.png), ' + imageSet + '("y.png" 1x); ' + color + ': red }\\n';
+                return attributes + '<style>' + sheet + '</style>';
+            };
+            // each the best of 3 rounds of 10 runs, after 5 to warm up: Firefox's clock moves in whole milliseconds, its
+            // compiler takes a few runs, and the machine is shared
+            const timed = (run) => {
+                for (let i = 0; i < 5; i++) run();
+                let best = Infinity;
+                for (let round = 0; round < 3; round++) {
+                    const t = performance.now();
+                    for (let i = 0; i < 10; i++) run();
+                    best = Math.min(best, (performance.now() - t) / 10);
+                }
+                return best;
+            };
+            const measure = (html) => {
+                const parsed = () => {
+                    const template = document.createElement('template');
+                    template.innerHTML = html;
+                    return template.content;
+                };
+                // the renderer, with animations allowed, as the view runs it: it collects the style attributes it keeps
+                const switches = { animations: true, autoplay: false, stylesheets: true };
+                const cleaned = () => {
+                    const content = parsed();
+                    const context = { target: 'div', animating: [], origins: { images: ['https://a.example'] }, refused: [], urls: 0, loads: [], css: [] };
+                    sanitize(content, () => null, () => false, rules, switches, { elements: 50000, depth: 256, urls: 1000 }, context);
+                    return { content, context };
+                };
+                // what cssLoadsOf does with them: the <style> texts and the stylesheet links read, and all counted joined
+                const texts = ({ content, context }) => {
+                    const out = context.css.slice();
+                    const styles = content.querySelectorAll('style');
+                    for (let i = 0; i < styles.length; i++) out.push(String(styles[i].textContent));
+                    content.querySelectorAll('link');
+                    return out;
+                };
+                const counted = (list) => count(list.join('\\n'), 200);
+                const result = cleaned();
+                const list = texts(result);
+                const bound = counted(list);
+                const parse = timed(parsed);
+                const clean = timed(cleaned);
+                const whole = timed(() => counted(texts(result)));
+                const tokens = timed(() => counted(list));
+                return { parse, clean, count: whole, tokens, bound, length: html.length };
+            };
+            window.__s73 = [measure(render('url', 'image-set', 'color')), measure(render('url', 'image-set', 'co\\\\6c or')), measure(render(escape('url'), escape('image-set'), 'color'))];
+        }, 0), true)`);
+        const measured = await waitInView<Cost[]>(page, browserName, `window.__s73`, 50000);
+        for (const [kind, cost] of [['without escapes', measured[0]!], ['with an escape per rule', measured[1]!], ['every name escaped', measured[2]!]] as const) {
+            console.log(`MEASURED ${browserName} S73 counting a ${cost.length}-character render full of CSS, ${kind} (${cost.bound} loads at most): parse ${cost.parse.toFixed(2)} ms, parse and clean ${cost.clean.toFixed(2)} ms, count ${cost.count.toFixed(2)} ms (${Math.round((cost.count / cost.parse) * 100)}% of the parse, ${Math.round((cost.count / cost.clean) * 100)}% of parse and clean; of it, cssLoadBound ${cost.tokens.toFixed(2)} ms), best of 3 rounds of 10`);
+            expect(cost.length).toBeLessThanOrEqual(VIEW_RENDER_MAX_LENGTH);
+            expect(cost.bound).toBeGreaterThan(0);
+        }
+        // Against what the view does with every render anyway, parse and clean (it lays out and paints besides): Firefox
+        // parses three to seven times as fast as the others, and there the count is about half of the bare parse
+        for (const cost of measured) expect(cost.count).toBeLessThan(cost.clean / 2);
     });
 
     test('observing the loads costs nothing while the view loads nothing', async ({ sandbox, page, browserName }) => {
@@ -280,29 +389,49 @@ async function sizeFor(page: Page, ms: number) {
     return found;
 }
 
-test.describe('M-2 (class P): the view charges every operation in full, and ends the sandbox on one past VIEW_MAX_OPERATION_MS', () => {
-    const REASON = `the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation`;
+test.describe('M-2 (class P): the view charges every operation in full; the second past VIEW_MAX_OPERATION_MS within VIEW_OVERRUN_WINDOW_MS ends the sandbox (S72)', () => {
+    const MINUTES = VIEW_OVERRUN_WINDOW_MS / 60000;
+    const REASON = `the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation twice within ${MINUTES} minutes`;
+    const FIRST_OVERRUN_LINE = `[Sandbox] the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation; a second such operation within ${MINUTES} minutes ends the sandbox.`;
 
-    test(`an operation that takes longer than ${VIEW_MAX_OPERATION_MS} ms ends the sandbox with the reason; one well under it does not`, async ({ sandbox, page, browserName }) => {
-        test.setTimeout(240000);
+    // Backlog S72, the repeated-overrun rule: before it, the first operation past the limit ended the sandbox, which on a
+    // loaded machine ended healthy ones (the meter measures wall time: a proxy of the view's own cost).
+    test(`one operation past ${VIEW_MAX_OPERATION_MS} ms, then operations well under it: the sandbox stays ready, said once; a second past it within the window ends it with the reason`, async ({ sandbox, page, browserName }) => {
+        test.setTimeout(300000);
         const long = await sizeFor(page, 2 * VIEW_MAX_OPERATION_MS);
         const short = { n: SIZES[0]!, cost: await operationCost(page, heavy(SIZES[0]!)) };
         console.log(`MEASURED ${browserName} M-2 calibration: ${long.n} elements under :has() ${long.cost} ms, ${short.n} ${short.cost} ms`);
         test.skip(long.cost < 1.5 * VIEW_MAX_OPERATION_MS, `the heaviest operation of the family takes ${long.cost} ms here`);
         expect(short.cost).toBeLessThan(VIEW_MAX_OPERATION_MS / 2);
-        await mountEntry(sandbox, `sandboxView.render('<div id="a"></div>'); globalThis.go = (n) => sandboxView.render(${JSON.stringify(heavy(1))}.replace('<i>x</i>', '<i>x</i>'.repeat(n)), 'a');`);
+        await mountEntry(sandbox, `sandboxView.render('<div id="a"></div>');
+            globalThis.go = (n) => sandboxView.render(${JSON.stringify(heavy(1))}.replace('<i>x</i>', '<i>x</i>'.repeat(n)), 'a');
+            globalThis.small = (k) => sandboxView.render('<p id="p' + k + '">' + k + '</p>', 'a');`);
         const reasons: string[] = [];
         await page.exposeFunction('__terminated', (reason: string) => reasons.push(reason));
         await page.evaluate(() => document.querySelector('web-sandbox')!.addEventListener('terminated', (e: any) => (window as any).__terminated(e.detail.reason)));
-        // well under the limit: applied, and the sandbox stays
-        await sandbox.run(`go(${short.n})`);
-        await waitInView(page, browserName, `document.querySelectorAll('#a i').length === ${short.n}`, 30000);
-        await page.waitForTimeout(500);
+        // past the limit: an overrun, said once on sandbox-log; the sandbox stands (before S72 it ended here)
+        await sandbox.run(`go(${long.n})`);
+        await sandbox.waitForLog(FIRST_OVERRUN_LINE, 3 * long.cost + 30000);
+        const first = Date.now();
         expect(await sandbox.state()).toBe('ready');
-        // past it: ended, with the reason (at 60814b5 it was applied, and the next waited 5 s)
+        // operations well under it: each applied, the first once the overrun's debt is repaid (five times its cost)
+        await sandbox.run(`go(${short.n})`);
+        await waitInView(page, browserName, `document.querySelectorAll('#a i').length === ${short.n}`, 8 * long.cost + 30000);
+        const resumed = Date.now() - first;
+        for (let k = 1; k <= 3; k++) {
+            await sandbox.run(`small(${k})`);
+            await waitInView(page, browserName, `!!document.getElementById('p${k}')`, 30000);
+        }
+        await page.waitForTimeout(500);
+        console.log(`MEASURED ${browserName} M-2 the first operation after the overrun applied ${resumed} ms after it was said`);
+        expect(await sandbox.state()).toBe('ready');
+        expect(reasons).toEqual([]);
+        // a second past the limit, within the window: ended, with the reason
         await sandbox.run(`go(${long.n})`);
         await expect.poll(() => sandbox.state(), { timeout: 3 * long.cost + 30000 }).toBe('terminated');
+        expect(Date.now() - first).toBeLessThan(VIEW_OVERRUN_WINDOW_MS);
         expect(reasons).toEqual([REASON]);
+        expect((await sandbox.logs()).filter(line => line === FIRST_OVERRUN_LINE)).toHaveLength(1);
     });
 
     test('operations of 1–1.5 s, one after the other, keep the view to about its long-run share of the host page', async ({ sandbox, page, browserName }) => {

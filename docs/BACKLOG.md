@@ -51,7 +51,7 @@ conditional "continue".
 | Review round 2 2026-10-15 | 🟡 not clean (the count stays 0): 2 high and 8 medium findings in our code from three defensive reviews (lifecycle model, change audit, documented limits measured), all fixed (S55): intrinsics captured before guest code (C-1), the byte measure on a cloned snapshot with an allow-list (C-3), worker mode `ready` only with a running worker, the host page's Trusted Types reason, a DOM-free import with a build-time view hash, one build predicate, long timers; every documented limit held at its edge on all three engines; round 3 held by the owner (S56); [report](security/REVIEW-ROUND-2-2026-10-15.md) |
 | Review round 3 2026-10-18 | 🟡 not clean (the count stays 0): 2 high and 6 medium findings in our code from the same three reviews, all fixed (S57): whole RPC frames and a guest call budget (`callLimits`), the view's time budget charges only measured rendering, `allowAnimations` (default `true`; `false` removes animations and transitions from the view) and `allowAutoplay` (default `false`); where the view runs per engine measured ([research 16](research/16_view_isolation/README.md)); round 4 held by the owner (S58); [report](security/REVIEW-ROUND-3-2026-10-18.md) |
 | Review round 4 2026-10-18 | 🟡 not clean (the count stays 0): no high finding for the first time, 5 medium in our code, all fixed (S62): the worker's own `postMessage` removed, values read once, the still-style rewrite bounded, build completion after a frame's load, the view's URL policy and budget (`VIEW_MAX_URLS`, `VIEW_URLS_PER_SECOND`); the default call rate 1000 per second; round 5 next (S63); [report](security/REVIEW-ROUND-4-2026-10-18.md) |
-| Review round 5 2026-10-18 | 🟡 not clean (the count stays 0): 1 high and 6 medium in our code, all in code earlier per-instance fixes added; [research 18](research/18_finding_classes/README.md) found the recurring classes; fixes as class slices (S64, done), then a lifecycle reducer (S65), a relay-worker probe (S66, done: build it, S69), one config schema (S67) and the view's cost bound (S68); [report](security/REVIEW-ROUND-5-2026-10-19.md) |
+| Review round 5 2026-10-18 | 🟡 not clean (the count stays 0): 1 high and 6 medium in our code, all in code earlier per-instance fixes added; [research 18](research/18_finding_classes/README.md) found the recurring classes; fixes as class slices (S64, done), then a lifecycle reducer (S65), a relay-worker probe (S66, done: build it, S69, then deferred under the availability rule), one config schema (S67) and the view's cost bound (S68); [report](security/REVIEW-ROUND-5-2026-10-19.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -82,6 +82,7 @@ later (S61), and the clean-up with independent reviews follows when the rounds e
 (S58, [report](security/REVIEW-ROUND-4-2026-10-18.md)) added and closed S62; round 5 is next (S63).
 Round 5 (S63) found the recurring classes behind the findings ([research 18](research/18_finding_classes/README.md));
 its fixes are made as slices of those classes (S64), followed by S65–S68. S65's model-based suite found LM-1, fixed by construction (S71).
+The owner's decision on the 2 s operation limit, the repeated-overrun rule, is S72. S73 closes the M-3 burst behind a slow server that PR #47's CI found.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1640,7 +1641,8 @@ The owner's decisions, 2026-10-18:
   - the one-sided URL match;
   - the prelude's captured error getters.
 
-Residual, for the owner: the 2 s operation limit ends a 250,000-character textarea `set()` in WebKit.
+Residual, for the owner: the 2 s operation limit ends a 250,000-character textarea `set()` in WebKit. **Decided**
+(owner, 2026-10-19): the sandbox ends only after repeated overruns (S72).
 
 ### S65 · One lifecycle reducer, with the model-based suite (S61.2) — 🟡 step 2 in progress (PR A of 4 done)
 
@@ -1698,9 +1700,15 @@ as a nested worker, on Chromium (headless shell and full), Firefox and WebKit:
 - **Caveats.** The relay's own thread and memory need a byte cap that ends the guest. WebKit under COEP refuses the
   view's worker, so the relay is never reached there, as today.
 
-### S69 · Build the relay worker — ⏸️ after S65
+### S69 · Build the relay worker — 💤 **deferred** (owner, 2026-10-19: availability findings are documented)
 
-Following research 19's plan:
+The relay closes the worker side of class E-cpu: it moves the cost of the guest's floods off the host page. Those
+floods are already bounded: the worker's own `postMessage()` is gone (round 4, M-1), and the uncaught budget ends the
+sandbox past its rate (`src/lib/egress.ts`). Under the owner's rule for availability findings (CONTRIBUTING.md,
+"Availability findings"), what remains is documented, and the relay is kept as a design to build if the bound is ever
+found not to hold.
+
+Research 19's plan:
 1. A stringified relay that mints and revokes the guest's URL.
 2. One typed frame protocol from guest to relay, charged to the existing budgets.
 3. A byte cap per engine after which the relay ends the guest.
@@ -1750,13 +1758,179 @@ docs/API.md, "The view's cost to the host page", states the bound per process pl
 - **(a) The long-run share.** At most 20% for the view's own work, plus the browser's work on at most
   `VIEW_URLS_PER_SECOND` loads, so up to 40%. It is an average, not a per-second cap.
 - **(b) One operation.** At most `VIEW_MAX_OPERATION_MS` as measured, then the sandbox ends, plus the operation's own
-  uninterruptible cost, bounded by the caps.
+  uninterruptible cost, bounded by the caps. Since S72: past `VIEW_MAX_OPERATION_MS` an operation is an overrun, and
+  the second within `VIEW_OVERRUN_WINDOW_MS` ends the sandbox.
 - **(c) The rates and caps.**
 - **(d) A closed list of what is outside the bound**, each item with its measured magnitude.
 
 `test/e2e/view-bound.spec.ts` runs the canonical floods on every engine and asserts (a) with a 10-point margin, and
 (b). `test/unit/view-bound.test.ts` keeps the statement's constants in step with the code. README and ADR-005 link to the
 statement instead of repeating it.
+
+### S72 · The repeated-overrun rule (owner's decision on the 2 s limit) — ✅ **done**
+
+Class P, a budget that counts a proxy: the meter measures wall time, a stand-in for the view's own cost, so under
+machine load one operation past `VIEW_MAX_OPERATION_MS` ended healthy sandboxes (a large initial view on a loaded CI
+runner, round 4's R4-2 and round 5's L-1 WebKit tests; WebKit's first `set()` of a 250,000-character textarea, always).
+The owner decided (2026-10-19) that the sandbox ends only after repeated overruns.
+
+What changed:
+- **The rule, in the pure budget arithmetic** (`viewBudget`'s `measured`, `src/lib/in-sandbox-view.ts`): an operation
+  past `VIEW_MAX_OPERATION_MS` is an overrun, charged in full to `VIEW_APPLY_MS_PER_SECOND` (the next operation waits
+  until the debt is repaid, at least 9 s), and the view goes on. The second overrun within `VIEW_OVERRUN_WINDOW_MS`
+  (300,000 ms, a module constant, not a public export) of the one before it ends the sandbox; a later one is a first
+  overrun again. A hidden-document measure is neither charged nor counted, and one operation is one overrun (its flush
+  and its rendering update are not counted twice).
+- **The reason**: "the view spent more than 2000 ms on one operation twice within 5 minutes".
+- **The first overrun is visible**: one `warn` host line on `sandbox-log` per environment, through the existing host
+  lines (API.md and the lifecycle model's whitelist): "[Sandbox] the view spent more than 2000 ms on one operation; a
+  second such operation within 5 minutes ends the sandbox." No new event or name.
+- **Tests**: the rule's edges in `test/unit/view-round-5.test.ts` (at the limit, one ms past it; exactly at the window
+  and one ms either side; the window running from the first of two; a first overrun followed by 1000 fast operations;
+  hidden measures; a property against a reference over 300 random runs; the host's line and reason);
+  `test/unit/review-round-3.test.ts` drives the real view in jsdom through both outcomes; the class's structural test
+  (`test/unit/view-bound.test.ts`) requires the window constant in the statement's table and (b) to state the rule in
+  the host's words. On every engine, `test/e2e/view-bound.spec.ts` (b) and `test/e2e/view-round-5.spec.ts` (M-2).
+- **Docs**: API.md (b), (c), (d), the reasons table, the limits table and the host lines; README; ADR-005; review
+  round 5's "What remains"; research 17's lifecycle model.
+
+Measured (2026-10-19, headless Playwright on the shared 4-core VM; Chromium, Firefox, WebKit):
+- `view-bound.spec.ts` (b), three renders under the `:has()` rule (30,000 elements in Chromium, 24,000 in Firefox and
+  WebKit; 3.9 s, 9.0 s and 6.5 s on a page of their own): the first stalled the host page 3.9 s, 8.9 s and 7.2 s and
+  the sandbox stood, with one warn line; the second ran 18.3 s, 43.5 s and 34.7 s later (its debt) and stalled it 4.0 s,
+  9.3 s and 6.5 s, and the sandbox ended with the new reason; the third never ran.
+- `view-round-5.spec.ts` (M-2): one overrun, then four operations well under the limit: the first of them applied
+  21.9 s, 21.0 s and 31.1 s after the warn line, all applied, the sandbox `ready`; a second overrun within the window
+  ended it with the reason. Operations of about 1 s one after the other: host 18% (Chromium) and 15% (WebKit) busy
+  (Firefox: no size of the family cost 0.7–1.4 s there, so that test skipped itself).
+- `review-round-2.spec.ts` (M-3), a 250,000-character textarea `set()` four times a second: the sandbox stays `ready`
+  on all three engines (WebKit's first `set()` ended it before).
+
+### S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
+
+Once S65, the rest of S61 and S60 are merged: an independent adversarial review board of the whole repository. The
+board clears after **two consecutive passes with no finding of high severity or above** (a stricter severity floor than
+the review rounds' medium, as the owner set it). Findings are fixed as before: by class, each naming its class and
+extending its chokepoint and structural test (CONTRIBUTING.md, "Fixing a finding"), after the owner has seen them.
+A finding whose only effect is a bounded cost to the host page that the embedder can end is at most medium, and is
+documented rather than mitigated (CONTRIBUTING.md, "Availability findings").
+
+### S73 · CSS-borne loads charged before they start — ✅ **done** (2026-10-19)
+
+Classes E-net and P ([research 18](research/18_finding_classes/README.md)): a load the policy admits is egress, and
+its budget counted it by a stand-in, the platform's report of it, which arrives only once the response has ended.
+
+**The cause.** PR #47's CI failed on Firefox: `view-round-5.spec.ts` M-3, "CSS backgrounds to an admitted origin",
+counted 5,000 loads over an 11.1 s flood against the test's bound of 4,935.6 (twice `VIEW_URLS_PER_SECOND` over the
+flood, plus one render). A URL the renderer kept in an attribute was charged when it was rendered, but a CSS-borne load
+(a style attribute's `url()` or `image-set()`, a `<style>`, an `@import`, a font) only when its resource-timing entry
+arrived. Behind a slow server every render the view applied before the first charge arrived got through: the first
+burst was the server's latency times the view's render rate, not the budget, and the test's "twice the rate" was
+empirical.
+
+**The design** (`src/lib/in-sandbox-view.ts`): every load is charged before the browser can start it, as kept URL
+attributes already were.
+- **Counted when applied.** `cssLoadBound` counts, in the CSS an operation adds, the function tokens named `url`,
+  `image-set`, `-webkit-image-set`, `image`, `cross-fade` or `src` (each 1) and each `@import` (a second's worth, 200,
+  for what the sheet it imports names, which the view cannot read then). The CSS an operation adds: a render's kept
+  style attributes (collected by the renderer as it walks them), the text of its `<style>` elements (HTML and SVG),
+  the fragment's text when the target is a `<style>` or inside one, and 200 per stylesheet `<link>` (only registered
+  sheets are kept); a `text()` into a `<style>` (or inside one); a `set()` of a textarea or an output inside one. The
+  texts are counted joined, in one pass.
+- **The counter**, a minimal subset of the CSS tokenizer: each code point of a name is matched in each way it can be
+  written (itself in either case; a backslash and itself, where it is no hex digit; 1–6 hex digits of either case's
+  value, with one optional whitespace, CR LF one, the digits ending at six or before a non-hex code point), then `(`.
+  One native regular expression, tried at every position, comments and strings included: it assumes no token
+  boundary, so wherever the tokenizer starts a token that loads, the pattern matches what it reads. It only
+  over-counts (`xurl(`, `5url(`, a name in a comment or string). Skipping comments and strings was rejected: a skip that
+  ends one where the tokenizer does not hides what follows, an under-count.
+- **Charged with the operation.** The count is prepaid to the load budget when the flush is settled, before it forces
+  layout (which starts the loads), like the attribute URLs, so the next operation waits until the budget has refilled.
+- **Reconciled as credit** (`viewBudget`'s `prepay` and `observed`). A load the platform reports that no render's
+  attribute charged, and a violation, takes from the prepaid credit first and is charged only once it is spent. The
+  credit is capped at `VIEW_URLS_PER_SECOND` (a second's worth); past it the prepayment is forfeited, so an
+  over-counting render cannot store a burst for later. An attribute-charged URL is still never charged again, and the
+  M-4 distinct-URL accounting is unchanged.
+- **The bound** (R the rate, over any t seconds): R·t + R (what the budget holds) + one operation's charge (at most
+  `VIEW_MAX_URLS` attributes and its CSS's count) + R (the credit carried in) + what CSS already in the view loads past
+  what was prepaid for it (a rule matching later, a sheet past its allowance), which only that CSS's text bounds. The
+  server's latency is in none of the first four terms. Stated in `VIEW_URLS_PER_SECOND`'s comment and API.md (a).
+
+**Tests.**
+- Unit, `test/unit/view-css-loads.test.ts`: the counter's forms (`url(`, `URL(`, `u\72 l(`, `\75 rl(`, six-digit and
+  CR LF escapes, `image-set(`, a nested `image-set(url() url())`, `@import`, `@\69mport`), what it does not count, and
+  what it counts by decision (comments, strings, `xurl(`); a property over 500 random texts with N tokens in random
+  escape forms (count ≥ N); a property over 4,000 random texts against a reference implementation of the css-syntax-3
+  tokenizer in the test (count ≥ the tokens that load, and the joined count ≥ the sum of the parts); the credit
+  (consumed before charging, capped, and a property that every load is charged at least once); and the real view in
+  jsdom with stand-ins for resource timing: what each operation prepays, a reported load and a violation taking the
+  credit, and an attribute-charged URL not charged again. Mutating the escape pattern (CR LF, six digits, the
+  whitespaces) fails them.
+- e2e, `test/e2e/view-round-5.spec.ts`: M-3's admitted-origin assertion is now the derived bound (R·t + R + 500 + R),
+  with no slack factor; "S73: behind a slow server" delays every response 1 s and asserts the same bound over the
+  first second and over the flood; "S73: counting" measures the counter.
+
+**Measured** (2026-10-19, the shared 4-core VM, headless Playwright):
+- **Behind a server 1 s late** ("S73: behind a slow server", bound 1,100 for the first second and 2,100 for the 6 s
+  flood): before the fix, Chromium 1,024 loads in the first second and 2,440 over the flood, Firefox 115 and 2,500,
+  WebKit 2,500 and 6,112, so the test failed on all three engines; after it, 500 and 1,000 on all three.
+- **M-3, an admitted origin, the derived bound** (R·t + R + 500 + R: 3,101–3,104 over the 11.0 s flood): 1,500 loads on
+  every engine, 136 a second; host 11%, 7% and 8% busy (Chromium, Firefox, WebKit). Refused source: 63, 125 and 125
+  refusals a second, host 4%, 2% and 1% busy.
+- **The counter's cost** on a 256 KiB render full of CSS (half style attributes, half one stylesheet; best of 3 rounds of
+  10), as count (of it, `cssLoadBound`) against the bare parse and against parse and clean:
+  - without escapes: Chromium 0.41 ms (3% of 11.9 ms), Firefox 1.2 ms (52% of 2.3 ms; 17% of 6.9 ms), WebKit 1.0 ms
+    (12% of 8.2 ms);
+  - one escape per rule: Chromium 0.60 ms (6%), Firefox 1.1 ms (37%; 12% of parse and clean), WebKit 1.2 ms (9%);
+  - every name escaped: Chromium 1.4 ms (12%), Firefox 1.4 ms (87% of its 1.6 ms parse; 32% of parse and clean),
+    WebKit 1.1 ms (13%).
+  Firefox parses three to seven times as fast as the others, so there the count is half its bare parse or more; the
+  test asserts it under half of parse and clean on every engine. A first version, a hand-written decoder in a loop,
+  cost 11.6 ms (Chromium) and 6 ms (Firefox, 150% of the parse); one escape-decoding pass with a callback, then two
+  matches, up to 10.7 ms in Firefox on escaped names. The count runs inside the flush, so it is in the view's
+  measured and charged time.
+- **Behaviour change**: a guest's own CSS now holds its next operation back by what it can load, whether or not it
+  loads it (a `url()` in a comment, a cached image); each `@import` or stylesheet `<link>` by a second.
+
+### S75 · A strict entry that ran was taken for one that failed (WebKit) — ✅ **done** (2026-10-19)
+
+Class B ([research 18](research/18_finding_classes/README.md)), a browser decision re-derived.
+
+**The cause.** PR #47's CI failed on WebKit: `review-round-1.spec.ts`, "strict mode: a later uncaught error and an
+unhandled rejection …", read `terminated` where it expected `ready`. The same test had failed on WebKit before, and was
+taken for an overrun; S72 did not touch it. Recorded by the fixture (below), the reason was **"the guest entry failed to
+start"**, for an empty entry, after `ready` and after the expected log lines. Measured with the view's errors traced: the
+`execute()`d `setTimeout(() => { throw new Error('later') })` reached the view's Worker object before `VIEW_STARTED`
+reached the render port, and the view took every error before `VIEW_STARTED` for the entry's own. That rule predicted
+that WebKit mutes a later error inside the worker (leaving it to the view) only once the view revoked the worker's source
+URL, which follows `VIEW_STARTED` (ADR-005, C1). But WebKit mutes the errors of code compiled from a string (`Function`,
+`eval`, every `execute()`) from the start, and its render-port messages can arrive after them. Before the fix, on WebKit
+(4-core VM, load 7–19 from other agents): the test 2 of 100 and 3 of 200 runs; an entry's `queueMicrotask` of compiled
+code that throws, 8 of 8; a timer of it, 5 of 8. Chromium and Firefox: never (they do not mute those errors).
+
+**The fix.** The end of the entry is read from the order of one channel, the Worker object's errors, which arrive in the
+order they were raised: the line after the entry raises the build's marker error (message: the per-build
+`entryDoneName`, which the view gets in `INIT_VIEW`) through `reportError`, so before any microtask the entry queued
+(an error thrown at the end of the script is reported only after them in Firefox and WebKit: measured, and the first
+version failed there). The prelude stops it, so no guest listener sees it; the view cancels it and posts nothing, and
+looks for it only until it came, in the first characters of the text (a later flood of 16 Mi-character errors is not
+searched). Errors before it are the entry's, errors after it later. `VIEW_STARTED` carries no count any more. ADR-005
+has the amendment.
+
+**Seen on the way, not changed** (T7's kind): on WebKit, `review-round-4.spec.ts` "M-1's class … strict mode: errors of
+16 Mi characters" and `review-round-5.spec.ts` N-1's strict 16 Mi case fail on this loaded VM at the base too (M-1: 5 of
+10 runs at the base, 3 of 10 with S75; busy 0–20% against the test's 10%).
+
+**Every e2e termination explains itself.** `test/e2e/fixture.ts` records every `terminated` event of the host page
+(reason, sandbox, state, time) from an init script; `sandbox.terminations()` returns them, a `state()` that reads
+`terminated` keeps them, and a test that fails gets them attached to its report (printed under the error).
+
+**Tests.** `test/unit/entry-end-marker.test.ts`: the view's verdicts for every place `VIEW_STARTED` can arrive among the
+errors, both engines' marker texts, an entry that threw, a missing marker; the prelude raises the marker at once and
+stops it (failed before the fix). `test/e2e/strict.spec.ts` ("the entry"): errors of a microtask, a microtask of compiled
+code and a timer of compiled code the entry queued are logged once and leave the sandbox `ready`, and no guest listener
+or log line sees the marker (the compiled-code cases failed on WebKit before, 3 of 3 each). After the fix: the test above
+0 of 300 runs on WebKit under the same load.
 
 ### T6 · Two CPU-heavy unit tests failed once on a loaded machine — 🔎 **investigate**
 
