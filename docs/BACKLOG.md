@@ -1551,7 +1551,8 @@ Once the review rounds end: a proper clean-up of the repository and the docs:
 - research notes indexed;
 - the backlog compacted.
 
-Then independent adversarial reviews of the cleaned-up repository and docs by sub-agents of other model families (Sonnet and Haiku), with their findings verified and fixed the same way as the review rounds.
+The independent adversarial reviews by sub-agents of other model families (Sonnet and Haiku) are folded into the
+final review board (S74, owner, 2026-10-19), which reviews the cleaned-up repository and docs.
 
 ### S61 · Property, model-based and structural tests (from research 17) — ⏸️ **later** (owner)
 
@@ -1852,7 +1853,8 @@ Measured (2026-10-19, headless Playwright on the shared 4-core VM; Chromium, Fir
 
 ### S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
 
-Once S65, the rest of S61 and S60 are merged: an independent adversarial review board of the whole repository. The
+Once S65, the rest of S61 and S60 are merged: an independent adversarial review board of the whole repository and its
+docs, with reviewers from several model families (Opus, Sonnet and Haiku; S60's independent reviews are folded in). The
 board clears after **two consecutive passes with no finding of high severity or above** (a stricter severity floor than
 the review rounds' medium, as the owner set it). Findings are fixed as before: by class, each naming its class and
 extending its chokepoint and structural test (CONTRIBUTING.md, "Fixing a finding"), after the owner has seen them.
