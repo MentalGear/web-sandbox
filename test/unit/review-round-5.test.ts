@@ -249,3 +249,112 @@ describe('5:L-3 (class D/L): the first listener cannot rewrite a detail for the 
     });
 });
 
+// ---- 5:N-4 and 5:L-4 (class D): the view, the list and the announcement are projections of one diff ----------------
+
+// The strict view as the element talks to it: the paths it resolves, from the build's files and the VIEW_WRITE frames,
+// and each VIEW_WRITE answered at once (VIEW_WRITTEN), as the view does once it holds the change.
+function fakeView(el: any) {
+    const shows = new Map<string, boolean>(); // path → shows something; unset: as the build delivered it
+    const port = {
+        postMessage(frame: any) {
+            if (frame.type !== 'VIEW_WRITE') return;
+            shows.set(frame.path, typeof frame.mime === 'string' && VIEW_WRITE_TYPES.includes(frame.mime) && frame.bytes instanceof Uint8Array);
+            queueMicrotask(() => el._onViewMessage(port, { type: 'VIEW_WRITTEN', id: frame.id }));
+        },
+        close() {},
+    };
+    el._viewPort = port;
+    return { shows };
+}
+
+const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+
+describe('5:N-4 and 5:L-4 (class D): one diff of the guest-write state', () => {
+    it('N-4: a removal of a file the host unregistered after the build is shown in the view, and announced nowhere', async () => {
+        const { el } = element();
+        el.registerFiles({ 'pic.png': PNG });
+        el.setConfig({ mode: 'strict', guestWrites: true });
+        const view = fakeView(el);
+        const heard: string[][] = [];
+        el.addEventListener('fileswritten', (e: CustomEvent) => heard.push([...e.detail.paths]));
+        el.unregisterFiles(['pic.png']);
+        const answer = await el._handleGuestWrite(el._guestWrites, { change: 'remove', path: 'pic.png' });
+        expect(answer).toEqual({ path: 'pic.png', change: 'remove' });
+        expect(el.listGuestWrites()).toEqual([]);
+        expect(heard).toEqual([]);
+        expect(view.shows.get('pic.png')).toBe(false); // at 60814b5 the view was never told, and kept the old blob: URL
+    });
+
+    it('L-4: a withdrawn write (a new path written, then removed) is announced, since the list changed, and listed nowhere; docs/API.md says so', async () => {
+        const { el } = element();
+        el.setConfig({ mode: 'strict', guestWrites: true });
+        fakeView(el);
+        const heard: string[][] = [];
+        el.addEventListener('fileswritten', (e: CustomEvent) => heard.push([...e.detail.paths]));
+        await el._handleGuestWrite(el._guestWrites, { change: 'write', path: 'new.txt', entry: 'x' });
+        await el._handleGuestWrite(el._guestWrites, { change: 'remove', path: 'new.txt' });
+        expect(heard).toEqual([['new.txt'], ['new.txt']]);
+        expect(el.listGuestWrites()).toEqual([]);
+        expect(read('docs/API.md').replace(/\s+/g, ' ')).toContain('A removal of a path the guest wrote and the files do not hold withdraws the write');
+    });
+
+    it('a model over random sequences of guest writes and removals and host registrations, removals and commits: the announcement names exactly the paths whose listed entry changed, and the view shows exactly what the guest sees', async () => {
+        const PATHS = ['a.png', 'b.txt', 'c.png', 'd.css'];
+        const content = (pathName: string, version: number) => (pathName.endsWith('.png') ? new Uint8Array([...PNG, version]) : `v${version}`);
+        for (let seed = 1; seed <= 60; seed++) {
+            const next = random(seed);
+            const pick = () => PATHS[Math.floor(next() * PATHS.length)]!;
+            const { el } = element();
+            const registered: Record<string, unknown> = {};
+            for (const candidate of PATHS) if (next() < 0.5) registered[candidate] = content(candidate, 0);
+            if (Object.keys(registered).length > 0) el.registerFiles(registered);
+            el.setConfig({ mode: 'strict', guestWrites: true });
+            const view = fakeView(el);
+            // what the guest's own sandboxFiles holds (the build's files, then the element's answers): path → its type
+            const guest = new Map<string, { type: string; built: boolean }>();
+            for (const [candidate] of Object.entries(registered)) guest.set(candidate, { type: typeForPath(candidate), built: true });
+            let heard: string[] = [];
+            el.addEventListener('fileswritten', (e: CustomEvent) => heard.push(...e.detail.paths));
+            const listed = () => JSON.stringify(el.listGuestWrites().map((entry: any) => (entry.content ? { ...entry, content: [...entry.content] } : entry)));
+            for (let step = 0; step < 25; step++) {
+                const roll = next();
+                const target = pick();
+                if (roll < 0.15) {
+                    el.registerFiles({ [target]: content(target, step + 1) });
+                    continue;
+                }
+                if (roll < 0.25) {
+                    el.unregisterFiles([target]);
+                    continue;
+                }
+                if (roll < 0.3) {
+                    try { el.commitGuestWrites([target], { code: true }); } catch { /* a refused commit changes nothing */ }
+                    continue;
+                }
+                const before = JSON.parse(listed()).find((entry: any) => entry.path === target) ?? null;
+                heard = [];
+                const request = roll < 0.65 ? { change: 'write', path: target, entry: content(target, step + 1) } : { change: 'remove', path: target };
+                let answer: any = null;
+                try {
+                    answer = await el._handleGuestWrite(el._guestWrites, request);
+                } catch {
+                    continue; // refused: nothing changed (FILES_BUSY cannot happen at 25 requests)
+                }
+                if (answer.change === 'write') guest.set(target, { type: answer.type, built: false });
+                if (answer.change === 'remove') guest.delete(target);
+                const after = JSON.parse(listed()).find((entry: any) => entry.path === target) ?? null;
+                const where = `seed ${seed} step ${step}: ${request.change} ${target}`;
+                expect(heard, where).toEqual(JSON.stringify(before) === JSON.stringify(after) ? [] : [target]);
+                for (const candidate of PATHS) {
+                    const seen = guest.get(candidate);
+                    const expected = !!seen && (seen.built ? isViewFileType(seen.type) : VIEW_WRITE_TYPES.includes(seen.type));
+                    const shown = view.shows.has(candidate) ? view.shows.get(candidate) : !!registered[candidate] && isViewFileType(typeForPath(candidate));
+                    expect(shown, `${where}: the view at ${candidate}`).toBe(expected);
+                }
+            }
+            document.body.replaceChildren();
+            vi.restoreAllMocks();
+        }
+    });
+});
+

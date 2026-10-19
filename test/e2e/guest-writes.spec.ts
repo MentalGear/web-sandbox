@@ -229,7 +229,8 @@ for (const mode of MODES) {
             const r = await inGuest(sandbox, `
                 const started = performance.now();
                 const results = [];
-                for (let i = 0; i < 3; i++) results.push(await outcome(() => sandboxFiles.write('big.bin', new Uint8Array(${third}))));
+                // different bytes each time: writing the same bytes again changes nothing listed, and is not announced
+                for (let i = 0; i < 3; i++) results.push(await outcome(() => sandboxFiles.write('big.bin', new Uint8Array(${third}).fill(i + 1))));
                 return { results, elapsed: performance.now() - started };`, 30000);
             if (r.elapsed < 900) {
                 expect(r.results).toEqual([{ ok: true, value: null }, { ok: true, value: null }, { code: 'FILES_BUSY', isError: true, keys: ['code'] }]);

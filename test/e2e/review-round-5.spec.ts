@@ -77,3 +77,47 @@ test.describe('L-1 (L): queued calls are posted only when the build is ready', (
     });
 });
 
+// A PNG of width × height, so a rendered <img> tells "this file decoded" by its natural size.
+function png(width: number, height: number): string {
+    const table = Array.from({ length: 256 }, (_, n) => {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        return c >>> 0;
+    });
+    const crc = (bytes: Buffer) => {
+        let c = 0xffffffff;
+        for (const byte of bytes) c = table[(c ^ byte) & 0xff]! ^ (c >>> 8);
+        return (c ^ 0xffffffff) >>> 0;
+    };
+    const chunk = (type: string, data: Buffer) => {
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(data.length);
+        const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+        const sum = Buffer.alloc(4);
+        sum.writeUInt32BE(crc(body));
+        return Buffer.concat([length, body, sum]);
+    };
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(width, 0);
+    header.writeUInt32BE(height, 4);
+    header.set([8, 2, 0, 0, 0], 8);
+    const rows = Buffer.concat(Array.from({ length: height }, () => Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3, 0x80)])));
+    return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]).toString('base64');
+}
+
+test.describe('N-4 (D): the view shows what the guest sees', () => {
+    // An <img> by id, read in the view from outside: its natural size once it loaded, and what its src attribute holds.
+    const image = (id: string) => `(() => { const i = document.getElementById('${id}'); return i && (i.complete || !/^blob:/.test(i.getAttribute('src'))) ? { size: i.naturalWidth + 'x' + i.naturalHeight, src: i.getAttribute('src') } : null; })()`;
+
+    test('a registered image the host unregistered after the build, then removed by the guest, names nothing in the view; another registered image still shows (positive control)', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.registerFiles({ 'pic.png': { base64: png(3, 5) }, 'kept.png': { base64: png(7, 4) } })).toBe('ok');
+        expect(await sandbox.mount({ mode: 'strict', guestWrites: true, scriptUnsafe: true })).toBe('ready');
+        await page.evaluate(() => (document.querySelector('web-sandbox') as any).unregisterFiles(['pic.png']));
+        const removed = await sandbox.inGuest(`await sandboxFiles.remove('pic.png'); sandboxView.render('<img id="pic" src="pic.png"><img id="kept" src="kept.png"><p id="done">done</p>'); return sandboxFiles.list();`);
+        expect(removed).toEqual(['kept.png']);
+        await waitInView(page, browserName, `!!document.getElementById('done')`, 8000);
+        expect((await waitInView<{ size: string }>(page, browserName, image('kept'), 8000)).size).toBe('7x4');
+        expect(await waitInView(page, browserName, image('pic'), 8000)).toEqual({ size: '0x0', src: 'pic.png' });
+        expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).listGuestWrites())).toEqual([]);
+    });
+});

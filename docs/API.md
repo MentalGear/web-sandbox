@@ -439,7 +439,7 @@ All events are `CustomEvent`s dispatched on the element. None is `composed`.
 | `violation` | `SandboxViolation` | yes | The guest policy refused a load. |
 | `fetch` | `FetchRecord` | yes | With `fetchBridge`: a `sandboxFetch()` request settled (including refusals). Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
 | `fileschanged` | `{ paths: string[] }` | no | `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; synchronous. |
-| `fileswritten` | `{ paths: string[] }` | yes | The element recorded a guest write or removal (`guestWrites`); one path per event, at most `GUEST_WRITES_PER_SECOND` per environment. |
+| `fileswritten` | `{ paths: string[] }` | yes | A guest write or removal changed what [`listGuestWrites()`](#listguestwrites) shows at a path (`guestWrites`); one path per event, at most `GUEST_WRITES_PER_SECOND` per environment. |
 
 The bubbling events reach a listener on `window` for every sandbox on the page; `event.target` says which one.
 Every `detail` is frozen, deeply: every object and array in it, a guest's log arguments included, so a listener cannot
@@ -746,7 +746,15 @@ In strict mode the view shows the raster images the guest writes: a write whose 
 `poster` or an icon link of the next render, with no rebuild. The element sends the view the bytes it recorded, the
 view makes its own URL from them, and the image is only decoded; `write()` resolves once the view has it. A later
 write to the path replaces the image; a removal, or a write of any other type, leaves the path naming nothing in the
-view (a registered file the guest replaced or removed included). A rebuild starts from the registered files again.
+view (a registered file the guest replaced or removed included, also one you unregistered after the build). The view
+shows what the guest's own `sandboxFiles` holds, whatever the pending list says. A rebuild starts from the registered
+files again.
+
+`fileswritten` names a path exactly when a request changed what `listGuestWrites()` shows there. A removal of a path
+the guest wrote and the files do not hold withdraws the write: the path leaves the list, and `fileswritten` names it
+with nothing listed there. A removal of a file you unregistered after the build lists nothing (there is nothing left to
+remove) and is announced nowhere; the file is gone from the guest's files and from the view. Writing the same bytes and type again
+changes nothing listed and is not announced.
 
 The element records a change before it announces it, and `listGuestWrites()` is the truth; the guest's view
 changes only when the element's answer arrives. They disagree by design in two cases: a `fileswritten` listener

@@ -757,8 +757,10 @@ writes is kept, loaded or run until the host says so.
 - **Rate.** Besides the broker's 256 calls in flight, at most `GUEST_WRITES_PER_SECOND` (100) requests are
   handled and `GUEST_WRITE_BYTES_PER_SECOND` (8 MiB) recorded per environment and second, refused with
   `FILES_BUSY`; the request count is taken first, refused requests included, and the byte rate after the quota.
-  That also bounds `fileswritten`, one event per recorded change, dispatched last through `_notifyThenAct`:
-  the guest's write is acknowledged only if no listener reset or terminated the sandbox meanwhile.
+  That also bounds `fileswritten`, one event per request that changed what `listGuestWrites()` shows at its path,
+  dispatched last through `_notifyThenAct`: the guest's write is acknowledged only if no listener reset or terminated
+  the sandbox meanwhile. The announcement and the strict view's copy are both derived from one diff of the overlay per
+  request (`record()`): the list changed, or what the guest sees changed.
 - **Lifecycle: one rule, builds discard and terminations keep.** The next build (`reset()`, `load()`,
   `setConfig()`) and the element's removal discard the overlay; `terminate()`, the watchdog and
   `workerExecutionTimeout` (a termination, ADR-003) keep it, closed: listable and committable, accepting

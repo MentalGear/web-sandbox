@@ -824,22 +824,23 @@ export class WebSandbox extends ElementBase {
     // told its change stands only if no listener reset or terminated the sandbox meanwhile (then the overlay that
     // held it is gone or closed, and the answer could only reach a closed port anyway).
     // In strict mode the change goes to the view as well (R4-4), and the guest is answered once the view has it.
+    // What is announced and what the view is told are both projections of the one diff the overlay reports for the
+    // request (guest-writes.ts, record; review round 5, N-4 and L-4): 'fileswritten' exactly when the entry
+    // listGuestWrites() shows at the path changed, and the view exactly when what the guest sees there changed. A removal
+    // of a file the host unregistered after the build changes nothing listed and is announced nowhere, but the guest no
+    // longer sees the file, so the view no longer shows it either (N-4: it kept the old blob: URL).
     private _handleGuestWrite(writes: GuestWrites | null, request: unknown): Promise<GuestWriteAnswer> {
         if (!writes) return refuseGuestWrite();
-        // What the list holds at the path before (the request is the guest's structured-cloned data, read once): a change is
-        // announced only when the list changed (review round 4, L-4), so 'fileswritten' never names what listGuestWrites()
-        // does not show. A removal of a path the host unregistered after the build changes the guest's view only.
-        const requested = request !== null && typeof request === 'object' ? (request as { path?: unknown }).path : undefined;
-        const before = typeof requested === 'string' ? writes.change(requested) : undefined;
-        let answer: GuestWriteAnswer;
+        let recorded: ReturnType<GuestWrites['record']>;
         try {
-            answer = writes.handle(request);
+            recorded = writes.record(request);
         } catch (error) {
             return Promise.reject(error);
         }
-        if (answer.change === 'none' || writes.change(answer.path) === before) return Promise.resolve(answer); // nothing to announce
+        const { answer, diff } = recorded;
         // What the view is told, taken now: a 'fileswritten' listener may commit the change and empty its place.
-        const shown = this._viewPort ? viewWriteOf(answer.path, writes.change(answer.path)) : null;
+        const shown = diff.view && this._viewPort ? viewWriteOf(answer.path, diff.shown) : null;
+        if (!diff.listed) return new Promise((resolve, reject) => this._showInView(shown, () => resolve(answer), reject));
         return new Promise((resolve, reject) => {
             let acted = false;
             this._notifyThenAct([() => this._dispatchFilesWritten(answer.path)], () => {
