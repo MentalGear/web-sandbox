@@ -2,10 +2,11 @@
 
 Review round 4's lifecycle reviewer tested `<web-sandbox>` against a reference model written from README.md and
 docs/API.md. It ran 2,100 seeded runs from 1,300 sequences on Chromium, Firefox and WebKit, and reached all 216
-(operation, state, mode) combinations on each engine. This note keeps the model and the generator, so that S61 can
-commit them as a permanent fast-check `commands` suite. The model describes the element at `c7672bb`, before round 4's
-fixes. Round 4 changed some of these rules, for example the "no repeat" rule now applies to every `terminated`, so
-update the model when it is committed.
+(operation, state, mode) combinations on each engine. This note keeps the model and the generator as the reviewers
+wrote them. The model described the element at `c7672bb`, before round 4's fixes; round 5 updated it (see the end).
+
+**The model now lives in `test/model/`** (S61.2, the first step of S65), updated to the element at `446017a`. See
+[The committed suite](#the-committed-suite-testmodel) for what it covers and how to run it.
 
 ## Model state
 
@@ -91,11 +92,8 @@ update the model when it is committed.
 
 ## As a fast-check suite
 
-- One command class per operation: `check()` comes from the model's preconditions, and `run()` performs the operation,
-  updates the model and asserts.
-- It runs in the page through Playwright, because the real element needs a browser. fast-check's shrinking replaces the
-  reviewer's delta debugging.
-- Keep round 4's L-1 loop (remove or move the element 12–30 ms into a rebuild) as its own e2e property.
+The plan was a fast-check `commands` suite. fast-check is not a dependency, so the committed suite keeps the reviewers'
+own tools instead: a seeded mulberry32 and delta debugging (below).
 
 ## Changes for `60814b5` (review round 5)
 
@@ -134,3 +132,67 @@ Round 5's lifecycle reviewer updated the model to the element after round 4's fi
   - 1,050 sequences (350 per engine), plus 12 sweeps and 6 tight loops per engine.
   - 216 of 216 combinations reached on each engine.
   - The round-4 L-1 loop: 1,438–1,448 iterations per engine, clean.
+
+## The committed suite (`test/model/`)
+
+The model, updated to the element at `446017a` (after round 5's fixes, S64), and its generator are permanent tests. The
+lifecycle reducer (S65) is refactored against them.
+
+| File | What it is |
+| :--- | :--- |
+| `test/model/lifecycle-model.ts` | The model, pure TypeScript: its state, one transition per operation (preconditions, the state it leads to, the events it must dispatch synchronously) and the checks on what is observed afterwards. |
+| `test/model/generator.ts` | The seeded generator (mulberry32) and the shrinker (delta debugging over the commands, then the listener plans). |
+| `test/model/runner.ts` | Runs one sequence against the real element in the e2e harness page and feeds every observation to the model. |
+| `test/e2e/lifecycle-model.spec.ts` | N sequences per engine, plus round 4's L-1 as a property. |
+| `test/unit/lifecycle-model.test.ts` | The model itself, on hand-written traces of round 4's L-1 and L-3 and round 5's L-1, L-2 and L-3. |
+
+**The rules of `446017a` it holds the element to.**
+- `ready` is the only flush point, in every mode: a call made while `loading` that times out before `ready` never runs.
+- One "no repeat" rule for every `terminated`: a build started while a `terminated` is dispatched, and refused with that
+  very reason, ends `terminated` without another event.
+- Every event detail is frozen, deeply.
+- A guest call heavier than `callLimits.maxBytesPerSecond` is `ARGS_NOT_TRANSFERABLE`, guest writes included, and never
+  announced.
+- One diff for guest writes: exactly one `fileswritten` per change of what `listGuestWrites()` shows at a path; none for
+  the same bytes again, nor for a removal of a file the host unregistered since the build; a withdrawn write is announced
+  with nothing listed.
+- A termination the element starts is accepted only when the environment allows it: the watchdog (a timeout and a busy
+  guest), `workerExecutionTimeout` (a timeout and a busy `execute()`), the strict entry's failure (a throwing entry), the
+  load deadline (`LOAD_TIMEOUT_MS` of loading). The uncaught budget, `VIEW_MAX_OPERATION_MS` and
+  `VIEW_MAX_DISTINCT_URLS` are not approached by the generator, so their terminations are divergences here; their edges
+  have their own specs (`review-round-5.spec.ts`, `view-round-5.spec.ts`).
+
+**What it generates.** One mode per sequence (by seed), 0–3 re-entrant listener plans on `ready`, `terminated`,
+`sandbox-log`, `fileswritten` and `fetch`, a prologue, then 3–6 segments of churn, calm guest steps, or a scenario (an
+argument getter that runs an action, calls with timeouts around the check-in, a move 12–30 ms into a rebuild, a
+termination the element starts, guest writes listed and committed). The operations: insert, remove, move to and from a
+foreign document, `setConfig()` (valid, an unknown mode, unusable configs), the same config again, `load()`, `reset()`,
+`terminate()`, `registerFiles()` (and a refused batch), `unregisterFiles()`, `expose()`, `call()`, `callWithTimeout()`,
+`execute()`, `listGuestWrites()`, `commitGuestWrites()` and the guest steps of the agent's `act(spec)` (logs, a throw, an
+uncaught error, busy loops, writes and removals, fetches, calls to the host, a late expose).
+
+**Coverage.** The spec prints the (operation, state, mode) combinations each chunk reached (`MEASURED …`) and the keys
+(`COVERAGE …`): 18 operations × 4 states × 3 modes = 216 combinations. At `446017a`, 40 sequences per engine reach
+174–176 of them, and 500 sequences per engine all 216 on Chromium, Firefox and WebKit. The other keys count what the
+checks saw: a refusal's `terminated` from a task, terminations the element started (strict and worker mode; cooperative
+mode's watchdog fires only where the frame has its own process), `fileswritten` announced and not, guest calls answered
+`ARGS_NOT_TRANSFERABLE` and `BUSY`, `fetch` records.
+
+**Running it.**
+- CI: `bun run test:e2e test/e2e/lifecycle-model.spec.ts` runs 40 sequences per engine (in chunks of 10, which the
+  workers share) and the L-1 property (120 moves and removals per mode).
+- Nightly: `WEB_SANDBOX_MODEL_RUNS=2000 bun run test:e2e test/e2e/lifecycle-model.spec.ts`; `WEB_SANDBOX_MODEL_SEED`
+  moves the first seed, so successive nights cover new sequences.
+- A divergence is shrunk and printed with its seed, the minimal sequence as JSON and its trace;
+  `WEB_SANDBOX_MODEL_REPRO='<json>'` runs that sequence again.
+- The model itself: `bun x vitest run test/unit/lifecycle-model.test.ts`.
+
+**Checked against mutants.** Each rule above was checked to bite: with the detail freeze removed from `fileschanged`,
+with round 4's no-repeat rule removed, and with round 5's L-1 flush at the wrapper's load put back, the suite diverged
+within 60 sequences on Chromium, and shrank each to a few commands.
+
+**Its first finding (LM-1, open).** At 500 sequences per engine, WebKit seed 73 diverged: a `fetch` record with outcome
+`ok`, of an environment a `fetch` listener had just torn down, was dispatched after the teardown, where API.md says only
+an `aborted` record of a torn-down environment arrives then. A focused test in `lifecycle-model.spec.ts` makes it
+deterministic (the host page's `fetch` answers four requests at once) and fails on all three engines; it is marked
+`test.fail()` until the owner decides between reporting such a record `aborted` and documenting it.
