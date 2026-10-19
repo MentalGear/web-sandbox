@@ -1931,6 +1931,25 @@ Steps, one PR each, merged when green:
    those items' semantic signature only (names, types, values, transitions; never formatting). When an item changes,
    the sections that describe it fail CI until they are reviewed (`docs:gen --accept`). If the markers prove noisy,
    they are dropped without losing the rest. ARCHITECTURE.md is the first document built this way.
+
+   **The tool is built in two parts.**
+   - **A generic engine** in `tools/docgen/`, about 200 lines. It rewrites regions, checks markers against hashes, and
+     runs in `--check` and `--accept` modes. It knows nothing about this repository: extractors are plugins returning
+     items `{ id, signature, render }`. It stays in this repository behind that boundary, and becomes a package once a
+     second project needs it. Cog, markdown-magic and embedme rewrite regions, but none flags stale prose.
+   - **Extractors, each next to the code it reads.** Built in order of value:
+     1. API.md's remaining tables: limits, reasons, events and their details, host log lines, error codes, capability
+        lists, each mode's CSP.
+     2. ARCHITECTURE.md.
+     3. BACKLOG.md's status table, from the item headers.
+     4. The ADR and research indexes, from each file's header.
+     5. The class registry (class, chokepoint, structural test) as data. Research 18 and CONTRIBUTING render it, and a
+        test checks that every class has its structural test.
+     6. API.md (d): the closed list of what the cost bound leaves out.
+
+     Measured numbers are never generated: they vary from run to run. The docs state the bound from code, the tests
+     assert it, and measurements stay in test output and the archive. Prose that explains why (ADR reasoning, the
+     threat model's argument, the README tutorial) gets markers only.
 3. **The archive.** Move the reports and research, and compact the backlog to open items. The research reproductions
    stay runnable (Playwright's `testMatch`), and the link check keeps every link.
 4. **ADRs.** Each states its current decision; its amendment trail moves to the archive, linked.
