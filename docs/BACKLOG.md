@@ -2310,13 +2310,19 @@ The view-switches positive control (`true` > 30% busy) and research 15's lower b
 thread) are unchanged. `view-budget` R1-2's `VIEW_MAX_OPERATION_MS` is a documented bound, and view-bound (b) counts
 stalls against it.
 
-**Validation** (2026-10-19, 4-core VM shared with other agents; each e2e batch started only below a 1-minute load of 6):
-- `bun run typecheck` clean. `bun run test:unit`: 1838 of 1838 passed, both idle and under two busy loops of the run's
-  own.
-- Every converted test, on its own engine, with no load of the run's own: Chromium 60 of 60, Firefox 59 and one
-  calibration skip (view-round-5's repeated-overrun test found no operation of 0.7–1.4 s), WebKit 60 of 60.
-- Under two busy loops, bursts of at most 3 minutes: Chromium 10 groups of 13 (54 tests), all passing. The rest was
-  trimmed, since the method held.
+**Validation** (2026-10-19, 4-core VM shared with other agents; each e2e batch started only below a 1-minute load of 6,
+on the code merged with S76 step 1):
+- `bun run typecheck` clean. `bun run test:unit` passed 1846 of 1846 idle, with the ratchet and the link check.
+  Before the S76 merge it also passed 1838 of 1838 under two busy loops of the run's own.
+- Every converted test once with no load of the run's own: Chromium 60 of 60, Firefox 59 and one calibration skip
+  (view-round-5's repeated-overrun test found no operation of 0.7–1.4 s), WebKit 60 of 60. The highest 1-minute load at
+  the start of a batch was 3.4.
+- Under two busy loops, `review-round-4` M-2 and `view-bound` (a), in bursts of at most 3 minutes: 11 of 11 on each
+  engine. Best-window shares for M-2 (refused, admitted, loopback): Chromium 18/23/24%, Firefox 11/21/15%, WebKit
+  23/14/1%, against 40%. For view-bound (a), the highest: Chromium 21% (admitted `<img>`, bound 50%), Firefox 15%
+  (element flood, bound 30%), WebKit 18% (element flood, bound 30%).
+- Before the S76 merge: all 13 burst groups on Chromium (54 tests), and 10 of them again with the floods interleaved,
+  all passing.
 
 ### <a id="bl-b1"></a>B1 · Promise-based RPC in both directions — ✅ **done**
 
