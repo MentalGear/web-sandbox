@@ -1892,6 +1892,46 @@ attributes already were.
 - **Behaviour change**: a guest's own CSS now holds its next operation back by what it can load, whether or not it
   loads it (a `url()` in a comment, a cached image); each `@import` or stylesheet `<link>` by a second.
 
+### S75 · A strict entry that ran was taken for one that failed (WebKit) — ✅ **done** (2026-10-19)
+
+Class B ([research 18](research/18_finding_classes/README.md)), a browser decision re-derived.
+
+**The cause.** PR #47's CI failed on WebKit: `review-round-1.spec.ts`, "strict mode: a later uncaught error and an
+unhandled rejection …", read `terminated` where it expected `ready`. The same test had failed on WebKit before, and was
+taken for an overrun; S72 did not touch it. Recorded by the fixture (below), the reason was **"the guest entry failed to
+start"**, for an empty entry, after `ready` and after the expected log lines. Measured with the view's errors traced: the
+`execute()`d `setTimeout(() => { throw new Error('later') })` reached the view's Worker object before `VIEW_STARTED`
+reached the render port, and the view took every error before `VIEW_STARTED` for the entry's own. That rule predicted
+that WebKit mutes a later error inside the worker (leaving it to the view) only once the view revoked the worker's source
+URL, which follows `VIEW_STARTED` (ADR-005, C1). But WebKit mutes the errors of code compiled from a string (`Function`,
+`eval`, every `execute()`) from the start, and its render-port messages can arrive after them. Before the fix, on WebKit
+(4-core VM, load 7–19 from other agents): the test 2 of 100 and 3 of 200 runs; an entry's `queueMicrotask` of compiled
+code that throws, 8 of 8; a timer of it, 5 of 8. Chromium and Firefox: never (they do not mute those errors).
+
+**The fix.** The end of the entry is read from the order of one channel, the Worker object's errors, which arrive in the
+order they were raised: the line after the entry raises the build's marker error (message: the per-build
+`entryDoneName`, which the view gets in `INIT_VIEW`) through `reportError`, so before any microtask the entry queued
+(an error thrown at the end of the script is reported only after them in Firefox and WebKit: measured, and the first
+version failed there). The prelude stops it, so no guest listener sees it; the view cancels it and posts nothing, and
+looks for it only until it came, in the first characters of the text (a later flood of 16 Mi-character errors is not
+searched). Errors before it are the entry's, errors after it later. `VIEW_STARTED` carries no count any more. ADR-005
+has the amendment.
+
+**Seen on the way, not changed** (T7's kind): on WebKit, `review-round-4.spec.ts` "M-1's class … strict mode: errors of
+16 Mi characters" and `review-round-5.spec.ts` N-1's strict 16 Mi case fail on this loaded VM at the base too (M-1: 5 of
+10 runs at the base, 3 of 10 with S75; busy 0–20% against the test's 10%).
+
+**Every e2e termination explains itself.** `test/e2e/fixture.ts` records every `terminated` event of the host page
+(reason, sandbox, state, time) from an init script; `sandbox.terminations()` returns them, a `state()` that reads
+`terminated` keeps them, and a test that fails gets them attached to its report (printed under the error).
+
+**Tests.** `test/unit/entry-end-marker.test.ts`: the view's verdicts for every place `VIEW_STARTED` can arrive among the
+errors, both engines' marker texts, an entry that threw, a missing marker; the prelude raises the marker at once and
+stops it (failed before the fix). `test/e2e/strict.spec.ts` ("the entry"): errors of a microtask, a microtask of compiled
+code and a timer of compiled code the entry queued are logged once and leave the sandbox `ready`, and no guest listener
+or log line sees the marker (the compiled-code cases failed on WebKit before, 3 of 3 each). After the fix: the test above
+0 of 300 runs on WebKit under the same load.
+
 ### T6 · Two CPU-heavy unit tests failed once on a loaded machine — 🔎 **investigate**
 
 `review-round-2.test.ts` (C-7: past the comparison cap the sandbox rebuilds) and `review-round-5.test.ts` (5:L-1: the

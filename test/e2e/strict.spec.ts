@@ -340,6 +340,46 @@ test.describe('the entry', () => {
         expect(await sandbox.call('alive')).toBe(true);
     });
 
+    // Backlog S75 (class B). WebKit mutes, inside the worker, the errors of code compiled from a string (Function, eval,
+    // execute()) from the start, so they reach the view's Worker object with their text. The view used to read the end of
+    // the entry from VIEW_STARTED, on another channel, and took such an error that reached it first for the entry's own:
+    // "the guest entry failed to start" for an entry that had run to its end (WebKit before S75: the microtask of compiled
+    // code 8 runs in 8, the timer 5 in 8, and review-round-1.spec.ts's execute() 2–3 in 100–200 under load). It reads it now from the
+    // marker error that ends the entry, in the order of the Worker object's errors.
+    for (const [label, source] of [
+        ['a microtask', `queueMicrotask(() => { throw new Error('late one'); });`],
+        ['a microtask of code compiled from a string', `queueMicrotask(new Function("throw new Error('late one')"));`],
+        ['a timer of code compiled from a string', `setTimeout(new Function("throw new Error('late one')"), 0);`],
+    ] as const) {
+        test(`an error of ${label} the entry queued, raised once its script ran to its end, is logged once and does not end the sandbox`, async ({ sandbox, page }) => {
+            await sandbox.registerFiles({ 'late.js': `${source} bridge.expose('alive', () => true);` });
+            expect(await sandbox.mount(strict({ entry: 'late.js', scriptUnsafe: true }))).toBe('ready');
+            await sandbox.waitForLog('late one');
+            await page.waitForTimeout(300);
+            const logs = await sandbox.logs();
+            expect(logs.filter(line => line.includes('late one'))).toEqual(['Uncaught Error: late one']);
+            expect(logs.filter(line => line.includes('__sandboxEntryRan_') || line.includes('entry failed'))).toEqual([]);
+            expect(await sandbox.state()).toBe('ready');
+            expect(await sandbox.call('alive')).toBe(true);
+        });
+    }
+
+    test("the marker error that ends the entry reaches none of the guest's own error listeners, nor its log", async ({ sandbox }) => {
+        await sandbox.registerFiles({ 'listens.js': `const seen = [];
+            self.addEventListener('error', (event) => { seen.push('capture ' + event.message); }, true);
+            self.addEventListener('error', (event) => { seen.push('bubble ' + event.message); });
+            self.onerror = (message) => { seen.push('onerror ' + message); };
+            setTimeout(() => { throw new Error('later failure'); }, 50);
+            bridge.expose('seen', () => seen);` });
+        expect(await sandbox.mount(strict({ entry: 'listens.js' }))).toBe('ready');
+        await sandbox.waitForLog('later failure');
+        const seen: string[] = await sandbox.call('seen');
+        expect(seen).toHaveLength(3); // the later error, once per listener (WebKit's worker: muted, "Script error.")
+        expect(seen.filter(line => line.includes('__sandboxEntryRan_'))).toEqual([]);
+        expect((await sandbox.logs()).filter(line => line.includes('__sandboxEntryRan_'))).toEqual([]);
+        expect(await sandbox.state()).toBe('ready');
+    });
+
     test('an entry that is not a registered JavaScript file ends the build with a reason', async ({ sandbox }) => {
         await sandbox.registerFiles({ 'data.json': '{}' });
         expect(await sandbox.mount(strict({ entry: 'missing.js' }))).toBe('terminated');

@@ -178,7 +178,7 @@ describe('R4-5: the view applies text and set: text is assigned, never parsed; v
         const render = workers[0]![1]!;
         const acks: any[] = [];
         render.onmessage = (event) => { if (event.data.type === 'VIEW_ACK') acks.push(event.data); };
-        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        render.postMessage({ type: 'VIEW_STARTED' });
         const send = async (frame: object) => {
             const before = acks.length;
             render.postMessage(frame);

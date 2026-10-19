@@ -2362,11 +2362,23 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         // revoked script is muted ("Script error.", no error object), since WebKit can no longer resolve the
         // script's URL to its origin; here, on the Worker object, the same error keeps its text. So the prelude
         // logs every later error it can describe itself and leaves a muted one to this document, which logs it
-        // (GUEST_UNCAUGHT). Which errors are the entry's own (they end the sandbox: GUEST_ERROR) is decided without
-        // relying on the order of two channels: an error before VIEW_STARTED can only be the entry's (a later one
-        // the worker can describe never reaches here, and a muted one needs the revocation, which follows
-        // VIEW_STARTED); after it, VIEW_STARTED says how many of the Worker object's errors were the entry's, and
-        // errors on one Worker object arrive in the order they were raised.
+        // (GUEST_UNCAUGHT). WebKit mutes there the errors of code compiled from a string too (Function, eval:
+        // execute() runs code so), and those from the first moment, before any revocation (measured).
+        //
+        // Which errors are the entry's own (they end the sandbox: GUEST_ERROR) is read from the order of one channel,
+        // the Worker object's error events, which arrive in the order they were raised (backlog S75, class B). The
+        // line after the entry, once the entry ran to its end, raises the build's marker error (inStrictWorker), and
+        // the prelude leaves it to reach this document: every error before it is the entry's, every error after it is
+        // later. Before S75 the end of the entry was read from VIEW_STARTED, on the render port, a second channel, on
+        // the prediction that an error which reaches this document before it can only be the entry's (a muted one
+        // needed the revocation, which follows VIEW_STARTED). WebKit refutes it: a muted error of code compiled from a
+        // string reached the Worker object before VIEW_STARTED reached the render port, on a loaded machine
+        // (execute()'s `setTimeout(() => { throw … })`, 2–3 runs in 100–200) and always (an entry's queueMicrotask of
+        // such code, 8 in 8), and the sandbox ended with "the guest entry failed to start" although the entry had run
+        // to its end.
+        // A guest that throws the marker's text itself (it can read the marker's name, as it could always call the
+        // marker early: ST4) only spares its own entry the end it would have had; it can make no later error end
+        // the sandbox, since an error it raises after the marker is later whatever its text.
         // The guest's error texts this document relays (review round 3, C-4): GUEST_ERROR, the entry's own error, and
         // GUEST_UNCAUGHT, a later one the worker could not describe itself (above). Both are the guest's words, and every
         // one of them leaves through here, bounded before it is posted, as the console relay bounds every other guest
@@ -2402,16 +2414,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
         let sourceUrl: string | null = null;
         let started = false;
-        let entryErrors = 0; // from VIEW_STARTED: how many of the worker's first error events are the entry's
-        let errorsSeen = 0;
+        // The build's marker (entryDoneName), whose error says the entry ran to its end; '' (a malformed INIT_VIEW)
+        // matches no error, so then every error is the entry's, the side that ends the sandbox.
+        const entryDoneGiven = data.entryDone;
+        const entryDone = typeof entryDoneGiven === 'string' ? entryDoneGiven : '';
+        let entryRan = false;
         const channel = new MessageChannel();
         renderPort = channel.port1;
         renderPort.onmessage = (event: MessageEvent) => {
             if (!started) {
                 started = true;
-                const first = event.data;
-                const counted = first && first.type === 'VIEW_STARTED' ? first.entryErrors : undefined;
-                if (typeof counted === 'number') entryErrors = counted;
                 if (sourceUrl !== null) URL.revokeObjectURL(sourceUrl);
                 sourceUrl = null;
             }
@@ -2429,8 +2441,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             return;
         }
         // Errors the worker did not cancel: the entry's own (a syntax error, a throw at its top level), which end
-        // the sandbox, and later ones the worker could not describe (muted, above), which are logged. An error event
-        // with no message before the worker started says only that its script did not run: either it was not loaded
+        // the sandbox, and later ones the worker could not describe (muted, above), which are logged; the marker
+        // between them (above) is neither. An error event with no message before the marker says only that its
+        // script did not run: either it was not loaded
         // at all (all three engines, for a host page's worker-src without blob:; WebKit under the host page's
         // Cross-Origin-Embedder-Policy) or it did not parse (Firefox gives a syntax error no message). A probe worker
         // of one statement tells which (R3-1): if it cannot run either, the policy refuses blob: workers and nothing of
@@ -2454,16 +2467,24 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             probeWorker!.onerror = () => done(true);
         };
         worker!.onerror = (error: ErrorEvent) => {
-            const index = errorsSeen++;
-            if (!started && !error.message) {
+            const text = error.message;
+            // The marker, looked for only until it came, and only where the engines put it (`Uncaught Error: <name>`,
+            // `Error: <name>`): a later error of 16 Mi characters is not searched (an error flood is the guest's, and this
+            // runs on the thread the view shares with the host page; review round 4's M-1 measures it on WebKit).
+            if (!entryRan && entryDone !== '' && typeof text === 'string' && text.slice(0, entryDone.length + 64).indexOf(entryDone) !== -1) {
+                entryRan = true; // the marker: the entry ran to its end; not a guest error, so not logged
+                error.preventDefault();
+                return;
+            }
+            if (!entryRan && !text) {
                 probe((refused) => {
                     if (refused) viewPort!.postMessage({ type: 'WORKER_REFUSED' });
                     else toHostGuestText('GUEST_ERROR', 'the entry did not parse (this browser gives no detail)');
                 });
                 return;
             }
-            const message = String(error.message || 'the worker failed');
-            if (!started || index < entryErrors) {
+            const message = String(text || 'the worker failed');
+            if (!entryRan) {
                 toHostGuestText('GUEST_ERROR', message);
                 return;
             }
@@ -2531,13 +2552,11 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     const portsOf = getOwn(MessageEvent.prototype, 'ports')!.get!;
     const stopImmediate = Event.prototype.stopImmediatePropagation;
     const cancel = Event.prototype.preventDefault;
-    const defaultPreventedOf = getOwn(Event.prototype, 'defaultPrevented')!.get!;
     // The error event's own fields, read through the getters of ErrorEvent.prototype as they are now (review round 5,
     // N-2; class G): guest code can replace the prototype's accessors, so the listener below never reads them through
     // the event. A captured getter returns what the browser stored in the event, and runs no guest code.
     const errorEventError = getOwn(ErrorEvent.prototype, 'error')!.get!;
     const errorEventMessage = getOwn(ErrorEvent.prototype, 'message')!.get!;
-    const laterMicrotask = g.queueMicrotask;
     const post = MessagePort.prototype.postMessage;
     const startPort = MessagePort.prototype.start;
     const join = Array.prototype.join; // for error texts: a patched join would otherwise receive the prelude's own list as `this`
@@ -2760,10 +2779,10 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         renderPort = ports[1];
         apply(addListener, renderPort, ['message', onRenderMessage]);
         apply(startPort, renderPort, []);
-        // Always the first frame on the render port: it tells the view that this script ran to its end, and how
-        // many of the errors that reach the Worker object were the entry's (the view ends the sandbox for those);
-        // the view revokes the worker's source URL on it (review C1). Before attach(), so it precedes everything.
-        apply(post, renderPort, [{ type: 'VIEW_STARTED', entryErrors }]);
+        // Always the first frame on the render port: the view revokes the worker's source URL on it (review C1).
+        // Before attach(), so it precedes everything. Which errors were the entry's is not said here: the marker
+        // error says it in the order of the errors themselves (the entry failure, below).
+        apply(post, renderPort, [{ type: 'VIEW_STARTED' }]);
         attach(ports[0]);
         syncListen();
         sendNext();
@@ -2771,12 +2790,17 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
 
     // ---- entry failure ----
     // An uncaught error while the entry runs (before the line after it calls the marker) is left alone: it
-    // reaches the Worker object in the view, which reports GUEST_ERROR, and the host ends the sandbox. It is
-    // counted once its dispatch is over, if nothing cancelled it, since only then does it reach the view;
-    // VIEW_STARTED carries the count. Every later uncaught error is cancelled here and logged, so it never ends
-    // the sandbox, except one the browser muted here: in WebKit, once the view has revoked the worker's source
-    // URL (review C1), an error thrown by code from that script reads "Script error." in the worker, while the
-    // Worker object in the view still gets its text. Such an error is left to the view, which logs it.
+    // reaches the Worker object in the view, which reports GUEST_ERROR, and the host ends the sandbox. The marker
+    // ends the entry with an error of its own, the build's marker error (its message is the marker's name, which the
+    // view is given in INIT_VIEW), and leaves it alone too: on the Worker object, whose errors arrive in the order they
+    // were raised, it is the line between the entry's errors and the later ones (backlog S75, class B; the view's
+    // comment on the worker's errors says why not VIEW_STARTED). It is stopped here, so no listener of the guest's sees
+    // it. If the entry threw, the marker never runs: every error then is the entry's, and ends the sandbox.
+    // Every later uncaught error is cancelled here and logged, so it never ends the sandbox, except one the browser
+    // muted here: in WebKit, once the view has revoked the worker's source URL (review C1), an error thrown by code
+    // from that script reads "Script error." in the worker, while the Worker object in the view still gets its text;
+    // and so, from the start, does one thrown by code compiled from a string (Function, eval: execute()). Such an
+    // error is left to the view, which logs it.
     // The event's fields are read only through the getters captured above (review round 5, N-2): the event's own
     // accessors are the guest's to replace, and a replaced one could make any error look muted, so that it reached the
     // view uncancelled, or throw, so that the listener stopped before it cancelled (Firefox then ended the sandbox as
@@ -2784,7 +2808,17 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     // reads are in a try/catch besides: anything unexpected is not muted, so it is cancelled. The one decision taken
     // before cancelling, "is it muted", reads nothing guest code can change; everything else is read after it.
     let entryRan = false;
-    let entryErrors = 0;
+    // Its text on the Worker object is the engine's "name: message"; both are its own, so no prototype the guest can
+    // change takes part in it.
+    const marker = new ErrorConstructor(options.entryDoneName);
+    defineOwn(marker, 'name', { value: 'Error' });
+    const isMarker = (event: ErrorEvent) => {
+        try {
+            return apply(errorEventError, event, []) === marker;
+        } catch {
+            return false;
+        }
+    };
     const isMuted = (event: ErrorEvent) => {
         try {
             return apply(errorEventError, event, []) === null && apply(errorEventMessage, event, []) === 'Script error.';
@@ -2801,15 +2835,24 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     };
     apply(addListener, g, ['error', (event: ErrorEvent) => {
         if (!event.isTrusted) return; // isTrusted is an own, unforgeable property; only trusted errors reach the view
-        if (!entryRan) {
-            apply(laterMicrotask, g, [() => { if (!apply(defaultPreventedOf, event, [])) entryErrors++; }]);
+        if (!entryRan) return;
+        if (isMarker(event)) {
+            apply(stopImmediate, event, []);
             return;
         }
         if (isMuted(event)) return;
         apply(cancel, event, []);
         log('error', [uncaught(messageOf(event))]);
     }, true]);
-    defineOwn(g, options.entryDoneName, { value: () => { entryRan = true; } });
+    // Reported at once (reportError): an error thrown at the end of the script is reported only after the microtasks
+    // the entry queued have run in Firefox and WebKit (measured), so an error of theirs reached the view before it.
+    defineOwn(g, options.entryDoneName, {
+        value: () => {
+            entryRan = true;
+            if (reportUncaught) apply(reportUncaught, g, [marker]);
+            else throw marker;
+        },
+    });
 }
 
 /**
