@@ -1,6 +1,11 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { inView, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
+import { idleBaseline, loadedShare, MARGIN } from './host-share';
+
+// The host page's busy share with the view's animations running, against its idle baseline before the sandbox
+// (./host-share.ts): the best of 2 windows of 1.5 s, 3 s in all.
+const ANIMATED = { windows: 2, ms: 1500 };
 
 /**
  * The strict view's switches where the browser decides (research 16): whether the still stylesheet of
@@ -106,24 +111,20 @@ test.describe('allowAnimations', () => {
 
     test("5000 animated elements: false leaves the host page its ticks; the default takes them where the view shares the host page's thread", async ({ sandbox, page, browserName }) => {
         test.setTimeout(90000);
-        const ticks = () => page.evaluate(() => new Promise<number>(resolve => {
-            let count = 0;
-            const timer = setInterval(() => count++, 10);
-            setTimeout(() => { clearInterval(timer); resolve(count); }, 3000);
-        }));
         const entry = `sandboxView.render('<style>${SPIN} i { display: block; height: 1px; animation: spin 1s infinite alternate }</style>' + '<i></i>'.repeat(5000));`;
         await sandbox.registerFiles({ 'main.js': entry });
-        const idle = await ticks();
+        const idle = await idleBaseline(page);
         const measured: Record<string, number> = {};
         for (const allowAnimations of [false, true]) {
             expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', allowAnimations })).toBe('ready');
             await waitInView(page, browserName, `document.getElementsByTagName('i').length === 5000`, 10000);
             await page.waitForTimeout(1000);
-            measured[String(allowAnimations)] = await ticks();
+            measured[String(allowAnimations)] = (await loadedShare(page, idle, ANIMATED)).busy;
         }
-        console.log(`MEASURED ${browserName} host ticks in 3 s with 5000 animated elements: idle ${idle}, allowAnimations false ${measured.false}, true ${measured.true}`);
-        expect(measured.false).toBeGreaterThan(idle * 0.85);
-        expect(measured.true, 'positive control: the animations take the host page\'s thread (the view shares it here)').toBeLessThan(idle * 0.7);
+        console.log(`MEASURED ${browserName} 5000 animated elements, busy share against ${idle.count} idle ticks per ${idle.ms} ms: allowAnimations false ${Math.round(measured.false! * 100)}%, true ${Math.round(measured.true! * 100)}%`);
+        // docs/API.md: false "brings every vector back to idle", so nothing past the measure's own margin
+        expect(measured.false).toBeLessThanOrEqual(MARGIN);
+        expect(measured.true, 'positive control: the animations take the host page\'s thread (the view shares it here)').toBeGreaterThan(0.3);
     });
 
     // The parts of form controls are pseudo-elements of the engines' own (::-webkit-slider-thumb, ::-moz-range-thumb,
@@ -135,11 +136,6 @@ test.describe('allowAnimations', () => {
     // change while the parts' colours and widths animate and do not when they cannot.
     test("form-control parts: 300 animated range thumbs and file buttons: false leaves the host page its ticks, and no part animates", async ({ sandbox, page, browserName }) => {
         test.setTimeout(90000);
-        const ticks = () => page.evaluate(() => new Promise<number>(resolve => {
-            let count = 0;
-            const timer = setInterval(() => count++, 10);
-            setTimeout(() => { clearInterval(timer); resolve(count); }, 3000);
-        }));
         // the animation name the parts compute to, where the engine computes style for them
         const COMPUTED_PARTS: Record<string, [string, string][]> = {
             chromium: [['file', '::file-selector-button']],
@@ -164,22 +160,22 @@ test.describe('allowAnimations', () => {
             + parts.split(', ').map(part => `input${part} { animation: paint 0.5s infinite alternate !important }`).join(' ');
         const entry = `sandboxView.render('<style>${style}</style>' + '<input type="range"><input type="file">'.repeat(150));`;
         await sandbox.registerFiles({ 'main.js': entry });
-        const idle = await ticks();
-        let ticksFalse = 0;
+        const idle = await idleBaseline(page);
+        let busyFalse = 1;
         const computed: Record<string, string[]> = {};
         const distinct: Record<string, number> = {};
         for (const allowAnimations of [false, true]) {
             expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', allowAnimations })).toBe('ready');
             await waitInView(page, browserName, `document.getElementsByTagName('input').length === 300`, 10000);
             await page.waitForTimeout(1000);
-            if (!allowAnimations) ticksFalse = await ticks();
+            if (!allowAnimations) busyFalse = (await loadedShare(page, idle, ANIMATED)).busy;
             computed[String(allowAnimations)] = await partAnimations() as string[];
             if (browserName === 'webkit') distinct[String(allowAnimations)] = await pictures();
         }
-        console.log(`MEASURED ${browserName} 300 animated form-control parts: host ticks in 3 s idle ${idle}, allowAnimations false ${ticksFalse}; computed animation names false ${JSON.stringify(computed.false)}, true ${JSON.stringify(computed.true)}`
+        console.log(`MEASURED ${browserName} 300 animated form-control parts: busy share against ${idle.count} idle ticks per ${idle.ms} ms, allowAnimations false ${Math.round(busyFalse * 100)}%; computed animation names false ${JSON.stringify(computed.false)}, true ${JSON.stringify(computed.true)}`
             + (browserName === 'webkit' ? `; distinct pictures of 6: false ${distinct.false}, true ${distinct.true}` : ''));
         // the guarantee
-        expect(ticksFalse).toBeGreaterThan(idle * 0.85);
+        expect(busyFalse).toBeLessThanOrEqual(MARGIN); // docs/API.md: false brings every vector back to idle
         // the positive control (true), and the same signal with false
         if (browserName === 'webkit') {
             expect(distinct.true, 'positive control: the parts animate with true').toBeGreaterThan(1);

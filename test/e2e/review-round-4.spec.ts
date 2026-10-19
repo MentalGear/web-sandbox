@@ -1,5 +1,6 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { inView, waitInView } from './strict-view';
+import { busyShare, describeShare, floodControl, IDLE_MS, IDLE_WINDOWS, interleavedShare, LOAD_SHARE, pausableFlood, ticks, TIME_SHARE, WARMUP_MS } from './host-share';
 import type { Page } from '@playwright/test';
 import { STILL_PROPERTIES, STILL_PROPERTY_PATTERN, VIEW_MAX_URLS, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 
@@ -12,12 +13,8 @@ import { STILL_PROPERTIES, STILL_PROPERTY_PATTERN, VIEW_MAX_URLS, VIEW_STILL_PSE
  * test/unit/review-round-4.test.ts.
  */
 
-// Ticks of a 10 ms interval on the host page over `ms`: what the host page's thread had left.
-const countTicks = (page: Page, ms: number) => page.evaluate((duration) => new Promise<number>(resolve => {
-    let count = 0;
-    const timer = setInterval(() => count++, 10);
-    setTimeout(() => { clearInterval(timer); resolve(count); }, duration);
-}), ms);
+// What the host page's thread has left is measured by ./host-share.ts: ticks of a 10 ms interval, the busy share against
+// the page's own idle baseline (best of N windows on both sides), and the longest gap.
 
 async function mountEntry(sandbox: SandboxDriver, source: string, config: Record<string, unknown> = {}) {
     await sandbox.registerFiles({ 'main.js': source });
@@ -45,8 +42,9 @@ const FIND_POST = `
     try { MessagePort.prototype.postMessage.call(self, 1); found.push('MessagePort.prototype.postMessage on self'); } catch {}
     return found;`;
 
-// The reviewers' flood, as written: four 8 MiB messages per timer tick through the worker's own postMessage.
-const FLOOD = `const p = new Uint8Array(8 * 1048576); setInterval(() => { for (let i = 0; i < 4; i++) postMessage(p); }, 0);`;
+// The reviewers' flood, as written: four 8 MiB messages per timer tick through the worker's own postMessage. Pausable,
+// so that each loaded window lies between two idle baselines (./host-share.ts, interleavedShare).
+const FLOOD = pausableFlood('const p = new Uint8Array(8 * 1048576);', '() => { for (let i = 0; i < 4; i++) postMessage(p); }');
 
 test.describe("M-1: the guest worker's own postMessage is gone; the library's port is the only path to its parent", () => {
     test('worker mode: no postMessage, onmessage or onmessageerror anywhere in the worker', async ({ sandbox }) => {
@@ -66,12 +64,10 @@ test.describe("M-1: the guest worker's own postMessage is gone; the library's po
             if (mode === 'worker') expect(await sandbox.mount({ mode: 'worker', scriptUnsafe: true })).toBe('ready');
             else await mountEntry(sandbox, 'void 0');
             await page.waitForTimeout(300);
-            const idle = await countTicks(page, 4000);
-            await sandbox.run(FLOOD);
-            await page.waitForTimeout(500);
-            const loaded = await countTicks(page, 4000);
-            console.log(`MEASURED ${browserName} M-1 ${mode} mode: host ticks in 4 s: idle ${idle}, under the flood ${loaded} (${Math.round((1 - loaded / idle) * 100)}% busy)`);
-            expect(loaded).toBeGreaterThan(idle * 0.9);
+            const share = await interleavedShare(page, floodControl(sandbox, FLOOD));
+            await sandbox.run('globalThis.stop = true');
+            console.log(`MEASURED ${browserName} M-1 ${mode} mode: ${describeShare(share)}`);
+            expect(share.busy).toBeLessThan(0.1); // no documented share: the spec's own 10% stands
         });
     }
 });
@@ -85,12 +81,10 @@ test.describe("M-1's class: the guest worker's uncaught errors reach its parent 
             if (mode === 'worker') expect(await sandbox.mount({ mode: 'worker', scriptUnsafe: true })).toBe('ready');
             else await mountEntry(sandbox, 'void 0');
             await page.waitForTimeout(300);
-            const idle = await countTicks(page, 4000);
-            await sandbox.run(`const big = 'x'.repeat(2 ** 24); setInterval(() => { reportError(new Error(big)); reportError(new Error(big)); }, 0);`);
-            await page.waitForTimeout(500);
-            const loaded = await countTicks(page, 4000);
-            console.log(`MEASURED ${browserName} ${mode} mode, an error flood: host ticks in 4 s: idle ${idle}, under the flood ${loaded} (${Math.round((1 - loaded / idle) * 100)}% busy)`);
-            expect(loaded).toBeGreaterThan(idle * 0.9);
+            const share = await interleavedShare(page, floodControl(sandbox, pausableFlood(`const big = 'x'.repeat(2 ** 24);`, '() => { reportError(new Error(big)); reportError(new Error(big)); }')));
+            await sandbox.run('globalThis.stop = true');
+            console.log(`MEASURED ${browserName} ${mode} mode, an error flood: ${describeShare(share)}`);
+            expect(share.busy).toBeLessThan(0.1); // no documented share: the spec's own 10% stands
             // WebKit mutes the errors of worker mode's blob: script ("Script error.", all the browser gives; docs/API.md)
             const line = await sandbox.waitForLog(/^Uncaught ((Error: )?x{100}|Script error\.)/);
             expect(line.length).toBeLessThanOrEqual(65536);
@@ -135,18 +129,6 @@ test.describe('L-1: ready is never dispatched from inside the embedder\'s own ap
     });
 });
 
-// The longest gap between the host page's 10 ms ticks while `go()` runs in the guest, over `ms`.
-const longestGapWhile = (page: Page, ms: number) => page.evaluate((duration) => new Promise<number>(resolve => {
-    let last = performance.now();
-    let longest = 0;
-    const timer = setInterval(() => {
-        const now = performance.now();
-        longest = Math.max(longest, now - last);
-        last = now;
-    }, 10);
-    (document.querySelector('web-sandbox') as any).execute('go()');
-    setTimeout(() => { clearInterval(timer); resolve(Math.round(longest)); }, duration);
-}), ms);
 
 test.describe("C-2: with allowAnimations false the renderer's style rewrite multiplies no work", () => {
     // The cost is read as the longest stall of the host page's thread while one render is applied (in Firefox and WebKit
@@ -154,22 +136,30 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
     // costs style work per element with `false` (its rules for every pseudo-element), whatever the elements carry, so
     // the control is the same number of plain <i> elements: the style attributes must cost the renderer nothing on top.
     test('one render of 262 000 characters of <i style="all:unset"></i>: false costs what false costs for plain <i>, and it is applied', async ({ sandbox, page, browserName }) => {
-        test.setTimeout(120000);
+        test.setTimeout(240000);
         const count = Math.floor(262000 / 26);
+        // Each configuration's stall is the least of SAMPLES renders, the samples of all four interleaved (best of N, as
+        // for a share, ./host-share.ts): one sample each read another process's load on the machine as the renderer's
+        // (Firefox under load: all:unset false 700 ms against plain false 106 ms, 315 against 51 idle).
+        const SAMPLES = 3;
         const gaps: Record<string, number> = {};
-        for (const [name, element] of [['all:unset', '<i style="all:unset"></i>'], ['plain', '<i></i>']] as const) {
-            for (const allowAnimations of [true, false]) {
-                await mountEntry(sandbox, `globalThis.go = () => sandboxView.render(${JSON.stringify(element)}.repeat(${count}), 'a'); sandboxView.render('<div id="a"></div>');`, { allowAnimations });
-                await waitInView(page, browserName, `!!document.getElementById('a')`);
-                await page.waitForTimeout(300);
-                gaps[`${name} ${allowAnimations}`] = await longestGapWhile(page, 4000);
-                const held = await waitInView<number>(page, browserName, `document.querySelectorAll('#a > i').length`, 30000);
-                expect(held, `${name} ${allowAnimations}`).toBe(count);
-                // left as written: nothing of it was read or rewritten (at c7672bb, 'all: unset;' with false)
-                if (name === 'all:unset') expect(await inView<string>(page, browserName, `document.querySelector('#a > i').getAttribute('style')`)).toBe('all:unset');
+        for (let sample = 0; sample < SAMPLES; sample++) {
+            for (const [name, element] of [['all:unset', '<i style="all:unset"></i>'], ['plain', '<i></i>']] as const) {
+                for (const allowAnimations of [true, false]) {
+                    await mountEntry(sandbox, `globalThis.go = () => sandboxView.render(${JSON.stringify(element)}.repeat(${count}), 'a'); sandboxView.render('<div id="a"></div>');`, { allowAnimations });
+                    await waitInView(page, browserName, `!!document.getElementById('a')`);
+                    await page.waitForTimeout(300);
+                    // the longest gap between the host page's 10 ms ticks while go() runs in the guest
+                    const key = `${name} ${allowAnimations}`;
+                    gaps[key] = Math.min(gaps[key] ?? Infinity, (await ticks(page, 4000, { execute: 'go()' })).longest);
+                    const held = await waitInView<number>(page, browserName, `document.querySelectorAll('#a > i').length`, 30000);
+                    expect(held, key).toBe(count);
+                    // left as written: nothing of it was read or rewritten (at c7672bb, 'all: unset;' with false)
+                    if (name === 'all:unset') expect(await inView<string>(page, browserName, `document.querySelector('#a > i').getAttribute('style')`)).toBe('all:unset');
+                }
             }
         }
-        console.log(`MEASURED ${browserName} C-2 longest host stall for one render of ${count} elements: <i style="all:unset"> true ${gaps['all:unset true']} ms, false ${gaps['all:unset false']} ms; plain <i> true ${gaps['plain true']} ms, false ${gaps['plain false']} ms`);
+        console.log(`MEASURED ${browserName} C-2 longest host stall for one render of ${count} elements, least of ${SAMPLES}: <i style="all:unset"> true ${gaps['all:unset true']} ms, false ${gaps['all:unset false']} ms; plain <i> true ${gaps['plain true']} ms, false ${gaps['plain false']} ms`);
         // at c7672bb: WebKit 10.3 s and Firefox 2.7 s with false, and the render was then refused
         expect(gaps['all:unset false']!).toBeLessThan(gaps['plain false']! * 2 + 300);
     });
@@ -270,14 +260,24 @@ test.describe('C-7: every -webkit- part of the media and form controls is in the
 // A one-pixel PNG, for an origin the view's policy admits (served by the test, never by a network).
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
-// Renders `perRender` <img> into #a as fast as the view acknowledges them, for 12 s: each render's URLs new, `prefix`
-// followed by the render's number and the image's.
+// The flood's period: a render of VIEW_MAX_URLS new URLs is applied, and the next waits until the load budget has
+// refilled, VIEW_MAX_URLS / VIEW_URLS_PER_SECOND later (5 s). Its cost to the host page comes in that period (measured,
+// per 500 ms on Chromium: about 2.5 s busy, then about 1.5 s idle), so a window shorter than the period reads its busy
+// part as the long-run share. Measured over whole periods: the best of 2 windows of one period each, after the warm-up.
+const PERIOD_MS = (VIEW_MAX_URLS / VIEW_URLS_PER_SECOND) * 1000;
+const FLOOD_WINDOWS = { windows: 2, ms: PERIOD_MS };
+const FLOOD_MS = WARMUP_MS + FLOOD_WINDOWS.windows * PERIOD_MS + 1000;
+
+// Renders `perRender` <img> into #a as fast as the view acknowledges them, for FLOOD_MS: each render's URLs new,
+// `prefix` followed by the render's number and the image's.
 const imageFlood = (prefix: string, perRender: number) => `
     sandboxView.render('<div id="a"></div><p id="b"></p>');
+    let n = 0; // across pauses: a resumed flood's URLs stay new
     globalThis.flood = () => {
-        let n = 0;
-        const end = Date.now() + 12000;
+        globalThis.stop = false;
+        const end = Date.now() + ${FLOOD_MS};
         const step = () => {
+            if (globalThis.stop) return;
             let html = '';
             for (let i = 0; i < ${perRender}; i++) html += '<img src="${prefix}' + n + '_' + i + '">';
             n++;
@@ -318,6 +318,13 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
     // A refused source: the reviewers' 6500 <img> per render (21–45% busy at c7672bb). An admitted origin: as many as the
     // view may hold, VIEW_MAX_URLS per render (the reviewers' 6500 are refused whole now), served by the test, and by the
     // e2e server itself (loopback http:, which WebKit upgrades to https: and then fails: its numbers are a failed load's).
+    //
+    // The share is the host page's busy share over its own idle baseline, measured as view-bound.spec.ts measures the
+    // bound (./host-share.ts: the best of short windows, each between two idle baselines taken with the flood paused,
+    // so that another process's load on the machine is in the baseline as in the window), and bounded by the
+    // statement's (a) for a flood that loads (docs/API.md, "The view's cost to the host page": TIME_SHARE + LOAD_SHARE,
+    // 40%), without view-bound's 10-point margin. One window on each side reads a loaded machine's load as the view's
+    // (T7).
     for (const [name, prefix, config, perRender] of [
         ['a refused source', 'https://r.example/', {}, 6500],
         ['an admitted origin', 'https://a.example/', { origins: { images: ['https://a.example'] } }, VIEW_MAX_URLS],
@@ -328,12 +335,12 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
             await page.route(/^https?:\/\/a\.example(:\d+)?\//, route => route.fulfill({ body: PNG, contentType: 'image/png' })); // never the network
             await mountEntry(sandbox, imageFlood(prefix, perRender), config);
             await page.waitForTimeout(300);
-            const idle = await countTicks(page, 8000);
-            await sandbox.run('flood()');
-            await page.waitForTimeout(1000);
-            const loaded = await countTicks(page, 8000);
-            console.log(`MEASURED ${browserName} M-2 ${name}, renders of ${perRender} <img>: host ticks in 8 s: idle ${idle}, under the flood ${loaded} (${Math.round((1 - loaded / idle) * 100)}% busy)`);
-            expect(loaded).toBeGreaterThan(idle * 0.7);
+            // each window of one period between two idle baselines, the flood paused for them, for a period (its loads end)
+            const { idle, loaded, busy, meanBusy } = await interleavedShare(page, { resume: () => sandbox.run('flood()'), pause: () => sandbox.run('globalThis.stop = true') }, FLOOD_WINDOWS, WARMUP_MS, PERIOD_MS);
+            await sandbox.run('globalThis.stop = true');
+            const bound = TIME_SHARE + LOAD_SHARE;
+            console.log(`MEASURED ${browserName} M-2 ${name}, renders of ${perRender} <img>: host ticks: idle ${idle.count} per ${IDLE_MS} ms (best of ${IDLE_WINDOWS}), under the flood ${loaded.count} per ${FLOOD_WINDOWS.ms} ms (best of ${FLOOD_WINDOWS.windows}, longest gap ${loaded.longest} ms): ${Math.round(busy * 100)}% busy (mean of the windows ${Math.round(meanBusy * 100)}%); bound ${Math.round(bound * 100)}%`);
+            expect(busy).toBeLessThanOrEqual(bound);
         });
     }
 
@@ -385,23 +392,11 @@ test.describe('M-6: the default call budget leaves the host page its share', () 
             await mountEntry(sandbox, 'void 0');
             await sandbox.exposeHost('noop', '() => 1');
             await page.waitForTimeout(300);
-            const idle = await countTicks(page, 6000);
-            await sandbox.run(code);
-            await page.waitForTimeout(500);
-            const gaps = await page.evaluate(() => new Promise<{ ticks: number; longest: number }>(resolve => {
-                let ticks = 0;
-                let last = performance.now();
-                let longest = 0;
-                const timer = setInterval(() => {
-                    ticks++;
-                    const now = performance.now();
-                    longest = Math.max(longest, now - last);
-                    last = now;
-                }, 10);
-                setTimeout(() => { clearInterval(timer); resolve({ ticks, longest: Math.round(longest) }); }, 6000);
-            }));
-            console.log(`MEASURED ${browserName} M-6 ${name} at the default budget: host ticks in 6 s: idle ${idle}, under the calls ${gaps.ticks} (${Math.round((1 - gaps.ticks / idle) * 100)}% busy), longest gap ${gaps.longest} ms`);
-            expect(gaps.ticks).toBeGreaterThan(idle * 0.7);
+            // windows of 2 s: whole periods of the bursts (one a second)
+            const share = await busyShare(page, () => sandbox.run(code), { windows: 2, ms: 2000 });
+            console.log(`MEASURED ${browserName} M-6 ${name} at the default budget: ${describeShare(share)}`);
+            // no documented share for calls (docs/API.md: the call budgets do not touch the view): the spec's own 30% stands
+            expect(share.busy).toBeLessThan(0.3);
         });
     }
 });

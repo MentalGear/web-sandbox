@@ -199,7 +199,10 @@ describe('FileStore', () => {
         }
     });
 
-    it('caps the resulting store, not the batch: replacing a file frees its old size', () => {
+    // An explicit budget for fixed work (backlog T6's class): the quota is the test's subject, so it registers files of
+    // MAX_TOTAL_BYTES / 2 (4 MiB) five times, each copied and measured. 1.3 s in a full idle run, 2.7 s at load average
+    // 14, past 5 s once there. 20 times the idle cost.
+    it('caps the resulting store, not the batch: replacing a file frees its old size', { timeout: 30000 }, () => {
         const store = new FileStore();
         const half = MAX_TOTAL_BYTES / 2;
         store.register({ 'a.bin': new Uint8Array(half), 'b.bin': new Uint8Array(half) });
@@ -647,7 +650,9 @@ describe('FileStore.snapshot: delivery order and reference cycles (PR4)', () => 
 });
 
 describe('FileStore: the quota counts what stylesheet references add (PR4)', () => {
-    it('each reference that could name a file costs its path, the edit overhead and the blob: URL that replaces it, at registration, whether or not its target is registered', () => {
+    // An explicit budget for fixed work (backlog T6's class): it fills the store to MAX_TOTAL_BYTES (8 MiB) twice. 1.5 s in
+    // a full idle run, 2.4 s at load average 14. 20 times the idle cost.
+    it('each reference that could name a file costs its path, the edit overhead and the blob: URL that replaces it, at registration, whether or not its target is registered', { timeout: 30000 }, () => {
         const store = new FileStore();
         const css = 'a { b: url(i.svg); c: url(missing/x.svg); d: url(https://cdn.example/x.svg); e: url(i.svg?v=1) }';
         store.register({ 's.css': css });

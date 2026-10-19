@@ -1,6 +1,7 @@
 import { test, expect, type SandboxDriver } from './fixture';
 import type { MountConfig } from './fixture';
 import { useRecorder } from './recorder';
+import { busyShare, describeShare, MARGIN } from './host-share';
 
 const recorder = useRecorder();
 
@@ -115,19 +116,14 @@ test.describe('R3-3: byte budgets on log lines and RPC messages', () => {
     test('strict mode: a 3 s flood of maximal log lines (64 strings of 64 Ki characters each) leaves the host page responsive', async ({ sandbox, page, browserName }) => {
         test.setTimeout(30000);
         expect(await sandbox.mount({ mode: 'strict', scriptUnsafe: true })).toBe('ready');
-        const countTicks = () => page.evaluate(() => new Promise<number>(resolve => {
-            let count = 0;
-            const timer = setInterval(() => count++, 10);
-            setTimeout(() => { clearInterval(timer); resolve(count); }, 2500);
-        }));
-        const idle = await countTicks(); // the control: the same page with the guest idle
-        await sandbox.run(`const s = 'x'.repeat(65536); const args = new Array(64).fill(s); const end = Date.now() + 3000;
+        // the control: the same page with the guest idle; then the 3 s flood, measured within it (./host-share.ts)
+        const share = await busyShare(page, () => sandbox.run(`const s = 'x'.repeat(65536); const args = new Array(64).fill(s); const end = Date.now() + 3000;
             while (Date.now() < end) console.log(...args);
-            setTimeout(() => console.log('R33 flood done'), 1100); // the budget refills: a line right after a flood is dropped`);
-        const ticks = await countTicks();
+            setTimeout(() => console.log('R33 flood done'), 1100); // the budget refills: a line right after a flood is dropped`), { windows: 2, ms: 1250 }, 300);
         await sandbox.waitForLog('R33 flood done', 10000);
-        console.log(`MEASURED ${browserName} host ticks (10 ms interval) in 2.5 s: idle ${idle}, during a log flood ${ticks}`);
-        expect(ticks).toBeGreaterThan(idle * 0.8); // at 5ede7ba: Firefox 47 of 242, WebKit never finished; now within a few ticks of idle on all three
+        console.log(`MEASURED ${browserName} R3-3 during a log flood: ${describeShare(share)}`);
+        // docs/API.md: "a flood never reaches the host page's thread", so nothing past the measure's own margin
+        expect(share.busy).toBeLessThanOrEqual(MARGIN);
     });
 });
 

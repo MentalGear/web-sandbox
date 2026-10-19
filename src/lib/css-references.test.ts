@@ -291,12 +291,25 @@ describe('cssUrlReferences: guarantees', () => {
         }
     });
 
-    it('runs in linear time: 8 MiB of references in well under a second', () => {
-        const css = 'a{b:url(x.png)}/*c*/"s"'.repeat(Math.floor(8 * 1024 * 1024 / 23));
-        const started = performance.now();
-        const found = cssUrlReferences(css);
-        expect(found.length).toBe(Math.floor(8 * 1024 * 1024 / 23));
-        expect(performance.now() - started).toBeLessThan(3000);
+    // Linear, as a ratio measured in the same run (backlog T9's class: "under a second" measured the machine): 8 times the
+    // references take at most 3 times 8 as long, the best of 3 runs of each size against noise. A scan quadratic in the
+    // text takes about 64 times as long.
+    it('runs in linear time: 8 MiB of references take about 8 times as long as 1 MiB, not 64', { timeout: 120000 }, () => {
+        const best = (bytes: number) => {
+            const n = Math.floor(bytes / 23);
+            const css = 'a{b:url(x.png)}/*c*/"s"'.repeat(n);
+            let fastest = Infinity;
+            for (let run = 0; run < 3; run++) {
+                const started = performance.now();
+                const found = cssUrlReferences(css);
+                fastest = Math.min(fastest, performance.now() - started);
+                expect(found.length).toBe(n);
+            }
+            return fastest;
+        };
+        const small = best(1024 * 1024);
+        const large = best(8 * 1024 * 1024);
+        expect(large / small, `best of 3: ${small.toFixed(1)} ms for 1 MiB, ${large.toFixed(1)} ms for 8 MiB`).toBeLessThan(24);
     });
 });
 

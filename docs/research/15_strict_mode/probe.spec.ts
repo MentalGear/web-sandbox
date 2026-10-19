@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { chromiumOutOfProcessFrames } from '../../../test/e2e/strict-view';
+import { lag, oneApplyStall, quietStall, startLag, stopLag } from '../../../test/e2e/host-share';
 import {
     BOOTSTRAP, INLINE_SCRIPT_POLICY, Listener, UdpListener, clickInView, escapeAttribute, frameStates, hashSource,
     iceProbe, inFrames, inView, inbox, init, markers, mount, viewPolicy, workerResults,
@@ -444,10 +445,9 @@ test('P6 scripts in template content: moved never run; cloned SVG scripts do (Ch
  * Host-side meters, in the host page: the largest gap of a 10 ms interval timer (event-loop lag),
  * and host → worker → host round trips on the logic port every 100 ms (the watchdog's path).
  */
-const startMeters = (page: Page) => page.evaluate(() => {
+const startMeters = async (page: Page) => { await startLag(page); await page.evaluate(() => {
     const w = window as any;
-    w.meter = { lagMax: 0, last: performance.now(), pingMax: 0, pings: 0, noPong: 0, on: true };
-    w.meterTimer = setInterval(() => { const now = performance.now(); w.meter.lagMax = Math.max(w.meter.lagMax, now - w.meter.last - 10); w.meter.last = now; }, 10);
+    w.meter = { pingMax: 0, pings: 0, noPong: 0, on: true };
     (async () => {
         while (w.meter.on) {
             const rtt = await w.ping(5000);
@@ -455,13 +455,17 @@ const startMeters = (page: Page) => page.evaluate(() => {
             await new Promise(r => setTimeout(r, 100));
         }
     })();
-});
-const stopMeters = (page: Page) => page.evaluate(() => {
-    const w = window as any;
-    w.meter.on = false;
-    clearInterval(w.meterTimer);
-    return { hostLagMaxMs: Math.round(w.meter.lagMax), workerPingMaxMs: Math.round(w.meter.pingMax), pings: w.meter.pings, noPong: w.meter.noPong };
-});
+}); };
+const stopMeters = async (page: Page) => {
+    const hostLagMaxMs = await lag(page);
+    await stopLag(page);
+    const pings = await page.evaluate(() => {
+        const w = window as any;
+        w.meter.on = false;
+        return { workerPingMaxMs: Math.round(w.meter.pingMax), pings: w.meter.pings, noPong: w.meter.noPong };
+    });
+    return { hostLagMaxMs, ...pings };
+};
 
 /** Worker body: renders `expr` with one render in flight (waits for VIEW_ACK), for `ms`. */
 const ackedFlood = (expr: string, ms: number) => `async function main() {
@@ -478,6 +482,14 @@ const ONE_WORD_64KIB = `'<p>' + 'x'.repeat(65536 - 32) + '</p>'`;
 test('P7 render flood: host responsiveness while the worker renders as fast as it can', async ({ page, browserName }) => {
     test.setTimeout(180000);
     const m: Record<string, any> = {};
+    // The upper bounds are relative to this run (test/e2e/host-share.ts, T9): one apply of each render as it costs here
+    // and now (calibrated before and after), and the machine's own stall, since a number per engine would read a loaded
+    // machine's stalls as the view's. The lower bounds (the view shares the host's thread) are numbers: a loaded machine
+    // only lengthens a stall.
+    const renders: Record<string, string> = { oneWord1MiB: new Function(`return ${ONE_WORD_1MIB}`)(), markup1MiB: new Function(`return ${MARKUP_1MIB}`)(), oneWord64KiB: new Function(`return ${ONE_WORD_64KIB}`)() };
+    const applyBound: Record<string, number> = {};
+    for (const [key, html] of Object.entries(renders)) applyBound[key] = (await oneApplyStall(page, html, 2)).bound;
+    const quiet = await quietStall(page);
 
     // (a) a burst of 200 x 1 MiB renders, no flow control: the view coalesces to one apply per frame
     {
@@ -514,14 +526,13 @@ test('P7 render flood: host responsiveness while the worker renders as fast as i
         const t = Date.now();
         await page.evaluate(() => document.getElementById('outer')!.remove());
         const removeMs = Date.now() - t;
-        await page.evaluate(() => {
-            const w = window as any;
-            w.meter = { lagMax: 0, last: performance.now() };
-            w.meterTimer = setInterval(() => { const now = performance.now(); w.meter.lagMax = Math.max(w.meter.lagMax, now - w.meter.last - 10); w.meter.last = now; }, 10);
-        });
+        await startLag(page);
         await page.waitForTimeout(1500);
-        m.endless = { removeMs, hostLagAfterMs: Math.round(await page.evaluate(() => (window as any).meter.lagMax)) };
+        m.endless = { removeMs, hostLagAfterMs: await lag(page) };
     }
+    for (const [key, html] of Object.entries(renders)) applyBound[key] = Math.max(applyBound[key]!, (await oneApplyStall(page, html, 1)).bound);
+    const quietAfter = Math.max(quiet, await quietStall(page));
+    m.bounds = { applyBound, quiet: quietAfter };
     log(browserName, 'P7', m);
 
     // All engines: every render arrives; the view applies only a handful (latest wins per frame);
@@ -531,19 +542,20 @@ test('P7 render flood: host responsiveness while the worker renders as fast as i
     expect(m.burst.stats.applied).toBeLessThanOrEqual(20);
     const sharedThread = browserName !== 'chromium' || !m.outOfProcess;
     expect(m.endless.removeMs).toBeLessThan(browserName === 'webkit' || (browserName === 'chromium' && sharedThread) ? 5000 : 1000);
-    expect(m.endless.hostLagAfterMs).toBeLessThan(250);
+    expect(m.endless.hostLagAfterMs).toBeLessThan(quietAfter + 250);
 
     if (browserName === 'chromium' && !sharedThread) {
         // measured: the sandboxed frames run out of process — host lag ≤ ~30 ms in every case
         for (const k of ['burst', 'ackedOneWord1MiB', 'ackedMarkup1MiB', 'ackedOneWord64KiB']) {
-            expect(m[k].hostLagMaxMs, k).toBeLessThan(150);
+            expect(m[k].hostLagMaxMs, k).toBeLessThan(quietAfter + 150);
             expect(m[k].workerPingMaxMs, k).toBeLessThan(500);
         }
     } else if (browserName === 'chromium') {
         // measured (headless shell, view in the host's process): the view shares the host's thread like Firefox's;
         // a 1 MiB apply ≈ 0.25–0.5 s of host lag, removal of a flooding frame ≈ 1 s; flow control still bounds it
-        for (const k of ['ackedOneWord1MiB', 'ackedMarkup1MiB']) expect(m[k].hostLagMaxMs, k).toBeLessThan(1500);
-        expect(m.ackedOneWord64KiB.hostLagMaxMs).toBeLessThan(150);
+        expect(m.ackedOneWord1MiB.hostLagMaxMs).toBeLessThan(applyBound.oneWord1MiB!);
+        expect(m.ackedMarkup1MiB.hostLagMaxMs).toBeLessThan(applyBound.markup1MiB!);
+        expect(m.ackedOneWord64KiB.hostLagMaxMs).toBeLessThan(applyBound.oneWord64KiB!);
     } else if (browserName === 'firefox') {
         // measured: the view shares the host's thread; one 1 MiB apply ≈ 150–265 ms of host lag; the
         // unacknowledged burst holds the worker round trip at 0.85–1.1 s; 64 KiB renders ≈ 15–55 ms
@@ -553,8 +565,9 @@ test('P7 render flood: host responsiveness while the worker renders as fast as i
         // cases. The raw numbers are logged (MEASURED) on every run.
         expect(m.burst.workerPingMaxMs).toBeGreaterThan(Math.max(m.ackedOneWord1MiB.workerPingMaxMs, m.ackedMarkup1MiB.workerPingMaxMs));
         expect(Math.max(m.ackedOneWord1MiB.hostLagMaxMs, m.ackedMarkup1MiB.hostLagMaxMs)).toBeGreaterThan(50);
-        for (const k of ['ackedOneWord1MiB', 'ackedMarkup1MiB']) expect(m[k].hostLagMaxMs, k).toBeLessThan(1000);
-        expect(m.ackedOneWord64KiB.hostLagMaxMs).toBeLessThan(150);
+        expect(m.ackedOneWord1MiB.hostLagMaxMs).toBeLessThan(applyBound.oneWord1MiB!);
+        expect(m.ackedMarkup1MiB.hostLagMaxMs).toBeLessThan(applyBound.markup1MiB!);
+        expect(m.ackedOneWord64KiB.hostLagMaxMs).toBeLessThan(applyBound.oneWord64KiB!);
     } else {
         // measured: the view shares the host's thread; ONE 1 MiB single-word apply blocks the host for
         // ≈ 1.2–1.6 s even with one render in flight; 1 MiB of ordinary markup ≈ 0.3–0.43 s; a 64 KiB
@@ -564,7 +577,9 @@ test('P7 render flood: host responsiveness while the worker renders as fast as i
         // are this container's; a CI runner measured 0.26–0.28 s for the same renders, so lower bounds in milliseconds
         // would assert the machine, not the engine. The raw numbers are logged (MEASURED) on every run.
         expect(Math.max(m.burst.hostLagMaxMs, m.ackedOneWord1MiB.hostLagMaxMs)).toBeGreaterThan(50);
-        for (const k of ['burst', 'ackedOneWord1MiB', 'ackedMarkup1MiB', 'ackedOneWord64KiB']) expect(m[k].hostLagMaxMs, k).toBeLessThan(3000);
+        for (const k of ['burst', 'ackedOneWord1MiB']) expect(m[k].hostLagMaxMs, k).toBeLessThan(applyBound.oneWord1MiB!);
+        expect(m.ackedMarkup1MiB.hostLagMaxMs).toBeLessThan(applyBound.markup1MiB!);
+        expect(m.ackedOneWord64KiB.hostLagMaxMs).toBeLessThan(applyBound.oneWord64KiB!);
     }
 });
 

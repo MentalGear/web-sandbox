@@ -3,9 +3,10 @@ import type { SandboxConfig, SandboxConfigOptions } from '@src/host';
 import type { SandboxOrigins } from '@src/lib/csp/origins';
 import type { SandboxViolation } from '@src/lib/violation';
 import type { FetchRecord } from '@src/lib/fetch-bridge';
+import { E2E_ORIGIN } from './server';
 
-// The e2e server's origin; a local config that runs a second server on another port sets WEB_SANDBOX_E2E_ORIGIN.
-export const ORIGIN = process.env.WEB_SANDBOX_E2E_ORIGIN || 'http://localhost:4444';
+// The e2e server's origin: the one serving this checkout (server.ts; 4444 in CI, a port of the checkout's own locally).
+export const ORIGIN = E2E_ORIGIN;
 export const HARNESS = `${ORIGIN}/test/e2e/harness.html`;
 
 // What the specs need to run anything at all: scripts in the frame and execute(), in cooperative mode (the mode most
