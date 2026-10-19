@@ -76,8 +76,10 @@ text stays constant) and hands the worker the logic and render ports.
   and a URL in rendered markup is kept only where every engine's policy check admits it (its exact origin is listed,
   or it is an image's `http:` URL whose `https:` upgrade is, off a loopback host), else dropped by the renderer before
   the browser sees it and, an `http(s)` one, reported as a violation; the ones it keeps are bounded in number
-  (`VIEW_MAX_URLS`), and every load, as the renderer kept it or as the browser reports it (resource timing, CSS-borne
-  loads included, and violations), per second (`VIEW_URLS_PER_SECOND`) and in distinct URLs over the view's life
+  (`VIEW_MAX_URLS`), and every load, charged before the browser can start it (a kept URL attribute when it is
+  rendered, what applied CSS can load, counted from its text, when it is applied; backlog S73) and otherwise as the
+  browser reports it (resource timing, CSS-borne loads included, and violations), per second (`VIEW_URLS_PER_SECOND`)
+  and in distinct URLs over the view's life
   (`VIEW_MAX_DISTINCT_URLS`). The renderer's prediction may only err toward refusing, and no bound depends on it.
   No WebRTC is reachable. The view cancels the default of every click on or inside a link (HTML and SVG `a`,
   `area`, anything with an `href`, including fragment links, which resolve against the inherited `about:blank`
@@ -298,7 +300,8 @@ Proof: `test/e2e/review-policy.spec.ts`, `test/e2e/review-strict.spec.ts`, the s
   script reads `Script error.` (no error object), while the Worker object in the view still gets its text. So the
   prelude logs the later errors it can describe and leaves a muted one to the view, which logs it as the same
   `Uncaught …` guest line (`GUEST_UNCAUGHT` on the view port). The view tells the entry's own errors (which end the
-  sandbox) from later ones without trusting the order of two channels: before `VIEW_STARTED` only the entry's can
+  sandbox) from later ones without trusting the order of two channels (*superseded 2026-10-19, S75: the prediction
+  below was wrong for WebKit; the end of the entry is now a marker error, in the order of the errors themselves*): before `VIEW_STARTED` only the entry's can
   arrive (a later describable one is cancelled in the worker, a muted one needs the revocation, which follows
   `VIEW_STARTED`), and `VIEW_STARTED` carries how many of the Worker object's errors were the entry's (errors on
   one Worker object arrive in the order they were raised). Executed code's late errors, muted in WebKit's worker
@@ -715,3 +718,32 @@ link it instead of restating it. A cost of the view outside both the bound and i
 Tests: `test/e2e/view-bound.spec.ts` (the canonical floods against (a), and (b), on every engine;
 `WEB_SANDBOX_SOAK=1` for longer windows and the (d) measurements), `test/unit/view-bound.test.ts` (every constant the
 statement names exists and has its value).
+
+## Amendment (2026-10-19): the end of the entry, read from the order of one channel
+
+**When**: backlog S75, PR #47's CI (`review-round-1.spec.ts`, "strict mode: a later uncaught error and an unhandled
+rejection …", WebKit: `terminated` with "the guest entry failed to start").
+
+**What was wrong** (class B, a browser decision re-derived). The follow-up amendment of 2026-10-14 (C1) told the entry's
+own errors from later ones by `VIEW_STARTED`, on the render port, on the prediction that an error which reaches the
+view's Worker object before it can only be the entry's: a later error the worker can describe is cancelled there, and a
+muted one "needs the revocation, which follows `VIEW_STARTED`". WebKit refutes the second half. It mutes, inside the
+worker, the errors of code compiled from a string (`Function`, `eval`, so every `execute()`) from the start, before any
+revocation, and leaves their text to the Worker object; and its render-port messages can arrive after a later error on
+the Worker object. Measured before the fix: `execute()`'s `setTimeout(() => { throw … })` ended the sandbox 2–3 runs in
+100–200 on a loaded machine; an entry's `queueMicrotask` of compiled code that throws, 8 runs in 8; a timer of it, 5 in 8.
+
+**Decision**: the end of the entry is read from the order of the Worker object's errors alone, which arrive in the order
+they were raised. The line after the entry raises the build's marker error (its message is the per-build marker name,
+`entryDoneName`, which the view gets in `INIT_VIEW`), through `reportError` so that it is raised before any microtask the
+entry queued (Firefox and WebKit report an error thrown at the end of a script only after them). The prelude stops it, so
+no listener of the guest's sees it, and leaves it uncancelled; the view cancels it and posts nothing, and looks for it
+only until it came, in the first characters of the text. Every error before
+it is the entry's; every error after it is later. An entry that threw never reaches the marker, so its errors all end the
+sandbox, as before. `VIEW_STARTED` now only triggers the revocation and carries no count. A guest that reads the marker's
+name and raises its text itself can only spare its own failing entry the end it would have had (as calling the marker
+early could, ST4); it cannot make a later error end the sandbox.
+
+Tests: `test/unit/entry-end-marker.test.ts` (every place `VIEW_STARTED` can arrive among the errors, both engines' marker
+texts; the prelude raises the marker at once and stops it), `test/e2e/strict.spec.ts` ("the entry": errors of a
+microtask and of compiled code the entry queued, on every engine; failed on WebKit before), `test/e2e/review-round-1.spec.ts`.

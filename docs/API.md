@@ -855,11 +855,13 @@ serialization: text, attributes and markup alike), and at most 1000 URL-bearing 
 and `<link>`'s `href`, whatever they name), counted over the document a render would leave (what is outside the target
 stays): a render past any of them is dropped as a whole, the next one still applies, and the guest's log says
 `[Sandbox] sandboxView.render: the view refused a render: …`. The view parses at most 1048576 characters of markup
-per second, renders it refused included. It makes at most 200 loads per second: every URL-bearing attribute a render keeps,
-charged when it is rendered, and every other load its document's resource timing reports (a CSS background, a font, a
-stylesheet, whatever named it: `url()`, `image-set()`, `@import`) or its policy refused, charged when the browser
-reports it, which is once a response has ended (a slow server lets the renders made meanwhile through first: Firefox
-made 1.8 times the rate under the tests' slow route). What the browser does with a URL once it is rendered, loading
+per second, renders it refused included. It makes at most 200 loads per second, each charged before the browser can
+start it: every URL-bearing attribute a render keeps, when it is rendered, and what the CSS an operation applies can
+load, when it is applied, counted from the text of its style attributes and `<style>` elements (each `url(`,
+`image-set(`, `image(`, `cross-fade(` and `src(`, in any case or escape, comments and strings included, and 200 for
+each `@import` and stylesheet `<link>`). A load its document's resource timing reports (a CSS background, a font, a
+stylesheet, whatever named it), or one its policy refused, that no URL attribute charged takes from what the CSS
+prepaid, of which at most a second's worth is kept, and is charged once that is spent. What the browser does with a URL once it is rendered, loading
 and decoding it, is no work of the view's, so its time budget cannot see it. Over its whole life one view loads at most
 10000 distinct URLs (each stays in the engine's caches while the view lives; WebKit's host page stalled 1.2 s near
 8 000 and 8.8 s near 43 000): a render whose URL attributes would take it past that is refused (`[Sandbox]
@@ -1057,8 +1059,28 @@ like any other), the view's share of the thread, averaged over runs long against
 That is 20% for a view that loads nothing and 40% for one that loads at the rate, on every engine where the view shares
 the thread. It is an average, not a cap on each second: an operation is charged after it ran, so a single second can
 hold more (398–553 ms of operations of at most 200 ms, simulated: [research 17](research/17_formal_methods/README.md)).
-A load is charged when its response ends, so behind a slow server the renders made meanwhile get through first (Firefox
-made 1.8 times the rate under the tests' slow route, review round 5, M-3); the long-run rate holds.
+
+Every load is charged before the browser can start it: a render's URL attributes when it is rendered, and what the CSS
+an operation applies can load when the operation is applied, counted from that CSS's text (each `url(`, `image-set(`,
+`image(`, `cross-fade(` and `src(`, and a second's worth for each `@import` and stylesheet `<link>`); a load the
+platform reports later takes from that prepayment, kept up to a second's worth, and is charged only past it. An
+operation is applied only while the load budget is not in debt. So, with R the rate (`VIEW_URLS_PER_SECOND`, 200), the
+loads the view's document starts over any t seconds number at most
+
+- R·t + R: the rate, and the second's worth the budget holds;
+- plus one operation's own charge, which may take the budget into debt: at most `VIEW_MAX_URLS` attributes and its
+  CSS's count;
+- plus R: the prepayment carried into the interval, which loads reported in it take before they are charged;
+- plus what CSS already in the view loads past what was prepaid for it (a rule that matches only later: elements a
+  later render inserts, a media query, a state such as `:hover`; an `image-set()` that picks another image when the
+  resolution changes; a linked or imported sheet past its second's worth), charged once the platform reports it, and
+  bounded only by that CSS's text.
+
+The server's latency is in none of the first three: nothing an operation can load waits for its response to be charged
+(review round 5, M-3, where it did: behind a slow server every render applied meanwhile got through, and Firefox made
+5 000 loads over an 11.1 s flood). A load the browser itself defers (an image with `loading="lazy"` until it is
+scrolled to, media until it plays) is charged when it is rendered and starts later: at most what the body holds of
+them, `VIEW_MAX_URLS`.
 
 Measured, the canonical floods (busy share). The suite asserts each against the bound plus 10 points, the measure's own
 error: a 10 ms interval loses a tick for every slot a task straddles, so a stream of short tasks reads up to one tick
@@ -1102,8 +1124,9 @@ render, made at once, ran 18.3 s, 43.5 s and 34.7 s later (the debt: five times 
 budget held) and stalled the host page for 4.0 s, 9.3 s and 6.5 s; the sandbox ended, and a third render queued behind
 it never ran. What one operation within the caps can cost is listed in (d), the documented single-operation stalls.
 
-One render's loads add to it, after the operation: up to `VIEW_MAX_URLS` (1000) of them, about a second of the host
-page's thread at most, and the next operation waits until the load budget has repaid them. Measured at
+One render's loads add to it, after the operation: up to `VIEW_MAX_URLS` (1000) URL attributes, about a second of the
+host page's thread at most, and what its CSS can load, which its count bounds ((a)); all of them are charged when the
+operation is applied, and the next operation waits until the load budget has repaid them. Measured at
 `VIEW_MAX_DISTINCT_URLS`, the host page's longest stall: Chromium 297 ms, Firefox 654 ms, WebKit 809 ms (review round 5,
 M-4).
 
@@ -1116,7 +1139,7 @@ The first three rows are (a)'s and (b)'s; the rest bound what the view's meter c
 | `VIEW_APPLY_MS_PER_SECOND` | 200 | (a): milliseconds of the view's own time per second, on average; an operation past it waits. |
 | `VIEW_MAX_OPERATION_MS` | 2000 | (b): milliseconds of one operation, as the meter measures it; past it the operation is an overrun, charged in full. |
 | `VIEW_OVERRUN_WINDOW_MS` | 300000 | (b): the second overrun within this many milliseconds of the one before it ends the sandbox. |
-| `VIEW_URLS_PER_SECOND` | 200 | Loads per second: every URL-bearing attribute a render keeps, when it is rendered, and every load the document's resource timing reports and every violation the view observes that no render charged. A render past it applies; the next operation waits. |
+| `VIEW_URLS_PER_SECOND` | 200 | Loads per second, each charged before it can start: every URL-bearing attribute a render keeps, and what the CSS an operation applies can load (its `url(`, `image-set(`, `image(`, `cross-fade(` and `src(` tokens, and a second's worth per `@import` and stylesheet `<link>`), when the operation is applied. A load the document's resource timing reports, or a violation the view observes, that no URL attribute charged takes from that prepayment (at most a second's worth is kept), and is charged once it is spent. An operation past it applies; the next one waits. The bound over any interval: (a). |
 | `VIEW_MAX_URLS` | 1000 | URL-bearing attributes the view's body holds: what one render can make the browser load. |
 | `VIEW_MAX_DISTINCT_URLS` | 10000 | Distinct URLs one view loads over its life: what stays in the engine's caches (WebKit's stalls grew with it: 1.2 s near 8 000, 8.8 s near 43 000). |
 | `VIEW_MAX_ELEMENTS` | 50000 | Elements the body holds: what any restyle, relayout or repaint, seen or not, covers. |

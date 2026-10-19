@@ -423,6 +423,9 @@ interface BootstrapFeatures {
 // What the host posts to a strict view with its two ports (INIT_VIEW).
 interface StrictInit {
     workerSource: string;
+    // The build's marker (entryDoneName): the worker's source ends the entry with its error, which tells the view the
+    // entry ran to its end, in the order of the Worker object's errors (backlog S75; in-sandbox-view.ts).
+    entryDone: string;
     viewFiles: FileSnapshotEntry[];
     html: string;
     autoResize: boolean;
@@ -1746,8 +1749,10 @@ export class WebSandbox extends ElementBase {
         this._warnAboutStrictHtml(html);
         const sandboxFlags = this._getSandboxFlags();
         const policy = this._guestPolicy(files);
+        const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)
         const strictInit: StrictInit = {
-            workerSource: this._getStrictWorkerSource(files, entrySource),
+            workerSource: this._getStrictWorkerSource(files, entrySource, marker),
+            entryDone: marker,
             viewFiles: files.filter(candidate => isViewFileType(candidate[1])), // never a type that opens as a document (broad review ST1)
             html,
             autoResize: this._autoResizeEnabled(),
@@ -1787,15 +1792,15 @@ export class WebSandbox extends ElementBase {
     // The worker's source in strict mode: the scope check, the globals allowlist, the comms script (bridge, logs, violations, execute,
     // the fetch bridge), sandboxFiles with every registered file, the strict prelude (hardening, sandboxView, the
     // ports), then the guest's entry in a function scope of its own, then the line that marks the entry as having
-    // run to its end. The entry's own scope (review C2): its top-level declarations are local to it, so none can
+    // run to its end (it raises the marker error that tells the view so: in-sandbox-view.ts). The entry's own scope
+    // (review C2): its top-level declarations are local to it, so none can
     // replace a global before the prelude has captured or deleted it; an entry that wants a global assigns it
     // (globalThis.x = …). `this` inside is the global object, as at a script's top level. The scope check
     // (assertEntryScoped) refuses to start a worker whose entry escaped that scope.
-    private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string): string {
+    private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string, marker = entryDoneName()): string {
         const features: BootstrapFeatures = { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET } };
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
-        const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)
         const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
         const prelude = '(function (g) {'
             + `(${assertEntryScoped.toString()})(g);`

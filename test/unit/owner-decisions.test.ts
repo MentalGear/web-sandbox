@@ -230,7 +230,7 @@ describe('R4-4: the strict view shows raster-image guest writes, minted by the v
             const render = workers[0]![1]!;
             const acks: unknown[] = [];
             render.onmessage = (event) => { if (event.data.type === 'VIEW_ACK') acks.push(event.data); };
-            render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+            render.postMessage({ type: 'VIEW_STARTED' });
             const host = view.port2;
             const fromView: any[] = [];
             host.onmessage = (event) => fromView.push(event.data);

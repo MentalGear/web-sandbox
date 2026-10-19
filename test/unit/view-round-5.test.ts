@@ -36,7 +36,9 @@ describe("N-2 (class G): the strict prelude's error listener reads the event onl
         } finally {
             EventTarget.prototype.addEventListener = add;
         }
-        w.__testEntryDone(); // the entry ran: every later error is the prelude's to cancel and log
+        // the entry ran: every later error is the prelude's to cancel and log. The marker raises the build's marker error
+        // (backlog S75); with no reportError on this stand-in global, by throwing it.
+        expect(() => w.__testEntryDone()).toThrow('__testEntryDone');
         return { onError: listeners['error']!, lines };
     };
     const raise = (onError: (event: Event) => void, message: string) => {
@@ -399,7 +401,7 @@ describe('M-4 (class P): one view loads at most VIEW_MAX_DISTINCT_URLS distinct 
         const render = workers[0]!.transfer[1]!;
         const acks: any[] = [];
         render.onmessage = (event) => { if (event.data?.type === 'VIEW_ACK') acks.push(event.data); };
-        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        render.postMessage({ type: 'VIEW_STARTED' });
         const send = async (markup: string, into: string) => {
             const before = acks.length;
             render.postMessage({ type: 'VIEW_RENDER', html: markup, into });

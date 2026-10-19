@@ -527,8 +527,9 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     `template`, SVG `use`, markers, filters or animation), so no nested frame exists and no checked attribute
     changes afterwards; the view holds at most 50 000 elements, 256 deep, 1 Mi characters and 1 000 URL-bearing
     attributes (`src`, `srcset`, `poster`, `<link>`'s `href`), parses at most 1 Mi characters of markup, makes at most 200
-    loads per second (every URL attribute it keeps, and every other load or refused load the browser reports for it,
-    CSS-borne ones included), loads at most 10 000 distinct URLs in its life, and ends the sandbox when an operation
+    loads per second, each charged before it can start (every URL attribute it keeps, and what the CSS it applies can
+    load, counted from its text; any other load or refused load the browser reports for it once that prepayment is
+    spent), loads at most 10 000 distinct URLs in its life, and ends the sandbox when an operation
     takes longer than 2 s for the second time within 5 minutes (the first is charged in full, and logged once); it shows only files that never open as
     a document (no SVG, HTML or XML; no `data:` images); a URL in rendered markup is kept only when it names a listed
     origin exactly (an image's `http:` URL may name a listed `https:` one), else dropped before the browser sees it,
