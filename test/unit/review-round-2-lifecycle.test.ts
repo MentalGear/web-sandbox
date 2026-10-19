@@ -128,7 +128,7 @@ describe('L-2: a delay of 2^31 ms or more waits; Infinity is off', () => {
         expect(found).toEqual([]);
         // rpc.ts, stringified into the guest, chains its own timer the same way
         const rpc = readFileSync('src/lib/rpc.ts', 'utf8');
-        expect(rpc).toMatch(/\bMAX_TIMER_DELAY = 2147483647\b/);
+        expect(rpc).toMatch(/\bMAX_TIMER_DELAY(?:: [^=]+)? = 2147483647\b/);
         expect([...rpc.matchAll(/\bsetTimer\(/g)]).toHaveLength(1);
         expect(rpc).toMatch(/setTimer\(\(\) => \{[^]*?\}, step\)/);
     });

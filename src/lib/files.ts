@@ -8,6 +8,7 @@
  */
 
 import { moduleSpecifierEdits, VIRTUAL_ROOT } from './module-specifiers';
+import type { Complete, Holds } from './utils';
 import { cssUrlReferences } from './css-references';
 import { virtualPathOf } from './markup-references';
 import { admits, type LoadKindName } from './load-kinds';
@@ -50,6 +51,10 @@ export interface FileInfo {
  * In the guest, every failed lookup is NOT_FOUND (in-sandbox-files.ts).
  */
 export type FileErrorCode = 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEEDED' | 'FILES_NOT_ALLOWED' | 'FILES_BUSY';
+
+/** Every FileErrorCode, as a value (S76): what docs/API.md's Files table lists, with the guest's NOT_FOUND. */
+export const FILE_ERROR_CODES = ['INVALID_PATH', 'INVALID_FILE', 'FILES_QUOTA_EXCEEDED', 'FILES_NOT_ALLOWED', 'FILES_BUSY'] as const satisfies readonly FileErrorCode[];
+type FileErrorCodesComplete = Holds<Complete<FileErrorCode, typeof FILE_ERROR_CODES>>;
 
 /**
  * The guest's view, published as the global `sandboxFiles` by the bootstrap (in-sandbox-files.ts) in

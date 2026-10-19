@@ -16,12 +16,9 @@ import { KIND_DIRECTIVES } from './csp/csp-generator';
  *      └─ view  srcdoc = CSP <meta> + referrer <meta> + ONE <script> (this file's bootstrap), no guest bytes
  *         └─ worker  new Worker(blob:) spawned by the view: the guest's logic, the bridge, sandboxView
  *
- * Three ports, all MessageChannels created per environment:
- *   logic   host ↔ worker   RPC, LOG, PING/PONG, VIOLATION (source 'logic'), EXECUTE — as in worker mode
- *   view    host ↔ view     VIEW_READY (the check-in), VIOLATION (source 'view'), RESIZE, GUEST_ERROR, GUEST_UNCAUGHT (bounded),
- *                           GUEST_TEXT_DROPPED (once),
- *                           WORKER_REFUSED, TRUSTED_TYPES_REFUSED, VIEW_PING/VIEW_PONG, VIEW_WRITE/VIEW_WRITTEN
- *   render  view ↔ worker   VIEW_STARTED, VIEW_RENDER, VIEW_TEXT, VIEW_SET, VIEW_ACK, VIEW_LISTEN, VIEW_EVENT — the host is not on this path
+ * Three ports, all MessageChannels created per environment: logic (host ↔ worker, as in worker mode), view (host ↔
+ * view) and render (view ↔ worker; the host is not on this path). The frames each carries, with their fields and
+ * bounds, are the frame table's (src/lib/frames.ts, FRAMES).
  * The render port is created by the view and handed to the library's worker prelude, which keeps it in a
  * closure and only ever uses primitives it captured before any guest code ran (A4): guest code cannot post
  * on it, so it cannot get past the flow control below.

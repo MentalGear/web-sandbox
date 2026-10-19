@@ -6,8 +6,7 @@ import { defineWebSandbox } from '@src/host';
 import { createBroker, RPC_MAX_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
-import { inSandboxFiles } from '@src/lib/in-sandbox-files';
-import { inSandboxView, inStrictWorker, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, VIEW_STILL_PSEUDO_ELEMENTS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
+import { RENDER_RULES, sanitizeRender, VIEW_OPTIONS, VIEW_STILL_PSEUDO_ELEMENTS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { workerBootstrap } from '@src/lib/worker-bootstrap';
 import { createGuestWrites } from '@src/lib/guest-writes';
@@ -15,6 +14,9 @@ import { FileStore } from '@src/lib/files';
 import { createFetchBridge, toFetchPolicy, type FetchRecord } from '@src/lib/fetch-bridge';
 import { LOG_EVENTS_PER_SECOND } from '@src/lib/sandbox-log';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
+import { stringifiedFor } from './stringified';
+
+const TYPEOF_SCANNED = await stringifiedFor('typeofRead');
 
 /**
  * Review round 4: each finding where the library's own logic decides, reproduced here first against the code it names
@@ -164,16 +166,10 @@ describe('C-1: a guest-controlled value is read once before it is posted, and ev
     });
 
     it('the source: no guest-realm function checks the type of a property and then reads it again in the same statement', () => {
-        // The class of C-1: `typeof x.p === 'string' ? use(x.p) : …` reads x.p twice, and a getter answers each read as it
-        // likes. Every function that runs in a guest realm or reads a guest's value before posting it is scanned.
-        const sources: [string, string][] = [
-            ['createBroker', createBroker.toString()],
-            ['inSandboxScript', inSandboxScript.toString()],
-            ['inSandboxFiles', inSandboxFiles.toString()],
-            ['inStrictWorker', inStrictWorker.toString()],
-            ['inSandboxView', inSandboxView.toString()],
-            ['sanitizeRender', sanitizeRender.toString()],
-        ];
+        // The class of R4:C-1: `typeof x.p === 'string' ? use(x.p) : …` reads x.p twice, and a getter answers each read as
+        // it likes. Every function that runs in a guest realm or reads a guest's value before posting it is scanned: the
+        // realms registry's (src/lib/realms.ts, STRINGIFIED: `typeofRead`).
+        const sources: [string, string][] = TYPEOF_SCANNED.map(([name, fn]) => [name, fn.toString()]);
         const offenders: string[] = [];
         for (const [name, source] of sources) {
             const tokens = tokenize(source);

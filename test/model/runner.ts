@@ -147,6 +147,12 @@ export async function runSequence(sequence: Sequence, origin = location.origin):
             fail(error);
         }
     };
+    // The reducer throws on an input its declaration does not admit (src/lib/lifecycle.ts, LC_INPUTS), in whatever platform
+    // callback delivered it: the run fails on it too.
+    const onError = (event: ErrorEvent) => {
+        if (String(event.message).includes('[Sandbox] lifecycle:')) fail(`an input the declaration does not admit: ${event.message}`);
+    };
+    addEventListener('error', onError);
 
     for (const type of EVENTS) {
         el.addEventListener(type, (event: CustomEvent) => guard(() => {
@@ -290,6 +296,7 @@ export async function runSequence(sequence: Sequence, origin = location.origin):
         guard(() => model.finish());
         await sleep(500);
     } finally {
+        removeEventListener('error', onError);
         console.warn = originalWarn;
         el.remove();
         foreignFrame.remove();

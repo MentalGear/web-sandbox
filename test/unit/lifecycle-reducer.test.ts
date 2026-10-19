@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { INITIAL_LIFECYCLE, LIFECYCLE_REASONS, isStale, reduce, runEffects, step, type BuildContext, type Effect, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice } from '../../src/lib/lifecycle';
+import { INITIAL_LIFECYCLE, admits, isStale, reduce, runEffects, step, type BuildContext, type Effect, type Generation, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice } from '../../src/lib/lifecycle';
+import { reasonText, TERMINATION_REASONS } from '../../src/lib/reasons';
 import { generate, shrink } from '../model/generator';
 import { DEFAULT_TERMINATE_REASON, ENTRY_FAILED_REASON, unknownModeReason, type Sequence } from '../model/lifecycle-model';
 import { forTheReducer, runReducerSequence, validConfig, type ReducerRunOptions } from '../model/reducer-runner';
@@ -107,7 +108,8 @@ describe("the reducer's properties on fuzzed inputs", () => {
         { buildsHere: false, blocked: null, strict: true, announces: false },
     ];
     function inputsFor(state: LcState): LcInput[] {
-        const gens = [state.gen, state.gen - 1, state.gen + 1];
+        // the current generation, and two that are not: made here only, as no code of the library's makes one
+        const gens = [state.gen, (state.gen - 1) as Generation, (state.gen + 1) as Generation];
         const inputs: LcInput[] = [{ t: 'disconnect' }, { t: 'filesChanged' }, { t: 'setConfig', same: true }, { t: 'setConfig', same: false }, { t: 'terminate', reason: 'bye' }, { t: 'dispatchStarted', reason: 'bye' }];
         if (state.dispatching.length > 0) inputs.push({ t: 'dispatchEnded' });
         for (const ctx of contexts) inputs.push({ t: 'connect', ctx }, { t: 'build', why: 'reset', ctx }, { t: 'build', why: 'load', ctx }, { t: 'configured', refusal: null, ctx }, { t: 'configured', refusal: 'refused', ctx });
@@ -121,13 +123,19 @@ describe("the reducer's properties on fuzzed inputs", () => {
         return inputs;
     }
 
-    it('every input on every sampled state: stale gens give nothing, connect and disconnect never dispatch, flush only with ready, dispatches last', () => {
+    it('every input on every sampled state: stale gens give nothing, connect and disconnect never dispatch, flush only with ready, dispatches last; one the declaration does not admit throws', () => {
         // the states the oracle reached (the test above), and the same ones with a 'terminated' being dispatched
         const states = sampled.size > 0 ? [...sampled.values()] : [INITIAL_LIFECYCLE];
         let checked = 0;
+        let refused = 0;
         for (const base of states) {
             for (const state of [base, { ...base, dispatching: [...base.dispatching, 'bye'] }]) {
                 for (const input of inputsFor(state)) {
+                    if (!isStale(state, input) && !admits(state, input)) {
+                        expect(() => reduce(state, input), `${input.t} in ${state.state}`).toThrow(/cannot arrive in/);
+                        refused++;
+                        continue;
+                    }
                     const output = reduce(state, input);
                     checked++;
                     const broken = brokenProperty(state, input, output);
@@ -136,6 +144,7 @@ describe("the reducer's properties on fuzzed inputs", () => {
             }
         }
         expect(checked).toBeGreaterThan(10_000);
+        expect(refused).toBeGreaterThan(1000);
     });
 
     it('connect, with a build that throws: no synchronous dispatch; the termination comes in a task', () => {
@@ -368,10 +377,12 @@ describe('class L, finding by finding', () => {
 });
 
 describe("the reducer describes today's host.ts", () => {
-    it('the reasons it decides are declared in the reducer only (host.ts kept copies until S65 PR D)', () => {
-        const source = readFileSync(path.join(ROOT, 'src/host.ts'), 'utf8');
-        for (const reason of Object.values(LIFECYCLE_REASONS)) expect(source, reason).not.toContain(reason);
-        expect(new RegExp(`const DEFAULT_TERMINATE_REASON = (["'])(.*?)\\1;`).exec(source)?.[2]).toBe(DEFAULT_TERMINATE_REASON);
+    it('the reasons it decides are the registry\'s (src/lib/reasons.ts), and neither it nor host.ts spells one out', () => {
+        for (const file of ['src/host.ts', 'src/lib/lifecycle.ts']) {
+            const source = readFileSync(path.join(ROOT, file), 'utf8');
+            for (const row of Object.values(TERMINATION_REASONS)) if (row.decidedBy === 'lifecycle') expect(source, `${file}: ${row.text}`).not.toContain(row.text);
+        }
+        expect(reasonText('host')).toBe(DEFAULT_TERMINATE_REASON);
     });
 
     it('`ready`: the state is `ready` before the first effect (host.ts sets it last, unobservably), in this order', () => {
@@ -436,8 +447,10 @@ describe("the reducer describes today's host.ts", () => {
         expect(host.log.filter(line => line.startsWith('attach') || line === 'startLoadDeadline')).toEqual(['attach {"build":2}', 'startLoadDeadline']);
         expect(host.lc.state).toBe('loading');
         // and a deadline acts only for its own build, while it is loading
-        expect(isStale(host.lc, { t: 'loadDeadline', gen: host.lc.gen - 1 })).toBe(true);
-        expect(reduce({ ...host.lc, state: 'ready' }, { t: 'loadDeadline', gen: host.lc.gen }).effects).toEqual([]);
+        expect(isStale(host.lc, { t: 'loadDeadline', gen: (host.lc.gen - 1) as Generation })).toBe(true);
+        const loading = host.lc;
+        if (loading.state !== 'loading') throw new Error('not loading');
+        expect(reduce({ ...loading, state: 'ready' }, { t: 'loadDeadline', gen: host.lc.gen }).effects).toEqual([]);
     });
 
     it('LM-2: if the outer build then throws, its failure is stale: the nested build stands, nothing is dispatched', () => {
@@ -475,7 +488,7 @@ describe("the reducer describes today's host.ts", () => {
         host.step({ t: 'frameLoad', gen, stillOurs: true, guest: OTHER });
         expect(host.lc.state).toBe('ready');
         host.step({ t: 'frameLoad', gen, stillOurs: true, guest: OTHER });
-        expect(host.events).toEqual(['ready', `terminated ${LIFECYCLE_REASONS.secondLoad}`]);
+        expect(host.events).toEqual(['ready', `terminated ${reasonText('secondLoad')}`]);
     });
 
     it("a guest that checked in: the wrapper's load must hold its window; a second announcement ends the environment", () => {
@@ -484,10 +497,10 @@ describe("the reducer describes today's host.ts", () => {
         host.step({ t: 'frameLoad', gen, stillOurs: true, guest: ANNOUNCER });
         expect(host.lc.state).toBe('ready');
         host.step({ t: 'announced', gen, valid: true, refusal: null, port: {}, source: ANNOUNCER });
-        expect(host.events).toEqual([`terminated ${LIFECYCLE_REASONS.secondAnnouncement}`]);
+        expect(host.events).toEqual([`terminated ${reasonText('secondAnnouncement')}`]);
         const other = readyHost();
         other.step({ t: 'frameLoad', gen: other.lc.gen, stillOurs: true, guest: OTHER });
-        expect(other.events).toEqual([`terminated ${LIFECYCLE_REASONS.secondLoad}`]);
+        expect(other.events).toEqual([`terminated ${reasonText('secondLoad')}`]);
     });
 
     it("the view's check-in counts only while loading", () => {
@@ -502,9 +515,9 @@ describe("the reducer describes today's host.ts", () => {
     it("the load deadline: before the wrapper's load the frame did not load; after it, a scripted frame's startup script did not run", () => {
         const host = new RecordingHost();
         host.step({ t: 'connect', ctx: COOPERATIVE });
-        expect(reduce(host.lc, { t: 'loadDeadline', gen: host.lc.gen }).effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: LIFECYCLE_REASONS.loadTimeout });
+        expect(reduce(host.lc, { t: 'loadDeadline', gen: host.lc.gen }).effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: reasonText('loadTimeout') });
         host.step({ t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
-        expect(reduce(host.lc, { t: 'loadDeadline', gen: host.lc.gen }).effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: LIFECYCLE_REASONS.startupBlocked });
+        expect(reduce(host.lc, { t: 'loadDeadline', gen: host.lc.gen }).effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: reasonText('startupBlocked') });
     });
 
     it('setConfig(): the same config again rebuilds nothing while the environment stands and nothing a build reads changed (R3-7)', () => {

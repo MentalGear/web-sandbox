@@ -32,20 +32,16 @@
  *   down (review B5 and round 4's L-2: `_notifyThenAct`'s rule, at one comparison site; LM-2: embedder code that runs
  *   inside the element's own build, or inside its warning, and builds again).
  *
+ * The inputs and the effects are declared as values (LC_INPUTS, LC_EFFECTS; S76): each input kind with where it comes
+ * from, whether it carries a generation, and the states and modes it can arrive in. LcInput and Effect are derived from
+ * them, `reduce` asserts the preconditions, the model runs check them (test/model/), and lifecycle-transitions.ts lists
+ * from them the transitions `reduce` can make, which the docs' state diagram is drawn from.
+ *
  * Where src/host.ts and the S65 plan disagree, this module follows host.ts (and README.md and docs/API.md), and says so
  * at the place: search for "Today's code".
  */
 import type { SandboxState } from '../host';
-
-// The reasons the lifecycle itself decides, declared here only (S65 PR D: host.ts kept copies until it stepped the
-// completion of a build here). test/unit/api-docs.test.ts checks that docs/API.md lists each of them.
-export const LIFECYCLE_REASONS = Object.freeze({
-    secondLoad: 'the sandbox frame loaded a second time',
-    secondAnnouncement: 'the guest frame announced itself again (it reloaded or rewrote its document)',
-    frameMissing: 'the guest frame is missing',
-    loadTimeout: 'the sandbox did not finish loading',
-    startupBlocked: "the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)",
-});
+import { hostLine, reasonText } from './reasons';
 
 /**
  * What a build reads besides the reducer's own state, asked of the host at the moment the build starts: whether the
@@ -83,21 +79,24 @@ export interface BuildProgress {
     readonly announcer: unknown;
 }
 
-export interface LcState {
-    readonly state: SandboxState;
+declare const generationBrand: unique symbol;
+
+/**
+ * Counts environments. Minted only by INITIAL_LIFECYCLE and by a teardown (tornDown), and compared only with another
+ * generation: the host's other counters (its probes' pings, its view writes) type-check as numbers, never as this.
+ */
+export type Generation = number & { readonly [generationBrand]: true };
+
+/** What every state holds, whatever it is. */
+export interface LcCommon {
     // Counts environments: every teardown increments it (host.ts, `_generation`). The only clock the reducer compares.
-    readonly gen: number;
-    // A build's 'terminated' waiting for its task (round 1's R3-2), with the generation it belongs to. host.ts holds a
-    // token object instead; the two are the same rule, since every teardown both clears the token and increments the
-    // generation, and nothing else replaces the token.
-    readonly pending: { readonly reason: string; readonly gen: number } | null;
+    readonly gen: Generation;
     // The 'terminated' reasons being dispatched, innermost last (host.ts, `_terminationDispatched`, saved and restored
     // around each dispatch: the same stack, kept as one value and the call stack).
     readonly dispatching: readonly string[];
     // The 'terminated' being dispatched when the last build started, or null (round 2's L-4; host.ts's `_buildWithin`
     // until S65's PR B). Kept across teardowns: only the next build replaces it.
     readonly within: string | null;
-    readonly build: BuildProgress | null;
     // What a build reads changed this many times: setConfig(), load(), the files (host.ts's `_buildInputs` until PR C).
     readonly inputs: number;
     // `inputs` when the last usable setConfig() argument was stored, or null after a refusal (the copy itself is the
@@ -108,9 +107,31 @@ export interface LcState {
     readonly refused: string | null;
 }
 
+// A build's 'terminated' waiting for its task (round 1's R3-2), with the generation it belongs to. host.ts holds a
+// token object instead; the two are the same rule, since every teardown both clears the token and increments the
+// generation, and nothing else replaces the token.
+export interface PendingTermination {
+    readonly reason: string;
+    readonly gen: Generation;
+}
+
+/**
+ * The lifecycle's state, by `state`: a build stands (`build`) exactly while it is `loading` or `ready`, and no refusal
+ * stands then (a refused build is `terminated` at once); a build's 'terminated' waits for its task only in `terminated`.
+ */
+export type LcState =
+    | (LcCommon & { readonly state: 'idle'; readonly build: null; readonly pending: null })
+    | (LcCommon & { readonly state: 'loading' | 'ready'; readonly build: BuildProgress; readonly pending: null; readonly refused: null })
+    | (LcCommon & { readonly state: 'terminated'; readonly build: null; readonly pending: PendingTermination | null });
+
+/** A state in which a build stands. */
+export type StandingState = Extract<LcState, { readonly state: 'loading' | 'ready' }>;
+
+const standing = (state: LcState): state is StandingState => state.state === 'loading' || state.state === 'ready';
+
 export const INITIAL_LIFECYCLE: LcState = Object.freeze({
     state: 'idle',
-    gen: 0,
+    gen: 0 as Generation,
     pending: null,
     dispatching: Object.freeze([]) as readonly string[],
     within: null,
@@ -120,87 +141,170 @@ export const INITIAL_LIFECYCLE: LcState = Object.freeze({
     refused: null,
 });
 
+// ---- the declaration: the reducer's inputs and effects, as values --------------------------------------------------
+
+declare const fieldType: unique symbol;
+
+/** A field of an input or an effect: the name of its type, for the docs, and the type itself, for the compiler. */
+export interface Field<T> {
+    readonly type: string;
+    readonly optional: boolean;
+    readonly [fieldType]?: T;
+}
+
+const field = <T>(type: string): Field<T> => ({ type, optional: false });
+const optional = <T>(type: string): Field<T> & { readonly optional: true } => ({ type, optional: true });
+
+type Fields = Readonly<Record<string, Field<unknown>>>;
+type Simplify<T> = { [K in keyof T]: T[K] };
+type FieldsOf<F extends Fields> = Simplify<
+    { -readonly [K in keyof F as F[K] extends { readonly optional: true } ? never : K]: F[K] extends Field<infer T> ? T : never }
+    & { -readonly [K in keyof F as F[K] extends { readonly optional: true } ? K : never]?: F[K] extends Field<infer T> ? T : never }
+>;
+
+/** The modes a build can be in. The reducer tells them apart by its build's `strict` only. */
+export type LcMode = 'strict' | 'cooperative' | 'worker';
+
+export const LC_STATES = ['idle', 'loading', 'ready', 'terminated'] as const satisfies readonly SandboxState[];
+const ANY_STATE = LC_STATES;
+const STANDING = ['loading', 'ready'] as const;
+
+/**
+ * An input kind: where it comes from, whether it carries the generation it was armed in (`stamped`: dropped once that
+ * environment is gone, isStale), and the preconditions of one that is not stale: the states it can arrive in, and,
+ * where it matters, the modes. `reduce` asserts them (`admits`); lifecycleTransitions() explores only these pairs.
+ */
+export interface InputKind {
+    readonly from: string;
+    readonly stamped: 'always' | 'optional' | 'never';
+    readonly states: readonly SandboxState[];
+    readonly modes?: readonly LcMode[];
+    readonly fields: Fields;
+}
+
 /**
  * What can happen to the lifecycle. The inputs that carry `gen` come from a platform callback or a timer armed in that
  * environment, and are dropped when it is gone; the others come from the embedder's call or from the executor itself,
- * now, and carry none.
+ * now, and carry none. A stamped input that is not stale arrives only while the environment it was armed in stands:
+ * every transition but `loading` → `ready` is a teardown, which counts the generation up.
  */
-export type LcInput =
+export const LC_INPUTS = {
     // connectedCallback (host.ts, `connected`); the host does not step it when the engine refused to give a Firefox-adopted
     // element its prototype back (restorePrototype: the element stays idle, as its `disconnect` left it).
-    | { t: 'connect'; ctx: BuildContext }
+    connect: { from: 'connectedCallback', stamped: 'never', states: ANY_STATE, fields: { ctx: field<BuildContext>('BuildContext') } },
     // disconnectedCallback and adoptedCallback alike (host.ts, `disconnected`, `adopted`): the environment ends, quietly.
-    | { t: 'disconnect' }
+    disconnect: { from: 'disconnectedCallback, adoptedCallback', stamped: 'never', states: ANY_STATE, fields: {} },
     // reset() and load() (load() stores its html first: the host's data).
-    | { t: 'build'; why: 'reset' | 'load'; ctx: BuildContext }
+    build: { from: 'reset(), load()', stamped: 'never', states: ANY_STATE, fields: { why: field<'reset' | 'load'>("'reset' | 'load'"), ctx: field<BuildContext>('BuildContext') } },
     // setConfig(): `same` is the host's comparison of the structured clone with the last usable copy (a clone that failed
     // is never the same). The rest of the no-op predicate is the reducer's (R3-7).
-    | { t: 'setConfig'; same: boolean }
+    setConfig: { from: 'setConfig()', stamped: 'never', states: ANY_STATE, fields: { same: field<boolean>('boolean') } },
     // The config was applied (the `applyConfig` effect): its refusal, or null, and the context of the build it starts.
-    | { t: 'configured'; refusal: string | null; ctx: BuildContext }
+    configured: { from: 'the applyConfig effect', stamped: 'never', states: ANY_STATE, fields: { refusal: field<string | null>('string | null'), ctx: field<BuildContext>('BuildContext') } },
     // registerFiles(), unregisterFiles() or commitGuestWrites() changed the store (its 'fileschanged' is the host's).
-    | { t: 'filesChanged' }
+    filesChanged: { from: 'registerFiles(), unregisterFiles(), commitGuestWrites()', stamped: 'never', states: ANY_STATE, fields: {} },
     // The build effect returned what it prepared, or threw (the reason the host gives for what it threw), for the build of
     // `gen` (LM-2: embedder code can run inside the build effect and build again, and then this build is gone). The
-    // `attach` effect's own throw is a `buildFailed` of its build too.
-    | { t: 'built'; gen: number; prepared: unknown }
-    | { t: 'buildFailed'; gen: number; reason: string }
-    // The task of a build's 'terminated' (R3-2).
-    | { t: 'buildTerminationDue'; gen: number }
+    // `attach` effect's own throw is a `buildFailed` of its build too. Its build is `loading` until it is attached.
+    built: { from: 'the build effect', stamped: 'always', states: ['loading'], fields: { prepared: field<unknown>('unknown') } },
+    buildFailed: { from: 'the build or attach effect', stamped: 'always', states: ['loading'], fields: { reason: field<string>('string') } },
+    // The task of a build's 'terminated' (R3-2), armed as the build ends.
+    buildTerminationDue: { from: 'the task effect', stamped: 'always', states: ['terminated'], fields: {} },
     // A termination. Without `gen`: terminate() (its reason already defaulted, review round 2, L-7), or a build failure
     // the executor caught. With `gen`: one the element starts (the watchdog, the view's watchdog, workerExecutionTimeout,
     // the uncaught budget, VIEW_OVERRUN, an entry failure, a host-page refusal, a second announcement, the frame-integrity
     // checks at the wrapper's load), whatever decides it (the host decides, for instance, which VIEW_OVERRUN ends the
-    // sandbox); with `notices`, the lines dispatched before it, one by one.
-    | { t: 'terminate'; reason: string; gen?: number; notices?: readonly Notice[] }
+    // sandbox); with `notices`, the lines dispatched before it, one by one. In any state: a guarded effect that throws
+    // after its own output terminated ends that environment again, which changes nothing.
+    terminate: { from: "terminate(), the element's own terminations, the executor", stamped: 'optional', states: ANY_STATE, fields: { reason: field<string>('string'), notices: optional<readonly Notice[]>('readonly Notice[]') } },
     // The load deadline (CB3): LOAD_TIMEOUT_MS of loading.
-    | { t: 'loadDeadline'; gen: number }
+    loadDeadline: { from: 'the load deadline', stamped: 'always', states: STANDING, fields: {} },
     // The wrapper's load, in the microtask the host's load handler queues (review round 4, L-1): `gen` as the load event
     // found it; `stillOurs` whether, in the microtask, the frame is still the element's and both are connected; `guest`
     // the guest frame's window, or null (round 2's L-6, S46): compared with the build's `announcer` by identity.
-    | { t: 'frameLoad'; gen: number; stillOurs: boolean; guest: unknown }
+    frameLoad: { from: "the wrapper's load event", stamped: 'always', states: STANDING, fields: { stillOurs: field<boolean>('boolean'), guest: field<unknown>('window | null') } },
     // The guest frame's announcement (CB1). `valid`: trusted, and exactly one port or worker mode's refusal; `refusal`:
     // the reason worker mode's frame gave for a worker that could not start (review round 2, C-5), else null; `source`:
-    // the window it came from (the guest frame's: the host's listener hears no other).
-    | { t: 'announced'; gen: number; valid: boolean; refusal: string | null; port: unknown; source: unknown }
+    // the window it came from (the guest frame's: the host's listener hears no other). A strict build listens for none.
+    announced: { from: "the host page's message listener", stamped: 'always', states: STANDING, modes: ['cooperative', 'worker'], fields: { valid: field<boolean>('boolean'), refusal: field<string | null>('string | null'), port: field<unknown>('unknown'), source: field<unknown>('window') } },
     // The strict view's check-in on its port (R3-1), with what the host checks then.
-    | { t: 'viewReady'; gen: number; height: unknown; stillStyleRefused: boolean }
+    viewReady: { from: "the view port's VIEW_READY", stamped: 'always', states: STANDING, modes: ['strict'], fields: { height: field<unknown>('unknown'), stillStyleRefused: field<boolean>('boolean') } },
     // Around each 'terminated' dispatch (the executor's; round 4's L-3: every one, so the no-repeat rule holds for all).
-    | { t: 'dispatchStarted'; reason: string }
-    | { t: 'dispatchEnded' };
+    dispatchStarted: { from: 'the executor', stamped: 'never', states: ANY_STATE, fields: { reason: field<string>('string') } },
+    dispatchEnded: { from: 'the executor', stamped: 'never', states: ANY_STATE, fields: {} },
+} as const satisfies Record<string, InputKind>;
 
-export type Effect =
-    | { k: 'teardown' } // host.ts, `_teardown` without its generation and pending-termination lines, which are the reducer's
-    | { k: 'discardWrites' }
-    | { k: 'applyConfig' } // stores the clone (normaliseConfig), and answers with its refusal: then `configured`
+export type LcInputKind = keyof typeof LC_INPUTS;
+
+type StampOf<S> = S extends 'always' ? { gen: Generation } : S extends 'optional' ? { gen?: Generation } : unknown;
+type InputOf<K extends LcInputKind> = Simplify<{ t: K } & FieldsOf<(typeof LC_INPUTS)[K]['fields']> & StampOf<(typeof LC_INPUTS)[K]['stamped']>>;
+
+/** An input of the reducer, derived from LC_INPUTS. */
+export type LcInput = { [K in LcInputKind]: InputOf<K> }[LcInputKind];
+
+/** An effect kind: one thing to the element's resources, or one dispatch; `variants` where one kind has several shapes. */
+export interface EffectKind {
+    readonly summary: string;
+    readonly fields?: Fields;
+    readonly variants?: readonly Fields[];
+}
+
+// The calls are marked pure: the element reads none of this at run time, and a bundle leaves it out.
+export const LC_EFFECTS = {
+    teardown: { summary: "host.ts, `_teardown` without its generation and pending-termination lines, which are the reducer's" },
+    discardWrites: { summary: "the guest writes' overlay is dropped" },
+    applyConfig: { summary: 'stores the clone (normaliseConfig), and answers with its refusal: then `configured`' },
     // host.ts, `_prepareBuild`: everything of the build that can run embedder code (the HTML sinks a host page's Trusted
-    // Types default policy runs at, the warnings), into values the element does not hold yet; then `built`, or
-    // `buildFailed` if it threw
-    | { k: 'build' }
+    // Types default policy runs at, the warnings), into values the element does not hold yet
+    build: { summary: 'prepares the build; then `built`, or `buildFailed` if it threw' },
     // host.ts, `_attachBuild`: the prepared build becomes the element's (its frame, its announcement listener, its bridge
     // and overlay); no embedder code runs there, so no other build can come in between (LM-2)
-    | { k: 'attach'; prepared: unknown }
-    | { k: 'startLoadDeadline' }
-    | { k: 'stopLoadDeadline' }
-    | { k: 'sendInitView'; target: unknown } // strict mode, at the wrapper's load: the view (`target`) gets its ports (`_setupStrictChannels`)
-    | { k: 'openChannel'; port: unknown } // cooperative and worker mode: the announced port, or none (`setupChannel`)
-    | { k: 'closePort'; port: unknown }
-    | { k: 'checkView'; height: unknown; stillStyleRefused: boolean } // the view's size and still-style warnings (R3-1)
-    | { k: 'flush' } // what waited for `ready` goes to the port (`_flushQueues`)
-    | { k: 'startWatchdogs' } // the guest's and, in strict mode, the view's
-    | { k: 'startAutoResize' }
-    | { k: 'warn'; text: string } // a console warning
-    | { k: 'warnForeignDocument' } // once per element (CB7)
-    | { k: 'dispatch'; event: 'ready' }
-    | { k: 'dispatch'; event: 'terminated'; reason: string }
-    | { k: 'notice'; notice: Notice }
-    | { k: 'step'; input: LcInput } // a nested step, synchronously
-    | { k: 'task'; input: LcInput }; // a step in a task of its own
+    attach: { summary: "the prepared build becomes the element's", fields: { prepared: /* @__PURE__ */ field<unknown>('unknown') } },
+    startLoadDeadline: { summary: 'arms the load deadline (LOAD_TIMEOUT_MS)' },
+    stopLoadDeadline: { summary: 'stops the load deadline' },
+    sendInitView: { summary: "strict mode, at the wrapper's load: the view (`target`) gets its ports (`_setupStrictChannels`)", fields: { target: /* @__PURE__ */ field<unknown>('window') } },
+    openChannel: { summary: 'cooperative and worker mode: the announced port, or none (`setupChannel`)', fields: { port: /* @__PURE__ */ field<unknown>('unknown') } },
+    closePort: { summary: 'an announced port no build takes', fields: { port: /* @__PURE__ */ field<unknown>('unknown') } },
+    checkView: { summary: "the view's size and still-style warnings (R3-1)", fields: { height: /* @__PURE__ */ field<unknown>('unknown'), stillStyleRefused: /* @__PURE__ */ field<boolean>('boolean') } },
+    flush: { summary: 'what waited for `ready` goes to the port (`_flushQueues`)' },
+    startWatchdogs: { summary: "the guest's and, in strict mode, the view's" },
+    startAutoResize: { summary: 'the resizer, in place for the reports buffered before the port' },
+    warn: { summary: 'a console warning', fields: { text: /* @__PURE__ */ field<string>('string') } },
+    warnForeignDocument: { summary: 'once per element (CB7)' },
+    dispatch: { summary: "one of the lifecycle's two events", variants: [{ event: /* @__PURE__ */ field<'ready'>("'ready'") }, { event: /* @__PURE__ */ field<'terminated'>("'terminated'"), reason: /* @__PURE__ */ field<string>('string') }] },
+    notice: { summary: "a line, as 'sandbox-log'", fields: { notice: /* @__PURE__ */ field<Notice>('Notice') } },
+    step: { summary: 'a nested step, synchronously', fields: { input: /* @__PURE__ */ field<LcInput>('LcInput') } },
+    task: { summary: 'a step in a task of its own', fields: { input: /* @__PURE__ */ field<LcInput>('LcInput') } },
+} as const satisfies Record<string, EffectKind>;
+
+export type EffectKindName = keyof typeof LC_EFFECTS;
+
+type EffectOf<K extends EffectKindName, D = (typeof LC_EFFECTS)[K]> =
+    D extends { readonly variants: readonly (infer V extends Fields)[] } ? (V extends Fields ? Simplify<{ k: K } & FieldsOf<V>> : never)
+    : D extends { readonly fields: infer F extends Fields } ? Simplify<{ k: K } & FieldsOf<F>>
+    : { k: K };
+
+/** An effect of the reducer, derived from LC_EFFECTS. */
+export type Effect = { [K in EffectKindName]: EffectOf<K> }[EffectKindName];
+
+/** Whether the declaration admits `input` in `state` (a stale one is not asked: `reduce` drops it first). */
+export function admits(state: LcState, input: LcInput): boolean {
+    const kind: InputKind = LC_INPUTS[input.t];
+    if (!kind.states.includes(state.state)) return false;
+    if (kind.modes === undefined || state.build === null) return true;
+    const strict = state.build.strict;
+    return kind.modes.some(mode => (mode === 'strict') === strict);
+}
+
+/** The exhaustiveness check of a switch over a declared union: a kind added and not handled fails to compile there. */
+export function assertNever(value: never): never {
+    throw new Error(`[Sandbox] lifecycle: unhandled ${JSON.stringify(value)}`);
+}
 
 export interface LcOutput {
     state: LcState;
     effects: readonly Effect[];
-    // Whether an effect that throws ends the sandbox (`BUILD_FAILED_REASON`): the completion of a build, on all three of
+    // Whether an effect that throws ends the sandbox (the reason `buildFailed`, reasons.ts): the completion of a build, on all three of
     // its paths, the wrapper's load, the guest's check-in and the view's (S65 PR D; until then host.ts ran the first two
     // in a try/catch and the view's bare, so a throw there left the build `loading`, its load deadline already stopped).
     // These effects do not throw in practice (they are backstops); one that does leaves nothing half-done behind.
@@ -217,8 +321,8 @@ const top = (stack: readonly string[]): string | null => (stack.length > 0 ? sta
 
 // The generation-and-pending half of host.ts's `_teardown`: a new environment count, and a build's 'terminated' still
 // to come is no longer the sandbox's state (R3-2). The resource half is the `teardown` effect.
-function tornDown(state: LcState): LcState {
-    return { ...state, gen: state.gen + 1, pending: null, build: null };
+function tornDown(state: LcCommon): LcCommon {
+    return { gen: (state.gen + 1) as Generation, dispatching: state.dispatching, within: state.within, inputs: state.inputs, lastInputs: state.lastInputs, refused: state.refused };
 }
 
 // host.ts, `_terminate`: every termination that is not a build's. Already terminated means nothing to do, which is what
@@ -227,7 +331,7 @@ function tornDown(state: LcState): LcState {
 function terminateNow(state: LcState, reason: string): LcOutput {
     if (state.state === 'terminated') return unchanged(state);
     return {
-        state: { ...tornDown(state), state: 'terminated' },
+        state: { ...tornDown(state), state: 'terminated', build: null, pending: null },
         effects: [{ k: 'warn', text: `[Sandbox] terminated: ${reason}` }, { k: 'teardown' }, { k: 'dispatch', event: 'terminated', reason }],
     };
 }
@@ -245,8 +349,14 @@ function terminateNow(state: LcState, reason: string): LcOutput {
 // model counts once, and the oracle compares only whether it changed.
 function terminateBuild(state: LcState, reason: string): LcOutput {
     if (state.state === 'terminated') return unchanged(state);
+    return endBuild(state, reason);
+}
+
+// The termination of a build that is not terminated: one that stands, or the one `initialize` is making (torn down,
+// and refused before it is `loading`).
+function endBuild(state: LcCommon, reason: string): LcOutput {
     const repeated = state.within === reason;
-    const next = { ...tornDown(state), state: 'terminated' as const };
+    const next = { ...tornDown(state), state: 'terminated' as const, build: null, pending: null };
     const effects: Effect[] = [];
     if (!repeated) effects.push({ k: 'warn', text: `[Sandbox] terminated: ${reason}` });
     effects.push({ k: 'teardown' });
@@ -257,7 +367,7 @@ function terminateBuild(state: LcState, reason: string): LcOutput {
 
 // The element left (or never reached) a document it can build in (host.ts's `stop` until PR C). No event.
 function stop(state: LcState): LcOutput {
-    return { state: { ...tornDown(state), state: 'idle' }, effects: [{ k: 'teardown' }, { k: 'discardWrites' }] };
+    return { state: { ...tornDown(state), state: 'idle', build: null, pending: null }, effects: [{ k: 'teardown' }, { k: 'discardWrites' }] };
 }
 
 // The one place a build starts (connection, reset(), load(), setConfig(); host.ts's `initialize` until PR C), then the
@@ -266,19 +376,19 @@ function stop(state: LcState): LcOutput {
 // not build (round 2's L-1: one predicate, asked by every build), it stops instead and stays idle. Otherwise 'loading'
 // first: every attempt that fails is one termination with its own reason, also from 'terminated' (reset() of a refused
 // config says again why it cannot start).
-function initialize(state: LcState, ctx: BuildContext): LcOutput {
+function initialize(state: LcCommon, ctx: BuildContext): LcOutput {
     const within = top(state.dispatching);
-    const torn: LcState = { ...tornDown(state), within };
+    const torn: LcCommon = { ...tornDown(state), within };
     const effects: Effect[] = [{ k: 'teardown' }, { k: 'discardWrites' }];
-    if (!ctx.buildsHere) return { state: { ...torn, state: 'idle' }, effects };
+    if (!ctx.buildsHere) return { state: { ...torn, state: 'idle', build: null, pending: null }, effects };
     const refusal = state.refused ?? ctx.blocked;
     if (refusal !== null) {
-        const refused = terminateBuild({ ...torn, state: 'loading' }, refusal);
+        const refused = endBuild(torn, refusal);
         return { state: refused.state, effects: [...effects, ...refused.effects] };
     }
     const build: BuildProgress = { strict: ctx.strict, announces: ctx.announces, frameLoaded: false, accepted: false, announcer: null };
     effects.push({ k: 'build' });
-    return { state: { ...torn, state: 'loading', build }, effects };
+    return { state: { ...torn, state: 'loading', build, pending: null, refused: null }, effects };
 }
 
 // The transition to `ready` (host.ts's `_enterReady` until PR D), in every mode, and the one place what waited for it is released
@@ -288,7 +398,7 @@ function initialize(state: LcState, ctx: BuildContext): LcOutput {
 // host.ts set `state` last, just before the dispatch, until PR D; here it is 'ready' before the first effect, as every
 // state is. Nothing the flush or the watchdogs run reads it (the host's own code, no embedder code), so the difference is
 // not observable; test/unit/lifecycle-reducer.test.ts pins the order.
-function enterReady(state: LcState, before: readonly Effect[] = NOTHING): LcOutput {
+function enterReady(state: StandingState, before: readonly Effect[] = NOTHING): LcOutput {
     return {
         state: { ...state, state: 'ready' },
         effects: [...before, { k: 'stopLoadDeadline' }, { k: 'flush' }, { k: 'startWatchdogs' }, { k: 'startAutoResize' }, { k: 'dispatch', event: 'ready' }],
@@ -298,7 +408,7 @@ function enterReady(state: LcState, before: readonly Effect[] = NOTHING): LcOutp
 
 // Cooperative and worker mode (host.ts's `_finishBuild` until PR D) complete at the guest's check-in, with its port, or, where the
 // guest runs no bootstrap, at the wrapper's load, with none. Not loading any more: the port is closed, nothing else.
-function finishBuild(state: LcState, port: unknown): LcOutput {
+function finishBuild(state: StandingState, port: unknown): LcOutput {
     if (state.state !== 'loading') return { state, effects: port === null ? NOTHING : [{ k: 'closePort', port }] };
     return enterReady(state, [{ k: 'openChannel', port }]);
 }
@@ -309,13 +419,13 @@ function finishBuild(state: LcState, port: unknown): LcOutput {
 // view its ports and completes at VIEW_READY, never on this load alone (R3-1: it also fires for a view whose bootstrap
 // the host page refused); a guest with no bootstrap completes now.
 function frameLoad(state: LcState, input: Extract<LcInput, { t: 'frameLoad' }>): LcOutput {
+    if (!input.stillOurs || !standing(state)) return unchanged(state);
     const build = state.build;
-    if (!input.stillOurs || build === null) return unchanged(state);
     const guarded = (output: LcOutput): LcOutput => ({ ...output, guarded: true });
-    if (build.frameLoaded) return guarded(terminateNow(state, LIFECYCLE_REASONS.secondLoad));
-    const loaded: LcState = { ...state, build: { ...build, frameLoaded: true } };
-    if (build.announcer !== null) return guarded(input.guest === build.announcer ? unchanged(loaded) : terminateNow(loaded, LIFECYCLE_REASONS.secondLoad));
-    if (input.guest === null) return guarded(terminateNow(loaded, LIFECYCLE_REASONS.frameMissing));
+    if (build.frameLoaded) return guarded(terminateNow(state, reasonText('secondLoad')));
+    const loaded: StandingState = { ...state, build: { ...build, frameLoaded: true } };
+    if (build.announcer !== null) return guarded(input.guest === build.announcer ? unchanged(loaded) : terminateNow(loaded, reasonText('secondLoad')));
+    if (input.guest === null) return guarded(terminateNow(loaded, reasonText('frameMissing')));
     if (build.announces) return guarded(unchanged(loaded));
     if (build.strict) return { state: loaded, effects: [{ k: 'sendInitView', target: input.guest }], guarded: true };
     return finishBuild(loaded, null);
@@ -326,20 +436,20 @@ function frameLoad(state: LcState, input: Extract<LcInput, { t: 'frameLoad' }>):
 // reloads or rewrites itself announces again, and a forgery can only end its own environment (PD8). Worker mode's
 // refusal is the frame's one announcement: one host line, then the termination with its reason (review round 2, C-5).
 function announced(state: LcState, input: Extract<LcInput, { t: 'announced' }>): LcOutput {
+    if (!standing(state) || state.build.accepted || !state.build.announces || !input.valid) return terminateNow(state, reasonText('secondAnnouncement'));
     const build = state.build;
-    if (build === null || build.accepted || !build.announces || !input.valid) return terminateNow(state, LIFECYCLE_REASONS.secondAnnouncement);
     if (input.refusal !== null) {
-        const accepted: LcState = { ...state, build: { ...build, accepted: true } };
+        const accepted: StandingState = { ...state, build: { ...build, accepted: true } };
         return refusedByHostPage(accepted, input.refusal);
     }
-    const checkedIn: LcState = { ...state, build: { ...build, accepted: true, announcer: input.source } };
+    const checkedIn: StandingState = { ...state, build: { ...build, accepted: true, announcer: input.source } };
     return { ...finishBuild(checkedIn, input.port), guarded: true };
 }
 
 // A frame of ours the host page's policy refused (host.ts, `_refusedByHostPage`, for the view's refusals): one host line,
 // then the termination, unless a listener of that line acted first.
 function refusedByHostPage(state: LcState, reason: string): LcOutput {
-    return terminate(state, { t: 'terminate', reason, gen: state.gen, notices: [{ level: 'error', text: `[Sandbox] ${reason}`, source: 'host' }] });
+    return terminate(state, { t: 'terminate', reason, gen: state.gen, notices: [{ level: 'error', text: hostLine('refusedByHostPage', reason), source: 'host' }] });
 }
 
 // host.ts, `_notifyThenAct` and `_terminate`. With notices, the lines come first, one event each, and the termination is a
@@ -361,16 +471,17 @@ function terminate(state: LcState, input: Extract<LcInput, { t: 'terminate' }>):
 // bounds `loading` only, of the build it was started for (LM-2): the input carries that build's generation, and it acts
 // only while that build is `loading`; `_enterReady` stops it as well, but the bound does not rest on a timer stopped.
 function loadDeadline(state: LcState): LcOutput {
+    if (state.state !== 'loading') return unchanged(state);
     const build = state.build;
-    if (state.state !== 'loading' || build === null) return unchanged(state);
     const scripted = build.strict || build.announces;
-    return terminateNow(state, build.frameLoaded && scripted ? LIFECYCLE_REASONS.startupBlocked : LIFECYCLE_REASONS.loadTimeout);
+    return terminateNow(state, build.frameLoaded && scripted ? reasonText('startupBlocked') : reasonText('loadTimeout'));
 }
 
 // host.ts, `_dispatchBuildTermination`: only if nothing tore the environment down since it was armed.
 function buildTerminationDue(state: LcState): LcOutput {
+    if (state.state !== 'terminated') return unchanged(state);
     const pending = state.pending;
-    if (pending === null || pending.gen !== state.gen || state.state !== 'terminated') return unchanged(state);
+    if (pending === null || pending.gen !== state.gen) return unchanged(state);
     return { state: { ...state, pending: null }, effects: [{ k: 'dispatch', event: 'terminated', reason: pending.reason }] };
 }
 
@@ -385,22 +496,31 @@ function setConfig(state: LcState, same: boolean): LcOutput {
 }
 
 function configured(state: LcState, input: Extract<LcInput, { t: 'configured' }>): LcOutput {
-    const stored: LcState = { ...state, refused: input.refusal, lastInputs: input.refusal === null ? state.inputs : null };
+    const stored: LcCommon = { ...state, refused: input.refusal, lastInputs: input.refusal === null ? state.inputs : null };
     return initialize(stored, input.ctx);
 }
 
-// The inputs that carry the generation they were armed in: dropped, with no effect and no change, once it is gone.
-const STAMPED = new Set<LcInput['t']>(['built', 'buildFailed', 'buildTerminationDue', 'loadDeadline', 'frameLoad', 'announced', 'viewReady']);
-
-/** Whether `input` belongs to an environment that is gone: then `reduce` gives no effects and leaves the state as it is. */
+/**
+ * Whether `input` belongs to an environment that is gone: then `reduce` gives no effects and leaves the state as it is.
+ * The inputs that carry the generation they were armed in are the kinds LC_INPUTS stamps, and the type derived from it
+ * gives exactly those a `gen` (required where `stamped` is 'always'): a kind newly stamped is checked here with no list
+ * to extend.
+ */
 export function isStale(state: LcState, input: LcInput): boolean {
-    if (input.t === 'terminate') return input.gen !== undefined && input.gen !== state.gen;
-    return STAMPED.has(input.t) && (input as { gen: number }).gen !== state.gen;
+    return 'gen' in input && input.gen !== undefined && input.gen !== state.gen;
 }
 
-/** The lifecycle's one transition function: pure, total, and the only place a next state is computed. */
+/**
+ * The lifecycle's one transition function: pure, total over the declared pairs, and the only place a next state is
+ * computed. An input that is not stale and that the declaration does not admit in this state (LC_INPUTS: its states
+ * and modes) throws, before anything is stored or run: the declaration is what the docs' state diagram is drawn from
+ * (lifecycleTransitions), so an input it does not foresee is a bug of the declaration or of the host, never a no-op.
+ * Asserted always, not only in tests: one lookup per input, a few inputs a build, and the package has no development
+ * build to put it in.
+ */
 export function reduce(state: LcState, input: LcInput): LcOutput {
     if (isStale(state, input)) return unchanged(state);
+    if (!admits(state, input)) throw new Error(`[Sandbox] lifecycle: ${input.t} cannot arrive in ${state.state}${state.build === null ? '' : state.build.strict ? ' (strict)' : ' (not strict)'}`);
     switch (input.t) {
         case 'connect':
             if (!input.ctx.buildsHere) {
@@ -463,6 +583,8 @@ export function reduce(state: LcState, input: LcInput): LcOutput {
             return { state: { ...state, dispatching: [...state.dispatching, input.reason] }, effects: NOTHING };
         case 'dispatchEnded':
             return { state: { ...state, dispatching: state.dispatching.slice(0, -1) }, effects: NOTHING };
+        default:
+            return assertNever(input);
     }
 }
 
@@ -522,7 +644,7 @@ const isEmbedderFacing = (effect: Effect) => effect.k === 'dispatch' || effect.k
 // input (isStale); this stops what is left of a run once its environment is gone. host.ts compares generations
 // nowhere else, apart from a call's own environment (`_issue`, `_postRpc`; review round 3, L-2), and
 // test/unit/lifecycle-reducer.test.ts scans for it.
-const tornDownSince = (host: { readonly lc: LcState }, stampGen: number): boolean => host.lc.gen !== stampGen;
+const tornDownSince = (host: { readonly lc: LcState }, stampGen: Generation): boolean => host.lc.gen !== stampGen;
 
 /**
  * Applies one output's effects in order. `stampGen` is the generation the output was computed at: before each effect the
@@ -540,7 +662,7 @@ const tornDownSince = (host: { readonly lc: LcState }, stampGen: number): boolea
  * then threw would otherwise have its new build ended by the old one's failure: the same rule as a build's own failure
  * (`buildFailed{gen}`, LM-2). In every other case the generation is the current one and the termination is today's.
  */
-export function runEffects(host: LifecycleHost, effects: readonly Effect[], stampGen: number, guarded = false): void {
+export function runEffects(host: LifecycleHost, effects: readonly Effect[], stampGen: Generation, guarded = false): void {
     for (const effect of effects) {
         if (tornDownSince(host, stampGen)) return;
         if (!guarded || isEmbedderFacing(effect)) {
@@ -573,7 +695,7 @@ export function runNotices(host: { readonly lc: LcState }, notices: readonly (()
     return true;
 }
 
-function runEffect(host: LifecycleHost, effect: Effect, stampGen: number): void {
+function runEffect(host: LifecycleHost, effect: Effect, stampGen: Generation): void {
     switch (effect.k) {
         case 'teardown': host.teardown(); return;
         case 'discardWrites': host.discardWrites(); return;
@@ -612,6 +734,7 @@ function runEffect(host: LifecycleHost, effect: Effect, stampGen: number): void 
         case 'notice': host.notice(effect.notice); return;
         case 'step': host.step(effect.input); return;
         case 'task': host.task(effect.input); return;
+        default: assertNever(effect);
     }
 }
 
@@ -619,7 +742,7 @@ function runEffect(host: LifecycleHost, effect: Effect, stampGen: number): void 
 // returned is attached and starts its deadline. Both answers carry the generation of the build (`stampGen`, the one its
 // output was computed at), and `reduce` drops them once embedder code inside the build built again (LM-2: see `built`
 // and `buildFailed` in reduce).
-function runBuild(host: LifecycleHost, stampGen: number): void {
+function runBuild(host: LifecycleHost, stampGen: Generation): void {
     let prepared: unknown;
     try {
         prepared = host.build();
