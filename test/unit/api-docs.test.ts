@@ -20,7 +20,7 @@ import { ELEMENT_EVENTS } from '@src/lib/element-events';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 import { CONFIG_SCHEMA } from '@src/lib/config-schema';
-import { HOST_LINES, TERMINATION_REASONS, type ReasonId } from '@src/lib/reasons';
+import { HOST_LINES, reasonCauses, TERMINATION_REASONS, type ReasonId } from '@src/lib/reasons';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { LIMITS, type LimitName, type LimitRow } from '@src/lib/limits';
 
@@ -234,7 +234,7 @@ describe('docs/API.md lists the public surface', () => {
         const table = new Map(rows.map(([text, cause]) => [text!.slice(1, -1), cause!]));
         const ids = Object.keys(TERMINATION_REASONS) as ReasonId[];
         expect(sorted(table.keys())).toEqual(sorted(ids.map(id => TERMINATION_REASONS[id].text)));
-        for (const id of ids) expect(table.get(TERMINATION_REASONS[id].text), id).toBe(TERMINATION_REASONS[id].cause);
+        for (const id of ids) expect(table.get(TERMINATION_REASONS[id].text), id).toBe(reasonCauses()[id]);
     });
 
     const STRING_KINDS = new Set([SyntaxKind.StringLiteral, SyntaxKind.NoSubstitutionTemplateLiteral, SyntaxKind.TemplateHead, SyntaxKind.TemplateMiddle, SyntaxKind.TemplateTail]);
