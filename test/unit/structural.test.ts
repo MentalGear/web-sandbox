@@ -347,7 +347,7 @@ describe('every string a frame carries out of a guest realm or the view is cut, 
 
     it('the bootstrap and the view cut a violation report\'s strings at the length the host keeps', () => {
         const bootstrap = read('src/lib/in-sandbox-script.ts');
-        expect(Number(bootstrap.match(/const VIOLATION_MAX_STRING = (\d+);/)![1])).toBe(VIOLATION_MAX_STRING);
+        expect(Number(bootstrap.match(/const VIOLATION_MAX_STRING(?:: [^=]+)? = (\d+);/)![1])).toBe(VIOLATION_MAX_STRING);
         expect(VIEW_OPTIONS.violationMaxString).toBe(VIOLATION_MAX_STRING);
         // and the host cuts them again on receipt, as defence in depth
         const detail = toViolationDetail({ directive: 'img-src', blockedURI: 'x'.repeat(5000), sourceFile: 'y'.repeat(5000) })!;

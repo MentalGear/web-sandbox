@@ -107,6 +107,12 @@ export const LIMITS = {
 
 export type LimitName = keyof typeof LIMITS;
 
+/**
+ * A limit's value as a literal type: the type of a constant mirrored into stringified code (`const MAX: LimitValue<'X'>
+ * = 256`), which compiles only while the two are equal. Types erase, so the stringified text is the literal alone.
+ */
+export type LimitValue<K extends LimitName> = (typeof LIMITS)[K]['value'];
+
 /** Every limit's value by its key: what the Budgets table's `{NAME}` cells are rendered with (egress.ts, budgetsTable). */
 export function limitValues(): Record<LimitName, number> {
     const values = {} as Record<LimitName, number>;

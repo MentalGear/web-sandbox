@@ -69,6 +69,8 @@
  * initiated) and its own registry (methods it exposed). ids only need to be unique within the
  * caller's own pending map — the responder merely echoes them back — so a per-side counter is enough.
  */
+import type { LimitValue } from './limits';
+import type { MAX_TIMER_DELAY as LONGEST_TIMER_DELAY } from './long-timer';
 import type { Complete, Holds } from './utils';
 
 // A method the other side may call. Args and the return value cross via structured clone.
@@ -285,7 +287,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // Declared INSIDE the function so it survives stringification into the guest. A call whose
     // handler never answers would otherwise hang forever; 30s is generous for a local same-process
     // port yet still bounds an unresponsive other side.
-    const DEFAULT_TIMEOUT_MS = 30000;
+    const DEFAULT_TIMEOUT_MS: LimitValue<'DEFAULT_TIMEOUT_MS'> = 30000;
     const defaultTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const acceptLibraryCodes = options.acceptLibraryCodes === true;
     const transferResults = options.transferResults === true;
@@ -300,18 +302,19 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const takeBusyRefusal = typeof takeBusyRefusalOption === 'function' ? takeBusyRefusalOption : null;
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
-    // Mirrors the exported RESERVED_METHOD_PREFIX (a test keeps them equal): declared here to survive stringification.
-    const RESERVED_PREFIX = 'sandbox:';
+    // Mirrors the exported RESERVED_METHOD_PREFIX: declared here to survive stringification, and typed by it, so the two
+    // compile only while equal (as every mirror below: typed by its constant, or by its row of the limits registry).
+    const RESERVED_PREFIX: typeof RESERVED_METHOD_PREFIX = 'sandbox:';
     // Mirrors the exported MAX_INBOUND_IN_FLIGHT, for the same reason.
-    const MAX_IN_FLIGHT = 256;
+    const MAX_IN_FLIGHT: typeof MAX_INBOUND_IN_FLIGHT = 256;
     // Mirror RPC_MAX_BYTES and RPC_MAX_INBOUND_BYTES, for the same reason.
-    const MAX_BYTES = 34603008;
-    const MAX_INBOUND_BYTES = 67108864;
+    const MAX_BYTES: typeof RPC_MAX_BYTES = 34603008;
+    const MAX_INBOUND_BYTES: typeof RPC_MAX_INBOUND_BYTES = 67108864;
     // The longest method name, and the longest string id (C-1): a name is chosen by whoever exposes it, so this bounds
     // what a frame and an UNKNOWN_METHOD text can carry of it. The library's own longest is 'sandbox:write'.
-    const MAX_NAME_LENGTH = 256;
+    const MAX_NAME_LENGTH: LimitValue<'MAX_NAME_LENGTH'> = 256;
     // The longest error text a frame or a rejection carries, the marker included (C-1): 64 Ki characters, as a log string.
-    const MAX_TEXT_LENGTH = 65536;
+    const MAX_TEXT_LENGTH: LimitValue<'MAX_TEXT_LENGTH'> = 65536;
     const CUT_MARKER = ` [… cut at ${MAX_TEXT_LENGTH} characters]`;
     const UNKNOWN_ERROR = 'unknown error';
     // The bytes of a value by the snapshot measure; a kind the measure does not know is written to `unsupported` (C-3).
@@ -319,7 +322,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // Mirrors MAX_TIMER_DELAY (long-timer.ts; a test keeps them equal), for the same reason. A call's timeout is the
     // caller's to choose, and setTimeout overflows at 2^31 ms and fires at once (review round 2, L-2): a longer timeout
     // is waited out in steps of at most this, and Infinity never fires. Returns how to disarm it.
-    const MAX_TIMER_DELAY = 2147483647;
+    const MAX_TIMER_DELAY: typeof LONGEST_TIMER_DELAY = 2147483647;
     const armTimer = (onTimeout: () => void, ms: number): (() => void) => {
         let timer: ReturnType<typeof setTimeout> | null = null;
         let disarmed = false;

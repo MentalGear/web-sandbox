@@ -126,7 +126,7 @@ describe('docs/API.md lists the public surface', () => {
             const limit: LimitRow = LIMITS[name];
             if (!limit.mirror) continue;
             const [file, constant] = limit.mirror;
-            const declared = read(file).match(new RegExp(`const ${constant}(?:: typeof \\w+)? = (\\d+);`));
+            const declared = read(file).match(new RegExp(`const ${constant}(?:: [^=]+)? = (\\d+);`));
             expect(declared, `${file}: ${constant}`).not.toBeNull();
             expect(Number(declared![1]), name).toBe(limit.value);
         }

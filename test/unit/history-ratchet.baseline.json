@@ -138,7 +138,7 @@
     "src/lib/in-sandbox-script.ts": 42,
     "src/lib/in-sandbox-view.test.ts": 3,
     "src/lib/in-sandbox-view.ts": 85,
-    "src/lib/lifecycle.ts": 35,
+    "src/lib/lifecycle.ts": 34,
     "src/lib/long-timer.ts": 1,
     "src/lib/origin.ts": 1,
     "src/lib/presets.ts": 1,

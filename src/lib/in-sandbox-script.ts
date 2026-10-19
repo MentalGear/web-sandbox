@@ -1,6 +1,7 @@
 import type { createBroker } from './rpc';
 import type { createSizeOf } from './structured-size';
 import type { FrameType } from './frames';
+import type { LimitValue } from './limits';
 
 /**
  * The type of the one message the guest frame posts to the host page in cooperative mode, carrying its port (the
@@ -360,8 +361,8 @@ export function inSandboxScript(
     // URL the guest chose, and every engine reports an https URL whole, so a fetch of a 100 000-character URL crossed
     // whole to the host page's thread, up to VIOLATION_LIMIT times (measured: test/e2e/violation-strings.spec.ts). The
     // cut is the bootstrap's one helper (cutAt), on the snapshot readEvent made.
-    const VIOLATION_LIMIT = 100;
-    const VIOLATION_MAX_STRING = 2048; // VIOLATION_MAX_STRING (violation.ts); a test keeps them equal
+    const VIOLATION_LIMIT: LimitValue<'VIOLATION_EVENT_LIMIT'> = 100;
+    const VIOLATION_MAX_STRING: LimitValue<'VIOLATION_MAX_STRING'> = 2048; // VIOLATION_MAX_STRING (violation.ts), typed by it
     let violationsSent = 0;
     const relayViolation = (event: Event) => {
         if (!event.isTrusted || violationsSent >= VIOLATION_LIMIT) return;
@@ -597,12 +598,12 @@ export function inSandboxScript(
     // snapshot, is what is measured and what the line carries: a getter cannot answer the measure one way and the post
     // another, and a line buffered before the port is attached holds its values as they were when logged, as postMessage
     // would, and is known to post. Mirrors of LOG_MAX_ARGS, LOG_MAX_STRING, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES and
-    // LOG_BYTES_PER_SECOND (sandbox-log.ts; a test keeps them equal): declared here to survive stringification.
-    const LOG_MAX_ARGS = 64;
-    const LOG_MAX_STRING = 65536;
-    const LOG_MAX_BYTES = 1048576;
-    const LOG_LINES_PER_SECOND = 1000;
-    const LOG_BYTES_PER_SECOND = 4194304;
+    // LOG_BYTES_PER_SECOND (sandbox-log.ts): declared here to survive stringification, typed by the limits registry.
+    const LOG_MAX_ARGS: LimitValue<'LOG_MAX_ARGS'> = 64;
+    const LOG_MAX_STRING: LimitValue<'LOG_MAX_STRING'> = 65536;
+    const LOG_MAX_BYTES: LimitValue<'LOG_MAX_BYTES'> = 1048576;
+    const LOG_LINES_PER_SECOND: LimitValue<'LOG_EVENTS_PER_SECOND'> = 1000;
+    const LOG_BYTES_PER_SECOND: LimitValue<'LOG_BYTES_PER_SECOND'> = 4194304;
     // At most LOG_BUFFER_LIMIT lines (and LOG_BYTES_PER_SECOND bytes) wait for the port (a strict entry's top level runs
     // before the view hands the worker its ports: independent verification 2026-10-14): one window's worth, so they fit
     // the host's window when they are flushed (M-2). Past either they are counted, and one warning on attach says how
@@ -1162,8 +1163,8 @@ export function inSandboxScript(
     // the gate early. A guest can only keep it closed for itself (document.open(), or stopping the event in a
     // listener of its window): its own calls then wait for 'complete' or time out. Worker and strict mode have no
     // gate: their guest code runs only in a worker, which has no document.
-    // Mirrors the exported MAX_INBOUND_IN_FLIGHT (rpc.ts; a test keeps them equal): declared here to survive stringification.
-    const MAX_HELD = 256;
+    // Mirrors the exported MAX_INBOUND_IN_FLIGHT (rpc.ts): declared here to survive stringification, typed by it.
+    const MAX_HELD: LimitValue<'MAX_INBOUND_IN_FLIGHT'> = 256;
     const held: unknown[] = list();
     let nextHeld = 0;     // index of the next frame to run; held.length - nextHeld frames wait
     let parsed = false;   // a trusted DOMContentLoaded has fired
