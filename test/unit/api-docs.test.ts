@@ -19,6 +19,7 @@ import { UNCAUGHT_CHARACTERS_PER_SECOND, UNCAUGHT_PER_SECOND } from '@src/lib/eg
 import { ELEMENT_EVENTS } from '@src/lib/element-events';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
+import { CONFIG_SCHEMA } from '@src/lib/config-schema';
 
 /**
  * docs/API.md is the consumer's reference (backlog D3): this test fails when the public surface and the
@@ -170,7 +171,7 @@ describe('docs/API.md lists the public surface', () => {
 
     it('the default mode, and the strict html warning, as the code has them', () => {
         const source = read('src/host.ts');
-        const mode = source.match(/const DEFAULT_SANDBOX_CONFIG[^}]+?\bmode: '(\w+)'/)![1]!;
+        const mode = CONFIG_SCHEMA.mode.default; // the config schema declares every default (S67)
         const options = section('## Configuration', true);
         expect(row(options, '`mode`').split(/(?<!\\)\|/)[3]!.trim()).toBe(`\`'${mode}'\``);
         const warning = source.match(/const STRICT_HTML_SCRIPT_WARNING = "\[Sandbox\] ([^;]+);/)![1]!;
