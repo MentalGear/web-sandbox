@@ -1630,12 +1630,34 @@ Every transition becomes a pure function of state and event. Effects and event d
 settles, and `ready` is the only point where queued work flushes. It is tested by the permanent fast-check `commands`
 suite built from [the lifecycle model](research/17_formal_methods/lifecycle-model.md).
 
-### S66 · Probe a trusted relay worker — ⏸️ phase 3
+### S66 · Probe a trusted relay worker — ✅ **done**: build it, with per-engine caveats (S69)
 
-A library-only worker would spawn the guest's worker and hold its only port, so guest-generated events land off the host
-page's thread and all measuring happens in a trusted realm. Probe it first, like research 15: nested blob workers under
-the view's policy, WebKit under COEP, memory, latency, error muting, and host-page cost under the round-4 and round-5
-floods. The result decides between building it and finishing design 2 (one reader) everywhere.
+[Research 19](research/19_relay_worker/README.md) measured a library-only relay worker that spawns the guest's worker
+as a nested worker, on Chromium (headless shell and full), Firefox and WebKit:
+- **Nesting works.** Nested `blob:` workers start in the sandboxed view on all three engines, and the guest inherits the
+  view's policy exactly.
+- **The worker-side costs leave the host page.** With the relay cancelling, the guest's 8 MiB `postMessage` floods
+  and 16 Mi-character uncaught errors cost the host page 0–2%, against 29–98% directly.
+- **Measuring moves to a trusted realm.** The relay measures plain data after it arrives (0–78 µs a message).
+- **Overheads.** About 1.9 MB per sandbox, under 0.1 ms per call, and 14–21 ms more to `ready`.
+- **Rejections stay open.** A rejection never reaches a `Worker` object, so Firefox's 96–98% stays: S64's guest-side
+  rejection budget is still the bound.
+- **Caveats.** The relay's own thread and memory need a byte cap that ends the guest. WebKit under COEP refuses the
+  view's worker, so the relay is never reached there, as today.
+
+### S69 · Build the relay worker — ⏸️ after S65
+
+Following research 19's plan:
+1. A stringified relay that mints and revokes the guest's URL.
+2. One typed frame protocol from guest to relay, charged to the existing budgets.
+3. A byte cap per engine after which the relay ends the guest.
+4. The relay cancels every error.
+5. The rejection budget stays in the guest realm.
+6. The view stops listening on the guest's `Worker`.
+7. Worker mode after its own probe.
+8. The floods as e2e tests, plus a test that a guest which subverts its prelude still cannot exceed a budget.
+
+This closes the worker side of E-cpu and G by construction ([research 18](research/18_finding_classes/README.md)).
 
 ### S67 · One config schema — ⏸️ phase 4
 
