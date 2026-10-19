@@ -33,7 +33,7 @@ conditional "continue".
 | Execution budget | ✅ strict mode, the default, bounds guest logic on every engine: it runs only in a worker the watchdog stops (S6, [ADR-005](ADR-005-strict-mode.md)); worker mode too; cooperative mode: opt-in watchdog, bounded in out-of-process frames, not where the frame shares the host's thread (a cooperative-mode limit, S44) |
 | Strict mode | ✅ the default (S48): guest code only in a worker, a view running only the hash-admitted library bootstrap, rendered markup cleaned (no nested frames, scripts, `meta`, `base`, SVG animation) and moved, links inert (one constant href), one render in flight, delegated events, view liveness check, the worker's source URL revoked once it ran (S6, S13, S17, S18, S24; [ADR-005](ADR-005-strict-mode.md)) |
 | Unit tests | ✅ `src/**` and `test/unit` run and pass (T2) |
-| E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C); the specs run the playground's presets, and a security preset without a spec fails the unit suite (T4) |
+| E2E tests | ✅ e2e + research specs run on a shared harness (T1); files covered on all three engines by `files.spec.ts` (section C); the specs run the playground's presets, and a security preset without a spec fails the unit suite (T4); a run tests its own checkout: its own server, port and specs (T8) |
 | `bun run test` / `bun run build` | ✅ both work from a clean checkout (T3) |
 | Type check | ✅ `bun run typecheck` is clean and gates CI (H3) |
 | CI | ✅ type check, unit tests, both builds, package smoke test; e2e on Chromium, Firefox, WebKit (D2), and the strict-mode design probes (research 15) on all three (S45) |
@@ -1724,12 +1724,35 @@ once per `setConfig()`.
 - **`mode: null`.** Its capabilities are filtered as strict mode's before the config is refused. This is harmless; it
   is kept as it was.
 
-### T7 · A host-load test that fails on a loaded machine at the base too — 🔎 **investigate**
+### T7 · A host-load test that fails on a loaded machine at the base too — ✅ **done**
 
 `review-round-4.spec.ts` "M-2: an admitted loopback origin" (an image flood, which must stay under 30% busy) measured
 41–45% on Chromium in local runs while other agents loaded the 4-core machine, at `32e59a1` as well as after S67. It
 passes in CI. Make it measure against its own idle baseline under the same load, as `view-bound.spec.ts` does, rather
 than an absolute share.
+
+**Root cause** (class: a test that measures the machine, not the code). The three M-2 floods each took one 8 s window
+of host-page ticks before the flood and one after, and asserted 70% of the idle ticks. One window on each side reads
+any ticks another process took as the view's: reproduced at `cacc0bf` with two busy loops on the machine (load average
+9.5), the loopback flood read 39% busy on Chromium (fail), against 22% with the machine otherwise idle. And the flood's
+cost comes in periods: a render of `VIEW_MAX_URLS` new URLs is applied, and the next waits until the load budget has
+refilled, 5 s later. Ticks per 500 ms on Chromium show about 2.5 s busy, then about 1.5 s idle, so a window placed on
+the busy part reads it as the long-run share. The 30% was not a bound the library states either: docs/API.md, "The
+view's cost to the host page", bounds a flood that loads at 40% (`VIEW_APPLY_MS_PER_SECOND` plus the loads).
+
+**Done.** The measure `view-bound.spec.ts` used is now one module, `test/e2e/host-share.ts` (ticks, the best of N windows
+on both sides, the bound's terms and margin), and both specs use it. M-2's idle baseline is the best of 3 windows of 1 s
+on the same page right before the flood. The loaded figure is the best of 2 windows of one period each
+(`VIEW_MAX_URLS / VIEW_URLS_PER_SECOND`), after a 1 s warm-up. The busy share must stay within the documented bound for a
+flood that loads, `TIME_SHARE + LOAD_SHARE` (40%), without `view-bound.spec.ts`'s 10-point margin. Measured with
+the new measure (Chromium / Firefox / WebKit, busy share of the best window):
+- with no load of the test's own (other agents' load average 5–9): refused source 20/18/20%, admitted origin
+  18/16/13%, loopback 35/21/21%;
+- with two busy loops on top (load average 7.5–9.5): 19/18/14%, 31/20/17% and 24/19/14%.
+
+All pass. The base measure failed under the same load. Other host-tick tests still use one window per side
+(`review-round-1.spec.ts` R3-3, `review-round-2.spec.ts`, `review-round-4.spec.ts` M-1 and M-6, `review-round-5.spec.ts`,
+`view-budget.spec.ts`). They have not failed so far, and each can move to `host-share.ts` the same way.
 
 ### S68 · State the view's cost bound — ✅ **done** (phase 5)
 
@@ -1745,13 +1768,65 @@ docs/API.md, "The view's cost to the host page", states the bound per process pl
 (b). `test/unit/view-bound.test.ts` keeps the statement's constants in step with the code. README and ADR-005 link to the
 statement instead of repeating it.
 
-### T6 · Two CPU-heavy unit tests failed once on a loaded machine — 🔎 **investigate**
+### T6 · Two CPU-heavy unit tests failed once on a loaded machine — ✅ **done**
 
 `review-round-2.test.ts` (C-7: past the comparison cap the sandbox rebuilds) and `review-round-5.test.ts` (5:L-1: the
 model over random schedules) failed once in a full unit run on 2026-10-19, at a load average of about 9. Three agents were
 running there at the time. Both passed alone and in the next full run (1635 passed), and both pass in CI. The failure
 text was not captured. Next: reproduce under load, then bound the work or give the test an explicit budget. A flake is
 not a root cause.
+
+**Root causes** (class: a test that measures the machine, not the code). Neither test fails on an assertion. Both hit
+vitest's default 5 s timeout, and both are CPU-bound, so their time scales with the machine's load. Reproduced by running
+the full unit suite with the base commit's copies of both files beside the new ones, idle and with two busy loops of
+the test's own on the 4-core machine. Then the four files ran with the vitest workers and both loops pinned to two
+cores, and to one core:
+- **C-7** (`review-round-2.test.ts`) did work that grows with a constant it should not depend on. It tests that past
+  `SAME_DATA_MAX_PAIRS` (10 000) compared pairs the configs count as different, and built a config of 200 000 objects,
+  20 times the cap. The comparison stops at the cap either way, but each `setConfig()` structured-clones the whole config
+  (measured: 640 ms per clone, 930 ms for the second `setConfig()`), so the test spent its time on objects that decide
+  nothing. It took 2.2 s in a full idle run and 4.2 s under the two loops (load average 8.2). It timed out at 5.3 s with
+  the workers and loops on two cores, and at 7.9 s on one core.
+  **Fixed by bounding the work**: `SAME_DATA_MAX_PAIRS` is exported from `src/host.ts` (not from the package's
+  entry), and the test is sized from it, on both sides: a config of exactly the cap's pairs rebuilds nothing (the
+  control, new), and one of twice the cap rebuilds. It took 0.2–1.1 s in every run since, idle, loaded or pinned.
+- **5:L-1** (`review-round-5.test.ts`) is a fixed amount of work under a fixed timeout. It runs 120 schedules (40 seeds in
+  3 modes), each one element build in jsdom (about four fifths of the cost) and 101 steps of the fake clock. Nothing grows
+  from one schedule to the next (measured: about 100 ms for the first, then 6–34 ms each to the last). 1.5 s in a full
+  idle run, 3.3–4.6 s in full runs under the two loops: the default 5 s was 3 times its idle cost. On one core shared
+  with the two loops, the base copy timed out (5.07 s), and the same work under the new budget passed in 6.3 s.
+  **Fixed with an explicit budget** sized from that work: 250 ms per schedule (30 s, about 20 times the idle cost),
+  with the reasoning beside it. No assertion changed.
+
+Validation: `bun run typecheck` clean and `bun run test:unit` 1712 passed (54 files), idle and with the two loops (load
+average 8.1); both tests passed both times.
+
+### T8 · An e2e run could test another checkout's code — ✅ **done**
+
+**Found** (class: a test that measures another checkout, not the code). `playwright.config.ts` served every checkout on
+port 4444 with `reuseExistingServer: !process.env.CI`, and its probe, `/__e2e`, answered 200 on any e2e server. A local
+run in one checkout or worktree therefore silently reused a server another checkout had started, and tested that
+checkout's `src/` and `dist/`. It happened to agents on 2026-10-19. Separately, Playwright matches `testMatch` and
+`testIgnore` against absolute paths with `**/` put in front, so with `testDir: '.'` the main checkout also ran the specs
+of every worktree nested under its `.claude/worktrees/` (measured: a copy nested there was listed, 696 tests per
+engine instead of 695). The obvious ignore, `'.claude/**'`, matches every file of a checkout that itself lives under `.claude/worktrees/`
+(measured: "No tests found").
+
+**Done**, by construction:
+- `test/e2e/server.ts` is the one place that says which server a run tests. `E2E_ROOT` is the checkout's physical path.
+  `E2E_PORT` is 4444 in CI, else derived from `E2E_ROOT` (FNV-1a into 20000–29999), else `WEB_SANDBOX_E2E_PORT`.
+  `playwright.config.ts` (the server, `baseURL`) and `fixture.ts` (`ORIGIN`, `HARNESS`) read it, so no spec names a port.
+  `WEB_SANDBOX_E2E_ORIGIN` is gone.
+- The e2e server's `/__e2e-root?root=<path>` (`vite.config.ts`) answers 200 only for the root it serves, and 409 with that
+  root to any other. Playwright counts a 409 as no server, so it never reuses another checkout's server. It starts its
+  own, which fails on a taken port, and the run stops with "Port … is already in use". The path is new, so a server of
+  a checkout from before this change, whose `/__e2e` answers 200 to anything, answers it 404. Shown: a server started from
+  a copy of `cacc0bf` in another directory, and one of this change, each on this checkout's port, were both refused.
+  This checkout's own running server was reused (no build, 3 passed).
+- `testIgnore` is a RegExp anchored at the checkout's root: `<root>/.claude/` is skipped, nested worktrees included, and a
+  checkout under another one's `.claude/` still finds its own 695 tests per engine.
+
+How to run e2e locally: CONTRIBUTING.md, "End-to-end tests".
 
 ### B1 · Promise-based RPC in both directions — ✅ **done**
 

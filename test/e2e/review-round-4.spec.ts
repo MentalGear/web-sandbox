@@ -1,5 +1,6 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { inView, waitInView } from './strict-view';
+import { busyShare, IDLE_MS, IDLE_WINDOWS, LOAD_SHARE, TIME_SHARE, WARMUP_MS } from './host-share';
 import type { Page } from '@playwright/test';
 import { STILL_PROPERTIES, STILL_PROPERTY_PATTERN, VIEW_MAX_URLS, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 
@@ -270,13 +271,21 @@ test.describe('C-7: every -webkit- part of the media and form controls is in the
 // A one-pixel PNG, for an origin the view's policy admits (served by the test, never by a network).
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
-// Renders `perRender` <img> into #a as fast as the view acknowledges them, for 12 s: each render's URLs new, `prefix`
-// followed by the render's number and the image's.
+// The flood's period: a render of VIEW_MAX_URLS new URLs is applied, and the next waits until the load budget has
+// refilled, VIEW_MAX_URLS / VIEW_URLS_PER_SECOND later (5 s). Its cost to the host page comes in that period (measured,
+// per 500 ms on Chromium: about 2.5 s busy, then about 1.5 s idle), so a window shorter than the period reads its busy
+// part as the long-run share. Measured over whole periods: the best of 2 windows of one period each, after the warm-up.
+const PERIOD_MS = (VIEW_MAX_URLS / VIEW_URLS_PER_SECOND) * 1000;
+const FLOOD_WINDOWS = { windows: 2, ms: PERIOD_MS };
+const FLOOD_MS = WARMUP_MS + FLOOD_WINDOWS.windows * PERIOD_MS + 1000;
+
+// Renders `perRender` <img> into #a as fast as the view acknowledges them, for FLOOD_MS: each render's URLs new,
+// `prefix` followed by the render's number and the image's.
 const imageFlood = (prefix: string, perRender: number) => `
     sandboxView.render('<div id="a"></div><p id="b"></p>');
     globalThis.flood = () => {
         let n = 0;
-        const end = Date.now() + 12000;
+        const end = Date.now() + ${FLOOD_MS};
         const step = () => {
             let html = '';
             for (let i = 0; i < ${perRender}; i++) html += '<img src="${prefix}' + n + '_' + i + '">';
@@ -318,6 +327,14 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
     // A refused source: the reviewers' 6500 <img> per render (21–45% busy at c7672bb). An admitted origin: as many as the
     // view may hold, VIEW_MAX_URLS per render (the reviewers' 6500 are refused whole now), served by the test, and by the
     // e2e server itself (loopback http:, which WebKit upgrades to https: and then fails: its numbers are a failed load's).
+    //
+    // The share is the host page's busy share over its own idle baseline, measured as view-bound.spec.ts measures the
+    // bound (./host-share.ts: the best of short windows on both sides, so a window that another process on the machine
+    // took ticks from says nothing about the view), and bounded by the statement's (a) for a flood that loads
+    // (docs/API.md, "The view's cost to the host page": TIME_SHARE + LOAD_SHARE, 40%), without view-bound's 10-point
+    // margin. Until backlog T7 it was one 8 s window on each side against 70% of the idle ticks: on a loaded machine
+    // that one window read the machine's load as the view's (41–45% on Chromium, at the base commit too), and its 30%
+    // was not a bound the library states.
     for (const [name, prefix, config, perRender] of [
         ['a refused source', 'https://r.example/', {}, 6500],
         ['an admitted origin', 'https://a.example/', { origins: { images: ['https://a.example'] } }, VIEW_MAX_URLS],
@@ -328,12 +345,10 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
             await page.route(/^https?:\/\/a\.example(:\d+)?\//, route => route.fulfill({ body: PNG, contentType: 'image/png' })); // never the network
             await mountEntry(sandbox, imageFlood(prefix, perRender), config);
             await page.waitForTimeout(300);
-            const idle = await countTicks(page, 8000);
-            await sandbox.run('flood()');
-            await page.waitForTimeout(1000);
-            const loaded = await countTicks(page, 8000);
-            console.log(`MEASURED ${browserName} M-2 ${name}, renders of ${perRender} <img>: host ticks in 8 s: idle ${idle}, under the flood ${loaded} (${Math.round((1 - loaded / idle) * 100)}% busy)`);
-            expect(loaded).toBeGreaterThan(idle * 0.7);
+            const { idle, loaded, busy, meanBusy } = await busyShare(page, () => sandbox.run('flood()'), FLOOD_WINDOWS);
+            const bound = TIME_SHARE + LOAD_SHARE;
+            console.log(`MEASURED ${browserName} M-2 ${name}, renders of ${perRender} <img>: host ticks: idle ${idle.count} per ${IDLE_MS} ms (best of ${IDLE_WINDOWS}), under the flood ${loaded.count} per ${FLOOD_WINDOWS.ms} ms (best of ${FLOOD_WINDOWS.windows}, longest gap ${loaded.longest} ms): ${Math.round(busy * 100)}% busy (mean of the windows ${Math.round(meanBusy * 100)}%); bound ${Math.round(bound * 100)}%`);
+            expect(busy).toBeLessThanOrEqual(bound);
         });
     }
 

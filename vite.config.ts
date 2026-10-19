@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { realpathSync } from 'fs';
 import { join } from 'path';
 
 // The e2e server (playwright.config.ts sets WEB_SANDBOX_E2E): no HMR websocket. Through it the dev server
@@ -9,6 +10,9 @@ import { join } from 'path';
 // (reproduced: `bun run build:lib` during strict-render-flood.spec.ts's 3 s flood). Without the socket the
 // client only logs that it could not connect, and nothing ever reloads a page under test.
 const e2e = !!process.env.WEB_SANDBOX_E2E;
+// The e2e server's port (test/e2e/server.ts, which playwright.config.ts passes on): 4444 in CI, a port of the
+// checkout's own locally. `bun run dev` keeps 4444.
+const e2ePort = e2e ? Number(process.env.WEB_SANDBOX_E2E_PORT) || 4444 : 4444;
 
 export default defineConfig({
   root: '.',
@@ -19,7 +23,7 @@ export default defineConfig({
   },
   server: {
     // host: 'localhost',
-    port: 4444,
+    port: e2ePort,
     // open: '/playground/index.html',
     strictPort: true,
     ...(e2e ? { ws: false as const } : {}),
@@ -37,9 +41,20 @@ export default defineConfig({
   plugins: [{
     name: 'dev-server',
     configureServer(server) {
-      // What playwright.config.ts waits for: answers only on a server started without HMR, so a dev server
-      // already running on 4444 (`bun run dev`, with HMR) is never reused for a test run.
-      if (e2e) server.middlewares.use('/__e2e', (_req, res) => { res.setHeader('cache-control', 'no-store'); res.end('ok'); });
+      // What playwright.config.ts polls (test/e2e/server.ts, backlog T8): `/__e2e-root?root=<checkout>` answers 200 only
+      // on an e2e server (started without HMR, so a `bun run dev` with HMR is never reused) that serves that very
+      // checkout. To any other root, or none, it answers 409 with the root it serves: Playwright counts that as no
+      // server, so a run never reuses another checkout's server and tests that checkout's code.
+      if (e2e) {
+        const root = realpathSync.native(server.config.root);
+        server.middlewares.use('/__e2e-root', (req, res) => {
+          const asked = new URL(req.url ?? '/', 'http://localhost').searchParams.get('root');
+          res.setHeader('cache-control', 'no-store');
+          res.setHeader('content-type', 'text/plain; charset=utf-8');
+          if (asked !== root) res.statusCode = 409;
+          res.end(`web-sandbox e2e server for ${root}\n`);
+        });
+      }
       // Test endpoint (fetch bridge specs, backlog B5): answers with the request's method and headers, so a
       // spec can see what reached the harness origin, outside the browser. Same origin as the harness, so a
       // credentialed request here carries the harness's cookies in every engine.

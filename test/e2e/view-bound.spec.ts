@@ -2,7 +2,8 @@ import { test, expect, type SandboxDriver } from './fixture';
 import { waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_MAX_URLS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
+import { VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_MAX_URLS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
+import { best, busyShare, IDLE_MS, IDLE_WINDOWS, LOAD_SHARE, LOADED_MS, MARGIN, SOAK, ticks, TIME_SHARE, WARMUP_MS } from './host-share';
 
 /**
  * The view's cost bound, executable (backlog S68; docs/API.md, "The view's cost to the host page"). On every engine the
@@ -13,61 +14,14 @@ import { VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS
  *       VIEW_URLS_PER_SECOND, plus the measure's margin (below);
  *   (b) an operation past VIEW_MAX_OPERATION_MS ends the sandbox, and no operation follows it.
  *
- * Measured as the other availability tests are: ticks of a 10 ms interval on the host page. Relative, so the machine's
- * speed does not matter: the idle baseline is the best of IDLE_WINDOWS windows on the same page right before the flood,
- * and the loaded figure the best of LOADED_WINDOWS windows once the flood is under way (best of N on both sides: a
- * window that another process on the machine took ticks from says nothing about the view). The busy share is
- * 1 − loaded / idle.
+ * Measured as the other availability tests are: ticks of a 10 ms interval on the host page, against the page's own idle
+ * baseline, the best of N windows on both sides (./host-share.ts, which also holds the bound's terms and the margin).
  *
  * What the doc lists as outside the bound (allowAnimations: true, relayout after decodes and font swaps, the documented
  * single-operation stalls, memory, :hover restyles, Firefox's cost of unhandled rejections) is not asserted here.
  *
  * WEB_SANDBOX_SOAK=1 runs the same floods over windows four times as long, with more of them.
  */
-
-const SOAK = !!process.env.WEB_SANDBOX_SOAK;
-const IDLE_WINDOWS = SOAK ? 5 : 3;
-const IDLE_MS = SOAK ? 4000 : 1000;
-const LOADED_WINDOWS = SOAK ? 4 : 2;
-const LOADED_MS = SOAK ? 10000 : 2500;
-const WARMUP_MS = 1000;
-
-/**
- * The long-run bound (a), as fractions of the host page's idle ticks (docs/API.md, the statement's (a)):
- *   - TIME_SHARE: what the view's time budget lets it spend, VIEW_APPLY_MS_PER_SECOND of every 1000 ms;
- *   - LOAD_SHARE: what the browser does with the loads VIEW_URLS_PER_SECOND admits, which the meter cannot see: about
- *     1 ms of the host page's thread per new admitted image at most (research 16: one render of 4 000 kept Chromium 52%
- *     and Firefox 46% busy over the 8 s after it), so at 200 loads a second at most 20 points. Only for floods that load;
- *   - MARGIN: the measure's own error. A 10 ms interval loses a tick for every slot a task straddles, so a stream of short
- *     tasks reads up to one tick per task more than the time they took; the time budget itself measured 15–23% under a
- *     flood against its 20% (research 16, the gap meter); and the machine is shared, so a window can lose ticks to
- *     another process (the best of N removes most of that, not all). 10 points.
- */
-const TIME_SHARE = VIEW_APPLY_MS_PER_SECOND / 1000;
-const LOAD_SHARE = 0.2;
-const MARGIN = 0.1;
-
-const ticks = (page: Page, ms: number) => page.evaluate((duration) => new Promise<{ count: number; longest: number }>(resolve => {
-    let count = 0;
-    let longest = 0;
-    let last = performance.now();
-    const timer = setInterval(() => { const now = performance.now(); longest = Math.max(longest, now - last); last = now; count++; }, 10);
-    setTimeout(() => { clearInterval(timer); resolve({ count, longest: Math.round(longest) }); }, duration);
-}), ms);
-
-// The best of `windows` windows (most ticks), the mean, and the longest gap of any.
-async function best(page: Page, windows: number, ms: number) {
-    let count = 0;
-    let sum = 0;
-    let longest = 0;
-    for (let i = 0; i < windows; i++) {
-        const window = await ticks(page, ms);
-        count = Math.max(count, window.count);
-        sum += window.count;
-        longest = Math.max(longest, window.longest);
-    }
-    return { count, mean: sum / windows, longest };
-}
 
 async function mountEntry(sandbox: SandboxDriver, source: string, config: Record<string, unknown> = {}) {
     await sandbox.registerFiles({ 'main.js': source });
@@ -155,14 +109,9 @@ test.describe("(a) the long-run bound: under each canonical flood the host page'
             await page.route(A_EXAMPLE, route => route.fulfill({ body: PNG, contentType: 'image/png' }));
             await mountEntry(sandbox, scenario.source, scenario.config);
             await page.waitForTimeout(300);
-            const idle = await best(page, IDLE_WINDOWS, IDLE_MS);
-            await sandbox.run('flood()');
-            await page.waitForTimeout(WARMUP_MS);
-            const loaded = await best(page, LOADED_WINDOWS, LOADED_MS);
-            const idleTicks = idle.count * (LOADED_MS / IDLE_MS);
-            const busy = 1 - loaded.count / idleTicks;
+            const { idle, loaded, busy, meanBusy } = await busyShare(page, () => sandbox.run('flood()'));
             const bound = TIME_SHARE + (scenario.loads ? LOAD_SHARE : 0);
-            console.log(`MEASURED ${browserName} view-bound (a) ${scenario.name}: idle ${idle.count} ticks per ${IDLE_MS} ms (longest gap ${idle.longest} ms), loaded ${loaded.count} per ${LOADED_MS} ms (longest gap ${loaded.longest} ms): ${Math.round(busy * 100)}% busy (mean of the windows ${Math.round((1 - loaded.mean / idleTicks) * 100)}%); bound ${Math.round(bound * 100)}% + ${Math.round(MARGIN * 100)} points`);
+            console.log(`MEASURED ${browserName} view-bound (a) ${scenario.name}: idle ${idle.count} ticks per ${IDLE_MS} ms (longest gap ${idle.longest} ms), loaded ${loaded.count} per ${LOADED_MS} ms (longest gap ${loaded.longest} ms): ${Math.round(busy * 100)}% busy (mean of the windows ${Math.round(meanBusy * 100)}%); bound ${Math.round(bound * 100)}% + ${Math.round(MARGIN * 100)} points`);
             await sandbox.run('globalThis.stop = true');
             expect(await sandbox.state()).toBe('ready');
             expect(busy).toBeLessThanOrEqual(bound + MARGIN);
