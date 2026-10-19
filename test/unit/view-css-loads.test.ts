@@ -413,7 +413,7 @@ describe('S73: the view prepays the CSS each operation applies, and a reported l
         const render = workers[0]!.transfer[1]!;
         let acks = 0;
         render.onmessage = (event) => { if (event.data?.type === 'VIEW_ACK') acks++; };
-        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        render.postMessage({ type: 'VIEW_STARTED' });
         const send = async (message: Record<string, unknown>) => {
             const before = acks;
             (globalThis as any).__calls.length = 0;

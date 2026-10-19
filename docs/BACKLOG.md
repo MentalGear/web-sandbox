@@ -51,7 +51,7 @@ conditional "continue".
 | Review round 2 2026-10-15 | 🟡 not clean (the count stays 0): 2 high and 8 medium findings in our code from three defensive reviews (lifecycle model, change audit, documented limits measured), all fixed (S55): intrinsics captured before guest code (C-1), the byte measure on a cloned snapshot with an allow-list (C-3), worker mode `ready` only with a running worker, the host page's Trusted Types reason, a DOM-free import with a build-time view hash, one build predicate, long timers; every documented limit held at its edge on all three engines; round 3 held by the owner (S56); [report](security/REVIEW-ROUND-2-2026-10-15.md) |
 | Review round 3 2026-10-18 | 🟡 not clean (the count stays 0): 2 high and 6 medium findings in our code from the same three reviews, all fixed (S57): whole RPC frames and a guest call budget (`callLimits`), the view's time budget charges only measured rendering, `allowAnimations` (default `true`; `false` removes animations and transitions from the view) and `allowAutoplay` (default `false`); where the view runs per engine measured ([research 16](research/16_view_isolation/README.md)); round 4 held by the owner (S58); [report](security/REVIEW-ROUND-3-2026-10-18.md) |
 | Review round 4 2026-10-18 | 🟡 not clean (the count stays 0): no high finding for the first time, 5 medium in our code, all fixed (S62): the worker's own `postMessage` removed, values read once, the still-style rewrite bounded, build completion after a frame's load, the view's URL policy and budget (`VIEW_MAX_URLS`, `VIEW_URLS_PER_SECOND`); the default call rate 1000 per second; round 5 next (S63); [report](security/REVIEW-ROUND-4-2026-10-18.md) |
-| Review round 5 2026-10-18 | 🟡 not clean (the count stays 0): 1 high and 6 medium in our code, all in code earlier per-instance fixes added; [research 18](research/18_finding_classes/README.md) found the recurring classes; fixes as class slices (S64, done), then a lifecycle reducer (S65), a relay-worker probe (S66, done: build it, S69), one config schema (S67) and the view's cost bound (S68); [report](security/REVIEW-ROUND-5-2026-10-19.md) |
+| Review round 5 2026-10-18 | 🟡 not clean (the count stays 0): 1 high and 6 medium in our code, all in code earlier per-instance fixes added; [research 18](research/18_finding_classes/README.md) found the recurring classes; fixes as class slices (S64, done), then a lifecycle reducer (S65), a relay-worker probe (S66, done: build it, S69, then deferred under the availability rule), one config schema (S67) and the view's cost bound (S68); [report](security/REVIEW-ROUND-5-2026-10-19.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -1700,9 +1700,15 @@ as a nested worker, on Chromium (headless shell and full), Firefox and WebKit:
 - **Caveats.** The relay's own thread and memory need a byte cap that ends the guest. WebKit under COEP refuses the
   view's worker, so the relay is never reached there, as today.
 
-### S69 · Build the relay worker — ⏸️ after S65
+### S69 · Build the relay worker — 💤 **deferred** (owner, 2026-10-19: availability findings are documented)
 
-Following research 19's plan:
+The relay closes the worker side of class E-cpu: it moves the cost of the guest's floods off the host page. Those
+floods are already bounded: the worker's own `postMessage()` is gone (round 4, M-1), and the uncaught budget ends the
+sandbox past its rate (`src/lib/egress.ts`). Under the owner's rule for availability findings (CONTRIBUTING.md,
+"Availability findings"), what remains is documented, and the relay is kept as a design to build if the bound is ever
+found not to hold.
+
+Research 19's plan:
 1. A stringified relay that mints and revokes the guest's URL.
 2. One typed frame protocol from guest to relay, charged to the existing budgets.
 3. A byte cap per engine after which the relay ends the guest.
@@ -1825,10 +1831,12 @@ Measured (2026-10-19, headless Playwright on the shared 4-core VM; Chromium, Fir
 
 ### S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
 
-Once S65, S69, the rest of S61 and S60 are merged: an independent adversarial review board of the whole repository. The
+Once S65, the rest of S61 and S60 are merged: an independent adversarial review board of the whole repository. The
 board clears after **two consecutive passes with no finding of high severity or above** (a stricter severity floor than
 the review rounds' medium, as the owner set it). Findings are fixed as before: by class, each naming its class and
 extending its chokepoint and structural test (CONTRIBUTING.md, "Fixing a finding"), after the owner has seen them.
+A finding whose only effect is a bounded cost to the host page that the embedder can end is at most medium, and is
+documented rather than mitigated (CONTRIBUTING.md, "Availability findings").
 
 ### S73 · CSS-borne loads charged before they start — ✅ **done** (2026-10-19)
 
@@ -1906,6 +1914,46 @@ attributes already were.
   measured and charged time.
 - **Behaviour change**: a guest's own CSS now holds its next operation back by what it can load, whether or not it
   loads it (a `url()` in a comment, a cached image); each `@import` or stylesheet `<link>` by a second.
+
+### S75 · A strict entry that ran was taken for one that failed (WebKit) — ✅ **done** (2026-10-19)
+
+Class B ([research 18](research/18_finding_classes/README.md)), a browser decision re-derived.
+
+**The cause.** PR #47's CI failed on WebKit: `review-round-1.spec.ts`, "strict mode: a later uncaught error and an
+unhandled rejection …", read `terminated` where it expected `ready`. The same test had failed on WebKit before, and was
+taken for an overrun; S72 did not touch it. Recorded by the fixture (below), the reason was **"the guest entry failed to
+start"**, for an empty entry, after `ready` and after the expected log lines. Measured with the view's errors traced: the
+`execute()`d `setTimeout(() => { throw new Error('later') })` reached the view's Worker object before `VIEW_STARTED`
+reached the render port, and the view took every error before `VIEW_STARTED` for the entry's own. That rule predicted
+that WebKit mutes a later error inside the worker (leaving it to the view) only once the view revoked the worker's source
+URL, which follows `VIEW_STARTED` (ADR-005, C1). But WebKit mutes the errors of code compiled from a string (`Function`,
+`eval`, every `execute()`) from the start, and its render-port messages can arrive after them. Before the fix, on WebKit
+(4-core VM, load 7–19 from other agents): the test 2 of 100 and 3 of 200 runs; an entry's `queueMicrotask` of compiled
+code that throws, 8 of 8; a timer of it, 5 of 8. Chromium and Firefox: never (they do not mute those errors).
+
+**The fix.** The end of the entry is read from the order of one channel, the Worker object's errors, which arrive in the
+order they were raised: the line after the entry raises the build's marker error (message: the per-build
+`entryDoneName`, which the view gets in `INIT_VIEW`) through `reportError`, so before any microtask the entry queued
+(an error thrown at the end of the script is reported only after them in Firefox and WebKit: measured, and the first
+version failed there). The prelude stops it, so no guest listener sees it; the view cancels it and posts nothing, and
+looks for it only until it came, in the first characters of the text (a later flood of 16 Mi-character errors is not
+searched). Errors before it are the entry's, errors after it later. `VIEW_STARTED` carries no count any more. ADR-005
+has the amendment.
+
+**Seen on the way, not changed** (T7's kind): on WebKit, `review-round-4.spec.ts` "M-1's class … strict mode: errors of
+16 Mi characters" and `review-round-5.spec.ts` N-1's strict 16 Mi case fail on this loaded VM at the base too (M-1: 5 of
+10 runs at the base, 3 of 10 with S75; busy 0–20% against the test's 10%).
+
+**Every e2e termination explains itself.** `test/e2e/fixture.ts` records every `terminated` event of the host page
+(reason, sandbox, state, time) from an init script; `sandbox.terminations()` returns them, a `state()` that reads
+`terminated` keeps them, and a test that fails gets them attached to its report (printed under the error).
+
+**Tests.** `test/unit/entry-end-marker.test.ts`: the view's verdicts for every place `VIEW_STARTED` can arrive among the
+errors, both engines' marker texts, an entry that threw, a missing marker; the prelude raises the marker at once and
+stops it (failed before the fix). `test/e2e/strict.spec.ts` ("the entry"): errors of a microtask, a microtask of compiled
+code and a timer of compiled code the entry queued are logged once and leave the sandbox `ready`, and no guest listener
+or log line sees the marker (the compiled-code cases failed on WebKit before, 3 of 3 each). After the fix: the test above
+0 of 300 runs on WebKit under the same load.
 
 ### T6 · Two CPU-heavy unit tests failed once on a loaded machine — ✅ **done**
 

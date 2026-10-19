@@ -508,7 +508,7 @@ describe('C-4: the strict view bounds the guest error texts it relays before pos
         const logic = new MessageChannel(), view = new MessageChannel();
         const toHost: any[] = [];
         view.port2.onmessage = (event) => toHost.push(event.data);
-        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '' }, source: window, ports: [logic.port1, view.port1] }));
+        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', entryDone: '__testEntryDone', viewFiles: [], html: '' }, source: window, ports: [logic.port1, view.port1] }));
         const worker = workers[0]!;
         const fail = (message: string) => worker.onerror!({ message, preventDefault() {} });
         const delivered = async () => {
@@ -529,8 +529,9 @@ describe('C-4: the strict view bounds the guest error texts it relays before pos
         vi.spyOn(performance, 'now').mockImplementation(() => 1000);
         const { worker, fail, delivered, close } = await startView();
         const render = worker.transfer[1]!;
-        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        render.postMessage({ type: 'VIEW_STARTED' });
         await new Promise(resolve => setTimeout(resolve, 20));
+        fail('Uncaught Error: __testEntryDone'); // the marker error: the entry ran to its end (backlog S75)
         for (let i = 0; i < LOG_EVENTS_PER_SECOND + 100; i++) fail('u'.repeat(4096));
         const frames = await delivered();
         expect(frames).toHaveLength(LOG_EVENTS_PER_SECOND);
@@ -688,7 +689,7 @@ describe("C-2 and M-5: the view's time budget charges only the rendering it meas
         const render = workers[0]!.transfer[1]!;
         const acks: unknown[] = [];
         render.onmessage = (event) => { if (event.data?.type === 'VIEW_ACK') acks.push(event.data); };
-        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        render.postMessage({ type: 'VIEW_STARTED' });
         const send = (value: string) => render.postMessage({ type: 'VIEW_TEXT', into: 'a', text: value });
         const text = async (value: string) => {
             const before = acks.length;
@@ -772,18 +773,27 @@ describe("C-2 and M-5: the view's time budget charges only the rendering it meas
             expect(await text('1')).toBe(true);
             frame();
             clock.now += VIEW_MAX_OPERATION_MS + 1; // its rendering update took just past the limit
-            await tasks();
-            expect(count(fromView, 'VIEW_FIRST_OVERRUN')).toBe(1);
+            // Wait for what the view posts, not for a fixed 5 ms: its port delivers in a later task, and under load (CI on
+            // PR #47) a fixed wait read the count before the message had arrived. Each case below waits for a message it
+            // is sure to get, then reads the others.
+            expect(await until(() => count(fromView, 'VIEW_FIRST_OVERRUN') === 1, 5000)).toBe(true);
             expect(count(fromView, 'VIEW_OVERRUN')).toBe(0);
             clock.now += 10000 + later; // the 9 s of debt repaid (and, for the second case, the window passed)
             let stop = runFrames();
             send('2');
             expect(await until(() => shown() === '2', 1500)).toBe(true); // applied: the view went on
             stop();
-            await tasks();
+            // Settle the meter before the second overrun: the frames that ran in real time may have left a measure of
+            // '2' pending (a frame requested, or its gap's task), and a flush while one is pending is measured by a later
+            // frame, so the frame() below would not measure '3'. Run the pending frames with no time passing, then wait
+            // for the frame that '3' asks for.
+            for (let i = 0; i < 10 && frames.size > 0; i++) { frame(); await tasks(); }
+            expect(frames.size).toBe(0);
             expect(await text('3')).toBe(true);
+            expect(await until(() => frames.size > 0, 5000)).toBe(true);
             frame();
             clock.now += VIEW_MAX_OPERATION_MS + 1; // the second overrun
+            expect(await until(() => ends ? count(fromView, 'VIEW_OVERRUN') === 1 : count(fromView, 'VIEW_FIRST_OVERRUN') === 2, 5000)).toBe(true);
             await tasks();
             expect(count(fromView, 'VIEW_OVERRUN')).toBe(ends ? 1 : 0);
             expect(count(fromView, 'VIEW_FIRST_OVERRUN')).toBe(ends ? 1 : 2);

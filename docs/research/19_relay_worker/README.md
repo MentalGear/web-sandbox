@@ -37,6 +37,9 @@ machine's. The decisions rest on their shapes: which thread pays, and what chang
   worker side's measuring) by construction. It does not close rejections (5:N-1), so S64's rejection budget and its
   ending of the sandbox stay. The relay needs a byte budget that ends the guest, because a flood saturates the relay's
   thread and grows memory by about 1 GB a second (see [Verdict](#verdict)).
+- **Decision (owner, 2026-10-19): deferred.** The floods it would move are already bounded (the worker's `postMessage()`
+  is gone; the uncaught budget ends the sandbox), so under the rule for availability findings (CONTRIBUTING.md) the
+  remaining cost is documented. The design is kept for the case where a bound is found not to hold (backlog S69).
 
 ## Method
 

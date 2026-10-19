@@ -352,7 +352,7 @@ describe('C-4: a view operation costs what it changes, not the size of the whole
             const render = workers[0]!.transfer[1]!;
             const acks: unknown[] = [];
             render.onmessage = (event) => { if (event.data.type === 'VIEW_ACK') acks.push(event.data); };
-            render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+            render.postMessage({ type: 'VIEW_STARTED' });
             const until = async (count: number) => {
                 for (let i = 0; i < 500 && acks.length < count; i++) await new Promise(resolve => setTimeout(resolve, 5));
                 expect(acks).toHaveLength(count);

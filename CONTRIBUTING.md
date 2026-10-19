@@ -67,6 +67,25 @@ test that enumerates the domain:
 A new mitigation (a stylesheet, a rewrite, a listener) is a new cost: measure it on every engine, as the code it guards
 is measured.
 
+### Availability findings (owner's rule, 2026-10-19)
+
+A finding whose only effect is that the guest slows the host page (CPU share, stalls, memory) is **documented, not
+mitigated further**, when both hold:
+- the cost is bounded: by a documented limit, or by the caps on what the view and the guest can hold;
+- the embedder can end it: `terminate()`, or removing the element, gives the host page back.
+
+Such a finding is at most medium. Its fix is a measured bound in docs/API.md, "The view's cost to the host page" (or
+the section of the surface it concerns), with what the embedder can do about it. The view shares the host page's thread
+on Firefox, WebKit and Android, so no budget of the library's removes that cost: past a stated bound, chasing it gives
+diminishing returns.
+
+These are **not** availability findings, and are fixed as any other:
+1. a host page frozen beyond the embedder's reach: it cannot regain control, or the stall has no bound but the
+   browser's (high);
+2. the library's own limits ending a healthy sandbox (a correctness bug);
+3. a flood that breaks a security property: a budget that fails open, a check skipped under pressure, state left
+   inconsistent, anything that moves data or crosses the policy.
+
 ## Style
 
 See [`agents.md`](agents.md) for the code style. `bun run format` applies Prettier; `bun run format:check`
