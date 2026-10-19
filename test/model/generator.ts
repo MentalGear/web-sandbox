@@ -35,7 +35,17 @@ export class Rng {
 
 const MODES: Mode[] = ['strict', 'cooperative', 'worker'];
 const TIMEOUT_VALUES: Raw[] = [0, -1, 'NaN', 'Infinity', 2 ** 31 + 5, 2 ** 32, 1e12, 5, 20, 60, 150, 400];
-const WATCHDOG_VALUES: (Raw | undefined)[] = [undefined, undefined, 0, -1, 'NaN', 'Infinity', '300', 150, 250];
+// The watchdog of an ordinary config, in a calm segment: off in every spelling, or on with a budget no responsive guest
+// misses (S65 PR D). The model allows the watchdog's termination only once a guest step blocked the event loop (`busy`,
+// lifecycle-model.ts, autonomousAllowed); scenario 3 below pairs a 150 ms watchdog with such a step. These were 150 and
+// 250 ms, and at a load average of 15 to 19 a strict guest's worker, starved for longer than that, missed its pings with
+// nothing busy: WebKit seed 225 diverged at 500 sequences, at the PR B commit as at PR C's (2 and 1 in 16 runs of its
+// repro). The fix is here, not in the model: a model that accepted a watchdog termination for any short budget would no
+// longer catch a watchdog that fires on a guest that answers (pings on the wrong port, a pong not heard), which is what
+// the rule is for. 4000 and 5000 ms keep the watchdog armed and pinging through the calm segments, at the budget the
+// element itself deems safe against scheduling jitter: its always-on view liveness check (VIEW_LIVENESS_TIMEOUT_MS,
+// 5000). The array keeps its length, so every seed draws the same values elsewhere.
+const WATCHDOG_VALUES: (Raw | undefined)[] = [undefined, undefined, 0, -1, 'NaN', 'Infinity', '300', 5000, 4000];
 const EXEC_VALUES: (Raw | undefined)[] = [undefined, undefined, 0, 'NaN', 150, 300];
 const SWITCHES: Raw[] = [true, true, true, 'true', 1, 0, null, 'no', false];
 const WRITE_PATHS = ['w/a.txt', 'w/b.js', 'data.txt'];

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT } from '@src/lib/violation';
+import { checkIn } from './check-in';
 
 /**
  * Follow-up audit 2026-10-14 (docs/security/ADVERSARIAL-REVIEW-2026-10.md, "Follow-up"), host side: the execution
@@ -36,7 +37,7 @@ describe('B8, focused review F2: workerExecutionTimeout requires a free event lo
         const { EXECUTION_TIMEOUT_GRACE_MS } = await import('@src/host');
         const el = await mount({ mode, scriptUnsafe: true, workerExecutionTimeout: budget });
         const port = recordingPort();
-        el._finishBuild(port); // the build is ready on this port (posting waits for `ready`, review round 5, L-1)
+        checkIn(el, port); // the build is ready on this port (posting waits for `ready`, review round 5, L-1)
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         const logs: string[] = [];
