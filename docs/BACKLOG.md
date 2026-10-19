@@ -81,7 +81,8 @@ S57; round 4 is held by the owner (S58), the Lean evaluation (S59) found no case
 later (S61), and the clean-up with independent reviews follows when the rounds end (S60). Review round 4
 (S58, [report](security/REVIEW-ROUND-4-2026-10-18.md)) added and closed S62; round 5 is next (S63).
 Round 5 (S63) found the recurring classes behind the findings ([research 18](research/18_finding_classes/README.md));
-its fixes are made as slices of those classes (S64), followed by S65–S68. S65's model-based suite found LM-1, fixed by construction (S71).
+its fixes are made as slices of those classes (S64), followed by S65–S68. S65 is done: the element runs on one lifecycle
+reducer, and its model-based suite found LM-1 (S71) and LM-2, both fixed by construction.
 The owner's decision on the 2 s operation limit, the repeated-overrun rule, is S72.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
@@ -1644,7 +1645,7 @@ The owner's decisions, 2026-10-18:
 Residual, for the owner: the 2 s operation limit ends a 250,000-character textarea `set()` in WebKit. **Decided**
 (owner, 2026-10-19): the sandbox ends only after repeated overruns (S72).
 
-### S65 · One lifecycle reducer, with the model-based suite (S61.2) — 🟡 step 2 in progress (PRs A, B and C of 4 done)
+### S65 · One lifecycle reducer, with the model-based suite (S61.2) — ✅ **done** (2026-10-19)
 
 Every transition becomes a pure function of state and event. Effects and event dispatch run only after the state
 settles, and `ready` is the only point where queued work flushes. It is tested by the permanent fast-check `commands`
@@ -1653,7 +1654,7 @@ suite built from [the lifecycle model](research/17_formal_methods/lifecycle-mode
 1. ✅ **The model-based suite.** The reference model is a module (`test/model/`), with its generator and runner, unit
    tests (`test/unit/lifecycle-model.test.ts`) and an e2e on every engine (`test/e2e/lifecycle-model.spec.ts`), which
    also keeps round 4's L-1 loop as a property. Its first finding is LM-1 (S71).
-2. 🟡 **The reducer**, tested by that suite, in four PRs, each merged on its own:
+2. ✅ **The reducer**, tested by that suite, in four PRs, each merged on its own:
    - ✅ **PR A: the reducer as a pure module, and its oracle.** `src/lib/lifecycle.ts` (`reduce`, `step`,
      `runEffects`; internal, not exported) describes exactly what `host.ts` does today, and `host.ts` does not use it
      yet. `test/model/reducer-runner.ts` runs the real reducer against a fake element and the reference model;
@@ -1695,8 +1696,21 @@ suite built from [the lifecycle model](research/17_formal_methods/lifecycle-mode
      real default policy (`host-policy.spec.ts`, "LM-2", Chromium and WebKit: `ready`, then the startup reason 5 s later)
      and jsdom unit tests (`test/unit/lifecycle-reentry.test.ts`: the stray deadline, the leaked listener, the double
      `appendChild`, the outer failure, the warning hook). The reasons are unchanged.
-   - ⏸️ PR D: the completion of a build and the `ready` gate; a source scan that `state` and the lifecycle events
-     change only in the executor.
+   - ✅ **PR D: the completion of a build and the `ready` gate.** The wrapper's load (`frameLoad`, its microtask stays
+     in the adapter: round 4's L-1), the guest's announcement (`announced`) and the strict view's check-in (`viewReady`)
+     are reducer inputs; the build's progress (the wrapper's load, the accepted announcement and the window it came
+     from) lives in `_lc`, and `_completeBuild`, `_finishBuild`, `_enterReady`, `_enterState` and their fields are gone.
+     The executor is the one writer of `_lc` and makes `ready` and `terminated`; queued work leaves only by the `flush`
+     effect, which only the transition to `ready` emits. The view's check-in is guarded like the other two completions
+     (a throw there left the build `loading`), and a guarded effect's failure carries its output's generation, so one
+     that ran embedder code which built again ends nothing of the new build. The reasons the reducer decides are
+     declared there only (`api-docs.test.ts` checks them against API.md). The structural test holds host.ts to class L:
+     one writer of `_lc`, one place each for the two events, one gate for the queue, the generation compared only in
+     `reduce`, the executor and a call's own environment. Tests reach the completion through `test/unit/check-in.ts`,
+     which steps the input the platform would give (the element's private `_step`), in place of `_finishBuild`.
+     The model's generator no longer gives ordinary configs a 150 or 250 ms watchdog, which a starved worker missed at
+     a load average of 15 to 19 (WebKit seed 225, before the reducer as after it): 4000 and 5000 ms instead; the
+     150 ms watchdog stays paired with a busy guest, where the model allows its termination.
 
 ### S71 · LM-1, a `fetch` record after its environment's teardown — ✅ **done** (2026-10-19): `aborted`, by construction
 
@@ -1730,7 +1744,7 @@ as a nested worker, on Chromium (headless shell and full), Firefox and WebKit:
 - **Caveats.** The relay's own thread and memory need a byte cap that ends the guest. WebKit under COEP refuses the
   view's worker, so the relay is never reached there, as today.
 
-### S69 · Build the relay worker — ⏸️ after S65
+### S69 · Build the relay worker — ⏸️ after S65 (done 2026-10-19)
 
 Following research 19's plan:
 1. A stringified relay that mints and revokes the guest's URL.

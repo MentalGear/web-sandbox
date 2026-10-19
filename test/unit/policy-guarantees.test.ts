@@ -337,8 +337,10 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
         const reasons = terminations(el);
-        el._completeBuild = () => { throw new Error('could not hand over the port'); };
-        el._onFrameLoad(el._lc.gen); // the load of the standing environment
+        // the strict view's ports, handed over at the wrapper's load (the `sendInitView` effect, applied through the
+        // class's prototype, CB7), throw; the wrapper's load of the standing environment, as the platform delivers it
+        vi.spyOn(Object.getPrototypeOf(el), '_setupStrictChannels').mockImplementation(() => { throw new Error('could not hand over the port'); });
+        el._step({ t: 'frameLoad', gen: el._lc.gen, stillOurs: true, guest: {} });
         expect([el.state, wrapperOf(el), reasons]).toEqual(['terminated', null, ['the environment could not be built (Error)']]);
     });
 });

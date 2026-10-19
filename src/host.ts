@@ -271,17 +271,14 @@ const VIEW_FIRST_OVERRUN_LINE = '[Sandbox] the view spent more than 2000 ms on o
 const EXECUTION_TIMEOUT_REASON = 'the executed code ran longer than workerExecutionTimeout';
 const CONFIG_REFUSED_REASON = 'the configuration could not be used';
 const BUILD_FAILED_REASON = 'the environment could not be built';
-const SECOND_LOAD_REASON = 'the sandbox frame loaded a second time';
-const SECOND_ANNOUNCEMENT_REASON = 'the guest frame announced itself again (it reloaded or rewrote its document)';
-const FRAME_MISSING_REASON = 'the guest frame is missing';
-const LOAD_TIMEOUT_REASON = 'the sandbox did not finish loading';
+// The reasons the lifecycle decides (a second load, a second announcement, a missing guest frame, the load deadline's
+// two) are the reducer's: src/lib/lifecycle.ts, LIFECYCLE_REASONS.
 // Past the budget of uncaught errors and rejections the guest's bootstrap keeps (egress.ts, UNCAUGHT_PER_SECOND and
 // UNCAUGHT_CHARACTERS_PER_SECOND; review round 5, N-1): the bootstrap says so once, on the port only it holds.
 const UNCAUGHT_BUDGET_REASON = 'the guest raised more uncaught errors or unhandled rejections in one second than their budget allows';
 // What the host page's own policy can refuse (review round 1, R3-1): the sandbox's frames are srcdoc documents, and a
 // srcdoc document inherits the policies of the page that made it (CSP3: a copy of its policy list; Trusted Types;
 // COEP). Each reason names the policy, so a misconfigured host page is told what to allow (docs/API.md#host-page-policy).
-const STARTUP_BLOCKED_REASON = "the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)";
 const WORKER_REFUSED_REASON = "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)";
 const TRUSTED_TYPES_REASON = `the host page's Trusted Types policy does not allow the policy name '${TRUSTED_TYPES_POLICY}' (trusted-types; see docs/API.md#host-page-policy)`;
 // What worker mode's frame may announce instead of a port (worker-bootstrap.ts), and the reason each ends the build with.
@@ -447,12 +444,9 @@ const ElementBase: typeof HTMLElement = typeof HTMLElement === 'function' ? HTML
 
 export class WebSandbox extends ElementBase {
     private _iframe: HTMLIFrameElement | null = null;
-    private _frameLoaded = false;
-    // The reversed handshake (broad review 2026-10-14, CB1): whether this build's guest runs a bootstrap that announces
-    // its port; the guest frame's window whose announcement was accepted (S46: the wrapper's load must still hold it);
-    // and the listener on the host's window, removed by _teardown. Cooperative and worker mode only.
-    private _expectAnnouncement = false;
-    private _guestWindow: Window | null = null;
+    // The reversed handshake (broad review 2026-10-14, CB1): the listener on the host's window, removed by _teardown
+    // (cooperative and worker mode). Whether this build's guest announces, whether the wrapper loaded and the window
+    // whose announcement was accepted are the build's progress in the reducer (`_lc.build`; S65 PR D).
     private _stopListening: (() => void) | null = null;
     private _loadDeadline: Watchdog | null = null; // LOAD_TIMEOUT_MS until the guest checks in, or a frame with no bootstrap loads (CB3, S46)
     // The lifecycle's state (src/lib/lifecycle.ts, LcState; backlog S65): `state`, the environment count (`gen`: every
@@ -460,7 +454,7 @@ export class WebSandbox extends ElementBase {
     // being dispatched (`dispatching`, round 4's L-3), the one being dispatched when the last build started (`within`,
     // round 2's L-4: CB5's no-repeat rule), the standing build's progress, how often what a build reads changed (setConfig(),
     // load(), the files: `inputs`, R3-7) and the refusal of the last setConfig() argument (`refused`). One value. The
-    // executor's `step` (module level, below) writes it, and, until S65's PR D moves `ready` into the reducer, _enterState.
+    // executor's `step` (module level, below) writes it, and nothing else does.
     private _lc: LcState = INITIAL_LIFECYCLE;
     private _watchdog: Watchdog | null = null;
     private _resizer: AutoResizer | null = null; // this environment's auto-sizing (B6), or null when off
@@ -841,7 +835,7 @@ export class WebSandbox extends ElementBase {
             return;
         }
 
-        // Before `ready` it waits, even with a port (strict mode has one from the wrapper's load): _enterReady posts it.
+        // Before `ready` it waits, even with a port (strict mode has one from the wrapper's load): the `flush` effect posts it.
         if (this._port && this._lc.state === 'ready') {
             this._postExecute(this._port, code);
         } else {
@@ -942,7 +936,7 @@ export class WebSandbox extends ElementBase {
         return null;
     }
 
-    // Sends one of the host's own RPC requests over the port once the build is ready, or queues it until _enterReady flushes
+    // Sends one of the host's own RPC requests over the port once the build is ready, or queues it until `ready` flushes
     // (mirrors execute(); review round 5, L-1: strict mode has its port from the wrapper's load, before `ready`).
     // Only for the environment the call was made in, while it stands (L-2, _issue): otherwise nothing is sent, and the
     // text returned refuses the call TERMINATED.
@@ -1055,7 +1049,7 @@ export class WebSandbox extends ElementBase {
         // calls it runs per channel (review B7), so the count belongs to this environment.
         const reply = (frame: unknown, transfer?: Transferable[]) => port.postMessage(frame, transfer ?? []);
         // Setting onmessage starts the port: frames the guest posted before its announcement was accepted are
-        // delivered now, after 'ready'. What waits in the queue is posted by _enterReady, the one flush point.
+        // delivered now, after 'ready'. What waits in the queue is posted by the `flush` effect, the one flush point.
         port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, null);
     }
 
@@ -1069,12 +1063,15 @@ export class WebSandbox extends ElementBase {
      * itself (location.reload(), a <meta refresh> without a URL) or rewrites its document so a bootstrap runs again
      * announces again, and a guest that forges one can only end its own environment (PD8). Messages from any other
      * window, and the guest's other messages, are not this listener's (they reach the embedder's own listeners).
+     *
+     * What the announcement is (from the guest frame's window, trusted, with exactly one port or worker mode's refusal)
+     * is read here; what it does is the reducer's (`announced`): which one is accepted, and whether the build expects one,
+     * are the build's progress there, and so is the window it came from, which the wrapper's load must still hold.
      */
     private _listenForAnnouncement(iframe: HTMLIFrameElement) {
         const host = window;
-        let accepted = false;
         // The environment this listener belongs to: installed by its build, removed by its teardown (_stopListening).
-        // Each termination it starts carries it, so one that a listener's teardown made stale is dropped (S65).
+        // Its input carries it, so one that a teardown made stale is dropped (S65).
         const gen = this._lc.gen;
         const onMessage = (event: MessageEvent) => {
             const guestWindow = guestWindowOf(iframe);
@@ -1085,20 +1082,11 @@ export class WebSandbox extends ElementBase {
             // Worker mode's frame announces a worker that could not start as its one announcement, with no port (review
             // round 2, C-5, worker-bootstrap.ts): the build ends with the reason strict mode gives for the same refusal,
             // and is never 'ready'. Only in worker mode, whose frame runs no guest code: elsewhere it is a forgery.
-            const refusal = this._config.mode === 'worker' && event.ports.length === 0 ? WORKER_FRAME_REFUSALS[data.refused as string] : undefined;
-            if (accepted || !this._expectAnnouncement || !event.isTrusted || (event.ports.length !== 1 && refusal === undefined)) {
-                step(this, { t: 'terminate', reason: SECOND_ANNOUNCEMENT_REASON, gen });
-                return;
-            }
-            accepted = true;
-            if (refusal !== undefined) {
-                this._refusedByHostPage(refusal, gen);
-                return;
-            }
-            // The check-in (S46): the environment is ready now, whether or not the wrapper has loaded (its load waits
-            // for the guest's subresources). The guest frame it came from is the one the wrapper's load must still hold.
-            this._guestWindow = guestWindow;
-            this._finishBuild(event.ports[0]!);
+            const refusal = this._config.mode === 'worker' && event.ports.length === 0 ? WORKER_FRAME_REFUSALS[data.refused as string] ?? null : null;
+            const valid = event.isTrusted && (event.ports.length === 1 || refusal !== null);
+            // The check-in (S46): the environment is ready then, whether or not the wrapper has loaded (its load waits for
+            // the guest's subresources).
+            step(this, { t: 'announced', gen, valid, refusal, port: valid && refusal === null ? event.ports[0]! : null, source: guestWindow });
         };
         host.addEventListener('message', onMessage, true);
         this._stopListening = () => host.removeEventListener('message', onMessage, true);
@@ -1169,7 +1157,7 @@ export class WebSandbox extends ElementBase {
         viewPort.onmessage = (e) => this._onViewMessage(viewPort, e.data);
 
         // The ports go to the view now, at the wrapper's load; what waits in the queue does not (review round 5, L-1): it is
-        // posted when the build becomes ready, at the view's check-in (_enterReady). Flushed here, a call made while loading
+        // posted when the build becomes ready, at the view's check-in (the `flush` effect). Flushed here, a call made while loading
         // that timed out between the load and the check-in had already left, and ran in the guest after its caller had been
         // told TIMEOUT, though docs/API.md says it never runs.
         const init = this._strictInit;
@@ -1181,11 +1169,9 @@ export class WebSandbox extends ElementBase {
         if (!viewPort || viewPort !== this._viewPort) return; // only the current environment's view (review B4)
         const gen = this._lc.gen; // so the environment the view port was opened in (see _onGuestMessage)
         if (data?.type === 'VIEW_READY') {
-            // The view's check-in, the first frame on the port only its bootstrap holds (R3-1): the strict build is ready.
-            if (this._lc.state !== 'loading') return;
-            this._checkViewSize(data.height);
-            if (data.stillStyleRefused === true) this._warnStillStyleRefused();
-            this._enterReady();
+            // The view's check-in, the first frame on the port only its bootstrap holds (R3-1): the strict build is ready,
+            // if it is still loading (the reducer's `viewReady`), and what the view measured is checked then (`checkView`).
+            step(this, { t: 'viewReady', gen, height: data.height, stillStyleRefused: data.stillStyleRefused === true });
             return;
         }
         if (data?.type === 'TRUSTED_TYPES_REFUSED') {
@@ -1284,7 +1270,7 @@ export class WebSandbox extends ElementBase {
 
     // Flushes what was queued before the build was ready onto its port, in the order it was issued (L-3): execute() code
     // (checked by execute() when queued) and the host's own RPC requests — the queue never holds answers (those go back
-    // on the port their request arrived on). Called by _enterReady only (review round 5, L-1). Requests are cloned when
+    // on the port their request arrived on). Reached by the `flush` effect only (review round 5, L-1). Requests are cloned when
     // the call is made (see callWithTimeout in rpc.ts), so a post failure is not expected here; the per-frame catch is a
     // backstop so that one bad frame could never drop the frames behind it or stop 'ready' from firing.
     private _flushQueues(port: MessagePort) {
@@ -1391,7 +1377,7 @@ export class WebSandbox extends ElementBase {
     private _startWatchdog(port: MessagePort) {
         const budget = watchdogBudget(this._config.watchdogTimeout);
         if (budget === 0) return;
-        const gen = this._lc.gen; // armed for this environment's port (_enterReady): its expiry ends that one only
+        const gen = this._lc.gen; // armed for this environment's port (`startWatchdogs`): its expiry ends that one only
         this._watchdog = startWatchdog({
             timeoutMs: budget,
             ping: (n) => port.postMessage({ type: 'PING', n }),
@@ -1459,14 +1445,6 @@ export class WebSandbox extends ElementBase {
         this.dispatchEvent(elementEvent('fetch', record));
     }
 
-    // `state: 'ready'` (_enterReady), whose event is dispatched here, after the state is set, so a listener reads the state
-    // its event announces. Every other state is the executor's (src/lib/lifecycle.ts). S65 step 2: the one write of `_lc`
-    // outside the executor, the reducer's own `enterReady` written out, until PR D steps the completion of a build.
-    private _enterState(next: 'ready') {
-        this._lc = { ...this._lc, state: next };
-        this.dispatchEvent(elementEvent('ready'));
-    }
-
     // The resources of the environment (the executor's `teardown` effect): its generation is the reducer's. Everything a
     // build makes is made in _attachBuild or later, and released here (LM-2).
     private _teardown() {
@@ -1487,8 +1465,6 @@ export class WebSandbox extends ElementBase {
         this._broker.rejectAllPending(RESET_CALL_MESSAGE);
         if (this._stopListening) { this._stopListening(); this._stopListening = null; }
         if (this._loadDeadline) { this._loadDeadline.stop(); this._loadDeadline = null; }
-        this._expectAnnouncement = false;
-        this._guestWindow = null;
         if (this._iframe) { this._iframe.onload = null; this._iframe.remove(); this._iframe = null; }
         if (this._port) { this._port.close(); this._port = null; }
         if (this._viewPort) { this._viewPort.close(); this._viewPort = null; }
@@ -1533,14 +1509,13 @@ export class WebSandbox extends ElementBase {
     // `loading` (`loadDeadline`), which also decides the reason: once the wrapper has loaded, the frame that runs the
     // library's startup script (the strict view, or the guest's bootstrap) has loaded too, and that script runs before
     // anything else in it, so had it run it would have checked in; what stops an inline script of ours there is the host
-    // page's policy, which srcdoc documents inherit (R3-1). Whether the wrapper loaded is reported from here until PR D
-    // steps the load itself.
+    // page's policy, which srcdoc documents inherit (R3-1).
     private _startLoadDeadline() {
         const gen = this._lc.gen;
         this._loadDeadline = startWatchdog({
             timeoutMs: LOAD_TIMEOUT_MS,
             ping: () => {},
-            onExpire: () => step(this, { t: 'loadDeadline', gen, wrapperLoaded: this._frameLoaded }),
+            onExpire: () => step(this, { t: 'loadDeadline', gen }),
         });
     }
 
@@ -1747,10 +1722,9 @@ export class WebSandbox extends ElementBase {
         }
         iframe.style.cssText = isWorkerMode ? "display:none" : "width:100%;height:100%;border:none";
         // srcdoc goes in before the frame is inserted: an iframe inserted without one first
-        // loads about:blank, which would count as the frame's one load (see _onFrameLoad)
+        // loads about:blank, which would count as the frame's one load (see _frameLoadHandler)
         setWrapperSrcdoc(iframe, buildWrapperDocument(guestDocument, sandboxFlags, permissions));
-        // A bootstrap runs, and announces, exactly where the inline script can run (_getMarkupPlan's test).
-        return { iframe, built, strictInit: null, announces: sandboxFlags.split(' ').includes('allow-scripts') };
+        return { iframe, built, strictInit: null };
     }
 
     /**
@@ -1788,7 +1762,7 @@ export class WebSandbox extends ElementBase {
         iframe.setAttribute("referrerpolicy", FRAME_REFERRER_POLICY);
         iframe.style.cssText = "width:100%;height:100%;border:none";
         setWrapperSrcdoc(iframe, buildWrapperDocument(view, sandboxFlags, []));
-        return { iframe, built, strictInit, announces: false };
+        return { iframe, built, strictInit };
     }
 
     // The executor's `attach` effect: the prepared build becomes the element's, every per-build resource made here (the
@@ -1803,11 +1777,9 @@ export class WebSandbox extends ElementBase {
         const iframe = prepared.iframe;
         this._iframe = iframe;
         this._strictInit = prepared.strictInit;
-        this._frameLoaded = false;
         iframe.onload = this._frameLoadHandler(iframe);
         // The guest announces its port from its first statement (CB1), so the listener is in place before the frame is
         // inserted. Strict mode's view checks in on its own port instead (R3-1).
-        this._expectAnnouncement = prepared.announces;
         if (prepared.strictInit === null) this._listenForAnnouncement(iframe);
         this.shadowRoot!.appendChild(iframe);
     }
@@ -1852,7 +1824,7 @@ export class WebSandbox extends ElementBase {
 
     // The view liveness check (A5): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.
     private _startViewWatchdog(viewPort: MessagePort) {
-        const gen = this._lc.gen; // armed for this environment's view (_enterReady): its expiry ends that one only
+        const gen = this._lc.gen; // armed for this environment's view (`startWatchdogs`): its expiry ends that one only
         this._viewWatchdog = startWatchdog({
             timeoutMs: VIEW_LIVENESS_TIMEOUT_MS,
             ping: (n) => viewPort.postMessage({ type: 'VIEW_PING', n }),
@@ -1860,9 +1832,6 @@ export class WebSandbox extends ElementBase {
         });
     }
 
-    // The wrapper's one load: completes a build that waits for it (strict mode, or a guest that runs no bootstrap), and
-    // checks the frame's integrity in every mode. Like the build itself, anything it throws ends the sandbox with a reason
-    // instead of leaving it 'loading'.
     // The wrapper's load handler for `iframe` (review round 2, L-6): a load counts only for the element's current frame
     // while both are in the document. Chromium and WebKit fire a frame's load when it is detached, from inside remove()
     // or appendChild() and before the element's disconnectedCallback: a cooperative build without a bootstrap became
@@ -1874,103 +1843,66 @@ export class WebSandbox extends ElementBase {
     // build completes in a microtask instead, after the element's own lifecycle reactions (disconnectedCallback, then
     // connectedCallback), which run before appendChild() or remove() returns: a frame that the move tore down is no
     // longer the element's then, and its load completes nothing. The microtask asks again: the same frame, and both still
-    // connected.
+    // connected (`stillOurs`).
     //
-    // The same frame is the same environment: every teardown removes the frame and clears `_iframe` in the same step as it
-    // counts the generation up (the executor's `teardown` effect right after the reducer's `tornDown`), and a build only
-    // ever sets a frame it has just created, and only while it is the element's build (_attachBuild, LM-2). So the generation the load event found is the one the frame
-    // was built in, and this handler need not compare it again (it did, until S65's PR B: a second comparison site of the
-    // one rule, now the executor's alone). It is read for the frame-integrity checks, which carry it (S65; `reduce` drops
-    // one that is stale), until PR D makes the load the reducer's `frameLoad{gen}` input.
+    // What the load is, is read here: whether it is still ours, and the guest frame's window it holds. What it does is the
+    // reducer's (`frameLoad`, S65 PR D): a second load, a guest frame other than the one that checked in, or none, end the
+    // environment; strict mode hands the view its ports (`sendInitView`); a guest with no bootstrap completes the build.
+    // It carries the generation the load event found, so the load of an environment torn down since is dropped. Anything
+    // reading the frame throws ends the build it completes, as the completion's own effects do (they are guarded).
     private _frameLoadHandler(iframe: HTMLIFrameElement) {
         return () => {
             const gen = this._lc.gen;
             queueMicrotask(() => {
-                if (iframe !== this._iframe || !iframe.isConnected || !this.isConnected) return;
-                this._onFrameLoad(gen);
+                const stillOurs = iframe === this._iframe && iframe.isConnected && this.isConnected;
+                let guest: Window | null;
+                try {
+                    guest = stillOurs ? guestWindowOf(iframe) : null;
+                } catch (error) {
+                    step(this, { t: 'terminate', reason: buildFailureReason(error, 'complete'), gen });
+                    return;
+                }
+                step(this, { t: 'frameLoad', gen, stillOurs, guest });
             });
         };
     }
 
-    private _onFrameLoad(gen: number) {
-        try {
-            this._completeBuild(gen);
-        } catch (error) {
-            step(this, { t: 'terminate', reason: buildFailureReason(error, 'complete'), gen });
-        }
-    }
+    // The executor's completion effects (src/lib/lifecycle.ts: `enterReady`, `finishBuild`, `frameLoad`), each one thing
+    // done to this environment's resources; the reducer decides when, and in which order.
 
-    // `gen`: the environment of the load (_frameLoadHandler), which each check that fails ends.
-    private _completeBuild(gen: number) {
-        // The wrapper is written once and has no script, so it loads exactly once.
-        // A second load means something navigated or reloaded it: never hand a port
-        // (or queued code) to a document we did not write.
-        if (this._frameLoaded) {
-            step(this, { t: 'terminate', reason: SECOND_LOAD_REASON, gen });
-            return;
-        }
-        this._frameLoaded = true;
-
-        const guestWindow = guestWindowOf(this._iframe);
-        // The guest checked in already (S46), and the build completed then: the load must hold the frame that
-        // announced. A wrapper navigated before its first load fires one load only, for a document we did not write.
-        if (this._guestWindow) {
-            if (guestWindow !== this._guestWindow) step(this, { t: 'terminate', reason: SECOND_LOAD_REASON, gen });
-            return;
-        }
-        if (!guestWindow) {
-            step(this, { t: 'terminate', reason: FRAME_MISSING_REASON, gen });
-            return;
-        }
-        // A bootstrap runs: its check-in completes the build, after this load.
-        if (this._expectAnnouncement) return;
-
-        // Strict mode: the view gets its ports now, and the build completes when the view checks in on its port
-        // (VIEW_READY, _onViewMessage): never on this load alone, which also fires for a view whose bootstrap did not
-        // run (refused by the host page's policy, R3-1: 'ready' came, and 5 s later "the sandbox view stopped
-        // responding").
-        if (this._config.mode === 'strict') {
-            this._setupStrictChannels(guestWindow);
-            return;
-        }
-        this._finishBuild(null);
-    }
-
-    // Cooperative and worker mode: the build completes when the guest checks in, its bootstrap's announcement accepted
-    // (CB1, S46), with the port it announced; where this build's guest runs no bootstrap (no allow-scripts), on the
-    // wrapper's one load, with no port. Anything it throws ends the sandbox, as in _onFrameLoad: the environment it
-    // completes (its callers run it at once, from a callback of the standing environment: the announcement's listener,
-    // the frame's load), and none that a 'ready' listener built meanwhile.
-    private _finishBuild(port: MessagePort | null) {
-        if (this._lc.state !== 'loading') {
-            port?.close();
-            return;
-        }
-        const gen = this._lc.gen;
-        try {
-            this.setupChannel(port);
-            this._enterReady();
-        } catch (error) {
-            step(this, { t: 'terminate', reason: buildFailureReason(error, 'complete'), gen });
-        }
-    }
-
-    // The transition to `ready`, in every mode, and the one place what waited for it is released (review round 5, L-1; the
-    // first slice of the lifecycle reducer, backlog S65): the queued calls and execute() code are posted here, in the
-    // order they were made, and nowhere else. A call made while loading waits in the queue for this point; if it settles
-    // first (its timeout), it leaves the queue and is never posted (_queuedWhilePending), so a call that timed out before
-    // `ready` never runs. Before, strict mode flushed at the wrapper's load (_setupStrictChannels), the other modes in
-    // setupChannel, two flush points for one rule, and strict mode's was not this one.
-    private _enterReady() {
+    // `stopLoadDeadline`: the build is ready, its bound is met.
+    private _stopLoadDeadline() {
         if (this._loadDeadline) { this._loadDeadline.stop(); this._loadDeadline = null; }
+    }
+
+    // `flush`: the one place what waited for `ready` is released (review round 5, L-1; the first slice of the lifecycle
+    // reducer, backlog S65). The reducer emits it in one output only, the transition to `ready`, in every mode, and
+    // test/unit/lifecycle-reducer.test.ts checks that nothing else reaches _flushQueues. The queued calls and execute()
+    // code are posted in the order they were made, and nowhere else. A call made while loading waits in the queue for this
+    // point; if it settles first (its timeout), it leaves the queue and is never posted (_queuedWhilePending), so a call
+    // that timed out before `ready` never runs. Before, strict mode flushed at the wrapper's load (_setupStrictChannels),
+    // the other modes in setupChannel, two flush points for one rule, and strict mode's was not this one.
+    private _flush() {
         if (this._port) this._flushQueues(this._port);
-        // Armed before 'ready' is dispatched: a 'ready' listener that resets or terminates the sandbox then
-        // stops this watchdog with the rest, instead of leaving one running for a port that is gone.
+    }
+
+    // `startWatchdogs`: armed before 'ready' is dispatched, so a 'ready' listener that resets or terminates the sandbox
+    // stops them with the rest, instead of leaving one running for a port that is gone.
+    private _startWatchdogs() {
         if (this._port) this._startWatchdog(this._port);
         if (this._viewPort) this._startViewWatchdog(this._viewPort);
-        // Reports buffered before the port existed arrive after this, so the resizer is in place for them.
-        this._startAutoResize();
-        this._enterState('ready');
+    }
+
+    // `checkView`: what the strict view measured at its check-in (R3-1).
+    private _checkView(height: unknown, stillStyleRefused: boolean) {
+        this._checkViewSize(height);
+        if (stillStyleRefused) this._warnStillStyleRefused();
+    }
+
+    // For tests: the platform's lifecycle inputs, delivered by hand where jsdom cannot deliver them (a guest frame's
+    // announcement, the view's check-in, the wrapper's load; test/unit/check-in.ts). The element itself never calls it.
+    private _step(input: LcInput) {
+        step(this, input);
     }
 }
 
@@ -1989,6 +1921,13 @@ const LIFECYCLE = WebSandbox.prototype as unknown as {
     _discardGuestWrites(): void;
     _dispatchHostLog(level: SandboxLogLevel, text: string): void;
     _dispatchGuestLog(frame: unknown): void;
+    _stopLoadDeadline(): void;
+    _setupStrictChannels(target: Window): void;
+    setupChannel(port: MessagePort | null): void;
+    _checkView(height: unknown, stillStyleRefused: boolean): void;
+    _flush(): void;
+    _startWatchdogs(): void;
+    _startAutoResize(): void;
 };
 
 // What the executor reaches on the element: its own fields, whatever its prototype (CB7).
@@ -2002,7 +1941,6 @@ interface PreparedBuild {
     iframe: HTMLIFrameElement; // the wrapper, its srcdoc written, not in the document
     built: FileStore; // the copy of the store this build delivers (CB4)
     strictInit: StrictInit | null; // strict mode: what the wrapper's load hands the view
-    announces: boolean; // the guest runs a bootstrap that announces its port (CB1)
 }
 
 // The context of a build where the element may not build (buildsHere): it stops instead, and asks nothing else.
@@ -2010,10 +1948,12 @@ const NOT_HERE: BuildContext = Object.freeze({ buildsHere: false, blocked: null,
 
 /**
  * The lifecycle executor's one entry (backlog S65; src/lib/lifecycle.ts, `step`): reduce `input` against the element's
- * `_lc`, store the next state, then run the effects on the element. Every build comes through here (the DOM callbacks,
- * reset(), load(), setConfig()), and every termination: terminate(), a build's failure and its deferred 'terminated',
- * and every one the element starts itself, each stamped with the generation it was armed in, which `reduce` drops once
- * a teardown made it stale (research 18, class L: "an actor of an old environment cannot act"). Module level, and
+ * `_lc`, store the next state, then run the effects on the element. Every transition comes through here: every build
+ * (the DOM callbacks, reset(), load(), setConfig()) and its completion (the wrapper's load, the guest's announcement,
+ * the view's check-in), and every termination: terminate(), a build's failure and its deferred 'terminated', and every
+ * one the element starts itself. What a platform callback or a timer delivers is stamped with the generation it was
+ * armed in, which `reduce` drops once a teardown made it stale (research 18, class L: "an actor of an old environment
+ * cannot act"). The executor is the only writer of `_lc` and makes the lifecycle's two events. Module level, and
  * every effect is applied through LIFECYCLE (CB7): in Firefox an element adopted into another document has lost its
  * prototype, and a step must still end its environment there.
  * Steps nest synchronously (a listener's terminate() dispatches inside that listener, as docs/API.md says).
@@ -2033,13 +1973,6 @@ function lifecycleHost(element: WebSandbox): LifecycleHost {
     }
     return host;
 }
-
-// The effects of the paths S65's PR D (the completion of a build, `ready`) moves into the reducer. Until then no input
-// host.ts steps has them (the reducer emits them only for frameLoad, announced and viewReady), and reaching one is a bug
-// of this file (test/unit/lifecycle-reducer.test.ts checks it on every sampled state).
-const notYet = (effect: string) => (): never => {
-    throw new Error(`[Sandbox] internal: the lifecycle effect "${effect}" is not driven by the reducer yet (S65 step 2, PR D)`);
-};
 
 function lifecycleHostOf(element: WebSandbox): LifecycleHost {
     const own = element as unknown as LifecycleFields;
@@ -2080,15 +2013,19 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
             if (notice.source === 'host') Reflect.apply(LIFECYCLE._dispatchHostLog, element, [notice.level, notice.text]);
             else Reflect.apply(LIFECYCLE._dispatchGuestLog, element, [{ level: notice.level, args: [notice.text] }]);
         },
-        stopLoadDeadline: notYet('stopLoadDeadline'),
-        sendInitView: notYet('sendInitView'),
-        openChannel: notYet('openChannel'),
-        closePort: notYet('closePort'),
-        checkView: notYet('checkView'),
-        flush: notYet('flush'),
-        startWatchdogs: notYet('startWatchdogs'),
-        startAutoResize: notYet('startAutoResize'),
-        dispatchReady: notYet('dispatchReady'),
+        // The completion of a build (S65 PR D), in the order `enterReady` gives them.
+        stopLoadDeadline: () => Reflect.apply(LIFECYCLE._stopLoadDeadline, element, []),
+        sendInitView: (target) => Reflect.apply(LIFECYCLE._setupStrictChannels, element, [target as Window]),
+        openChannel: (port) => Reflect.apply(LIFECYCLE.setupChannel, element, [port as MessagePort | null]),
+        closePort: (port) => (port as MessagePort | null)?.close(),
+        checkView: (height, stillStyleRefused) => Reflect.apply(LIFECYCLE._checkView, element, [height, stillStyleRefused]),
+        flush: () => Reflect.apply(LIFECYCLE._flush, element, []),
+        startWatchdogs: () => Reflect.apply(LIFECYCLE._startWatchdogs, element, []),
+        startAutoResize: () => Reflect.apply(LIFECYCLE._startAutoResize, element, []),
+        // The one dispatch of 'ready', after the state settled and the watchdogs and the resizer are in place.
+        dispatchReady: () => {
+            element.dispatchEvent(elementEvent('ready'));
+        },
     };
 }
 

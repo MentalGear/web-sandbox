@@ -83,6 +83,7 @@ interface Frame {
     silent: boolean;
     connected: boolean;
     onload: (() => void) | null;
+    guest: object; // its guest frame's window, as an identity (host.ts: the wrapper's frames[0])
 }
 
 const errorName = (error: unknown): string => {
@@ -109,7 +110,6 @@ export class FakeElement implements LifecycleHost {
     config: StoredConfig = defaultConfig();
     files: Record<string, string> = {};
     frame: Frame | null = null;
-    announcedBy: Frame | null = null; // the frame whose announcement was accepted (host.ts: `_guestWindow`)
     log: string[] = [];
     warns = 0;
     stats: Record<string, number> = {};
@@ -194,7 +194,6 @@ export class FakeElement implements LifecycleHost {
             this.frame.connected = false;
         }
         this.frame = null;
-        this.announcedBy = null;
     }
 
     discardWrites() {
@@ -237,7 +236,8 @@ export class FakeElement implements LifecycleHost {
         // never two silent guests in a row: a rebuild from the deadline's 'terminated' listener must settle within 8 s
         const silent = !this.lastSilent && this.rng.chance(this.options.silentGuests ?? 1 / 40);
         this.lastSilent = silent;
-        return { id: ++this.frames, gen: this.lc.gen, silent, connected: true, onload: null };
+        const id = ++this.frames;
+        return { id, gen: this.lc.gen, silent, connected: true, onload: null, guest: { guestOf: id } };
     }
 
     // host.ts, `_attachBuild`: the frame becomes the element's, and its guest starts
@@ -252,8 +252,7 @@ export class FakeElement implements LifecycleHost {
         this.schedule(this.rng.int(1, 20), () => frame.onload?.());
         if (ctx.announces && !frame.silent) {
             this.schedule(this.rng.int(1, 20), () => {
-                if (frame.gen === this.lc.gen && this.frame === frame) this.announcedBy = frame;
-                this.step({ t: 'announced', gen: frame.gen, valid: true, refusal: null, port: { frame: frame.id } });
+                this.step({ t: 'announced', gen: frame.gen, valid: true, refusal: null, port: { frame: frame.id }, source: frame.guest });
             });
         }
     }
@@ -267,7 +266,7 @@ export class FakeElement implements LifecycleHost {
                 t: 'frameLoad',
                 gen,
                 stillOurs: frame === this.frame && frame.connected && this.parent !== 'none',
-                guest: this.announcedBy === frame ? 'announcer' : 'other',
+                guest: frame.guest,
             });
             if (this.options.syncFrameLoad) deliver();
             else this.queueMicrotask(deliver);

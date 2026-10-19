@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineWebSandbox, LOAD_TIMEOUT_MS } from '@src/host';
+import { checkIn } from './check-in';
 
 /**
  * LM-2 (class L; S65 step 2, PR C): embedder code that runs inside the element's own build. A host page's Trusted Types
@@ -63,7 +64,7 @@ describe('LM-2: a build re-entered from inside the build leaves one build, the n
         el.setConfig(COOPERATIVE);
         expect(el.state).toBe('loading');
         const { port1 } = new MessageChannel();
-        el._finishBuild(port1); // the guest's check-in: ready, and the build's deadline stops
+        checkIn(el, port1); // the guest's check-in: ready, and the build's deadline stops
         expect(el.state).toBe('ready');
         vi.advanceTimersByTime(LOAD_TIMEOUT_MS * 2);
         expect([el.state, heard]).toEqual(['ready', []]);

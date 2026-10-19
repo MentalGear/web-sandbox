@@ -20,6 +20,7 @@ import { ELEMENT_EVENTS } from '@src/lib/element-events';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 import { CONFIG_SCHEMA } from '@src/lib/config-schema';
+import { LIFECYCLE_REASONS } from '@src/lib/lifecycle';
 
 /**
  * docs/API.md is the consumer's reference (backlog D3): this test fails when the public surface and the
@@ -254,7 +255,9 @@ describe('docs/API.md lists the public surface', () => {
         // a reason written at the termination itself (the lifecycle executor's input, S65), not as a constant
         const literals = [...source.matchAll(/t: '(?:terminate|buildFailed)', reason: ['`]([^'`]+)['`]/g)].map(match => match[1]!);
         expect(constants.length).toBeGreaterThan(3);
-        for (const reason of [...constants, ...literals]) {
+        // and the reasons the lifecycle reducer decides (a second load or announcement, a missing guest frame, the load
+        // deadline's two), declared there only since S65's PR D
+        for (const reason of [...constants, ...literals, ...Object.values(LIFECYCLE_REASONS)]) {
             const fixedPart = reason.split('${')[0]!.replace(/\s*"?$/, '');
             expect(reasons, reason).toContain(fixedPart);
         }

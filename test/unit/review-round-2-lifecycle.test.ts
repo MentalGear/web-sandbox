@@ -5,6 +5,7 @@ import { defineWebSandbox } from '@src/host';
 import { createBroker } from '@src/lib/rpc';
 import { startWatchdog } from '@src/lib/watchdog';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
+import { checkIn } from './check-in';
 
 /**
  * Review round 2, reviewer L (model-based lifecycle testing): each finding reproduced here first, against the element
@@ -143,7 +144,7 @@ describe('L-3: work queued while loading is sent in the order it was issued', ()
         const { port1 } = new MessageChannel();
         const posted: any[] = [];
         port1.postMessage = (frame: unknown) => { posted.push(frame); };
-        el._finishBuild(port1); // the build becomes ready: what waited is posted then (review round 5, L-1)
+        checkIn(el, port1); // the build becomes ready: what waited is posted then (review round 5, L-1)
         expect(posted.map(frame => (frame.type === 'RPC_REQ' ? `call ${frame.method}` : `execute ${frame.code}`))).toEqual(['call get', 'execute v = 1', 'call after']);
         port1.close();
     });

@@ -114,10 +114,9 @@ describe("the reducer's properties on fuzzed inputs", () => {
         for (const gen of gens) {
             inputs.push({ t: 'buildTerminationDue', gen }, { t: 'loadDeadline', gen }, { t: 'viewReady', gen, height: 100, stillStyleRefused: false });
             inputs.push({ t: 'built', gen, prepared: {} }, { t: 'buildFailed', gen, reason: 'x' });
-            for (const wrapperLoaded of [true, false]) inputs.push({ t: 'loadDeadline', gen, wrapperLoaded });
             inputs.push({ t: 'terminate', reason: 'self', gen }, { t: 'terminate', reason: 'self', gen, notices: [{ level: 'error', text: 'line', source: 'host' }] });
-            for (const guest of ['none', 'announcer', 'other'] as const) for (const stillOurs of [true, false]) inputs.push({ t: 'frameLoad', gen, stillOurs, guest });
-            for (const valid of [true, false]) for (const refusal of [null, 'refused']) inputs.push({ t: 'announced', gen, valid, refusal, port: {} });
+            for (const guest of [null, ANNOUNCER, OTHER]) for (const stillOurs of [true, false]) inputs.push({ t: 'frameLoad', gen, stillOurs, guest });
+            for (const valid of [true, false]) for (const refusal of [null, 'refused']) inputs.push({ t: 'announced', gen, valid, refusal, port: {}, source: ANNOUNCER });
         }
         return inputs;
     }
@@ -139,32 +138,6 @@ describe("the reducer's properties on fuzzed inputs", () => {
         expect(checked).toBeGreaterThan(10_000);
     });
 
-    // S65 step 2, PRs B and C: host.ts steps the terminations and the builds, and its executor applies only their effects
-    // (the others are `notYet` there, until PR D). On every sampled state, what those inputs give, nested steps and tasks
-    // included, stays inside what host.ts applies; the source scan below checks that host.ts steps no other input.
-    it('the inputs host.ts steps give only the effects its executor applies, on every sampled state', () => {
-        const states = sampled.size > 0 ? [...sampled.values()] : [INITIAL_LIFECYCLE];
-        let checked = 0;
-        for (const base of states) {
-            for (const state of [base, { ...base, dispatching: [...base.dispatching, 'bye'] }]) {
-                const pending: LcInput[] = inputsFor(state).filter(input => HOST_STEPS.has(input.t));
-                while (pending.length > 0) {
-                    const input = pending.pop()!;
-                    for (const effect of reduce(state, input).effects) {
-                        checked++;
-                        if (!HOST_EFFECTS.has(effect.k)) expect.fail(`${input.t} gave ${effect.k}\nstate ${JSON.stringify(state)}`);
-                        if (effect.k === 'dispatch' && effect.event === 'ready') expect.fail(`${input.t} dispatched ready\nstate ${JSON.stringify(state)}`);
-                        if (effect.k === 'step' || effect.k === 'task') {
-                            if (!HOST_STEPS.has(effect.input.t)) expect.fail(`${input.t} stepped ${effect.input.t}`);
-                            pending.push(effect.input);
-                        }
-                    }
-                }
-            }
-        }
-        expect(checked).toBeGreaterThan(1000);
-    });
-
     it('connect, with a build that throws: no synchronous dispatch; the termination comes in a task', () => {
         const host = new RecordingHost();
         host.buildThrows = true;
@@ -182,6 +155,9 @@ describe("the reducer's properties on fuzzed inputs", () => {
 const COOPERATIVE: BuildContext = { buildsHere: true, blocked: null, strict: false, announces: true };
 const NO_BOOTSTRAP: BuildContext = { buildsHere: true, blocked: null, strict: false, announces: false };
 const STRICT: BuildContext = { buildsHere: true, blocked: null, strict: true, announces: false };
+// Guest frame windows, as identities (frameLoad.guest, announced.source): the one that checked in, and another one.
+const ANNOUNCER = Object.freeze({ window: 'announcer' });
+const OTHER = Object.freeze({ window: 'other' });
 
 class RecordingHost implements LifecycleHost {
     lc: LcState = INITIAL_LIFECYCLE;
@@ -238,7 +214,7 @@ class RecordingHost implements LifecycleHost {
 function readyHost(): RecordingHost {
     const host = new RecordingHost();
     host.step({ t: 'connect', ctx: COOPERATIVE });
-    host.step({ t: 'announced', gen: host.lc.gen, valid: true, refusal: null, port: {} });
+    host.step({ t: 'announced', gen: host.lc.gen, valid: true, refusal: null, port: {}, source: ANNOUNCER });
     expect(host.lc.state).toBe('ready');
     host.log = [];
     host.events = [];
@@ -266,9 +242,9 @@ describe('class L, finding by finding', () => {
         it('the reducer alone does not prevent it: a current-generation load would complete the build; the microtask in the adapter is what keeps it out of the DOM call', () => {
             const host = new RecordingHost();
             host.step({ t: 'connect', ctx: NO_BOOTSTRAP });
-            const output = reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: 'other' });
+            const output = reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
             expect(output.effects.some(isReady)).toBe(true);
-            expect(reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: false, guest: 'other' }).effects).toEqual([]);
+            expect(reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: false, guest: OTHER }).effects).toEqual([]);
         });
     });
 
@@ -331,8 +307,8 @@ describe('class L, finding by finding', () => {
         it("strict mode: the wrapper's load sends the view its ports and flushes nothing; the view's check-in flushes, with `ready`", () => {
             const host = new RecordingHost();
             host.step({ t: 'connect', ctx: STRICT });
-            const load = reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: 'other' });
-            expect(load.effects).toEqual([{ k: 'sendInitView' }]);
+            const load = reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
+            expect(load.effects).toEqual([{ k: 'sendInitView', target: OTHER }]);
             host.lc = load.state;
             const ready = reduce(host.lc, { t: 'viewReady', gen: host.lc.gen, height: 100, stillStyleRefused: false });
             expect(ready.effects.map(effect => effect.k)).toEqual(['checkView', 'stopLoadDeadline', 'flush', 'startWatchdogs', 'startAutoResize', 'dispatch']);
@@ -392,21 +368,16 @@ describe('class L, finding by finding', () => {
 });
 
 describe("the reducer describes today's host.ts", () => {
-    it("the reasons it decides are host.ts's texts", () => {
+    it('the reasons it decides are declared in the reducer only (host.ts kept copies until S65 PR D)', () => {
         const source = readFileSync(path.join(ROOT, 'src/host.ts'), 'utf8');
-        const constant = (name: string) => new RegExp(`const ${name} = (["'])(.*?)\\1;`).exec(source)?.[2];
-        expect(constant('SECOND_LOAD_REASON')).toBe(LIFECYCLE_REASONS.secondLoad);
-        expect(constant('SECOND_ANNOUNCEMENT_REASON')).toBe(LIFECYCLE_REASONS.secondAnnouncement);
-        expect(constant('LOAD_TIMEOUT_REASON')).toBe(LIFECYCLE_REASONS.loadTimeout);
-        expect(constant('STARTUP_BLOCKED_REASON')).toBe(LIFECYCLE_REASONS.startupBlocked);
-        expect(constant('FRAME_MISSING_REASON')).toBe(LIFECYCLE_REASONS.frameMissing);
-        expect(constant('DEFAULT_TERMINATE_REASON')).toBe(DEFAULT_TERMINATE_REASON);
+        for (const reason of Object.values(LIFECYCLE_REASONS)) expect(source, reason).not.toContain(reason);
+        expect(new RegExp(`const DEFAULT_TERMINATE_REASON = (["'])(.*?)\\1;`).exec(source)?.[2]).toBe(DEFAULT_TERMINATE_REASON);
     });
 
     it('`ready`: the state is `ready` before the first effect (host.ts sets it last, unobservably), in this order', () => {
         const host = new RecordingHost();
         host.step({ t: 'connect', ctx: COOPERATIVE });
-        const output = reduce(host.lc, { t: 'announced', gen: host.lc.gen, valid: true, refusal: null, port: {} });
+        const output = reduce(host.lc, { t: 'announced', gen: host.lc.gen, valid: true, refusal: null, port: {}, source: ANNOUNCER });
         expect(output.state.state).toBe('ready');
         expect(output.effects.map(effect => effect.k)).toEqual(['openChannel', 'stopLoadDeadline', 'flush', 'startWatchdogs', 'startAutoResize', 'dispatch']);
         expect(output.guarded).toBe(true);
@@ -418,19 +389,38 @@ describe("the reducer describes today's host.ts", () => {
         expect(output.effects.filter(effect => effect.k === 'teardown')).toHaveLength(2);
     });
 
-    it("the view's check-in is not guarded, the frame's load and the guest's check-in are (host.ts: _enterReady bare in _onViewMessage)", () => {
+    it("every completion is guarded: the frame's load, the guest's check-in and the view's (S65 PR D; the view's was not before)", () => {
         const host = new RecordingHost();
         host.step({ t: 'connect', ctx: STRICT });
-        const load = reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: 'other' });
+        const load = reduce(host.lc, { t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
         expect(load.guarded).toBe(true);
-        expect(reduce(load.state, { t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false }).guarded).toBe(false);
+        expect(reduce(load.state, { t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false }).guarded).toBe(true);
+        const cooperative = new RecordingHost();
+        cooperative.step({ t: 'connect', ctx: COOPERATIVE });
+        expect(reduce(cooperative.lc, { t: 'announced', gen: cooperative.lc.gen, valid: true, refusal: null, port: {}, source: ANNOUNCER }).guarded).toBe(true);
+    });
+
+    it("a guarded effect's failure carries the output's generation: one that ran embedder code which built again ends nothing of the new build", () => {
+        const host = new RecordingHost();
+        host.step({ t: 'connect', ctx: STRICT });
+        host.step({ t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
+        // the view's size warning, through a console.warn the page patched, resets and then throws
+        host.checkView = () => {
+            host.checkView = () => {};
+            host.step({ t: 'build', why: 'reset', ctx: STRICT });
+            throw new Error('the hook threw');
+        };
+        host.step({ t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false });
+        expect(host.lc.state).toBe('loading');
+        expect(host.events).toEqual([]);
+        expect(host.log.filter(line => line === 'flush')).toEqual([]);
     });
 
     it('a guarded effect that throws ends the sandbox with the build-failure reason; nothing after it runs', () => {
         const host = new RecordingHost();
         host.step({ t: 'connect', ctx: COOPERATIVE });
         host.openChannel = () => { throw new Error('no port'); };
-        host.step({ t: 'announced', gen: host.lc.gen, valid: true, refusal: null, port: {} });
+        host.step({ t: 'announced', gen: host.lc.gen, valid: true, refusal: null, port: {}, source: ANNOUNCER });
         expect(host.lc.state).toBe('terminated');
         expect(host.events).toEqual(['terminated failed (complete)']);
         expect(host.log).not.toContain('flush');
@@ -481,29 +471,29 @@ describe("the reducer describes today's host.ts", () => {
         const host = new RecordingHost();
         host.step({ t: 'connect', ctx: NO_BOOTSTRAP });
         const gen = host.lc.gen;
-        expect(reduce(host.lc, { t: 'frameLoad', gen, stillOurs: false, guest: 'other' }).effects).toEqual([]);
-        host.step({ t: 'frameLoad', gen, stillOurs: true, guest: 'other' });
+        expect(reduce(host.lc, { t: 'frameLoad', gen, stillOurs: false, guest: OTHER }).effects).toEqual([]);
+        host.step({ t: 'frameLoad', gen, stillOurs: true, guest: OTHER });
         expect(host.lc.state).toBe('ready');
-        host.step({ t: 'frameLoad', gen, stillOurs: true, guest: 'other' });
+        host.step({ t: 'frameLoad', gen, stillOurs: true, guest: OTHER });
         expect(host.events).toEqual(['ready', `terminated ${LIFECYCLE_REASONS.secondLoad}`]);
     });
 
     it("a guest that checked in: the wrapper's load must hold its window; a second announcement ends the environment", () => {
         const host = readyHost();
         const gen = host.lc.gen;
-        host.step({ t: 'frameLoad', gen, stillOurs: true, guest: 'announcer' });
+        host.step({ t: 'frameLoad', gen, stillOurs: true, guest: ANNOUNCER });
         expect(host.lc.state).toBe('ready');
-        host.step({ t: 'announced', gen, valid: true, refusal: null, port: {} });
+        host.step({ t: 'announced', gen, valid: true, refusal: null, port: {}, source: ANNOUNCER });
         expect(host.events).toEqual([`terminated ${LIFECYCLE_REASONS.secondAnnouncement}`]);
         const other = readyHost();
-        other.step({ t: 'frameLoad', gen: other.lc.gen, stillOurs: true, guest: 'other' });
+        other.step({ t: 'frameLoad', gen: other.lc.gen, stillOurs: true, guest: OTHER });
         expect(other.events).toEqual([`terminated ${LIFECYCLE_REASONS.secondLoad}`]);
     });
 
     it("the view's check-in counts only while loading", () => {
         const host = new RecordingHost();
         host.step({ t: 'connect', ctx: STRICT });
-        host.step({ t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: 'other' });
+        host.step({ t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
         host.step({ t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false });
         expect(reduce(host.lc, { t: 'viewReady', gen: host.lc.gen, height: 1, stillStyleRefused: false }).effects).toEqual([]);
         expect(host.events).toEqual(['ready']);
@@ -513,7 +503,7 @@ describe("the reducer describes today's host.ts", () => {
         const host = new RecordingHost();
         host.step({ t: 'connect', ctx: COOPERATIVE });
         expect(reduce(host.lc, { t: 'loadDeadline', gen: host.lc.gen }).effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: LIFECYCLE_REASONS.loadTimeout });
-        host.step({ t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: 'other' });
+        host.step({ t: 'frameLoad', gen: host.lc.gen, stillOurs: true, guest: OTHER });
         expect(reduce(host.lc, { t: 'loadDeadline', gen: host.lc.gen }).effects).toContainEqual({ k: 'dispatch', event: 'terminated', reason: LIFECYCLE_REASONS.startupBlocked });
     });
 
@@ -532,16 +522,13 @@ describe("the reducer describes today's host.ts", () => {
     });
 });
 
-// ---- class L in host.ts, by its source (S65 step 2, PRs B and C) ----------------------------------------------------
+// ---- class L in host.ts, by its source (S65 step 2) ------------------------------------------------------------------
 
-// What host.ts steps (PR B: the terminations; PR C: the builds, the DOM callbacks, the files and the load deadline), with
-// what the executor steps for it (a build's answer, the config applied, the deferred 'terminated', the steps around a
-// dispatch), and the effects its executor applies (src/host.ts, lifecycleHostOf; every other effect is `notYet` there
-// until PR D). `dispatch` here is 'terminated' only: 'ready' is PR D's.
-const HOST_STEPS = new Set<LcInput['t']>(['connect', 'disconnect', 'build', 'setConfig', 'configured', 'filesChanged', 'built', 'buildFailed', 'loadDeadline', 'terminate', 'buildTerminationDue', 'dispatchStarted', 'dispatchEnded']);
-const HOST_EFFECTS = new Set<Effect['k']>(['teardown', 'discardWrites', 'applyConfig', 'build', 'attach', 'startLoadDeadline', 'warn', 'warnForeignDocument', 'dispatch', 'notice', 'step', 'task']);
-
-describe('class L in host.ts, by its source (S65 step 2, PRs B and C)', () => {
+// Class L's invariant (research 18), held by host.ts's source: every transition is a reducer input, stepped through the
+// one executor; the state settles in one place (`_lc`, written by the executor only); the lifecycle's two events are
+// made in one place each; queued work is released at one gate (`flush`); and the generation is compared only where the
+// reducer drops a stale input and the executor stops a run, besides a call's own environment.
+describe('class L in host.ts, by its source (S65 step 2)', () => {
     // Comments say what the code did before; they are not code.
     const code = (file: string) => readFileSync(path.join(ROOT, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
     const host = code('src/host.ts');
@@ -557,12 +544,18 @@ describe('class L in host.ts, by its source (S65 step 2, PRs B and C)', () => {
     // A comparison that involves a generation: `gen`, `.gen`, or the environment of a call (`_issuedIn`).
     const GEN_COMPARISON = /\b(?:gen|_issuedIn)\s*[!=]==|[!=]==\s*[\w.]*\bgen\b/g;
 
-    it("'terminated' is made in one place: the executor's dispatch (lifecycleHostOf), between its dispatchStarted and dispatchEnded steps", () => {
-        const sites = [...host.matchAll(/elementEvent\('terminated'/g)].map(match => match.index!);
-        expect(sites).toHaveLength(1);
+    it("'ready' and 'terminated' are made in one place each: the executor's dispatch (lifecycleHostOf); 'terminated' between its dispatchStarted and dispatchEnded steps", () => {
         const adapter = bodyOf(host, 'function lifecycleHostOf(');
-        expect(inside(sites[0]!, adapter)).toBe(true);
+        for (const event of ['ready', 'terminated']) {
+            const sites = [...host.matchAll(new RegExp(`elementEvent\\('${event}'`, 'g'))].map(match => match.index!);
+            expect(sites, event).toHaveLength(1);
+            expect(inside(sites[0]!, adapter), event).toBe(true);
+        }
         expect(host.slice(adapter[0], adapter[1])).toMatch(/dispatchTerminated: \(reason\) => \{\s*element\.dispatchEvent\(elementEvent\('terminated'/);
+        expect(host.slice(adapter[0], adapter[1])).toMatch(/dispatchReady: \(\) => \{\s*element\.dispatchEvent\(elementEvent\('ready'\)\)/);
+        // and the executor dispatches 'ready' only for the `dispatch ready` effect, which `enterReady` alone emits
+        expect([...lifecycle.matchAll(/host\.dispatchReady\(/g)]).toHaveLength(1);
+        expect([...lifecycle.matchAll(/\{ k: 'dispatch', event: 'ready' \}/g)].map(match => inside(match.index!, bodyOf(lifecycle, 'function enterReady(')))).toEqual([true]);
         // and lifecycle.ts's executor calls it only from its dispatchTerminated, inside the two steps
         const [start, end] = bodyOf(lifecycle, 'function dispatchTerminated(');
         const calls = [...lifecycle.matchAll(/host\.dispatchTerminated\(/g)].map(match => match.index!);
@@ -570,7 +563,17 @@ describe('class L in host.ts, by its source (S65 step 2, PRs B and C)', () => {
         expect(calls[0]! > start && calls[0]! < end).toBe(true);
         expect(lifecycle.slice(start, end)).toMatch(/dispatchStarted[\s\S]*try[\s\S]*host\.dispatchTerminated[\s\S]*finally[\s\S]*dispatchEnded/);
         // no other file of src/ makes the event (src/lib/element-events.ts declares it)
-        for (const file of ['src/lib/lifecycle.ts', 'src/lib/element-events.ts']) expect(code(file)).not.toMatch(/elementEvent\('terminated'/);
+        for (const file of ['src/lib/lifecycle.ts', 'src/lib/element-events.ts']) expect(code(file)).not.toMatch(/elementEvent\('(?:terminated|ready)'/);
+    });
+
+    it('queued work is released at one gate: _flushQueues is reached only from the `flush` effect, which only `enterReady` emits, with `dispatch ready`', () => {
+        const calls = [...host.matchAll(/_flushQueues\(/g)].map(match => match.index!);
+        expect(calls).toHaveLength(2); // its declaration, and the one call
+        expect(inside(calls[1]!, method('_flush'))).toBe(true);
+        expect([...host.matchAll(/_flush\b(?!Queues)/g)].map(match => match.index!).filter(index => !inside(index, method('_flush')))).toHaveLength(2); // LIFECYCLE's type, the adapter
+        expect(host.slice(...bodyOf(host, 'function lifecycleHostOf('))).toContain('flush: () => Reflect.apply(LIFECYCLE._flush, element, [])');
+        // in effect lists (the Effect type declares it once, with no comma after)
+        expect([...lifecycle.matchAll(/\{ k: 'flush' \}(?=,)/g)].map(match => inside(match.index!, bodyOf(lifecycle, 'function enterReady(')))).toEqual([true]);
     });
 
     it('the generation is compared only in reduce and the executor, and, for a call, in _postRpc (the environment _issue records)', () => {
@@ -589,7 +592,9 @@ describe('class L in host.ts, by its source (S65 step 2, PRs B and C)', () => {
 
     it('every termination the element starts carries its generation; only terminate() carries none', () => {
         const terminations = [...host.matchAll(/step\(this, \{ t: 'terminate', ([^\n]*)\}\)/g)];
-        expect(terminations.length).toBeGreaterThanOrEqual(12);
+        // terminate(); the watchdogs, the execution timeout, the uncaught budget, VIEW_OVERRUN, the entry failure, the host
+        // page's refusals, a frame that cannot be read at its load (the reducer decides the completion's own since PR D)
+        expect(terminations.length).toBeGreaterThanOrEqual(9);
         const without = terminations.filter(match => !/\bgen\b/.test(match[1]!)).map(match => match.index!);
         expect(without).toHaveLength(1);
         expect(inside(without[0]!, bodyOf(host, '    terminate(reason', '\n    }\n'))).toBe(true);
@@ -602,14 +607,16 @@ describe('class L in host.ts, by its source (S65 step 2, PRs B and C)', () => {
         for (const match of answers) expect(match[2], match[0]).toMatch(/^gen: stampGen, /);
     });
 
-    it('host.ts steps the builds, the DOM callbacks and the terminations; `_lc` is written by the executor and, until PR D, _enterState', () => {
+    it('host.ts steps every transition, and `_lc` is written by the executor only', () => {
         const stepped = new Set([...host.matchAll(/step\((?:this|element), \{ t: '(\w+)'/g)].map(match => match[1]!));
-        expect([...stepped].sort()).toEqual(['build', 'connect', 'disconnect', 'filesChanged', 'loadDeadline', 'setConfig', 'terminate']);
-        for (const t of stepped) expect(HOST_STEPS.has(t as LcInput['t'])).toBe(true);
-        expect(host).not.toMatch(/_endEnvironment|private initialize\(|function stop\(|_buildInputs|_configRefusal|_isCurrentConfig/);
+        expect([...stepped].sort()).toEqual(['announced', 'build', 'connect', 'disconnect', 'filesChanged', 'frameLoad', 'loadDeadline', 'setConfig', 'terminate', 'viewReady']);
+        // removed, each a second path or a second store of the lifecycle (PRs B to D)
+        expect(host).not.toMatch(/_endEnvironment|private initialize\(|function stop\(|_buildInputs|_configRefusal|_isCurrentConfig|_enterState|_enterReady|_finishBuild|_completeBuild|_frameLoaded|_expectAnnouncement|_guestWindow|notYet/);
+        // the tests' entry is not the element's (_step: the platform's inputs by hand, where jsdom cannot deliver them)
+        expect(host).not.toMatch(/this\._step\(/);
         const writes = [...host.matchAll(/\._lc = |\blc = next/g)].map(match => match.index!);
-        const writers = [bodyOf(host, 'function lifecycleHostOf('), method('_enterState')];
-        expect(writes).toHaveLength(2);
+        const writers = [bodyOf(host, 'function lifecycleHostOf(')];
+        expect(writes).toHaveLength(1);
         for (const index of writes) expect(writers.some(writer => inside(index, writer)), host.slice(index - 40, index + 40)).toBe(true);
     });
 
@@ -626,7 +633,6 @@ describe('class L in host.ts, by its source (S65 step 2, PRs B and C)', () => {
             ['_fetchBridge', ['_startFetchBridge']],
             ['_guestWrites', ['_startGuestWrites']],
             ['_loadDeadline', ['_startLoadDeadline']],
-            ['_expectAnnouncement', ['_attachBuild']],
         ];
         for (const [field, owners] of OWNERS) {
             const sets = [...host.matchAll(new RegExp(`this\\.${field} = (?!null;|false;)`, 'g'))].map(match => match.index!);

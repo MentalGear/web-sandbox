@@ -6,6 +6,7 @@ import { createFetchBridge, toFetchPolicy } from '@src/lib/fetch-bridge';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkIn } from './check-in';
 
 /**
  * Adversarial review 2026-10, channels and lifecycle (docs/security/ADVERSARIAL-REVIEW-2026-10.md), host side:
@@ -61,7 +62,7 @@ describe('B3: every sandbox-log detail is normalised and labelled', () => {
         el._onGuestMessage(el._port, () => {}, { type: 'LOG', level: 'error', args: ['Execution Timeout'], source: 'host' }, null);
         expect(heard).toEqual([]); // no port in jsdom: nothing is current, nothing is heard (B4)
         const { port1 } = new MessageChannel();
-        el._finishBuild(port1); // ready on this port (posting waits for `ready`, review round 5, L-1)
+        checkIn(el, port1); // ready on this port (posting waits for `ready`, review round 5, L-1)
         el._onGuestMessage(port1, () => {}, { type: 'LOG', level: 'error', args: ['Execution Timeout'], source: 'host' }, null);
         vi.useFakeTimers();
         el.execute('for (;;) {}'); // nobody answers the probe at the deadline here: its budget expires
@@ -148,7 +149,7 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
             start: async () => {
                 const el = await mount({ mode: 'worker', scriptUnsafe: true, workerExecutionTimeout: 10 });
                 const { port1 } = new MessageChannel();
-                el._finishBuild(port1); // ready on this port (posting waits for `ready`, review round 5, L-1)
+                checkIn(el, port1); // ready on this port (posting waits for `ready`, review round 5, L-1)
                 vi.useFakeTimers();
                 // the deadline, then a grace without an answer
                 return { el, force: () => { el.execute('for (;;) {}'); vi.advanceTimersByTime(20 + EXECUTION_TIMEOUT_GRACE_MS); }, done: () => port1.close() };

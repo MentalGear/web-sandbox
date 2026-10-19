@@ -13,8 +13,9 @@
  * with the generation it was armed in (`terminate{gen}`). Since PR C: every build (connect, reset(), load(),
  * setConfig(): `connect`, `build`, `setConfig`, `configured`, and the build effect's `built` and `buildFailed`), the
  * element's removal and adoption (`disconnect`), the files (`filesChanged`) and the load deadline (`loadDeadline`).
- * Until PR D, the completion of a build and `ready` stay host.ts's (`_completeBuild`, `_finishBuild`, `_enterReady`,
- * which writes `state: 'ready'` itself).
+ * Since PR D: the completion of a build and the `ready` gate (the wrapper's load, `frameLoad`; the guest's announcement,
+ * `announced`; the view's check-in, `viewReady`). The executor is the one writer of `_lc`, and makes the lifecycle's two
+ * events; test/unit/lifecycle-reducer.test.ts holds host.ts to it by its source ("class L in host.ts").
  *
  * Class L's invariant (research 18): each transition is reachable by one path, guarded by one predicate; events are
  * dispatched only after the state has settled, never from inside the embedder's own call; queued work is released only
@@ -36,8 +37,8 @@
  */
 import type { SandboxState } from '../host';
 
-// The reasons the lifecycle itself decides. src/host.ts keeps its own copies (SECOND_LOAD_REASON and the others) until
-// PR D moves the completion of a build here; test/unit/lifecycle-reducer.test.ts checks that the two agree.
+// The reasons the lifecycle itself decides, declared here only (S65 PR D: host.ts kept copies until it stepped the
+// completion of a build here). test/unit/api-docs.test.ts checks that docs/API.md lists each of them.
 export const LIFECYCLE_REASONS = Object.freeze({
     secondLoad: 'the sandbox frame loaded a second time',
     secondAnnouncement: 'the guest frame announced itself again (it reloaded or rewrote its document)',
@@ -69,15 +70,17 @@ export interface Notice {
 }
 
 /**
- * The progress of the standing build, from the build effect to the next teardown (host.ts: `_frameLoaded`,
- * `_expectAnnouncement`, the announcement listener's `accepted`, `_guestWindow`).
+ * The progress of the standing build, from the build effect to the next teardown (host.ts's `_frameLoaded`,
+ * `_expectAnnouncement`, the announcement listener's `accepted` and `_guestWindow` until S65's PR D).
  */
 export interface BuildProgress {
     readonly strict: boolean;
     readonly announces: boolean;
     readonly frameLoaded: boolean; // the wrapper's one load arrived
     readonly accepted: boolean; // the one announcement this build accepts arrived (a port, or worker mode's refusal)
-    readonly checkedIn: boolean; // it carried a port: the guest frame it came from is the one the wrapper's load must hold (S46)
+    // The window the accepted announcement came from, when it carried a port (the guest checked in), else null: the
+    // guest frame the wrapper's load must hold (S46). Opaque here, compared by identity only; released with the build.
+    readonly announcer: unknown;
 }
 
 export interface LcState {
@@ -150,17 +153,16 @@ export type LcInput =
     // checks at the wrapper's load), whatever decides it (the host decides, for instance, which VIEW_OVERRUN ends the
     // sandbox); with `notices`, the lines dispatched before it, one by one.
     | { t: 'terminate'; reason: string; gen?: number; notices?: readonly Notice[] }
-    // The load deadline (CB3): LOAD_TIMEOUT_MS of loading. `wrapperLoaded`: whether the wrapper's one load arrived, as
-    // host.ts reports it until PR D steps that load here (`frameLoad`, which records it in the build's progress); left
-    // out, the build's progress says.
-    | { t: 'loadDeadline'; gen: number; wrapperLoaded?: boolean }
+    // The load deadline (CB3): LOAD_TIMEOUT_MS of loading.
+    | { t: 'loadDeadline'; gen: number }
     // The wrapper's load, in the microtask the host's load handler queues (review round 4, L-1): `gen` as the load event
     // found it; `stillOurs` whether, in the microtask, the frame is still the element's and both are connected; `guest`
-    // the guest frame's window: none, the one whose announcement was accepted, or another (round 2's L-6, S46).
-    | { t: 'frameLoad'; gen: number; stillOurs: boolean; guest: 'none' | 'announcer' | 'other' }
+    // the guest frame's window, or null (round 2's L-6, S46): compared with the build's `announcer` by identity.
+    | { t: 'frameLoad'; gen: number; stillOurs: boolean; guest: unknown }
     // The guest frame's announcement (CB1). `valid`: trusted, and exactly one port or worker mode's refusal; `refusal`:
-    // the reason worker mode's frame gave for a worker that could not start (review round 2, C-5), else null.
-    | { t: 'announced'; gen: number; valid: boolean; refusal: string | null; port: unknown }
+    // the reason worker mode's frame gave for a worker that could not start (review round 2, C-5), else null; `source`:
+    // the window it came from (the guest frame's: the host's listener hears no other).
+    | { t: 'announced'; gen: number; valid: boolean; refusal: string | null; port: unknown; source: unknown }
     // The strict view's check-in on its port (R3-1), with what the host checks then.
     | { t: 'viewReady'; gen: number; height: unknown; stillStyleRefused: boolean }
     // Around each 'terminated' dispatch (the executor's; round 4's L-3: every one, so the no-repeat rule holds for all).
@@ -180,7 +182,7 @@ export type Effect =
     | { k: 'attach'; prepared: unknown }
     | { k: 'startLoadDeadline' }
     | { k: 'stopLoadDeadline' }
-    | { k: 'sendInitView' } // strict mode, at the wrapper's load: the view gets its ports (`_setupStrictChannels`)
+    | { k: 'sendInitView'; target: unknown } // strict mode, at the wrapper's load: the view (`target`) gets its ports (`_setupStrictChannels`)
     | { k: 'openChannel'; port: unknown } // cooperative and worker mode: the announced port, or none (`setupChannel`)
     | { k: 'closePort'; port: unknown }
     | { k: 'checkView'; height: unknown; stillStyleRefused: boolean } // the view's size and still-style warnings (R3-1)
@@ -198,11 +200,10 @@ export type Effect =
 export interface LcOutput {
     state: LcState;
     effects: readonly Effect[];
-    // Whether an effect that throws ends the sandbox (`BUILD_FAILED_REASON`): host.ts runs the completion of a build at
-    // the wrapper's load (`_onFrameLoad`) and at the guest's check-in (`_finishBuild`) in a try/catch. Today's code does
-    // not at the view's check-in: `_onViewMessage` calls `_enterReady()` bare, so a throw there leaves the build
-    // `loading`, its load deadline already stopped. These effects do not throw in practice (they are backstops), so the
-    // difference is not observable; it is kept as it is, and listed in the PR for PR D to decide.
+    // Whether an effect that throws ends the sandbox (`BUILD_FAILED_REASON`): the completion of a build, on all three of
+    // its paths, the wrapper's load, the guest's check-in and the view's (S65 PR D; until then host.ts ran the first two
+    // in a try/catch and the view's bare, so a throw there left the build `loading`, its load deadline already stopped).
+    // These effects do not throw in practice (they are backstops); one that does leaves nothing half-done behind.
     guarded?: boolean;
 }
 
@@ -275,18 +276,18 @@ function initialize(state: LcState, ctx: BuildContext): LcOutput {
         const refused = terminateBuild({ ...torn, state: 'loading' }, refusal);
         return { state: refused.state, effects: [...effects, ...refused.effects] };
     }
-    const build: BuildProgress = { strict: ctx.strict, announces: ctx.announces, frameLoaded: false, accepted: false, checkedIn: false };
+    const build: BuildProgress = { strict: ctx.strict, announces: ctx.announces, frameLoaded: false, accepted: false, announcer: null };
     effects.push({ k: 'build' });
     return { state: { ...torn, state: 'loading', build }, effects };
 }
 
-// host.ts, `_enterReady`: the transition to `ready`, in every mode, and the one place what waited for it is released
+// The transition to `ready` (host.ts's `_enterReady` until PR D), in every mode, and the one place what waited for it is released
 // (review round 5, L-1). The load deadline stops; the queue goes to the port in the order it was issued; the watchdogs
 // are armed before 'ready' is dispatched (a 'ready' listener that resets or terminates stops them with the rest, instead
 // of leaving one running for a port that is gone); the resizer is in place for the reports buffered before the port.
-// Today's code sets `state` last, just before the dispatch; here it is 'ready' before the first effect, as every state
-// is. Nothing the flush or the watchdogs run reads it (the host's own code, no embedder code), so the difference is not
-// observable; test/unit/lifecycle-reducer.test.ts pins the order for PR D.
+// host.ts set `state` last, just before the dispatch, until PR D; here it is 'ready' before the first effect, as every
+// state is. Nothing the flush or the watchdogs run reads it (the host's own code, no embedder code), so the difference is
+// not observable; test/unit/lifecycle-reducer.test.ts pins the order.
 function enterReady(state: LcState, before: readonly Effect[] = NOTHING): LcOutput {
     return {
         state: { ...state, state: 'ready' },
@@ -295,14 +296,14 @@ function enterReady(state: LcState, before: readonly Effect[] = NOTHING): LcOutp
     };
 }
 
-// host.ts, `_finishBuild`: cooperative and worker mode complete at the guest's check-in, with its port, or, where the
+// Cooperative and worker mode (host.ts's `_finishBuild` until PR D) complete at the guest's check-in, with its port, or, where the
 // guest runs no bootstrap, at the wrapper's load, with none. Not loading any more: the port is closed, nothing else.
 function finishBuild(state: LcState, port: unknown): LcOutput {
     if (state.state !== 'loading') return { state, effects: port === null ? NOTHING : [{ k: 'closePort', port }] };
     return enterReady(state, [{ k: 'openChannel', port }]);
 }
 
-// host.ts, `_frameLoadHandler` (its microtask) then `_completeBuild`. The wrapper is written once and has no script, so it
+// The wrapper's load (host.ts's `_completeBuild` until PR D). The wrapper is written once and has no script, so it
 // loads exactly once: a second load means something navigated or reloaded it. A guest that checked in already must be
 // the one the load holds (S46). Then: a bootstrap's check-in completes the build, after this load; strict mode hands the
 // view its ports and completes at VIEW_READY, never on this load alone (R3-1: it also fires for a view whose bootstrap
@@ -313,14 +314,14 @@ function frameLoad(state: LcState, input: Extract<LcInput, { t: 'frameLoad' }>):
     const guarded = (output: LcOutput): LcOutput => ({ ...output, guarded: true });
     if (build.frameLoaded) return guarded(terminateNow(state, LIFECYCLE_REASONS.secondLoad));
     const loaded: LcState = { ...state, build: { ...build, frameLoaded: true } };
-    if (build.checkedIn) return guarded(input.guest === 'announcer' ? unchanged(loaded) : terminateNow(loaded, LIFECYCLE_REASONS.secondLoad));
-    if (input.guest === 'none') return guarded(terminateNow(loaded, LIFECYCLE_REASONS.frameMissing));
+    if (build.announcer !== null) return guarded(input.guest === build.announcer ? unchanged(loaded) : terminateNow(loaded, LIFECYCLE_REASONS.secondLoad));
+    if (input.guest === null) return guarded(terminateNow(loaded, LIFECYCLE_REASONS.frameMissing));
     if (build.announces) return guarded(unchanged(loaded));
-    if (build.strict) return { state: loaded, effects: [{ k: 'sendInitView' }], guarded: true };
+    if (build.strict) return { state: loaded, effects: [{ k: 'sendInitView', target: input.guest }], guarded: true };
     return finishBuild(loaded, null);
 }
 
-// host.ts, `_listenForAnnouncement`: exactly one announcement per environment, from a build that expects one. Any other
+// The guest frame's announcement (host.ts, `_onAnnouncement`): exactly one per environment, from a build that expects one. Any other
 // (a second one, one strict mode's frame never sends, an untrusted or malformed one) ends the environment: a guest that
 // reloads or rewrites itself announces again, and a forgery can only end its own environment (PD8). Worker mode's
 // refusal is the frame's one announcement: one host line, then the termination with its reason (review round 2, C-5).
@@ -331,11 +332,12 @@ function announced(state: LcState, input: Extract<LcInput, { t: 'announced' }>):
         const accepted: LcState = { ...state, build: { ...build, accepted: true } };
         return refusedByHostPage(accepted, input.refusal);
     }
-    const checkedIn: LcState = { ...state, build: { ...build, accepted: true, checkedIn: true } };
+    const checkedIn: LcState = { ...state, build: { ...build, accepted: true, announcer: input.source } };
     return { ...finishBuild(checkedIn, input.port), guarded: true };
 }
 
-// host.ts, `_refusedByHostPage`: one host line, then the termination, unless a listener of that line acted first.
+// A frame of ours the host page's policy refused (host.ts, `_refusedByHostPage`, for the view's refusals): one host line,
+// then the termination, unless a listener of that line acted first.
 function refusedByHostPage(state: LcState, reason: string): LcOutput {
     return terminate(state, { t: 'terminate', reason, gen: state.gen, notices: [{ level: 'error', text: `[Sandbox] ${reason}`, source: 'host' }] });
 }
@@ -358,12 +360,11 @@ function terminate(state: LcState, input: Extract<LcInput, { t: 'terminate' }>):
 // the wrapper's load, the frame did not finish loading. A deadline
 // bounds `loading` only, of the build it was started for (LM-2): the input carries that build's generation, and it acts
 // only while that build is `loading`; `_enterReady` stops it as well, but the bound does not rest on a timer stopped.
-function loadDeadline(state: LcState, input: Extract<LcInput, { t: 'loadDeadline' }>): LcOutput {
+function loadDeadline(state: LcState): LcOutput {
     const build = state.build;
     if (state.state !== 'loading' || build === null) return unchanged(state);
     const scripted = build.strict || build.announces;
-    const loaded = input.wrapperLoaded ?? build.frameLoaded;
-    return terminateNow(state, loaded && scripted ? LIFECYCLE_REASONS.startupBlocked : LIFECYCLE_REASONS.loadTimeout);
+    return terminateNow(state, build.frameLoaded && scripted ? LIFECYCLE_REASONS.startupBlocked : LIFECYCLE_REASONS.loadTimeout);
 }
 
 // host.ts, `_dispatchBuildTermination`: only if nothing tore the environment down since it was armed.
@@ -448,16 +449,16 @@ export function reduce(state: LcState, input: LcInput): LcOutput {
         case 'terminate':
             return terminate(state, input);
         case 'loadDeadline':
-            return loadDeadline(state, input);
+            return loadDeadline(state);
         case 'frameLoad':
             return frameLoad(state, input);
         case 'announced':
             return announced(state, input);
         case 'viewReady':
             // host.ts, `_onViewMessage` VIEW_READY: the view's check-in, the first frame on the port only its bootstrap
-            // holds (R3-1). Not guarded (see LcOutput.guarded).
+            // holds (R3-1). Guarded, like the two other completions (S65 PR D; see LcOutput.guarded).
             if (state.state !== 'loading') return unchanged(state);
-            return { ...enterReady(state, [{ k: 'checkView', height: input.height, stillStyleRefused: input.stillStyleRefused }]), guarded: false };
+            return enterReady(state, [{ k: 'checkView', height: input.height, stillStyleRefused: input.stillStyleRefused }]);
         case 'dispatchStarted':
             return { state: { ...state, dispatching: [...state.dispatching, input.reason] }, effects: NOTHING };
         case 'dispatchEnded':
@@ -486,7 +487,7 @@ export interface LifecycleHost {
     failureReason(error: unknown, phase: 'build' | 'complete'): string;
     startLoadDeadline(): void;
     stopLoadDeadline(): void;
-    sendInitView(): void;
+    sendInitView(target: unknown): void;
     openChannel(port: unknown): void;
     closePort(port: unknown): void;
     checkView(height: unknown, stillStyleRefused: boolean): void;
@@ -530,8 +531,14 @@ const tornDownSince = (host: { readonly lc: LcState }, stampGen: number): boolea
  * here at one site). Until S65's PR C it was made before a dispatch, a notice or a nested step only, since only those run
  * embedder code; but a resource effect can too (a warning, through a patched console.warn), and a `teardown` after a
  * warning whose hook built again tore down that new build, leaving it `loading` with no frame. Now no effect of a gone
- * environment runs. With `guarded`, an effect other than a dispatch that throws ends the sandbox, as today's try/catch at
- * the completion of a build does (`_onFrameLoad`, `_finishBuild`).
+ * environment runs. With `guarded`, an effect other than a dispatch that throws ends the sandbox: the completion of a
+ * build (see LcOutput.guarded).
+ *
+ * That termination carries the output's generation (S65 PR D; until then it carried none). The decision: the throw is a
+ * failure of the completion of this environment, so it may end this environment only. A guarded effect can run embedder
+ * code (`checkView` warns, through a console.warn the page may have patched), and code that built again from there and
+ * then threw would otherwise have its new build ended by the old one's failure: the same rule as a build's own failure
+ * (`buildFailed{gen}`, LM-2). In every other case the generation is the current one and the termination is today's.
  */
 export function runEffects(host: LifecycleHost, effects: readonly Effect[], stampGen: number, guarded = false): void {
     for (const effect of effects) {
@@ -543,7 +550,7 @@ export function runEffects(host: LifecycleHost, effects: readonly Effect[], stam
         try {
             runEffect(host, effect, stampGen);
         } catch (error) {
-            host.step({ t: 'terminate', reason: host.failureReason(error, 'complete') });
+            host.step({ t: 'terminate', reason: host.failureReason(error, 'complete'), gen: stampGen });
             return;
         }
     }
@@ -589,7 +596,7 @@ function runEffect(host: LifecycleHost, effect: Effect, stampGen: number): void 
             return;
         case 'startLoadDeadline': host.startLoadDeadline(); return;
         case 'stopLoadDeadline': host.stopLoadDeadline(); return;
-        case 'sendInitView': host.sendInitView(); return;
+        case 'sendInitView': host.sendInitView(effect.target); return;
         case 'openChannel': host.openChannel(effect.port); return;
         case 'closePort': host.closePort(effect.port); return;
         case 'checkView': host.checkView(effect.height, effect.stillStyleRefused); return;

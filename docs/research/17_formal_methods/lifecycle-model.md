@@ -136,7 +136,15 @@ Round 5's lifecycle reviewer updated the model to the element after round 4's fi
 ## The committed suite (`test/model/`)
 
 The model, updated to the element at `446017a` (after round 5's fixes, S64), and its generator are permanent tests. The
-lifecycle reducer (S65) is refactored against them.
+lifecycle reducer (S65) was refactored against them, and since S65's step 2 (done 2026-10-19) the element runs on it:
+every transition of `host.ts` is an input of `src/lib/lifecycle.ts`, so the e2e suite checks the reducer in each engine,
+and the reducer runner below checks it in a unit run.
+
+**The generator's margins.** A guest that answers is never ended by its watchdog in the model: the watchdog's termination
+is allowed only once a guest step blocked the event loop. So the watchdog budgets of ordinary configs are off, or 4000
+and 5000 ms (S65 PR D). They were 150 and 250 ms, and a strict guest's worker, starved past them at a load average of 15
+to 19, missed its pings with nothing busy (WebKit seed 225 at 500 sequences, before and after the reducer alike). The
+150 ms watchdog stays where the generator pairs it with a busy guest (the "termination the element starts" segment).
 
 | File | What it is |
 | :--- | :--- |
