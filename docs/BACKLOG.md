@@ -1677,9 +1677,37 @@ Following research 19's plan:
 
 This closes the worker side of E-cpu and G by construction ([research 18](research/18_finding_classes/README.md)).
 
-### S67 · One config schema — ⏸️ phase 4
+### S67 · One config schema — ✅ **done** (phase 4)
 
-Defaults, clamps, cross-field invariants and warnings come from one declarative description, checked by a property test.
+`CONFIG_SCHEMA` (`src/lib/config-schema.ts`) declares every option once:
+- its default and documented default, its modes, how it is read, its warnings, and what the modes that ignore it say;
+- `normaliseConfig()` is pure, and host.ts only applies its result;
+- `CONFIG_INVARIANTS` names the cross-field invariants once: stored options only, as own data; types; capabilities per mode; options outside their modes at their defaults; the `callLimits` rules; `fetchBridge` budgets that admit a request and fit one call; guest writes of the whole quota fitting one call.
+
+The checks:
+- a property test over 4165 configs (edges per mode, plus seeded random configs with poisoned keys at any depth) checks every invariant, idempotence and deterministic warnings;
+- a doc-sync test ties every row of API.md's Configuration table to the schema;
+- a differential run against the code before, over 3000 configs and 500 sequences, found the effective config, origins, fetch policy, call budget and refusals identical.
+
+One behaviour change: the capability warnings come once per element and message, as API.md already said, instead of
+once per `setConfig()`.
+
+### S70 · For the owner: three edges the schema found — ⏸️ **decide**
+
+- **String fetch request bodies.** A string body is measured at 2 bytes per character. With `fetchBridge.maxBytes` above
+  about 16.5 MiB, a string body over about 17.3 million characters is refused `ARGS_NOT_TRANSFERABLE` by the guest's
+  broker before it reaches the bridge, although API.md allows request bodies up to 32 MiB. Clamp `maxBytes` for string
+  bodies, or document it.
+- **A tiny `watchdogTimeout`.** A value such as 0.001 ms may end a healthy guest. Measure it, then set a floor or document it.
+- **`mode: null`.** Its capabilities are filtered as strict mode's before the config is refused. This is harmless; it
+  is kept as it was.
+
+### T7 · A host-load test that fails on a loaded machine at the base too — 🔎 **investigate**
+
+`review-round-4.spec.ts` "M-2: an admitted loopback origin" (an image flood, which must stay under 30% busy) measured
+41–45% on Chromium in local runs while other agents loaded the 4-core machine, at `32e59a1` as well as after S67. It
+passes in CI. Make it measure against its own idle baseline under the same load, as `view-bound.spec.ts` does, rather
+than an absolute share.
 
 ### S68 · State the view's cost bound — ✅ **done** (phase 5)
 
