@@ -76,8 +76,10 @@ text stays constant) and hands the worker the logic and render ports.
   and a URL in rendered markup is kept only where every engine's policy check admits it (its exact origin is listed,
   or it is an image's `http:` URL whose `https:` upgrade is, off a loopback host), else dropped by the renderer before
   the browser sees it and, an `http(s)` one, reported as a violation; the ones it keeps are bounded in number
-  (`VIEW_MAX_URLS`), and every load, as the renderer kept it or as the browser reports it (resource timing, CSS-borne
-  loads included, and violations), per second (`VIEW_URLS_PER_SECOND`) and in distinct URLs over the view's life
+  (`VIEW_MAX_URLS`), and every load, charged before the browser can start it (a kept URL attribute when it is
+  rendered, what applied CSS can load, counted from its text, when it is applied; backlog S73) and otherwise as the
+  browser reports it (resource timing, CSS-borne loads included, and violations), per second (`VIEW_URLS_PER_SECOND`)
+  and in distinct URLs over the view's life
   (`VIEW_MAX_DISTINCT_URLS`). The renderer's prediction may only err toward refusing, and no bound depends on it.
   No WebRTC is reachable. The view cancels the default of every click on or inside a link (HTML and SVG `a`,
   `area`, anything with an `href`, including fragment links, which resolve against the inherited `about:blank`
@@ -666,8 +668,13 @@ indeterminate `<progress>` up to +4.
   document's visibility changed is dropped). Every operation is charged all it took, so the budget is a long-run
   average of `VIEW_APPLY_MS_PER_SECOND`, not a bound on each second: a single second can hold more (simulated: 398–553
   ms with operations of at most 200 ms; [research 17](research/17_formal_methods/README.md)). One operation, a flush
-  and the rendering measured after it, is bounded by `VIEW_MAX_OPERATION_MS` (2 s): past it the view stops and the
-  sandbox ends (`the view spent more than 2000 ms on one operation`). A debt cap of one second, which this replaces,
+  and the rendering measured after it, is bounded by `VIEW_MAX_OPERATION_MS` (2 s) and the repeated-overrun rule
+  (2026-10-19, the owner's decision; backlog S72, class P): past it the operation is an overrun, charged in full, and
+  the view goes on; the second overrun within `VIEW_OVERRUN_WINDOW_MS` (5 minutes) stops the view and ends the sandbox
+  (`the view spent more than 2000 ms on one operation twice within 5 minutes`). The single-operation limit as first
+  made (2026-10-19, review round 5, M-2) ended the sandbox at the first overrun; the meter measures wall time, so under
+  machine load it ended healthy sandboxes (a large initial view on a loaded CI runner; WebKit's first `set()` of a
+  250 000-character textarea, always). A debt cap of one second, which this replaces,
   charged an operation of 7.5 s 1.2 s, and it ran again every 12.5 s (53% busy). This replaces the frame callback per flush that charged its
   own age past one frame: hidden 5 s with one render applied meanwhile, the next render waited 18.3 s (C-2, Chromium,
   Firefox `display:none`, WebKit off-screen); and a frame per flush went uncharged, so a flood took 22–25% (M-5). Now:
@@ -700,8 +707,8 @@ removes: research 16).
 **Decision**: the view's cost to the thread it runs on is one statement, in
 [API.md, "The view's cost to the host page"](API.md#the-views-cost-to-the-host-page), per engine and process placement:
 (a) the long-run bound, `VIEW_APPLY_MS_PER_SECOND` of the view's own time plus the browser's work on at most
-`VIEW_URLS_PER_SECOND` loads; (b) one operation at most `VIEW_MAX_OPERATION_MS` before the sandbox ends, plus that
-operation's own cost, which is not interruptible; (c) the rates and caps that bound what the meter cannot see; and (d) a
+`VIEW_URLS_PER_SECOND` loads; (b) at most one operation past `VIEW_MAX_OPERATION_MS` per `VIEW_OVERRUN_WINDOW_MS` beyond the
+first (the second within the window ends the sandbox; S72), each that operation's own cost, which is not interruptible; (c) the rates and caps that bound what the meter cannot see; and (d) a
 closed list of what is outside it, each item with its measured magnitude. The residuals of
 [Consequences](#consequences) and the amendments above (2026-10-15 "host-page availability", 2026-10-17, 2026-10-18)
 record how each part came to be; where their figures differ from the statement, the statement holds. README's limits

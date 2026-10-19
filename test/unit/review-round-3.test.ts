@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
-import { inSandboxView, sanitizeRender, VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
+import { inSandboxView, sanitizeRender, VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
 import { defineWebSandbox } from '@src/host';
 import { createBroker } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
@@ -736,8 +736,9 @@ describe("C-2 and M-5: the view's time budget charges only the rendering it meas
     });
 
     // Review round 5, M-2: the debt was floored at one second (VIEW_APPLY_MAX_DEBT_MS), so an operation of 7.5 s was
-    // charged 1.2 s and ran again every 12.5 s. Each is charged in full now, and one past VIEW_MAX_OPERATION_MS ends the
-    // sandbox. (At 60814b5, the 1.5 s update held the next one back 5 s, and 20 s did too.)
+    // charged 1.2 s and ran again every 12.5 s. Each is charged in full now, and the second past VIEW_MAX_OPERATION_MS
+    // within VIEW_OVERRUN_WINDOW_MS ends the sandbox (S72). (At 60814b5, the 1.5 s update held the next one back 5 s, and
+    // 20 s did too.)
     it("a rendering update that took 1.5 s holds the next operation back for all of it: 1.3 s of debt, repaid at 200 ms per second (6.5 s)", { timeout: 60000 }, async () => {
         const { send, text, shown, fromView, close } = startView();
         await tasks();
@@ -759,24 +760,45 @@ describe("C-2 and M-5: the view's time budget charges only the rendering it meas
         close();
     });
 
-    it(`a rendering update past VIEW_MAX_OPERATION_MS (${VIEW_MAX_OPERATION_MS} ms) ends the view: VIEW_OVERRUN on its port, once, and nothing more is applied`, { timeout: 60000 }, async () => {
-        const { send, text, shown, fromView, close } = startView();
-        await tasks();
-        frame();
-        await tasks();
-        expect(await text('1')).toBe(true);
-        frame();
-        clock.now += VIEW_MAX_OPERATION_MS + 1; // its rendering update took just past the limit
-        await tasks();
-        expect(fromView.filter(type => type === 'VIEW_OVERRUN')).toHaveLength(1);
-        const stop = runFrames();
-        send('2');
-        await until(() => shown() === '2', 1500);
-        stop();
-        expect(shown()).toBe('1');
-        expect(fromView.filter(type => type === 'VIEW_OVERRUN')).toHaveLength(1);
-        close();
-    });
+    // Backlog S72 (class P), the repeated-overrun rule: one overrun is charged and survived; the second within
+    // VIEW_OVERRUN_WINDOW_MS ends the view. (Before S72 the first ended it.)
+    const count = (fromView: string[], type: string) => fromView.filter(t => t === type).length;
+    for (const [later, ends] of [[0, true], [VIEW_OVERRUN_WINDOW_MS + 1, false]] as const) {
+        it(`a rendering update past VIEW_MAX_OPERATION_MS (${VIEW_MAX_OPERATION_MS} ms) is a first overrun, and the view goes on once its debt is repaid; a second ${ends ? 'within the window ends the view: VIEW_OVERRUN, once, and nothing more is applied' : 'past the window is a first overrun again'}`, { timeout: 60000 }, async () => {
+            const { send, text, shown, fromView, close } = startView();
+            await tasks();
+            frame();
+            await tasks();
+            expect(await text('1')).toBe(true);
+            frame();
+            clock.now += VIEW_MAX_OPERATION_MS + 1; // its rendering update took just past the limit
+            await tasks();
+            expect(count(fromView, 'VIEW_FIRST_OVERRUN')).toBe(1);
+            expect(count(fromView, 'VIEW_OVERRUN')).toBe(0);
+            clock.now += 10000 + later; // the 9 s of debt repaid (and, for the second case, the window passed)
+            let stop = runFrames();
+            send('2');
+            expect(await until(() => shown() === '2', 1500)).toBe(true); // applied: the view went on
+            stop();
+            await tasks();
+            expect(await text('3')).toBe(true);
+            frame();
+            clock.now += VIEW_MAX_OPERATION_MS + 1; // the second overrun
+            await tasks();
+            expect(count(fromView, 'VIEW_OVERRUN')).toBe(ends ? 1 : 0);
+            expect(count(fromView, 'VIEW_FIRST_OVERRUN')).toBe(ends ? 1 : 2);
+            if (ends) {
+                clock.now += 20000;
+                stop = runFrames();
+                send('4');
+                await until(() => shown() === '4', 1500);
+                stop();
+                expect(shown()).toBe('3');
+                expect(count(fromView, 'VIEW_OVERRUN')).toBe(1);
+            }
+            close();
+        });
+    }
 
     it('at the limit, and hidden for 30 s between flushes: no VIEW_OVERRUN (time in which no frame ran is no operation)', { timeout: 60000 }, async () => {
         const { text, fromView, close } = startView();

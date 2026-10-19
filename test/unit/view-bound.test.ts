@@ -30,6 +30,7 @@ function section(doc: string, heading: string): string {
 const CONSTANTS: Record<string, unknown> = {
     VIEW_APPLY_MS_PER_SECOND: view.VIEW_APPLY_MS_PER_SECOND,
     VIEW_MAX_OPERATION_MS: view.VIEW_MAX_OPERATION_MS,
+    VIEW_OVERRUN_WINDOW_MS: view.VIEW_OVERRUN_WINDOW_MS,
     VIEW_URLS_PER_SECOND: view.VIEW_URLS_PER_SECOND,
     VIEW_MAX_URLS: view.VIEW_MAX_URLS,
     VIEW_MAX_DISTINCT_URLS: view.VIEW_MAX_DISTINCT_URLS,
@@ -71,7 +72,7 @@ describe("docs/API.md, the view's cost to the host page", () => {
     it('the e2e suite that measures it, the constants it uses, and its links exist', () => {
         // the spec and the measure it shares with review-round-4.spec.ts (the bound's terms live there)
         const spec = read('test/e2e/view-bound.spec.ts') + read('test/e2e/host-share.ts');
-        for (const name of ['VIEW_APPLY_MS_PER_SECOND', 'VIEW_MAX_OPERATION_MS', 'VIEW_URLS_PER_SECOND', 'VIEW_MAX_URLS', 'VIEW_MAX_DISTINCT_URLS']) {
+        for (const name of ['VIEW_APPLY_MS_PER_SECOND', 'VIEW_MAX_OPERATION_MS', 'VIEW_OVERRUN_WINDOW_MS', 'VIEW_URLS_PER_SECOND', 'VIEW_MAX_URLS', 'VIEW_MAX_DISTINCT_URLS']) {
             expect(spec).toContain(name);
             expect(named.has(name)).toBe(true);
         }
@@ -79,6 +80,22 @@ describe("docs/API.md, the view's cost to the host page", () => {
         const anchor = 'API.md#the-views-cost-to-the-host-page';
         expect(read('README.md')).toContain(`docs/${anchor}`);
         expect(read('docs/ADR-005-strict-mode.md')).toContain(anchor);
+    });
+
+    // Backlog S72 (class P): the single-operation bound is the repeated-overrun rule; (b) states it in the words the host
+    // gives, and API.md's reasons and host lines name them as host.ts has them.
+    it('(b) states the repeated-overrun rule, with the reason and the warn line host.ts gives', () => {
+        const host = read('src/host.ts');
+        const reason = host.match(/const VIEW_OVERRUN_REASON = '([^']+)';/)![1]!;
+        const warning = host.match(/const VIEW_FIRST_OVERRUN_LINE = '([^']+)';/)![1]!;
+        const b = SECTION.slice(SECTION.indexOf('### (b)'), SECTION.indexOf('### (c)')).replace(/\s+/g, ' ');
+        expect(b).toContain(`(\`${reason}\`)`);
+        expect(b).toContain('`VIEW_OVERRUN_WINDOW_MS`');
+        expect(b).toContain('at most one stall past 2000 ms per 5 minutes beyond the first');
+        const api = read('docs/API.md').replace(/\s+/g, ' ');
+        expect(api).toContain(`| \`${reason}\` |`);
+        expect(api).toContain(`\`${warning}\``);
+        expect(api).not.toMatch(/`the view spent more than \d+ ms on one operation`/);
     });
 
     it('lists what is outside the bound as one closed list', () => {

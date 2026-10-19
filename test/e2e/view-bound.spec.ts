@@ -2,7 +2,7 @@ import { test, expect, type SandboxDriver } from './fixture';
 import { waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_MAX_URLS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
+import { VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_MAX_URLS, VIEW_OVERRUN_WINDOW_MS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 import { best, busyShare, IDLE_MS, IDLE_WINDOWS, LOAD_SHARE, LOADED_MS, MARGIN, SOAK, ticks, TIME_SHARE, WARMUP_MS } from './host-share';
 
 /**
@@ -12,7 +12,8 @@ import { best, busyShare, IDLE_MS, IDLE_WINDOWS, LOAD_SHARE, LOADED_MS, MARGIN, 
  *   (a) under each canonical flood, the host page's busy share stays within the long-run bound: the view's time budget
  *       (VIEW_APPLY_MS_PER_SECOND, 20%) plus, for floods that load, the browser's own work on loads at
  *       VIEW_URLS_PER_SECOND, plus the measure's margin (below);
- *   (b) an operation past VIEW_MAX_OPERATION_MS ends the sandbox, and no operation follows it.
+ *   (b) an operation past VIEW_MAX_OPERATION_MS is an overrun: charged in full, and survived; the second within
+ *       VIEW_OVERRUN_WINDOW_MS ends the sandbox, and no operation follows it (backlog S72, class P).
  *
  * Measured as the other availability tests are: ticks of a 10 ms interval on the host page, against the page's own idle
  * baseline, the best of N windows on both sides (./host-share.ts, which also holds the bound's terms and the margin).
@@ -187,36 +188,58 @@ const operationCost = async (page: Page, html: string) => {
 // all their later siblings (test/e2e/view-round-5.spec.ts, M-2).
 const heavy = (n: number) => `<style>i:has(~ b){color:red}</style><div>${'<i>x</i>'.repeat(n)}<b>y</b></div>`;
 
-test.describe('(b) the single-operation bound', () => {
-    test(`an operation past VIEW_MAX_OPERATION_MS (${VIEW_MAX_OPERATION_MS} ms) ends the sandbox, and none runs after it`, async ({ sandbox, page, browserName }) => {
-        test.setTimeout(180000);
+// The words of the repeated-overrun rule (backlog S72), as host.ts has them (test/unit/view-round-5.test.ts keeps them
+// equal to the constants).
+const MINUTES = VIEW_OVERRUN_WINDOW_MS / 60000;
+const OVERRUN_REASON = `the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation twice within ${MINUTES} minutes`;
+const FIRST_OVERRUN_LINE = `[Sandbox] the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation; a second such operation within ${MINUTES} minutes ends the sandbox.`;
+// The least debt one overrun leaves: past VIEW_MAX_OPERATION_MS, less the second the budget holds, repaid at its rate.
+const LEAST_DEBT_MS = ((VIEW_MAX_OPERATION_MS - VIEW_APPLY_MS_PER_SECOND) / VIEW_APPLY_MS_PER_SECOND) * 1000;
+
+test.describe('(b) the single-operation bound: the repeated-overrun rule (class P, backlog S72)', () => {
+    test(`an operation past VIEW_MAX_OPERATION_MS (${VIEW_MAX_OPERATION_MS} ms) is survived and charged in full; the second, once the debt is repaid and within VIEW_OVERRUN_WINDOW_MS, ends the sandbox, and none runs after it`, async ({ sandbox, page, browserName }) => {
+        test.setTimeout(300000);
         let n = 24000;
         let cost = await operationCost(page, heavy(n));
         if (cost < 1.5 * VIEW_MAX_OPERATION_MS) cost = await operationCost(page, heavy(n = 30000));
         console.log(`MEASURED ${browserName} view-bound (b) calibration: ${n} elements under :has() ${cost} ms`);
         test.skip(cost < 1.5 * VIEW_MAX_OPERATION_MS, `the heaviest operation of the family takes ${cost} ms here`);
-        await mountEntry(sandbox, `sandboxView.render('<div id="a"></div><div id="b"></div>');
-            globalThis.go = () => { const html = ${JSON.stringify(heavy(1))}.replace('<i>x</i>', '<i>x</i>'.repeat(${n})); sandboxView.render(html, 'a'); sandboxView.render(html, 'b'); };`);
+        // Every operation replaces one target, so that the view holds n elements at most (two targets of 30 000 would be
+        // past VIEW_MAX_ELEMENTS, and refused unmeasured). The worker keeps the latest operation per target until the
+        // one in flight is acknowledged, so the third is queued 100 ms after the second: it waits in the worker, behind it.
+        await mountEntry(sandbox, `sandboxView.render('<div id="a"></div>');
+            const html = (text) => '<style>i:has(~ b){color:red}</style><div>' + ('<i>' + text + '</i>').repeat(${n}) + '<b>y</b></div>'; // heavy(n)
+            globalThis.go = () => sandboxView.render(html('x'), 'a');
+            globalThis.again = () => { sandboxView.render(html('y'), 'a'); setTimeout(() => sandboxView.render(html('z'), 'a'), 100); };`);
         const reasons: string[] = [];
         await page.exposeFunction('__terminated', (reason: string) => reasons.push(reason));
         await page.evaluate(() => {
             document.querySelector('web-sandbox')!.addEventListener('terminated', (e: any) => (window as any).__terminated(e.detail.reason));
-            // every stall of the host page's thread past 500 ms, from a 10 ms timer
+            // every stall of the host page's thread past 500 ms, from a 10 ms timer: where it ended, and how long it was
             (window as any).__stalls = [];
             let last = performance.now();
-            const tick = () => { const now = performance.now(); if (now - last > 500) (window as any).__stalls.push(Math.round(now - last)); last = now; setTimeout(tick, 10); };
+            const tick = () => { const now = performance.now(); if (now - last > 500) (window as any).__stalls.push({ end: Math.round(now), ms: Math.round(now - last) }); last = now; setTimeout(tick, 10); };
             tick();
         });
-        // two operations queued, each past the limit: the first ends the sandbox, the second never runs
+        // three operations, each past the limit: the first is an overrun, said once, and the sandbox stands
         await sandbox.run('go()');
-        await expect.poll(() => sandbox.state(), { timeout: 3 * cost + 30000 }).toBe('terminated');
+        await sandbox.waitForLog(FIRST_OVERRUN_LINE, 3 * cost + 30000);
+        expect(await sandbox.state()).toBe('ready');
+        // the second, made at once, runs only when the first's debt is repaid (five times what it was charged), and
+        // ends the sandbox; the third, behind it, never runs
+        await sandbox.run('again()');
+        await expect.poll(() => sandbox.state(), { timeout: 8 * cost + 60000 }).toBe('terminated');
         await page.waitForTimeout(Math.max(3000, 2 * cost));
-        const stalls = await page.evaluate(() => (window as any).__stalls as number[]);
-        console.log(`MEASURED ${browserName} view-bound (b): the host page's stalls past 500 ms: ${stalls.join(', ')} ms (the operation ${cost} ms on a page of its own)`);
-        expect(reasons).toEqual([`the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation`]);
-        // one operation's stall, not two: what one operation costs before the view can observe it is the bound's second
-        // term, and the sandbox ends before the next one
-        expect(stalls.filter(stall => stall > VIEW_MAX_OPERATION_MS / 2).length).toBeLessThanOrEqual(1);
+        const stalls = await page.evaluate(() => (window as any).__stalls as { end: number; ms: number }[]);
+        console.log(`MEASURED ${browserName} view-bound (b): the host page's stalls past 500 ms: ${stalls.map(stall => `${stall.ms} ms ending at ${stall.end}`).join(', ')} (the operation ${cost} ms on a page of its own)`);
+        expect(reasons).toEqual([OVERRUN_REASON]);
+        expect((await sandbox.logs()).filter(line => line === FIRST_OVERRUN_LINE)).toHaveLength(1);
+        // two operations' stalls at most, not three: what one operation costs before the view can observe it is the
+        // bound's second term, the debt holds the second back for at least LEAST_DEBT_MS, and the sandbox ends before
+        // the third
+        const long = stalls.filter(stall => stall.ms > VIEW_MAX_OPERATION_MS / 2);
+        expect(long.length).toBeLessThanOrEqual(2);
+        if (long.length === 2) expect(long[1]!.end - long[1]!.ms - long[0]!.end).toBeGreaterThan(0.9 * LEAST_DEBT_MS);
     });
 });
 
