@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { INITIAL_LIFECYCLE, admits, isStale, reduce, runEffects, step, type BuildContext, type Effect, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice } from '../../src/lib/lifecycle';
+import { INITIAL_LIFECYCLE, admits, isStale, reduce, runEffects, step, type BuildContext, type Effect, type Generation, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice } from '../../src/lib/lifecycle';
 import { reasonText, TERMINATION_REASONS } from '../../src/lib/reasons';
 import { generate, shrink } from '../model/generator';
 import { DEFAULT_TERMINATE_REASON, ENTRY_FAILED_REASON, unknownModeReason, type Sequence } from '../model/lifecycle-model';
@@ -108,7 +108,8 @@ describe("the reducer's properties on fuzzed inputs", () => {
         { buildsHere: false, blocked: null, strict: true, announces: false },
     ];
     function inputsFor(state: LcState): LcInput[] {
-        const gens = [state.gen, state.gen - 1, state.gen + 1];
+        // the current generation, and two that are not: made here only, as no code of the library's makes one
+        const gens = [state.gen, (state.gen - 1) as Generation, (state.gen + 1) as Generation];
         const inputs: LcInput[] = [{ t: 'disconnect' }, { t: 'filesChanged' }, { t: 'setConfig', same: true }, { t: 'setConfig', same: false }, { t: 'terminate', reason: 'bye' }, { t: 'dispatchStarted', reason: 'bye' }];
         if (state.dispatching.length > 0) inputs.push({ t: 'dispatchEnded' });
         for (const ctx of contexts) inputs.push({ t: 'connect', ctx }, { t: 'build', why: 'reset', ctx }, { t: 'build', why: 'load', ctx }, { t: 'configured', refusal: null, ctx }, { t: 'configured', refusal: 'refused', ctx });
@@ -446,7 +447,7 @@ describe("the reducer describes today's host.ts", () => {
         expect(host.log.filter(line => line.startsWith('attach') || line === 'startLoadDeadline')).toEqual(['attach {"build":2}', 'startLoadDeadline']);
         expect(host.lc.state).toBe('loading');
         // and a deadline acts only for its own build, while it is loading
-        expect(isStale(host.lc, { t: 'loadDeadline', gen: host.lc.gen - 1 })).toBe(true);
+        expect(isStale(host.lc, { t: 'loadDeadline', gen: (host.lc.gen - 1) as Generation })).toBe(true);
         expect(reduce({ ...host.lc, state: 'ready' }, { t: 'loadDeadline', gen: host.lc.gen }).effects).toEqual([]);
     });
 

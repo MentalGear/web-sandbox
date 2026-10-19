@@ -79,14 +79,22 @@ export interface BuildProgress {
     readonly announcer: unknown;
 }
 
+declare const generationBrand: unique symbol;
+
+/**
+ * Counts environments. Minted only by INITIAL_LIFECYCLE and by a teardown (tornDown), and compared only with another
+ * generation: the host's other counters (its probes' pings, its view writes) type-check as numbers, never as this.
+ */
+export type Generation = number & { readonly [generationBrand]: true };
+
 export interface LcState {
     readonly state: SandboxState;
     // Counts environments: every teardown increments it (host.ts, `_generation`). The only clock the reducer compares.
-    readonly gen: number;
+    readonly gen: Generation;
     // A build's 'terminated' waiting for its task (round 1's R3-2), with the generation it belongs to. host.ts holds a
     // token object instead; the two are the same rule, since every teardown both clears the token and increments the
     // generation, and nothing else replaces the token.
-    readonly pending: { readonly reason: string; readonly gen: number } | null;
+    readonly pending: { readonly reason: string; readonly gen: Generation } | null;
     // The 'terminated' reasons being dispatched, innermost last (host.ts, `_terminationDispatched`, saved and restored
     // around each dispatch: the same stack, kept as one value and the call stack).
     readonly dispatching: readonly string[];
@@ -106,7 +114,7 @@ export interface LcState {
 
 export const INITIAL_LIFECYCLE: LcState = Object.freeze({
     state: 'idle',
-    gen: 0,
+    gen: 0 as Generation,
     pending: null,
     dispatching: Object.freeze([]) as readonly string[],
     within: null,
@@ -211,7 +219,7 @@ export const LC_INPUTS = {
 
 export type LcInputKind = keyof typeof LC_INPUTS;
 
-type StampOf<S> = S extends 'always' ? { gen: number } : S extends 'optional' ? { gen?: number } : unknown;
+type StampOf<S> = S extends 'always' ? { gen: Generation } : S extends 'optional' ? { gen?: Generation } : unknown;
 type InputOf<K extends LcInputKind> = Simplify<{ t: K } & FieldsOf<(typeof LC_INPUTS)[K]['fields']> & StampOf<(typeof LC_INPUTS)[K]['stamped']>>;
 
 /** An input of the reducer, derived from LC_INPUTS. */
@@ -297,7 +305,7 @@ const top = (stack: readonly string[]): string | null => (stack.length > 0 ? sta
 // The generation-and-pending half of host.ts's `_teardown`: a new environment count, and a build's 'terminated' still
 // to come is no longer the sandbox's state (R3-2). The resource half is the `teardown` effect.
 function tornDown(state: LcState): LcState {
-    return { ...state, gen: state.gen + 1, pending: null, build: null };
+    return { ...state, gen: (state.gen + 1) as Generation, pending: null, build: null };
 }
 
 // host.ts, `_terminate`: every termination that is not a build's. Already terminated means nothing to do, which is what
@@ -468,13 +476,14 @@ function configured(state: LcState, input: Extract<LcInput, { t: 'configured' }>
     return initialize(stored, input.ctx);
 }
 
-// The inputs that carry the generation they were armed in: dropped, with no effect and no change, once it is gone.
-const STAMPED = new Set<LcInput['t']>(['built', 'buildFailed', 'buildTerminationDue', 'loadDeadline', 'frameLoad', 'announced', 'viewReady']);
-
-/** Whether `input` belongs to an environment that is gone: then `reduce` gives no effects and leaves the state as it is. */
+/**
+ * Whether `input` belongs to an environment that is gone: then `reduce` gives no effects and leaves the state as it is.
+ * The inputs that carry the generation they were armed in are the kinds LC_INPUTS stamps, and the type derived from it
+ * gives exactly those a `gen` (required where `stamped` is 'always'): a kind newly stamped is checked here with no list
+ * to extend.
+ */
 export function isStale(state: LcState, input: LcInput): boolean {
-    if (input.t === 'terminate') return input.gen !== undefined && input.gen !== state.gen;
-    return STAMPED.has(input.t) && (input as { gen: number }).gen !== state.gen;
+    return 'gen' in input && input.gen !== undefined && input.gen !== state.gen;
 }
 
 /**
@@ -611,7 +620,7 @@ const isEmbedderFacing = (effect: Effect) => effect.k === 'dispatch' || effect.k
 // input (isStale); this stops what is left of a run once its environment is gone. host.ts compares generations
 // nowhere else, apart from a call's own environment (`_issue`, `_postRpc`; review round 3, L-2), and
 // test/unit/lifecycle-reducer.test.ts scans for it.
-const tornDownSince = (host: { readonly lc: LcState }, stampGen: number): boolean => host.lc.gen !== stampGen;
+const tornDownSince = (host: { readonly lc: LcState }, stampGen: Generation): boolean => host.lc.gen !== stampGen;
 
 /**
  * Applies one output's effects in order. `stampGen` is the generation the output was computed at: before each effect the
@@ -629,7 +638,7 @@ const tornDownSince = (host: { readonly lc: LcState }, stampGen: number): boolea
  * then threw would otherwise have its new build ended by the old one's failure: the same rule as a build's own failure
  * (`buildFailed{gen}`, LM-2). In every other case the generation is the current one and the termination is today's.
  */
-export function runEffects(host: LifecycleHost, effects: readonly Effect[], stampGen: number, guarded = false): void {
+export function runEffects(host: LifecycleHost, effects: readonly Effect[], stampGen: Generation, guarded = false): void {
     for (const effect of effects) {
         if (tornDownSince(host, stampGen)) return;
         if (!guarded || isEmbedderFacing(effect)) {
@@ -662,7 +671,7 @@ export function runNotices(host: { readonly lc: LcState }, notices: readonly (()
     return true;
 }
 
-function runEffect(host: LifecycleHost, effect: Effect, stampGen: number): void {
+function runEffect(host: LifecycleHost, effect: Effect, stampGen: Generation): void {
     switch (effect.k) {
         case 'teardown': host.teardown(); return;
         case 'discardWrites': host.discardWrites(); return;
@@ -709,7 +718,7 @@ function runEffect(host: LifecycleHost, effect: Effect, stampGen: number): void 
 // returned is attached and starts its deadline. Both answers carry the generation of the build (`stampGen`, the one its
 // output was computed at), and `reduce` drops them once embedder code inside the build built again (LM-2: see `built`
 // and `buildFailed` in reduce).
-function runBuild(host: LifecycleHost, stampGen: number): void {
+function runBuild(host: LifecycleHost, stampGen: Generation): void {
     let prepared: unknown;
     try {
         prepared = host.build();

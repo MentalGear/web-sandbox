@@ -28,7 +28,7 @@ import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, normaliseConfig, ST
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
 import { hostLine, reasonText } from "./lib/reasons";
-import { INITIAL_LIFECYCLE, runNotices, step as runStep, type BuildContext, type LcInput, type LcState, type LifecycleHost, type Notice } from "./lib/lifecycle";
+import { INITIAL_LIFECYCLE, runNotices, step as runStep, type BuildContext, type Generation, type LcInput, type LcState, type LifecycleHost, type Notice } from "./lib/lifecycle";
 import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
@@ -968,7 +968,7 @@ export class WebSandbox extends ElementBase {
     // The check at a deadline: a one-off watchdog over EXECUTION_TIMEOUT_GRACE_MS (watchdog.ts: pings each tick until
     // an answer, expires after a whole grace of silent ticks, so a host stall is never counted against the guest).
     // Its pings carry negative numbers of their own, so a PONG names the probe it answers and never the watchdog's.
-    private _probeExecution(gen: number) {
+    private _probeExecution(gen: Generation) {
         const port = this._port;
         if (!port) return;
         const pings: number[] = [];
@@ -1011,14 +1011,14 @@ export class WebSandbox extends ElementBase {
     // and the step itself carries `gen`, which `reduce` drops once it is stale. This was `_notifyThenAct`, a comparison of
     // host.ts's own; there is none left here (test/unit/lifecycle-reducer.test.ts scans for one), and a notice is data
     // now, so it dispatches exactly one event by construction (the executor's `notice`, host.ts's `lifecycleHost`).
-    private _onExecutionTimeout(gen: number) {
+    private _onExecutionTimeout(gen: Generation) {
         step(this, { t: 'terminate', reason: reasonText('executionTimeout'), gen, notices: [hostNotice(hostLine('executionTimeout'))] });
     }
 
     // A frame of ours that the host page's policy refused, as it reported (R3-1; review round 2, C-5 and C-6): one host
     // line, then the termination with the reason that names the policy (unless a listener of that line acted first), of
     // the environment `gen` whose frame said so.
-    private _refusedByHostPage(reason: string, gen: number) {
+    private _refusedByHostPage(reason: string, gen: Generation) {
         step(this, { t: 'terminate', reason, gen, notices: [hostNotice(hostLine('refusedByHostPage', reason))] });
     }
 

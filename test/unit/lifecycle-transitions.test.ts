@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { admits, INITIAL_LIFECYCLE, isStale, LC_EFFECTS, LC_INPUTS, LC_STATES, reduce, type Effect, type LcInput, type LcInputKind, type LcOutput, type LcState } from '../../src/lib/lifecycle';
+import { admits, INITIAL_LIFECYCLE, isStale, LC_EFFECTS, LC_INPUTS, LC_STATES, reduce, type Effect, type Generation, type LcInput, type LcInputKind, type LcOutput, type LcState } from '../../src/lib/lifecycle';
 import { exploreLifecycle, lifecycleTransitions, transitionKey, type Transition } from '../../src/lib/lifecycle-transitions';
 import { generate } from '../model/generator';
 import { forTheReducer, runReducerSequence } from '../model/reducer-runner';
@@ -79,12 +79,24 @@ describe('the declaration (LC_INPUTS, LC_EFFECTS) and the types derived from it'
         expect(INITIAL_LIFECYCLE.state).toBe('idle');
     });
 
+    it('isStale drops a stamped kind of another generation, and nothing else', () => {
+        for (const { state, input } of exploration.witnesses.values()) {
+            const stamped = LC_INPUTS[input.t].stamped !== 'never';
+            expect(isStale(state, input), input.t).toBe(false);
+            if (stamped) expect(isStale(state, { ...input, gen: (state.gen + 1) as Generation } as LcInput), input.t).toBe(true);
+            else expect('gen' in input, input.t).toBe(false);
+        }
+    });
+
     it('LcInput and Effect are the declared kinds with their fields: the type checker refuses anything else', () => {
-        const inputs: LcInput[] = [{ t: 'terminate', reason: 'x' }, { t: 'terminate', reason: 'x', gen: 1 }, { t: 'built', gen: 1, prepared: null }, { t: 'disconnect' }];
+        const gen = INITIAL_LIFECYCLE.gen;
+        const inputs: LcInput[] = [{ t: 'terminate', reason: 'x' }, { t: 'terminate', reason: 'x', gen }, { t: 'built', gen, prepared: null }, { t: 'disconnect' }];
+        // @ts-expect-error a number that is no generation: only a teardown makes one
+        inputs.push({ t: 'loadDeadline', gen: 1 });
         // @ts-expect-error a stamped input without its generation (`bun run typecheck` fails if this line type-checks)
         inputs.push({ t: 'built', prepared: null });
         // @ts-expect-error an input with a generation its kind does not carry
-        inputs.push({ t: 'disconnect', gen: 1 });
+        inputs.push({ t: 'disconnect', gen });
         // @ts-expect-error a kind the declaration does not have
         inputs.push({ t: 'restart' });
         const effects: Effect[] = [{ k: 'dispatch', event: 'ready' }, { k: 'dispatch', event: 'terminated', reason: 'x' }, { k: 'teardown' }];
@@ -92,7 +104,7 @@ describe('the declaration (LC_INPUTS, LC_EFFECTS) and the types derived from it'
         effects.push({ k: 'dispatch', event: 'terminated' });
         // @ts-expect-error a field of another kind
         effects.push({ k: 'flush', port: null });
-        expect(inputs.length + effects.length).toBe(12); // the types are checked at compile time; nothing changes at run time
+        expect(inputs.length + effects.length).toBe(13); // the types are checked at compile time; nothing changes at run time
     });
 
     it('a transition is a value the docs can render: from, input and to, each a declared name', () => {

@@ -27,7 +27,7 @@
  * same `state`, the same pending build termination, no 'terminated' still being dispatched, and the generation changed
  * exactly when the model's did (the element counts two teardowns for a refused build, the model one).
  */
-import { admits, isStale, reduce, step, type BuildContext, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice, INITIAL_LIFECYCLE } from '../../src/lib/lifecycle';
+import { admits, isStale, reduce, step, type BuildContext, type Generation, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice, INITIAL_LIFECYCLE } from '../../src/lib/lifecycle';
 import { defaultConfig, normaliseConfig, unknownModeReason, type StoredConfig } from '../../src/lib/config-schema';
 import { isJavaScriptType, mimeTypeFor } from '../../src/lib/files';
 import { CONFIG_REFUSED, DEFAULT_TERMINATE_REASON, LifecycleModel, type Cmd, type ConfigDesc, type Sequence } from './lifecycle-model';
@@ -79,7 +79,7 @@ interface Task {
 
 interface Frame {
     id: number;
-    gen: number; // the generation it was built in
+    gen: Generation; // the generation it was built in
     silent: boolean;
     connected: boolean;
     onload: (() => void) | null;
