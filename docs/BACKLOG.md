@@ -1901,6 +1901,48 @@ reference docs generated from it. A review first (reported to the owner before a
 Output: a report with measurements and a migration plan in PR-sized steps, for the owner. S60's clean-up applies its
 outcome.
 
+**The plan (owner, 2026-10-19).** The code and the docs state the current state only; history is archived, and reached
+on demand through stable IDs. Four layers, each linking to the one below:
+- **Code:** types, TSDoc and short comments. A comment says what holds now and why, plus a stable ID to the decision
+  or finding (`ADR-005#…`, `R5:M-2`). Measured numbers stay only where they justify a constant today.
+- **Reference:** generated. api-extractor and api-documenter for the public surface, with a checked-in API report
+  that fails CI on an unreviewed public change. Tables rendered from code for config, limits, budgets, reasons and
+  events.
+- **Current docs:** handwritten prose, with generated regions. README, a new one-page ARCHITECTURE.md, the security
+  and threat model, and ADRs that state each decision as it stands.
+- **Archive:** `docs/archive/` holds review reports, finished research, done backlog items and superseded ADR text.
+  Git history stays the final archive.
+
+Steps, one PR each, merged when green:
+0. **Measure.** This review, reported to the owner.
+1. **Conventions and guards.** A CONTRIBUTING section on comments and docs, with the ID scheme. A link check: every ID
+   resolves. A history-pattern ratchet: SHAs, "before", "at round N" and the like; the count may only go down.
+2. **Generated docs.** A small `bun run docs:gen`, using the TypeScript compiler API, rewrites only
+   `<!-- generated:begin … -->` regions. It renders:
+   - realms and the code each runs;
+   - channels and frames, from the frame and egress tables and `CHANNEL_BUDGETS`;
+   - the lifecycle's states, inputs and effects from the reducer's types, and a Mermaid state diagram from exploring
+     the pure `reduce`;
+   - config, limits and reasons;
+   - the module map.
+
+   CI regenerates the docs and fails on any difference, so every structural change shows in its PR's diff. Handwritten
+   sections declare what they describe (`<!-- describes: channel:view-port, input:frameLoad -->`), with a hash of
+   those items' semantic signature only (names, types, values, transitions; never formatting). When an item changes,
+   the sections that describe it fail CI until they are reviewed (`docs:gen --accept`). If the markers prove noisy,
+   they are dropped without losing the rest. ARCHITECTURE.md is the first document built this way.
+3. **The archive.** Move the reports and research, and compact the backlog to open items. The research reproductions
+   stay runnable (Playwright's `testMatch`), and the link check keeps every link.
+4. **ADRs.** Each states its current decision; its amendment trail moves to the archive, linked.
+5. **Code comments, file by file**, largest first: `host.ts`, `in-sandbox-view.ts`, `in-sandbox-script.ts`, then
+   `lib/`. Each comment is rewritten to the current reason plus a link, and any history worth keeping moves into the
+   matching archived report. The ratchet keeps history out.
+6. **The public API.** TSDoc on every export and the api-extractor report. API.md's reference parts become
+   generated; its guide parts stay handwritten.
+
+S60's remaining clean-up (stale files and branches) follows, then the review board (S74), which reviews the current
+state.
+
 ### S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
 
 Once S65, the rest of S61, S76 and S60 are merged: an independent adversarial review board of the whole repository and its
