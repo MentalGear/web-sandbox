@@ -36,32 +36,32 @@ WebKit is not Safari.
 
 | Id | Area | Severity | Status | Test (file: name) |
 | :--- | :--- | :--- | :--- | :--- |
-| CB1 | channel | medium/low | **fixed** (by construction) | `test/e2e/broad-review.spec.ts`: "CB1" (2 tests); `src/lib/in-sandbox-script.test.ts` ("iframe mode (broad review CB1)") |
-| CB2 | bootstrap | low | **fixed** | `test/unit/broad-review-bootstrap.test.ts`: "CB2" |
-| CB3 | lifecycle | low | **fixed** | `test/e2e/broad-review.spec.ts`: "CB3" (2 tests); `test/unit/broad-review.test.ts`: "CB3" |
-| CB4 | guest writes | info/low | **fixed** | `test/unit/broad-review.test.ts`: "CB4" (3 tests) |
-| CB5 | lifecycle | info | **fixed** | `test/unit/broad-review.test.ts`: "CB5" (3 tests) |
-| CB6 | fetch bridge | info | **fixed** | `test/unit/broad-review.test.ts`: "CB6"; `test/e2e/fetch-bridge.spec.ts` (2 tests updated) |
-| CB7 | lifecycle | info | **fixed** | `test/e2e/broad-review.spec.ts`: "CB7" |
-| PD1 | policy, platform | high (WebKit) | **fixed** (by construction); upstream report | `test/e2e/broad-review.spec.ts`: "PD1"; `test/unit/broad-review.test.ts`: "PD1"; `src/lib/csp/drop-data-workers.test.ts` |
-| PD2 | platform | high (Firefox) | **hardened**; residual (frames the guest creates); upstream report | `test/e2e/broad-review.spec.ts`: "PD2" (3 tests, one residual); `test/unit/broad-review-bootstrap.test.ts`: "PD2" |
-| PD3 | platform | medium | **hardened** (meta); residual (WebKit preconnect) | `test/e2e/broad-review.spec.ts`: "PD3" (2 tests, one residual) |
-| PD4 | platform | medium | **fixed** in the guest realm; residual (frames the guest creates) | `test/e2e/broad-review.spec.ts`: "PD4" (2 tests, one residual); `test/unit/broad-review-bootstrap.test.ts`: "PD4" |
-| PD5 | platform | medium | **documented** (residual), measured | `test/e2e/broad-review.spec.ts`: "PD5" (2 tests) |
-| PD6 | platform | low | **fixed** in the guest realm; residual (frames the guest creates) | `test/e2e/broad-review.spec.ts`: "PD6" (2 tests, one residual); `test/unit/broad-review-bootstrap.test.ts`: "PD6" |
-| PD7 | embedder | low | **fixed** (playground); documented | `test/e2e/broad-review.spec.ts`: "PD8 … other messages … (PD7, positive control)" |
-| PD8 | channel | low | **fixed** | `test/e2e/broad-review.spec.ts`: "PD8" (5 cases + control) |
-| PD9 | packaging | low | **fixed** | `scripts/smoke-package.sh` (exact manifest) |
-| PA1 | policy steps | info (latent) | **fixed** (the class) | `test/unit/broad-review.test.ts`: "PA1" (2, one a property); `src/lib/csp/drop-data-workers.test.ts`: "assertWidensOnly" |
-| PA2 | markup | info | **held**, now asserted | `test/e2e/broad-review.spec.ts`: "PA2" (22 markups × 3 engines) |
-| PA3 | modules | info | **held**, now asserted | `test/unit/broad-review.test.ts`: "PA3" (property) |
-| I1 | strict renderer | info | **held**, now asserted | `test/unit/broad-review.test.ts`: "I1" |
-| I2 | presets | info | **fixed** | `test/unit/presets.test.ts`: "scriptUnsafe only where a preset needs it" |
+| <a id="br-cb1"></a>CB1 | channel | medium/low | **fixed** (by construction) | `test/e2e/broad-review.spec.ts`: "CB1" (2 tests); `src/lib/in-sandbox-script.test.ts` ("iframe mode (broad review CB1)") |
+| <a id="br-cb2"></a>CB2 | bootstrap | low | **fixed** | `test/unit/broad-review-bootstrap.test.ts`: "CB2" |
+| <a id="br-cb3"></a>CB3 | lifecycle | low | **fixed** | `test/e2e/broad-review.spec.ts`: "CB3" (2 tests); `test/unit/broad-review.test.ts`: "CB3" |
+| <a id="br-cb4"></a>CB4 | guest writes | info/low | **fixed** | `test/unit/broad-review.test.ts`: "CB4" (3 tests) |
+| <a id="br-cb5"></a>CB5 | lifecycle | info | **fixed** | `test/unit/broad-review.test.ts`: "CB5" (3 tests) |
+| <a id="br-cb6"></a>CB6 | fetch bridge | info | **fixed** | `test/unit/broad-review.test.ts`: "CB6"; `test/e2e/fetch-bridge.spec.ts` (2 tests updated) |
+| <a id="br-cb7"></a>CB7 | lifecycle | info | **fixed** | `test/e2e/broad-review.spec.ts`: "CB7" |
+| <a id="br-pd1"></a>PD1 | policy, platform | high (WebKit) | **fixed** (by construction); upstream report | `test/e2e/broad-review.spec.ts`: "PD1"; `test/unit/broad-review.test.ts`: "PD1"; `src/lib/csp/drop-data-workers.test.ts` |
+| <a id="br-pd2"></a>PD2 | platform | high (Firefox) | **hardened**; residual (frames the guest creates); upstream report | `test/e2e/broad-review.spec.ts`: "PD2" (3 tests, one residual); `test/unit/broad-review-bootstrap.test.ts`: "PD2" |
+| <a id="br-pd3"></a>PD3 | platform | medium | **hardened** (meta); residual (WebKit preconnect) | `test/e2e/broad-review.spec.ts`: "PD3" (2 tests, one residual) |
+| <a id="br-pd4"></a>PD4 | platform | medium | **fixed** in the guest realm; residual (frames the guest creates) | `test/e2e/broad-review.spec.ts`: "PD4" (2 tests, one residual); `test/unit/broad-review-bootstrap.test.ts`: "PD4" |
+| <a id="br-pd5"></a>PD5 | platform | medium | **documented** (residual), measured | `test/e2e/broad-review.spec.ts`: "PD5" (2 tests) |
+| <a id="br-pd6"></a>PD6 | platform | low | **fixed** in the guest realm; residual (frames the guest creates) | `test/e2e/broad-review.spec.ts`: "PD6" (2 tests, one residual); `test/unit/broad-review-bootstrap.test.ts`: "PD6" |
+| <a id="br-pd7"></a>PD7 | embedder | low | **fixed** (playground); documented | `test/e2e/broad-review.spec.ts`: "PD8 … other messages … (PD7, positive control)" |
+| <a id="br-pd8"></a>PD8 | channel | low | **fixed** | `test/e2e/broad-review.spec.ts`: "PD8" (5 cases + control) |
+| <a id="br-pd9"></a>PD9 | packaging | low | **fixed** | `scripts/smoke-package.sh` (exact manifest) |
+| <a id="br-pa1"></a>PA1 | policy steps | info (latent) | **fixed** (the class) | `test/unit/broad-review.test.ts`: "PA1" (2, one a property); `src/lib/csp/drop-data-workers.test.ts`: "assertWidensOnly" |
+| <a id="br-pa2"></a>PA2 | markup | info | **held**, now asserted | `test/e2e/broad-review.spec.ts`: "PA2" (22 markups × 3 engines) |
+| <a id="br-pa3"></a>PA3 | modules | info | **held**, now asserted | `test/unit/broad-review.test.ts`: "PA3" (property) |
+| <a id="br-i1"></a>I1 | strict renderer | info | **held**, now asserted | `test/unit/broad-review.test.ts`: "I1" |
+| <a id="br-i2"></a>I2 | presets | info | **fixed** | `test/unit/presets.test.ts`: "scriptUnsafe only where a preset needs it" |
 | — | renderer | (design) | **allowlist** | `broad-strict.spec.ts`: "the renderer is an allowlist" (2 tests); `src/lib/in-sandbox-view.test.ts`: "broad review 2026-10-14: the renderer is an allowlist" (5, one a 300-corpus property) |
-| ST1 | strict view, files | medium | **fixed** | `broad-strict.spec.ts`: "ST1" (2 tests); `src/lib/load-kinds.test.ts`; `test/unit/strict.test.ts`: "broad review ST1" (2) |
-| ST2 | strict view, liveness | medium | **fixed**; residual S42 filed | `broad-strict.spec.ts`: "ST2" (4 tests); `src/lib/in-sandbox-view.test.ts`: "broad review ST2", "budgets" |
-| ST3 | strict events | low | **fixed** | `broad-strict.spec.ts`: "ST3"; `src/lib/in-sandbox-view.test.ts`: "an event detail shares one character budget" |
-| ST4 | strict entry | info | **fixed** | `broad-strict.spec.ts`: "ST4"; `test/unit/strict.test.ts`: "broad review ST4" |
+| <a id="br-st1"></a>ST1 | strict view, files | medium | **fixed** | `broad-strict.spec.ts`: "ST1" (2 tests); `src/lib/load-kinds.test.ts`; `test/unit/strict.test.ts`: "broad review ST1" (2) |
+| <a id="br-st2"></a>ST2 | strict view, liveness | medium | **fixed**; residual S42 filed | `broad-strict.spec.ts`: "ST2" (4 tests); `src/lib/in-sandbox-view.test.ts`: "broad review ST2", "budgets" |
+| <a id="br-st3"></a>ST3 | strict events | low | **fixed** | `broad-strict.spec.ts`: "ST3"; `src/lib/in-sandbox-view.test.ts`: "an event detail shares one character budget" |
+| <a id="br-st4"></a>ST4 | strict entry | info | **fixed** | `broad-strict.spec.ts`: "ST4"; `test/unit/strict.test.ts`: "broad review ST4" |
 | I1 | renderer, files | info | **fixed** | `src/lib/load-kinds.test.ts`: "a <link>'s kinds in the renderer are load-kinds.ts's linkKinds()" |
 
 "Fixed" means the test failed against `12d7924` and passes now. Of the new end-to-end tests, 42 of 72 (24 per

@@ -33,27 +33,27 @@ WebKit on Linux is not Safari.
 
 | Id | Area | Severity | Status | Test (file: name) |
 | :--- | :--- | :--- | :--- | :--- |
-| A1 | policy | medium/high | **fixed** | `test/e2e/review-policy.spec.ts`: "A1: an injected default-src value gives the strict view no handler attributes…"; `test/unit/policy-guarantees.test.ts`: "A1: … property, strict and iframe mode"; `src/lib/csp/policy-grammar.test.ts` |
-| A2 | policy | low/medium | **fixed** (by A1) | `test/unit/policy-guarantees.test.ts`: "A2: the S14 'self' drop cannot be bypassed by punctuation" |
-| A3 | policy | low/medium | **fixed**; class closed in the follow-up | `test/unit/policy-guarantees.test.ts`: "A3: … warns once when script-src-elem refuses inline scripts"; `src/lib/markup-references.test.ts` (inlineScriptsAllowed rows); `src/lib/csp/file-sources.test.ts` ("over the one fallback table"); `test/e2e/review-policy.spec.ts`: "A3 class" (3 tests) |
-| A4 | config | low | **fixed** | `test/unit/policy-guarantees.test.ts`: "A4: an unknown mode fails closed" |
-| A5 | policy | low | **fixed** | `test/unit/policy-guarantees.test.ts`: "A5: 'unsafe-eval' and 'wasm-unsafe-eval' come only from scriptUnsafe" |
-| A6 | config | info | **fixed**; by construction in the follow-up | `test/unit/policy-guarantees.test.ts`: "A6: the values interpolated into the bootstrap come from one copy of the config" |
-| A7 | config | info | **fixed**; by construction in the follow-up | `test/unit/policy-guarantees.test.ts`: "A7: a merge never writes prototypes, with no list of keys" (property) |
-| A8 | documents | info | **held**, now asserted | `test/unit/policy-guarantees.test.ts`: "A8: the default bootstrap is parser-safe"; `test/e2e/package.spec.ts`: "… parser-safety assertion for every default bootstrap variant" |
-| B1 | channel | medium/low | **fixed** | `test/e2e/review-channels.spec.ts`: "B1: another frame on the host page racing the host with INIT_PORT…"; `src/lib/in-sandbox-script.test.ts`: "the one INIT_PORT (review B1)" |
-| B2 | channel | medium/low | **fixed** | `test/e2e/review-channels.spec.ts`: "B2: the port never reaches guest code" (3 tests); `src/lib/in-sandbox-script.test.ts`: "the port never reaches guest code (review B2)" |
-| B3 | events | medium/low | **fixed** | `test/unit/channel-guarantees.test.ts`: "B3: every sandbox-log detail is normalised and labelled" |
-| B4 | lifecycle | low/medium | **fixed** (real in Firefox) | `test/e2e/review-channels.spec.ts`: "B4: a listener that resets the sandbox mid-flood…"; `test/unit/channel-guarantees.test.ts`: "B4" |
-| B5 | lifecycle | low | **fixed**; one helper in the follow-up | `test/unit/channel-guarantees.test.ts`: "B5: a listener that resets or terminates the sandbox is never undone" (every path forced, and a source check) |
-| B6 | fetch bridge | low | **fixed**; the platform validates in the follow-up | `test/unit/channel-guarantees.test.ts`: "B6: the platform validates a request before the bridge records it" |
-| B7 | broker | low | **fixed** | `test/e2e/review-channels.spec.ts`: "B7: 300 calls to a host method that never settles…"; `src/lib/rpc.test.ts`: "inbound calls in flight are capped per channel (review B7)" |
-| B8 | broker, events | info | **documented** (by design) | `test/e2e/review-channels.spec.ts`: "B8 (documented): an own "__proto__" key survives structured clone…" |
-| C1 | strict, files | medium/low | claim narrowed; **fixed** by construction in the follow-up | `test/e2e/review-strict.spec.ts`: "C1: the view renders no blob: content but registered files" (3 tests); `src/lib/in-sandbox-view.test.ts` ("revokes the worker's source URL…") |
-| C2 | strict | low/medium | **fixed** | `test/e2e/review-strict.spec.ts`: "C2: the entry runs in its own scope" (3 tests); `src/lib/in-sandbox-view.test.ts`, `test/unit/strict.test.ts` ("review C2") |
-| C3 | strict | low | **fixed** | `test/e2e/review-strict.spec.ts`: "C3: guest code watching every array write…"; `src/lib/in-sandbox-view.test.ts` ("C3") |
-| C4 | strict | low | measured; **fixed** in the follow-up | `test/e2e/review-strict.spec.ts`: "C4: the view counts violations per directive…"; `test/unit/followup-guarantees.test.ts` ("C4") |
-| C5 | strict | low | measured; **fixed** in the follow-up (S24 option B) | `test/e2e/review-strict.spec.ts`: "C5: a rendered link stays a link, but its href is one inert constant" (2 tests); `src/lib/in-sandbox-view.test.ts` |
+| <a id="ar-a1"></a>A1 | policy | medium/high | **fixed** | `test/e2e/review-policy.spec.ts`: "A1: an injected default-src value gives the strict view no handler attributes…"; `test/unit/policy-guarantees.test.ts`: "A1: … property, strict and iframe mode"; `src/lib/csp/policy-grammar.test.ts` |
+| <a id="ar-a2"></a>A2 | policy | low/medium | **fixed** (by A1) | `test/unit/policy-guarantees.test.ts`: "A2: the S14 'self' drop cannot be bypassed by punctuation" |
+| <a id="ar-a3"></a>A3 | policy | low/medium | **fixed**; class closed in the follow-up | `test/unit/policy-guarantees.test.ts`: "A3: … warns once when script-src-elem refuses inline scripts"; `src/lib/markup-references.test.ts` (inlineScriptsAllowed rows); `src/lib/csp/file-sources.test.ts` ("over the one fallback table"); `test/e2e/review-policy.spec.ts`: "A3 class" (3 tests) |
+| <a id="ar-a4"></a>A4 | config | low | **fixed** | `test/unit/policy-guarantees.test.ts`: "A4: an unknown mode fails closed" |
+| <a id="ar-a5"></a>A5 | policy | low | **fixed** | `test/unit/policy-guarantees.test.ts`: "A5: 'unsafe-eval' and 'wasm-unsafe-eval' come only from scriptUnsafe" |
+| <a id="ar-a6"></a>A6 | config | info | **fixed**; by construction in the follow-up | `test/unit/policy-guarantees.test.ts`: "A6: the values interpolated into the bootstrap come from one copy of the config" |
+| <a id="ar-a7"></a>A7 | config | info | **fixed**; by construction in the follow-up | `test/unit/policy-guarantees.test.ts`: "A7: a merge never writes prototypes, with no list of keys" (property) |
+| <a id="ar-a8"></a>A8 | documents | info | **held**, now asserted | `test/unit/policy-guarantees.test.ts`: "A8: the default bootstrap is parser-safe"; `test/e2e/package.spec.ts`: "… parser-safety assertion for every default bootstrap variant" |
+| <a id="ar-b1"></a>B1 | channel | medium/low | **fixed** | `test/e2e/review-channels.spec.ts`: "B1: another frame on the host page racing the host with INIT_PORT…"; `src/lib/in-sandbox-script.test.ts`: "the one INIT_PORT (review B1)" |
+| <a id="ar-b2"></a>B2 | channel | medium/low | **fixed** | `test/e2e/review-channels.spec.ts`: "B2: the port never reaches guest code" (3 tests); `src/lib/in-sandbox-script.test.ts`: "the port never reaches guest code (review B2)" |
+| <a id="ar-b3"></a>B3 | events | medium/low | **fixed** | `test/unit/channel-guarantees.test.ts`: "B3: every sandbox-log detail is normalised and labelled" |
+| <a id="ar-b4"></a>B4 | lifecycle | low/medium | **fixed** (real in Firefox) | `test/e2e/review-channels.spec.ts`: "B4: a listener that resets the sandbox mid-flood…"; `test/unit/channel-guarantees.test.ts`: "B4" |
+| <a id="ar-b5"></a>B5 | lifecycle | low | **fixed**; one helper in the follow-up | `test/unit/channel-guarantees.test.ts`: "B5: a listener that resets or terminates the sandbox is never undone" (every path forced, and a source check) |
+| <a id="ar-b6"></a>B6 | fetch bridge | low | **fixed**; the platform validates in the follow-up | `test/unit/channel-guarantees.test.ts`: "B6: the platform validates a request before the bridge records it" |
+| <a id="ar-b7"></a>B7 | broker | low | **fixed** | `test/e2e/review-channels.spec.ts`: "B7: 300 calls to a host method that never settles…"; `src/lib/rpc.test.ts`: "inbound calls in flight are capped per channel (review B7)" |
+| <a id="ar-b8"></a>B8 | broker, events | info | **documented** (by design) | `test/e2e/review-channels.spec.ts`: "B8 (documented): an own "__proto__" key survives structured clone…" |
+| <a id="ar-c1"></a>C1 | strict, files | medium/low | claim narrowed; **fixed** by construction in the follow-up | `test/e2e/review-strict.spec.ts`: "C1: the view renders no blob: content but registered files" (3 tests); `src/lib/in-sandbox-view.test.ts` ("revokes the worker's source URL…") |
+| <a id="ar-c2"></a>C2 | strict | low/medium | **fixed** | `test/e2e/review-strict.spec.ts`: "C2: the entry runs in its own scope" (3 tests); `src/lib/in-sandbox-view.test.ts`, `test/unit/strict.test.ts` ("review C2") |
+| <a id="ar-c3"></a>C3 | strict | low | **fixed** | `test/e2e/review-strict.spec.ts`: "C3: guest code watching every array write…"; `src/lib/in-sandbox-view.test.ts` ("C3") |
+| <a id="ar-c4"></a>C4 | strict | low | measured; **fixed** in the follow-up | `test/e2e/review-strict.spec.ts`: "C4: the view counts violations per directive…"; `test/unit/followup-guarantees.test.ts` ("C4") |
+| <a id="ar-c5"></a>C5 | strict | low | measured; **fixed** in the follow-up (S24 option B) | `test/e2e/review-strict.spec.ts`: "C5: a rendered link stays a link, but its href is one inert constant" (2 tests); `src/lib/in-sandbox-view.test.ts` |
 
 "Fixed" means the test failed against `ca2110c` and passes now; the engines it failed on are given below.
 

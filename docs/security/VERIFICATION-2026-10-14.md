@@ -26,7 +26,7 @@ each negative — fixed at the chokepoint that closes its class, and re-run gree
 
 ## New findings and their fixes
 
-### V1 · Firefox: a guest worker's EventSource and FontFace ignore the policy (high on Firefox) — fixed by construction
+### <a id="vr-v1"></a>V1 · Firefox: a guest worker's EventSource and FontFace ignore the policy (high on Firefox) — fixed by construction
 
 - **Found** (black box): `new EventSource(url)` from the strict-mode worker and from worker mode's worker reached an
   origin `connect-src` blocks, with no violation, while `fetch`, `XMLHttpRequest`, `WebSocket` and `importScripts` from
@@ -57,7 +57,7 @@ each negative — fixed at the chokepoint that closes its class, and re-run gree
   evidence). Tests: `test/e2e/verification.spec.ts` ("V1", 6 tests × 3 engines), `src/lib/worker-globals.test.ts`.
   Upstream report: [broad review appendix](BROAD-REVIEW-2026-10-14.md#v1--firefox-bugzilla-core--dom-security-security-sensitive).
 
-### V2 · A strict entry's synchronous console lines were lost — fixed
+### <a id="vr-v2"></a>V2 · A strict entry's synchronous console lines were lost — fixed
 
 - **Found** (black box): `console.log` at an entry's top level never arrived as `sandbox-log`; the same line in a
   `setTimeout` did. All three engines.
@@ -69,7 +69,7 @@ each negative — fixed at the chokepoint that closes its class, and re-run gree
 - **Evidence**: `verification.spec.ts` ("V2") failed on all three engines before (the synchronous lines missing) and
   passes after; `src/lib/in-sandbox-script.test.ts` (order, bound, warning).
 
-### V3 · The user's modifier clicks open a guest link in a new tab (default mode) — residual, measured
+### <a id="vr-v3"></a>V3 · The user's modifier clicks open a guest link in a new tab (default mode) — residual, measured
 
 - **Found** (black box): a Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest `<a href>` (HTML or SVG)
   opens a new top-level tab at the guest's URL in Chromium and Firefox without `allow-popups`; a bare sandboxed iframe

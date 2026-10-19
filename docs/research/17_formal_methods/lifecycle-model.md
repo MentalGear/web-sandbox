@@ -202,7 +202,7 @@ mode's watchdog fires only where the frame has its own process), `fileswritten` 
 with round 4's no-repeat rule removed, and with round 5's L-1 flush at the wrapper's load put back, the suite diverged
 within 60 sequences on Chromium, and shrank each to a few commands.
 
-**Its first finding (LM-1, fixed 2026-10-19).** At 500 sequences per engine, WebKit seed 73 diverged: a `fetch` record
+<a id="lm-1"></a>**Its first finding (LM-1, fixed 2026-10-19).** At 500 sequences per engine, WebKit seed 73 diverged: a `fetch` record
 with outcome `ok`, of an environment a `fetch` listener had just torn down, was dispatched after the teardown, where
 API.md says only an `aborted` record of a torn-down environment arrives then. A focused test in `lifecycle-model.spec.ts`
 makes it deterministic (the host page's `fetch` answers four requests at once); it failed on all three engines. The
@@ -211,7 +211,7 @@ the outcome from the bridge's lifetime, so every record made after `abortAll()` 
 settled on, and the guest is told the sandbox was torn down. `test/unit/fetch-bridge-lifecycle.test.ts` enumerates every
 settle path with the teardown at its last possible point; the focused e2e test passes on all three engines.
 
-**LM-2 (found writing the reducer, fixed 2026-10-19, S65 step 2, PR C).** Embedder code can run inside the element's own
+<a id="lm-2"></a>**LM-2 (found writing the reducer, fixed 2026-10-19, S65 step 2, PR C).** Embedder code can run inside the element's own
 build: a host page's Trusted Types default policy at each HTML sink the build writes, a patched `console.warn` at each
 warning. A `reset()` there built again from inside the build, and the outer build went on over the nested one: a second
 load deadline (the nested one's never stopped, so it ended the sandbox 5 s later, `ready` as it was), a second

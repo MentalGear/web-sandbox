@@ -27,18 +27,18 @@ follow-up's fixes (strict view, execution budget, config and policy steps). Same
 
 | Id | Area | Severity | Status | Test (file: name) |
 | :--- | :--- | :--- | :--- | :--- |
-| W1 | files, guest writes | high | **fixed** | `test/e2e/focused-review.spec.ts`: "W1" (6 tests); `src/lib/load-kinds.test.ts`; `test/unit/focused-review.test.ts`: "W1" |
-| W2 | guest writes, logs | low | **fixed** | `test/unit/focused-review.test.ts`: "W2" (5 tests, one a guarantee for auto-sizing) |
-| W3 | guest writes | info | **fixed** | `test/unit/focused-review.test.ts`: "W3" |
-| W4 | guest writes | info | **fixed** | `test/unit/focused-review.test.ts`: "W4" |
-| W5 | guest writes | info | **documented** (by design) | API.md, "Guest writes" |
-| F1 | strict view | medium | **fixed** | `test/e2e/focused-review.spec.ts`: "F1" (2 tests); `src/lib/in-sandbox-view.test.ts` |
-| F2 | liveness | medium | **fixed** | `test/e2e/focused-review.spec.ts`: "F2" (5 tests × worker, strict); `test/unit/followup-guarantees.test.ts`: "B8, focused review F2"; `src/lib/in-sandbox-script.test.ts` |
-| F3 | config, events | low | **fixed** | `test/unit/focused-review.test.ts`: "F3" (4 tests) |
-| F4 | policy steps | low | **fixed** (latent) | `test/unit/focused-review.test.ts`: "F4" (per step, and a property over every step) |
-| F5 | policy | info | **fixed** | `test/unit/focused-review.test.ts`: "F5" (source check) |
-| F6 | config | info | **fixed** | `test/unit/focused-review.test.ts`: "F6" |
-| H | fetch bridge | hardening | **done** | `test/unit/focused-review.test.ts`: "Hardening" |
+| <a id="fr-w1"></a>W1 | files, guest writes | high | **fixed** | `test/e2e/focused-review.spec.ts`: "W1" (6 tests); `src/lib/load-kinds.test.ts`; `test/unit/focused-review.test.ts`: "W1" |
+| <a id="fr-w2"></a>W2 | guest writes, logs | low | **fixed** | `test/unit/focused-review.test.ts`: "W2" (5 tests, one a guarantee for auto-sizing) |
+| <a id="fr-w3"></a>W3 | guest writes | info | **fixed** | `test/unit/focused-review.test.ts`: "W3" |
+| <a id="fr-w4"></a>W4 | guest writes | info | **fixed** | `test/unit/focused-review.test.ts`: "W4" |
+| <a id="fr-w5"></a>W5 | guest writes | info | **documented** (by design) | API.md, "Guest writes" |
+| <a id="fr-f1"></a>F1 | strict view | medium | **fixed** | `test/e2e/focused-review.spec.ts`: "F1" (2 tests); `src/lib/in-sandbox-view.test.ts` |
+| <a id="fr-f2"></a>F2 | liveness | medium | **fixed** | `test/e2e/focused-review.spec.ts`: "F2" (5 tests × worker, strict); `test/unit/followup-guarantees.test.ts`: "B8, focused review F2"; `src/lib/in-sandbox-script.test.ts` |
+| <a id="fr-f3"></a>F3 | config, events | low | **fixed** | `test/unit/focused-review.test.ts`: "F3" (4 tests) |
+| <a id="fr-f4"></a>F4 | policy steps | low | **fixed** (latent) | `test/unit/focused-review.test.ts`: "F4" (per step, and a property over every step) |
+| <a id="fr-f5"></a>F5 | policy | info | **fixed** | `test/unit/focused-review.test.ts`: "F5" (source check) |
+| <a id="fr-f6"></a>F6 | config | info | **fixed** | `test/unit/focused-review.test.ts`: "F6" |
+| <a id="fr-h"></a>H | fetch bridge | hardening | **done** | `test/unit/focused-review.test.ts`: "Hardening" |
 
 "Fixed" means the test failed against `affe25e` and passes now: 19 of the 27 new unit tests in
 `test/unit/focused-review.test.ts` failed there (the other 8 are guarantees: auto-sizing, and F4 for the seven steps
