@@ -486,8 +486,9 @@ describe('the docs say what the code does', () => {
         }
     });
 
-    it("M-3: the README's residuals of one operation name Chromium's <img> cost", () => {
-        expect(read('README.md').replace(/\s+/g, ' ')).toContain('`<img>` elements in Chromium, which cost far more than their markup (6 500 `<img alt>` with no source: 1.9–2.6 s; Firefox and WebKit about 150 ms)');
+    // the residuals are stated once since S68, in API.md's "The view's cost to the host page", which README links
+    it("M-3: the view's cost statement lists Chromium's <img> cost among the single-operation stalls", () => {
+        expect(read('docs/API.md').replace(/\s+/g, ' ')).toContain('6 500 `<img alt>`: Chromium 1.9–2.6 s (Firefox and WebKit about 150 ms)');
     });
 
     it('I-1: API.md says an aborted record of a torn-down environment can arrive after reset(), while the next build loads', () => {

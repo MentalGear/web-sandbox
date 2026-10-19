@@ -592,31 +592,18 @@ One list, the same in [API.md](docs/API.md#modes) and the [backlog](docs/BACKLOG
 What remains for the default:
 
 *   **The host page's availability**: strict mode protects confidentiality and egress. It does not protect the host
-    page's availability wherever the view shares the host page's thread. Where that is (measured on headless
-    Playwright 1.58.1, [research 16](docs/research/16_view_isolation/README.md)): Firefox, whose Fission isolates only
-    cross-site frames and places the view (an opaque-origin sandboxed frame) with the site that made it; Safari and
-    every WebKit browser, which have no site isolation; Android, where Chromium isolates partially and Android WebView
-    not at all; and Chromium without sandboxed-iframe isolation (the headless shell). Desktop Chromium 127+ runs the
-    view in a process of its own. The view's budgets bound the common cases (one render in flight; elements, depth and
-    characters held; characters parsed per second; loads per second; 200 ms of the view's own time per second on
-    average, measured, every operation charged in full; 2 s for one operation, past which the sandbox ends), but not:
-    *   what one operation's layout and paint cost beyond what the markup weighs: CSS filters (WebKit: 10 `blur()`s on
-        1 000 elements, 3.7 s), bidirectional text in one paragraph (240 000 characters alternating directions: tens of
-        seconds in Chromium and WebKit, engine and machine dependent), and small CSS changes over many elements, which
-        cost style recalculation and layout (Firefox: a 31-character `text()` into a `<style>` over 46 000 elements,
-        7 s), and `<img>` elements in Chromium, which cost far more than their markup (6 500 `<img alt>` with no
-        source: 1.9–2.6 s; Firefox and WebKit about 150 ms);
-    *   what runs without the view doing anything: CSS animations and transitions while `allowAnimations` is `true`
-        (the default; 5 000 animated elements kept the host page 80–98% busy), `:hover` restyles over many elements
-        while the user's pointer moves (80–100% while it moves), animated images (WebKit: +22 points for 2 000),
-        indeterminate `<progress>` (up to +4 points for 5 000), and autoplaying media with `allowAutoplay: true` (up to
-        +6 points for 20 videos);
-    *   what one render's loads cost before the load budget can hold the next one back: a render of 1 000 new images
-        stalled WebKit's host page 0.1–0.2 s while the view had loaded fewer than 8 000 distinct URLs, and up to 1.2 s
-        near that, where the view's limit of 10 000 stops it; loads named in CSS (`url()`, `image-set()`; up to one per
-        element, 50 000) are charged as the browser reports them, once their responses have ended, so a render makes
-        them all and what follows waits until the budget has repaid them; and the loads of a stylesheet already in the
-        view once the view has loaded 10 000 distinct URLs.
+    page's availability wherever the view shares the host page's thread: Firefox, Safari and every WebKit browser,
+    Android WebView, and Chromium without sandboxed-iframe isolation (the headless shell); desktop Chromium 127+ runs
+    the view in a process of its own ([research 16](docs/research/16_view_isolation/README.md)). There the view's cost
+    is one stated bound, [API.md, "The view's cost to the host page"](docs/API.md#the-views-cost-to-the-host-page),
+    measured on every engine by `test/e2e/view-bound.spec.ts`: on average at most 20% of the thread for the view's own
+    work, plus at most 20 points for the browser's work on the loads it makes; one operation at most 2 s before the
+    sandbox ends, plus that operation's own cost, which nothing can interrupt; the rates and caps that bound the rest;
+    and a closed list of what is outside it: animations and transitions while `allowAnimations` is `true` (the default),
+    animated images, indeterminate `<progress>` and autoplaying media, relayout after image decodes and font swaps, the
+    documented single-operation stalls (CSS filters, bidirectional text, small CSS changes over many elements,
+    Chromium's `<img>`, WebKit's 250 000-character textarea), memory, `:hover` restyles while the user's pointer moves,
+    and Firefox's cost of unhandled rejections.
 
     Cooperative mode is no better: there a guest `while (true) {}` freezes the host page wherever the frame shares its
     thread.
