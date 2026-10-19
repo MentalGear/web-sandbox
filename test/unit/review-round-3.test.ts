@@ -508,7 +508,7 @@ describe('C-4: the strict view bounds the guest error texts it relays before pos
         const logic = new MessageChannel(), view = new MessageChannel();
         const toHost: any[] = [];
         view.port2.onmessage = (event) => toHost.push(event.data);
-        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '' }, source: window, ports: [logic.port1, view.port1] }));
+        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', entryDone: '__testEntryDone', viewFiles: [], html: '' }, source: window, ports: [logic.port1, view.port1] }));
         const worker = workers[0]!;
         const fail = (message: string) => worker.onerror!({ message, preventDefault() {} });
         const delivered = async () => {
@@ -529,8 +529,9 @@ describe('C-4: the strict view bounds the guest error texts it relays before pos
         vi.spyOn(performance, 'now').mockImplementation(() => 1000);
         const { worker, fail, delivered, close } = await startView();
         const render = worker.transfer[1]!;
-        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        render.postMessage({ type: 'VIEW_STARTED' });
         await new Promise(resolve => setTimeout(resolve, 20));
+        fail('Uncaught Error: __testEntryDone'); // the marker error: the entry ran to its end (backlog S75)
         for (let i = 0; i < LOG_EVENTS_PER_SECOND + 100; i++) fail('u'.repeat(4096));
         const frames = await delivered();
         expect(frames).toHaveLength(LOG_EVENTS_PER_SECOND);
@@ -688,7 +689,7 @@ describe("C-2 and M-5: the view's time budget charges only the rendering it meas
         const render = workers[0]!.transfer[1]!;
         const acks: unknown[] = [];
         render.onmessage = (event) => { if (event.data?.type === 'VIEW_ACK') acks.push(event.data); };
-        render.postMessage({ type: 'VIEW_STARTED', entryErrors: 0 });
+        render.postMessage({ type: 'VIEW_STARTED' });
         const send = (value: string) => render.postMessage({ type: 'VIEW_TEXT', into: 'a', text: value });
         const text = async (value: string) => {
             const before = acks.length;

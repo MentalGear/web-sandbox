@@ -442,8 +442,10 @@ The policy half of C is already closed by S47.
 - A probe load costs exactly the violation processing that 4:M-2 set out to avoid.
 
 So delegation takes three forms:
-- **Try it and read the result.** Done already in three places, each by construction: 2:C-6 probes `createPolicy`,
-  1:R3-1 uses a probe worker, and B6 builds the `Request`.
+- **Try it and read the result.** Done already in four places, each by construction: 2:C-6 probes `createPolicy`,
+  1:R3-1 uses a probe worker, B6 builds the `Request`, and S75 reads the end of the strict entry from a marker error in
+  the order of the Worker object's errors, where it predicted which errors WebKit mutes (wrong for code compiled from a
+  string: "the guest entry failed to start" for an entry that had run).
 - **Let the browser decide, and charge what it reports.** Every observed violation is charged to
   `VIEW_URLS_PER_SECOND`. The owner has approved this for CSS URLs; it is not in the code at `60814b5`. Extend it to
   every violation in the view. Then the bound no longer depends on the library's model being right: a URL the model

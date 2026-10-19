@@ -33,6 +33,13 @@ export type ViolationRecord = SandboxViolation & { sandbox: string };
 /** One 'fetch' event (backlog B5) as the harness records it: the element's detail plus which sandbox sent it. */
 export type FetchEventRecord = FetchRecord & { sandbox: string };
 
+/**
+ * One 'terminated' event, as the fixture records it on every page it drives: the element's reason, which sandbox sent it
+ * (its id, 'main' for the harness's own), the element's state when it was dispatched, and when (the page's
+ * performance.now(), ms since the page's navigation started).
+ */
+export type TerminationRecord = { sandbox: string; reason: string; state: string; at: number };
+
 /** A file for SandboxDriver.registerFiles(): text, or bytes as base64 with an optional type override. */
 export type FileSpec = string | { base64: string; type?: string };
 
@@ -74,10 +81,29 @@ export class SandboxDriver {
         return this.page.evaluate(() => whenSettled(s => s.reset()));
     }
 
-    /** The element's lifecycle state (backlog B2). */
+    /**
+     * The element's lifecycle state (backlog B2). A read of 'terminated' also keeps the terminations recorded so far, so a
+     * test that then fails shows why the sandbox ended (the fixture attaches them), even if the page navigates after.
+     */
     async state(): Promise<string> {
-        return this.page.evaluate(() => (document.querySelector('web-sandbox') as any).state);
+        const { state, terminations } = await this.page.evaluate(() => ({
+            state: (document.querySelector('web-sandbox') as any).state as string,
+            terminations: [...((window as any).sandboxTerminations ?? [])] as TerminationRecord[],
+        }));
+        if (state === 'terminated') this.seenTerminated.push({ readAt: Date.now(), terminations });
+        return state;
     }
+
+    /**
+     * Every 'terminated' event the sandboxes on this page dispatched so far, in order, with its reason and time
+     * (recorded by the fixture's init script, from before the page's own scripts run; a navigation starts a new list).
+     */
+    async terminations(): Promise<TerminationRecord[]> {
+        return this.page.evaluate(() => [...((window as any).sandboxTerminations ?? [])]);
+    }
+
+    /** What state() returned 'terminated' with: the terminations recorded at each such read. */
+    readonly seenTerminated: { readAt: number; terminations: TerminationRecord[] }[] = [];
 
     /**
      * Mounts a second <web-sandbox id="second"> next to the harness's, with BASELINE_CONFIG merged with
@@ -273,8 +299,25 @@ declare global {
 }
 
 export const test = base.extend<{ sandbox: SandboxDriver }>({
-    sandbox: async ({ page }, use) => {
+    sandbox: async ({ page }, use, testInfo) => {
         await page.addInitScript(() => {
+            // Every termination is self-explaining (the e2e fixture's rule): each 'terminated' event any sandbox on the
+            // page dispatches is recorded with its reason, before a listener of the page's could stop it (capture, at
+            // the window: the first listener of every dispatch, whether or not the event bubbles).
+            // Only in the host page: an init script runs in every frame, and the guest's realm is the guest's.
+            if (window === window.top) {
+                const terminations: unknown[] = [];
+                Object.defineProperty(window, 'sandboxTerminations', { value: terminations });
+                window.addEventListener('terminated', (event: Event) => {
+                    const target = event.target as any;
+                    terminations.push({
+                        sandbox: target?.id || 'main',
+                        reason: String((event as CustomEvent).detail?.reason),
+                        state: String(target?.state),
+                        at: Math.round(performance.now()),
+                    });
+                }, { capture: true });
+            }
             (window as any).whenSettled = (action: (sandbox: any) => void) => new Promise(resolve => {
                 const sandbox = document.querySelector('web-sandbox') as any;
                 const settle = (event: Event) => {
@@ -298,7 +341,23 @@ export const test = base.extend<{ sandbox: SandboxDriver }>({
         const driver = new SandboxDriver(page);
         await driver.open();
         await use(driver);
+        // A test that failed shows every termination: those its state() reads saw, and those on the page now.
+        if (testInfo.status !== testInfo.expectedStatus) {
+            let now: TerminationRecord[] | string;
+            try { now = await driver.terminations(); } catch (error) { now = `(not readable: ${String(error)})`; }
+            const lines = [
+                ...driver.seenTerminated.map(({ readAt, terminations }) =>
+                    `state() read 'terminated' at ${new Date(readAt).toISOString()}; terminations then:\n${formatTerminations(terminations)}`),
+                `terminations on the page at the end of the test:\n${typeof now === 'string' ? now : formatTerminations(now)}`,
+            ];
+            await testInfo.attach('sandbox terminations', { body: lines.join('\n'), contentType: 'text/plain' });
+        }
     },
 });
+
+function formatTerminations(terminations: TerminationRecord[]): string {
+    if (terminations.length === 0) return '  (none)';
+    return terminations.map(t => `  [${t.sandbox}] at ${t.at} ms (state ${t.state}): ${t.reason}`).join('\n');
+}
 
 export { expect };
