@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { createBroker } from '@src/lib/rpc';
-import { inSandboxScript } from '@src/lib/in-sandbox-script';
-import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from '@src/lib/in-sandbox-files';
-import { workerBootstrap } from '@src/lib/worker-bootstrap';
-import { keepOnlyWorkerGlobals } from '@src/lib/worker-globals';
 import { repeatedReads } from './read-once-scan';
+import { stringifiedFor } from './stringified';
 
 /**
  * Class G (docs/research/18_finding_classes/README.md; review round 5, N-6): in the code that runs in a guest realm, a
@@ -13,10 +9,11 @@ import { repeatedReads } from './read-once-scan';
  * it. Guest-supplied objects and events are read once each, by readOptions() and readEvent() (in-sandbox-script.ts).
  *
  * The scan counts every value; the values below are the library's own (its constants, its records, the host's frames,
- * its lists' lengths), each named with why it may be read again. A guest value is never one of them. The view's
- * functions (inSandboxView, inStrictWorker, sanitizeRender) are in-sandbox-view.ts's, scanned by round 4's statement
- * scan (test/unit/review-round-4.test.ts) until that file's own values are listed here.
+ * its lists' lengths), each named with why it may be read again. A guest value is never one of them. Which functions
+ * are scanned, and why each other is not, is the realms registry's (src/lib/realms.ts, STRINGIFIED: `readOnce`).
  */
+
+const SCANNED = await stringifiedFor('readOnce');
 
 const LIBRARY_VALUES: Record<string, Record<string, string>> = {
     createBroker: {
@@ -37,6 +34,11 @@ const LIBRARY_VALUES: Record<string, Record<string, string>> = {
         line: 'its own list',
         held: 'its own list',
     },
+    createSizeOf: {
+        tag: 'a string: what Object.prototype.toString answered',
+        stack: 'its own list',
+        buffers: "its caller's own list, which it appends to",
+    },
     inSandboxFiles: {
         binary: 'a string the host wrote into the literal',
         target: 'its own record',
@@ -54,15 +56,7 @@ const LIBRARY_VALUES: Record<string, Record<string, string>> = {
 };
 
 describe('class G: a property of a guest value is read once per function', () => {
-    const sources: [string, string][] = [
-        ['createBroker', createBroker.toString()],
-        ['inSandboxScript', inSandboxScript.toString()],
-        ['inSandboxFiles', inSandboxFiles.toString()],
-        ['inSandboxImportMap', inSandboxImportMap.toString()],
-        ['inSandboxMarkup', inSandboxMarkup.toString()],
-        ['workerBootstrap', workerBootstrap.toString()],
-        ['keepOnlyWorkerGlobals', keepOnlyWorkerGlobals.toString()],
-    ];
+    const sources: [string, string][] = SCANNED.map(([name, fn]) => [name, fn.toString()]);
 
     for (const [name, source] of sources) {
         it(`${name}: every value read more than once is one of the library's own, and the list names no other`, () => {

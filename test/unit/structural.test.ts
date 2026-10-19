@@ -12,6 +12,8 @@ import { LOG_MAX_ARGS, LOG_MAX_BYTES, LOG_MAX_STRING, toLogDetail } from '@src/l
 import { toViolationDetail, VIOLATION_MAX_STRING } from '@src/lib/violation';
 import { VIEW_OPTIONS } from '@src/lib/in-sandbox-view';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
+import { CHANNELS, FRAMES, type FrameField, type FrameRoute, type FrameType } from '@src/lib/frames';
+import { REALMS, scanned, STRINGIFIED } from '@src/lib/realms';
 
 /**
  * Structural checks (backlog S61.3; research 18): the chokepoints that closed a class, each kept closed by a test that
@@ -19,9 +21,12 @@ import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
  *   - The RPC frame (class P; review round 3, C-1): a branded type that only the three builders mint, and a source scan
  *     that no other code casts to it (test/unit/review-round-3.test.ts keeps every 'RPC_REQ' and 'RPC_RES' literal of
  *     src/ in those builders, and every post of the broker on one of their frames).
+ *   - The frame table and the realms registry (S76; src/lib/frames.ts, src/lib/realms.ts) against the code: every
+ *     frame literal of src/ is a row, every row is posted and read, and the registry names every stringified function.
  *   - Every string a frame carries out of a guest realm, or out of the view, is cut, checked or measured before it is
  *     posted (class E-cpu: "cut before posting"): a scan of every frame literal in every function the library
- *     stringifies into a realm, against one table of its fields, so a new field or a new frame is a missing row here.
+ *     stringifies into a realm, against the frame table's fields and bounds, so a new field or a new frame is a missing
+ *     row.
  *   - The size measure (structured-size.ts; class P and G) against the real structuredClone, over fast-check's
  *     arbitrary values restricted to what clone accepts.
  *   - The console relay (in-sandbox-script.ts) against the measure and against the host's reading of a line
@@ -89,119 +94,114 @@ describe('the RPC frame: a branded type only the builders mint (class P; review 
 
 /**
  * Every field of every frame literal (an object literal whose first property is `type`) in the functions the library
- * stringifies into a realm, with the expression it is given, and what bounds it if it can be a string the guest
- * chose. `bound` starts with one of:
- *   not a string   a number, a boolean, or nothing of the guest's
- *   constant       a string of the library's (a literal, a member of a closed set, a text built from constants and counts)
- *   cut            a string the guest chose, cut to a fixed length before it is posted
- *   checked        a string the guest chose, refused past a fixed length before anything is posted
- *   measured       a snapshot, measured whole against a byte budget before it is posted, its strings cut first
+ * stringifies into a realm (src/lib/realms.ts, STRINGIFIED), with the expression it is given. What bounds each field is
+ * its row's in the frame table (src/lib/frames.ts, FRAMES): this list pins the expression at each place a frame is
+ * posted, so an edit that drops a cut, or a new field, fails here. `(type)` is a literal whose `type` is a variable,
+ * typed in the source as a union of frame types.
  */
-const FRAME_FIELDS: readonly (readonly [type: string, field: string, expression: string, bound: string])[] = [
+const SENT: readonly (readonly [type: string, field: string, expression: string])[] = [
     // in-sandbox-script.ts, inSandboxScript: the guest's bootstrap, on the logic port (or the announcement)
-    ['SANDBOX_PORT', 'type', "'SANDBOX_PORT'", 'constant'],
-    ['VIOLATION', 'type', "'VIOLATION'", 'constant'],
-    ['VIOLATION', 'directive', 'cutAt(read.effectiveDirective || read.violatedDirective, VIOLATION_MAX_STRING)', 'cut: at VIOLATION_MAX_STRING (2048), the browser\'s directive name; the host takes it only if it matches /^[a-z][a-z-]{0,63}$/ (violation.ts)'],
-    ['VIOLATION', 'blockedURI', 'cutAt(read.blockedURI, VIOLATION_MAX_STRING)', 'cut: at VIOLATION_MAX_STRING (2048), the browser\'s report of a URL the guest chose; cut again on receipt (violation.ts), at most VIOLATION_EVENT_LIMIT per environment'],
-    ['VIOLATION', 'sourceFile', 'cutAt(read.sourceFile, VIOLATION_MAX_STRING)', 'cut: as blockedURI'],
-    ['VIOLATION', 'lineNumber', 'read.lineNumber', 'not a string: the browser\'s number (the host keeps a positive integer only)'],
-    ['VIOLATION', 'columnNumber', 'read.columnNumber', 'not a string: as lineNumber'],
-    ['RESIZE', 'type', "'RESIZE'", 'constant'],
-    ['RESIZE', 'height', 'height', 'not a string: a measured height'],
-    ['LOG', 'type', "'LOG'", 'constant'],
-    ['LOG', 'level', 'level', 'constant: one of log, info, warn, error'],
-    ['LOG', 'args', '[text]', 'constant: the relay\'s own warning, built from constants and counts (ownLine)'],
-    ['LOG', 'own', 'true', 'not a string'],
-    ['LOG', 'args', 'line', 'measured: safeArgs: at most LOG_MAX_ARGS, each string cut at LOG_MAX_STRING, the rest measured against LOG_MAX_BYTES'],
-    ['LOG', 'level', "'info'", 'constant'],
-    ['LOG', 'args', '[`${mode} Ready`]', 'constant: the mode is one of three'],
-    ['UNCAUGHT_PAST_BUDGET', 'type', "'UNCAUGHT_PAST_BUDGET'", 'constant'],
-    ['PONG', 'type', "'PONG'", 'constant'],
-    ['PONG', 'n', 'n', 'not a string: checked to be a number'],
-    ['WORKER_STARTED', 'type', "'WORKER_STARTED'", 'constant'],
+    ['SANDBOX_PORT', 'type', "'SANDBOX_PORT'"],
+    ['VIOLATION', 'type', "'VIOLATION'"],
+    ['VIOLATION', 'directive', 'cutAt(read.effectiveDirective || read.violatedDirective, VIOLATION_MAX_STRING)'],
+    ['VIOLATION', 'blockedURI', 'cutAt(read.blockedURI, VIOLATION_MAX_STRING)'],
+    ['VIOLATION', 'sourceFile', 'cutAt(read.sourceFile, VIOLATION_MAX_STRING)'],
+    ['VIOLATION', 'lineNumber', 'read.lineNumber'],
+    ['VIOLATION', 'columnNumber', 'read.columnNumber'],
+    ['RESIZE', 'type', "'RESIZE'"],
+    ['RESIZE', 'height', 'height'],
+    ['LOG', 'type', "'LOG'"],
+    ['LOG', 'level', 'level'],
+    ['LOG', 'args', '[text]'],
+    ['LOG', 'own', 'true'],
+    ['LOG', 'args', 'line'],
+    ['LOG', 'level', "'info'"],
+    ['LOG', 'args', '[`${mode} Ready`]'],
+    ['UNCAUGHT_PAST_BUDGET', 'type', "'UNCAUGHT_PAST_BUDGET'"],
+    ['PONG', 'type', "'PONG'"],
+    ['PONG', 'n', 'n'],
+    ['WORKER_STARTED', 'type', "'WORKER_STARTED'"],
     // worker-bootstrap.ts, workerBootstrap: worker mode's frame
-    ['SANDBOX_PORT', 'refused', 'refused', 'constant: one of worker, trusted-types, failed'],
-    ['INIT_PORT', 'type', "'INIT_PORT'", 'constant'],
+    ['SANDBOX_PORT', 'refused', 'refused'],
+    ['INIT_PORT', 'type', "'INIT_PORT'"],
     // in-sandbox-view.ts, inSandboxView: the strict view, to the host page (view port) or the worker (render port)
-    ['VIOLATION', 'directive', 'name', 'cut: at options.violationMaxString (VIOLATION_MAX_STRING), the browser\'s directive name; checked on receipt as above'],
-    ['VIOLATION', 'blockedURI', 'cutText(blockedURI, options.violationMaxString)', 'cut: at options.violationMaxString (VIOLATION_MAX_STRING), a URL of the guest\'s markup or CSS; cut again on receipt, at most VIOLATION_EVENT_LIMIT per directive'],
-    ['VIOLATION', 'sourceFile', 'cutText(sourceFile, options.violationMaxString)', 'cut: as blockedURI'],
-    ['VIOLATION', 'lineNumber', 'lineNumber', 'not a string: the browser\'s number'],
-    ['VIOLATION', 'columnNumber', 'columnNumber', 'not a string: the browser\'s number'],
-    ['VIEW_EVENT', 'type', "'VIEW_EVENT'", 'constant'],
-    ['VIEW_EVENT', 'detail', 'detail', 'cut: every string of it through clamp, at most VIEW_EVENT_LIMITS.maxString each and maxTotal together; ids and form fields capped'],
-    ['VIEW_FIRST_OVERRUN', 'type', "'VIEW_FIRST_OVERRUN'", 'constant'],
-    ['VIEW_OVERRUN', 'type', "'VIEW_OVERRUN'", 'constant'],
-    ['VIEW_ACK', 'type', "'VIEW_ACK'", 'constant'],
-    ['VIEW_ACK', 'refused', 'refused', 'constant: names from a fixed list (VIEW_MAX_ELEMENTS …)'],
-    ['RESIZE', 'height', 'height', 'not a string: a measured height'],
-    ['VIEW_PONG', 'type', "'VIEW_PONG'", 'constant'],
-    ['VIEW_PONG', 'n', 'm.n', 'not a string: checked to be a number'],
-    ['VIEW_WRITTEN', 'type', "'VIEW_WRITTEN'", 'constant'],
-    ['VIEW_WRITTEN', 'id', 'm.id', 'not a string: checked to be a number'],
-    ['TRUSTED_TYPES_REFUSED', 'type', "'TRUSTED_TYPES_REFUSED'", 'constant'],
-    ['VIEW_READY', 'type', "'VIEW_READY'", 'constant'],
-    ['VIEW_READY', 'width', 'g.innerWidth', 'not a string: the view\'s own window'],
-    ['VIEW_READY', 'height', 'g.innerHeight', 'not a string: the view\'s own window'],
-    ['VIEW_READY', 'stillStyleRefused', 'true', 'not a string'],
-    ['GUEST_TEXT_DROPPED', 'type', "'GUEST_TEXT_DROPPED'", 'constant'],
-    ['(type)', 'type', 'type', 'constant: GUEST_ERROR or GUEST_UNCAUGHT'],
-    ['(type)', 'message', 'cutText(text, options.guestText.maxLength)', 'cut: to guestText.maxLength (2048), at most LOG_EVENTS_PER_SECOND a second'],
-    ['WORKER_REFUSED', 'type', "'WORKER_REFUSED'", 'constant'],
-    ['INIT_WORKER', 'type', "'INIT_WORKER'", 'constant'],
+    ['VIOLATION', 'directive', 'name'],
+    ['VIOLATION', 'blockedURI', 'cutText(blockedURI, options.violationMaxString)'],
+    ['VIOLATION', 'sourceFile', 'cutText(sourceFile, options.violationMaxString)'],
+    ['VIOLATION', 'lineNumber', 'lineNumber'],
+    ['VIOLATION', 'columnNumber', 'columnNumber'],
+    ['VIEW_EVENT', 'type', "'VIEW_EVENT'"],
+    ['VIEW_EVENT', 'detail', 'detail'],
+    ['VIEW_FIRST_OVERRUN', 'type', "'VIEW_FIRST_OVERRUN'"],
+    ['VIEW_OVERRUN', 'type', "'VIEW_OVERRUN'"],
+    ['VIEW_ACK', 'type', "'VIEW_ACK'"],
+    ['VIEW_ACK', 'refused', 'refused'],
+    ['RESIZE', 'height', 'height'],
+    ['VIEW_PONG', 'type', "'VIEW_PONG'"],
+    ['VIEW_PONG', 'n', 'm.n'],
+    ['VIEW_WRITTEN', 'type', "'VIEW_WRITTEN'"],
+    ['VIEW_WRITTEN', 'id', 'm.id'],
+    ['TRUSTED_TYPES_REFUSED', 'type', "'TRUSTED_TYPES_REFUSED'"],
+    ['VIEW_READY', 'type', "'VIEW_READY'"],
+    ['VIEW_READY', 'width', 'g.innerWidth'],
+    ['VIEW_READY', 'height', 'g.innerHeight'],
+    ['VIEW_READY', 'stillStyleRefused', 'true'],
+    ['GUEST_TEXT_DROPPED', 'type', "'GUEST_TEXT_DROPPED'"],
+    ['(type)', 'type', 'type'],
+    ['(type)', 'message', 'cutText(text, options.guestText.maxLength)'],
+    ['WORKER_REFUSED', 'type', "'WORKER_REFUSED'"],
+    ['INIT_WORKER', 'type', "'INIT_WORKER'"],
     // in-sandbox-view.ts, inStrictWorker: the strict prelude, in the guest's worker, to the view (render port)
-    ['VIEW_RENDER', 'type', "'VIEW_RENDER'", 'constant'],
-    ['VIEW_RENDER', 'html', 'html', 'checked: at most VIEW_RENDER_MAX_LENGTH characters, else render() throws'],
-    ['VIEW_RENDER', 'into', 'into: target', 'checked: an id of at most VIEW_TARGET_MAX_LENGTH characters, or null'],
-    ['VIEW_TEXT', 'type', "'VIEW_TEXT'", 'constant'],
-    ['VIEW_TEXT', 'into', 'into: id', 'checked: an id of at most VIEW_TARGET_MAX_LENGTH characters'],
-    ['VIEW_TEXT', 'text', 'text: value', 'checked: at most VIEW_RENDER_MAX_LENGTH characters, else text() throws'],
-    ['VIEW_SET', 'type', "'VIEW_SET'", 'constant'],
-    ['VIEW_SET', 'id', 'id', 'checked: an id of at most VIEW_TARGET_MAX_LENGTH characters; its value field, set by key after the literal, at most VIEW_RENDER_MAX_LENGTH, else set() throws'],
-    ['VIEW_LISTEN', 'type', "'VIEW_LISTEN'", 'constant'],
-    ['VIEW_LISTEN', 'types', 'types', 'constant: members of VIEW_EVENT_TYPES'],
-    ['VIEW_STARTED', 'type', "'VIEW_STARTED'", 'constant'],
+    ['VIEW_RENDER', 'type', "'VIEW_RENDER'"],
+    ['VIEW_RENDER', 'html', 'html'],
+    ['VIEW_RENDER', 'into', 'into: target'],
+    ['VIEW_TEXT', 'type', "'VIEW_TEXT'"],
+    ['VIEW_TEXT', 'into', 'into: id'],
+    ['VIEW_TEXT', 'text', 'text: value'],
+    ['VIEW_SET', 'type', "'VIEW_SET'"],
+    ['VIEW_SET', 'id', 'id'],
+    ['VIEW_LISTEN', 'type', "'VIEW_LISTEN'"],
+    ['VIEW_LISTEN', 'types', 'types'],
+    ['VIEW_STARTED', 'type', "'VIEW_STARTED'"],
     // rpc.ts, createBroker: the three builders (both sides)
-    ['RPC_REQ', 'type', "'RPC_REQ'", 'constant'],
-    ['RPC_REQ', 'id', 'id', 'not a string: the broker\'s own counter'],
-    ['RPC_REQ', 'method', 'method', 'checked: at most MAX_NAME_LENGTH (256) characters, else INVALID_CALL and nothing is posted'],
-    ['RPC_REQ', 'args', 'args', 'measured: the snapshot, and the whole frame, against RPC_MAX_BYTES before it is posted'],
-    ['RPC_RES', 'type', "'RPC_RES'", 'constant'],
-    ['RPC_RES', 'id', 'id', 'checked: a number, or a string of at most MAX_NAME_LENGTH characters (isId), else the request is dropped'],
-    ['RPC_RES', 'ok', 'true', 'not a string'],
-    ['RPC_RES', 'value', 'value', 'measured: the snapshot, and the whole frame, against RPC_MAX_BYTES before it is posted'],
-    ['RPC_RES', 'ok', 'false', 'not a string'],
-    ['RPC_RES', 'error', 'cutText(error)', 'cut: to MAX_TEXT_LENGTH (65536) by the builder'],
-    ['RPC_RES', 'code', 'code', 'constant: one of the broker\'s CODE constants'],
+    ['RPC_REQ', 'type', "'RPC_REQ'"],
+    ['RPC_REQ', 'id', 'id'],
+    ['RPC_REQ', 'method', 'method'],
+    ['RPC_REQ', 'args', 'args'],
+    ['RPC_RES', 'type', "'RPC_RES'"],
+    ['RPC_RES', 'id', 'id'],
+    ['RPC_RES', 'ok', 'true'],
+    ['RPC_RES', 'value', 'value'],
+    ['RPC_RES', 'ok', 'false'],
+    ['RPC_RES', 'error', 'cutText(error)'],
+    ['RPC_RES', 'code', 'code'],
 ];
 
-// Every function the library stringifies into a realm, and where it is declared.
-const STRINGIFIED: Record<string, string> = {
-    inSandboxScript: 'src/lib/in-sandbox-script.ts',
-    workerBootstrap: 'src/lib/worker-bootstrap.ts',
-    inSandboxView: 'src/lib/in-sandbox-view.ts',
-    inStrictWorker: 'src/lib/in-sandbox-view.ts',
-    assertEntryScoped: 'src/lib/in-sandbox-view.ts',
-    sanitizeRender: 'src/lib/in-sandbox-view.ts',
-    viewBudget: 'src/lib/in-sandbox-view.ts',
-    cssLoadBound: 'src/lib/in-sandbox-view.ts',
-    createBroker: 'src/lib/rpc.ts',
-    createSizeOf: 'src/lib/structured-size.ts',
-    inSandboxFiles: 'src/lib/in-sandbox-files.ts',
-    inSandboxMarkup: 'src/lib/in-sandbox-files.ts',
-    inSandboxImportMap: 'src/lib/in-sandbox-files.ts',
-    keepOnlyWorkerGlobals: 'src/lib/worker-globals.ts',
-    removeWebAssembly: 'src/host.ts',
-};
+const isFrameType = (type: string): type is FrameType => Object.hasOwn(FRAMES, type);
 
-/** The frame literals in `name`'s body: [type, field, expression] for each property (a shorthand's expression is its name). */
-function frameLiterals(file: string, name: string): [string, string, string][] {
+/** The frame types a `type` variable can hold where the literal at `at` uses it: the union in its nearest `type: 'A' | 'B'` annotation. */
+function variableTypes(tokens: Token[], at: number): string[] {
+    for (let i = at; i > 1; i--) {
+        const parameter = tokens[i - 1]?.kind === SyntaxKind.OpenParenToken || tokens[i - 1]?.kind === SyntaxKind.CommaToken;
+        if (!parameter || tokens[i]!.text !== 'type' || tokens[i + 1]?.kind !== SyntaxKind.ColonToken || tokens[i + 2]?.kind !== SyntaxKind.StringLiteral) continue;
+        const types: string[] = [];
+        for (let j = i + 2; tokens[j]?.kind === SyntaxKind.StringLiteral; j += 2) {
+            types.push(tokens[j]!.text.slice(1, -1));
+            if (tokens[j + 1]?.kind !== SyntaxKind.BarToken) break;
+        }
+        return types;
+    }
+    throw new Error('a `type` variable with no annotated union before it');
+}
+
+/** The frame literals in `name`'s body: [type, field, expression, frame types] for each property (a shorthand's expression is its name). */
+function frameLiterals(file: string, name: string): [string, string, string, string[]][] {
     const text = read(file);
     const tokens = tokenize(text);
     const [open, close] = bodyOf(tokens, name);
     const OPEN = new Set([SyntaxKind.OpenBraceToken, SyntaxKind.OpenParenToken, SyntaxKind.OpenBracketToken, SyntaxKind.TemplateHead]);
     const CLOSE = new Set([SyntaxKind.CloseBraceToken, SyntaxKind.CloseParenToken, SyntaxKind.CloseBracketToken, SyntaxKind.TemplateTail]);
-    const out: [string, string, string][] = [];
+    const out: [string, string, string, string[]][] = [];
     for (let i = open + 1; i < close; i++) {
         if (tokens[i]!.kind !== SyntaxKind.OpenBraceToken || tokens[i + 1]?.text !== 'type') continue;
         const after = tokens[i + 2]!;
@@ -210,6 +210,7 @@ function frameLiterals(file: string, name: string): [string, string, string][] {
         else if (after.kind === SyntaxKind.CommaToken) type = '(type)';
         else continue;
         if (type !== '(type)' && !/^[A-Z][A-Z_]+$/.test(type)) continue; // a Blob's or an observer's options, not a frame
+        const types = type === '(type)' ? variableTypes(tokens, i) : [type];
         let depth = 0;
         let start = i + 1;
         for (let j = i; j < tokens.length; j++) {
@@ -220,7 +221,7 @@ function frameLiterals(file: string, name: string): [string, string, string][] {
                 if (start < j) {
                     const property = text.slice(tokens[start]!.start, tokens[j - 1]!.end).replace(/\s+/g, ' ');
                     const colon = tokens[start + 1]?.kind === SyntaxKind.ColonToken;
-                    out.push([type, tokens[start]!.text, colon && tokens[start]!.text !== 'into' && tokens[start]!.text !== 'text' ? property.slice(property.indexOf(':') + 1).trim() : property]);
+                    out.push([type, tokens[start]!.text, colon && tokens[start]!.text !== 'into' && tokens[start]!.text !== 'text' ? property.slice(property.indexOf(':') + 1).trim() : property, types]);
                 }
                 start = j + 1;
                 if (depth === 0) break;
@@ -230,27 +231,117 @@ function frameLiterals(file: string, name: string): [string, string, string][] {
     return out;
 }
 
-describe('every string a frame carries out of a guest realm or the view is cut, checked or measured before it is posted (class E-cpu)', () => {
-    it('the scan covers every function the library stringifies into a realm', () => {
-        const stringified = new Set<string>();
-        for (const file of sourceFiles('src')) {
-            for (const match of read(file).matchAll(/\b([a-zA-Z]+)\.toString\(\)/g)) if (match[1] !== 'fn' && match[1] !== 'prototype') stringified.add(match[1]!);
+/**
+ * Every frame literal in src/'s code (comments and strings aside), by where it stands: posted (`type: 'X'` in an object
+ * literal or a type), compared (`.type === 'X'`, `type !== 'X'`), or a constant declared as a frame type
+ * (`'X' satisfies FrameType`). "file: TYPE" for each.
+ */
+function frameLiteralsInSource(): { posted: Set<string>; compared: Set<string>; all: string[] } {
+    const posted = new Set<string>();
+    const compared = new Set<string>();
+    const all: string[] = [];
+    const COMPARE = new Set([SyntaxKind.EqualsEqualsEqualsToken, SyntaxKind.ExclamationEqualsEqualsToken, SyntaxKind.EqualsEqualsToken, SyntaxKind.ExclamationEqualsToken]);
+    for (const file of sourceFiles('src')) {
+        const tokens = tokenize(read(file));
+        for (let i = 0; i < tokens.length; i++) {
+            const token = tokens[i]!;
+            if (token.kind !== SyntaxKind.StringLiteral || !/^['"][A-Z][A-Z_]+['"]$/.test(token.text)) continue;
+            const type = token.text.slice(1, -1);
+            // walk back over a union of literals, `type: 'A' | 'B'`
+            let first = i;
+            while (tokens[first - 1]?.kind === SyntaxKind.BarToken && tokens[first - 2]?.kind === SyntaxKind.StringLiteral) first -= 2;
+            const before = tokens[first - 1], named = tokens[first - 2];
+            if (before?.kind === SyntaxKind.ColonToken && named?.text === 'type') posted.add(type);
+            else if (before && COMPARE.has(before.kind) && named?.text === 'type') compared.add(type);
+            else if (tokens[i + 1]?.kind === SyntaxKind.SatisfiesKeyword && tokens[i + 2]?.text === 'FrameType') compared.add(type);
+            else continue;
+            all.push(`${file}: ${type}`);
         }
-        expect([...stringified].sort()).toEqual(Object.keys(STRINGIFIED).sort());
+    }
+    return { posted, compared, all };
+}
+
+describe('the frame table (src/lib/frames.ts) and the realms registry (src/lib/realms.ts) against the code', () => {
+    it('every frame literal in src/ is a row of FRAMES, and every row is posted somewhere and read somewhere', () => {
+        const { posted, compared, all } = frameLiteralsInSource();
+        expect(all.filter(entry => !isFrameType(entry.slice(entry.lastIndexOf(' ') + 1))), 'a frame type FRAMES does not declare').toEqual([]);
+        expect(Object.keys(FRAMES).filter(type => !posted.has(type)), 'a row no code posts').toEqual([]);
+        const readByType = (type: FrameType) => compared.has(type) !== ('receivedAs' in FRAMES[type]);
+        expect((Object.keys(FRAMES) as FrameType[]).filter(type => !readByType(type)), 'a row no code reads by its type, or one that says it is told apart otherwise').toEqual([]);
     });
 
-    it('every field of every frame literal is a row of the table, with its bound, and every row is in the code', () => {
-        const found = new Set<string>();
-        for (const [name, file] of Object.entries(STRINGIFIED)) {
-            for (const [type, field, expression] of frameLiterals(file, name)) found.add(`${type}.${field} = ${expression}`);
+    it('every route is between realms that speak on its channel, and every channel has frames and two ends', () => {
+        const wrong: string[] = [];
+        for (const [type, row] of Object.entries(FRAMES)) {
+            for (const route of row.routes) {
+                for (const realm of [...route.from, ...route.to]) {
+                    if (!(REALMS[realm].channels as readonly string[]).includes(route.channel)) wrong.push(`${type}: ${realm} is not on ${route.channel}`);
+                }
+            }
         }
-        const listed = new Set(FRAME_FIELDS.map(([type, field, expression]) => `${type}.${field} = ${expression}`));
-        expect([...found].filter(entry => !listed.has(entry)), 'a frame field the table does not list').toEqual([]);
-        expect([...listed].filter(entry => !found.has(entry)), 'a row no frame has').toEqual([]);
-        for (const [type, field, , bound] of FRAME_FIELDS) {
-            // no other kind: a string posted as it is, bounded only on receipt, fails here (backlog S61.3: the violation
-            // reports' strings were such rows until they were cut at the source)
-            expect(bound, `${type}.${field}`).toMatch(/^(not a string|constant|cut|checked|measured)\b/);
+        expect(wrong).toEqual([]);
+        for (const channel of Object.keys(CHANNELS)) {
+            expect(Object.values(FRAMES).some(row => row.routes.some(route => route.channel === channel)), channel).toBe(true);
+            expect(Object.values(REALMS).filter(realm => (realm.channels as readonly string[]).includes(channel)).length, channel).toBeGreaterThanOrEqual(2);
+        }
+    });
+
+    it('the registry names every function the library stringifies into a realm, and the module that declares it', () => {
+        const stringified = new Set<string>();
+        const builders = new Set<string>();
+        for (const file of sourceFiles('src')) {
+            const tokens = tokenize(read(file));
+            for (let i = 2; i + 2 < tokens.length; i++) {
+                if (tokens[i]!.text !== 'toString' || tokens[i - 1]!.kind !== SyntaxKind.DotToken || tokens[i + 1]!.kind !== SyntaxKind.OpenParenToken || tokens[i + 2]!.kind !== SyntaxKind.CloseParenToken) continue;
+                const name = tokens[i - 2]!.text;
+                if (name === 'fn' || name === 'prototype' || tokens[i - 2]!.kind !== SyntaxKind.Identifier) continue;
+                stringified.add(name);
+                builders.add(file.split(path.sep).join('/'));
+            }
+        }
+        expect([...stringified].sort()).toEqual(Object.keys(STRINGIFIED).sort());
+        for (const [name, row] of Object.entries(STRINGIFIED)) expect(() => bodyOf(tokenize(read(row.module)), name), name).not.toThrow();
+        // the files that stringify are the realms' builders, and every realm a function runs in has one
+        const declared = new Set(Object.values(REALMS).flatMap(realm => (realm.builder === null ? [] : [realm.builder.split(',')[0]!])));
+        expect([...builders].sort()).toEqual([...declared].sort());
+        for (const [name, row] of Object.entries(STRINGIFIED)) for (const realm of row.realms) expect(REALMS[realm].builder, `${name} in ${realm}`).not.toBeNull();
+        // every scan applies to some function, and the capture scan only where guest code runs
+        for (const scan of ['capture', 'readOnce', 'typeofRead'] as const) expect(scanned(scan).length, scan).toBeGreaterThan(0);
+        for (const name of scanned('capture')) expect(STRINGIFIED[name].realms.some(realm => REALMS[realm].guestCode), name).toBe(true);
+    });
+});
+
+describe('every string a frame carries out of a guest realm or the view is cut, checked or measured before it is posted (class E-cpu)', () => {
+    it('every field of every frame literal the stringified code posts is a field of its FRAMES row, from a realm of its route, and every row of SENT is in the code', () => {
+        const found = new Set<string>();
+        const wrong: string[] = [];
+        for (const [name, row] of Object.entries(STRINGIFIED)) {
+            for (const [type, field, expression, types] of frameLiterals(row.module, name)) {
+                found.add(`${type}.${field} = ${expression}`);
+                for (const frame of types) {
+                    if (!isFrameType(frame)) {
+                        wrong.push(`${name}: ${frame} is no frame type`);
+                        continue;
+                    }
+                    if (field !== 'type' && !Object.hasOwn(FRAMES[frame].fields, field)) wrong.push(`${name}: ${frame}.${field} is no field of its row`);
+                    const from = FRAMES[frame].routes.flatMap(route => route.from as readonly string[]);
+                    if (!row.realms.some(realm => from.includes(realm))) wrong.push(`${name}: ${frame} is posted from ${row.realms.join(', ')}, no realm of its routes`);
+                }
+            }
+        }
+        expect(wrong).toEqual([]);
+        const listed = new Set(SENT.map(([type, field, expression]) => `${type}.${field} = ${expression}`));
+        expect([...found].filter(entry => !listed.has(entry)), 'a frame field SENT does not list').toEqual([]);
+        expect([...listed].filter(entry => !found.has(entry)), 'a row of SENT no frame has').toEqual([]);
+    });
+
+    it('every field a guest realm or the view posts has a bound of the five kinds: only a frame the host alone sends carries a value of the host\'s', () => {
+        for (const [type, row] of Object.entries(FRAMES)) {
+            const fromHostOnly = row.routes.every((route: FrameRoute) => route.from.every(realm => realm === 'host'));
+            for (const [field, { bound }] of Object.entries(row.fields as Readonly<Record<string, FrameField>>)) {
+                // no other kind: a string posted as it is, bounded only on receipt, has no kind here (S61)
+                if (!fromHostOnly) expect(['not a string', 'constant', 'cut', 'checked', 'measured'], `${type}.${field}`).toContain(bound);
+            }
         }
     });
 

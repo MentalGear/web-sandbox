@@ -1,5 +1,6 @@
 import type { createBroker } from './rpc';
 import type { createSizeOf } from './structured-size';
+import type { FrameType } from './frames';
 
 /**
  * The type of the one message the guest frame posts to the host page in cooperative mode, carrying its port (the
@@ -7,7 +8,7 @@ import type { createSizeOf } from './structured-size';
  * per environment. The stringified functions spell the literal out (they close over nothing); a unit test keeps
  * them equal to this constant.
  */
-export const ANNOUNCEMENT_TYPE = 'SANDBOX_PORT';
+export const ANNOUNCEMENT_TYPE = 'SANDBOX_PORT' satisfies FrameType;
 
 /**
  * This function is stringified and injected into the sandbox (iframe or worker).

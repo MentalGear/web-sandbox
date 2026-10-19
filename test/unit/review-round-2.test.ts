@@ -3,13 +3,15 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
-import { inSandboxFiles } from '@src/lib/in-sandbox-files';
-import { inSandboxView, inStrictWorker, sanitizeRender, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
+import { inStrictWorker, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
 import { defineWebSandbox } from '@src/host';
 import { createBroker, RPC_MAX_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, LOG_MAX_STRING } from '@src/lib/sandbox-log';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
+import { stringifiedFor } from './stringified';
+
+const CAPTURED = await stringifiedFor('capture');
 
 /**
  * Review round 2 (reviewer C): each finding reproduced here first, against the code it names. The bootstrap runs against
@@ -113,18 +115,9 @@ describe('C-1: code that runs after guest code started reads nothing the guest c
     // guest code, captures what it uses in one list at its top, ended by `const CAPTURE_POINT = …`; the list holds no
     // closure (one would run later, unscanned), and after that point the text names no global, reads no property of the global object (`g`), and uses no syntax that consults a prototype
     // the guest can patch (spread and iteration go through Array.prototype[Symbol.iterator], instanceof through
-    // Symbol.hasInstance, a method call through the receiver's prototype). Not scanned, each for its reason:
-    //   inSandboxImportMap, inSandboxMarkup, keepOnlyWorkerGlobals, assertEntryScoped, removeWebAssembly: they run to
-    //     their end before any guest code and leave no closure behind;
-    //   workerBootstrap: the worker-mode frame runs no guest code at all;
-    //   inSandboxView, sanitizeRender: the view runs no guest code at all.
-    const GUEST_REALM_FUNCTIONS: [string, (...args: any[]) => unknown][] = [
-        ['inSandboxScript', inSandboxScript],
-        ['createBroker', createBroker],
-        ['createSizeOf', createSizeOf],
-        ['inSandboxFiles', inSandboxFiles],
-        ['inStrictWorker', inStrictWorker],
-    ];
+    // Symbol.hasInstance, a method call through the receiver's prototype). Which functions those are, and why each other
+    // is not scanned, is the realms registry's (src/lib/realms.ts, STRINGIFIED: `capture`).
+    const GUEST_REALM_FUNCTIONS = CAPTURED;
     // Globals of every realm the bootstrap runs in (window or worker): the intrinsics, and the platform's functions and
     // objects. `undefined`, `NaN` and `Infinity` are not here: they are non-writable and non-configurable.
     const GLOBALS = new Set([
