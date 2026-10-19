@@ -199,3 +199,45 @@ owner's decision: such a record is `aborted`. Fixed by construction (class L): t
 the outcome from the bridge's lifetime, so every record made after `abortAll()` is `aborted`, whatever path the request
 settled on, and the guest is told the sandbox was torn down. `test/unit/fetch-bridge-lifecycle.test.ts` enumerates every
 settle path with the teardown at its last possible point; the focused e2e test passes on all three engines.
+
+## The reducer runner (S65 step 2)
+
+The lifecycle reducer (`src/lib/lifecycle.ts`) is checked against the same model in a unit run, with no browser.
+`test/model/reducer-runner.ts` runs the real `reduce` and `runEffects` against a fake element, and feeds the model's
+`begin`, `end`, `event` and `eventEnd` as `runner.ts` does. Listener plans run as nested steps inside the dispatch.
+
+**The fake element.**
+- It is the adapter `host.ts` becomes: setConfig() clones and applies its argument with the real config schema, and the
+  files are a map of paths.
+- A build's fake guest checks in after a seeded delay of fake time: the strict view after its ports, the bootstrap's
+  announcement, or the wrapper's load alone without a bootstrap. One build in 40 (never two in a row) never checks in,
+  so the load deadline ends it.
+- The wrapper's load counts in a microtask, and a frame also fires its load inside the embedder's `appendChild()` or
+  `remove()`, as Chromium and WebKit do (round 4's L-1).
+- Nothing an old environment's guest or timers deliver is cancelled at a teardown. The reducer must drop it by its
+  generation, which is stronger than the element, whose listeners and ports go with their environment.
+
+**What it leaves out.** Calls, `execute()`, `commitGuestWrites()` and `listGuestWrites()` are filtered out of the
+commands and the plans, since they need a guest that answers. So are the guest's logs, writes and fetches, and the
+terminations a guest causes. The e2e suite covers them.
+
+**What it checks besides the model.**
+- After every operation and task, the reducer's state is the model's: the same state and pending build termination, no
+  `terminated` still being dispatched, and a generation that changed exactly when the model's did. A refused build
+  counts two teardowns in the element and one in the model, so only the change is compared.
+- Every step keeps the reducer's properties:
+  - a stale generation gives no effects;
+  - connect and disconnect never dispatch, notify or step synchronously;
+  - `flush` appears exactly with `dispatch ready`, from `loading`;
+  - no resource effect follows a dispatch.
+
+**Running it.** `bun x vitest run test/unit/lifecycle-reducer.test.ts` runs 5,000 sequences in about 2 s.
+`WEB_SANDBOX_REDUCER_RUNS` and `WEB_SANDBOX_REDUCER_SEED` change the count and the first seed. A divergence is shrunk
+and printed with its seed, the minimal sequence and its trace.
+
+**Checked against mutants.** Ten mutants of the reducer were tried: the no-repeat rule removed, `within` not recorded,
+the stale-generation drop removed, a build's `terminated` dispatched synchronously, a second `terminate()` dispatched
+again, the `setConfig()` no-op ignoring the inputs, `ready` from any state, `stillOurs` ignored, a second load
+accepted, and a flush at the wrapper's load. The model oracle alone caught six. It missed the last four, which need
+inputs the fake guest never sends, or calls. The per-step properties and the finding traces caught all ten.
+
