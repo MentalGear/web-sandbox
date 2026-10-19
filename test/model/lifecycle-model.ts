@@ -668,6 +668,10 @@ export class LifecycleModel {
             case 'fetch': {
                 const url: string = ev.detail?.url ?? '';
                 const match = /[?&]env=(\d+)/.exec(url);
+                // API.md (FetchRecord): after its teardown an environment's records are `aborted`, and they can arrive
+                // after the call that tore it down; any other outcome belongs to the current environment. LM-1 (an `ok`
+                // record of an environment a `fetch` listener had torn down) diverged here; fixed 2026-10-19 in
+                // fetch-bridge.ts, whose one record() makes every record after abortAll() `aborted`.
                 if (ev.detail?.outcome === 'aborted') return;
                 if (!this.env || !match || Number(match[1]) !== this.env.id) this.fail(`fetch record ${url} (${ev.detail?.outcome}) does not belong to the current environment ${this.env?.id}`);
                 this.coverage.add(`event:fetch|${this.mode}`);

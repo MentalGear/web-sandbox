@@ -129,17 +129,16 @@ test.describe("round 4's L-1 as a property: no `ready` inside a DOM operation", 
     }
 });
 
-// FINDING LM-1 (the lifecycle model, WebKit seed 73 at 500 sequences; made deterministic here): a `fetch` record with outcome `ok` of an environment that a `fetch`
-// listener tore down is dispatched after the teardown. API.md (`fetch` — FetchRecord): a record is dispatched when its
-// request settles, `aborted` means "the environment was torn down meanwhile", and only an aborted record of a torn-down
-// environment arrives after the teardown. A request whose body was already read when the listener of an earlier record
-// tore the environment down records `ok` (fetch-bridge.ts looks at the abort only on a throw), and the element dispatches
-// it to the next environment's listeners. The owner decides: report it `aborted` (or not at all), or document that a
-// record that settled at the teardown can be `ok`. Fails at 446017a on Chromium, Firefox and WebKit, in the first round:
-// the three later records arrive `ok`. Marked test.fail() until the owner decides; then drop the mark (or the test).
+// FINDING LM-1, fixed (class L; the lifecycle model, WebKit seed 73 at 500 sequences; made deterministic here). A `fetch`
+// record with outcome `ok` of an environment that a `fetch` listener had torn down was dispatched after the teardown, where
+// API.md (`fetch` — FetchRecord) says that after its teardown an environment's records are `aborted`. A request whose body
+// was already read when the listener of an earlier record tore the environment down recorded `ok`: fetch-bridge.ts looked
+// at the teardown only on a throw. It failed at 446017a on Chromium, Firefox and WebKit, in the first round: the three
+// later records arrived `ok`. Fixed 2026-10-19 by construction, the owner's decision being `aborted`: the bridge's one
+// record() decides the outcome from the bridge's lifetime, so every record made after abortAll() is `aborted`, whatever
+// path it settled on (test/unit/fetch-bridge-lifecycle.test.ts enumerates the paths).
 test.describe('finding: fetch records after a teardown', () => {
     test('a record dispatched after a fetch listener tore its environment down is `aborted`', async ({ sandbox, page, browserName }) => {
-        test.fail(); // finding LM-1: the owner decides
         test.setTimeout(90000);
         expect(await sandbox.mount({ mode: 'cooperative', fetchBridge: { allow: [ORIGIN] } })).toBe('ready');
         const late: string[] = [];

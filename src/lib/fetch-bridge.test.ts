@@ -202,7 +202,9 @@ describe('createFetchBridge (backlog B5)', () => {
         await expect(second).rejects.toMatchObject({ code: 'FETCH_FAILED' });
         await expect(bridge.handle({ url: 'https://api.example/4' })).rejects.toMatchObject({ code: 'FETCH_FAILED' });
         expect(calls.map(c => (c.init.signal as AbortSignal).aborted)).toEqual([true, true]);
-        expect(records.map(r => r.outcome)).toEqual(['refused', 'aborted', 'aborted', 'refused']);
+        // the one refused after close is 'aborted' too (LM-1, the owner's decision): after its teardown an environment's
+        // records are all 'aborted' (test/unit/fetch-bridge-lifecycle.test.ts covers every settle path)
+        expect(records.map(r => r.outcome)).toEqual(['refused', 'aborted', 'aborted', 'aborted']);
     });
 
     it('clamps what the guest supplied before reporting it', async () => {
