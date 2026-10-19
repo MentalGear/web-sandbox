@@ -1851,9 +1851,30 @@ Measured (2026-10-19, headless Playwright on the shared 4-core VM; Chromium, Fir
 - `review-round-2.spec.ts` (M-3), a 250,000-character textarea `set()` four times a second: the sandbox stays `ready`
   on all three engines (WebKit's first `set()` ended it before).
 
+### S76 · Self-explaining code, generated reference docs: review the current state — ⏸️ **before S60** (owner, 2026-10-19)
+
+The owner's direction: code that mostly explains itself, with strong types and comments where they are needed, and the
+reference docs generated from it. A review first (reported to the owner before anything changes), against five points:
+1. **Types that carry the rules.** Where an invariant can be a type, the wrong code does not compile: what is typed
+   today (typed origins, the branded `RpcFrame`, the reducer's input and effect unions) and what could be (readonly
+   state, branded generations, exhaustive `never` checks, option types narrower than `unknown`).
+2. **TSDoc on the public surface, the reference generated from it.** Measure the coverage of `src/index.ts`'s exports.
+   Evaluate api-extractor, which generates the reference and a checked-in public-API report that fails CI on an
+   unreviewed change (the owner's rule that public names need approval, by construction), against TypeDoc.
+3. **Data in code, docs rendered from it**, each with a doc-sync test: `CONFIG_SCHEMA`, `CHANNEL_BUDGETS` and the egress
+   table do this already; list the docs that still restate code by hand (limits, reasons, events, host lines).
+4. **Comments that say why, briefly.** Many comments tell a fix's history (the round, the measurement, the commit).
+   Measure it, and propose a convention: the current reason plus a link to the finding or ADR, with history kept in the
+   review reports and ADRs.
+5. **Handwritten docs only where code cannot explain:** the threat and security model, ADRs, research, the README's
+   tutorial. Which parts of API.md become generated.
+
+Output: a report with measurements and a migration plan in PR-sized steps, for the owner. S60's clean-up applies its
+outcome.
+
 ### S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
 
-Once S65, the rest of S61 and S60 are merged: an independent adversarial review board of the whole repository and its
+Once S65, the rest of S61, S76 and S60 are merged: an independent adversarial review board of the whole repository and its
 docs, with reviewers from several model families (Opus, Sonnet and Haiku; S60's independent reviews are folded in). The
 board clears after **two consecutive passes with no finding of high severity or above** (a stricter severity floor than
 the review rounds' medium, as the owner set it). Findings are fixed as before: by class, each naming its class and
