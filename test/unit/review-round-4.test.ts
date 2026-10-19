@@ -487,9 +487,12 @@ describe('the docs say what the code does', () => {
         }
     });
 
-    // the residuals are stated once since S68, in API.md's "The view's cost to the host page", which README links
-    it("M-3: the view's cost statement lists Chromium's <img> cost among the single-operation stalls", () => {
-        expect(read('docs/API.md').replace(/\s+/g, ' ')).toContain('6 500 `<img alt>`: Chromium 1.9–2.6 s (Firefox and WebKit about 150 ms)');
+    // the residuals are stated once since S68, in API.md's "The view's cost to the host page", which README links; this
+    // checks the closed list and the bound beside it, never a measured figure (CONTRIBUTING.md, "Measured figures")
+    it("M-3: the view's cost statement lists Chromium's <img> cost among the single-operation stalls, under the overrun bound", () => {
+        const row = read('docs/API.md').split('\n').find(line => line.startsWith('| The documented single-operation stalls'));
+        expect(row).toContain('`<img>` in Chromium');
+        expect(row).toContain('Past `VIEW_MAX_OPERATION_MS` each is an overrun');
     });
 
     it('I-1: API.md says an aborted record of a torn-down environment can arrive after reset(), while the next build loads', () => {

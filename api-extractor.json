@@ -1,0 +1,43 @@
+// The public-API gate (backlog S76): `bun run api:check` builds dist/ and fails when the public surface differs
+// from etc/web-sandbox.api.md, so every change to a public name or signature shows in its PR's diff and is reviewed
+// there. `bun run api:update` rewrites the report after such a change.
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/api-extractor/v7/api-extractor.schema.json",
+
+  // The declarations the package ships, as `build:lib` emits them (tsc, then scripts/declaration-specifiers.ts), so
+  // the report describes exactly what a consumer type-checks against. api-extractor reads them with its own bundled
+  // TypeScript; the repository's TypeScript 7 has no classic compiler API for it to use.
+  "mainEntryPointFilePath": "<projectFolder>/dist/index.d.ts",
+  "bundledPackages": [],
+  "compiler": { "tsconfigFilePath": "<projectFolder>/tsconfig.build.json" },
+
+  "apiReport": {
+    "enabled": true,
+    "reportFolder": "<projectFolder>/etc/",
+    // Where a run writes the report it compares against etc/ (gitignored).
+    "reportTempFolder": "<projectFolder>/temp/"
+  },
+
+  // Not needed by the gate. The doc model (for api-documenter) comes with the generated reference; the d.ts rollup
+  // would change what the package ships, which smoke-package.sh pins.
+  "docModel": { "enabled": false },
+  "dtsRollup": { "enabled": false },
+  "tsdocMetadata": { "enabled": false },
+
+  // Every message fails `api:check` (a warning fails a run without --local), except the policy below.
+  "messages": {
+    "compilerMessageReporting": { "default": { "logLevel": "warning" } },
+    "extractorMessageReporting": {
+      "default": { "logLevel": "warning", "addToApiReportFile": false },
+      // Policy: the package has one entry point and no release stages. Everything src/index.ts exports is public,
+      // and the report is what approves it, so no declaration carries @public, @beta or @alpha. @internal is still
+      // honoured: it keeps a reached declaration out of the report.
+      "ae-missing-release-tag": { "logLevel": "none" },
+      // A declaration the public surface reaches but src/index.ts does not export is written into the report, where
+      // review sees it; a new one changes the report and so fails api:check like any other change. The one left,
+      // SandboxConfigOptions (the base of the three mode configs), awaits the owner's decision on its name.
+      "ae-forgotten-export": { "logLevel": "warning", "addToApiReportFile": true }
+    },
+    "tsdocMessageReporting": { "default": { "logLevel": "warning" } }
+  }
+}

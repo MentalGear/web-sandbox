@@ -39,10 +39,14 @@ export const UNSAFE_PERMISSIONS = [
 /** The values `unsafeCapabilities` accepts: each reaches outside the frame and warns once when enabled. */
 export const UNSAFE_CAPABILITIES = [...UNSAFE_SANDBOX_FLAGS, ...UNSAFE_PERMISSIONS] as const;
 
-// Everything that may end up in the sandbox attribute
+/**
+ * Everything that may end up in the sandbox attribute: the members of SandboxCapability.
+ * @internal
+ */
 export const ALLOWED_CAPABILITIES = [...SAFE_CAPABILITIES, ...UNSAFE_SANDBOX_FLAGS] as const;
 
 export type SafeCapability = (typeof SAFE_CAPABILITIES)[number];
 export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];
 export type UnsafePermission = (typeof UNSAFE_PERMISSIONS)[number];
-export type SandboxCapability = (typeof ALLOWED_CAPABILITIES)[number];
+// ALLOWED_CAPABILITIES's members, derived from the two public lists it joins, so the public type names no internal value.
+export type SandboxCapability = SafeCapability | (typeof UNSAFE_SANDBOX_FLAGS)[number];

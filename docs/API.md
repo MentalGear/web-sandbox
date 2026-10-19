@@ -78,7 +78,8 @@ name (the guest's own frame cannot; its `window.name` is inert).
 ## Configuration
 
 **`setConfig(config: SandboxConfig): void`** replaces the configuration and rebuilds the environment
-(see [Lifecycle](#lifecycle)). `SandboxConfig` is a union keyed by `mode`: strict mode's `origins` has no `scripts`, and
+(see [Lifecycle](#lifecycle)). `SandboxConfig` is a union keyed by `mode` (`StrictSandboxConfig`,
+`CooperativeSandboxConfig`, `WorkerSandboxConfig`): strict mode's `origins` has no `scripts`, and
 a config without `mode` is a strict config (strict mode is the default).
 
 - Each call is applied **over the defaults, not over the previous configuration**: an option left out returns
@@ -440,7 +441,7 @@ to the files, as one `registerFiles()` / `unregisterFiles()` would, and removes 
 
 ## Events
 
-All events are `CustomEvent`s dispatched on the element. None is `composed`.
+All events are `CustomEvent`s dispatched on the element. None is `composed`. `WebSandboxEventMap` types each one.
 
 | Event | `detail` | Bubbles | When |
 | :--- | :--- | :--- | :--- |
@@ -516,7 +517,7 @@ Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerEx
 past `LOG_EVENTS_PER_SECOND` (lines delivered late, while your page was busy, can arrive closer together than the guest
 sent them): `[Sandbox] the guest logged more than 1000 lines in one second; lines past that rate are not dispatched as
 'sandbox-log' events.`; and, in strict mode, one `warn` line per environment at the view's first overrun (an operation
-past 2000 ms that did not end the sandbox; see [`sandboxView`](#sandboxview)): `[Sandbox] the view spent more than
+past 2000 ms that did not end the sandbox; see [`sandboxView`](#sandboxview-strict-mode)): `[Sandbox] the view spent more than
 2000 ms on one operation; a second such operation within 5 minutes ends the sandbox.`
 
 ### `violation` — `SandboxViolation`
@@ -566,7 +567,7 @@ already read, an error, a refusal), and they can arrive after the call that tore
 | `the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)` | The host page enforces Trusted Types and its `trusted-types` directive does not name `web-sandbox`, also when the host page's own default policy takes the element's strings (the view and worker mode's frame need the policy themselves). |
 | `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
-| `the view spent more than 2000 ms on one operation twice within 5 minutes` | Strict mode: an operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it, and another one had, at most 5 minutes before it. The first such operation only logs a `warn` line (see [`sandbox-log`](#sandbox-log--sandboxlog)); see [`sandboxView`](#sandboxview). |
+| `the view spent more than 2000 ms on one operation twice within 5 minutes` | Strict mode: an operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it, and another one had, at most 5 minutes before it. The first such operation only logs a `warn` line (see [`sandbox-log`](#sandbox-log--sandboxlog)); see [`sandboxView`](#sandboxview-strict-mode). |
 | `unknown mode …` | `mode` is not `strict`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`. |
 | `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned, an `origins` that is not an object, or a kind of it that is not a list. |
 | `the environment could not be built (…)` | Building the frame failed. |
@@ -1202,7 +1203,7 @@ This list is closed: a cost of the view not listed here and not inside (a) or (b
 | CSS animations and transitions while `allowAnimations: true` (the default), and while they run | 5 000 animated elements: 81–92% busy (Firefox 21–89% by property); transitions 75–87%; scroll-driven animations 47–92%. `false` brings every vector back to idle. | [research 16](research/16_view_isolation/README.md#what-keeps-a-shared-thread-busy); [`allowAnimations`](#allowanimations-and-allowautoplay) |
 | What else runs on its own, which `allowAnimations: false` does not stop: animated images, indeterminate `<progress>`, autoplaying media with `allowAutoplay: true` | 2 000 animated PNGs: WebKit 39% (+22 points), Firefox 12%; 5 000 `<progress>`: up to +4 points; 20 looping videos: up to +6 points | research 16 |
 | Relayout after image decodes or font swaps: the browser's work after the frame the meter measured; only the load rate and the caps of (c) bound it | One render of 1 000 admitted images without dimensions above 15 000 paragraphs, the responses spread over 2 s, so that each arrival lays the paragraphs out again: over the 3 s after it, Chromium 40%, Firefox 22%, WebKit 37% busy, longest gap 226, 55 and 289 ms (the loads themselves included; (a)'s flood of images with dimensions, 3–8%). One `@font-face` swap over 15 000 paragraphs: 2%, 5% and 23% busy over the 3 s around it, longest gap 31, 54 and 214 ms. | [review round 5](security/REVIEW-ROUND-5-2026-10-19.md), "What remains"; `test/e2e/view-bound.spec.ts` (d), on demand |
-| The documented single-operation stalls, each one operation's own cost: CSS filters, bidirectional text, small CSS changes over many elements, selectors whose matching grows faster than the elements, `<img>` in Chromium, and WebKit's first value of a 250 000-character textarea | 10 `blur()`s on 1 000 elements: WebKit 3.7 s (100 on 1 000: over 180 s); 240 000 characters of bidirectional text in one paragraph: tens of seconds in Chromium and WebKit; a 31-character `text()` into a `<style>` over 46 000 elements: Firefox 7 s; a rule whose `:has()` looks at every later sibling, over 24 000 elements: Chromium 4.2 s, Firefox 8.9–9.2 s, WebKit 7.1–8.6 s; 6 500 `<img alt>`: Chromium 1.9–2.6 s (Firefox and WebKit about 150 ms); the first `set()` of a 250 000-character textarea: WebKit over 2 s, an overrun the sandbox survives. Past `VIEW_MAX_OPERATION_MS` each is an overrun, after the stall: charged in full, and the second within `VIEW_OVERRUN_WINDOW_MS` ends the sandbox ((b)). | [broad review](security/BROAD-REVIEW-2026-10-14.md), review rounds [1](security/REVIEW-ROUND-1-2026-10-15.md), [4](security/REVIEW-ROUND-4-2026-10-18.md) and [5](security/REVIEW-ROUND-5-2026-10-19.md) |
+| The documented single-operation stalls, each one operation's own cost: CSS filters, bidirectional text, small CSS changes over many elements, selectors whose matching grows faster than the elements, `<img>` in Chromium, and WebKit's first value of a 250 000-character textarea | 10 `blur()`s on 1 000 elements: WebKit 3.7 s (100 on 1 000: over 180 s); 240 000 characters of bidirectional text in one paragraph: tens of seconds in Chromium and WebKit; a 31-character `text()` into a `<style>` over 46 000 elements: Firefox 7 s; a rule whose `:has()` looks at every later sibling, over 24 000 elements: Chromium 4.2 s, Firefox 8.9–9.2 s, WebKit 7.1–8.6 s; 6 500 `<img alt>`: Chromium 1.9–2.6 s, Firefox and WebKit about 150 ms (an example, measured 2026-10-18); the first `set()` of a 250 000-character textarea: WebKit over 2 s, an overrun the sandbox survives. Past `VIEW_MAX_OPERATION_MS` each is an overrun, after the stall: charged in full, and the second within `VIEW_OVERRUN_WINDOW_MS` ends the sandbox ((b)). | [broad review](security/BROAD-REVIEW-2026-10-14.md), review rounds [1](security/REVIEW-ROUND-1-2026-10-15.md), [4](security/REVIEW-ROUND-4-2026-10-18.md) and [5](security/REVIEW-ROUND-5-2026-10-19.md) |
 | Memory: not bounded | No budget counts it. The caps of (c) bound what the document holds, not what that costs in memory (decoded images, the caches of up to `VIEW_MAX_DISTINCT_URLS` URLs, layout structures); measured only where it ended a run: a flood of large rejections took Firefox's content process to 7 GB before the uncaught budget ended such floods | [review round 5](security/REVIEW-ROUND-5-2026-10-19.md), N-1 |
 | `:hover` restyles driven by the user's pointer over many elements | 80–100% busy while the pointer moves (5 000 elements under a `:hover ~` rule) | research 16 |
 | Firefox's cost of the worker's unhandled rejections, which it reports on the view's thread, cancelled or not | Within `UNCAUGHT_PER_SECOND`: 1 000 cancelled a second idle, 1 000 handled a tick later 4–7% busy, 1 Mi characters a second 6%; one rejection of 16 Mi characters about 0.5 s, after which the sandbox ends. A relay worker does not change it. | `src/lib/egress.ts`; [research 19](research/19_relay_worker/README.md) |
@@ -1269,7 +1270,8 @@ Values:
 `document.createElement('web-sandbox')` is typed as a `WebSandbox` (`HTMLElementTagNameMap`), and its
 `addEventListener` types each event's `detail`.
 
-Types: `SandboxConfig`, `SandboxState`, `CallLimits`, `RpcError`, `RpcErrorCode`, `SandboxLog`, `SandboxLogLevel`,
+Types: `SandboxConfig`, `StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, `SandboxState`,
+`WebSandboxEventMap`, `CallLimits`, `RpcError`, `RpcErrorCode`, `RpcLibraryCode`, `SandboxLog`, `SandboxLogLevel`,
 `SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,
 `FileInfo`, `FileError`, `FileErrorCode`, `SandboxFiles`, `GuestWrite`, `SandboxOrigins`, `StrictSandboxOrigins`,
 `SafeCapability`, `UnsafeCapability`, `UnsafePermission`, `SandboxCapability`.

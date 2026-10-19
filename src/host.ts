@@ -436,15 +436,17 @@ interface StrictInit {
     origins: { images: readonly string[]; media: readonly string[] };
 }
 
+// What the element extends: HTMLElement where there is a DOM. Importing the package must not need one (review round 2,
+// C-8): an embedder reads viewScriptHash() in a build step, in Node or Bun, and the class declaration is the only thing
+// evaluated at import that names a DOM interface. Without a DOM the class extends an empty one, which nothing constructs.
+// It is private to this module and typed `typeof HTMLElement`, so the declarations name HTMLElement instead
+// (scripts/declaration-base.ts rewrites dist/host.d.ts): the public type is the same, and no stand-in is a public name.
+const ElementBase: typeof HTMLElement = typeof HTMLElement === 'function' ? HTMLElement : (class {} as unknown as typeof HTMLElement);
+
 /**
  * The `<web-sandbox>` element: one sandboxed environment for untrusted web content, rebuilt by setConfig(),
  * load() and reset(). Register it with defineWebSandbox(). Public surface: docs/API.md.
  */
-// What the element extends: HTMLElement where there is a DOM. Importing the package must not need one (review round 2,
-// C-8): an embedder reads viewScriptHash() in a build step, in Node or Bun, and the class declaration is the only thing
-// evaluated at import that names a DOM interface. Without a DOM the class extends an empty one, which nothing constructs.
-const ElementBase: typeof HTMLElement = typeof HTMLElement === 'function' ? HTMLElement : (class {} as unknown as typeof HTMLElement);
-
 export class WebSandbox extends ElementBase {
     private _iframe: HTMLIFrameElement | null = null;
     // The reversed handshake (broad review 2026-10-14, CB1): the listener on the host's window, removed by _teardown
@@ -702,9 +704,10 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * The guest's pending writes and removals (guestWrites), sorted by path: `{ path, change: 'write', type, size,
-     * content }` (content a copy of the bytes) or `{ path, change: 'remove' }`. Empty when writes are off. They belong
-     * to the current environment, survive its termination, and are discarded by the next build and on removal.
+     * The guest's pending writes and removals (guestWrites), sorted by path:
+     * `{ path, change: 'write', type, size, content }` (content a copy of the bytes) or `{ path, change: 'remove' }`.
+     * Empty when writes are off. They belong to the current environment, survive its termination, and are discarded by
+     * the next build and on removal.
      */
     listGuestWrites(): GuestWrite[] {
         return this._guestWrites?.list() ?? [];
@@ -1063,7 +1066,7 @@ export class WebSandbox extends ElementBase {
      * frame is inserted, accepts exactly one such announcement per environment: a trusted message from the guest
      * frame's own window (identity: the wrapper's frames[0]) carrying exactly one port. Every later announcement from
      * that window, or one this build does not expect, or a malformed one, ends the environment: a guest that reloads
-     * itself (location.reload(), a <meta refresh> without a URL) or rewrites its document so a bootstrap runs again
+     * itself (location.reload(), a `<meta refresh>` without a URL) or rewrites its document so a bootstrap runs again
      * announces again, and a guest that forges one can only end its own environment (PD8). Messages from any other
      * window, and the guest's other messages, are not this listener's (they reach the embedder's own listeners).
      *

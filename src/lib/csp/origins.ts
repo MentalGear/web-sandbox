@@ -20,9 +20,9 @@ export interface SandboxOrigins {
     connect?: readonly string[];
     /** Images, CSS backgrounds, icons: img-src. */
     images?: readonly string[];
-    /** Stylesheets (`<link rel=stylesheet>`, @import): style-src. Inline styles are always allowed. */
+    /** Stylesheets (`<link rel=stylesheet>`, `@import`): style-src. Inline styles are always allowed. */
     styles?: readonly string[];
-    /** Web fonts (@font-face): font-src. */
+    /** Web fonts (`@font-face`): font-src. */
     fonts?: readonly string[];
     /** Audio, video, text tracks: media-src. */
     media?: readonly string[];

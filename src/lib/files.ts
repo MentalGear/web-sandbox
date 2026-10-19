@@ -39,13 +39,13 @@ export interface FileInfo {
  * caller, and a guest write is refused by the host's reserved method (guest-writes.ts).
  *   INVALID_PATH          a path fails isValidPath(), or a list of paths is not an array
  *   INVALID_FILE          the batch is not an object, or an entry is not a string, a Uint8Array or
- *                         { content, type } with a valid type (a guest write: not a write or a remove)
+ *                         `{ content, type }` with a valid type (a guest write: not a write or a remove)
  *   FILES_QUOTA_EXCEEDED  the store after the change would exceed MAX_FILES or MAX_TOTAL_BYTES (a
  *                         JavaScript file counts its registered bytes plus what its rewrite adds,
  *                         rewriteCost(); a stylesheet its registered bytes plus what its references
  *                         add, referenceCost())
  *   FILES_NOT_ALLOWED     an opt-in is missing: a guest write while guestWrites is off, or a commit of a file
- *                         whose type is not inert (INERT_TYPES, guest-writes.ts) without { code: true }
+ *                         whose type is not inert (INERT_TYPES, guest-writes.ts) without `{ code: true }`
  *   FILES_BUSY            a guest write past the per-environment rate (guest-writes.ts); retryable
  * In the guest, every failed lookup is NOT_FOUND (in-sandbox-files.ts).
  */

@@ -92,7 +92,7 @@ Rows re-checked against the items below on 2026-10-10. Items marked ✅ below ke
 
 ## T · Broken Foundations
 
-### T1 · The entire e2e suite is dark — ✅ **done**
+### <a id="t1"></a>T1 · The entire e2e suite is dark — ✅ **done**
 
 **Done**: every spec now drives `test/e2e/harness.html` through the `SandboxDriver` fixture in
 `test/e2e/fixture.ts`. The playground can move without touching the suite.
@@ -117,7 +117,7 @@ the specs against it, so the next playground move breaks one file instead of fif
 **Acceptance**: `bun run test:e2e` runs green; deliberately reverting a mitigation turns the
 matching `reproduce.spec.ts` red.
 
-### T2 · `test/unit` never runs, and is red when it does — ✅ **done**
+### <a id="t2"></a>T2 · `test/unit` never runs, and is red when it does — ✅ **done**
 
 **Done**: vitest includes `test/unit`; the test imports `ALLOWED_CAPABILITIES` from
 `@src/csp-directives`, its real home, so no new public export was added to `host.ts`.
@@ -136,7 +136,7 @@ This is the deny-list test that guards findings 01, 02 and 05 — the ones that 
 **Acceptance**: `bun run test:unit` collects both directories and is green; deleting the filter
 in `setConfig()` (`src/host.ts:70`) turns it red.
 
-### T3 · `bun test` and `bun run build` fail on stale paths — ✅ **done**
+### <a id="t3"></a>T3 · `bun test` and `bun run build` fail on stale paths — ✅ **done**
 
 **Done**: `bun run test` runs unit then e2e (`bun test` without `run` is Bun's own runner, so the
 README now says `bun run test`); Playwright starts Vite itself; `vite build` targets the playground;
@@ -157,7 +157,7 @@ README now says `bun run test`); Playwright starts Vite itself; `vite build` tar
 
 **Acceptance**: `bun test` runs unit **and** e2e from a clean checkout; `bun run build` completes.
 
-### T4 · Presets are not wired into the tests — ✅ **done**
+### <a id="t4"></a>T4 · Presets are not wired into the tests — ✅ **done**
 
 **Guarantee**: an attack is written down once, in `src/lib/presets.ts`, and the playground and the
 regression specs run that same definition; a security preset without a spec, or a research reproduction
@@ -196,7 +196,7 @@ specs hard-code their payloads. The unification is documented but not built.
 **Acceptance**: each `reproduce.spec.ts` sources its payload and rules from a preset id; adding a
 preset without a spec fails a coverage assertion.
 
-### T5 · Egress specs rely on request routing that can miss guest requests — ✅ **done**
+### <a id="t5"></a>T5 · Egress specs rely on request routing that can miss guest requests — ✅ **done**
 
 **Guarantee**: every "nothing left the sandbox" assertion rests on evidence that cannot silently
 miss a request.
@@ -260,7 +260,7 @@ control, and a matched reference the outcome channel's.
 
 ## S · Security & Correctness
 
-### S1 · Worker mode escapes the sandbox CSP — ✅ **done**
+### <a id="s1"></a>S1 · Worker mode escapes the sandbox CSP — ✅ **done**
 
 **Done**: worker mode now creates the sandbox frame too, and a bootstrap inside it spawns the worker
 (`src/lib/worker-bootstrap.ts`), so the worker inherits the opaque origin and the sandbox CSP. A
@@ -282,7 +282,7 @@ origin and injected CSP; route the `MessagePort` handshake through the frame.
 **Acceptance**: worker-mode `fetch` to a domain absent from `connectionsAllowed` is blocked, and
 `importScripts` of an external URL fails — asserted in a *running* spec.
 
-### S2 · User markup can delete the injected CSP — ✅ **done**
+### <a id="s2"></a>S2 · User markup can delete the injected CSP — ✅ **done**
 
 **Done**: the security block is prepended before any user content instead of spliced into it
 (`buildGuestDocument()` in `src/lib/frame-documents.ts`). The parser ignores the user's later
@@ -318,7 +318,7 @@ before any user content and assert the parsed result. Fuzz it against hostile in
 to fail against today's code), and the meta is asserted to be the first *parsed* head child across
 a corpus of malformed and hostile documents.
 
-### S3 · The session id is readable by sandboxed code — ✅ **done**
+### <a id="s3"></a>S3 · The session id is readable by sandboxed code — ✅ **done**
 
 **Done** ([ADR-004](ADR-004-files-as-blob-urls.md)): there is no session id any more. Files reach the
 guest as `blob:` URLs minted in its own realm, which neither another sandbox nor the host page can
@@ -341,7 +341,7 @@ even when handed its session id.
 If the Service Worker is replaced by blob-URL files, this guarantee moves to C1's containment
 acceptance rather than disappearing with it.
 
-### S4 · `scriptUnsafe` has no guard rail — ✅ **done**
+### <a id="s4"></a>S4 · `scriptUnsafe` has no guard rail — ✅ **done**
 
 **Guarantee**: an instance that enables `scriptUnsafe` says so on the console exactly once, naming the
 risk: guest code can run strings as code.
@@ -363,7 +363,7 @@ presets and in every e2e spec, so it is the path of least resistance for a copy-
 **Work**: a one-time console warning when enabled, and a prominent README note that it exists for
 testing. **Acceptance**: enabling it emits exactly one warning per instance.
 
-### S5 · No CSP violation reporting — ✅ **done**
+### <a id="s5"></a>S5 · No CSP violation reporting — ✅ **done**
 
 **Guarantee**: every CSP violation the engine raises in the guest's own document (iframe mode) or worker
 (worker mode) is offered to the host as a `violation` event on the element, by a listener installed
@@ -407,7 +407,7 @@ success log with a 2s timeout — slow and prone to false green.
 a first-class event. **Acceptance**: a blocked request produces an observable `violation` event on
 the host, and the security specs assert on it directly.
 
-### S6 · No execution budget in iframe mode — ✅ **done** (strict mode, the default; cooperative-mode watchdog, its same-thread case a limit, S44)
+### <a id="s6"></a>S6 · No execution budget in iframe mode — ✅ **done** (strict mode, the default; cooperative-mode watchdog, its same-thread case a limit, S44)
 
 **Done (strict mode, 2026-10-13)**, decided in [ADR-005](ADR-005-strict-mode.md): `mode: 'strict'` runs guest
 code only in a worker spawned by a view document whose policy admits one script, the library's bootstrap, by
@@ -485,7 +485,7 @@ runs in its own process, and the README states the same-thread limit plainly.
 
 ---
 
-### S7 · Silently ignored CSP directives — ✅ **done**
+### <a id="s7"></a>S7 · Silently ignored CSP directives — ✅ **done**
 
 *From [Research 11.1](research/11_meta_csp_delivery/README.md).*
 
@@ -524,7 +524,7 @@ directive the browser discards.
 *Update (2026-10-13, S16)*: the shipped default no longer lists `frame-ancestors`, and an explicit `[]`
 is now emitted as `frame-ancestors 'none'`, which a `<meta>` policy discards like any other value.
 
-### S8 · Pre-policy egress window — **P3 · accepted risk** (cooperative mode; a limit, S44)
+### <a id="s8"></a>S8 · Pre-policy egress window — **P3 · accepted risk** (cooperative mode; a limit, S44)
 
 *2026-10-15*: a cooperative-mode limit. Strict mode's view document holds only the policy and the library's script
 when it is parsed, and guest markup reaches it later, rendered under the policy.
@@ -542,7 +542,7 @@ for exfiltration where the URL is the payload.
 closes only under header delivery, where the policy arrives with the response carrying the content.
 Tracked as a known limitation; see [ADR-001](ADR-001-continue-or-adopt.md).
 
-### S9 · `base-uri` and `form-action` are silently unrestricted — ✅ **done**
+### <a id="s9"></a>S9 · `base-uri` and `form-action` are silently unrestricted — ✅ **done**
 
 **Done**: `generateCSP()` emits `'none'` for an empty directive listed in `NON_FALLBACK_DIRECTIVES`
 (`base-uri`, `form-action`). `frame-ancestors` is left out on purpose: browsers ignore it under
@@ -582,7 +582,7 @@ empty non-fallback directive instead of omitting it. Default `base-uri` to `'sel
 **Acceptance**: `docs/research/12_non_fallback_directives/reproduce.spec.ts` passes (both cases are
 written to fail against today's code).
 
-### S10 · The guest frame can navigate itself to carry data out — ✅ **done**
+### <a id="s10"></a>S10 · The guest frame can navigate itself to carry data out — ✅ **done**
 
 *From [issue #6](https://github.com/MentalGear/web-sandbox/issues/6) (N1) and
 [Research 14](research/14_self_navigation/README.md).*
@@ -598,7 +598,7 @@ including ones the child starts, before the request is sent. Research 14.1 cover
 
 Confirmed in Chromium, Firefox and WebKit (CI).
 
-### S11 · A fresh port is handed to whatever document loads next — ✅ **done**
+### <a id="s11"></a>S11 · A fresh port is handed to whatever document loads next — ✅ **done**
 
 *From issue #6 (N2).*
 
@@ -609,7 +609,7 @@ Confirmed in Chromium, Firefox and WebKit (CI).
 queue, removes the frame and fires `terminated`; `execute()` is refused until the next
 `setConfig()` / `load()`. Research 14.2.
 
-### S12 · Risky capabilities are on the allow-list — ✅ **done**
+### <a id="s12"></a>S12 · Risky capabilities are on the allow-list — ✅ **done**
 
 *From issue #6 (N3) and [Research 13](research/13_popup_exfiltration/README.md).*
 
@@ -623,7 +623,7 @@ ones are dropped from `capabilities` with a warning and accepted only through `u
 which warns once per capability per instance. `allow-forms` stays safe: `form-action` defaults to
 `'none'` (S9) and a form submission is a navigation the wrapper blocks (S10).
 
-### S13 · No WebRTC egress guarantee — ✅ **done in strict mode** (the default); cooperative mode: a limit (frames the guest creates, S44)
+### <a id="s13"></a>S13 · No WebRTC egress guarantee — ✅ **done in strict mode** (the default); cooperative mode: a limit (frames the guest creates, S44)
 
 **Done (strict mode, 2026-10-13, [ADR-005](ADR-005-strict-mode.md))**: guest code runs only in a worker, which
 has no peer-connection constructor, and the view runs no guest script; a frame in rendered markup is removed
@@ -692,7 +692,7 @@ guest script in the DOM frame, no frame can be created that runs one.
 and in any frame it creates, on Chromium, Firefox and WebKit (CI). Met for the guest; not for frames it
 creates.
 
-### S14 · **script-src 'self'** admits other origins in the guest — ✅ **done**
+### <a id="s14"></a>S14 · **script-src 'self'** admits other origins in the guest — ✅ **done**
 
 *From the [blob-delivery probe](research/blob-delivery-probe.md).*
 
@@ -731,7 +731,7 @@ any opaque-origin document (`sandbox` without `allow-same-origin`, or a `data:` 
 policy; every fetch directive; with `upgrade-insecure-requests`, http origins too. The drop stays: it does not
 depend on the engine.
 
-### S15 · The guest can read the host page's URL — ✅ **done** (platform limits below; WebKit residual in S17)
+### <a id="s15"></a>S15 · The guest can read the host page's URL — ✅ **done** (platform limits below; WebKit residual in S17)
 
 **Guarantee**: nothing in the guest's own document or location reveals the host page's URL or origin.
 
@@ -799,7 +799,7 @@ Measured 2026-10-13 (same builds as above), before → after; "host URL" include
 - WebKit gives a frame the guest creates the host page URL, minus fragment, as `document.referrer`
   (S17). That is the full path and query, so the guarantee does not hold in WebKit until S17 is done.
 
-### S16 · An empty directive array can widen the policy — ✅ **done**
+### <a id="s16"></a>S16 · An empty directive array can widen the policy — ✅ **done**
 
 **Guarantee**: no configuration can make the emitted policy broader than the same configuration with
 that directive left out.
@@ -837,7 +837,7 @@ Tests:
 - e2e: `test/e2e/empty-directive.spec.ts` — with `connectionsAllowed: { 'default-src': [] }` an image
   and a fetch to a non-allowlisted origin are refused, each with its violation, in all three engines.
 
-### S17 · WebKit shows a frame the guest creates the host page URL — ✅ **done in strict mode** (the default); cooperative mode: a limit (S44)
+### <a id="s17"></a>S17 · WebKit shows a frame the guest creates the host page URL — ✅ **done in strict mode** (the default); cooperative mode: a limit (S44)
 
 **Done (strict mode, 2026-10-13, [ADR-005](ADR-005-strict-mode.md))**: guest code runs only in the worker, which
 has no document and whose location is its own `blob:` URL, and the renderer removes every frame from rendered
@@ -863,7 +863,7 @@ S11 and the file tests before choosing; report upstream to WebKit in any case.
 
 **Acceptance**: in WebKit, no frame the guest can create reads the host page's path or query.
 
-### S18 · WebKit sends the host page URL to same-site origins when the guest asks — ✅ **closed in strict mode** (the default); cooperative mode: a limit (S44)
+### <a id="s18"></a>S18 · WebKit sends the host page URL to same-site origins when the guest asks — ✅ **closed in strict mode** (the default); cooperative mode: a limit (S44)
 
 *Found by [research 15](research/15_strict_mode/README.md), P8 (amendment A9).*
 
@@ -886,7 +886,7 @@ rendered markup asking for `unsafe-url` every way it can (attribute, `<meta>`, C
 cross-site and same-site, carry no `Referer` and no host `Origin` in all three engines, while the host page's
 own control shows what each engine would send (WebKit: the full URL same-site).
 
-### S19 · A configured value or key could add CSP directives — ✅ **done**
+### <a id="s19"></a>S19 · A configured value or key could add CSP directives — ✅ **done**
 
 *From the [adversarial review 2026-10](security/ADVERSARIAL-REVIEW-2026-10.md), A1 and A2.*
 
@@ -906,7 +906,7 @@ Everything dropped is warned about once. Tests: `src/lib/csp/policy-grammar.test
 element in strict and iframe mode: fixed directives keep their values, the directive set is what the config may
 name, each once), `test/e2e/review-policy.spec.ts` (the strict view, all engines).
 
-### S20 · Bootstrap check and config hygiene — ✅ **done**
+### <a id="s20"></a>S20 · Bootstrap check and config hygiene — ✅ **done**
 
 *From the review, A3–A8.*
 
@@ -930,7 +930,7 @@ interpolation. A7: `deepMerge` defines every key as an own data property, so no 
 with `__proto__`, `constructor`, `prototype` at any depth). Tests: `src/lib/csp/file-sources.test.ts`,
 `test/unit/policy-guarantees.test.ts`, `test/e2e/review-policy.spec.ts` ("A3 class").
 
-### S21 · The channel: one trusted INIT_PORT, a port guest code cannot reach — ✅ **done**
+### <a id="s21"></a>S21 · The channel: one trusted INIT_PORT, a port guest code cannot reach — ✅ **done**
 
 *From the review, B1, B2 and B4; [ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-14-adversarial-review-the-channel).*
 
@@ -949,7 +949,7 @@ ports. Worker mode keeps `Worker`/`SharedWorker`: the watchdog no longer depends
 `test/e2e/review-channels.spec.ts`, `src/lib/in-sandbox-script.test.ts`, `test/unit/channel-guarantees.test.ts`.
 The specs that used to forge frames on the port now forge through what the bootstrap reads.
 
-### S22 · Logs, re-entrancy, fetch headers, calls in flight — ✅ **done**
+### <a id="s22"></a>S22 · Logs, re-entrancy, fetch headers, calls in flight — ✅ **done**
 
 *From the review, B3, B5, B6 and B7.*
 
@@ -970,7 +970,7 @@ check. B6: the bridge builds the `Request` before it records anything, and what 
 `failed` is documented as "the browser's fetch rejected", not "a request was sent". B3: `_dispatchLog` makes
 the detail itself from the raw line and its source.
 
-### S23 · Strict mode: the entry's scope and the prelude's lists — ✅ **done**
+### <a id="s23"></a>S23 · Strict mode: the entry's scope and the prelude's lists — ✅ **done**
 
 *From the review, C2 and C3; [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-adversarial-review).*
 
@@ -986,7 +986,7 @@ holds a non-configurable function, which only a top-level declaration of an entr
 a name the prelude cannot delete is an error. The prelude's lists have no prototype. Tests:
 `test/e2e/review-strict.spec.ts`, `src/lib/in-sandbox-view.test.ts`, `test/unit/strict.test.ts`.
 
-### S24 · Strict view residuals: CSS references, the shared violation cap, browser link actions — ✅ **done**
+### <a id="s24"></a>S24 · Strict view residuals: CSS references, the shared violation cap, browser link actions — ✅ **done**
 
 *From the review, C1, C4 and C5.*
 
@@ -1017,7 +1017,7 @@ a name the prelude cannot delete is an error. The prelude's lists have no protot
   guest's marker, `:link`, focus, role and a real drag's data read from outside; a real click and Enter delivered,
   nothing navigated), `src/lib/in-sandbox-view.test.ts`.
 
-### S25 · Guest data can carry own `__proto__` keys — **documented** (by design)
+### <a id="s25"></a>S25 · Guest data can carry own `__proto__` keys — **documented** (by design)
 
 *From the review, B8.*
 
@@ -1027,7 +1027,7 @@ Structured clone keeps an own `__proto__` key (measured in all three engines), s
 `sandbox-log` in the README; `deepMerge` (the element's own config merge) skips the key (S20). Asserted:
 `test/e2e/review-channels.spec.ts` ("B8").
 
-### S26 · A build that fails is a termination; the config is a copy — ✅ **done**
+### <a id="s26"></a>S26 · A build that fails is a termination; the config is a copy — ✅ **done**
 
 *From the follow-up by-construction audit of the review (2026-10-14).*
 
@@ -1043,7 +1043,7 @@ its argument; a config that cannot be cloned or is not an object applies nothing
 mode). `setConfig()` never throws. [ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment).
 Tests: `test/unit/policy-guarantees.test.ts` ("Every build failure is a termination"), `test/e2e/review-followup.spec.ts`.
 
-### S27 · A committed inert file could run as a script of the next build — ✅ **done**
+### <a id="s27"></a>S27 · A committed inert file could run as a script of the next build — ✅ **done**
 
 *From the [focused review 2026-10-14](security/FOCUSED-REVIEW-2026-10-14.md), W1 (high).*
 
@@ -1059,7 +1059,7 @@ policy's `blob:` admission all read it. A mismatch stays as written, with one wa
 committed CSS still styles the next build's markup; code that loads `sandboxFiles.url()` as a script itself
 decides what runs. Tests: `src/lib/load-kinds.test.ts`, `test/unit/focused-review.test.ts`, `test/e2e/focused-review.spec.ts`.
 
-### S28 · Guest writes: rate windows, stale marks, a synchronous throw, a documented disagreement — ✅ **done**
+### <a id="s28"></a>S28 · Guest writes: rate windows, stale marks, a synchronous throw, a documented disagreement — ✅ **done**
 
 *From the focused review, W2–W5 (low, info).*
 
@@ -1071,7 +1071,7 @@ limit (W2). A removal mark whose path the host unregistered is forgotten before 
 the guest's view and `listGuestWrites()` disagree by design: a `fileswritten` listener that terminates, or blocks
 past the 30 s call timeout (W5). Tests: `test/unit/focused-review.test.ts`.
 
-### S29 · SVG animation re-animated a checked attribute in the strict view — ✅ **done**
+### <a id="s29"></a>S29 · SVG animation re-animated a checked attribute in the strict view — ✅ **done**
 
 *From the focused review, F1 (medium).*
 
@@ -1081,7 +1081,7 @@ it loaded an unchecked URL (Chromium, Firefox). **Done**: the renderer removes e
 ([ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer)).
 Tests: `test/e2e/focused-review.spec.ts` ("F1"), `src/lib/in-sandbox-view.test.ts`.
 
-### S30 · `workerExecutionTimeout` could be evaded — ✅ **done**
+### <a id="s30"></a>S30 · `workerExecutionTimeout` could be evaded — ✅ **done**
 
 *From the focused review, F2 (medium).*
 
@@ -1093,7 +1093,7 @@ executed code is compiled with a captured `Function`
 ([ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline)).
 Tests: `test/e2e/focused-review.spec.ts` ("F2"), `test/unit/followup-guarantees.test.ts`.
 
-### S31 · Error text in reasons, assigned config keys, two eval writers, a refused config stored; fetch per build — ✅ **done**
+### <a id="s31"></a>S31 · Error text in reasons, assigned config keys, two eval writers, a refused config stored; fetch per build — ✅ **done**
 
 *From the focused review, F3–F6 (low, info) and a hardening.*
 
@@ -1106,7 +1106,7 @@ that is not an object is refused (F6). `sandbox:fetch` is registered per build, 
 ([ADR-006 amendment](ADR-006-fetch-bridge.md#amendment-2026-10-14-the-method-is-bound-to-its-build)).
 Tests: `test/unit/focused-review.test.ts`.
 
-### S32 · The guest announces its port; a second announcement ends the environment — ✅ **done**
+### <a id="s32"></a>S32 · The guest announces its port; a second announcement ends the environment — ✅ **done**
 
 *From the [broad review 2026-10-14](security/BROAD-REVIEW-2026-10-14.md), CB1 (medium/low) and PD8 (low);
 [ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-14-broad-review-the-guest-announces-its-port).*
@@ -1118,7 +1118,7 @@ in `ready`. **Done**: the bootstrap's first statement makes the channel and post
 accepts exactly one announcement per environment, from the guest frame's window, and terminates on a second one.
 Worker mode's frame does the same. Tests: `test/e2e/broad-review.spec.ts` ("CB1", "PD8"), `review-channels.spec.ts`.
 
-### S33 · Lifecycle: calls queued while loading, a bounded load, one answer per build, one document — ✅ **done**
+### <a id="s33"></a>S33 · Lifecycle: calls queued while loading, a bounded load, one answer per build, one document — ✅ **done**
 
 *From the broad review, CB3, CB5, CB7 (low, info); [ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-loading-is-bounded-one-answer-per-build-one-document).*
 
@@ -1129,7 +1129,7 @@ moved into another document stops its guest and builds nothing there (Firefox ha
 guest running). Tests: `test/e2e/broad-review.spec.ts`, `test/unit/broad-review.test.ts`. *Since S46 the deadline
 bounds only the guest's check-in: a guest that keeps its document open is `ready`, and its slow images never count.*
 
-### S34 · Policy: no `data:` workers; every policy step widens only its own kinds — ✅ **done**
+### <a id="s34"></a>S34 · Policy: no `data:` workers; every policy step widens only its own kinds — ✅ **done**
 
 *From the broad review, PD1 (high, WebKit) and PA1 (info, latent); [ADR-004 amendment](ADR-004-files-as-blob-urls.md#amendment-2026-10-14-broad-review-answers-from-the-build-file-sources-widen-only-their-kinds).*
 
@@ -1138,7 +1138,7 @@ blocked listener, no violation). File sources' `blob:` reached `worker-src` thro
 **Done**: the default `worker-src` is `blob:`; a policy step removes `data:` from what governs worker loads; every
 step ends with `assertWidensOnly`. Upstream report text: [report appendix](security/BROAD-REVIEW-2026-10-14.md#appendix-upstream-reports).
 
-### S35 · Guest-realm hardening: keepalive, history traversal, `window.name`, DNS prefetch — ✅ **done in the guest realm**; residuals are cooperative-mode limits (S44)
+### <a id="s35"></a>S35 · Guest-realm hardening: keepalive, history traversal, `window.name`, DNS prefetch — ✅ **done in the guest realm**; residuals are cooperative-mode limits (S44)
 
 *From the broad review, PD2 (high, Firefox platform bug), PD3, PD4 (medium), PD6 (low).*
 
@@ -1149,7 +1149,7 @@ host page); `window.name` is inert (host named targets reached the guest frame);
 keepalive; history traversal in Firefox and WebKit; named targets); WebKit opens a connection for
 `<link rel=preconnect>`. Strict mode runs no guest script in a document.
 
-### S36 · Focus, clipboard and messages to the host window — **documented** (a cooperative-mode limit, S44)
+### <a id="s36"></a>S36 · Focus, clipboard and messages to the host window — **documented** (a cooperative-mode limit, S44)
 
 *From the broad review, PD5 (medium) and PD7 (low).*
 
@@ -1157,7 +1157,7 @@ Guest code can take focus from the host page (Chromium, Firefox) and, after a us
 clipboard (Firefox `writeText()`, Chromium and Firefox `execCommand('copy')`): measured and asserted per engine. The
 guest can post messages to the host window; the playground now checks `event.source`, and README and API.md say so.
 
-### S37 · No global lookups on EXECUTE; answers from the build; one fetch refusal text; packaging; presets; parse properties — ✅ **done**
+### <a id="s37"></a>S37 · No global lookups on EXECUTE; answers from the build; one fetch refusal text; packaging; presets; parse properties — ✅ **done**
 
 *From the broad review, CB2, CB4, CB6, PD9, I1, I2, PA2, PA3 (low, info).*
 
@@ -1168,7 +1168,7 @@ package lists its files and the smoke test asserts the tarball exactly, no sourc
 `scriptUnsafe` off; property tests for the host's and the guest's parse of rewritten markup and for inline-module
 rewrites; a test keeps the strict renderer's link kinds equal to `load-kinds.ts`.
 
-### S38 · The strict renderer was a list of what to remove — ✅ **done**
+### <a id="s38"></a>S38 · The strict renderer was a list of what to remove — ✅ **done**
 
 *From the broad review, reviewer C (strict mode).*
 
@@ -1178,24 +1178,24 @@ SVG `image`, `foreignObject`, handlers, form targets, popovers and invoker comma
 ([ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view)).
 Tests: `test/e2e/broad-strict.spec.ts`, `src/lib/in-sandbox-view.test.ts`.
 
-### S39 · A file the strict view showed could open as a script-running document — ✅ **done**
+### <a id="s39"></a>S39 · A file the strict view showed could open as a script-running document — ✅ **done**
 
 *ST1, medium.* The view mints URLs only for `VIEW_FILE_TYPES` (never a document), and `data:` is dropped from the
 directive that governs images. Tests: `test/e2e/broad-strict.spec.ts` ("ST1"), `test/unit/strict.test.ts`.
 
-### S40 · One render could stall the host by fan-out; the view's document was unbounded — ✅ **done**
+### <a id="s40"></a>S40 · One render could stall the host by fan-out; the view's document was unbounded — ✅ **done**
 
 *ST2, medium.* No instancing elements; at most `VIEW_MAX_ELEMENTS` elements and `VIEW_MAX_DEPTH` levels in the
 view, counted over the resulting document; a refused render is dropped, acknowledged and logged. Tests:
 `test/e2e/broad-strict.spec.ts` ("ST2"), `src/lib/in-sandbox-view.test.ts`.
 
-### S41 · An event detail was bounded per string, not in total — ✅ **done**
+### <a id="s41"></a>S41 · An event detail was bounded per string, not in total — ✅ **done**
 
 *ST3, low.* One character budget per detail, `truncated: true` when cut. *ST4, info*: the entry marker is named per
 build. *I1*: the renderer's link kinds come from load-kinds.ts. Tests: as S40, plus `test/unit/strict.test.ts`,
 `src/lib/load-kinds.test.ts`.
 
-### S42 · CSS paint cost in the strict view can stall the host page — ✅ **accepted** (documented; 2026-10-15)
+### <a id="s42"></a>S42 · CSS paint cost in the strict view can stall the host page — ✅ **accepted** (documented; 2026-10-15)
 
 **Restated** by review round 1 (S52): host-page availability is not protected wherever the view shares the host page's
 thread (WebKit always, Firefox, Chromium depending on its process model), not only in WebKit; the view's budgets bound
@@ -1217,7 +1217,7 @@ declarations outrank layers); (b) parse guest CSS with the browser's own parser 
 only allowlisted properties; (c) a view out of the host's process where the platform offers one. (a) is a list of
 expensive properties, so not by construction; (b) is the allowlist answer and costs every guest some CSS.
 
-### S43 · A guest worker keeps only allowlisted globals — ✅ **done**
+### <a id="s43"></a>S43 · A guest worker keeps only allowlisted globals — ✅ **done**
 
 *From the [independent verification 2026-10-14](security/VERIFICATION-2026-10-14.md), V1 (high on Firefox);
 [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist).*
@@ -1233,7 +1233,7 @@ more. Residual: a worker the guest creates in iframe mode (S44). Upstream report
 [broad review appendix](security/BROAD-REVIEW-2026-10-14.md#v1--firefox-bugzilla-core--dom-security-security-sensitive).
 Tests: `test/e2e/verification.spec.ts` ("V1"), `src/lib/worker-globals.test.ts`.
 
-### S44 · Cooperative-mode limits, one frozen list — **documented** (limits)
+### <a id="s44"></a>S44 · Cooperative-mode limits, one frozen list — **documented** (limits)
 
 *From the independent verification, V3 and H1 (measured), with the earlier residuals gathered here; frozen on
 2026-10-15 with S48.* The one list, the same in the [README](../README.md#cooperative-mode-limits) and
@@ -1279,7 +1279,7 @@ origins that are same-site with the host page (Firefox and WebKit, observed by t
 Tests: `verification.spec.ts` ("V1 … residual", "V3", "H1"), `broad-review.spec.ts` (PD2–PD8), `webrtc.spec.ts`,
 `host-url.spec.ts`, `watchdog.spec.ts`.
 
-### S45 · Verification gaps: the policy steps' input, a strict entry's first log lines, tests that could not fail, CI — ✅ **done**
+### <a id="s45"></a>S45 · Verification gaps: the policy steps' input, a strict entry's first log lines, tests that could not fail, CI — ✅ **done**
 
 *From the independent verification: 9 test gaps, V2 and the docs.*
 
@@ -1292,7 +1292,7 @@ two heavy unit tests are cheaper or state their bound; a guest cannot outlive `t
 announcement to `top` is not accepted (new tests); the strict-mode design probes run in CI (`bun run test:probes`).
 Docs: README mitigation 2, B8's "Done", the reports' "skipped" wording, the adversarial review's stale claims.
 
-### S46 · `ready` is the guest's check-in — ✅ **done**
+### <a id="s46"></a>S46 · `ready` is the guest's check-in — ✅ **done**
 
 *From the [independent verification](security/VERIFICATION-2026-10-14.md#decisions-after-the-verification), decision 1;
 [ADR-003 amendment](ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-ready-is-the-guests-check-in), ADR-002
@@ -1313,7 +1313,7 @@ engine and its calls time out, where Chromium and WebKit terminated it. Not cove
 `autoResize` may report while the document loads. Tests: `test/e2e/ready.spec.ts`, `broad-review.spec.ts` ("CB3"),
 `src/lib/in-sandbox-script.test.ts` ("the startup gate").
 
-### S47 · The guest policy is a template; the embedder lists origins — ✅ **done**
+### <a id="s47"></a>S47 · The guest policy is a template; the embedder lists origins — ✅ **done**
 
 *[ADR-007](ADR-007-typed-origins.md); owner-approved design.*
 
@@ -1344,7 +1344,7 @@ directives exactly the template's, fixed ones byte-identical, every other token 
 always admits the bootstrap), `test/unit/host.test.ts` (removal warning), and the e2e specs migrated on all engines.
 Dropped specs, now unrepresentable: the `-elem` directive cases of the A3 class (`review-policy.spec.ts`).
 
-### S48 · Strict is the default; `'iframe'` is renamed `'cooperative'`; cooperative mode's limits are frozen — ✅ **done**
+### <a id="s48"></a>S48 · Strict is the default; `'iframe'` is renamed `'cooperative'`; cooperative mode's limits are frozen — ✅ **done**
 
 *From the [independent verification](security/VERIFICATION-2026-10-14.md#decisions-after-the-verification), decision 2;
 owner-approved design; [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen).*
@@ -1369,7 +1369,7 @@ Tests: `test/unit/strict-default.test.ts`, `test/unit/policy-guarantees.test.ts`
 `test/unit/presets.test.ts`, `test/unit/api-docs.test.ts`, `test/e2e/strict-default.spec.ts` (all three engines),
 each failing at `8b561d1`.
 
-### S49 · Fold worker mode into strict mode with `entry` — ⏳ **open** (P3 · M)
+### <a id="s49"></a>S49 · Fold worker mode into strict mode with `entry` — ⏳ **open** (P3 · M)
 
 Worker mode is frozen as it is (S48). It duplicates strict mode without a view: a worker inside the frame, the same
 worker-globals allowlist (S43), code only through `execute()`. What differs, and what folding has to decide:
@@ -1378,7 +1378,7 @@ lost with the allowlist (S43), so nothing to keep; `WebAssembly`, which worker m
 `'unsafe-eval'`) and strict mode keeps only with `scriptUnsafe`; and a headless strict build (no view, or a hidden
 one). Until then worker mode gets no new features.
 
-### S50 · The host page's policy reaches the sandbox's frames — ✅ **done**
+### <a id="s50"></a>S50 · The host page's policy reaches the sandbox's frames — ✅ **done**
 
 *From [review round 1](security/REVIEW-ROUND-1-2026-10-15.md), R2-1 = R3-1 (medium);
 [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-15-review-round-1-the-views-check-in-its-character-budget-host-page-availability).*
@@ -1404,7 +1404,7 @@ cooperative-mode limit; worker mode's frame starts its worker through the policy
 strings (`execute()` is refused). The exported view-hash function, `viewScriptHash()`, was decided and done in S54 (R4-5).
 Tests: `test/e2e/host-policy.spec.ts`, `test/unit/review-round-1.test.ts` (Trusted Types), `test/unit/channel-guarantees.test.ts`.
 
-### S51 · One console relay; byte budgets on log lines and RPC messages — ✅ **done**
+### <a id="s51"></a>S51 · One console relay; byte budgets on log lines and RPC messages — ✅ **done**
 
 *From review round 1, R4-1 = R2-3, R3-3, R4-2 (medium), R4-6, R4-7 (low);
 [ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-15-review-round-1-byte-budgets-on-every-message).*
@@ -1421,7 +1421,7 @@ not at all); the host measures again. RPC messages: `RPC_MAX_BYTES` (33 MiB) at 
 inbound arguments per channel. Measured host ticks during the flood now within a few of idle on all three engines.
 WebKit's muted errors ("Script error.") are documented. Tests: `test/unit/review-round-1.test.ts`, `test/e2e/review-round-1.spec.ts`.
 
-### S52 · The strict view's budget: characters, work per second, a linear renderer — ✅ **done**
+### <a id="s52"></a>S52 · The strict view's budget: characters, work per second, a linear renderer — ✅ **done**
 
 *From review round 1, R1-1, R1-2 (medium) and the availability claim; ADR-005 amendment.*
 
@@ -1435,7 +1435,7 @@ the budgets bound the common cases, CSS paint and bidirectional text layout are 
 alternating directions in one paragraph: tens of seconds in Chromium and WebKit, engine and machine dependent). Tests: `test/e2e/view-budget.spec.ts`,
 `src/lib/in-sandbox-view.test.ts`.
 
-### S53 · Review round 1, the low findings and the cooperative residual — ✅ **done** (R2-2 documented)
+### <a id="s53"></a>S53 · Review round 1, the low findings and the cooperative residual — ✅ **done** (R2-2 documented)
 
 *From review round 1.* **Done**: configs drop what they cannot use instead of refusing (R1-3); origins are printable
 ASCII as written (R1-4); invalid punycode labels are left to each engine's URL parser, documented (R1-5); the strict
@@ -1450,7 +1450,7 @@ top-level tab (Chromium with no gesture where its popup blocker lets it, Firefox
 Chromium submits a form that way past `form-action`; measured and asserted per engine; `allow-forms` became an unsafe
 capability (S54). Tests: `test/unit/review-round-1.test.ts`, `test/e2e/review-round-1.spec.ts`.
 
-### S54 · The owner's decisions after review round 1: images the guest writes, `text()`/`set()`, the view's hash, `allow-forms` — ✅ **done**
+### <a id="s54"></a>S54 · The owner's decisions after review round 1: images the guest writes, `text()`/`set()`, the view's hash, `allow-forms` — ✅ **done**
 
 *From [review round 1](security/REVIEW-ROUND-1-2026-10-15.md), "Awaiting the owner" (R4-4, R4-5, R2-2);
 [ADR-005 amendment](ADR-005-strict-mode.md#amendment-2026-10-15-the-owners-decisions-after-review-round-1),
@@ -1477,7 +1477,7 @@ Tests: `test/unit/owner-decisions.test.ts`, `test/unit/view-api.test.ts`, `test/
 `test/e2e/owner-decisions.spec.ts`, `test/e2e/guest-writes.spec.ts` ("8"), `test/e2e/review-round-1.spec.ts` ("R2-2"),
 `test/e2e/host-policy.spec.ts`, `test/e2e/package.spec.ts`.
 
-### S55 · Review round 2: captured intrinsics, a snapshot measure, host-page refusals, lifecycle gaps, the view's time — ✅ **done**
+### <a id="s55"></a>S55 · Review round 2: captured intrinsics, a snapshot measure, host-page refusals, lifecycle gaps, the view's time — ✅ **done**
 
 *From [review round 2](security/REVIEW-ROUND-2-2026-10-15.md) (C-1 to C-12, L-1 to L-7, M-1 to M-6).*
 
@@ -1503,12 +1503,12 @@ Tests: `test/unit/review-round-2.test.ts`, `test/unit/review-round-2-lifecycle.t
 `test/e2e/review-round-2.spec.ts`, `test/e2e/host-policy.spec.ts`, `test/e2e/package.spec.ts`,
 `scripts/smoke-package.sh`.
 
-### S56 · Review round 3 — ✅ **done** (not clean: S57)
+### <a id="s56"></a>S56 · Review round 3 — ✅ **done** (not clean: S57)
 
 Ran on `main` at `16c545b` with the same three reviews as round 2 (lifecycle model, change audit, documented limits
 measured); the owner reviewed the findings before any fix. [Report](security/REVIEW-ROUND-3-2026-10-18.md).
 
-### S57 · Review round 3: whole RPC frames, a call budget, the view's time, animations and autoplay — ✅ **done**
+### <a id="s57"></a>S57 · Review round 3: whole RPC frames, a call budget, the view's time, animations and autoplay — ✅ **done**
 
 *From [review round 3](security/REVIEW-ROUND-3-2026-10-18.md) and [research 16](research/16_view_isolation/README.md).*
 
@@ -1532,12 +1532,12 @@ measured); the owner reviewed the findings before any fix. [Report](security/REV
 Tests: `test/unit/review-round-3.test.ts`, `test/e2e/review-round-3.spec.ts`, `test/unit/view-switches.test.ts`,
 `test/e2e/view-switches.spec.ts`, `test/e2e/view-budget.spec.ts`.
 
-### S58 · Review round 4 — ✅ **done** (not clean: S62)
+### <a id="s58"></a>S58 · Review round 4 — ✅ **done** (not clean: S62)
 
 Ran on `main` at `c7672bb` with the same three reviews; the owner reviewed the findings before any fix.
 [Report](security/REVIEW-ROUND-4-2026-10-18.md).
 
-### S59 · Evaluate machine-checked proofs (Lean) — ✅ **done** (no Lean; S61)
+### <a id="s59"></a>S59 · Evaluate machine-checked proofs (Lean) — ✅ **done** (no Lean; S61)
 
 [Research 17](research/17_formal_methods/README.md): of 48 medium-or-higher findings, none only a proof would have
 caught; the 12 a proof could reach are caught as well by cheaper tests once the property is written down, and the rest
@@ -1545,7 +1545,7 @@ are about the JavaScript runtime or the browser, outside any model. A Lean and a
 rate limiter are kept there (not in CI). Decided by the owner: no Lean; the cheaper tests later (S61); the view's time
 budget restated as a long-run average (API.md, README, ADR-005).
 
-### S60 · Repository and docs clean-up, then independent adversarial reviews — ⏸️ **after we are done**
+### <a id="s60"></a>S60 · Repository and docs clean-up, then independent adversarial reviews — ⏸️ **after we are done**
 
 Once the review rounds end: a proper clean-up of the repository and the docs:
 - stale files and branches;
@@ -1556,7 +1556,7 @@ Once the review rounds end: a proper clean-up of the repository and the docs:
 The independent adversarial reviews by sub-agents of other model families (Sonnet and Haiku) are folded into the
 final review board (S74, owner, 2026-10-19), which reviews the cleaned-up repository and docs.
 
-### S61 · Property, model-based and structural tests (from research 17) — ✅ **done** (2026-10-19)
+### <a id="s61"></a>S61 · Property, model-based and structural tests (from research 17) — ✅ **done** (2026-10-19)
 
 The tests [research 17](research/17_formal_methods/README.md) found would have caught most of rounds 1–3's findings in
 our own logic. fast-check is a dev dependency; the four new unit files take about 2 s of test time (3.4 s run alone).
@@ -1603,7 +1603,7 @@ our own logic. fast-check is a dev dependency; the four new unit files take abou
   the line ends with the tail, which says how many arguments it dropped. The fast-check property, with the
   counterexample, is the test: the host drops nothing of any line the relay posts.
 
-### S62 · Review round 4: the worker's only way out, values read once, the view's URL budget, build completion after load — ✅ **done**
+### <a id="s62"></a>S62 · Review round 4: the worker's only way out, values read once, the view's URL budget, build completion after load — ✅ **done**
 
 *From [review round 4](security/REVIEW-ROUND-4-2026-10-18.md).*
 
@@ -1624,7 +1624,7 @@ our own logic. fast-check is a dev dependency; the four new unit files take abou
 Tests: `test/unit/review-round-4.test.ts`, `test/e2e/review-round-4.spec.ts`, `test/e2e/view-switches.spec.ts`,
 `test/unit/channel-guarantees.test.ts`.
 
-### S63 · Review round 5 — ✅ **done** (not clean: S64)
+### <a id="s63"></a>S63 · Review round 5 — ✅ **done** (not clean: S64)
 
 Ran on `main` at `60814b5` with the same three reviews. It found 1 high and 6 medium findings in our code, all in code
 an earlier per-instance fix added or changed. The owner reviewed them before any fix and adopted every recommendation
@@ -1632,7 +1632,7 @@ of [research 18](research/18_finding_classes/README.md): the fixes are made as t
 designs (S64), and the structural work follows in phases (S65–S69), each merged on its own.
 [Report](security/REVIEW-ROUND-5-2026-10-19.md).
 
-### S64 · Review round 5's fixes, as slices of their classes — ✅ **done** (phase 1)
+### <a id="s64"></a>S64 · Review round 5's fixes, as slices of their classes — ✅ **done** (phase 1)
 
 The owner's decisions, 2026-10-18:
 - **Egress (N-1).** Rejections are cancelled after relaying, as errors are. A per-second rejection budget ends the
@@ -1675,7 +1675,7 @@ The owner's decisions, 2026-10-18:
 Residual, for the owner: the 2 s operation limit ends a 250,000-character textarea `set()` in WebKit. **Decided**
 (owner, 2026-10-19): the sandbox ends only after repeated overruns (S72).
 
-### S65 · One lifecycle reducer, with the model-based suite (S61.2) — ✅ **done** (2026-10-19)
+### <a id="s65"></a>S65 · One lifecycle reducer, with the model-based suite (S61.2) — ✅ **done** (2026-10-19)
 
 Every transition becomes a pure function of state and event. Effects and event dispatch run only after the state
 settles, and `ready` is the only point where queued work flushes. It is tested by the permanent fast-check `commands`
@@ -1742,7 +1742,7 @@ suite built from [the lifecycle model](research/17_formal_methods/lifecycle-mode
      a load average of 15 to 19 (WebKit seed 225, before the reducer as after it): 4000 and 5000 ms instead; the
      150 ms watchdog stays paired with a busy guest, where the model allows its termination.
 
-### S71 · LM-1, a `fetch` record after its environment's teardown — ✅ **done** (2026-10-19): `aborted`, by construction
+### <a id="s71"></a>S71 · LM-1, a `fetch` record after its environment's teardown — ✅ **done** (2026-10-19): `aborted`, by construction
 
 A `fetch` listener that tore the environment down could still receive an `ok` record of that environment, where API.md
 says only an `aborted` record of a torn-down environment arrives then. The owner decided: such a record is `aborted`.
@@ -1759,7 +1759,7 @@ What changed (class L):
 - **Docs.** API.md (FetchRecord) states the rule; [the lifecycle model](research/17_formal_methods/lifecycle-model.md)
   records LM-1 as fixed.
 
-### S66 · Probe a trusted relay worker — ✅ **done**: build it, with per-engine caveats (S69)
+### <a id="s66"></a>S66 · Probe a trusted relay worker — ✅ **done**: build it, with per-engine caveats (S69)
 
 [Research 19](research/19_relay_worker/README.md) measured a library-only relay worker that spawns the guest's worker
 as a nested worker, on Chromium (headless shell and full), Firefox and WebKit:
@@ -1774,7 +1774,7 @@ as a nested worker, on Chromium (headless shell and full), Firefox and WebKit:
 - **Caveats.** The relay's own thread and memory need a byte cap that ends the guest. WebKit under COEP refuses the
   view's worker, so the relay is never reached there, as today.
 
-### S69 · Build the relay worker — 💤 **deferred** (owner, 2026-10-19: availability findings are documented)
+### <a id="s69"></a>S69 · Build the relay worker — 💤 **deferred** (owner, 2026-10-19: availability findings are documented)
 
 The relay closes the worker side of class E-cpu: it moves the cost of the guest's floods off the host page. Those
 floods are already bounded: the worker's own `postMessage()` is gone (round 4, M-1), and the uncaught budget ends the
@@ -1794,7 +1794,7 @@ Research 19's plan:
 
 This closes the worker side of E-cpu and G by construction ([research 18](research/18_finding_classes/README.md)).
 
-### S67 · One config schema — ✅ **done** (phase 4)
+### <a id="s67"></a>S67 · One config schema — ✅ **done** (phase 4)
 
 `CONFIG_SCHEMA` (`src/lib/config-schema.ts`) declares every option once:
 - its default and documented default, its modes, how it is read, its warnings, and what the modes that ignore it say;
@@ -1809,7 +1809,7 @@ The checks:
 One behaviour change: the capability warnings come once per element and message, as API.md already said, instead of
 once per `setConfig()`.
 
-### S70 · For the owner: three edges the schema found — ⏸️ **decide**
+### <a id="s70"></a>S70 · For the owner: three edges the schema found — ⏸️ **decide**
 
 - **String fetch request bodies.** A string body is measured at 2 bytes per character. With `fetchBridge.maxBytes` above
   about 16.5 MiB, a string body over about 17.3 million characters is refused `ARGS_NOT_TRANSFERABLE` by the guest's
@@ -1819,14 +1819,14 @@ once per `setConfig()`.
 - **`mode: null`.** Its capabilities are filtered as strict mode's before the config is refused. This is harmless; it
   is kept as it was.
 
-### T7 · A host-load test that fails on a loaded machine at the base too — 🔎 **investigate**
+### <a id="t7"></a>T7 · A host-load test that fails on a loaded machine at the base too — 🔎 **investigate**
 
 `review-round-4.spec.ts` "M-2: an admitted loopback origin" (an image flood, which must stay under 30% busy) measured
 41–45% on Chromium in local runs while other agents loaded the 4-core machine, at `32e59a1` as well as after S67. It
 passes in CI. Make it measure against its own idle baseline under the same load, as `view-bound.spec.ts` does, rather
 than an absolute share.
 
-### S68 · State the view's cost bound — ✅ **done** (phase 5)
+### <a id="s68"></a>S68 · State the view's cost bound — ✅ **done** (phase 5)
 
 docs/API.md, "The view's cost to the host page", states the bound per process placement:
 - **(a) The long-run share.** At most 20% for the view's own work, plus the browser's work on at most
@@ -1841,7 +1841,7 @@ docs/API.md, "The view's cost to the host page", states the bound per process pl
 (b). `test/unit/view-bound.test.ts` keeps the statement's constants in step with the code. README and ADR-005 link to the
 statement instead of repeating it.
 
-### S72 · The repeated-overrun rule (owner's decision on the 2 s limit) — ✅ **done**
+### <a id="s72"></a>S72 · The repeated-overrun rule (owner's decision on the 2 s limit) — ✅ **done**
 
 Class P, a budget that counts a proxy: the meter measures wall time, a stand-in for the view's own cost, so under
 machine load one operation past `VIEW_MAX_OPERATION_MS` ended healthy sandboxes (a large initial view on a loaded CI
@@ -1880,7 +1880,7 @@ Measured (2026-10-19, headless Playwright on the shared 4-core VM; Chromium, Fir
 - `review-round-2.spec.ts` (M-3), a 250,000-character textarea `set()` four times a second: the sandbox stays `ready`
   on all three engines (WebKit's first `set()` ended it before).
 
-### S76 · Self-explaining code, generated reference docs: review the current state — ⏸️ **before S60** (owner, 2026-10-19)
+### <a id="s76"></a>S76 · Self-explaining code, generated reference docs: review the current state — ⏸️ **before S60** (owner, 2026-10-19)
 
 The owner's direction: code that mostly explains itself, with strong types and comments where they are needed, and the
 reference docs generated from it. A review first (reported to the owner before anything changes), against five points:
@@ -1931,6 +1931,25 @@ Steps, one PR each, merged when green:
    those items' semantic signature only (names, types, values, transitions; never formatting). When an item changes,
    the sections that describe it fail CI until they are reviewed (`docs:gen --accept`). If the markers prove noisy,
    they are dropped without losing the rest. ARCHITECTURE.md is the first document built this way.
+
+   **The tool is built in two parts.**
+   - **A generic engine** in `tools/docgen/`, about 200 lines. It rewrites regions, checks markers against hashes, and
+     runs in `--check` and `--accept` modes. It knows nothing about this repository: extractors are plugins returning
+     items `{ id, signature, render }`. It stays in this repository behind that boundary, and becomes a package once a
+     second project needs it. Cog, markdown-magic and embedme rewrite regions, but none flags stale prose.
+   - **Extractors, each next to the code it reads.** Built in order of value:
+     1. API.md's remaining tables: limits, reasons, events and their details, host log lines, error codes, capability
+        lists, each mode's CSP.
+     2. ARCHITECTURE.md.
+     3. BACKLOG.md's status table, from the item headers.
+     4. The ADR and research indexes, from each file's header.
+     5. The class registry (class, chokepoint, structural test) as data. Research 18 and CONTRIBUTING render it, and a
+        test checks that every class has its structural test.
+     6. API.md (d): the closed list of what the cost bound leaves out.
+
+     Measured numbers are never generated: they vary from run to run. The docs state the bound from code, the tests
+     assert it, and measurements stay in test output and the archive. Prose that explains why (ADR reasoning, the
+     threat model's argument, the README tutorial) gets markers only.
 3. **The archive.** Move the reports and research, and compact the backlog to open items. The research reproductions
    stay runnable (Playwright's `testMatch`), and the link check keeps every link.
 4. **ADRs.** Each states its current decision; its amendment trail moves to the archive, linked.
@@ -1943,7 +1962,45 @@ Steps, one PR each, merged when green:
 S60's remaining clean-up (stale files and branches) follows, then the review board (S74), which reviews the current
 state.
 
-### S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
+**Step 0 done (2026-10-19), and the owner's decisions on it.** The measurement report has the counts. In short:
+- 60% TSDoc coverage of the public surface;
+- no exhaustive `never` check;
+- ADR-005's port table has drifted by 7 frame types;
+- 713 finding-ID citations, 358 of them ambiguous;
+- 174 KB of done items in this backlog;
+- api-extractor works on `dist/*.d.ts`, and TypeDoc cannot run here.
+
+The owner adopted all of the report's recommendations:
+- **A. The plan's amendments.**
+  1. The api-extractor gate comes first.
+  2. The frame table and the realms registry are written as code before ARCHITECTURE.md.
+  3. Input preconditions per state are declared before the state diagram is drawn.
+  4. Research 01–15 stay where they are; only loose notes are archived.
+  5. The ratchet takes only the strict history patterns (SHAs, dates, rounds, named reviews, "measured at", "used to",
+     "no longer").
+  6. An ID registry with anchors, so that `R5:M-2` resolves.
+  7. Test files named after review events are renamed by subject, and the finding IDs stay in the test titles.
+  8. TSDoc is rendered into the docs only after its history has been cleaned.
+- **Single source of truth, by construction: values first, types derived from them.** Anything a doc renders exists as
+  a runtime value: `CONFIG_SCHEMA`, `CHANNEL_BUDGETS`, the egress table, and the new `FRAMES` table, realms registry and
+  registries for limits, reasons and host lines. The types are derived from those values (`as const`, `typeof`,
+  `satisfies`), so the generator imports values and needs no compiler.
+  - **The reducer.** Its input and effect kinds, and which inputs may arrive in which state, are declared once as data.
+    `LcInput` and `Effect` are derived from it. `reduce` asserts the preconditions, the state diagram is drawn from them,
+    and the model checks against them. No unstable compiler API is used, and no TypeScript version is pinned.
+  - **Public signatures** come from api-extractor's model of the compiled `.d.ts`, and its checked-in report gates them.
+  - **The drift checks.** CI regenerates every region and fails on a difference. Exhaustive `never` checks and
+    `satisfies` catch a value and its use disagreeing.
+- **B. Measured numbers.** A doc states each bound itself, rendered from code and checked by tests. A measured figure
+  may stand beside the bound as an example, with its date and engine, but is never generated and never pinned by a test.
+  The pin at `review-round-4.test.ts:492` goes.
+- **C. Public names.** `StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, `WebSandboxEventMap`
+  and `RpcLibraryCode` are exported as types. `ALLOWED_CAPABILITIES` is marked internal. `ElementBase` is hidden from the
+  declaration files.
+- **D.** The public `FetchRecord` becomes a union keyed by `outcome`, in step 6.
+- **E.** A threat-model document is written new, in the current-docs layer.
+
+### <a id="s74"></a>S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
 
 Once S65, the rest of S61, S76 and S60 are merged: an independent adversarial review board of the whole repository and its
 docs, with reviewers from several model families (Opus, Sonnet and Haiku; S60's independent reviews are folded in). The
@@ -1953,7 +2010,7 @@ extending its chokepoint and structural test (CONTRIBUTING.md, "Fixing a finding
 A finding whose only effect is a bounded cost to the host page that the embedder can end is at most medium, and is
 documented rather than mitigated (CONTRIBUTING.md, "Availability findings").
 
-### S73 · CSS-borne loads charged before they start — ✅ **done** (2026-10-19)
+### <a id="s73"></a>S73 · CSS-borne loads charged before they start — ✅ **done** (2026-10-19)
 
 Classes E-net and P ([research 18](research/18_finding_classes/README.md)): a load the policy admits is egress, and
 its budget counted it by a stand-in, the platform's report of it, which arrives only once the response has ended.
@@ -2030,7 +2087,7 @@ attributes already were.
 - **Behaviour change**: a guest's own CSS now holds its next operation back by what it can load, whether or not it
   loads it (a `url()` in a comment, a cached image); each `@import` or stylesheet `<link>` by a second.
 
-### S75 · A strict entry that ran was taken for one that failed (WebKit) — ✅ **done** (2026-10-19)
+### <a id="s75"></a>S75 · A strict entry that ran was taken for one that failed (WebKit) — ✅ **done** (2026-10-19)
 
 Class B ([research 18](research/18_finding_classes/README.md)), a browser decision re-derived.
 
@@ -2070,7 +2127,7 @@ code and a timer of compiled code the entry queued are logged once and leave the
 or log line sees the marker (the compiled-code cases failed on WebKit before, 3 of 3 each). After the fix: the test above
 0 of 300 runs on WebKit under the same load.
 
-### T6 · Two CPU-heavy unit tests failed once on a loaded machine — 🔎 **investigate**
+### <a id="t6"></a>T6 · Two CPU-heavy unit tests failed once on a loaded machine — 🔎 **investigate**
 
 `review-round-2.test.ts` (C-7: past the comparison cap the sandbox rebuilds) and `review-round-5.test.ts` (5:L-1: the
 model over random schedules) failed once in a full unit run on 2026-10-19, at a load average of about 9. Three agents were
@@ -2078,7 +2135,7 @@ running there at the time. Both passed alone and in the next full run (1635 pass
 text was not captured. Next: reproduce under load, then bound the work or give the test an explicit budget. A flake is
 not a root cause.
 
-### B1 · Promise-based RPC in both directions — ✅ **done**
+### <a id="bl-b1"></a>B1 · Promise-based RPC in both directions — ✅ **done**
 
 **Done**: built in-house rather than adopted; [ADR-002](ADR-002-host-guest-broker.md) records why.
 One dispatcher, `src/lib/rpc.ts`, runs on both sides: `expose()`, `call()` and `callWithTimeout()`
@@ -2105,7 +2162,7 @@ symmetric `host.call()` inside; keep `execute()` as the `scriptUnsafe`-gated esc
 **Acceptance**: `await sandbox.call('sum', 1, 2) === 3`; a sandbox-side throw rejects with the
 original message; identical behaviour in both modes.
 
-### B2 · Lifecycle: `terminate()`, `reset()`, state — ✅ **done**
+### <a id="bl-b2"></a>B2 · Lifecycle: `terminate()`, `reset()`, state — ✅ **done**
 
 **Done**: `terminate(reason?)`, `reset()` and a readonly `state` (`idle`, `loading`, `ready`,
 `terminated`) on the element, all transitions in one method that also dispatches `ready` and
@@ -2125,7 +2182,7 @@ state-machine sketch in `IMPROVEMENTS.md` §4 without the XState dependency.
 
 **Acceptance**: `reset()` yields a fresh opaque origin; `terminated` fires exactly once.
 
-### B3 · Per-instance events — fixes a live defect — ✅ **done**
+### <a id="bl-b3"></a>B3 · Per-instance events — fixes a live defect — ✅ **done**
 
 **Done**: `sandbox-log` is dispatched on the element with `bubbles: true` (log lines and the worker
 execution-timeout line). A listener on the element hears only its sandbox; a listener on `window`
@@ -2146,7 +2203,7 @@ opt-in global mirror for the playground.
 **Acceptance**: with two sandboxes mounted, each receives only its own logs; DevTools output is
 covered by a test.
 
-### B4 · The library never registers its element — ✅ **done**
+### <a id="bl-b4"></a>B4 · The library never registers its element — ✅ **done**
 
 **Was**: `customElements.define(...)` appeared only in the playground, so a consumer importing the
 bundle got an inert tag with no hint that registration was theirs to do.
@@ -2157,7 +2214,7 @@ nothing, so consumers can choose their own tag. The playground and the e2e harne
 
 **Open**: the D1 smoke test (mount a sandbox using only the public entry point) waits on D1.
 
-### B5 · Host-mediated `sandbox.fetch` bridge — ✅ **done**
+### <a id="bl-b5"></a>B5 · Host-mediated `sandbox.fetch` bridge — ✅ **done**
 
 **Guarantee**: with `fetchBridge` configured, the guest's `sandboxFetch()` never reaches an origin that is
 not listed exactly, never sends the host page's credentials or URL, never follows a redirect, never holds
@@ -2225,7 +2282,7 @@ records no request; an oversized body rejects after reading at most the cap plus
 the one-port-per-request stream shape follows Lunet
 ([`docs/lunet/data.js.flow`](https://github.com/Gozala/lunet/blob/master/docs/lunet/data.js.flow)).
 
-### B6 · Content auto-sizing — ✅ **done**
+### <a id="bl-b6"></a>B6 · Content auto-sizing — ✅ **done**
 
 **Guarantee**: with `autoResize: true` (iframe mode) the element's height follows the guest's content, and
 nothing the guest posts can make the host write a height that is not a finite number in
@@ -2261,7 +2318,7 @@ the viewport is not measured; the element needs a non-inline `display`.
 **Work**: a `ResizeObserver` inside the sandbox reporting `scrollHeight` over the port, opt-in via
 `autoResize`. **Acceptance**: host element height tracks content within one frame.
 
-### B7 · Refusals carry a reason only the local side can set — ✅ **done**
+### <a id="bl-b7"></a>B7 · Refusals carry a reason only the local side can set — ✅ **done**
 
 **Done**: every rejection from the broker and from the element's `call()`/`callWithTimeout()` is an
 `Error` with a `code` from the closed set below, minted in `src/lib/rpc.ts`; the element's own
@@ -2307,7 +2364,7 @@ Their separate retry/stop field is not adopted: here it follows from the code.
 
 ---
 
-### B8 · Behaviour the API reference surfaced — ✅ **done**
+### <a id="bl-b8"></a>B8 · Behaviour the API reference surfaced — ✅ **done**
 
 *Found while writing [`API.md`](API.md) (D3), where the code and its comments or the README disagreed.*
 
@@ -2347,7 +2404,7 @@ Their separate retry/stop field is not adopted: here it follows from the code.
 Decided in [ADR-004](ADR-004-files-as-blob-urls.md): files are registered on the element and reach
 the guest as `blob:` URLs created in its own realm. The Service-Worker hub is gone (Rejected, below).
 
-### C1 · In-sandbox VFS API — ✅ **done**
+### <a id="bl-c1"></a>C1 · In-sandbox VFS API — ✅ **done**
 
 **Done** (2026-10-13): the guest global `sandboxFiles` with `list()`, `url(path)`, `read(path)` and
 `text(path)`, in iframe and worker mode, built by the bootstrap from a snapshot the host embeds as one
@@ -2424,7 +2481,7 @@ Met for reads; the write half is C5's.
 ([Readme](https://github.com/Gozala/lunet#readme)). Its encryption at rest is not adopted: with the
 key stored beside the data on the same origin, it protects nothing.
 
-### C2 · MIME types and binary files — ✅ **done**
+### <a id="bl-c2"></a>C2 · MIME types and binary files — ✅ **done**
 
 **Done** (2026-10-13): a case-insensitive extension table of about 30 types, never empty (unknown is
 `application/octet-stream`: an empty type is applied as a stylesheet by every engine), with a
@@ -2436,7 +2493,7 @@ asserts each blob's type against the table and a byte-exact round trip of all 25
 as `text/javascript`, and `fileCache` was a `Map<string, string>` although `registerFiles()`
 advertised `Record<string, string | Uint8Array>`. Binary registration was broken at the type boundary.
 
-### C3 · File lifecycle and cap — ✅ **done**
+### <a id="bl-c3"></a>C3 · File lifecycle and cap — ✅ **done**
 
 **Done** (2026-10-13): files belong to the element and live until `unregisterFiles()` or garbage
 collection; each environment build snapshots them. The guest's blobs belong to its document or
@@ -2452,7 +2509,7 @@ file bytes across host and guest.
 **Verified** (kept as a record): `fileCache` grew without bound and was never pruned; entries keyed by
 a dead session id outlived the sandbox for the Service Worker's lifetime.
 
-### C5 · Guest writes — ✅ **done**
+### <a id="bl-c5"></a>C5 · Guest writes — ✅ **done**
 
 **Guarantee**: a guest can change files only when the embedder opted in, and never past the host's
 path rules and cap.
@@ -2496,7 +2553,7 @@ an uncommitted overlay is gone after `reset()`, and a committed one fires `files
 
 ## D · Packaging & Distribution
 
-### D1 · Ship an installable package — 🟡 **ready except the licence**
+### <a id="bl-d1"></a>D1 · Ship an installable package — 🟡 **ready except the licence**
 
 **Done**: public entry `src/index.ts`; `exports` / `types` / `main` point at `dist/`, built by
 `bun run build:lib` (bun bundle + `tsc` declarations). `scripts/smoke-package.sh` runs `bun pm pack`,
@@ -2518,7 +2575,7 @@ README with the real entry points.
 **Acceptance**: a packed tarball imports cleanly in a scratch project with working types, and a
 smoke test mounts a sandbox through the public entry point (with B4).
 
-### D2 · CI — ✅ **done**
+### <a id="bl-d2"></a>D2 · CI — ✅ **done**
 
 **Done**: `.github/workflows/ci.yml` runs unit tests and both builds, and the e2e suite on Chromium,
 Firefox and WebKit, on push to `main` and on every PR. The type check now gates CI too (H3).
@@ -2532,7 +2589,7 @@ undetected.
 **Acceptance**: reverting any mitigation fails the PR. Order this immediately after T1–T3, or the
 same drift recurs.
 
-### D3 · API reference — ✅ **done**
+### <a id="bl-d3"></a>D3 · API reference — ✅ **done**
 
 **Done**: [`API.md`](API.md) documents the current public surface: registration, the element and its
 `state`, every `SandboxConfig` option (type, default, modes), `connectionsAllowed` rules and `fetchBridge`
@@ -2553,7 +2610,7 @@ Original scope: document the public surface once B1–B4 stabilise it; thin Reac
 
 ## H · Repo & Docs Hygiene
 
-### H1 · Duplicate documents — ✅ **done**
+### <a id="bl-h1"></a>H1 · Duplicate documents — ✅ **done**
 
 **Done**: `research/ARCHITECTURE_COMPARISON.md` and `research/VIRTUAL_FILES_SECURITY_ANALYSIS.md` are
 kept; their byte-identical twins are now stubs pointing at them. The VFS overlap below remains.
@@ -2565,7 +2622,7 @@ kept; their byte-identical twins are now stubs pointing at them. The VFS overlap
 Plus heavy overlap between `VFS_ARCHITECTURE.md`, `VIRTUAL_FILES_PLAN.md` and
 `RESEARCH_VFS_ACCESS.md`. **Work**: keep one of each pair, leave a stub pointing at it.
 
-### H2 · Naming drift — ✅ **done**
+### <a id="bl-h2"></a>H2 · Naming drift — ✅ **done**
 
 **Was**: four names for one project — `lofi-sandbox` (the element), `lofi-web-sandbox` (the package),
 `iframe-sandbox` (older docs) and "Lofi Sandbox" (prose).
@@ -2574,7 +2631,7 @@ Plus heavy overlap between `VFS_ARCHITECTURE.md`, `VIRTUAL_FILES_PLAN.md` and
 `<web-sandbox>` and the class `WebSandbox`; "Web Sandbox" in prose. `iframe-sandbox` remains only
 in research write-ups that describe that older architecture.
 
-### H3 · Type check is not part of the build — ✅ **done**
+### <a id="bl-h3"></a>H3 · Type check is not part of the build — ✅ **done**
 
 **Done**: `bun run typecheck` is clean and gates CI. The playground's `window` surface is typed,
 `sw.ts` has its own `tsconfig.worker.json`, `test/` and the research specs are included, `baseUrl` is
@@ -2591,13 +2648,13 @@ from `include`, and `baseUrl` is deprecated for TS 7.
 import, include `test/`, replace `baseUrl` with relative paths. **Acceptance**: `tsc --noEmit` is
 clean and runs in CI.
 
-### H4 · Research index — ✅ **done**
+### <a id="bl-h4"></a>H4 · Research index — ✅ **done**
 
 `docs/research/README.md` now indexes all twelve findings with a per-finding status against the
 current opaque-origin architecture, distinguishing "closed by construction" from "open". A
 `docs/README.md` index was added alongside it.
 
-### H5 · Missing repo basics — 🟡 **partly done**
+### <a id="bl-h5"></a>H5 · Missing repo basics — 🟡 **partly done**
 
 **Done**: `CONTRIBUTING.md`; `format` / `format:check` scripts; `.prettierrc` stripped of the Svelte
 and Tailwind plugins it was copied with. `format:check` is not a CI gate yet (101 files predate the

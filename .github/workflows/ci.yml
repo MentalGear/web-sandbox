@@ -18,6 +18,8 @@ jobs:
       - run: bun run typecheck
       - run: bun run test:unit
       - run: bun run build
+      # the public API against its reviewed report, etc/web-sandbox.api.md (bun run api:update accepts a change)
+      - run: bun run api:check
       - run: ./scripts/smoke-package.sh
 
   e2e:
