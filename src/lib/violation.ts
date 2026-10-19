@@ -52,11 +52,12 @@ export const VIOLATION_DIRECTIVES: readonly string[] = [
     'manifest-src', 'base-uri', 'form-action', 'frame-ancestors',
 ];
 
-const MAX_STRING = 2048;
+/** Longest string of a report the host keeps (blockedURI, sourceFile); a longer one is cut on receipt. */
+export const VIOLATION_MAX_STRING = 2048;
 const DIRECTIVE = /^[a-z][a-z-]{0,63}$/;
 
 const clampString = (value: unknown): string | undefined =>
-    typeof value === 'string' ? value.slice(0, MAX_STRING) : undefined;
+    typeof value === 'string' ? value.slice(0, VIOLATION_MAX_STRING) : undefined;
 
 const positiveInteger = (value: unknown): number | undefined =>
     typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;

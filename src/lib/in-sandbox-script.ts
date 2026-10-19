@@ -404,6 +404,8 @@ export function inSandboxScript(
     // relayed, among them the relay's own warning that it had started dropping). Inline arithmetic and lists of our own
     // only (C-1: Math.min, which the bucket called, is the guest's to replace). `mode` 'spent' records a weight already
     // spent (the lines flushed on attach, below) whatever the window holds; 'fits' only says whether it would be admitted.
+    // A weight that is not a finite number ≥ 0 is refused in every mode, recording nothing: rate-limit.ts's isWeight, the
+    // same expression (backlog S61, class C; a unit test compares the texts, and a differential property runs both).
     const now = (): number => (nowOf ? apply(nowOf, clock, []) : apply(dateNow, DateConstructor, []));
     const slidingWindow = (limit: number) => {
         const times: number[] = list();
@@ -411,6 +413,7 @@ export function inSandboxScript(
         let head = 0; // entries before head have left the window
         let total = 0;
         return (weight: number, mode?: 'spent' | 'fits'): boolean => {
+            if (!(typeof weight === 'number' && weight >= 0 && weight - weight === 0)) return false;
             const at = now();
             while (head < times.length && times[head]! <= at - 1000) {
                 total -= weights[head]!;
