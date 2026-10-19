@@ -11,10 +11,12 @@ import { toFetchPolicy } from '@src/lib/fetch-bridge';
 import { INERT_TYPES } from '@src/lib/guest-writes';
 import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { cooperativePolicy, KIND_DIRECTIVES, strictViewPolicy } from '@src/lib/csp/csp-generator';
-import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MAX_DEBT_MS, VIEW_APPLY_MS_PER_SECOND, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_MAX_URLS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
+import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_MAX_URLS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 import { LOG_BYTES_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { WORKER_GLOBALS } from '@src/lib/worker-globals';
+import { UNCAUGHT_CHARACTERS_PER_SECOND, UNCAUGHT_PER_SECOND } from '@src/lib/egress';
+import { ELEMENT_EVENTS } from '@src/lib/element-events';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 
@@ -120,8 +122,10 @@ describe('docs/API.md lists the public surface', () => {
         // internal constants, read where they are declared (review round 3: no new exports)
         const constant = (file: string, name: string) => Number(read(file).match(new RegExp(`const ${name} = (\\d+);`))![1]);
         const expected: [string, number][] = [
-            ['Guest calls per second', constant('src/host.ts', 'GUEST_CALLS_PER_SECOND')],
-            ['Bytes of guest calls per second', constant('src/host.ts', 'GUEST_CALL_BYTES_PER_SECOND')],
+            ['Guest calls per second', constant('src/lib/config-schema.ts', 'GUEST_CALLS_PER_SECOND')],
+            ['Bytes of guest calls per second', constant('src/lib/config-schema.ts', 'GUEST_CALL_BYTES_PER_SECOND')],
+            ['Uncaught errors and unhandled rejections per second', UNCAUGHT_PER_SECOND],
+            ['Characters of uncaught errors and unhandled rejections per second', UNCAUGHT_CHARACTERS_PER_SECOND],
             ['Characters of a method name', constant('src/lib/rpc.ts', 'MAX_NAME_LENGTH')],
             ['Characters of an error message a call carries', constant('src/lib/rpc.ts', 'MAX_TEXT_LENGTH')],
             ['Fetch: characters of a URL', constant('src/lib/fetch-bridge.ts', 'MAX_URL')],
@@ -132,9 +136,10 @@ describe('docs/API.md lists the public surface', () => {
             ['Strict: characters in the view', VIEW_MAX_CHARACTERS],
             ['Strict: characters of markup the view parses per second', VIEW_RENDER_CHARACTERS_PER_SECOND],
             ['Strict: time the view spends applying operations per second', VIEW_APPLY_MS_PER_SECOND],
-            ["Strict: most time the view's time budget may owe", VIEW_APPLY_MAX_DEBT_MS],
+            ['Strict: longest operation of the view', VIEW_MAX_OPERATION_MS],
             ['Strict: URL-bearing attributes in the view', VIEW_MAX_URLS],
-            ['Strict: URL-bearing attributes the view takes per second', VIEW_URLS_PER_SECOND],
+            ['Strict: loads of the view per second', VIEW_URLS_PER_SECOND],
+            ['Strict: distinct URLs one view loads', VIEW_MAX_DISTINCT_URLS],
             ['Bytes per log line', LOG_MAX_BYTES],
             ['Bytes of guest log lines sent per second', LOG_BYTES_PER_SECOND],
             ['Bytes per RPC message', RPC_MAX_BYTES],
@@ -216,7 +221,8 @@ describe('docs/API.md lists the public surface', () => {
     });
 
     it('every event the element dispatches, and no other', () => {
-        const dispatched = [...read('src/host.ts').matchAll(/new CustomEvent\('([\w-]+)'/g)].map(match => match[1]!);
+        // the one table of the element's events (element-events.ts), each dispatched by host.ts (test/unit/element-events.test.ts)
+        const dispatched = Object.keys(ELEMENT_EVENTS);
         expect(sorted(rowKeys(section('## Events', true)))).toEqual(sorted(dispatched));
     });
 

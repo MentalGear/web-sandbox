@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, RENDER_RULES, RENDER_URL_ATTRIBUTES, type RenderContext, type RenderSwitches, sanitizeRender, VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, viewBootstrapText } from './in-sandbox-view';
+import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_ATTRIBUTES, RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, RENDER_RULES, RENDER_URL_ATTRIBUTES, type RenderContext, type RenderSwitches, sanitizeRender, VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, viewBootstrapSource, viewBootstrapText } from './in-sandbox-view';
 import { REFERENCES } from './markup-references';
 
 import { inSandboxFiles } from './in-sandbox-files';
@@ -18,7 +18,7 @@ function sanitize(html: string, files: Record<string, string> = {}, origins: Rec
     const template = document.createElement('template');
     template.innerHTML = html;
     const minted = new Set(Object.values(files));
-    const context: RenderContext = { target: 'body', animating: RENDER_RULES.still.known, origins, refused: [], urls: 0 };
+    const context: RenderContext = { target: 'body', animating: RENDER_RULES.still.known, origins, refused: [], urls: 0, loads: [] };
     sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), RENDER_RULES, KEEP_ALL, undefined, context);
     return template.content;
 }
@@ -519,7 +519,7 @@ describe('the view bootstrap: budgets (broad review ST2, ST3)', () => {
             postMessage(_message: unknown, transfer: MessagePort[]) { workers[workers.length - 1]!.transfer = transfer; }
         };
         const options = { ...VIEW_OPTIONS, render: { ...VIEW_OPTIONS.render, maxElements } };
-        new Function(maxElements === VIEW_MAX_ELEMENTS ? viewBootstrapText() : `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(options)});`)();
+        new Function(maxElements === VIEW_MAX_ELEMENTS ? viewBootstrapText() : viewBootstrapSource(options))();
         const a = new MessageChannel(), b = new MessageChannel();
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<div id="a"></div><div id="b"></div>' }, source: window, ports: [a.port1, b.port1] }));
         const render = workers[0]!.transfer[1]!;

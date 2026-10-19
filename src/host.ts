@@ -11,7 +11,7 @@ import { LOAD_KINDS } from "./lib/load-kinds";
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { deepMerge } from "./lib/utils";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
-import { createBroker, RESERVED_METHOD_PREFIX } from "./lib/rpc";
+import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
 import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
@@ -26,7 +26,10 @@ import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type Fetc
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
+import { admitGuestCall, callBudgetOf, DEFAULT_CALL_BUDGET, type CallBudget } from "./lib/config-schema";
+import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
+import { elementEvent } from "./lib/element-events";
+import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
  * The element's configuration, passed to setConfig(): every option left out takes its default
@@ -90,11 +93,11 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions {
 /** The element's events and what each one carries (docs/API.md#events; review round 1, R4-12). */
 export interface WebSandboxEventMap extends HTMLElementEventMap {
     ready: CustomEvent<null>;
-    terminated: CustomEvent<{ reason: string }>;
+    terminated: CustomEvent<{ readonly reason: string }>;
     'sandbox-log': CustomEvent<SandboxLog>;
     violation: CustomEvent<SandboxViolation>;
     fetch: CustomEvent<FetchRecord>;
-    fileschanged: CustomEvent<{ paths: string[] }>;
+    fileschanged: CustomEvent<{ readonly paths: readonly string[] }>;
     fileswritten: CustomEvent<{ readonly paths: readonly string[] }>;
 }
 
@@ -289,61 +292,23 @@ const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
 const STRICT_VIEW_FLAGS = ['allow-scripts', 'allow-forms'] as const;
 const STRICT_CAPABILITIES = [...SAFE_CAPABILITIES, ...STRICT_VIEW_FLAGS] as const;
 
-// The per-second budget of the calls the guest makes, per environment (review round 3, M-2): calls, and bytes of their
-// frames, in any one-second window. The defaults of `callLimits`; the configuration gives the budget in callBudgetOf(),
-// the one place both ends take it from (the host's window, _admitGuestCall; the guest's broker, through the bootstrap's
-// features).
-// 1000 calls (review round 4, M-6, the owner's decision): the reviewers measured Firefox's host page 32–37% busy at 4900
-// calls per second, with gaps of 1.8 s in bursts. At 1000, a strict guest calling paced at the budget and one sending
-// a second's worth at once each second left Firefox's host page its idle ticks, longest gap 15–27 ms
-// (test/e2e/review-round-4.spec.ts, "M-6").
-const GUEST_CALLS_PER_SECOND = 1000;
-const GUEST_CALL_BYTES_PER_SECOND = 67108864;
-
-interface CallBudget {
-    calls: number;
-    bytes: number;
-}
-
-const DEFAULT_CALL_BUDGET: Readonly<CallBudget> = Object.freeze({ calls: GUEST_CALLS_PER_SECOND, bytes: GUEST_CALL_BYTES_PER_SECOND });
-
-// The call budget `callLimits` asks for (from the copy setConfig() took). Each field is a finite number >= 1, else its
-// default: left out, silently; anything else (Infinity, a number below 1, NaN, a string), with a warning. There is no
-// "off": a budget that can be lifted is one a config typo lifts. Nor a budget that admits nothing (review round 4, C-6):
-// below 1, every call was BUSY forever, without a word, since no call weighs less than 1. Never throws: a callLimits that
-// is not an object is warned about and gives the defaults.
-function callBudgetOf(callLimits: unknown, warn: (message: string) => void): Readonly<CallBudget> {
-    if (callLimits === undefined) return DEFAULT_CALL_BUDGET;
-    if (!callLimits || typeof callLimits !== 'object' || Array.isArray(callLimits)) {
-        warn(`[Sandbox] callLimits must be an object; ${shown(callLimits)} was ignored: the defaults apply (${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes} bytes per second).`);
-        return DEFAULT_CALL_BUDGET;
-    }
-    const limits = callLimits as Record<string, unknown>;
-    const field = (name: keyof CallLimits, fallback: number): number => {
-        const value = limits[name];
-        if (value === undefined) return fallback;
-        if (typeof value === 'number' && Number.isFinite(value) && value >= 1) return value;
-        warn(`[Sandbox] callLimits.${name} must be a finite number >= 1; ${typeof value === 'number' ? String(value) : shown(value)} was ignored: the default ${fallback} applies.`);
-        return fallback;
-    };
-    return Object.freeze({ calls: field('maxPerSecond', DEFAULT_CALL_BUDGET.calls), bytes: field('maxBytesPerSecond', DEFAULT_CALL_BUDGET.bytes) });
-}
-
-// Why a guest call past the budget is refused (BUSY): the same words in the guest's broker (in-sandbox-script.ts).
-const callBudgetText = (budget: Readonly<CallBudget>) => `more than ${budget.calls} calls or ${budget.bytes} bytes of calls in one second`;
-
 const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 
 const DEFAULT_TERMINATE_REASON = 'terminated by the host';
 const WATCHDOG_REASON = 'the guest stopped responding (watchdog)';
 const ENTRY_FAILED_REASON = 'the guest entry failed to start';
 const VIEW_LOST_REASON = 'the sandbox view stopped responding';
+// VIEW_MAX_OPERATION_MS, in words (a unit test keeps them equal)
+const VIEW_OVERRUN_REASON = 'the view spent more than 2000 ms on one operation';
 const EXECUTION_TIMEOUT_REASON = 'the executed code ran longer than workerExecutionTimeout';
 const CONFIG_REFUSED_REASON = 'the configuration could not be used';
 const BUILD_FAILED_REASON = 'the environment could not be built';
 const SECOND_LOAD_REASON = 'the sandbox frame loaded a second time';
 const SECOND_ANNOUNCEMENT_REASON = 'the guest frame announced itself again (it reloaded or rewrote its document)';
 const LOAD_TIMEOUT_REASON = 'the sandbox did not finish loading';
+// Past the budget of uncaught errors and rejections the guest's bootstrap keeps (egress.ts, UNCAUGHT_PER_SECOND and
+// UNCAUGHT_CHARACTERS_PER_SECOND; review round 5, N-1): the bootstrap says so once, on the port only it holds.
+const UNCAUGHT_BUDGET_REASON = 'the guest raised more uncaught errors or unhandled rejections in one second than their budget allows';
 // What the host page's own policy can refuse (review round 1, R3-1): the sandbox's frames are srcdoc documents, and a
 // srcdoc document inherits the policies of the page that made it (CSP3: a copy of its policy list; Trusted Types;
 // COEP). Each reason names the policy, so a misconfigured host page is told what to allow (docs/API.md#host-page-policy).
@@ -475,6 +440,19 @@ export const VIEW_LIVENESS_TIMEOUT_MS = 5000;
  * document, is `ready`. Without one, the frame's load waits for the guest's subresources, and they count.
  */
 export const LOAD_TIMEOUT_MS = VIEW_LIVENESS_TIMEOUT_MS;
+
+// The features literal a bootstrap is given (in-sandbox-script.ts): the opt-in ones only when on, the call budget
+// always, the listeners of its rows in the egress table (egress.ts), and in worker and strict mode the budget of uncaught
+// errors and rejections.
+interface BootstrapFeatures {
+    autoResize?: true;
+    fetchBridge?: { timeoutMs: number };
+    externalPort?: true;
+    guestWrites?: true;
+    callBudget: CallBudget;
+    listeners: BootstrapListener[];
+    uncaught?: { count: number; characters: number };
+}
 
 // What the host posts to a strict view with its two ports (INIT_VIEW).
 interface StrictInit {
@@ -832,7 +810,7 @@ export class WebSandbox extends ElementBase {
     private _dispatchFilesChanged(paths: string[]) {
         if (paths.length === 0) return;
         this._buildInputs++;
-        this.dispatchEvent(new CustomEvent('fileschanged', { detail: { paths } }));
+        this.dispatchEvent(elementEvent('fileschanged', { paths }));
     }
 
     // One overlay per environment (C5), made with the build like the fetch bridge, and the reserved method bound to
@@ -865,22 +843,23 @@ export class WebSandbox extends ElementBase {
     // told its change stands only if no listener reset or terminated the sandbox meanwhile (then the overlay that
     // held it is gone or closed, and the answer could only reach a closed port anyway).
     // In strict mode the change goes to the view as well (R4-4), and the guest is answered once the view has it.
+    // What is announced and what the view is told are both projections of the one diff the overlay reports for the
+    // request (guest-writes.ts, record; review round 5, N-4 and L-4): 'fileswritten' exactly when the entry
+    // listGuestWrites() shows at the path changed, and the view exactly when what the guest sees there changed. A removal
+    // of a file the host unregistered after the build changes nothing listed and is announced nowhere, but the guest no
+    // longer sees the file, so the view no longer shows it either (N-4: it kept the old blob: URL).
     private _handleGuestWrite(writes: GuestWrites | null, request: unknown): Promise<GuestWriteAnswer> {
         if (!writes) return refuseGuestWrite();
-        // What the list holds at the path before (the request is the guest's structured-cloned data, read once): a change is
-        // announced only when the list changed (review round 4, L-4), so 'fileswritten' never names what listGuestWrites()
-        // does not show. A removal of a path the host unregistered after the build changes the guest's view only.
-        const requested = request !== null && typeof request === 'object' ? (request as { path?: unknown }).path : undefined;
-        const before = typeof requested === 'string' ? writes.change(requested) : undefined;
-        let answer: GuestWriteAnswer;
+        let recorded: ReturnType<GuestWrites['record']>;
         try {
-            answer = writes.handle(request);
+            recorded = writes.record(request);
         } catch (error) {
             return Promise.reject(error);
         }
-        if (answer.change === 'none' || writes.change(answer.path) === before) return Promise.resolve(answer); // nothing to announce
+        const { answer, diff } = recorded;
         // What the view is told, taken now: a 'fileswritten' listener may commit the change and empty its place.
-        const shown = this._viewPort ? viewWriteOf(answer.path, writes.change(answer.path)) : null;
+        const shown = diff.view && this._viewPort ? viewWriteOf(answer.path, diff.shown) : null;
+        if (!diff.listed) return new Promise((resolve, reject) => this._showInView(shown, () => resolve(answer), reject));
         return new Promise((resolve, reject) => {
             let acted = false;
             this._notifyThenAct([() => this._dispatchFilesWritten(answer.path)], () => {
@@ -909,7 +888,7 @@ export class WebSandbox extends ElementBase {
     // One guest change the host recorded: dispatched on the element and bubbling, like the other events a guest
     // causes. At most GUEST_WRITES_PER_SECOND per environment (guest-writes.ts).
     private _dispatchFilesWritten(path: string) {
-        this.dispatchEvent(new CustomEvent('fileswritten', { detail: Object.freeze({ paths: Object.freeze([path]) }), bubbles: true }));
+        this.dispatchEvent(elementEvent('fileswritten', { paths: [path] }));
     }
 
     // Options that were removed, dropped from the config with one warning per instance each, so an old config keeps
@@ -969,7 +948,8 @@ export class WebSandbox extends ElementBase {
             return;
         }
 
-        if (this._port) {
+        // Before `ready` it waits, even with a port (strict mode has one from the wrapper's load): _enterReady posts it.
+        if (this._port && this._state === 'ready') {
             this._postExecute(this._port, code);
         } else {
             this._queue.push({ code });
@@ -1069,12 +1049,13 @@ export class WebSandbox extends ElementBase {
         return null;
     }
 
-    // Sends one of the host's own RPC requests over the port, or queues it until setupChannel flushes (mirrors execute()).
+    // Sends one of the host's own RPC requests over the port once the build is ready, or queues it until _enterReady flushes
+    // (mirrors execute(); review round 5, L-1: strict mode has its port from the wrapper's load, before `ready`).
     // Only for the environment the call was made in, while it stands (L-2, _issue): otherwise nothing is sent, and the
     // text returned refuses the call TERMINATED.
     private _postRpc(frame: unknown): string | undefined {
         if (this._issuedIn !== this._generation || this._state === 'idle' || this._state === 'terminated') return RESET_CALL_MESSAGE;
-        if (this._port) {
+        if (this._port && this._state === 'ready') {
             this._port.postMessage(frame);
             return;
         }
@@ -1224,9 +1205,8 @@ export class WebSandbox extends ElementBase {
         // calls it runs per channel (review B7), so the count belongs to this environment.
         const reply = (frame: unknown, transfer?: Transferable[]) => port.postMessage(frame, transfer ?? []);
         // Setting onmessage starts the port: frames the guest posted before its announcement was accepted are
-        // delivered now, after 'ready'.
+        // delivered now, after 'ready'. What waits in the queue is posted by _enterReady, the one flush point.
         port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, null);
-        this._flushQueues(port);
     }
 
     /**
@@ -1296,6 +1276,13 @@ export class WebSandbox extends ElementBase {
             if (source === null) this._resizer?.report(data);
             return;
         }
+        if (data?.type === 'UNCAUGHT_PAST_BUDGET') {
+            // The guest raised more uncaught errors and rejections in one second than their budget (egress.ts; review
+            // round 5, N-1), counted by its bootstrap, which alone posts on this port. Firefox reports each to the host
+            // page's thread, cancelled or not, so the guest that causes them is stopped.
+            this._terminate(UNCAUGHT_BUDGET_REASON);
+            return;
+        }
         // Everything else on this port is RPC (or not ours); the broker validates every frame.
         // Answers go back on THIS port — the one the request arrived on — never on whatever port is
         // current. Teardown closes it, and a message posted on a closed port is silently discarded
@@ -1326,10 +1313,13 @@ export class WebSandbox extends ElementBase {
         port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, 'logic');
         viewPort.onmessage = (e) => this._onViewMessage(viewPort, e.data);
 
+        // The ports go to the view now, at the wrapper's load; what waits in the queue does not (review round 5, L-1): it is
+        // posted when the build becomes ready, at the view's check-in (_enterReady). Flushed here, a call made while loading
+        // that timed out between the load and the check-in had already left, and ran in the guest after its caller had been
+        // told TIMEOUT, though docs/API.md says it never runs.
         const init = this._strictInit;
         this._strictInit = null;
         target.postMessage({ type: 'INIT_VIEW', ...init }, '*', [logic.port2, view.port2]);
-        this._flushQueues(port);
     }
 
     private _onViewMessage(viewPort: MessagePort, data: any) {
@@ -1356,6 +1346,12 @@ export class WebSandbox extends ElementBase {
         }
         if (data?.type === 'VIEW_PONG') {
             this._viewWatchdog?.handlePong(data.n);
+            return;
+        }
+        if (data?.type === 'VIEW_OVERRUN') {
+            // One operation of the view, a flush and the rendering that showed it, took longer than VIEW_MAX_OPERATION_MS
+            // (review round 5, M-2; in-sandbox-view.ts): the view has stopped applying operations.
+            this._terminate(VIEW_OVERRUN_REASON);
             return;
         }
         if (data?.type === 'VIEW_WRITTEN') {
@@ -1416,12 +1412,11 @@ export class WebSandbox extends ElementBase {
         this._warnStrictOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or '${scriptHashSource(VIEW_STILL_STYLE)}' in style-src (see docs/API.md#host-page-policy).`);
     }
 
-    // Flushes what was queued before the guest's port existed onto it, in the order it was issued (L-3): execute() code
+    // Flushes what was queued before the build was ready onto its port, in the order it was issued (L-3): execute() code
     // (checked by execute() when queued) and the host's own RPC requests — the queue never holds answers (those go back
-    // on the port their request arrived on). Requests are cloned when the call is made (see callWithTimeout in rpc.ts),
-    // so a post failure is not expected here; the per-frame catch is a backstop so that one bad frame could never drop
-    // the frames behind it or — since _finishBuild dispatches 'ready' only after setupChannel returns — stop 'ready'
-    // from firing.
+    // on the port their request arrived on). Called by _enterReady only (review round 5, L-1). Requests are cloned when
+    // the call is made (see callWithTimeout in rpc.ts), so a post failure is not expected here; the per-frame catch is a
+    // backstop so that one bad frame could never drop the frames behind it or stop 'ready' from firing.
     private _flushQueues(port: MessagePort) {
         const queued = this._queue;
         this._queue = [];
@@ -1445,7 +1440,7 @@ export class WebSandbox extends ElementBase {
     // Every detail is normalised and labelled with where it came from (sandbox-log.ts, review B3), here, from the
     // raw line and its source: no caller can hand this a detail of its own making.
     private _dispatchLog(line: unknown, source: 'guest' | 'host') {
-        this.dispatchEvent(new CustomEvent('sandbox-log', { detail: toLogDetail(line, source, () => this._warnLogBytes()), bubbles: true }));
+        this.dispatchEvent(elementEvent('sandbox-log', toLogDetail(line, source, () => this._warnLogBytes())));
     }
 
     // A line past LOG_MAX_BYTES arrived (the guest's relay never sends one): its arguments past the budget were dropped.
@@ -1479,15 +1474,13 @@ export class WebSandbox extends ElementBase {
     }
 
     // One request from the guest against this environment's per-second budget (M-2), before its method is looked up (the
-    // broker asks, rpc.ts): null when it fits, and is counted against both windows; else why it is refused BUSY, and
-    // nothing is counted. The guest's broker refuses a call past the same budget before sending it, so this refuses only
-    // what did not come through that check, or arrived bunched (delivered late while the host page was busy).
-    private _admitGuestCall(bytes: number): string | null {
-        const now = performance.now();
-        if (!this._guestCalls.fits(now) || !this._guestCallBytes.fits(now, bytes)) return callBudgetText(this._callBudget);
-        this._guestCalls.admit(now);
-        this._guestCallBytes.admit(now, bytes);
-        return null;
+    // broker asks, rpc.ts), by the config schema's one rule (admitGuestCall, config-schema.ts): null when it fits, and is
+    // counted against both windows; else the refusal, BUSY, or ARGS_NOT_TRANSFERABLE for a call heavier than the whole byte
+    // budget (review round 5, L-2), and nothing is counted. The guest's broker refuses a call by the same rule before
+    // sending it, so this refuses only what did not come through that check, or arrived bunched (delivered late while the
+    // host page was busy).
+    private _admitGuestCall(bytes: number): BudgetRefusal | null {
+        return admitGuestCall(this._callBudget, this._guestCalls, this._guestCallBytes, bytes, performance.now());
     }
 
     // A line the element writes itself: labelled 'host', never rate-limited.
@@ -1520,7 +1513,7 @@ export class WebSandbox extends ElementBase {
             console.warn(`[Sandbox] the guest reported more than ${VIOLATION_EVENT_LIMIT} CSP violations${where}; further ones are not dispatched until the next reset(), load() or setConfig().`);
             return;
         }
-        this.dispatchEvent(new CustomEvent('violation', { detail, bubbles: true }));
+        this.dispatchEvent(elementEvent('violation', detail));
     }
 
     // Arms the liveness watchdog for the port just handed over, if the config asks for one (see
@@ -1598,7 +1591,7 @@ export class WebSandbox extends ElementBase {
     // Every request through the bridge, once, when it settled: dispatched on the element and bubbling, like
     // 'violation'. The record is built by the host from validated fields (fetch-bridge.ts).
     private _dispatchFetch(record: FetchRecord) {
-        this.dispatchEvent(new CustomEvent('fetch', { detail: record, bubbles: true }));
+        this.dispatchEvent(elementEvent('fetch', record));
     }
 
     // What setConfig() did not take of `callLimits`: once per element and message, as the same config is set again and again.
@@ -1619,7 +1612,7 @@ export class WebSandbox extends ElementBase {
     // own (`dispatch: 'task'`, _terminateBuild).
     private _enterState(next: SandboxState, reason?: string, dispatch: 'now' | 'task' | 'none' = 'now') {
         this._state = next;
-        if (next === 'ready') this.dispatchEvent(new CustomEvent('ready'));
+        if (next === 'ready') this.dispatchEvent(elementEvent('ready'));
         if (next !== 'terminated' || dispatch === 'none') return;
         if (dispatch === 'now') {
             this._dispatchTerminated(reason ?? '');
@@ -1756,7 +1749,7 @@ export class WebSandbox extends ElementBase {
         const outer = this._terminationDispatched;
         this._terminationDispatched = reason;
         try {
-            this.dispatchEvent(new CustomEvent('terminated', { detail: { reason } }));
+            this.dispatchEvent(elementEvent('terminated', { reason }));
         } finally {
             this._terminationDispatched = outer;
         }
@@ -1806,7 +1799,10 @@ export class WebSandbox extends ElementBase {
         // communication, logs and RPC bridge template that any content running in the sandbox uses.
         // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
         // The features as one literal: the opt-in ones only when on, and the call budget always (M-2).
-        const features: { autoResize?: true; fetchBridge?: { timeoutMs: number }; guestWrites?: true; callBudget: CallBudget } = { callBudget: { ...this._callBudget } };
+        // The listeners the bootstrap installs are the egress table's rows for this mode (egress.ts), and worker mode's guest also
+        // counts its uncaught errors and rejections against their budget (review round 5, N-1).
+        const features: BootstrapFeatures = { callBudget: { ...this._callBudget }, listeners: bootstrapListeners(mode) };
+        if (mode === 'worker') features.uncaught = { ...UNCAUGHT_BUDGET };
         if (mode === 'cooperative' && this._autoResizeEnabled()) features.autoResize = true;
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
@@ -2040,11 +2036,11 @@ export class WebSandbox extends ElementBase {
     // (globalThis.x = …). `this` inside is the global object, as at a script's top level. The scope check
     // (assertEntryScoped) refuses to start a worker whose entry escaped that scope.
     private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string): string {
-        const features: { fetchBridge?: { timeoutMs: number }; externalPort: true; guestWrites?: true; callBudget: CallBudget } = { externalPort: true, callBudget: { ...this._callBudget } };
+        const features: BootstrapFeatures = { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET } };
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)
-        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
+        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
         const prelude = '(function (g) {'
             + `(${assertEntryScoped.toString()})(g);`
             + workerGlobalsStatement('g')
@@ -2187,8 +2183,15 @@ export class WebSandbox extends ElementBase {
         }
     }
 
+    // The transition to `ready`, in every mode, and the one place what waited for it is released (review round 5, L-1; the
+    // first slice of the lifecycle reducer, backlog S65): the queued calls and execute() code are posted here, in the
+    // order they were made, and nowhere else. A call made while loading waits in the queue for this point; if it settles
+    // first (its timeout), it leaves the queue and is never posted (_queuedWhilePending), so a call that timed out before
+    // `ready` never runs. Before, strict mode flushed at the wrapper's load (_setupStrictChannels), the other modes in
+    // setupChannel, two flush points for one rule, and strict mode's was not this one.
     private _enterReady() {
         if (this._loadDeadline) { this._loadDeadline.stop(); this._loadDeadline = null; }
+        if (this._port) this._flushQueues(this._port);
         // Armed before 'ready' is dispatched: a 'ready' listener that resets or terminates the sandbox then
         // stops this watchdog with the rest, instead of leaving one running for a port that is gone.
         if (this._port) this._startWatchdog(this._port);

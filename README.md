@@ -164,7 +164,9 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     `error`; `source` is `'host'` for the element's own lines (an execution timeout, an entry that failed, guest lines
     it dropped past its per-second window) and
     `'guest'` for everything from the guest, whatever it claims. Guest lines carry the guest's `console` calls (every
-    method), uncaught errors and unhandled rejections (`Uncaught …`), in every mode; the guest's console never throws:
+    method), uncaught errors and unhandled rejections (`Uncaught …`), in every mode (in worker and strict mode they are
+    cancelled once relayed, and more than 1000 of them, or 1 Mi characters of them, in one second end the sandbox);
+    the guest's console never throws:
     a function, a DOM node or anything else structured clone refuses arrives as a string naming its kind, an `Error`
     (also inside an object, an array or `Promise.allSettled`'s results) as `{ name, message, stack }`. Bounded in the
     guest before anything is posted: 64 arguments, strings cut at
@@ -308,7 +310,8 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
     call is refused at once with `BUSY`, before its method runs, so calls to a slow method cannot pile up
     without bound. The guest makes at most 1000 calls and 64 MiB of calls in any one second (`callLimits` sets
     other values); past that its `bridge` refuses a call with `BUSY` before sending it, and the element answers `BUSY`
-    to one that arrives anyway.
+    to one that arrives anyway. A call heavier than `maxBytesPerSecond` could never fit, so both ends refuse it with
+    `ARGS_NOT_TRANSFERABLE`, which is not worth retrying.
 *   **Every message is bounded as a whole**: a method name is at most 256 characters, an error message at most
     65536 (cut, with a marker), and arguments or a result at most 33 MiB (`RPC_MAX_BYTES`), measured on both sides.
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never
@@ -523,10 +526,13 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     keeps only allowlisted elements and attributes (no handlers, frames, `object`/`embed`, `meta`, `base`,
     `template`, SVG `use`, markers, filters or animation), so no nested frame exists and no checked attribute
     changes afterwards; the view holds at most 50 000 elements, 256 deep, 1 Mi characters and 1 000 URL-bearing
-    attributes, parses at most 1 Mi characters of markup and takes at most 200 URL-bearing attributes per second, and
-    shows only files that never open as
-    a document (no SVG, HTML or XML; no `data:` images); a URL in rendered markup that the view's policy would refuse is
-    dropped before the browser sees it, and reported as the browser would have; guest code has no
+    attributes (`src`, `srcset`, `poster`, `<link>`'s `href`), parses at most 1 Mi characters of markup, makes at most 200
+    loads per second (every URL attribute it keeps, and every other load or refused load the browser reports for it,
+    CSS-borne ones included), loads at most 10 000 distinct URLs in its life, and ends the sandbox when one operation
+    takes longer than 2 s; it shows only files that never open as
+    a document (no SVG, HTML or XML; no `data:` images); a URL in rendered markup is kept only when it names a listed
+    origin exactly (an image's `http:` URL may name a listed `https:` one), else dropped before the browser sees it,
+    and an `http(s)` one reported as a `violation`; guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
     `Referer`); the worker keeps only allowlisted globals, so it can request only through `fetch`, `XMLHttpRequest`,
     `WebSocket` and `importScripts`, which the policy governs on every engine, and reaches its parent only through
@@ -592,7 +598,8 @@ What remains for the default:
     every WebKit browser, which have no site isolation; Android, where Chromium isolates partially and Android WebView
     not at all; and Chromium without sandboxed-iframe isolation (the headless shell). Desktop Chromium 127+ runs the
     view in a process of its own. The view's budgets bound the common cases (one render in flight; elements, depth and
-    characters held; characters parsed per second; 200 ms of the view's own time per second on average, measured), but not:
+    characters held; characters parsed per second; loads per second; 200 ms of the view's own time per second on
+    average, measured, every operation charged in full; 2 s for one operation, past which the sandbox ends), but not:
     *   what one operation's layout and paint cost beyond what the markup weighs: CSS filters (WebKit: 10 `blur()`s on
         1 000 elements, 3.7 s), bidirectional text in one paragraph (240 000 characters alternating directions: tens of
         seconds in Chromium and WebKit, engine and machine dependent), and small CSS changes over many elements, which
@@ -604,10 +611,12 @@ What remains for the default:
         while the user's pointer moves (80–100% while it moves), animated images (WebKit: +22 points for 2 000),
         indeterminate `<progress>` (up to +4 points for 5 000), and autoplaying media with `allowAutoplay: true` (up to
         +6 points for 20 videos);
-    *   loads named in CSS: a URL a `<style>` or a `style` attribute names (`url()`, `image-set()`) is left to the
-        browser, outside the view's URL budget, and a refused one costs the browser its refusal (renders of 3 000
-        elements each with a background from a refused source, as fast as the view acknowledged them: Firefox 33%
-        busy; Chromium 18% and WebKit 9%, about what renders without a URL cost them).
+    *   what one render's loads cost before the load budget can hold the next one back: a render of 1 000 new images
+        stalled WebKit's host page 0.1–0.2 s while the view had loaded fewer than 8 000 distinct URLs, and up to 1.2 s
+        near that, where the view's limit of 10 000 stops it; loads named in CSS (`url()`, `image-set()`; up to one per
+        element, 50 000) are charged as the browser reports them, once their responses have ended, so a render makes
+        them all and what follows waits until the budget has repaid them; and the loads of a stylesheet already in the
+        view once the view has loaded 10 000 distinct URLs.
 
     Cooperative mode is no better: there a guest `while (true) {}` freezes the host page wherever the frame shares its
     thread.

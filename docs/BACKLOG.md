@@ -51,7 +51,7 @@ conditional "continue".
 | Review round 2 2026-10-15 | 🟡 not clean (the count stays 0): 2 high and 8 medium findings in our code from three defensive reviews (lifecycle model, change audit, documented limits measured), all fixed (S55): intrinsics captured before guest code (C-1), the byte measure on a cloned snapshot with an allow-list (C-3), worker mode `ready` only with a running worker, the host page's Trusted Types reason, a DOM-free import with a build-time view hash, one build predicate, long timers; every documented limit held at its edge on all three engines; round 3 held by the owner (S56); [report](security/REVIEW-ROUND-2-2026-10-15.md) |
 | Review round 3 2026-10-18 | 🟡 not clean (the count stays 0): 2 high and 6 medium findings in our code from the same three reviews, all fixed (S57): whole RPC frames and a guest call budget (`callLimits`), the view's time budget charges only measured rendering, `allowAnimations` (default `true`; `false` removes animations and transitions from the view) and `allowAutoplay` (default `false`); where the view runs per engine measured ([research 16](research/16_view_isolation/README.md)); round 4 held by the owner (S58); [report](security/REVIEW-ROUND-3-2026-10-18.md) |
 | Review round 4 2026-10-18 | 🟡 not clean (the count stays 0): no high finding for the first time, 5 medium in our code, all fixed (S62): the worker's own `postMessage` removed, values read once, the still-style rewrite bounded, build completion after a frame's load, the view's URL policy and budget (`VIEW_MAX_URLS`, `VIEW_URLS_PER_SECOND`); the default call rate 1000 per second; round 5 next (S63); [report](security/REVIEW-ROUND-4-2026-10-18.md) |
-| Review round 5 2026-10-18 | 🟡 not clean (the count stays 0): 1 high and 6 medium in our code, all in code earlier per-instance fixes added; [research 18](research/18_finding_classes/README.md) found the recurring classes; fixes as class slices (S64), then a lifecycle reducer (S65), a relay-worker probe (S66), one config schema (S67) and the view's cost bound (S68) |
+| Review round 5 2026-10-18 | 🟡 not clean (the count stays 0): 1 high and 6 medium in our code, all in code earlier per-instance fixes added; [research 18](research/18_finding_classes/README.md) found the recurring classes; fixes as class slices (S64, done), then a lifecycle reducer (S65), a relay-worker probe (S66, done: build it, S69), one config schema (S67) and the view's cost bound (S68); [report](security/REVIEW-ROUND-5-2026-10-19.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -1597,9 +1597,10 @@ Tests: `test/unit/review-round-4.test.ts`, `test/e2e/review-round-4.spec.ts`, `t
 Ran on `main` at `60814b5` with the same three reviews. It found 1 high and 6 medium findings in our code, all in code
 an earlier per-instance fix added or changed. The owner reviewed them before any fix and adopted every recommendation
 of [research 18](research/18_finding_classes/README.md): the fixes are made as the first slices of their classes'
-designs (S64), and the structural work follows in phases (S65–S68), each merged on its own. Report: written with S64.
+designs (S64), and the structural work follows in phases (S65–S69), each merged on its own.
+[Report](security/REVIEW-ROUND-5-2026-10-19.md).
 
-### S64 · Review round 5's fixes, as slices of their classes — ▶️ **in progress** (phase 1)
+### S64 · Review round 5's fixes, as slices of their classes — ✅ **done** (phase 1)
 
 The owner's decisions, 2026-10-18:
 - **Egress (N-1).** Rejections are cancelled after relaying, as errors are. A per-second rejection budget ends the
@@ -1623,6 +1624,23 @@ The owner's decisions, 2026-10-18:
   - N-4, L-4: one diff for guest-write projections;
   - L-3: one frozen-detail constructor;
   - the lows and docs.
+
+**Done** ([report](security/REVIEW-ROUND-5-2026-10-19.md)):
+- **The egress table** (`src/lib/egress.ts`), with its enumeration e2e and the uncaught-error and rejection budget.
+- **One config schema** (`src/lib/config-schema.ts`), with its first rules.
+- **One element-event constructor** (`src/lib/element-events.ts`).
+- **One guest-write diff.**
+- **One reader for guest values**, with its scan.
+- **`ready` as the only flush point.**
+- **The view:**
+  - observed loads and violations are charged;
+  - the full time charge, with `VIEW_MAX_OPERATION_MS` (2000);
+  - a still stylesheet built per guest;
+  - `VIEW_MAX_DISTINCT_URLS` (10,000);
+  - the one-sided URL match;
+  - the prelude's captured error getters.
+
+Residual, for the owner: the 2 s operation limit ends a 250,000-character textarea `set()` in WebKit.
 
 ### S65 · One lifecycle reducer, with the model-based suite (S61.2) — ⏸️ phase 2
 

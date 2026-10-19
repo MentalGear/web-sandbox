@@ -91,7 +91,9 @@ export type RpcSend = (frame: unknown, transfer?: Transferable[]) => unknown;
  *                           after the next 'ready')
  *   ARGS_NOT_TRANSFERABLE   the arguments cannot be structured-cloned, measure past RPC_MAX_BYTES or hold a kind the
  *                           measure does not know; nothing was sent. Also reported by the other side for a request
- *                           that arrives so (its own broker never sends one); nothing ran there
+ *                           that arrives so (its own broker never sends one); nothing ran there. A guest's call whose
+ *                           frame is heavier than its per-second byte budget (callLimits.maxBytesPerSecond) is refused
+ *                           so too, by both ends: no wait would let it through (review round 5, L-2)
  *   SEND_FAILED             the transport threw while sending; nothing was left pending
  *   INVALID_CALL            the method name is not a string, or is longer than 256 characters; nothing was sent
  * Reported by the other side (the message is its text; any other reported value reads as HANDLER_ERROR):
@@ -167,15 +169,23 @@ export interface BrokerOptions {
     // channels take a transfer list. The guest's posts nothing but the frame.
     transferResults?: boolean;
     // The per-second budget of the calls the guest makes (review round 3, M-2), as a sliding one-second window its owner
-    // keeps: given a call's frame bytes, counts it and returns null, or returns why it is refused (and counts nothing).
-    // The guest's broker asks `admitOutbound` before it sends a call, and refuses one past it BUSY, locally, so it never
-    // crosses; the host's asks `admitInbound` when a request arrives, before its method is looked up, and answers BUSY.
-    admitOutbound?: (bytes: number) => string | null;
-    admitInbound?: (bytes: number) => string | null;
+    // keeps: given a call's frame bytes, counts it and returns null, or returns the refusal (and counts nothing): BUSY past
+    // the window, or ARGS_NOT_TRANSFERABLE for a call heavier than the whole byte budget, which no wait would let through
+    // (review round 5, L-2 = N-5; config-schema.ts). The guest's broker asks `admitOutbound` before it sends a call, and
+    // refuses one past it locally, so it never crosses; the host's asks `admitInbound` when a request arrives, before its
+    // method is looked up, and answers with the same code.
+    admitOutbound?: (bytes: number) => BudgetRefusal | null;
+    admitInbound?: (bytes: number) => BudgetRefusal | null;
     // The guest's startup gate (in-sandbox-script.ts) answers a request it cannot hold with BUSY. It is given, once, the
     // function that does so through this broker's builder, so no RPC frame is made anywhere else (C-1); it is never part
     // of the returned object, so guest code never holds it.
     takeBusyRefusal?: (refuse: (request: unknown, reason: string) => void) => void;
+}
+
+/** Why a call budget refuses a guest call: retryable (BUSY), or never carried (ARGS_NOT_TRANSFERABLE). */
+export interface BudgetRefusal {
+    code: 'BUSY' | 'ARGS_NOT_TRANSFERABLE';
+    reason: string;
 }
 
 export interface Broker {
@@ -419,10 +429,15 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         return codedError(message, code);
     }
 
-    // The guest's call past the per-second budget (M-2), refused here, before it is sent, as the host would answer it:
-    // BUSY, the other side's code, minted for the other side's budget. Its text is the budget owner's.
-    function budgetRefusal(message: string): RpcError {
-        return codedError(message, CODE.BUSY);
+    // The guest's call refused by the per-second budget (M-2), here, before it is sent, as the host would answer it: BUSY,
+    // the other side's code, minted for the other side's budget; or ARGS_NOT_TRANSFERABLE for a call heavier than the whole
+    // budget (L-2), which the host would answer the same. Its text is the budget owner's. The refusal is read once.
+    function budgetCode(refusal: BudgetRefusal): string {
+        return refusal.code === CODE.ARGS_NOT_TRANSFERABLE ? CODE.ARGS_NOT_TRANSFERABLE : CODE.BUSY;
+    }
+    function budgetRefusal(refusal: BudgetRefusal): RpcError {
+        const reason = refusal.reason;
+        return codedError(reason, budgetCode(refusal));
     }
 
     // Turns a failure the other side reported into a rejection. The inbound frame is untrusted, so its
@@ -527,7 +542,8 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         // calls to names that do not exist costs this side as much as any other.
         const overBudget = admitInbound ? admitInbound(bytes) : null;
         if (overBudget !== null) {
-            respond(refusalFrame(id, overBudget, CODE.BUSY));
+            const reason = overBudget.reason;
+            respond(refusalFrame(id, reason, budgetCode(overBudget)));
             return;
         }
 

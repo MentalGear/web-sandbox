@@ -175,13 +175,15 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
     });
 
     test('a style attribute that names no animation is left exactly as written; one that does loses only its animations', async ({ sandbox, page, browserName }) => {
-        await mountEntry(sandbox, `sandboxView.render('<p id="a" style="all:unset">a</p><p id="b" style="COLOR:red;margin:0">b</p><p id="c" style="color: red; transition: color 1s; animation: spin 1s">c</p><p id="d" style="all:unset;animation:spin 1s">d</p>');`, { allowAnimations: false });
-        await waitInView(page, browserName, `!!document.getElementById('d')`);
-        const styles = await inView<(string | null)[]>(page, browserName, `['a', 'b', 'c', 'd'].map(id => document.getElementById(id).getAttribute('style'))`);
+        await mountEntry(sandbox, `sandboxView.render('<p id="a" style="all:unset">a</p><p id="b" style="COLOR:red;margin:0">b</p><p id="c" style="color: red; transition: color 1s; animation: spin 1s">c</p><p id="d" style="all:unset;animation:spin 1s">d</p><p id="e" style="transform: rotate(1deg); color: transparent">e</p>');`, { allowAnimations: false });
+        await waitInView(page, browserName, `!!document.getElementById('e')`);
+        const styles = await inView<(string | null)[]>(page, browserName, `['a', 'b', 'c', 'd', 'e'].map(id => document.getElementById(id).getAttribute('style'))`);
         expect(styles.slice(0, 3)).toEqual(['all:unset', 'COLOR:red;margin:0', 'color: red;']);
-        // `all` beside an animation: rewritten without it where the engine keeps `all` as one property (Chromium), gone
-        // whole where `all` expands into more properties than the attribute has characters (Firefox, WebKit)
-        expect(styles[3] === null || !/anim/i.test(styles[3]!), String(styles[3])).toBe(true);
+        // `all` beside an animation: gone whole, on every engine (review round 5, L-2: Chromium kept `all: unset;`, as it
+        // stores `all` as one property)
+        expect(styles[3]).toBeNull();
+        // no "animation" or "transition" in it: as written (review round 5, N-7: "trans" in transform and transparent)
+        expect(styles[4]).toBe('transform: rotate(1deg); color: transparent');
     });
 
     test("the engine's animation and transition longhands are all among the ones the view reads", async ({ sandbox, page, browserName }) => {
@@ -202,10 +204,11 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
         expect(missing).toEqual([]);
     });
 
-    // The renderer reads a style attribute only when its text has "anim", "trans" or a backslash (in-sandbox-view.ts,
-    // stillStyle): every property of this engine that sets an animation or transition longhand must be named so, `all`
-    // aside (it takes CSS-wide keywords only). Every property the engine knows, set to `inherit` on its own.
-    test('every property that sets an animation or transition longhand is named with "anim" or "trans", but all', async ({ page }) => {
+    // The renderer reads a style attribute only when its text has "animation", "transition" or a backslash
+    // (in-sandbox-view.ts, stillStyle; review round 5, N-7): every property of this engine that sets an animation or
+    // transition longhand must be named so, `all` aside (it takes CSS-wide keywords only). Every property the engine
+    // knows, set to `inherit` on its own.
+    test('every property that sets an animation or transition longhand is named with "animation" or "transition", but all', async ({ page }) => {
         const offenders = await page.evaluate((pattern) => {
             const animating = new RegExp(pattern);
             const names = new Set<string>();
@@ -219,7 +222,7 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
                 const probe = document.createElement('i');
                 probe.style.setProperty(name, 'inherit');
                 for (let i = 0; i < probe.style.length; i++) {
-                    if (!animating.test(probe.style.item(i)) || /anim|trans/i.test(name) || name === 'all') continue;
+                    if (!animating.test(probe.style.item(i)) || /animation|transition/i.test(name) || name === 'all') continue;
                     offenders.push(name + ' sets ' + probe.style.item(i));
                     break;
                 }
@@ -253,6 +256,14 @@ test.describe('C-7: every -webkit- part of the media and form controls is in the
         console.log(`MEASURED chromium C-7: ${ids.size} user-agent pseudo ids, ${webkit.length} -webkit- ones`);
         expect(webkit.length).toBeGreaterThan(10);
         expect(webkit.filter(id => !(VIEW_STILL_PSEUDO_ELEMENTS as readonly string[]).includes(id))).toEqual([]);
+        // and the view gives each a rule here (review round 5, M-1): it adds one for a ::-webkit- name wherever the parser
+        // keeps it, as CSS.supports() denies parts Chromium has (-webkit-media-controls-volume-control-container)
+        const kept = await page.evaluate((names) => names.filter(name => {
+            const sheet = new CSSStyleSheet();
+            try { sheet.insertRule(`*::${name}{}`); } catch { return false; }
+            return sheet.cssRules.length === 1;
+        }), webkit);
+        expect(kept).toEqual(webkit);
     });
 });
 

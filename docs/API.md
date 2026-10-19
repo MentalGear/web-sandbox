@@ -214,6 +214,13 @@ A field left out, or `callLimits` left out, takes the default. A value that is n
 an object takes both defaults with one warning; there is no way to turn the budget off, nor to set one that admits no
 call.
 
+The two fields are checked together: every call that can be carried fits an empty window. A call weighs its whole
+message, so a `maxBytesPerSecond` below `RPC_MAX_BYTES` (33 MiB) also caps one call: a call heavier than it can never fit,
+and is refused with `ARGS_NOT_TRANSFERABLE`, which is not worth retrying, by the guest's `bridge` before sending it and
+by the element if it arrives anyway; such a value gives one warning at `setConfig()`. The smallest call measures about
+136 bytes, so a budget below that refuses every guest call, `sandboxFetch()` and guest writes included, with
+`ARGS_NOT_TRANSFERABLE`.
+
 ### `allowAnimations` and `allowAutoplay`
 
 Strict mode's view runs on your page's main thread wherever the browser places it there, and then everything it
@@ -235,11 +242,13 @@ animations and transitions too). The budget bounds what the view does when the g
 rendered, runs without the view doing anything. Set `false` to remove animations and transitions from the view: every
 element shows its end state, and the bound holds again. With `false` the view puts a stylesheet of its own before
 anything the guest renders, one anonymous cascade layer that sets `animation` and `transition` to `none !important` on
-every element and pseudo-element, and the renderer removes every animation and transition declaration that holds
+every element and, once the guest's CSS names it (or uses an escape or `@import`), on each pseudo-element the browser
+supports that an animation applies to (not `::first-letter`, `::first-line`, the highlight pseudo-elements or scrollbar
+parts, on which no animation runs), and the renderer removes every animation and transition declaration that holds
 anything but a CSS-wide keyword from `style` attributes (an inline `!important` would beat any layer). A `style`
-attribute whose text names no animation or transition (no `anim`, `trans` or backslash in it) is left exactly as
-written; one that does, and declares more properties than it has characters (`all` beside an animation), is removed
-whole. Nothing the guest declares overrides it: its own
+attribute whose text contains neither `animation` nor `transition` (in any case) nor a backslash is left exactly as
+written. One that does, and also has a backslash or declares `all` (outside comments and strings), is removed whole;
+any other loses only its animation and transition declarations. Nothing the guest declares overrides it: its own
 `!important`, its own layers, `@starting-style`, `@property`, scroll-driven animations, registered stylesheets and
 their `@import`s. Your page's `style-src` must allow that stylesheet (`'unsafe-inline'`, or its hash: see
 [Host page policy](#host-page-policy)); where it does not, the view removes the guest's stylesheets instead
@@ -295,7 +304,7 @@ before any guest code ran. Nothing reaches the host: no return value, no report 
 - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
 - While `idle` (not in the document) or `terminated` there is no environment: it warns and does nothing, as
   `call()` rejects then.
-- While `loading` the code is queued and sent when the guest is ready. In cooperative mode it runs once the guest
+- While `loading` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the guest
   document is parsed (see [the startup gate](#ready-and-the-startup-gate)), in order with calls.
 - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
 - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
@@ -341,8 +350,9 @@ handler.
   method name included: a name is at most 256 characters (`INVALID_CALL`).
 - Default timeout: 30 s. The element's timers and its copy of the arguments use the `setTimeout` and `structuredClone`
   it took when it was constructed: fake timers installed after that (a test's) do not control a call's timeout.
-- Calls made while `loading` are queued and sent when the guest is ready; one that settles while queued (its
-  timeout) leaves the queue and never runs. In cooperative mode a call reaches the guest's method once the guest
+- Calls made while `loading` are queued and sent when the build becomes `ready`, in every mode (strict mode included,
+  whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue and never
+  runs. In cooperative mode a call reaches the guest's method once the guest
   document is parsed (see [the startup gate](#ready-and-the-startup-gate)). Calls made while `idle` (not in the
   document) or `terminated` reject at once with `TERMINATED`, as `execute()` does nothing then.
 - Rejects with an `RpcError` (an `Error` with a `code`); see [Refusal codes](#refusal-codes).
@@ -431,11 +441,13 @@ All events are `CustomEvent`s dispatched on the element. None is `composed`.
 | `violation` | `SandboxViolation` | yes | The guest policy refused a load. |
 | `fetch` | `FetchRecord` | yes | With `fetchBridge`: a `sandboxFetch()` request settled (including refusals). Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
 | `fileschanged` | `{ paths: string[] }` | no | `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; synchronous. |
-| `fileswritten` | `{ paths: string[] }` | yes | The element recorded a guest write or removal (`guestWrites`); one path per event, at most `GUEST_WRITES_PER_SECOND` per environment. |
+| `fileswritten` | `{ paths: string[] }` | yes | A guest write or removal changed what [`listGuestWrites()`](#listguestwrites) shows at a path (`guestWrites`); one path per event, at most `GUEST_WRITES_PER_SECOND` per environment. |
 
 The bubbling events reach a listener on `window` for every sandbox on the page; `event.target` says which one.
-Every `detail` is frozen. Fields that come from the guest are validated and clamped, but they remain the
-guest's data: read them, don't merge them into your objects. The element's own startup message, the guest frame's
+Every `detail` is frozen, deeply: every object and array in it, a guest's log arguments included, so a listener cannot
+change what a later listener reads. What cannot be frozen stays as it is: the bytes of a typed array or an `ArrayBuffer`,
+the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and clamped, but they
+remain the guest's data: read them, don't merge them into your objects. The element's own startup message, the guest frame's
 port announcement (`{ type: 'SANDBOX_PORT' }` from the guest frame's window), is taken by a capture listener the
 element adds to your window at each build; a `message` listener of yours added before it, in the capture phase, sees
 it first. Act on a message only by `event.source` (above), never by its shape.
@@ -478,6 +490,14 @@ dropped and for which cap. In strict mode the view relays the later uncaught err
 raises them there) within the same `LOG_EVENTS_PER_SECOND` window; the first one it drops sends one `warn` line, also
 not counted: `[Sandbox] the guest raised more than 1000 uncaught errors in one second that only the view could
 describe; errors past that are dropped in the view.`
+
+In worker and strict mode an uncaught error or an unhandled rejection is cancelled once it is relayed, so the browser
+does not report it as well. Firefox reports a worker's unhandled rejections to your page's thread all the same, so in
+those modes they have a budget per environment: past 1000 uncaught errors and rejections (rejections handled later
+included), or 1048576 characters of their names and messages (of a rejected string, its length), in any one-second
+window, the sandbox ends: `the guest raised more uncaught errors or unhandled rejections in one second than their
+budget allows`. One error or rejection is not bounded by it: the browser reports it before the sandbox can end, so one
+with a message of hundreds of millions of characters costs your page's thread that one report.
 
 Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`);
 `[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
@@ -532,6 +552,7 @@ build is loading.
 | `the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)` | The host page enforces Trusted Types and its `trusted-types` directive does not name `web-sandbox`, also when the host page's own default policy takes the element's strings (the view and worker mode's frame need the policy themselves). |
 | `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
+| `the view spent more than 2000 ms on one operation` | Strict mode: one operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it; see [`sandboxView`](#sandboxview). |
 | `unknown mode …` | `mode` is not `strict`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`. |
 | `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned, an `origins` that is not an object, or a kind of it that is not a list. |
 | `the environment could not be built (…)` | Building the frame failed. |
@@ -540,6 +561,7 @@ build is loading.
 | `the guest frame announced itself again (it reloaded or rewrote its document)` | Cooperative and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. |
 | `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time and its frame had not loaded (without `allow-scripts`: subresources included). |
 | `the guest frame is missing` | The library's frame has no guest frame. |
+| `the guest raised more uncaught errors or unhandled rejections in one second than their budget allows` | Worker and strict mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)). |
 
 Branch on `state` and the event, not on these texts. A reason never carries the text of an error the element
 caught (that can quote your config, or be the guest's words): only a fixed text and, in parentheses, the error's
@@ -554,7 +576,7 @@ name.
 | `idle` | Not in the document (constructed, or removed): no frame. |
 | `loading` | A frame was built; waiting for the guest to check in (without `allow-scripts`, and in strict mode, for the frame to load); at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
 | `ready` | The guest can be reached; `ready` was dispatched. In cooperative mode the guest document may still be loading. |
-| `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`), an integrity check or a failed build; `terminated` was dispatched. |
+| `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`, the view's longest operation), an integrity check or a failed build; `terminated` was dispatched. |
 
 There is no `running` state: nothing reports that guest code is running or that it stopped.
 
@@ -562,7 +584,7 @@ There is no `running` state: nothing reports that guest code is running or that 
 | :--- | :--- | :--- |
 | any | inserted into the document; `setConfig()`, `load()` or `reset()` while in it | `loading`, then `ready`, or `terminated` if the build is refused or fails: one `terminated` per attempt, except for an attempt made from a `terminated` listener that ends with the very reason being dispatched (the same refusal again), which ends `terminated` without another event |
 | any | removed from the document | `idle`, no event |
-| any but `terminated` | `terminate()`, watchdog, `workerExecutionTimeout`, integrity check | `terminated` |
+| any but `terminated` | `terminate()`, watchdog, `workerExecutionTimeout`, the view's longest operation, integrity check | `terminated` |
 
 Every rebuild and teardown rejects pending calls with `TERMINATED`, aborts in-flight `sandboxFetch()` requests,
 and resets the per-environment caps (log rate, violations). Listeners run synchronously; a listener that calls
@@ -613,7 +635,7 @@ From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.
 | :--- | :--- | :--- | :--- |
 | `TIMEOUT` | local | No answer within the call's timeout. | yes |
 | `TERMINATED` | local | The environment was reset, terminated or removed. | after the next `ready` |
-| `ARGS_NOT_TRANSFERABLE` | local, reported | The arguments cannot be structured-cloned, measure more than `RPC_MAX_BYTES`, or hold a value the measure does not know (the message names it; see [`call()`](#callmethod-args)); nothing was sent. Reported by the other side for a call that arrived so: the method did not run. | no |
+| `ARGS_NOT_TRANSFERABLE` | local, reported | The arguments cannot be structured-cloned, measure more than `RPC_MAX_BYTES`, or hold a value the measure does not know (the message names it; see [`call()`](#callmethod-args)); nothing was sent. Reported by the other side for a call that arrived so: the method did not run. Guest calls only: the call is heavier than [`callLimits`](#calllimits)`.maxBytesPerSecond`, so no window could ever carry it. | no |
 | `SEND_FAILED` | local | The transport threw while sending. | no |
 | `INVALID_CALL` | local | The method name is not a string, or is longer than 256 characters. | no |
 | `UNKNOWN_METHOD` | reported | No method of that name is exposed on the other side. | no |
@@ -689,8 +711,10 @@ encoding, streams, `crypto`, `Blob`, `File`, `URL`, IndexedDB, `OffscreenCanvas`
 and `fonts`, `caches`, `Notification`, `Worker` and `SharedWorker` (no nested workers), the Service Worker, Push, RTC,
 MediaSource and Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`; and the worker's own
 `postMessage`, `onmessage` and `onmessageerror`: the library's port, with its budgets, is the only way from the worker
-to its parent (worker mode's frame, strict mode's view). Its uncaught errors leave it the same way, as
-[`sandbox-log`](#sandbox-log--sandboxlog) lines.
+to its parent (worker mode's frame, strict mode's view). Its uncaught errors and unhandled rejections leave it the same
+way, as [`sandbox-log`](#sandbox-log--sandboxlog) lines, within their budget. Every surface of the worker and its parent
+document by which guest activity can make work on your page's thread is listed, with its bound, in
+`src/lib/egress.ts`.
 
 ### `bridge`
 
@@ -736,7 +760,15 @@ In strict mode the view shows the raster images the guest writes: a write whose 
 `poster` or an icon link of the next render, with no rebuild. The element sends the view the bytes it recorded, the
 view makes its own URL from them, and the image is only decoded; `write()` resolves once the view has it. A later
 write to the path replaces the image; a removal, or a write of any other type, leaves the path naming nothing in the
-view (a registered file the guest replaced or removed included). A rebuild starts from the registered files again.
+view (a registered file the guest replaced or removed included, also one you unregistered after the build). The view
+shows what the guest's own `sandboxFiles` holds, whatever the pending list says. A rebuild starts from the registered
+files again.
+
+`fileswritten` names a path exactly when a request changed what `listGuestWrites()` shows there. A removal of a path
+the guest wrote and the files do not hold withdraws the write: the path leaves the list, and `fileswritten` names it
+with nothing listed there. A removal of a file you unregistered after the build lists nothing (there is nothing left to
+remove) and is announced nowhere; the file is gone from the guest's files and from the view. Writing the same bytes and type again
+changes nothing listed and is not announced.
 
 The element records a change before it announces it, and `listGuestWrites()` is the truth; the guest's view
 changes only when the element's answer arrives. They disagree by design in two cases: a `fileswritten` listener
@@ -748,7 +780,7 @@ with `TIMEOUT`, and the change is listed all the same). A listener's `reset()` d
 
 `sandboxFetch(url: string, init?: { method?, headers?, body? }): Promise<Response>` — asks the host to make the
 request under the [`fetchBridge`](#fetchbridge) rules; without `fetchBridge` every request rejects with
-`FETCH_NOT_ALLOWED`. Only `method`, `headers` and `body` are read from `init`;
+`FETCH_NOT_ALLOWED`. Only `method`, `headers` and `body` are read from `init`, each once;
 the body is a string, an `ArrayBuffer` or a typed array. Resolves with a whole `Response` (no streaming, no
 `AbortSignal`); rejects with a [`FetchErrorCode`](#sandboxfetch-fetcherrorcode). `fetch` itself is untouched;
 assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](ADR-006-fetch-bridge.md)
@@ -790,10 +822,13 @@ ones it needs (form controls, tables, lists, media, links; SVG geometry and pres
 Never an event handler. `src`, `srcset` and `poster` keep a registered file's path, a relative URL (which loads
 nothing), or an `https:` or `http:` URL of an origin [`origins`](#origins) lists for that load (`images` for `img`,
 `srcset` and `poster`, `media` for `audio`, `video`, their `source` and `track`), never `data:` or `javascript:`. A URL
-the view's policy would refuse is dropped before insertion, so the browser never loads or refuses it, and the view
-reports it as the browser would have: a `violation` with the directive and the URL (without credentials or fragment),
-within the same cap. CSS is not rewritten: a URL a stylesheet or a `style` attribute names (`url()`, `image-set()`)
-is left to the browser, which refuses and reports a refused one. SVG `fill`, `stroke`, `clip-path` and `mask`
+the view's policy might refuse is dropped before insertion, so the browser never loads or refuses it: an `https:` or
+`http:` URL is kept only when its scheme, host and port are exactly those of a listed origin, or, for an image, when it
+is an `http:` URL whose `https:` form is (the policy upgrades an image's `http:` URL on every engine; not on a loopback
+host, which Chromium does not upgrade). So write URLs in the form you list them. A dropped `https:` or `http:` URL is
+reported as a `violation` with the directive and the URL (without credentials or fragment), within the same cap; a URL
+of any other scheme is dropped without a report (no engine would request it). CSS is not rewritten: a URL a stylesheet
+or a `style` attribute names (`url()`, `image-set()`) is left to the browser, which refuses and reports a refused one. SVG `fill`, `stroke`, `clip-path` and `mask`
 reference only `url(#id)`. Link clicks and form submissions navigate nowhere.
 
 Not available in strict mode: `use`, markers, SVG filters, SVG `image`, `foreignObject` and animation; `canvas`,
@@ -804,20 +839,33 @@ SVG cover most of it.
 
 Text is kept, each run of adjacent text joined into one node; comments are dropped. The view holds
 at most 50000 elements, nested at most 256 deep below its body, and at most 1048576 characters (its body's
-serialization: text, attributes and markup alike), and at most 1000 URL-bearing attributes (`src`, `srcset`, `poster`
-and a link's `href`, whatever they name), counted over the document a render would leave (what is outside the target stays): a render past
-any of them is dropped as a whole, the next one still applies, and the guest's log says
+serialization: text, attributes and markup alike), and at most 1000 URL-bearing attributes (`src`, `srcset`, `poster`,
+and `<link>`'s `href`, whatever they name), counted over the document a render would leave (what is outside the target
+stays): a render past any of them is dropped as a whole, the next one still applies, and the guest's log says
 `[Sandbox] sandboxView.render: the view refused a render: …`. The view parses at most 1048576 characters of markup
-per second, renders it refused included, takes at most 200 URL-bearing attributes per second (what the browser does
-with a URL once it is rendered, loading and decoding it, is no work of the view's, so its time budget cannot see it),
-and spends on average at most 200 ms of its own time per second on them, measured
-(their layout and the rendering update that shows them included; never time in which the view, hidden or off-screen,
-rendered nothing): an operation past either waits, and so does the worker's next one (one in flight), so a flood of
-renders is slowed, not dropped. One operation's own cost is not bounded by them (one textarea of 250 000 characters
-took WebKit 1.3–1.7 s); what follows it waits for the budget, at most 5 s (the budget owes at most one second of the
-view's time). The time budget bounds the long-run share, not each second: since it may owe up to one second, a single
-second can hold more (simulated: up to 553 ms with operations of at most 200 ms), and an operation longer than that is
-charged only up to it ([research 17](research/17_formal_methods/README.md)). CSS animations and transitions, once rendered, are outside this budget: see
+per second, renders it refused included. It makes at most 200 loads per second: every URL-bearing attribute a render keeps,
+charged when it is rendered, and every other load its document's resource timing reports (a CSS background, a font, a
+stylesheet, whatever named it: `url()`, `image-set()`, `@import`) or its policy refused, charged when the browser
+reports it, which is once a response has ended (a slow server lets the renders made meanwhile through first: Firefox
+made 1.8 times the rate under the tests' slow route). What the browser does with a URL once it is rendered, loading
+and decoding it, is no work of the view's, so its time budget cannot see it. Over its whole life one view loads at most
+10000 distinct URLs (each stays in the engine's caches while the view lives; WebKit's host page stalled 1.2 s near
+8 000 and 8.8 s near 43 000): a render whose URL attributes would take it past that is refused (`[Sandbox]
+sandboxView.render: the view refused a render: the view would load more than 10000
+distinct URLs in this environment; nothing of it was applied.`), and so is, once it is reached, a render carrying CSS
+that can name a URL (a `<style>`, a stylesheet `<link>`, a `style` attribute with `url(`, `image-set(`, `@import` or a
+backslash); a stylesheet already in the view still loads what it names. `reset()` starts a new view. The view spends on
+average at most 200 ms of its own time per second on operations, measured (their layout and the rendering update that
+shows them included; never time in which the view, hidden or off-screen, rendered nothing). An operation past any of
+these waits, and so does the worker's next one (one in flight), so a flood of renders is slowed, not dropped. Each
+operation is charged all it took, so the budget bounds the view's long-run share of the thread: an operation of 1.5 s
+holds the next back for about 6.5 s. It does not bound each second: the budget holds one second's worth, so a single
+second can hold more (simulated: up to 553 ms with operations of at most 200 ms;
+[research 17](research/17_formal_methods/README.md)). One operation's own cost is bounded by time alone: one that takes
+longer than 2000 ms ends the sandbox (`the view spent more than 2000 ms on one operation`): in WebKit the first
+`set()` of a 250 000-character textarea value does (its value and first paint), and slower machines reach it sooner. Where the view shares your
+page's thread, a task of your page's that runs while the view measures its rendering update is counted in it. CSS
+animations and transitions, once rendered, are outside this budget: see
 [`allowAnimations`](#allowanimations-and-allowautoplay).
 
 Registered files are named by path in `src`, `href` and `poster`. The view shows only files that never open as a
@@ -922,6 +970,8 @@ in strict mode.
 | Characters kept per string log argument | 65536 | `LOG_MAX_STRING` |
 | Bytes per log line, all arguments together | 1048576 (1 MiB) | — |
 | Bytes of guest log lines sent per second | 4194304 (4 MiB) | — |
+| Uncaught errors and unhandled rejections per second, per environment (worker and strict mode; rejections handled later included); past it the sandbox ends | 1000 | — |
+| Characters of uncaught errors and unhandled rejections per second, per environment (worker and strict mode; their names and messages); past it the sandbox ends | 1048576 | — |
 | Bytes per RPC message (arguments, or a result) | 34603008 (33 MiB) | — |
 | Bytes of arguments in inbound calls running at once, per side and environment | 67108864 (64 MiB) | — |
 | `violation` events per environment (strict mode: per source, and per directive for the view) | 100 | `VIOLATION_EVENT_LIMIT` |
@@ -933,9 +983,10 @@ in strict mode.
 | Strict: characters in the view (its body's serialization) | 1048576 | — |
 | Strict: characters of markup the view parses per second | 1048576 | — |
 | Strict: time the view spends applying operations per second, their layout and rendering included (ms) | 200 | — |
-| Strict: most time the view's time budget may owe (ms) | 1000 | — |
-| Strict: URL-bearing attributes in the view (`src`, `srcset`, `poster`, `href`) | 1000 | — |
-| Strict: URL-bearing attributes the view takes per second | 200 | — |
+| Strict: longest operation of the view, its layout and rendering included (ms; longer ends the sandbox) | 2000 | — |
+| Strict: URL-bearing attributes in the view (`src`, `srcset`, `poster`, `<link>`'s `href`) | 1000 | — |
+| Strict: loads of the view per second (URL-bearing attributes rendered, and every other load or refused load the browser reports) | 200 | — |
+| Strict: distinct URLs one view loads, over its life | 10000 | — |
 | Strict: nesting depth below the view's body | 256 | — |
 | Strict: characters of one event detail, all strings together | 262144 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
@@ -967,7 +1018,7 @@ policy must allow:
 | :--- | :--- | :--- | :--- |
 | `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; `'unsafe-eval'` for `execute()` | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
 | `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
-| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; with `allowAnimations: false`, also the view's animation stylesheet's hash `'sha256-/5RpApu78aTdhG04IX6feIc7KP+1UuVtUKyPG2hoG9k='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
+| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; with `allowAnimations: false`, also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
 | `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` | the same | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
 | Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox`, which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |

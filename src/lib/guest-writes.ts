@@ -24,7 +24,11 @@
  *     NOT_FOUND) and records nothing. A mark whose path the host unregistered later is forgotten before the marks are
  *     listed or committed, so a listed mark always names a stored file. A removal of a path the build delivered and
  *     the host unregistered since changes the guest's view and records nothing (review round 4, L-4: it was recorded,
- *     announced, and never listed); the host announces a change only when the list changed (host.ts).
+ *     announced, and never listed).
+ *   - One diff (review round 5, N-4 and L-4). Every request is recorded by record(), which compares the two projections
+ *     of the path before and after it: what listGuestWrites() shows there, and what the guest sees there. The host
+ *     announces 'fileswritten' exactly when the first changed, and tells the strict view exactly when the second did, so
+ *     the list, the announcement and the view cannot disagree about what a request did.
  *   - Code needs a second opt-in. A commit refuses any file whose type is not on INERT_TYPES unless
  *     `{ code: true }`: JavaScript, HTML, SVG, XML, WebAssembly and every type not listed (an override included).
  *     The type checked is the CheckedFile's, the one the store will load the file as, never the file name.
@@ -90,9 +94,23 @@ export interface GuestWritesOptions {
     now?: () => number;
 }
 
+/**
+ * What one recorded request changed (review round 5, N-4 and L-4; class D): the one diff of the overlay at the request's
+ * path, of which every projection is derived. `listed`: the entry listGuestWrites() shows at the path changed, so
+ * 'fileswritten' names it (and only then). `view`: what the guest sees at the path changed, so the strict view is told,
+ * with `shown`, what the guest now sees there: the written file, or null for nothing.
+ */
+export interface GuestWriteDiff {
+    listed: boolean;
+    view: boolean;
+    shown: Readonly<CheckedFile> | null;
+}
+
 export interface GuestWrites {
     /** Handles one request from the guest: records it and answers, or throws a FileError (a library code). */
     handle(request: unknown): GuestWriteAnswer;
+    /** The same, with what it changed: the one diff the host derives the announcement and the view's change from. */
+    record(request: unknown): { answer: GuestWriteAnswer; diff: GuestWriteDiff };
     /** The pending changes, sorted by path. */
     list(): GuestWrite[];
     /**
@@ -146,7 +164,8 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         return { put, remove };
     };
 
-    const handle = (request: unknown): GuestWriteAnswer => {
+    // One request, its `path` already read (record, below).
+    const handleOnce = (request: unknown, path: unknown): GuestWriteAnswer => {
         if (closed) throw fileError('FILES_NOT_ALLOWED', 'the environment that sent this write has ended.');
         // Counted first, refused or not: the window bounds the work a guest can make the host do.
         const time = now();
@@ -155,7 +174,6 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         // Only `change`, `path` and `entry` are read, each once: the request is the guest's structured-cloned data.
         const source = request !== null && typeof request === 'object' ? request as Record<string, unknown> : {};
         const change = source.change;
-        const path = source.path;
 
         if (change === 'remove') {
             if (!isValidPath(path)) throw fileError('INVALID_PATH', `${REMOVE_CALLER} refused the path ${describePath(path)}.`);
@@ -179,6 +197,61 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         overlay.set(valid, file);
         removedInView.delete(valid);
         return { path: valid, change: 'write', type: file.type, size: file.bytes.length };
+    };
+
+    // ---- The one diff (review round 5, N-4 and L-4; class D). The overlay, removedInView and the store are one state,
+    // and the host shows it three ways: listGuestWrites(), the 'fileswritten' announcement, and the strict view's copy of
+    // what the guest sees (VIEW_WRITE). Each used to be derived by a predicate of its own: the host announced when the
+    // overlay's entry at the path changed, and told the view only then. So a removal of a file the host had unregistered
+    // after the build changed nothing listed and was told nowhere, and the view kept showing the file the guest no longer
+    // had (N-4); a withdrawn write (a new path written, then removed) changed the list and was announced (L-4), which is
+    // right, since the list changed, and is now the documented rule. Now both projections at the request's path are taken
+    // before and after it, and compared: the announcement is "the listed entry changed", the view's change is "what the
+    // guest sees changed".
+    type Listed = CheckedFile | 'remove' | null;
+    type Shown = CheckedFile | 'built' | null;
+    // What listGuestWrites() shows at `path`: the written file, a removal mark (only one that names a stored file: see
+    // forgetStaleMarks), or nothing.
+    const listedAt = (path: string): Listed => {
+        if (!overlay.has(path)) return null;
+        const change = overlay.get(path)!;
+        if (change === null) return markable(path) ? 'remove' : null;
+        return change;
+    };
+    // What the guest's own sandboxFiles holds at `path`, which is what the strict view may show: what it wrote, else the
+    // build's file it did not remove, else nothing.
+    const shownAt = (path: string): Shown => {
+        const written = overlay.get(path);
+        if (written) return written;
+        return built.has(path) && !removedInView.has(path) ? 'built' : null;
+    };
+    // Two states of a path are the same when they hold the same thing: a file by its type and bytes (writing the same
+    // bytes again changes nothing anyone can see), anything else by itself.
+    const sameFile = (a: CheckedFile, b: CheckedFile) => {
+        if (a === b) return true;
+        if (a.type !== b.type || a.bytes.length !== b.bytes.length) return false;
+        for (let i = 0; i < a.bytes.length; i++) if (a.bytes[i] !== b.bytes[i]) return false;
+        return true;
+    };
+    const same = (a: Listed | Shown, b: Listed | Shown) => (a instanceof CheckedFile && b instanceof CheckedFile ? sameFile(a, b) : a === b);
+
+    const record = (request: unknown): { answer: GuestWriteAnswer; diff: GuestWriteDiff } => {
+        const requested = request !== null && typeof request === 'object' ? (request as { path?: unknown }).path : undefined;
+        const path = typeof requested === 'string' ? requested : null;
+        const listedBefore = path === null ? null : listedAt(path);
+        const shownBefore = path === null ? null : shownAt(path);
+        const answer = handleOnce(request, requested);
+        if (answer.change === 'none') return { answer, diff: { listed: false, view: false, shown: null } };
+        const listedAfter = listedAt(answer.path);
+        const shownAfter = shownAt(answer.path);
+        return {
+            answer,
+            diff: {
+                listed: !same(listedBefore, listedAfter),
+                view: !same(shownBefore, shownAfter),
+                shown: shownAfter instanceof CheckedFile ? shownAfter : null,
+            },
+        };
     };
 
     // A removal mark names a path the store held when it was recorded; the host may unregister that path later
@@ -222,7 +295,9 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         return changed;
     };
 
-    return { handle, list, commit, change: (path: string) => overlay.get(path), close: () => { closed = true; } };
+    const handle = (request: unknown): GuestWriteAnswer => record(request).answer;
+
+    return { handle, record, list, commit, change: (path: string) => overlay.get(path), close: () => { closed = true; } };
 }
 
 /**

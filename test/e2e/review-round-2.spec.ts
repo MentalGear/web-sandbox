@@ -118,6 +118,7 @@ test.describe("M-3: the view's work is budgeted by the time it takes, not only b
             test.setTimeout(90000);
             await sandbox.registerFiles({ 'main.js': entry });
             expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', scriptUnsafe: true })).toBe('ready');
+            await page.evaluate(() => document.querySelector('web-sandbox')!.addEventListener('terminated', (e: any) => { (window as any).__lastTerminated = e.detail.reason; }));
             await page.waitForTimeout(300);
             const idle = await countTicks(page, 8000);
             await sandbox.run('flood()');
@@ -125,8 +126,13 @@ test.describe("M-3: the view's work is budgeted by the time it takes, not only b
             // not something a rate can bound; what follows it is
             await page.waitForTimeout(2000);
             const loaded = await countTicks(page, 8000);
-            await sandbox.waitForLog('M3 flood done', 30000);
-            console.log(`MEASURED ${browserName} M-3 ${name}: host ticks in 8 s idle ${idle}, loaded ${loaded}`);
+            // One operation past VIEW_MAX_OPERATION_MS ends the sandbox (review round 5, M-2): in WebKit the first set() of
+            // the textarea, its value and its first paint, takes longer than 2 s, so there the flood ends the sandbox
+            // with that reason, and the host page keeps its ticks either way.
+            await expect.poll(async () => (await sandbox.logs()).includes('M3 flood done') || (await sandbox.state()) === 'terminated', { timeout: 30000 }).toBe(true);
+            const state = await sandbox.state();
+            console.log(`MEASURED ${browserName} M-3 ${name}: host ticks in 8 s idle ${idle}, loaded ${loaded}; the sandbox ${state}`);
+            if (state === 'terminated') expect(await page.evaluate(() => (window as any).__lastTerminated)).toBe('the view spent more than 2000 ms on one operation');
             expect(loaded).toBeGreaterThan(idle * 0.5);
         });
     }
