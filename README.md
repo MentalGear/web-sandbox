@@ -308,7 +308,8 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
     call is refused at once with `BUSY`, before its method runs, so calls to a slow method cannot pile up
     without bound. The guest makes at most 1000 calls and 64 MiB of calls in any one second (`callLimits` sets
     other values); past that its `bridge` refuses a call with `BUSY` before sending it, and the element answers `BUSY`
-    to one that arrives anyway.
+    to one that arrives anyway. A call heavier than `maxBytesPerSecond` could never fit, so both ends refuse it with
+    `ARGS_NOT_TRANSFERABLE`, which is not worth retrying.
 *   **Every message is bounded as a whole**: a method name is at most 256 characters, an error message at most
     65536 (cut, with a marker), and arguments or a result at most 33 MiB (`RPC_MAX_BYTES`), measured on both sides.
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never

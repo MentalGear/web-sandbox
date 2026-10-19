@@ -11,7 +11,7 @@ import { LOAD_KINDS } from "./lib/load-kinds";
 import { mergeGuestImportMaps } from "./lib/import-map";
 import { deepMerge } from "./lib/utils";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
-import { createBroker, RESERVED_METHOD_PREFIX } from "./lib/rpc";
+import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
 import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
@@ -26,6 +26,7 @@ import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type Fetc
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
+import { admitGuestCall, callBudgetOf, DEFAULT_CALL_BUDGET, type CallBudget } from "./lib/config-schema";
 import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
@@ -288,49 +289,6 @@ const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
 // owner's move of allow-forms leaves strict mode as it was.
 const STRICT_VIEW_FLAGS = ['allow-scripts', 'allow-forms'] as const;
 const STRICT_CAPABILITIES = [...SAFE_CAPABILITIES, ...STRICT_VIEW_FLAGS] as const;
-
-// The per-second budget of the calls the guest makes, per environment (review round 3, M-2): calls, and bytes of their
-// frames, in any one-second window. The defaults of `callLimits`; the configuration gives the budget in callBudgetOf(),
-// the one place both ends take it from (the host's window, _admitGuestCall; the guest's broker, through the bootstrap's
-// features).
-// 1000 calls (review round 4, M-6, the owner's decision): the reviewers measured Firefox's host page 32–37% busy at 4900
-// calls per second, with gaps of 1.8 s in bursts. At 1000, a strict guest calling paced at the budget and one sending
-// a second's worth at once each second left Firefox's host page its idle ticks, longest gap 15–27 ms
-// (test/e2e/review-round-4.spec.ts, "M-6").
-const GUEST_CALLS_PER_SECOND = 1000;
-const GUEST_CALL_BYTES_PER_SECOND = 67108864;
-
-interface CallBudget {
-    calls: number;
-    bytes: number;
-}
-
-const DEFAULT_CALL_BUDGET: Readonly<CallBudget> = Object.freeze({ calls: GUEST_CALLS_PER_SECOND, bytes: GUEST_CALL_BYTES_PER_SECOND });
-
-// The call budget `callLimits` asks for (from the copy setConfig() took). Each field is a finite number >= 1, else its
-// default: left out, silently; anything else (Infinity, a number below 1, NaN, a string), with a warning. There is no
-// "off": a budget that can be lifted is one a config typo lifts. Nor a budget that admits nothing (review round 4, C-6):
-// below 1, every call was BUSY forever, without a word, since no call weighs less than 1. Never throws: a callLimits that
-// is not an object is warned about and gives the defaults.
-function callBudgetOf(callLimits: unknown, warn: (message: string) => void): Readonly<CallBudget> {
-    if (callLimits === undefined) return DEFAULT_CALL_BUDGET;
-    if (!callLimits || typeof callLimits !== 'object' || Array.isArray(callLimits)) {
-        warn(`[Sandbox] callLimits must be an object; ${shown(callLimits)} was ignored: the defaults apply (${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes} bytes per second).`);
-        return DEFAULT_CALL_BUDGET;
-    }
-    const limits = callLimits as Record<string, unknown>;
-    const field = (name: keyof CallLimits, fallback: number): number => {
-        const value = limits[name];
-        if (value === undefined) return fallback;
-        if (typeof value === 'number' && Number.isFinite(value) && value >= 1) return value;
-        warn(`[Sandbox] callLimits.${name} must be a finite number >= 1; ${typeof value === 'number' ? String(value) : shown(value)} was ignored: the default ${fallback} applies.`);
-        return fallback;
-    };
-    return Object.freeze({ calls: field('maxPerSecond', DEFAULT_CALL_BUDGET.calls), bytes: field('maxBytesPerSecond', DEFAULT_CALL_BUDGET.bytes) });
-}
-
-// Why a guest call past the budget is refused (BUSY): the same words in the guest's broker (in-sandbox-script.ts).
-const callBudgetText = (budget: Readonly<CallBudget>) => `more than ${budget.calls} calls or ${budget.bytes} bytes of calls in one second`;
 
 const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 
@@ -1482,15 +1440,13 @@ export class WebSandbox extends ElementBase {
     }
 
     // One request from the guest against this environment's per-second budget (M-2), before its method is looked up (the
-    // broker asks, rpc.ts): null when it fits, and is counted against both windows; else why it is refused BUSY, and
-    // nothing is counted. The guest's broker refuses a call past the same budget before sending it, so this refuses only
-    // what did not come through that check, or arrived bunched (delivered late while the host page was busy).
-    private _admitGuestCall(bytes: number): string | null {
-        const now = performance.now();
-        if (!this._guestCalls.fits(now) || !this._guestCallBytes.fits(now, bytes)) return callBudgetText(this._callBudget);
-        this._guestCalls.admit(now);
-        this._guestCallBytes.admit(now, bytes);
-        return null;
+    // broker asks, rpc.ts), by the config schema's one rule (admitGuestCall, config-schema.ts): null when it fits, and is
+    // counted against both windows; else the refusal, BUSY, or ARGS_NOT_TRANSFERABLE for a call heavier than the whole byte
+    // budget (review round 5, L-2), and nothing is counted. The guest's broker refuses a call by the same rule before
+    // sending it, so this refuses only what did not come through that check, or arrived bunched (delivered late while the
+    // host page was busy).
+    private _admitGuestCall(bytes: number): BudgetRefusal | null {
+        return admitGuestCall(this._callBudget, this._guestCalls, this._guestCallBytes, bytes, performance.now());
     }
 
     // A line the element writes itself: labelled 'host', never rate-limited.

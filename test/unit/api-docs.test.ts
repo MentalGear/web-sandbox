@@ -120,8 +120,8 @@ describe('docs/API.md lists the public surface', () => {
         // internal constants, read where they are declared (review round 3: no new exports)
         const constant = (file: string, name: string) => Number(read(file).match(new RegExp(`const ${name} = (\\d+);`))![1]);
         const expected: [string, number][] = [
-            ['Guest calls per second', constant('src/host.ts', 'GUEST_CALLS_PER_SECOND')],
-            ['Bytes of guest calls per second', constant('src/host.ts', 'GUEST_CALL_BYTES_PER_SECOND')],
+            ['Guest calls per second', constant('src/lib/config-schema.ts', 'GUEST_CALLS_PER_SECOND')],
+            ['Bytes of guest calls per second', constant('src/lib/config-schema.ts', 'GUEST_CALL_BYTES_PER_SECOND')],
             ['Characters of a method name', constant('src/lib/rpc.ts', 'MAX_NAME_LENGTH')],
             ['Characters of an error message a call carries', constant('src/lib/rpc.ts', 'MAX_TEXT_LENGTH')],
             ['Fetch: characters of a URL', constant('src/lib/fetch-bridge.ts', 'MAX_URL')],

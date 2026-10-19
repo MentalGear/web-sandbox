@@ -579,7 +579,8 @@ describe("M-2: callLimits, the call budget's option (the owner's name)", () => {
         }
         el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: 1024 } });
         expect(el._callBudget).toEqual({ calls: CALL_BUDGET.calls, bytes: 1024 });
-        expect(warnings()).toEqual([]);
+        // a byte budget below the largest call is kept, and says once which calls it refuses (review round 5, L-2)
+        expect(warnings()).toEqual(['[Sandbox] callLimits.maxBytesPerSecond is 1024, below the largest call (34603008 bytes): a call heavier than 1024 bytes is refused with ARGS_NOT_TRANSFERABLE.']);
     });
 
     it('a value that is not a finite number >= 1 takes its default, with one warning each (once per element); there is no "off"', () => {

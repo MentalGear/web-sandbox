@@ -163,3 +163,58 @@ describe('5:L-1 (class L): a call made while loading that settles before `ready`
     });
 });
 
+// ---- 5:L-2 = N-5 (class C): a call heavier than the byte budget is refused for good, never BUSY forever --------------
+
+// Strict mode's comms script (the bootstrap as the worker runs it), attached to a real port; what it posts arrives in `sent`.
+function attachedStrictComms(callBudget: { calls: number; bytes: number }) {
+    const sent: any[] = [];
+    const { port1, port2 } = new MessageChannel();
+    port2.onmessage = (event) => sent.push(event.data);
+    inSandboxScript(false, 'strict', console, createBroker, { externalPort: true, callBudget }, createSizeOf).attach(port1);
+    return {
+        sent,
+        close: () => {
+            port1.close();
+            port2.close();
+            delete (globalThis as any).bridge;
+            delete (globalThis as any).sandboxFetch;
+        },
+    };
+}
+
+describe('5:L-2 (class C): callLimits.maxBytesPerSecond smaller than one call', () => {
+    it.each([64, 100])('maxBytesPerSecond: %i — the guest\'s bridge refuses every call ARGS_NOT_TRANSFERABLE (not retryable), never BUSY', async (bytes) => {
+        const { sent, close } = attachedStrictComms({ calls: 1000, bytes });
+        const result = await outcome((globalThis as any).bridge.call('m'));
+        await settle();
+        close();
+        expect(result).toMatchObject({ code: 'ARGS_NOT_TRANSFERABLE' });
+        expect(sent.filter((frame: any) => frame?.type === 'RPC_REQ')).toEqual([]);
+    });
+
+    it.each([64, 100])('maxBytesPerSecond: %i — the element answers a call that arrives anyway ARGS_NOT_TRANSFERABLE, and its method does not run', async (bytes) => {
+        const { el } = element();
+        el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: bytes } });
+        const method = vi.fn(() => 'ran');
+        el.expose('m', method);
+        const answers: any[] = [];
+        el._broker.handleMessage({ type: 'RPC_REQ', id: 1, method: 'm', args: [] }, (frame: unknown) => answers.push(frame));
+        await settle();
+        expect(method).not.toHaveBeenCalled();
+        expect(answers).toEqual([expect.objectContaining({ type: 'RPC_RES', id: 1, ok: false, code: 'ARGS_NOT_TRANSFERABLE' })]);
+    });
+
+    it('a maxBytesPerSecond below the largest call gives one warning, that calls heavier than it are refused; at or above it, none', () => {
+        const { el, warn } = element();
+        for (const bytes of [100, 1048576, RPC_MAX_BYTES - 1, RPC_MAX_BYTES, 67108864]) {
+            warn.mockClear();
+            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: bytes } });
+            el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: bytes }, html: 'again' });
+            const said = warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('callLimits'));
+            expect(said, String(bytes)).toEqual(bytes < RPC_MAX_BYTES
+                ? [`[Sandbox] callLimits.maxBytesPerSecond is ${bytes}, below the largest call (${RPC_MAX_BYTES} bytes): a call heavier than ${bytes} bytes is refused with ARGS_NOT_TRANSFERABLE.`]
+                : []);
+        }
+    });
+});
+

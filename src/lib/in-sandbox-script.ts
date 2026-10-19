@@ -40,7 +40,7 @@ export function inSandboxScript(
     // logic port to attach().
     // `guestWrites`: the host records the guest's file writes (backlog C5); returned as `writeFiles` below.
     // `callBudget`: the per-second budget of the calls the guest makes (review round 3, M-2), from the element's config
-    // (`callLimits`); the host always passes it.
+    // (`callLimits`); the host always passes it. A call heavier than its bytes is refused for good (config-schema.ts).
     features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean; callBudget?: { calls: number; bytes: number } },
     // The byte measure (structured-size.ts), stringified in like createBroker: the console relay's budget and the
     // broker's are measured with it, made before any guest code runs.
@@ -363,11 +363,18 @@ export function inSandboxScript(
     // way onto the port, so a call past it never crosses: the broker refuses it BUSY. The host counts the same window on
     // receipt (host.ts) and answers BUSY past it. Before, calls of 32 MiB back to back kept the host 15–39% busy within
     // every other cap, and small calls reached 44 000 per second. A call counts against both windows or neither.
+    // A call heavier than the whole byte budget can never fit an empty window (review round 5, L-2 = N-5; the config schema's
+    // invariant, config-schema.ts): it is refused for good, ARGS_NOT_TRANSFERABLE, which is not retryable, as the element
+    // refuses one that arrives anyway. Before, it was BUSY, every time: with a budget smaller than one call (about 136
+    // bytes), every call, sandboxFetch() and guest writes included, was BUSY forever.
     const callBudget = features?.callBudget;
-    const callsWindow = callBudget ? slidingWindow(callBudget.calls) : null;
-    const callBytesWindow = callBudget ? slidingWindow(callBudget.bytes) : null;
-    const admitOutbound = callBudget && callsWindow && callBytesWindow ? (bytes: number): string | null => {
-        if (!callsWindow(1, 'fits') || !callBytesWindow(bytes, 'fits')) return 'more than ' + callBudget.calls + ' calls or ' + callBudget.bytes + ' bytes of calls in one second';
+    const budgetCalls = callBudget ? callBudget.calls : 0;
+    const budgetBytes = callBudget ? callBudget.bytes : 0;
+    const callsWindow = callBudget ? slidingWindow(budgetCalls) : null;
+    const callBytesWindow = callBudget ? slidingWindow(budgetBytes) : null;
+    const admitOutbound = callsWindow && callBytesWindow ? (bytes: number): { code: 'BUSY' | 'ARGS_NOT_TRANSFERABLE'; reason: string } | null => {
+        if (bytes > budgetBytes) return { code: 'ARGS_NOT_TRANSFERABLE', reason: 'the call is heavier than callLimits.maxBytesPerSecond (' + budgetBytes + ' bytes), so it can never be carried' };
+        if (!callsWindow(1, 'fits') || !callBytesWindow(bytes, 'fits')) return { code: 'BUSY', reason: 'more than ' + budgetCalls + ' calls or ' + budgetBytes + ' bytes of calls in one second' };
         callsWindow(1, 'spent');
         callBytesWindow(bytes, 'spent');
         return null;

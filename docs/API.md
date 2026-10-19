@@ -214,6 +214,13 @@ A field left out, or `callLimits` left out, takes the default. A value that is n
 an object takes both defaults with one warning; there is no way to turn the budget off, nor to set one that admits no
 call.
 
+The two fields are checked together: every call that can be carried fits an empty window. A call weighs its whole
+message, so a `maxBytesPerSecond` below `RPC_MAX_BYTES` (33 MiB) also caps one call: a call heavier than it can never fit,
+and is refused with `ARGS_NOT_TRANSFERABLE`, which is not worth retrying, by the guest's `bridge` before sending it and
+by the element if it arrives anyway; such a value gives one warning at `setConfig()`. The smallest call measures about
+136 bytes, so a budget below that refuses every guest call, `sandboxFetch()` and guest writes included, with
+`ARGS_NOT_TRANSFERABLE`.
+
 ### `allowAnimations` and `allowAutoplay`
 
 Strict mode's view runs on your page's main thread wherever the browser places it there, and then everything it
@@ -614,7 +621,7 @@ From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.
 | :--- | :--- | :--- | :--- |
 | `TIMEOUT` | local | No answer within the call's timeout. | yes |
 | `TERMINATED` | local | The environment was reset, terminated or removed. | after the next `ready` |
-| `ARGS_NOT_TRANSFERABLE` | local, reported | The arguments cannot be structured-cloned, measure more than `RPC_MAX_BYTES`, or hold a value the measure does not know (the message names it; see [`call()`](#callmethod-args)); nothing was sent. Reported by the other side for a call that arrived so: the method did not run. | no |
+| `ARGS_NOT_TRANSFERABLE` | local, reported | The arguments cannot be structured-cloned, measure more than `RPC_MAX_BYTES`, or hold a value the measure does not know (the message names it; see [`call()`](#callmethod-args)); nothing was sent. Reported by the other side for a call that arrived so: the method did not run. Guest calls only: the call is heavier than [`callLimits`](#calllimits)`.maxBytesPerSecond`, so no window could ever carry it. | no |
 | `SEND_FAILED` | local | The transport threw while sending. | no |
 | `INVALID_CALL` | local | The method name is not a string, or is longer than 256 characters. | no |
 | `UNKNOWN_METHOD` | reported | No method of that name is exposed on the other side. | no |
