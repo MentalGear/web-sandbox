@@ -4,6 +4,8 @@ node_modules
 # output
 out
 dist
+# api-extractor's working copy of the API report (api-extractor.json)
+temp
 dist-*
 *.tgz
 

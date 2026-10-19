@@ -78,7 +78,8 @@ name (the guest's own frame cannot; its `window.name` is inert).
 ## Configuration
 
 **`setConfig(config: SandboxConfig): void`** replaces the configuration and rebuilds the environment
-(see [Lifecycle](#lifecycle)). `SandboxConfig` is a union keyed by `mode`: strict mode's `origins` has no `scripts`, and
+(see [Lifecycle](#lifecycle)). `SandboxConfig` is a union keyed by `mode` (`StrictSandboxConfig`,
+`CooperativeSandboxConfig`, `WorkerSandboxConfig`): strict mode's `origins` has no `scripts`, and
 a config without `mode` is a strict config (strict mode is the default).
 
 - Each call is applied **over the defaults, not over the previous configuration**: an option left out returns
@@ -440,7 +441,7 @@ to the files, as one `registerFiles()` / `unregisterFiles()` would, and removes 
 
 ## Events
 
-All events are `CustomEvent`s dispatched on the element. None is `composed`.
+All events are `CustomEvent`s dispatched on the element. None is `composed`. `WebSandboxEventMap` types each one.
 
 | Event | `detail` | Bubbles | When |
 | :--- | :--- | :--- | :--- |
@@ -1269,7 +1270,8 @@ Values:
 `document.createElement('web-sandbox')` is typed as a `WebSandbox` (`HTMLElementTagNameMap`), and its
 `addEventListener` types each event's `detail`.
 
-Types: `SandboxConfig`, `SandboxState`, `CallLimits`, `RpcError`, `RpcErrorCode`, `SandboxLog`, `SandboxLogLevel`,
+Types: `SandboxConfig`, `StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, `SandboxState`,
+`WebSandboxEventMap`, `CallLimits`, `RpcError`, `RpcErrorCode`, `RpcLibraryCode`, `SandboxLog`, `SandboxLogLevel`,
 `SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,
 `FileInfo`, `FileError`, `FileErrorCode`, `SandboxFiles`, `GuestWrite`, `SandboxOrigins`, `StrictSandboxOrigins`,
 `SafeCapability`, `UnsafeCapability`, `UnsafePermission`, `SandboxCapability`.

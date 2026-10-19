@@ -3,9 +3,17 @@
  * Importing it registers nothing: call defineWebSandbox() (optionally with your own tag name).
  */
 export { WebSandbox, defineWebSandbox, EXECUTION_TIMEOUT_GRACE_MS, LOAD_TIMEOUT_MS, VIEW_LIVENESS_TIMEOUT_MS } from "./host";
-export type { CallLimits, SandboxConfig, SandboxState } from "./host";
+export type {
+    CallLimits,
+    CooperativeSandboxConfig,
+    SandboxConfig,
+    SandboxState,
+    StrictSandboxConfig,
+    WebSandboxEventMap,
+    WorkerSandboxConfig,
+} from "./host";
 export type { SandboxOrigins, StrictSandboxOrigins } from "./lib/csp/origins";
-export type { RpcError, RpcErrorCode } from "./lib/rpc";
+export type { RpcError, RpcErrorCode, RpcLibraryCode } from "./lib/rpc";
 export { MAX_INBOUND_IN_FLIGHT } from "./lib/rpc";
 export type { SandboxLog, SandboxLogLevel } from "./lib/sandbox-log";
 export { LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_STRING } from "./lib/sandbox-log";
