@@ -182,6 +182,30 @@ describe('the lifecycle model on the round reports', () => {
     });
 });
 
+describe("backlog S72: the view's first overrun is a host line the model allows in a standing strict environment", () => {
+    const line = (model: LifecycleModel) => seen(model, 'sandbox-log', { type: 'LOG', level: 'warn', args: ['[Sandbox] the view spent more than 2000 ms on one operation; a second such operation within 5 minutes ends the sandbox.'], source: 'host' });
+    it('strict, loading or ready: allowed', () => {
+        const model = standing('strict');
+        model.event(line(model));
+        model.event(seen(model, 'ready', null));
+        model.event(line(model));
+    });
+    it('another mode, or no standing environment: a divergence; and the second overrun\'s termination stays one', () => {
+        const cooperative = standing('cooperative');
+        expect(() => cooperative.event(line(cooperative))).toThrow(/host line not allowed here/);
+        const strict = standing('strict');
+        strict.event(seen(strict, 'ready', null));
+        op(strict, { op: 'terminate', reason: 'bye' }, () => {
+            strict.event(seen(strict, 'terminated', { reason: 'bye' }, { depth: 1 }));
+            strict.eventEnd('terminated');
+        });
+        expect(() => strict.event(line(strict))).toThrow(/host line not allowed here/);
+        const ended = standing('strict');
+        ended.event(seen(ended, 'ready', null));
+        expect(() => ended.event(seen(ended, 'terminated', { reason: 'the view spent more than 2000 ms on one operation twice within 5 minutes' }))).toThrow(/unexpected terminated/);
+    });
+});
+
 describe('the generator', () => {
     it('mulberry32 is deterministic', () => {
         const a = mulberry32(42);

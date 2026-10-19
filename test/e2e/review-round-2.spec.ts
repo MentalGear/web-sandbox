@@ -126,13 +126,14 @@ test.describe("M-3: the view's work is budgeted by the time it takes, not only b
             // not something a rate can bound; what follows it is
             await page.waitForTimeout(2000);
             const loaded = await countTicks(page, 8000);
-            // One operation past VIEW_MAX_OPERATION_MS ends the sandbox (review round 5, M-2): in WebKit the first set() of
-            // the textarea, its value and its first paint, takes longer than 2 s, so there the flood ends the sandbox
-            // with that reason, and the host page keeps its ticks either way.
+            // The second operation past VIEW_MAX_OPERATION_MS within VIEW_OVERRUN_WINDOW_MS ends the sandbox (review round
+            // 5, M-2; backlog S72): in WebKit the first set() of the textarea, its value and its first paint, takes longer
+            // than 2 s, an overrun the sandbox survives; a later set() past it ends the sandbox with that reason. The
+            // host page keeps its ticks either way.
             await expect.poll(async () => (await sandbox.logs()).includes('M3 flood done') || (await sandbox.state()) === 'terminated', { timeout: 30000 }).toBe(true);
             const state = await sandbox.state();
             console.log(`MEASURED ${browserName} M-3 ${name}: host ticks in 8 s idle ${idle}, loaded ${loaded}; the sandbox ${state}`);
-            if (state === 'terminated') expect(await page.evaluate(() => (window as any).__lastTerminated)).toBe('the view spent more than 2000 ms on one operation');
+            if (state === 'terminated') expect(await page.evaluate(() => (window as any).__lastTerminated)).toBe('the view spent more than 2000 ms on one operation twice within 5 minutes');
             expect(loaded).toBeGreaterThan(idle * 0.5);
         });
     }

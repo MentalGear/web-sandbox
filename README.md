@@ -528,8 +528,8 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     changes afterwards; the view holds at most 50 000 elements, 256 deep, 1 Mi characters and 1 000 URL-bearing
     attributes (`src`, `srcset`, `poster`, `<link>`'s `href`), parses at most 1 Mi characters of markup, makes at most 200
     loads per second (every URL attribute it keeps, and every other load or refused load the browser reports for it,
-    CSS-borne ones included), loads at most 10 000 distinct URLs in its life, and ends the sandbox when one operation
-    takes longer than 2 s; it shows only files that never open as
+    CSS-borne ones included), loads at most 10 000 distinct URLs in its life, and ends the sandbox when an operation
+    takes longer than 2 s for the second time within 5 minutes (the first is charged in full, and logged once); it shows only files that never open as
     a document (no SVG, HTML or XML; no `data:` images); a URL in rendered markup is kept only when it names a listed
     origin exactly (an image's `http:` URL may name a listed `https:` one), else dropped before the browser sees it,
     and an `http(s)` one reported as a `violation`; guest code has no
@@ -597,8 +597,9 @@ What remains for the default:
     the view in a process of its own ([research 16](docs/research/16_view_isolation/README.md)). There the view's cost
     is one stated bound, [API.md, "The view's cost to the host page"](docs/API.md#the-views-cost-to-the-host-page),
     measured on every engine by `test/e2e/view-bound.spec.ts`: on average at most 20% of the thread for the view's own
-    work, plus at most 20 points for the browser's work on the loads it makes; one operation at most 2 s before the
-    sandbox ends, plus that operation's own cost, which nothing can interrupt; the rates and caps that bound the rest;
+    work, plus at most 20 points for the browser's work on the loads it makes; at most one stall past 2 s per 5 minutes
+    beyond the first (the second operation past 2 s within 5 minutes ends the sandbox), each that operation's own
+    cost, which nothing can interrupt; the rates and caps that bound the rest;
     and a closed list of what is outside it: animations and transitions while `allowAnimations` is `true` (the default),
     animated images, indeterminate `<progress>` and autoplaying media, relayout after image decodes and font swaps, the
     documented single-operation stalls (CSS filters, bidirectional text, small CSS changes over many elements,
