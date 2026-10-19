@@ -7,7 +7,7 @@ import { createBroker, RPC_MAX_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
-import { inSandboxView, inStrictWorker, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, VIEW_STILL_PSEUDO_ELEMENTS } from '@src/lib/in-sandbox-view';
+import { inSandboxView, inStrictWorker, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, VIEW_STILL_PSEUDO_ELEMENTS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 import { workerBootstrap } from '@src/lib/worker-bootstrap';
 import { createGuestWrites } from '@src/lib/guest-writes';
@@ -388,7 +388,7 @@ describe("M-5: the view's guest-error rate limit says so the first time it drops
             transfer: MessagePort[] = [];
             postMessage(_message: unknown, transfer: MessagePort[]) { this.transfer = transfer; }
         };
-        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(VIEW_OPTIONS)});`)();
+        new Function(viewBootstrapSource(VIEW_OPTIONS))();
         const logic = new MessageChannel(), view = new MessageChannel();
         const toHost: any[] = [];
         view.port2.onmessage = (event) => toHost.push(event.data);
@@ -427,7 +427,7 @@ describe('M-2: the renderer drops every URL the view policy refuses, reports it,
     const run = (html: string, origins: Record<string, string[]>, room?: { elements: number; depth: number; urls?: number }, target = 'body') => {
         const template = document.createElement('template');
         template.innerHTML = html;
-        const context = { target, animating: [] as string[], origins, refused: [] as [string, string][], urls: 0 };
+        const context = { target, animating: [] as string[], origins, refused: [] as [string, string][], urls: 0, loads: [] as string[] };
         sanitizeRender(template.content, () => null, () => false, RENDER_RULES, { animations: true, autoplay: true, stylesheets: true }, room, context);
         return { fragment: template.content, context };
     };

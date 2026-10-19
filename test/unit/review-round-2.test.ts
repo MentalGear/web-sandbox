@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { join } from 'node:path';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
-import { inSandboxView, inStrictWorker, sanitizeRender, VIEW_OPTIONS } from '@src/lib/in-sandbox-view';
+import { inSandboxView, inStrictWorker, sanitizeRender, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
 import { defineWebSandbox } from '@src/host';
 import { createBroker, RPC_MAX_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
@@ -346,7 +346,7 @@ describe('C-4: a view operation costs what it changes, not the size of the whole
         Object.defineProperty(Element.prototype, 'outerHTML', { ...outer, get() { const text = outer.get!.call(this); serialized += text.length; return text; } });
         try {
             const options = { ...VIEW_OPTIONS, renderRate: 1e12 }; // the rate is not what this measures
-            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(options)});`)();
+            new Function(viewBootstrapSource(options))();
             const a = new MessageChannel(), b = new MessageChannel();
             window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<div id="b0"></div><div id="b1"></div><div id="b2"></div><input id="in"><p id="t"></p>' }, source: window, ports: [a.port1, b.port1] }));
             const render = workers[0]!.transfer[1]!;

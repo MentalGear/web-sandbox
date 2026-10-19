@@ -66,20 +66,28 @@ export const VIEW_MAX_CHARACTERS = 4 * VIEW_RENDER_MAX_LENGTH;
 export const VIEW_RENDER_CHARACTERS_PER_SECOND = 4 * VIEW_RENDER_MAX_LENGTH;
 
 /**
- * The most milliseconds of its own time the view spends applying operations per second, their layout included (review
- * round 2, M-3): a fifth of one thread, which it shares with the host page in WebKit and Firefox (and in Chromium
- * depending on its process model). An operation past it waits, like one past VIEW_RENDER_CHARACTERS_PER_SECOND; nothing
- * is dropped. See the view's flush (inSandboxView) for why time, and not only characters, is budgeted.
+ * The most milliseconds of its own time the view spends applying operations per second, their layout and rendering
+ * included (review round 2, M-3): a fifth of one thread, which it shares with the host page in WebKit and Firefox (and in
+ * Chromium depending on its process model). An operation past it waits, like one past VIEW_RENDER_CHARACTERS_PER_SECOND;
+ * nothing is dropped. Every operation is charged all it took, measured, however long (review round 5, M-2), so the
+ * budget bounds the view's long-run share of the thread at this rate: one that took 1.5 s holds the next one back for
+ * 1.5 s × 1000 / VIEW_APPLY_MS_PER_SECOND (7.5 s), less what the budget held. See the view's flush (inSandboxView) for
+ * why time, and not only characters, is budgeted, and VIEW_MAX_OPERATION_MS for what bounds one operation.
  */
 export const VIEW_APPLY_MS_PER_SECOND = 200;
 
 /**
- * The most the view's time budget may owe, in ms of the view's time (review round 3, C-2): one second of it, which the
- * budget repays in 1000 / VIEW_APPLY_MS_PER_SECOND = 5 s. An operation that took longer is charged this much, so one
- * operation's own cost (which no rate can bound: ADR-005) never holds the view back for longer than that; anything
- * shorter is charged in full, so the budget holds for every operation up to it.
+ * The most milliseconds one operation of the view may take: a flush and the rendering update that shows it, measured as
+ * the time budget measures them (review round 5, M-2). An operation that took longer ends the sandbox ("the view spent
+ * more than 2000 ms on one operation"): no rate can bound one operation's own cost (ADR-005), and a time budget that
+ * charged only part of it let an operation of 7.5 s (Chromium's layout of 30 000 restyled elements) run again every few
+ * seconds, 53% of the thread, while a budget that charges all of it would hold the view back five times as long as the
+ * operation took. So the budget charges all of it, and this bounds what it charges. Two seconds: an order of magnitude
+ * above what the view's budgets admit per render on every engine measured (a render of VIEW_MAX_ELEMENTS elements takes
+ * 0.2–0.3 s), and the longest stall of the host page's thread that the view can cause per operation where it shares it.
+ * Time in which no frame ran (a hidden or off-screen view) is never part of it (inSandboxView, the gap meter).
  */
-export const VIEW_APPLY_MAX_DEBT_MS = 1000;
+export const VIEW_MAX_OPERATION_MS = 2000;
 
 /**
  * The most URL-bearing attributes the view's body may hold (review round 4, M-2): RENDER_URL_ATTRIBUTES on the elements
@@ -102,26 +110,49 @@ export const VIEW_APPLY_MAX_DEBT_MS = 1000;
 export const VIEW_MAX_URLS = 1000;
 
 /**
- * The most URL-bearing attributes the view takes per second, charged with the render that keeps them (review round 4,
- * M-2): a render past it is applied, and the next operation waits until the budget has refilled, like
- * VIEW_RENDER_CHARACTERS_PER_SECOND. Every kept URL is charged, a cached or relative one too: what it costs the browser
- * is not known when it is rendered. See VIEW_MAX_URLS.
+ * The most loads the view's document makes per second, refused ones included (review round 4, M-2; round 5, M-3: class
+ * P, a budget that counts a proxy, and E-net). It charges every URL-bearing attribute a render keeps, when it is rendered
+ * (a cached, relative or failing one too: what it costs the browser is not known then), and every load the platform
+ * reports that no render charged: what the document's resource timing reports (a CSS background, a font, an @import,
+ * whatever named it) and every violation of its policy the view observes. So the charge does not depend on the
+ * renderer's model of what loads: CSS-borne loads, which the renderer never parses, kept Firefox issuing 1400 requests
+ * per second (7 times this budget) before. A render past it is applied, and the next operation waits until the budget
+ * has refilled, like VIEW_RENDER_CHARACTERS_PER_SECOND, however far past it the charges took it. See VIEW_MAX_URLS.
  */
 export const VIEW_URLS_PER_SECOND = 200;
 
 /**
- * The pseudo-elements the view's stylesheet stops animations and transitions on, besides the elements themselves
- * (VIEW_STILL_STYLE): every pseudo-element a guest's stylesheet can give an `animation` or a `transition` on the elements
- * the renderer keeps, standard and engine-prefixed (the parts of form controls and media controls the engines style with
- * pseudo-elements). `*` reaches no pseudo-element, so each is named. Each has a rule of its own: a selector list with one
- * pseudo-element an engine does not know drops the whole rule (research 16), so a name an engine does not support costs
- * nothing, and a name missing here is one an engine could animate. A pseudo-element an engine ships later is outside
- * this list until it is added; the inline-style half of the switch does not depend on it.
+ * The most distinct URLs one view may load, over its whole life (review round 5, M-4: class P, a per-second rate standing
+ * in for a cumulative cost). Each distinct URL a document loads stays in the engine's caches while the document lives,
+ * and the URL budget bounds only the rate: renders of 1000 new images, as fast as VIEW_URLS_PER_SECOND let them, made
+ * WebKit's host page stall for longer and longer as the count grew (measured: 1.2 s near 8 000, 2.4 s near 18 000,
+ * 3.5 s near 33 000, 8.8 s near 43 000; the reviewers 13–28 s after about two minutes). So a view loads at most this
+ * many: about where the stalls begin, and well below where they pass a second or two. Counted, and refused past it, in
+ * inSandboxView (`newLoads`); `reset()` starts a new view.
+ */
+export const VIEW_MAX_DISTINCT_URLS = 10000;
+
+/**
+ * The pseudo-elements the view's still stylesheet may stop animations and transitions on, besides the elements themselves
+ * (VIEW_STILL_STYLE; review round 4, C-7; round 5, M-1): every pseudo-element a guest's stylesheet can give an
+ * `animation` or a `transition` on the elements the renderer keeps, standard and engine-prefixed (the parts of form
+ * controls and media controls the engines style with pseudo-elements). `*` reaches no pseudo-element, so each is named.
+ * The view gives a name a rule of its own only where the engine supports it, and only once guest CSS it applies names
+ * it (inSandboxView, `stillNamed`): every rule costs style work for every element of the view. A pseudo-element an
+ * engine ships later is outside this list until it is added; the inline-style half of the switch does not depend on it.
+ * Left out, as no animation applies to them (round 5, M-1):
+ *   - ::first-letter and ::first-line: only typographic properties apply; with their rules, replacing 37 449 elements
+ *     took Firefox 22–30 s instead of 0.1–0.5 s, on the host page's thread;
+ *   - the highlight pseudo-elements (::selection, ::target-text, ::spelling-error, ::grammar-error, ::search-text,
+ *     ::-moz-selection): only colours, text decorations and shadows apply (css-pseudo-4);
+ *   - ::column (only scroll snapping applies), ::-webkit-scrollbar and its parts, and ::-webkit-resizer: an infinite
+ *     animation on them changed no pixel in Chromium or WebKit (measured), and each of their rules made a replacement
+ *     2–3 times as expensive in Chromium.
  */
 export const VIEW_STILL_PSEUDO_ELEMENTS = [
     // standard
-    'before', 'after', 'marker', 'placeholder', 'selection', 'backdrop', 'file-selector-button', 'first-letter', 'first-line',
-    'cue', 'details-content', 'target-text', 'spelling-error', 'grammar-error', 'search-text', 'column', 'checkmark', 'picker-icon',
+    'before', 'after', 'marker', 'placeholder', 'backdrop', 'file-selector-button',
+    'cue', 'details-content', 'checkmark', 'picker-icon',
     'picker(select)', 'scroll-marker', 'scroll-marker-group', 'scroll-button(*)',
     // Chromium and WebKit
     '-webkit-file-upload-button', '-webkit-input-placeholder', '-webkit-details-marker', '-webkit-textfield-decoration-container',
@@ -144,16 +175,18 @@ export const VIEW_STILL_PSEUDO_ELEMENTS = [
     '-webkit-media-controls-seek-forward-button', '-webkit-media-controls-rewind-button', '-webkit-media-controls-return-to-realtime-button',
     '-webkit-media-controls-start-playback-button', '-webkit-media-controls-status-display',
     '-webkit-media-text-track-container', '-webkit-media-text-track-display', '-webkit-media-text-track-region', '-webkit-media-text-track-region-container',
-    '-webkit-scrollbar', '-webkit-scrollbar-button', '-webkit-scrollbar-thumb', '-webkit-scrollbar-track', '-webkit-scrollbar-track-piece',
-    '-webkit-scrollbar-corner', '-webkit-resizer',
     // Firefox
     '-moz-range-track', '-moz-range-thumb', '-moz-range-progress', '-moz-progress-bar', '-moz-meter-bar', '-moz-color-swatch',
-    '-moz-focus-inner', '-moz-list-bullet', '-moz-list-number', '-moz-placeholder', '-moz-selection',
+    '-moz-focus-inner', '-moz-list-bullet', '-moz-list-number', '-moz-placeholder',
 ] as const;
+
+/** What the still stylesheet sets, on every element and on each pseudo-element the view gives a rule (VIEW_STILL_STYLE). */
+export const VIEW_STILL_DECLARATIONS = 'animation:none!important;transition:none!important';
 
 /**
  * The view's stylesheet for `allowAnimations: false` (research 16): no animation and no transition on any element of the
- * view or any pseudo-element of VIEW_STILL_PSEUDO_ELEMENTS. Elements show their end state.
+ * view, and, by the rules the view adds to its layer at its start, on any pseudo-element of VIEW_STILL_PSEUDO_ELEMENTS
+ * the engine supports. Elements show their end state.
  *
  * Why it holds against anything a guest's stylesheet says, measured on Chromium, Firefox and WebKit against unlayered
  * `!important`, the guest's own anonymous and named layers, `::before`, `@starting-style`, hover transitions and
@@ -162,14 +195,16 @@ export const VIEW_STILL_PSEUDO_ELEMENTS = [
  *     (css-cascade-5), so the layer must be the first one: the view inserts this sheet as its head's first element before
  *     anything is rendered (renders reach only the body, so every guest sheet, and every sheet it `@import`s, comes after
  *     it, and so does every layer they declare);
- *   - the layer is ANONYMOUS, so no guest rule can be appended to it (a named layer can be reopened by name);
+ *   - the layer is ANONYMOUS, so no guest rule can be appended to it (a named layer can be reopened by name); the view's
+ *     own rules for pseudo-elements go into it through the CSSOM (insertRule on the layer's rule), which no style-src
+ *     governs, before anything is rendered;
  *   - an inline `!important` (a `style` attribute) beats any layer: the renderer takes every `animation*` and
  *     `transition*` declaration out of every kept `style` attribute (sanitizeRender, `animations: false`).
- * Its text is constant, so its CSP hash is a constant of the library (docs/API.md#host-page-policy): a host page whose
- * style-src refuses inline styles must list it, or the view drops the guest's stylesheets instead (inSandboxView).
+ * Its text is constant, whatever the engine supports, so its CSP hash is a constant of the library
+ * (docs/API.md#host-page-policy): a host page whose style-src refuses inline styles must list it, or the view drops the
+ * guest's stylesheets instead (inSandboxView).
  */
-export const VIEW_STILL_STYLE = '@layer{' + ['*', ...VIEW_STILL_PSEUDO_ELEMENTS.map(name => '*::' + name)]
-    .map(selector => `${selector}{animation:none!important;transition:none!important}`).join('') + '}';
+export const VIEW_STILL_STYLE = `@layer{*{${VIEW_STILL_DECLARATIONS}}}`;
 
 /**
  * The properties `allowAnimations: false` takes out of style attributes (review round 4, C-2): the animation and
@@ -483,6 +518,8 @@ export interface RenderContext {
     refused: [directive: string, url: string][];
     /** Counted by the renderer: the URL-bearing attributes it kept. */
     urls: number;
+    /** Filled by the renderer: each http(s) URL it kept for a load, parsed, without its fragment (VIEW_MAX_DISTINCT_URLS). */
+    loads: string[];
 }
 
 /**
@@ -589,7 +626,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     const urlRoom = limit.urls === undefined ? rules.maxUrls : limit.urls;
     // Without a context (a caller that only cleans markup), the strictest one: no origin is admitted, and the
     // still properties are the known ones.
-    const context: RenderContext = given || { target: 'body', animating: rules.still.known, origins: {}, refused: [], urls: 0 };
+    const context: RenderContext = given || { target: 'body', animating: rules.still.known, origins: {}, refused: [], urls: 0, loads: [] };
     // lookups without a prototype: an element or attribute name is never an inherited key
     const setOf = (names: readonly string[]) => {
         const out: Record<string, true> = Object.create(null);
@@ -645,12 +682,20 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         }
         return false;
     };
-    // Whether the view's policy admits an http(s) URL for a load of `kind` (review round 4, M-2): the URL's origin, read
-    // by the URL parser, must be one the policy lists for that kind (context.origins, the parsed `origins`, canonical as
-    // origin.ts makes them), as CSP matches a source: an http: source also matches the https: URL of its host and port,
-    // and the policy's upgrade-insecure-requests may turn an http: URL into its https: form first (WebKit does for every
-    // host, measured), so either form is enough to keep it. Anything else the browser would refuse, after fetching
-    // nothing, and report: such a URL is dropped here, before the browser sees it, and reported by the view instead.
+    // Whether every engine's policy check admits an http(s) URL for a load of `kind` (review round 4, M-2; round 5, N-3:
+    // class B, a browser decision re-derived). This is a prediction of the browser's CSP source matching, and it is
+    // one-sided by construction: it keeps a URL only where every engine is known to admit it, and drops everything else,
+    // so where it is wrong it drops a URL some engine would have loaded (a functional loss: write URLs in the exact form
+    // you list), never keeps one the browser then refuses. Nothing is bounded by it either: what the browser refuses is
+    // charged where the view observes it (inSandboxView, the URL budget). A URL is kept when:
+    //   - its scheme, host and port, read by the URL parser, are exactly those of an origin the policy lists for that
+    //     kind (context.origins, the parsed `origins`, canonical as origin.ts makes them); or
+    //   - it is an image's http: URL whose upgrade is such an https: origin, on a host that is not a loopback one: the
+    //     policy's upgrade-insecure-requests turns an image's http: URL into https: (port 80 into 443) before the check in
+    //     every engine (measured), but Chromium's not for a loopback host. For other kinds of load Chromium and WebKit
+    //     do not (they refused an http: media URL of an https: origin), so none is kept.
+    // The forms CSP itself would also match are not relied on: an http: source matching an https: URL failed for a
+    // loopback host in Chromium. Anything dropped is reported by the view, as a violation of the kind's directive.
     // A URL that does not parse loads nothing and is kept, as a relative one is.
     const ruleOf = (kind: string): KindRule | null => (call(own, rules.kinds, [kind]) ? rules.kinds[kind]! : null);
     const admittedOrigins = (kind: string): readonly string[] => {
@@ -663,6 +708,9 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     };
     // The URL a refusal names, as every engine measured reports it (without credentials or fragment), or null when the
     // policy admits it (or it does not parse).
+    // Hosts an engine may take as potentially trustworthy, which Chromium does not upgrade (it refused the http: image of
+    // a listed https://localhost or https://127.0.0.1, measured): no upgrade is assumed for them.
+    const LOOPBACK = /^(localhost|.*\.localhost|127\.\d+\.\d+\.\d+|\[::1\])$/;
     const refusedUrl = (value: string, kind: string): string | null => {
         let url: URL;
         try {
@@ -670,41 +718,57 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         } catch {
             return null;
         }
-        const scheme = url.protocol;
-        const hostAndPort = url.hostname + (url.port ? ':' + url.port : '');
+        const exact = url.protocol + '//' + url.hostname + (url.port ? ':' + url.port : '');
+        // the image upgrade: http: becomes https:, and the port of http (80, which the parser leaves out) becomes 443's
+        const upgraded = kind === 'image' && url.protocol === 'http:' && !LOOPBACK.test(url.hostname) ? 'https://' + url.hostname + (url.port && url.port !== '443' ? ':' + url.port : '') : null;
         const origins = admittedOrigins(kind);
         for (let i = 0; i < origins.length; i++) {
-            const origin = origins[i];
-            if (origin === scheme + '//' + hostAndPort || origin === 'http://' + hostAndPort || (scheme === 'http:' && origin === 'https://' + hostAndPort)) return null;
+            if (origins[i] === exact || origins[i] === upgraded) return null;
         }
         url.username = '';
         url.password = '';
         url.hash = '';
         return url.href;
     };
+    // What a kept http(s) URL loads, for the count of distinct loads: the parsed URL without its fragment.
+    const loadOf = (value: string): string | null => {
+        try {
+            const url = new URL(value);
+            url.hash = '';
+            return url.href;
+        } catch {
+            return null;
+        }
+    };
     // A URL the view would load: http(s), one it minted, or relative (against the view's about:blank base it resolves
     // to nothing). The scheme is read the way the URL parser reads it: outer C0 controls and spaces stripped, tabs and
-    // newlines removed. An http(s) URL the policy refuses for a load of `kind` ('' for none) is added to `refused`, and
-    // is not allowed.
-    const urlAllowed = (value: string, kind: string, refused: string[]) => {
+    // newlines removed. Any other scheme is dropped, and nothing is reported: no engine would have made a request for it.
+    // An http(s) URL the policy refuses for a load of `kind` ('' for none) is added to `refused`, and is not allowed;
+    // one it admits is added to `loads`.
+    const urlAllowed = (value: string, kind: string, refused: string[], loads: string[]) => {
         const url = value.replace(/^[\u0000- ]+|[\u0000- ]+$/g, '').replace(/[\t\n\r]/g, '');
         const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(url);
         if (!scheme) return true;
         const name = scheme[1]!.toLowerCase();
         if (name === 'blob') return isMinted(value);
         if (name !== 'https' && name !== 'http') return false;
-        const blocked = kind === '' ? null : refusedUrl(url, kind);
-        if (blocked === null) return true;
-        refused[refused.length] = blocked;
-        return false;
+        if (kind === '') return true;
+        const blocked = refusedUrl(url, kind);
+        if (blocked !== null) {
+            refused[refused.length] = blocked;
+            return false;
+        }
+        const load = loadOf(url);
+        if (load !== null) loads[loads.length] = load;
+        return true;
     };
     // srcset: every candidate's URL starts at the start or after a comma, and its scheme holds neither, so checking the
     // first token after every comma checks every candidate (a URL that itself holds a comma is only checked more)
-    const srcsetAllowed = (value: string, kind: string, refused: string[]) => {
+    const srcsetAllowed = (value: string, kind: string, refused: string[], loads: string[]) => {
         const pieces = value.split(',');
         for (let i = 0; i < pieces.length; i++) {
             const url = pieces[i]!.replace(/^[\t\n\f\r ]+/, '').split(/[\t\n\f\r ]/)[0]!;
-            if (url !== '' && !urlAllowed(url, kind, refused)) return false;
+            if (url !== '' && !urlAllowed(url, kind, refused, loads)) return false;
         }
         return true;
     };
@@ -728,25 +792,30 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         if (namespace === SVG) return svgAttributes[attribute] === true || (element === 'a' && svgLinkAttributes[attribute] === true);
         return namespace === MATHML && mathAttributes[attribute] === true;
     };
-    // A kept style attribute without animations and transitions (switches.animations false; review round 4, C-2).
+    // A kept style attribute without animations and transitions (switches.animations false; review round 4, C-2; round
+    // 5, L-2 and N-7). What happens to an attribute depends on its text alone, never on how an engine stores it:
     //   1. The text decides whether there is anything to read. A declaration names its property with an identifier,
     //      matched ASCII case-insensitively and spelled with literal letters or CSS escapes, and every property that sets
-    //      an animation or transition longhand has "anim" or "trans" in its name (shorthands, aliases and prefixes
-    //      alike: checked against each engine's whole property list, test/e2e/review-round-4.spec.ts), but `all`, which
-    //      takes nothing but a CSS-wide keyword (a var() in it resolves to one, or the declaration is invalid). So a text
-    //      without "anim", "trans" (in any case) or a backslash declares no animation, and stays as the guest wrote it:
-    //      nothing is read, nothing is serialized.
-    //   2. Otherwise the element's own CSSOM declaration is read, so the engine's parser decides what the attribute
-    //      declares (escapes, case, `!important`, var() in a shorthand: every engine stores longhands, under their own
-    //      names). A declaration of more properties than the attribute has characters (`all` with an animation
-    //      beside it expands into hundreds) goes whole: reading and rewriting it would be work out of proportion to
-    //      what the guest sent, which the budgets charge only after it is done.
-    //   3. Only the engine's animation and transition properties are read (context.animating, found once per view),
-    //      each with getPropertyValue, and each that holds anything but a CSS-wide keyword is removed; one whose value
-    //      only a var() decides reads '' and is removed too (removeProperty takes it, and the declaration's length says
-    //      so). A CSS-wide keyword (initial, inherit, unset, revert, revert-layer) never animates: it is the property's
-    //      initial value, the parent's value (every parent was cleaned, or is stopped by the still stylesheet), or a
-    //      rollback to sheets the still stylesheet stops.
+    //      an animation or transition longhand has "animation" or "transition" in its name (shorthands, aliases and
+    //      prefixes alike: checked against each engine's whole property list, test/e2e/review-round-4.spec.ts), but
+    //      `all`, which takes nothing but a CSS-wide keyword (a var() in it resolves to one, or the declaration is
+    //      invalid). So a text without "animation", "transition" (in any case) or a backslash declares no animation, and
+    //      stays as the guest wrote it: nothing is read, nothing is serialized. "transform", "transparent" or
+    //      "text-transform" alone never take the slower path (they did when the test was "anim" or "trans").
+    //   2. A text that does, and has a backslash (an escape the engine's parser would read as any name), or declares
+    //      `all` (the word as a property name: after the start, a `;`, whitespace or a comment, before an optional
+    //      whitespace and a colon; comments are skipped), goes whole. `all` expands into hundreds of longhands in Firefox
+    //      and WebKit and into one in Chromium, so reading and rewriting it would be work out of proportion to what the
+    //      guest sent, and its result would differ per engine. Either errs only toward removing.
+    //   3. Otherwise the element's own CSSOM declaration is read, so the engine's parser decides what the attribute
+    //      declares (case, `!important`, var() in a shorthand: every engine stores longhands, under their own names).
+    //      Without `all` a declaration holds at most a few longhands per character of its text (`font` the most), so
+    //      the work is linear in what the guest sent. Only the engine's animation and transition properties are read
+    //      (context.animating, found once per view), each with getPropertyValue, and each that holds anything but a
+    //      CSS-wide keyword is removed; one whose value only a var() decides reads '' and is removed too (removeProperty
+    //      takes it, and the declaration's length says so). A CSS-wide keyword (initial, inherit, unset, revert,
+    //      revert-layer) never animates: it is the property's initial value, the parent's value (every parent was
+    //      cleaned, or is stopped by the still stylesheet), or a rollback to sheets the still stylesheet stops.
     //   4. When something was removed, the attribute becomes the declaration's serialization, so what the view applies
     //      is exactly what was read here (the attribute goes when nothing is left); else it stays as written.
     // The CSSOM is no CSP sink. Before, every property of every declaration was listed and the attribute written back
@@ -755,7 +824,38 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     // (0.35 s and 0.27 s with animations on), and was then refused for the characters its expansion took.
     // An element whose namespace has no `style` (jsdom's MathML, an engine without MathMLElement) loses an attribute it
     // would have to read: fail closed.
-    const MAY_ANIMATE = /anim|trans|\\/i;
+    const MAY_ANIMATE = /animation|transition|\\/i;
+    const ALL_PROPERTY = /(^|[^a-z0-9_-])all[\t\n\f\r ]*:/i;
+    // The text without its comments and strings, each a space, in one pass: a comment runs to its "*/" or the end of
+    // the text, a string to its closing quote, a newline or the end (no escape is left to read: a text with a backslash
+    // went before this). So neither a comment nor a quote can hide `all` from ALL_PROPERTY, nor show it one.
+    const outsideCommentsAndStrings = (text: string) => {
+        const parts = list<string>();
+        let from = 0;
+        let i = 0;
+        while (i < text.length) {
+            const c = text[i]!;
+            let end = -1;
+            if (c === '/' && text[i + 1] === '*') {
+                const close = text.indexOf('*/', i + 2);
+                end = close < 0 ? text.length : close + 2;
+            } else if (c === '"' || c === "'") {
+                end = i + 1;
+                while (end < text.length && text[end] !== c && text[end] !== '\n' && text[end] !== '\r' && text[end] !== '\f') end++;
+                end = end < text.length ? end + 1 : end;
+            }
+            if (end < 0) {
+                i++;
+                continue;
+            }
+            parts[parts.length] = call(String.prototype.slice, text, [from, i]) as string;
+            parts[parts.length] = ' ';
+            from = end;
+            i = end;
+        }
+        parts[parts.length] = call(String.prototype.slice, text, [from]) as string;
+        return call(joinList, parts, ['']) as string;
+    };
     const CSS_WIDE_KEYWORDS = setOf(['initial', 'inherit', 'unset', 'revert', 'revert-layer']);
     const declaration = CSSStyleDeclaration.prototype;
     const declarationLength = getter(declaration, 'length');
@@ -776,16 +876,12 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     const stillStyle = (element: Element, namespace: unknown, written: string) => {
         if (!MAY_ANIMATE.test(written)) return;
         const styleOf = typeof namespace === 'string' ? styleGetters[namespace] : null;
-        if (!styleOf) {
+        if (!styleOf || written.indexOf('\\') >= 0 || ALL_PROPERTY.test(outsideCommentsAndStrings(written))) {
             drop(element, 'style');
             return;
         }
         const style = call(styleOf, element, []) as CSSStyleDeclaration;
         const before = call(declarationLength, style, []) as number;
-        if (before > written.length) {
-            drop(element, 'style');
-            return;
-        }
         for (let i = 0; i < animating.length; i++) {
             const value = String(call(propertyValue, style, [animating[i]!]));
             if (value !== '' && CSS_WIDE_KEYWORDS[value.toLowerCase()]) continue;
@@ -846,9 +942,10 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             const isUrl = html && isPair(rules.urls, name, attribute);
             const kind = isUrl ? urlKind(name, attribute, parent) : '';
             const refused = list<string>();
+            const loads = list<string>();
             const keep = attributeAllowed(namespace, name, attribute)
                 && !(/blob:/i.test(value.replace(/[\t\n\r]/g, '')) && !(html && isPair(rules.references, name, attribute) && isMinted(value)))
-                && !(isUrl && !(attribute === 'srcset' ? srcsetAllowed(value, kind, refused) : urlAllowed(value, kind, refused)))
+                && !(isUrl && !(attribute === 'srcset' ? srcsetAllowed(value, kind, refused, loads) : urlAllowed(value, kind, refused, loads)))
                 && !(namespace === SVG && svgLocal[attribute] && /[:\\]/.test(value))
                 && !(attribute === 'autoplay' && !switches.autoplay);
             // a URL the policy refuses: reported as the browser would have reported its load (a srcset's first one)
@@ -860,6 +957,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             if (attribute === 'referrerpolicy') set(element, attribute, 'no-referrer');
             else if (attribute === 'style' && !switches.animations) stillStyle(element, namespace, value);
             if (!isUrl) continue;
+            for (let l = 0; l < loads.length; l++) context.loads[context.loads.length] = loads[l]!;
             context.urls++;
             if (context.urls > urlRoom) throw new RangeError('VIEW_MAX_URLS');
         }
@@ -943,19 +1041,72 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     return kept;
 }
 
+/** The view's budgets per second (ViewOptions): characters of markup, ms of its own time, loads. */
+export interface ViewRates {
+    /** VIEW_RENDER_CHARACTERS_PER_SECOND */
+    characters: number;
+    /** VIEW_APPLY_MS_PER_SECOND */
+    time: number;
+    /** VIEW_URLS_PER_SECOND */
+    urls: number;
+}
+
+/**
+ * The view's budgets, as arithmetic and nothing else (review round 1, R1-1; round 2, M-3; round 4, M-2; round 5, M-2 and
+ * M-3): one token bucket per measure of ViewRates, each holding at most one second's worth, refilled at its rate as time
+ * passes (`now`, ms, given by the caller: the view passes performance.now()). The view charges each bucket what it
+ * measured or observed, in full, never capped: an operation of 1.5 s leaves the time budget 1.3 s in debt, which it
+ * repays in 6.5 s, so the time budget bounds the view's long-run share of the thread at `time` per second (review round 5,
+ * M-2: the debt was floored at 1 s, and operations of 7.5 s ran every 12.5 s). One operation's own cost is bounded by
+ * VIEW_MAX_OPERATION_MS instead.
+ *   charge(kind, amount, now)   takes `amount` from that bucket;
+ *   owes(now)                   whether the time or the load budget is in debt: an operation waits until neither is;
+ *   wait(characters, now)       the ms until neither owes and the characters budget covers `characters`.
+ * Stringified into the view bootstrap; self-contained.
+ */
+export function viewBudget(rates: ViewRates, start: number) {
+    const held = { characters: rates.characters, time: rates.time, urls: rates.urls };
+    let refilled = start;
+    const refill = (now: number) => {
+        const seconds = now > refilled ? (now - refilled) / 1000 : 0;
+        held.characters = Math.min(rates.characters, held.characters + seconds * rates.characters);
+        held.time = Math.min(rates.time, held.time + seconds * rates.time);
+        held.urls = Math.min(rates.urls, held.urls + seconds * rates.urls);
+        if (now > refilled) refilled = now;
+    };
+    // ms until `owed` units are repaid at `rate` per second
+    const repaid = (owed: number, rate: number) => (owed > 0 ? Math.ceil((owed / rate) * 1000) : 0);
+    return {
+        charge(kind: keyof ViewRates, amount: number, now: number) {
+            refill(now);
+            held[kind] -= amount;
+        },
+        owes(now: number): boolean {
+            refill(now);
+            return held.time < 0 || held.urls < 0;
+        },
+        wait(characters: number, now: number): number {
+            refill(now);
+            return Math.max(repaid(characters - held.characters, rates.characters), repaid(-held.time, rates.time), repaid(-held.urls, rates.urls));
+        },
+        held(kind: keyof ViewRates, now: number): number {
+            refill(now);
+            return held[kind];
+        },
+    };
+}
+
 /** What the view bootstrap is given, as one literal in its (constant) text. */
 export interface ViewOptions {
     render: RenderRules;
     maxRender: number;
     maxTarget: number;
-    /** VIEW_RENDER_CHARACTERS_PER_SECOND */
-    renderRate: number;
-    /** VIEW_APPLY_MS_PER_SECOND */
-    applyTime: number;
-    /** VIEW_APPLY_MAX_DEBT_MS */
-    applyDebt: number;
-    /** VIEW_URLS_PER_SECOND */
-    urlRate: number;
+    /** The budgets per second (viewBudget). */
+    rates: ViewRates;
+    /** VIEW_MAX_OPERATION_MS */
+    maxOperation: number;
+    /** VIEW_MAX_DISTINCT_URLS */
+    maxDistinctUrls: number;
     violationLimit: number;
     events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
     /** The Trusted Types policy name the view creates where the host page enforces them (trusted-types.ts). */
@@ -966,6 +1117,8 @@ export interface ViewOptions {
     guestText: { maxLength: number; perSecond: number };
     /** VIEW_STILL_STYLE: the view's stylesheet for `allowAnimations: false`. */
     stillStyle: string;
+    /** VIEW_STILL_PSEUDO_ELEMENTS and VIEW_STILL_DECLARATIONS: the rules the view adds to it, where the engine supports them. */
+    still: { pseudoElements: readonly string[]; declarations: string };
 }
 
 /**
@@ -978,11 +1131,12 @@ export interface ViewOptions {
  * message is ignored. A copy of this text that ever ran a second time in the same document would return
  * at once (the run counter), and a copy elsewhere would never receive INIT_VIEW (research 15, P1).
  */
-export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, options: ViewOptions) {
+export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, options: ViewOptions) {
     const g = globalThis as any;
     const runs = (g.__sandboxViewRuns || 0) + 1;
     g.__sandboxViewRuns = runs;
     if (runs > 1) return;
+    const budget = makeBudget(options.rates, performance.now()); // the view's budgets (viewBudget; the flush, below)
 
     // DOM access through the prototypes' own methods and getters, captured now, before any rendered markup
     // exists: Document and HTMLFormElement expose named elements as properties that override built-ins
@@ -1028,8 +1182,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         violationCounts.set(bucket, count + 1);
         toHost({ type: 'VIOLATION', directive, blockedURI, sourceFile, lineNumber, columnNumber });
     };
+    // Each one is charged to the load budget too (review round 5, M-3; VIEW_URLS_PER_SECOND): what the browser did to
+    // refuse a load, whatever named it (CSS too), unless it is a URL a render kept, which was charged when it was
+    // rendered (the renderer expected the browser to admit it). WebKit reports some refusals twice: each report is
+    // work, and each is charged.
     addEventListener('securitypolicyviolation', (event: any) => {
         if (!event.isTrusted) return;
+        if (!renderedLoads.has(String(event.blockedURI))) budget.charge('urls', 1, performance.now());
         reportViolation(event.effectiveDirective || event.violatedDirective, event.blockedURI, event.sourceFile, event.lineNumber, event.columnNumber);
     }, true);
 
@@ -1210,7 +1369,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     let bodyElements: number | null = null;
     let bodyUrls: number | null = null; // the body's URL-bearing attributes (VIEW_MAX_URLS; review round 4, M-2)
     let work = 0; // characters serialized by the current flush, charged to the budget with it
-    let urlWork = 0; // URL-bearing attributes the current flush kept, charged to the URL budget with it
+    let urlWork = 0; // URL-bearing attributes the current flush kept, charged to the load budget with it
     const innerHTMLOf = getter(Element.prototype, 'innerHTML');
     const outerHTMLOf = getter(Element.prototype, 'outerHTML');
     const innerLength = (element: Element) => {
@@ -1313,6 +1472,78 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // element with an inline transition and animation (set through the CSSOM, which no style-src governs) must compute
     // to none. The sheet is an inline style, so a host page whose style-src has neither 'unsafe-inline' nor its hash
     // refuses it (a srcdoc document inherits the host page's policy); false then.
+    //
+    // Its rules for pseudo-elements (review round 5, M-1; VIEW_STILL_PSEUDO_ELEMENTS) are appended to its anonymous layer
+    // through the CSSOM, one per name, and only for what can need one. Every such rule costs style work for every element
+    // of the view, whatever the elements carry (Chromium: one more style resolution per element for most names, and for
+    // ::scroll-button(*) 2.5–8 times a whole replacement, growing faster than the elements), so the library's own sheet
+    // made every render of every guest two to eight times as expensive. A rule is needed only where an animation could
+    // reach the pseudo-element, and only a guest stylesheet can give a pseudo-element anything (a style attribute cannot
+    // name one, and the user agent's own sheet animates none). So:
+    //   - a name gets a rule only where the engine supports it (CSS.supports('selector(*::name)')): a name the engine does
+    //     not know matches nothing, and its rule would cost all the same; but a ::-webkit- name gets one wherever the
+    //     engine's parser keeps it (every engine keeps any): Chromium matches the parts of its controls by name, and
+    //     denies two of them in CSS.supports (-webkit-media-controls-volume-control-container and its hover background,
+    //     found by review-round-4.spec.ts's enumeration of its parts);
+    //   - and only once guest CSS that the view is about to apply names it (stillNamed): the text of every registered
+    //     stylesheet at INIT_VIEW, of every <style> a render keeps (HTML or SVG) before it is inserted, and of every
+    //     text() into a <style> before it is set. A name that appears anywhere in the text, comments and strings
+    //     included, gets its rule (a selector can name a pseudo-element only by its name: `::before`, `:before`, nested
+    //     or not); a text with a backslash (an escape spells any name) or an `@import` (of a sheet the view cannot read)
+    //     gives every supported name its rule. That errs only toward adding rules, and each is added before the CSS that
+    //     named it applies.
+    // So a guest that names no pseudo-element pays for the `*` rule alone, and one that does pays for what it named, as
+    // its own work, in the view's time budget. A rule once added stays for the view's life. A sheet the host page's
+    // policy refused has no rules to append to (the guest's stylesheets are dropped then, inSandboxView below).
+    let stillLayer: CSSGroupingRule | null = null;
+    let stillPending: string[] = []; // the supported names without a rule yet
+    const cssFound = g.CSS;
+    const describedGetter = (proto: object | undefined, name: string) => {
+        const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, name) : undefined;
+        return descriptor && descriptor.get ? descriptor.get : null;
+    };
+    const groupRulesOf = describedGetter(g.CSSGroupingRule && g.CSSGroupingRule.prototype, 'cssRules');
+    const ruleListLength = describedGetter(g.CSSRuleList && g.CSSRuleList.prototype, 'length');
+    const stillLayerOf = (sheet: HTMLStyleElement): CSSGroupingRule | null => {
+        const sheetOf = describedGetter(HTMLStyleElement.prototype, 'sheet');
+        const rulesOf = describedGetter(g.CSSStyleSheet && g.CSSStyleSheet.prototype, 'cssRules');
+        if (!sheetOf || !rulesOf || !groupRulesOf || !ruleListLength || !cssFound) return null; // jsdom
+        const styleSheet = call(sheetOf, sheet, []) as CSSStyleSheet | null;
+        const rules = styleSheet ? call(rulesOf, styleSheet, []) as CSSRuleList : null;
+        const layer = rules && call(ruleListLength, rules, []) > 0 ? call(CSSRuleList.prototype.item, rules, [0]) : null;
+        return layer instanceof CSSGroupingRule ? layer : null;
+    };
+    const addStillRule = (name: string) => {
+        try {
+            const length = call(ruleListLength!, call(groupRulesOf!, stillLayer, []), []);
+            call(CSSGroupingRule.prototype.insertRule, stillLayer, ['*::' + name + '{' + options.still.declarations + '}', length]);
+        } catch {
+            // a name the engine claims and then refuses in a rule: nothing to stop there
+        }
+    };
+    // Guest CSS the view is about to apply: every supported name it could reach gets its rule now.
+    const stillNamed = (css: string) => {
+        if (!stillLayer || stillPending.length === 0) return;
+        const text = css.toLowerCase();
+        const all = text.indexOf('\\') >= 0 || text.indexOf('@import') >= 0;
+        const left: string[] = [];
+        for (let i = 0; i < stillPending.length; i++) {
+            const name = stillPending[i]!;
+            const open = name.indexOf('(');
+            if (all || text.indexOf(open < 0 ? name : name.slice(0, open)) >= 0) addStillRule(name);
+            else left.push(name);
+        }
+        stillPending = left;
+    };
+    // Every kept <style> of a fragment about to be inserted (HTML and SVG alike).
+    const stylesOf = (fragment: DocumentFragment) => call(DocumentFragment.prototype.querySelectorAll, fragment, ['style']) as NodeListOf<Element>;
+    const textContentOf = getter(Node.prototype, 'textContent');
+    const stillNamedIn = (fragment: DocumentFragment) => {
+        if (!stillLayer || stillPending.length === 0) return;
+        const styles = stylesOf(fragment);
+        const length = call(getter(NodeList.prototype, 'length'), styles, []) as number;
+        for (let i = 0; i < length; i++) stillNamed(String(call(textContentOf, call(NodeList.prototype.item, styles, [i]), [])));
+    };
     const headOf = getter(Document.prototype, 'head');
     const firstChildOf = getter(Node.prototype, 'firstChild');
     const styleOfElement = getter(HTMLElement.prototype, 'style');
@@ -1322,6 +1553,12 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const sheet = call(D.createElement, document, ['style']);
         call(Object.getOwnPropertyDescriptor(Node.prototype, 'textContent')!.set!, sheet, [options.stillStyle]);
         call(Node.prototype.insertBefore, head, [sheet, call(firstChildOf, head, [])]);
+        stillLayer = stillLayerOf(sheet as HTMLStyleElement);
+        stillPending = [];
+        const names = options.still.pseudoElements;
+        for (let i = 0; stillLayer && i < names.length; i++) {
+            if (cssFound.supports('selector(*::' + names[i] + ')') || names[i]!.indexOf('-webkit-') === 0) stillPending.push(names[i]!);
+        }
         const probe = call(D.createElement, document, ['span']);
         const inline = call(styleOfElement, probe, []) as CSSStyleDeclaration;
         call(CSSStyleDeclaration.prototype.setProperty, inline, ['transition-duration', '1s']);
@@ -1331,6 +1568,80 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const held = computed.getPropertyValue('transition-duration') === '0s' && computed.getPropertyValue('animation-name') === 'none';
         call(Node.prototype.removeChild, head, [probe]);
         return held;
+    };
+
+    // The distinct URLs this view has loaded or holds (review round 5, M-4; VIEW_MAX_DISTINCT_URLS), without their
+    // fragment: every one the document's resource timing reported (loadsObserved, below), and every http(s) URL a render
+    // kept in a URL attribute. Each distinct URL a document loads stays in the engine's caches for the document's life:
+    // past a few tens of thousands WebKit's host page stalled for 13–28 s while its memory grew without bound, though
+    // the URL budget held the rate. A render whose URL attributes would take the count past the limit is refused before
+    // anything is inserted (VIEW_MAX_DISTINCT_URLS); one that carries CSS (a <style>, a stylesheet <link>, a style
+    // attribute that can name a URL) is refused once the count has reached it, since what CSS loads is known only once
+    // it has loaded: that errs only toward refusing. A stylesheet already in the view still loads what its rules name for
+    // the elements they match, which only its own text bounds (VIEW_MAX_CHARACTERS); each load is charged to the rate.
+    const distinctLoads = new Set<string>();
+    // The http(s) URLs a render kept, which the load budget was charged with when they were rendered: what the platform
+    // reports of one of them is not charged again (below). A subset of distinctLoads.
+    const renderedLoads = new Set<string>();
+    const CSS_URL = /url\(|image-set\(|@import|\\/i;
+    const styleAttributeOf = (element: Element) => call(E.getAttribute, element, ['style']) as string | null;
+    const cssMayLoad = (fragment: DocumentFragment) => {
+        const sheets = call(DocumentFragment.prototype.querySelectorAll, fragment, ['style, link']) as NodeListOf<Element>;
+        if (call(nodeListLength, sheets, []) as number > 0) return true;
+        const styled = call(DocumentFragment.prototype.querySelectorAll, fragment, ['[style]']) as NodeListOf<Element>;
+        const length = call(nodeListLength, styled, []) as number;
+        for (let i = 0; i < length; i++) if (CSS_URL.test(styleAttributeOf(call(NodeList.prototype.item, styled, [i]) as Element) || '')) return true;
+        return false;
+    };
+    // The URLs of `loads` this view has not loaded yet, once each; throws, before anything is inserted, when they would
+    // take the count past the limit, or when the count has reached it and `fragment` carries CSS that can load.
+    const newLoads = (loads: readonly string[], fragment: DocumentFragment): string[] => {
+        const fresh: string[] = [];
+        const seen = new Set<string>();
+        for (let i = 0; i < loads.length; i++) {
+            if (distinctLoads.has(loads[i]!) || seen.has(loads[i]!)) continue;
+            seen.add(loads[i]!);
+            fresh.push(loads[i]!);
+        }
+        if (distinctLoads.size + fresh.length > options.maxDistinctUrls) throw new RangeError('VIEW_MAX_DISTINCT_URLS');
+        if (distinctLoads.size >= options.maxDistinctUrls && cssMayLoad(fragment)) throw new RangeError('VIEW_MAX_DISTINCT_URLS');
+        return fresh;
+    };
+    // Every load the view's document makes, as the platform reports it (review round 5, M-3: class P and E-net): its
+    // resource timing, which every engine keeps per document and reports for every fetch the document made, whatever
+    // named the URL (markup, a stylesheet's url() or image-set(), @import, a style attribute, a font), once its response
+    // ended (Chromium and Firefox report failed loads too, WebKit does not). A load the policy refused makes a
+    // violation, which the listener above charges (Chromium reports an entry too: such a load is charged twice). Each
+    // URL is counted among the distinct ones (VIEW_MAX_DISTINCT_URLS), and each entry charged to the load budget
+    // (VIEW_URLS_PER_SECOND), but the entry of a URL a render kept, whose URL attribute was charged when it was rendered.
+    // So every load is charged at least once whether or not the renderer's model of what loads is right: what it kept
+    // is charged when it is rendered (a relative URL, or one that fails in WebKit, too), and what it never saw (CSS) or
+    // wrongly expected to be refused is charged when the platform reports it. The renderer's drop of the URLs the
+    // policy would refuse saves the browser that work, and is no part of the bound. The observer runs only when there
+    // are entries: nothing per frame, nothing while the view loads nothing. The document's own buffer is emptied as
+    // entries arrive (nothing here reads it), so it holds none of them.
+    const httpUrl = /^https?:/i;
+    const observeLoads = () => {
+        const named = typeof PerformanceEntry === 'function' ? Object.getOwnPropertyDescriptor(PerformanceEntry.prototype, 'name') : undefined;
+        if (typeof PerformanceObserver !== 'function' || !named || !named.get) return; // all three engines have them (Node's, under jsdom, not)
+        const clearTimings = Performance.prototype.clearResourceTimings;
+        const entriesOf = PerformanceObserverEntryList.prototype.getEntries;
+        const nameOf = named.get;
+        const observer = new PerformanceObserver((list) => {
+            const entries = call(entriesOf, list, []) as PerformanceEntry[];
+            let unrendered = 0;
+            for (let i = 0; i < entries.length; i++) {
+                const name = String(call(nameOf, entries[i], []));
+                const hash = name.indexOf('#');
+                const load = hash < 0 ? name : name.slice(0, hash);
+                if (renderedLoads.has(load)) continue;
+                unrendered++;
+                if (httpUrl.test(load)) distinctLoads.add(load);
+            }
+            budget.charge('urls', unrendered, performance.now());
+            if (clearTimings) call(clearTimings, performance, []);
+        });
+        observer.observe({ type: 'resource', buffered: true });
     };
 
     // template.innerHTML parses into an inert fragment (no script runs, nothing loads); the renderer cleans
@@ -1349,18 +1660,22 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const ownUrls = target === body ? before.urls : urlsOf(target);
         let depth = 0;
         for (let n = target; n !== body; n = call(parentOf, n, [])) depth++;
-        const context: RenderContext = { target: String(call(localNameOf, target, [])), animating: switches.animations ? [] : animatingProperties(), origins: viewOrigins, refused: [], urls: 0 };
+        const context: RenderContext = { target: String(call(localNameOf, target, [])), animating: switches.animations ? [] : animatingProperties(), origins: viewOrigins, refused: [], urls: 0, loads: [] };
         const room = { elements: options.render.maxElements - (before.elements - ownElements), depth: options.render.maxDepth - depth, urls: options.render.maxUrls - (before.urls - ownUrls) };
         const kept = sanitize(template.content, fileOf, isMinted, options.render, switches, room, context);
+        const fresh = newLoads(context.loads, template.content);
         // The characters the body would hold (R1-1): its serialization outside the target, plus the cleaned fragment's
         // (what the target's serialization becomes: the same nodes, moved; never more, and less only inside a raw-text
         // element, whose text is not escaped). Measured on the browser's own serializer, after the renderer, so
         // attributes it dropped and elements it unwrapped never count. Once inserted, the target is measured again, so
         // the count is what the body serializes to, exactly.
         if (before.characters - ownCharacters + innerLength(template) > options.render.maxCharacters) throw new RangeError('VIEW_MAX_CHARACTERS');
+        if (!switches.animations) stillNamedIn(template.content); // the still rules its stylesheets need, before they apply
         call(E.replaceChildren, target, [template.content]);
         settle(target);
         urlWork += context.urls;
+        for (let i = 0; i < context.loads.length; i++) renderedLoads.add(context.loads[i]!);
+        for (let i = 0; i < fresh.length; i++) distinctLoads.add(fresh[i]!);
         for (let i = 0; i < context.refused.length; i++) reportViolation(context.refused[i]![0], context.refused[i]![1]);
         if (bodyCharacters === null) return;
         bodyCharacters = before.characters - ownCharacters + innerLength(target);
@@ -1424,7 +1739,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     const applyText = (text: string, into: string) => {
         const target = elementInBody(into);
-        if (target) replaceText(target, text);
+        if (!target) return;
+        if (!switches.animations && call(localNameOf, target, []) === 'style') stillNamed(text); // a stylesheet's new text
+        replaceText(target, text);
     };
     // value: an input's (shown, and its value attribute, so the characters it holds are in the serialization and the
     // budget), a textarea's (shown, and its text), a select's (which option), an output's (its text); any other element,
@@ -1482,9 +1799,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     //     textarea's text (measured: 0–1 ms against 1.6–2 s for elementFromPoint);
     //   - the rendering update that shows them (style and paint), measured by the gap meter below.
     // Whether a flush may run is checked when it is about to run, so a charge that arrived after it was scheduled still
-    // holds it back. The debt is capped at one second of the view's time (VIEW_APPLY_MAX_DEBT_MS, repaid in 5 s): one
-    // operation's own cost is not something a rate can bound (ADR-005), and an uncapped debt held every later operation
-    // back five times as long as that one took, however the time was counted (C-2, below).
+    // holds it back. Each is charged in full, however long it took (review round 5, M-2; viewBudget): the debt was floored
+    // at one second of the view's time, so an operation of 7.5 s (Chromium's layout of 30 000 restyled elements) was
+    // charged 1.2 s and ran again every 12.5 s, 53% of the thread, against a budget documented as a long-run share. One
+    // operation's own cost is not something a rate can bound (ADR-005); VIEW_MAX_OPERATION_MS bounds it instead: an
+    // operation, a flush and the rendering update measured after it, that took longer ends the sandbox (`overrun`).
+    // So no operation is charged much more than VIEW_MAX_OPERATION_MS, and none holds the view back for much longer than
+    // that repaid at VIEW_APPLY_MS_PER_SECOND (10 s).
     //
     // The gap meter (review round 3, C-2 and M-5). The rendering update that shows a flush runs after the animation-frame
     // callbacks of the frame that follows it, and the first task after that frame's callbacks runs only once the update
@@ -1493,51 +1814,67 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // rendered by that very frame, so the measure starts as the flush ends; one that ran from the timer (frames
     // throttled) asks for the next frame, and the measure starts at the end of its callback. The task is a zero-delay
     // timer, posted from the frame (no clamping applies at that depth). At most one measurement is outstanding:
-    // a flush while one is pending is measured by the next frame it asks for when it ends. Nothing runs while the view
-    // does nothing: no frame is requested without a flush, and nothing runs per frame while guest animations play
-    // (research 16 measured both). The meter never charges time in which no frame ran: a hidden or off-screen view runs
-    // no frame in most engines, so its one pending request runs once the view shows again, and measures that frame.
-    // Before, every flush queued a frame callback that charged the wall time from the flush to it, past one frame's
-    // length: a view hidden for 5 s, with one render applied meanwhile, made the next render wait 18.3 s (C-2); and one
-    // frame's length went uncharged per flush (M-5). Where the view shares the host page's renderer (an in-process
-    // frame), the update measured is the whole frame's: the host page's own rendering in that frame is charged to the
-    // view too, which only slows the guest.
+    // a flush while one is pending is measured by the next frame it asks for when it ends, and the time it took itself,
+    // which it charges, is taken out of the measure it ran inside. Nothing runs while the view does nothing: no frame is
+    // requested without a flush, and nothing runs per frame while guest animations play (research 16 measured both).
+    // The meter never charges time in which no frame ran: a hidden or off-screen view runs no frame in most engines, so
+    // its one pending request runs once the view shows again, and measures that frame. A measure across which the
+    // document's visibility changed is dropped, neither charged nor counted towards an operation (review round 5, M-2):
+    // a page hidden between the frame and the task throttles the task (Chromium runs a background page's timers once a
+    // second), so the measure would hold time in which nothing rendered. Before, every flush queued a frame callback that
+    // charged the wall time from the flush to it, past one frame's length: a view hidden for 5 s, with one render applied
+    // meanwhile, made the next render wait 18.3 s (C-2); and one frame's length went uncharged per flush (M-5). Where the
+    // view shares the host page's renderer (an in-process frame), the update measured is the whole frame's, and a task of
+    // the host page's that the event loop runs before the meter's task is in it too: both are charged to the view and
+    // count towards its operation, which slows the guest, and ends it only past VIEW_MAX_OPERATION_MS.
     type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: { value?: string; checked?: boolean; focus?: boolean } | null };
     let pending: Job[] = [];
     let scheduled = false;
-    let tokens = options.renderRate;
-    let time = options.applyTime; // ms of the view's time the budget holds now; never below -applyDebt
-    let urlTokens = options.urlRate; // URL-bearing attributes the budget holds now (VIEW_URLS_PER_SECOND; review round 4, M-2)
-    let refilled = performance.now();
-    const refill = () => {
-        const now = performance.now();
-        tokens = Math.min(options.renderRate, tokens + ((now - refilled) / 1000) * options.renderRate);
-        time = Math.min(options.applyTime, time + ((now - refilled) / 1000) * options.applyTime);
-        urlTokens = Math.min(options.urlRate, urlTokens + ((now - refilled) / 1000) * options.urlRate);
-        refilled = now;
+    // An operation past VIEW_MAX_OPERATION_MS (review round 5, M-2): the view says so on its port, once, and applies
+    // nothing more; the host ends the sandbox with the reason.
+    let overran = false;
+    const overrun = (ms: number) => {
+        if (overran || ms <= options.maxOperation) return;
+        overran = true;
+        pending = [];
+        if (viewPort) viewPort.postMessage({ type: 'VIEW_OVERRUN' });
     };
-    const charge = (ms: number) => {
-        refill();
-        time = Math.max(-options.applyDebt, time - ms);
-    };
+    const hiddenOf = getter(Document.prototype, 'hidden');
+    let visibilityChanges = 0;
+    addEventListener('visibilitychange', () => { visibilityChanges++; }, true);
     const IDLE = 0, FRAME = 1, GAP = 2;
     let meter = IDLE; // FRAME: a frame is requested for the measure; GAP: the measure's task is pending
     let meterFrame = 0;
     let unmeasured = false; // a flush happened whose rendering no measure has covered yet
+    let unmeasuredFlush = 0; // the longest of those flushes, in ms: the first part of their operation
+    let inGap = 0; // ms of flushes that ran while the measure's task was pending, which they charged themselves
     const startGap = () => {
         unmeasured = false;
+        const flushed = unmeasuredFlush;
+        unmeasuredFlush = 0;
+        inGap = 0;
         meter = GAP;
         const gapStart = performance.now();
+        const visibility = visibilityChanges;
         setTimeout(() => {
-            charge(performance.now() - gapStart);
             meter = IDLE;
-            if (unmeasured) measureRendering(false); // a flush ran after the measure started: the next frame renders it
+            const now = performance.now();
+            const rendering = now - gapStart - inGap;
+            if (visibility === visibilityChanges && !call(hiddenOf, document, [])) {
+                budget.charge('time', rendering, now);
+                overrun(flushed + rendering);
+            }
+            if (unmeasured) measureRendering(false, 0); // a flush ran after the measure started: the next frame renders it
         }, 0);
     };
-    // After a flush: `inFrame` when it ran inside a frame callback, so this frame renders it.
-    const measureRendering = (inFrame: boolean) => {
+    // After a flush that took `ms`: `inFrame` when it ran inside a frame callback, so this frame renders it.
+    const measureRendering = (inFrame: boolean, ms: number) => {
         unmeasured = true;
-        if (meter === GAP) return;
+        if (ms > unmeasuredFlush) unmeasuredFlush = ms;
+        if (meter === GAP) {
+            inGap += ms;
+            return;
+        }
         if (inFrame) {
             if (meter === FRAME) cancelAnimationFrame(meterFrame); // this frame renders the earlier flush too
             startGap();
@@ -1557,12 +1894,25 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         for (let i = 0; i < jobs.length; i++) cost += jobs[i]!.kind === 'set' ? (jobs[i]!.fields!.value || '').length : jobs[i]!.html.length;
         return cost;
     };
+    // After operations that started at `started`: what they serialized and the time they took, layout included, are
+    // charged, the operation checked against its limit, and its rendering measured next.
+    const settleOperations = (started: number, inFrame: boolean) => {
+        budget.charge('characters', work, performance.now()); // what the operations serialized (C-4)
+        work = 0;
+        budget.charge('urls', urlWork, performance.now()); // the URL-bearing attributes they kept (M-2)
+        urlWork = 0;
+        layout();
+        const now = performance.now();
+        const spent = now - started;
+        budget.charge('time', spent, now); // what the flush took (M-3)
+        overrun(spent);
+        measureRendering(inFrame, spent); // and what showing it takes
+    };
     const flush = (inFrame: boolean) => {
         const jobs = pending;
         pending = [];
         scheduled = false;
-        refill();
-        tokens -= costOf(jobs);
+        budget.charge('characters', costOf(jobs), performance.now());
         work = 0;
         const started = performance.now();
         const refused: string[] = [];
@@ -1577,20 +1927,14 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 // below still releases the next one; one past the view's budget, or a focus the view refused, is named to
                 // the worker, which says so
                 const message = error && error.message;
-                if (message === 'VIEW_MAX_ELEMENTS' || message === 'VIEW_MAX_DEPTH' || message === 'VIEW_MAX_CHARACTERS' || message === 'VIEW_MAX_URLS' || message === 'VIEW_FOCUS') refused.push(message);
+                if (message === 'VIEW_MAX_ELEMENTS' || message === 'VIEW_MAX_DEPTH' || message === 'VIEW_MAX_CHARACTERS' || message === 'VIEW_MAX_URLS' || message === 'VIEW_MAX_DISTINCT_URLS' || message === 'VIEW_FOCUS') refused.push(message);
             }
         }
-        tokens -= work; // what the operations serialized (C-4): the next flush waits until the budget covers it
-        work = 0;
-        urlTokens -= urlWork; // the URL-bearing attributes they kept (M-2), likewise
-        urlWork = 0;
-        layout();
-        charge(performance.now() - started); // what the flush took (M-3), likewise
-        measureRendering(inFrame); // and what showing it takes
+        settleOperations(started, inFrame);
         if (renderPort) renderPort.postMessage(refused.length > 0 ? { type: 'VIEW_ACK', refused } : { type: 'VIEW_ACK' });
     };
     const schedule = () => {
-        if (scheduled) return;
+        if (scheduled || overran) return;
         scheduled = true;
         let ran = false;
         let frame = 0;
@@ -1600,21 +1944,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             ran = true;
             if (inFrame && timer !== null) clearTimeout(timer);
             if (!inFrame) cancelAnimationFrame(frame);
-            refill();
-            if (time < 0 || urlTokens < 0) {
-                // charged since this was scheduled (the rendering of the last flush): wait for the budget again
+            if (overran) return;
+            if (budget.owes(performance.now())) {
+                // charged since this was scheduled (the rendering of the last flush, a load): wait for the budget again
                 scheduled = false;
                 schedule();
                 return;
             }
             flush(inFrame);
         };
-        refill();
-        const short = costOf(pending) - tokens; // what the budget lacks now, in characters
-        const late = -time; // and in ms of the view's time
-        const owed = -urlTokens; // and in URL-bearing attributes (M-2)
-        const wait = Math.max(short > 0 ? Math.ceil((short / options.renderRate) * 1000) : 0, late > 0 ? Math.ceil((late / options.applyTime) * 1000) : 0,
-            owed > 0 ? Math.ceil((owed / options.urlRate) * 1000) : 0);
+        const wait = budget.wait(costOf(pending), performance.now()); // what the budgets lack now, as a delay
         const start = () => {
             frame = requestAnimationFrame(() => run(true));
             timer = setTimeout(() => run(false), 100);
@@ -1743,6 +2082,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         // mints for raster-image guest writes (showWrite, R4-4), the only blob: URLs the renderer keeps (A8).
         const entries = Array.isArray(data.viewFiles) ? data.viewFiles : [];
         const files = installFiles(entries);
+        // the registered stylesheets a render can link or import: the still rules their text names (stillNamed)
+        for (let i = 0; !switches.animations && i < entries.length; i++) {
+            if (entries[i][1] !== 'text/css' || typeof entries[i][2] !== 'string') continue;
+            try {
+                const bytes = Uint8Array.from(atob(entries[i][2]), (c: string) => c.charCodeAt(0));
+                stillNamed(new TextDecoder().decode(bytes));
+            } catch {
+                stillNamed('\\'); // not readable here: every rule
+            }
+        }
         viewFiles = new Map();
         minted = new Set();
         for (let i = 0; i < entries.length; i++) {
@@ -1880,23 +2229,18 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         worker!.postMessage({ type: 'INIT_WORKER' }, [logicPort, channel.port2]);
 
         observeBody();
+        observeLoads();
         const initial = data.html;
         if (typeof initial === 'string' && initial !== '') {
+            budget.charge('characters', initial.length, performance.now()); // the initial view is charged like any render (R1-1)
             work = 0;
             const started = performance.now();
             try {
-                tokens -= initial.length; // the initial view is charged like any render (R1-1)
                 apply(initial, null);
             } catch {
                 // past the budget, or anything else the renderer refused: the initial view stays empty
             }
-            tokens -= work;
-            work = 0;
-            urlTokens -= urlWork;
-            urlWork = 0;
-            layout();
-            charge(performance.now() - started);
-            measureRendering(false);
+            settleOperations(started, false);
         }
         if (data.autoResize === true) startAutoResize();
     }, true);
@@ -1922,7 +2266,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * next only after the view's VIEW_ACK, and `sandboxView.on`, which registers handlers for the events the view forwards
  * (the port itself is never handed to a handler).
  */
-export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; maxUrls: number; entryDoneName: string; eventTypes: readonly string[] }) {
+export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; maxUrls: number; maxDistinctUrls: number; entryDoneName: string; eventTypes: readonly string[] }) {
     // ---- The captured list (review C3; review round 2, C-1): sandboxView's methods, the render port's listener and the
     // error listener run after the entry, so everything they use is taken here, and nothing below reads a global or a
     // prototype guest code can replace (a unit test scans the text). The prelude's own lists have no prototype (review
@@ -1944,6 +2288,11 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     const stopImmediate = Event.prototype.stopImmediatePropagation;
     const cancel = Event.prototype.preventDefault;
     const defaultPreventedOf = getOwn(Event.prototype, 'defaultPrevented')!.get!;
+    // The error event's own fields, read through the getters of ErrorEvent.prototype as they are now (review round 5,
+    // N-2; class G): guest code can replace the prototype's accessors, so the listener below never reads them through
+    // the event. A captured getter returns what the browser stored in the event, and runs no guest code.
+    const errorEventError = getOwn(ErrorEvent.prototype, 'error')!.get!;
+    const errorEventMessage = getOwn(ErrorEvent.prototype, 'message')!.get!;
     const laterMicrotask = g.queueMicrotask;
     const post = MessagePort.prototype.postMessage;
     const startPort = MessagePort.prototype.start;
@@ -2140,7 +2489,9 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
                         ? 'the view would hold more than ' + options.maxCharacters + ' characters'
                         : refused[i] === 'VIEW_MAX_URLS'
                             ? 'the view would hold more than ' + options.maxUrls + ' URLs (src, srcset, poster, href)'
-                            : 'the view would hold more than ' + options.maxElements + ' elements';
+                            : refused[i] === 'VIEW_MAX_DISTINCT_URLS'
+                                ? 'the view would load more than ' + options.maxDistinctUrls + ' distinct URLs in this environment'
+                                : 'the view would hold more than ' + options.maxElements + ' elements';
                 log('warn', ['[Sandbox] sandboxView.' + kind + ': the view refused ' + (kind === 'render' ? 'a render' : 'it') + ': ' + why + '; nothing of it was applied.']);
             }
             inFlight = null;
@@ -2182,9 +2533,28 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     // the sandbox, except one the browser muted here: in WebKit, once the view has revoked the worker's source
     // URL (review C1), an error thrown by code from that script reads "Script error." in the worker, while the
     // Worker object in the view still gets its text. Such an error is left to the view, which logs it.
+    // The event's fields are read only through the getters captured above (review round 5, N-2): the event's own
+    // accessors are the guest's to replace, and a replaced one could make any error look muted, so that it reached the
+    // view uncancelled, or throw, so that the listener stopped before it cancelled (Firefox then ended the sandbox as
+    // if the entry had failed). The captured getters cannot be replaced, cannot throw for a trusted ErrorEvent, and the
+    // reads are in a try/catch besides: anything unexpected is not muted, so it is cancelled. The one decision taken
+    // before cancelling, "is it muted", reads nothing guest code can change; everything else is read after it.
     let entryRan = false;
     let entryErrors = 0;
-    const isMuted = (event: ErrorEvent) => event.error === null && event.message === 'Script error.';
+    const isMuted = (event: ErrorEvent) => {
+        try {
+            return apply(errorEventError, event, []) === null && apply(errorEventMessage, event, []) === 'Script error.';
+        } catch {
+            return false;
+        }
+    };
+    const messageOf = (event: ErrorEvent) => {
+        try {
+            return StringConstructor(apply(errorEventMessage, event, []));
+        } catch {
+            return 'an error';
+        }
+    };
     apply(addListener, g, ['error', (event: ErrorEvent) => {
         if (!event.isTrusted) return; // isTrusted is an own, unforgeable property; only trusted errors reach the view
         if (!entryRan) {
@@ -2193,7 +2563,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         }
         if (isMuted(event)) return;
         apply(cancel, event, []);
-        log('error', [uncaught(StringConstructor(event.message))]);
+        log('error', [uncaught(messageOf(event))]);
     }, true]);
     defineOwn(g, options.entryDoneName, { value: () => { entryRan = true; } });
 }
@@ -2234,10 +2604,9 @@ export const VIEW_OPTIONS: ViewOptions = {
     render: RENDER_RULES,
     maxRender: VIEW_RENDER_MAX_LENGTH,
     maxTarget: VIEW_TARGET_MAX_LENGTH,
-    renderRate: VIEW_RENDER_CHARACTERS_PER_SECOND,
-    applyTime: VIEW_APPLY_MS_PER_SECOND,
-    applyDebt: VIEW_APPLY_MAX_DEBT_MS,
-    urlRate: VIEW_URLS_PER_SECOND,
+    rates: { characters: VIEW_RENDER_CHARACTERS_PER_SECOND, time: VIEW_APPLY_MS_PER_SECOND, urls: VIEW_URLS_PER_SECOND },
+    maxOperation: VIEW_MAX_OPERATION_MS,
+    maxDistinctUrls: VIEW_MAX_DISTINCT_URLS,
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
     events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,
@@ -2246,10 +2615,16 @@ export const VIEW_OPTIONS: ViewOptions = {
     // LOG_EVENTS_PER_SECOND guest lines in any one second
     guestText: { maxLength: 2048, perSecond: LOG_EVENTS_PER_SECOND },
     stillStyle: VIEW_STILL_STYLE,
+    still: { pseudoElements: VIEW_STILL_PSEUDO_ELEMENTS, declarations: VIEW_STILL_DECLARATIONS },
 };
 
 let cachedText: string | null = null;
 let cachedHash: string | null = null;
+
+/** The view bootstrap's text for `options`, built from the functions it runs (the tests build it with other options). */
+export function viewBootstrapSource(options: ViewOptions): string {
+    return `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')});`;
+}
 
 /**
  * The view bootstrap as one string literal, in the published bundle (review round 2, C-8): scripts/build-lib.ts builds
@@ -2269,9 +2644,7 @@ declare const __WEB_SANDBOX_VIEW_BOOTSTRAP__: string | undefined;
  */
 export function viewBootstrapText(): string {
     if (cachedText !== null) return cachedText;
-    const text = typeof __WEB_SANDBOX_VIEW_BOOTSTRAP__ === 'string'
-        ? __WEB_SANDBOX_VIEW_BOOTSTRAP__
-        : `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(VIEW_OPTIONS).replaceAll('<', '\\u003c')});`;
+    const text = typeof __WEB_SANDBOX_VIEW_BOOTSTRAP__ === 'string' ? __WEB_SANDBOX_VIEW_BOOTSTRAP__ : viewBootstrapSource(VIEW_OPTIONS);
     assertHashableScript(text);
     cachedText = text;
     return text;
