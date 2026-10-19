@@ -1,6 +1,7 @@
 /**
  * The tokens of a JavaScript or TypeScript text, comments and whitespace left out, as TypeScript's own scanner reads them
- * (typescript/unstable/ast, the dev dependency's JavaScript scanner; no type checker, no compiler process). Shared by
+ * (typescript/unstable/ast, the dev dependency's JavaScript scanner; no type checker, no compiler process), and its
+ * comments on their own (comments(), read by test/unit/history-ratchet.test.ts). Shared by
  * scripts/declaration-specifiers.ts (review round 2, C-11: only real import and export specifiers are rewritten, never
  * text in a comment or a string that looks like one) and by the unit test that scans the guest-realm functions for
  * intrinsics read after their capture point (C-1).
@@ -32,18 +33,35 @@ const ENDS_EXPRESSION = new Set<SyntaxKind>([
 ]);
 
 export function tokenize(text: string): Token[] {
-    const scanner = createScanner(true, undefined, text);
+    return scan(text).tokens;
+}
+
+/** The comments of a text (`//` and `/* … *\/`, each whole), as the scanner reads them: never text in a string or regex. */
+export function comments(text: string): Token[] {
+    return scan(text).comments;
+}
+
+const TRIVIA = new Set<SyntaxKind>([SyntaxKind.WhitespaceTrivia, SyntaxKind.NewLineTrivia, SyntaxKind.ConflictMarkerTrivia, SyntaxKind.NonTextFileMarkerTrivia]);
+
+function scan(text: string): { tokens: Token[]; comments: Token[] } {
+    const scanner = createScanner(false, undefined, text);
     const out: Token[] = [];
+    const found: Token[] = [];
     // one entry per open `{` or template substitution: true for a substitution
     const braces: boolean[] = [];
     for (let kind = scanner.scan(); kind !== SyntaxKind.EndOfFile; kind = scanner.scan()) {
+        if (kind === SyntaxKind.SingleLineCommentTrivia || kind === SyntaxKind.MultiLineCommentTrivia) {
+            found.push({ kind, text: scanner.getTokenText(), start: scanner.getTokenStart(), end: scanner.getTokenEnd() });
+            continue;
+        }
+        if (TRIVIA.has(kind)) continue;
         if (kind === SyntaxKind.CloseBraceToken && braces.pop() === true) kind = scanner.reScanTemplateToken(false);
         else if ((kind === SyntaxKind.SlashToken || kind === SyntaxKind.SlashEqualsToken) && !ENDS_EXPRESSION.has(out.at(-1)?.kind as SyntaxKind)) kind = scanner.reScanSlashToken();
         if (kind === SyntaxKind.OpenBraceToken) braces.push(false);
         if (kind === SyntaxKind.TemplateHead || kind === SyntaxKind.TemplateMiddle) braces.push(true);
         out.push({ kind, text: scanner.getTokenText(), start: scanner.getTokenStart(), end: scanner.getTokenEnd() });
     }
-    return out;
+    return { tokens: out, comments: found };
 }
 
 export { SyntaxKind };

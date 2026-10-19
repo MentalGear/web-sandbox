@@ -517,7 +517,7 @@ Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerEx
 past `LOG_EVENTS_PER_SECOND` (lines delivered late, while your page was busy, can arrive closer together than the guest
 sent them): `[Sandbox] the guest logged more than 1000 lines in one second; lines past that rate are not dispatched as
 'sandbox-log' events.`; and, in strict mode, one `warn` line per environment at the view's first overrun (an operation
-past 2000 ms that did not end the sandbox; see [`sandboxView`](#sandboxview)): `[Sandbox] the view spent more than
+past 2000 ms that did not end the sandbox; see [`sandboxView`](#sandboxview-strict-mode)): `[Sandbox] the view spent more than
 2000 ms on one operation; a second such operation within 5 minutes ends the sandbox.`
 
 ### `violation` — `SandboxViolation`
@@ -567,7 +567,7 @@ already read, an error, a refusal), and they can arrive after the call that tore
 | `the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)` | The host page enforces Trusted Types and its `trusted-types` directive does not name `web-sandbox`, also when the host page's own default policy takes the element's strings (the view and worker mode's frame need the policy themselves). |
 | `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
-| `the view spent more than 2000 ms on one operation twice within 5 minutes` | Strict mode: an operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it, and another one had, at most 5 minutes before it. The first such operation only logs a `warn` line (see [`sandbox-log`](#sandbox-log--sandboxlog)); see [`sandboxView`](#sandboxview). |
+| `the view spent more than 2000 ms on one operation twice within 5 minutes` | Strict mode: an operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it, and another one had, at most 5 minutes before it. The first such operation only logs a `warn` line (see [`sandbox-log`](#sandbox-log--sandboxlog)); see [`sandboxView`](#sandboxview-strict-mode). |
 | `unknown mode …` | `mode` is not `strict`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`. |
 | `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned, an `origins` that is not an object, or a kind of it that is not a list. |
 | `the environment could not be built (…)` | Building the frame failed. |

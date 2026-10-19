@@ -100,6 +100,8 @@ stand beside the bound as an example, with its date and engine; it is never gene
 **The guards**, in the unit run and CI:
 - `bun run api:check`: the public API against its reviewed report, [etc/web-sandbox.api.md](etc/web-sandbox.api.md);
   `bun run api:update` accepts a change, which the PR then shows.
+- `test/unit/doc-links.test.ts`: every relative link and anchor in the Markdown files, and every ID in the registry's
+  forms cited in `src/`, `test/` and the docs, resolves.
 
 ## Style
 
