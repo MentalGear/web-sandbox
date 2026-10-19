@@ -196,13 +196,15 @@ test.describe('3. isolation between sandboxes and from the host page', () => {
             url: sandboxFiles.url('secret.txt'),
             list: sandboxFiles.list(),
             base: document.querySelector('base'),
-            markup: document.documentElement.outerHTML,
+            // read in the guest: the markup itself, the bootstrap's source among it, is longer than one log string
+            localhost: document.documentElement.outerHTML.includes('localhost'),
+            uuid: /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(document.documentElement.outerHTML),
         };`);
         expect(a.url).toMatch(/^blob:null\//);
         expect(a.list).toEqual(['secret.txt']);
         expect(a.base).toBeNull();
-        expect(a.markup).not.toContain('localhost');
-        expect(a.markup).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+        expect(a.localhost).toBe(false);
+        expect(a.uuid).toBe(false);
 
         // a second sandbox with files of its own
         expect(await page.evaluate(() => new Promise(resolve => {

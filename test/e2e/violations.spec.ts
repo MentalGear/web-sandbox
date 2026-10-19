@@ -83,13 +83,14 @@ test.describe('3. a report is a guest claim', () => {
         expect((await sandbox.violations()).map(v => v.blockedURI)).toEqual([`${ATTACKER}/real`]);
     });
 
-    test('guest code cannot reach the port (review B2), but it can bend what the bootstrap reads: forged fields are validated and clamped, a bad directive is dropped, extra fields never reach the host', async ({ sandbox }) => {
+    test('guest code cannot reach the port (review B2), nor bend what the bootstrap reads: getters it puts on the event\'s prototype answer nothing, the reports are the browser\'s (review round 5, N-6)', async ({ sandbox }) => {
         expect(await sandbox.mount()).toBe('ready');
         // Before review B2, guest code took the port by patching MessagePort.prototype.postMessage and posted
         // VIOLATION frames of its own. The bootstrap now calls only primitives captured before guest code ran, so
-        // that yields nothing (asserted at length in review-channels.spec.ts). What remains guest-influenced is
-        // what the bootstrap reads from a real violation event, through getters guest code can replace: a
-        // report stays a claim, and the host validates it.
+        // that yields nothing (asserted at length in review-channels.spec.ts). The bootstrap reads a violation event
+        // through the platform's getters, captured before guest code ran (readEvent, review round 5, N-6), so getters
+        // guest code puts on SecurityPolicyViolationEvent.prototype change nothing it reports. (The host validates and
+        // clamps every report all the same: violation.ts.)
         await sandbox.run(`
             globalThis.__port = null;
             const original = MessagePort.prototype.postMessage;
@@ -114,11 +115,10 @@ test.describe('3. a report is a guest claim', () => {
         `);
         await sandbox.waitForLog('forging');
         expect(await sandbox.inGuest('return globalThis.__port')).toBeNull();
-        await sandbox.waitForViolation('connect-src', 'FORGED_DONE');
-        const forged = await sandbox.violations();
-        expect(forged.map(v => [v.directive, v.blockedURI.length])).toEqual([['connect-src', 2048], ['connect-src', 'FORGED_DONE'.length]]);
-        const { sandbox: _, sourceFile: __, columnNumber: ___, ...detail } = forged[0]!;
-        expect(detail).toEqual({ directive: 'connect-src', blockedURI: 'y'.repeat(2048) });
+        await sandbox.waitForViolation('img-src', `${ATTACKER}/forge-2`);
+        await sandbox.page.waitForTimeout(300);
+        const reported = await sandbox.violations();
+        expect(reported.map(v => [v.directive, v.blockedURI])).toEqual([0, 1, 2].map(i => ['img-src', `${ATTACKER}/forge-${i}`]));
     });
 
     test('an honest guest stops forwarding at 100 per environment, below the host cap that warns; the next environment starts a fresh count', async ({ sandbox, page }) => {

@@ -314,5 +314,7 @@ the guest makes have a per-second budget per environment, by default 1000 calls 
 config sets others; it cannot be turned off), a sliding one-second window like the log relay's: the guest's broker, the
 only code that holds the port, refuses a call past it with `BUSY` before sending it, and the host counts the same
 window on receipt and answers `BUSY`. `BUSY` stays a code the other side reports; the guest's broker mints it only for
-the host's budget, applied early. A value the byte measure does not know (an `Error`) is refused with a message that
+the host's budget, applied early. The two fields of the budget are one rule (the config schema, `src/lib/config-schema.ts`):
+every call that can be carried fits an empty window, so a call heavier than the byte budget, which no wait would let
+through, is refused with `ARGS_NOT_TRANSFERABLE` at both ends, and a byte budget below `RPC_MAX_BYTES` warns once. A value the byte measure does not know (an `Error`) is refused with a message that
 names it, never as past the budget.

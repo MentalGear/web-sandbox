@@ -214,6 +214,13 @@ A field left out, or `callLimits` left out, takes the default. A value that is n
 an object takes both defaults with one warning; there is no way to turn the budget off, nor to set one that admits no
 call.
 
+The two fields are checked together: every call that can be carried fits an empty window. A call weighs its whole
+message, so a `maxBytesPerSecond` below `RPC_MAX_BYTES` (33 MiB) also caps one call: a call heavier than it can never fit,
+and is refused with `ARGS_NOT_TRANSFERABLE`, which is not worth retrying, by the guest's `bridge` before sending it and
+by the element if it arrives anyway; such a value gives one warning at `setConfig()`. The smallest call measures about
+136 bytes, so a budget below that refuses every guest call, `sandboxFetch()` and guest writes included, with
+`ARGS_NOT_TRANSFERABLE`.
+
 ### `allowAnimations` and `allowAutoplay`
 
 Strict mode's view runs on your page's main thread wherever the browser places it there, and then everything it
@@ -297,7 +304,7 @@ before any guest code ran. Nothing reaches the host: no return value, no report 
 - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
 - While `idle` (not in the document) or `terminated` there is no environment: it warns and does nothing, as
   `call()` rejects then.
-- While `loading` the code is queued and sent when the guest is ready. In cooperative mode it runs once the guest
+- While `loading` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the guest
   document is parsed (see [the startup gate](#ready-and-the-startup-gate)), in order with calls.
 - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
 - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
@@ -343,8 +350,9 @@ handler.
   method name included: a name is at most 256 characters (`INVALID_CALL`).
 - Default timeout: 30 s. The element's timers and its copy of the arguments use the `setTimeout` and `structuredClone`
   it took when it was constructed: fake timers installed after that (a test's) do not control a call's timeout.
-- Calls made while `loading` are queued and sent when the guest is ready; one that settles while queued (its
-  timeout) leaves the queue and never runs. In cooperative mode a call reaches the guest's method once the guest
+- Calls made while `loading` are queued and sent when the build becomes `ready`, in every mode (strict mode included,
+  whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue and never
+  runs. In cooperative mode a call reaches the guest's method once the guest
   document is parsed (see [the startup gate](#ready-and-the-startup-gate)). Calls made while `idle` (not in the
   document) or `terminated` reject at once with `TERMINATED`, as `execute()` does nothing then.
 - Rejects with an `RpcError` (an `Error` with a `code`); see [Refusal codes](#refusal-codes).
@@ -433,11 +441,13 @@ All events are `CustomEvent`s dispatched on the element. None is `composed`.
 | `violation` | `SandboxViolation` | yes | The guest policy refused a load. |
 | `fetch` | `FetchRecord` | yes | With `fetchBridge`: a `sandboxFetch()` request settled (including refusals). Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
 | `fileschanged` | `{ paths: string[] }` | no | `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; synchronous. |
-| `fileswritten` | `{ paths: string[] }` | yes | The element recorded a guest write or removal (`guestWrites`); one path per event, at most `GUEST_WRITES_PER_SECOND` per environment. |
+| `fileswritten` | `{ paths: string[] }` | yes | A guest write or removal changed what [`listGuestWrites()`](#listguestwrites) shows at a path (`guestWrites`); one path per event, at most `GUEST_WRITES_PER_SECOND` per environment. |
 
 The bubbling events reach a listener on `window` for every sandbox on the page; `event.target` says which one.
-Every `detail` is frozen. Fields that come from the guest are validated and clamped, but they remain the
-guest's data: read them, don't merge them into your objects. The element's own startup message, the guest frame's
+Every `detail` is frozen, deeply: every object and array in it, a guest's log arguments included, so a listener cannot
+change what a later listener reads. What cannot be frozen stays as it is: the bytes of a typed array or an `ArrayBuffer`,
+the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and clamped, but they
+remain the guest's data: read them, don't merge them into your objects. The element's own startup message, the guest frame's
 port announcement (`{ type: 'SANDBOX_PORT' }` from the guest frame's window), is taken by a capture listener the
 element adds to your window at each build; a `message` listener of yours added before it, in the capture phase, sees
 it first. Act on a message only by `event.source` (above), never by its shape.
@@ -480,6 +490,14 @@ dropped and for which cap. In strict mode the view relays the later uncaught err
 raises them there) within the same `LOG_EVENTS_PER_SECOND` window; the first one it drops sends one `warn` line, also
 not counted: `[Sandbox] the guest raised more than 1000 uncaught errors in one second that only the view could
 describe; errors past that are dropped in the view.`
+
+In worker and strict mode an uncaught error or an unhandled rejection is cancelled once it is relayed, so the browser
+does not report it as well. Firefox reports a worker's unhandled rejections to your page's thread all the same, so in
+those modes they have a budget per environment: past 1000 uncaught errors and rejections (rejections handled later
+included), or 1048576 characters of their names and messages (of a rejected string, its length), in any one-second
+window, the sandbox ends: `the guest raised more uncaught errors or unhandled rejections in one second than their
+budget allows`. One error or rejection is not bounded by it: the browser reports it before the sandbox can end, so one
+with a message of hundreds of millions of characters costs your page's thread that one report.
 
 Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`);
 `[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
@@ -543,6 +561,7 @@ build is loading.
 | `the guest frame announced itself again (it reloaded or rewrote its document)` | Cooperative and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. |
 | `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time and its frame had not loaded (without `allow-scripts`: subresources included). |
 | `the guest frame is missing` | The library's frame has no guest frame. |
+| `the guest raised more uncaught errors or unhandled rejections in one second than their budget allows` | Worker and strict mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)). |
 
 Branch on `state` and the event, not on these texts. A reason never carries the text of an error the element
 caught (that can quote your config, or be the guest's words): only a fixed text and, in parentheses, the error's
@@ -616,7 +635,7 @@ From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.
 | :--- | :--- | :--- | :--- |
 | `TIMEOUT` | local | No answer within the call's timeout. | yes |
 | `TERMINATED` | local | The environment was reset, terminated or removed. | after the next `ready` |
-| `ARGS_NOT_TRANSFERABLE` | local, reported | The arguments cannot be structured-cloned, measure more than `RPC_MAX_BYTES`, or hold a value the measure does not know (the message names it; see [`call()`](#callmethod-args)); nothing was sent. Reported by the other side for a call that arrived so: the method did not run. | no |
+| `ARGS_NOT_TRANSFERABLE` | local, reported | The arguments cannot be structured-cloned, measure more than `RPC_MAX_BYTES`, or hold a value the measure does not know (the message names it; see [`call()`](#callmethod-args)); nothing was sent. Reported by the other side for a call that arrived so: the method did not run. Guest calls only: the call is heavier than [`callLimits`](#calllimits)`.maxBytesPerSecond`, so no window could ever carry it. | no |
 | `SEND_FAILED` | local | The transport threw while sending. | no |
 | `INVALID_CALL` | local | The method name is not a string, or is longer than 256 characters. | no |
 | `UNKNOWN_METHOD` | reported | No method of that name is exposed on the other side. | no |
@@ -692,8 +711,10 @@ encoding, streams, `crypto`, `Blob`, `File`, `URL`, IndexedDB, `OffscreenCanvas`
 and `fonts`, `caches`, `Notification`, `Worker` and `SharedWorker` (no nested workers), the Service Worker, Push, RTC,
 MediaSource and Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`; and the worker's own
 `postMessage`, `onmessage` and `onmessageerror`: the library's port, with its budgets, is the only way from the worker
-to its parent (worker mode's frame, strict mode's view). Its uncaught errors leave it the same way, as
-[`sandbox-log`](#sandbox-log--sandboxlog) lines.
+to its parent (worker mode's frame, strict mode's view). Its uncaught errors and unhandled rejections leave it the same
+way, as [`sandbox-log`](#sandbox-log--sandboxlog) lines, within their budget. Every surface of the worker and its parent
+document by which guest activity can make work on your page's thread is listed, with its bound, in
+`src/lib/egress.ts`.
 
 ### `bridge`
 
@@ -739,7 +760,15 @@ In strict mode the view shows the raster images the guest writes: a write whose 
 `poster` or an icon link of the next render, with no rebuild. The element sends the view the bytes it recorded, the
 view makes its own URL from them, and the image is only decoded; `write()` resolves once the view has it. A later
 write to the path replaces the image; a removal, or a write of any other type, leaves the path naming nothing in the
-view (a registered file the guest replaced or removed included). A rebuild starts from the registered files again.
+view (a registered file the guest replaced or removed included, also one you unregistered after the build). The view
+shows what the guest's own `sandboxFiles` holds, whatever the pending list says. A rebuild starts from the registered
+files again.
+
+`fileswritten` names a path exactly when a request changed what `listGuestWrites()` shows there. A removal of a path
+the guest wrote and the files do not hold withdraws the write: the path leaves the list, and `fileswritten` names it
+with nothing listed there. A removal of a file you unregistered after the build lists nothing (there is nothing left to
+remove) and is announced nowhere; the file is gone from the guest's files and from the view. Writing the same bytes and type again
+changes nothing listed and is not announced.
 
 The element records a change before it announces it, and `listGuestWrites()` is the truth; the guest's view
 changes only when the element's answer arrives. They disagree by design in two cases: a `fileswritten` listener
@@ -751,7 +780,7 @@ with `TIMEOUT`, and the change is listed all the same). A listener's `reset()` d
 
 `sandboxFetch(url: string, init?: { method?, headers?, body? }): Promise<Response>` — asks the host to make the
 request under the [`fetchBridge`](#fetchbridge) rules; without `fetchBridge` every request rejects with
-`FETCH_NOT_ALLOWED`. Only `method`, `headers` and `body` are read from `init`;
+`FETCH_NOT_ALLOWED`. Only `method`, `headers` and `body` are read from `init`, each once;
 the body is a string, an `ArrayBuffer` or a typed array. Resolves with a whole `Response` (no streaming, no
 `AbortSignal`); rejects with a [`FetchErrorCode`](#sandboxfetch-fetcherrorcode). `fetch` itself is untouched;
 assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](ADR-006-fetch-bridge.md)
@@ -941,6 +970,8 @@ in strict mode.
 | Characters kept per string log argument | 65536 | `LOG_MAX_STRING` |
 | Bytes per log line, all arguments together | 1048576 (1 MiB) | — |
 | Bytes of guest log lines sent per second | 4194304 (4 MiB) | — |
+| Uncaught errors and unhandled rejections per second, per environment (worker and strict mode; rejections handled later included); past it the sandbox ends | 1000 | — |
+| Characters of uncaught errors and unhandled rejections per second, per environment (worker and strict mode; their names and messages); past it the sandbox ends | 1048576 | — |
 | Bytes per RPC message (arguments, or a result) | 34603008 (33 MiB) | — |
 | Bytes of arguments in inbound calls running at once, per side and environment | 67108864 (64 MiB) | — |
 | `violation` events per environment (strict mode: per source, and per directive for the view) | 100 | `VIOLATION_EVENT_LIMIT` |

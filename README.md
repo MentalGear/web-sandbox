@@ -164,7 +164,9 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     `error`; `source` is `'host'` for the element's own lines (an execution timeout, an entry that failed, guest lines
     it dropped past its per-second window) and
     `'guest'` for everything from the guest, whatever it claims. Guest lines carry the guest's `console` calls (every
-    method), uncaught errors and unhandled rejections (`Uncaught …`), in every mode; the guest's console never throws:
+    method), uncaught errors and unhandled rejections (`Uncaught …`), in every mode (in worker and strict mode they are
+    cancelled once relayed, and more than 1000 of them, or 1 Mi characters of them, in one second end the sandbox);
+    the guest's console never throws:
     a function, a DOM node or anything else structured clone refuses arrives as a string naming its kind, an `Error`
     (also inside an object, an array or `Promise.allSettled`'s results) as `{ name, message, stack }`. Bounded in the
     guest before anything is posted: 64 arguments, strings cut at
@@ -308,7 +310,8 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
     call is refused at once with `BUSY`, before its method runs, so calls to a slow method cannot pile up
     without bound. The guest makes at most 1000 calls and 64 MiB of calls in any one second (`callLimits` sets
     other values); past that its `bridge` refuses a call with `BUSY` before sending it, and the element answers `BUSY`
-    to one that arrives anyway.
+    to one that arrives anyway. A call heavier than `maxBytesPerSecond` could never fit, so both ends refuse it with
+    `ARGS_NOT_TRANSFERABLE`, which is not worth retrying.
 *   **Every message is bounded as a whole**: a method name is at most 256 characters, an error message at most
     65536 (cut, with a marker), and arguments or a result at most 33 MiB (`RPC_MAX_BYTES`), measured on both sides.
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never

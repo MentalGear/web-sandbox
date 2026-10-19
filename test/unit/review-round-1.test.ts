@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
+import { bootstrapListeners } from '@src/lib/egress';
 import { defineWebSandbox } from '@src/host';
 import { createBroker, RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
@@ -13,6 +14,7 @@ import { LOG_BYTES_PER_SECOND, LOG_DROPPED_ARGUMENT, LOG_EVENTS_PER_SECOND, LOG_
 
 class FakeEvent {
     stopImmediatePropagation() {}
+    preventDefault() {}
 }
 class FakeMessageEvent extends FakeEvent {
     readonly isTrusted = true;
@@ -37,7 +39,16 @@ class FakeMessageChannel {
         FakeMessageChannel.next = null;
     }
 }
-const PLATFORM = { MessagePort: ClonePort, MessageEvent: FakeMessageEvent, Event: FakeEvent, MessageChannel: FakeMessageChannel };
+class FakeErrorEvent extends FakeEvent {
+    constructor(private readonly init: Record<string, unknown>, readonly isTrusted = true) { super(); }
+    get message() { return this.init.message; }
+    get error() { return this.init.error; }
+}
+class FakeRejectionEvent extends FakeEvent {
+    constructor(private readonly init: Record<string, unknown>, readonly isTrusted = true) { super(); }
+    get reason() { return this.init.reason; }
+}
+const PLATFORM = { MessagePort: ClonePort, MessageEvent: FakeMessageEvent, Event: FakeEvent, MessageChannel: FakeMessageChannel, ErrorEvent: FakeErrorEvent, PromiseRejectionEvent: FakeRejectionEvent };
 const originals: Record<string, unknown> = {};
 const originalAddEventListener = globalThis.addEventListener;
 let listeners: Record<string, (event: unknown) => void> = {};
@@ -63,7 +74,7 @@ const silentConsole = () => ({ log() {}, info() {}, warn() {}, error() {}, debug
 
 /** The bootstrap as the host builds it (strict mode's comms: externalPort), attached to a cloning port. */
 function strictComms(console = silentConsole()) {
-    const comms = inSandboxScript(false, 'strict', console, createBroker, { externalPort: true }, createSizeOf);
+    const comms = inSandboxScript(false, 'strict', console, createBroker, { externalPort: true, listeners: bootstrapListeners('strict') }, createSizeOf);
     const port = new ClonePort();
     comms.attach(port as any);
     port.frames.length = 0;
@@ -75,7 +86,7 @@ function strictComms(console = silentConsole()) {
 function cooperativeComms(console = silentConsole()) {
     const port = new ClonePort();
     FakeMessageChannel.next = port;
-    inSandboxScript(false, 'cooperative', console, createBroker, undefined, createSizeOf);
+    inSandboxScript(false, 'cooperative', console, createBroker, { listeners: bootstrapListeners('cooperative') }, createSizeOf);
     port.frames.length = 0;
     return { port, console, lines: () => port.frames.filter(frame => frame.type === 'LOG') };
 }
@@ -106,7 +117,9 @@ describe('R4-1: the console relay never throws; what clone refuses crosses as it
 });
 
 describe('R4-2, R4-6, R4-7: uncaught errors and rejections are log lines; errors and the other console methods relay', () => {
-    const trusted = (fields: Record<string, unknown>) => ({ isTrusted: true, ...fields });
+    // Events as the platform makes them: their fields are getters of the interface's prototype, which the bootstrap
+    // captures before guest code and reads through (review round 5, N-6), and isTrusted an own property.
+    const trusted = (fields: Record<string, unknown>, isTrusted = true) => ('reason' in fields ? new FakeRejectionEvent(fields, isTrusted) : new FakeErrorEvent(fields, isTrusted));
 
     it('cooperative (and worker) mode: an uncaught error is one "Uncaught …" line, whatever the engine puts first; a muted one says what the browser gave; a synthetic one is not relayed', () => {
         const { lines } = cooperativeComms();
@@ -114,7 +127,7 @@ describe('R4-2, R4-6, R4-7: uncaught errors and rejections are log lines; errors
         listeners['error']!(trusted({ error: new Error('firefox'), message: 'Error: firefox' }));
         listeners['error']!(trusted({ error: null, message: 'Script error.' }));
         listeners['error']!(trusted({ error: 'a string', message: 'Uncaught a string' }));
-        listeners['error']!({ isTrusted: false, error: new Error('forged'), message: 'forged' }); // engines report errors trusted: a forged one is not relayed
+        listeners['error']!(trusted({ error: new Error('forged'), message: 'forged' }, false)); // engines report errors trusted: a forged one is not relayed
         expect(lines().map(line => [line.level, line.args[0]])).toEqual([
             ['error', 'Uncaught TypeError: chromium'],
             ['error', 'Uncaught Error: firefox'],
@@ -123,7 +136,7 @@ describe('R4-2, R4-6, R4-7: uncaught errors and rejections are log lines; errors
         ]);
     });
 
-    it('every mode: an unhandled rejection is one "Uncaught (in promise) …" line; strict mode leaves the error event to its prelude', () => {
+    it('every mode: an unhandled rejection is one "Uncaught (in promise) …" line; strict mode leaves relaying the error event to its prelude, and only counts it', () => {
         for (const start of [cooperativeComms, strictComms]) {
             listeners = {};
             const { lines } = start();
@@ -133,8 +146,9 @@ describe('R4-2, R4-6, R4-7: uncaught errors and rejections are log lines; errors
             expect(lines().map(line => line.args[0])).toEqual(['Uncaught (in promise) RangeError: no', 'Uncaught (in promise) 42', 'Uncaught (in promise) [object Object]']);
         }
         listeners = {};
-        strictComms();
-        expect(listeners['error']).toBeUndefined();
+        const { lines } = strictComms();
+        listeners['error']!(trusted({ error: new Error('counted'), message: 'Error: counted' }));
+        expect(lines()).toEqual([]);
     });
 
     it('an Error argument crosses as { name, message, stack }; debug, trace, assert, dir, dirxml, table, group and groupCollapsed relay; a passing assert and groupEnd do not', () => {

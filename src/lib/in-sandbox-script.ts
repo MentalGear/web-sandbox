@@ -40,15 +40,26 @@ export function inSandboxScript(
     // logic port to attach().
     // `guestWrites`: the host records the guest's file writes (backlog C5); returned as `writeFiles` below.
     // `callBudget`: the per-second budget of the calls the guest makes (review round 3, M-2), from the element's config
-    // (`callLimits`); the host always passes it.
-    features?: { autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean; callBudget?: { calls: number; bytes: number } },
+    // (`callLimits`); the host always passes it. A call heavier than its bytes is refused for good (config-schema.ts).
+    // `listeners`: the listeners this bootstrap installs, the egress table's rows for this mode (egress.ts,
+    // bootstrapListeners): it installs these and no other. `uncaught`: the per-second budget of uncaught errors and
+    // rejections (worker and strict mode; egress.ts), past which it tells the element, which ends the sandbox.
+    features?: {
+        autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean; callBudget?: { calls: number; bytes: number };
+        listeners?: readonly { type: string; relay: boolean; cancel: boolean; budget: boolean }[]; uncaught?: { count: number; characters: number };
+    },
     // The byte measure (structured-size.ts), stringified in like createBroker: the console relay's budget and the
     // broker's are measured with it, made before any guest code runs.
     createSizeOfFn?: typeof createSizeOf,
     // Worker mode: the platform's postMessage of the worker, which the globals allowlist took before deleting it
     // (worker-globals.ts, review round 4, M-1), for the one WORKER_STARTED below. Nothing else in the worker holds it.
     postToFrameFn?: ((message: unknown) => void) | null,
-): { attach(port: MessagePort): void; writeFiles: ((request: unknown) => Promise<unknown>) | null; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void } {
+): {
+    attach(port: MessagePort): void;
+    writeFiles: ((request: unknown) => Promise<unknown>) | null;
+    log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void;
+    readEvent(event: unknown, kind: 'error' | 'rejection' | 'violation'): Record<string, unknown>;
+} {
     // The announcement (broad review 2026-10-14, CB1), the first statement, before anything else in the guest
     // document can run: in cooperative mode the bootstrap makes the channel itself, keeps port1 in this closure and
     // posts port2 to the host page (parent.parent: the guest's parent is the wrapper). The host takes exactly one
@@ -132,7 +143,11 @@ export function inSandboxScript(
     const DateConstructor = Date;
     const dateNow = Date.now;
     const queueMicrotaskFn = g.queueMicrotask;
+    const setTimer = g.setTimeout; // the budget of uncaught errors says it is past in a task of its own (below)
     const postToFrame = mode === 'worker' && typeof postToFrameFn === 'function' ? postToFrameFn : null;
+    // The worker's own close() (worker and strict mode), for a guest past the budget of uncaught errors (below).
+    const closeFound = mode === 'cooperative' ? null : g.close;
+    const closeWorker = typeof closeFound === 'function' ? closeFound : null;
     // Bytes (the fetch bridge's request body): copied with set(), which consults no species constructor.
     const Uint8ArrayConstructor = Uint8Array;
     const typedArrayPrototype = protoOf(Uint8Array.prototype);
@@ -175,12 +190,76 @@ export function inSandboxScript(
         readyStateOf = getOwn(proto, 'readyState')?.get; // on Document.prototype in every engine
     }
     const sizeOf = createSizeOfFn ? createSizeOfFn() : null;
+    // The one reader of guest values (class G, review round 5, N-6; readEvent and readOptions below): Reflect.get, and the
+    // platform's getters of the events the bootstrap reads, from each interface's prototype chain, by "Interface.field".
+    // Guest code that later puts its own getter on ErrorEvent.prototype (or any prototype on the way) changes nothing the
+    // bootstrap reads. Null where an engine has no such interface: then the field is read once through Reflect.get.
+    const getProperty = Reflect.get;
+    const EVENT_READS = [
+        'ErrorEvent', 'message', 'ErrorEvent', 'error',
+        'PromiseRejectionEvent', 'reason',
+        'SecurityPolicyViolationEvent', 'effectiveDirective', 'SecurityPolicyViolationEvent', 'violatedDirective',
+        'SecurityPolicyViolationEvent', 'blockedURI', 'SecurityPolicyViolationEvent', 'sourceFile',
+        'SecurityPolicyViolationEvent', 'lineNumber', 'SecurityPolicyViolationEvent', 'columnNumber',
+    ];
+    const eventGetters: Record<string, ((this: unknown) => unknown) | null> = setPrototype({}, null);
+    for (let i = 0; i + 1 < EVENT_READS.length; i += 2) {
+        const found = g[EVENT_READS[i]!];
+        let getter: ((this: unknown) => unknown) | null = null;
+        for (let proto = typeof found === 'function' ? found.prototype : null; proto && !getter; proto = protoOf(proto)) getter = getOwn(proto, EVENT_READS[i + 1]!)?.get ?? null;
+        defineOwn(eventGetters, EVENT_READS[i] + '.' + EVENT_READS[i + 1], { value: getter, enumerable: true });
+    }
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
     // Lists of our own: an index written to them never reaches an inherited setter, and they are read by index only.
     const list = <T>(): T[] => setPrototype([], null);
     const append = (target: unknown[], value: unknown) => defineOwn(target, target.length, { value, writable: true, enumerable: true, configurable: true });
     const publish = (name: string, value: unknown) => defineOwn(g, name, { value, writable: true, enumerable: true, configurable: true });
+
+    // ---- One reader of guest values (class G; review round 5, N-6, and the reader N-2's fix shares). An object the guest
+    // hands the library (an option object, an event, a thrown value) can answer each read differently, through a getter or
+    // a Proxy: sandboxFetch read `init.method` once to test it and again to use it, so it tested one value and sent
+    // another. Every guest-supplied option object and event is read here, each listed field once, into a snapshot of our
+    // own (no prototype, so no inherited getter), and the code after works on the snapshot only. An event's fields are
+    // read through the platform's getters captured above; an option object's through the captured Reflect.get. A field
+    // whose read throws is undefined. test/unit/read-once.test.ts scans that no function reads a property of a guest value
+    // twice.
+    const snapshotOf = (): Record<string, unknown> => setPrototype({}, null);
+    const keep = (snapshot: Record<string, unknown>, field: string, value: unknown) => defineOwn(snapshot, field, { value, enumerable: true });
+    const readOptions = (value: unknown, fields: readonly string[]): Record<string, unknown> => {
+        const snapshot = snapshotOf();
+        const readable = value !== null && (typeof value === 'object' || typeof value === 'function');
+        for (let i = 0; i < fields.length; i++) {
+            let read: unknown;
+            try {
+                read = readable ? apply(getProperty, undefined, [value, fields[i]!]) : undefined;
+            } catch {
+                read = undefined;
+            }
+            keep(snapshot, fields[i]!, read);
+        }
+        return snapshot;
+    };
+    const EVENT_KINDS: Record<string, readonly string[]> = setPrototype({
+        error: ['ErrorEvent', 'message', 'error'],
+        rejection: ['PromiseRejectionEvent', 'reason'],
+        violation: ['SecurityPolicyViolationEvent', 'effectiveDirective', 'violatedDirective', 'blockedURI', 'sourceFile', 'lineNumber', 'columnNumber'],
+    }, null);
+    const readEvent = (event: unknown, kind: 'error' | 'rejection' | 'violation'): Record<string, unknown> => {
+        const fields = EVENT_KINDS[kind]!;
+        const snapshot = snapshotOf();
+        for (let i = 1; i < fields.length; i++) {
+            const getter = eventGetters[fields[0] + '.' + fields[i]];
+            let read: unknown;
+            try {
+                read = getter ? apply(getter, event, []) : apply(getProperty, undefined, [event, fields[i]!]);
+            } catch {
+                read = undefined; // not an event of that interface (a guest's own), or no such field
+            }
+            keep(snapshot, fields[i]!, read);
+        }
+        return snapshot;
+    };
 
     // The port does not exist until INIT_PORT, but guest content scripts parse BEFORE that and may
     // call bridge.expose()/bridge.call() straight away. So the bridge is created now with a send that
@@ -261,31 +340,31 @@ export function inSandboxScript(
     // guest creates can still be named (`<iframe name>`): host pages should not use named targets (README).
     if (mode === 'cooperative') defineOwn(g, 'name', { get: function () { return ''; }, set: nothing, enumerable: true, configurable: true });
 
-    // CSP violation reports (backlog S5, src/lib/violation.ts). Installed here, in the bootstrap, so it is
-    // in place before any guest code runs: a capture listener on the global object is the first listener on
+    // CSP violation reports (backlog S5, src/lib/violation.ts): the egress table's securitypolicyviolation row, installed
+    // with the others below, before any guest code runs: a capture listener on the global object is the first listener on
     // the event's path, so guest code cannot stop it from seeing a violation by registering first. Guest
     // code can still suppress its own reports later (it can reach the port), which is why a report is
     // evidence of an attempt and silence proves nothing. Forwarded as a first-class VIOLATION frame, not
     // through the broker, so it can never collide with an exposed method name. Reports raised before
     // INIT_PORT wait in the outbox like bridge frames. Synthetic events (isTrusted false) are not reports.
     // At most VIOLATION_LIMIT per environment (the host caps at the same number, VIOLATION_EVENT_LIMIT,
-    // and is the authoritative bound); declared here because this function is stringified.
+    // and is the authoritative bound); declared here because this function is stringified. Its fields are read once
+    // each, through the platform's getters (readEvent), so a getter the guest put on the prototype answers nothing here.
     const VIOLATION_LIMIT = 100;
     let violationsSent = 0;
-    if (typeof addGlobalListener === 'function') {
-        apply(addGlobalListener, g, ['securitypolicyviolation', (event: any) => {
-            if (!event.isTrusted || violationsSent >= VIOLATION_LIMIT) return;
-            violationsSent++;
-            send({
-                type: 'VIOLATION',
-                directive: event.effectiveDirective || event.violatedDirective,
-                blockedURI: event.blockedURI,
-                sourceFile: event.sourceFile,
-                lineNumber: event.lineNumber,
-                columnNumber: event.columnNumber,
-            });
-        }, true]);
-    }
+    const relayViolation = (event: Event) => {
+        if (!event.isTrusted || violationsSent >= VIOLATION_LIMIT) return;
+        violationsSent++;
+        const read = readEvent(event, 'violation');
+        send({
+            type: 'VIOLATION',
+            directive: read.effectiveDirective || read.violatedDirective,
+            blockedURI: read.blockedURI,
+            sourceFile: read.sourceFile,
+            lineNumber: read.lineNumber,
+            columnNumber: read.columnNumber,
+        });
+    };
 
     // Content auto-sizing (backlog B6, src/lib/auto-resize.ts), opt-in and cooperative mode only: a worker has no
     // document. A ResizeObserver on the root element reports the content height as a RESIZE frame, outside
@@ -363,11 +442,18 @@ export function inSandboxScript(
     // way onto the port, so a call past it never crosses: the broker refuses it BUSY. The host counts the same window on
     // receipt (host.ts) and answers BUSY past it. Before, calls of 32 MiB back to back kept the host 15–39% busy within
     // every other cap, and small calls reached 44 000 per second. A call counts against both windows or neither.
+    // A call heavier than the whole byte budget can never fit an empty window (review round 5, L-2 = N-5; the config schema's
+    // invariant, config-schema.ts): it is refused for good, ARGS_NOT_TRANSFERABLE, which is not retryable, as the element
+    // refuses one that arrives anyway. Before, it was BUSY, every time: with a budget smaller than one call (about 136
+    // bytes), every call, sandboxFetch() and guest writes included, was BUSY forever.
     const callBudget = features?.callBudget;
-    const callsWindow = callBudget ? slidingWindow(callBudget.calls) : null;
-    const callBytesWindow = callBudget ? slidingWindow(callBudget.bytes) : null;
-    const admitOutbound = callBudget && callsWindow && callBytesWindow ? (bytes: number): string | null => {
-        if (!callsWindow(1, 'fits') || !callBytesWindow(bytes, 'fits')) return 'more than ' + callBudget.calls + ' calls or ' + callBudget.bytes + ' bytes of calls in one second';
+    const budgetCalls = callBudget ? callBudget.calls : 0;
+    const budgetBytes = callBudget ? callBudget.bytes : 0;
+    const callsWindow = callBudget ? slidingWindow(budgetCalls) : null;
+    const callBytesWindow = callBudget ? slidingWindow(budgetBytes) : null;
+    const admitOutbound = callsWindow && callBytesWindow ? (bytes: number): { code: 'BUSY' | 'ARGS_NOT_TRANSFERABLE'; reason: string } | null => {
+        if (bytes > budgetBytes) return { code: 'ARGS_NOT_TRANSFERABLE', reason: 'the call is heavier than callLimits.maxBytesPerSecond (' + budgetBytes + ' bytes), so it can never be carried' };
+        if (!callsWindow(1, 'fits') || !callBytesWindow(bytes, 'fits')) return { code: 'BUSY', reason: 'more than ' + budgetCalls + ' calls or ' + budgetBytes + ' bytes of calls in one second' };
         callsWindow(1, 'spent');
         callBytesWindow(bytes, 'spent');
         return null;
@@ -384,6 +470,7 @@ export function inSandboxScript(
         takeBusyRefusal: (refuse) => { refuseHeld = refuse; },
     }) : null;
     const handleBridgeMessage = bridge ? bridge.handleMessage : null;
+    const bridgeCall = bridge ? bridge.callWithTimeout : null; // read once: sandboxFetch and guest writes call it (below)
     if (bridge) publish('bridge', bridge);
 
     // The host-mediated fetch bridge (backlog B5, src/lib/fetch-bridge.ts, ADR-006), opt-in, both modes. A
@@ -396,8 +483,9 @@ export function inSandboxScript(
     // FETCH_NOT_ALLOWED ("the fetch bridge is off"), as docs/API.md says, where the global used to be missing and a
     // call threw a ReferenceError. One path either way: the host decides.
     if (bridge) {
-        const callWithTimeout = bridge.callWithTimeout;
-        const callTimeoutMs = (features?.fetchBridge ? features.fetchBridge.timeoutMs : 10000) + 5000;
+        const callWithTimeout = bridgeCall!;
+        const fetchBridgeFeature = features?.fetchBridge;
+        const callTimeoutMs = (fetchBridgeFeature ? fetchBridgeFeature.timeoutMs : 10000) + 5000;
         const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
         const isNullBody = (status: unknown) => {
             for (let i = 0; i < NULL_BODY_STATUSES.length; i++) if (NULL_BODY_STATUSES[i] === status) return true;
@@ -431,15 +519,19 @@ export function inSandboxScript(
             if (bytes) return bytes;
             throw construct(TypeErrorConstructor, ['sandboxFetch: the body must be a string, an ArrayBuffer or a typed array']);
         };
-        publish('sandboxFetch', (input: unknown, init?: any) => {
+        // init's three fields, each read once (readOptions; review round 5, N-6: `method` was read to test it and again to
+        // send it, so a getter answered 'GET' to the test and anything at all to the send).
+        const FETCH_INIT = ['method', 'headers', 'body'];
+        publish('sandboxFetch', (input: unknown, init?: unknown) => {
             let request;
             try {
-                const options = init || {};
+                const options = readOptions(init, FETCH_INIT);
+                const method = options.method;
                 const headers: [string, string][] = list();
                 if (HeadersConstructor && headersForEach) {
                     apply(headersForEach, construct(HeadersConstructor, [options.headers]), [(value: string, name: string) => append(headers, [name, value])]);
                 }
-                request = { url: StringConstructor(input), method: options.method === undefined ? 'GET' : StringConstructor(options.method), headers, body: toBody(options.body) };
+                request = { url: StringConstructor(input), method: method === undefined ? 'GET' : StringConstructor(method), headers, body: toBody(options.body) };
             } catch (error) {
                 return apply(rejected, PromiseConstructor, [error]);
             }
@@ -466,7 +558,7 @@ export function inSandboxScript(
     // The host answers at once (it decides synchronously), so the broker's default 30 s timeout is only a backstop.
     let writeFiles: ((request: unknown) => Promise<unknown>) | null = null;
     if (bridge && features?.guestWrites === true) {
-        const callWithTimeout = bridge.callWithTimeout;
+        const callWithTimeout = bridgeCall!;
         writeFiles = (request: unknown) => callWithTimeout(30000, 'sandbox:write', request);
     }
 
@@ -548,16 +640,33 @@ export function inSandboxScript(
         }
         return form;
     };
-    // A thrown or rejected value as text: an error's "name: message", anything else by kind (a primitive as itself).
-    const errorText = (value: unknown): string => {
-        if (typeof value === 'string') return cut(value);
+    // A thrown or rejected value as it is reported: its text, an error's "name: message", anything else by kind (a
+    // primitive as itself); and how many characters the browser reads of it to make its own report, which the budget of
+    // uncaught errors counts (egress.ts, UNCAUGHT_CHARACTERS_PER_SECOND): a string's, or an error's name and message.
+    // Measured in Firefox, which reports every rejection of a worker to the host page's thread: the cost followed the
+    // characters of the error's message and name (a stack, a toString or a getter cost nothing, since the browser reads
+    // data properties only). Each is read once here, and a getter's answer is counted too: more than the browser reads,
+    // never less (research 18: a model of the browser may only err toward refusing).
+    const lengthOf = (value: unknown) => (typeof value === 'string' ? value.length : 0);
+    const reportOf = (value: unknown): { text: string; characters: number } => {
+        if (typeof value === 'string') return { text: cut(value), characters: value.length };
         if (isErrorLike(value)) {
-            const form = errorForm(value);
-            return form.name ? (form.message ? form.name + ': ' + form.message : form.name) : form.message;
+            let name: unknown;
+            let message: unknown;
+            try {
+                name = (value as { name?: unknown }).name;
+                message = (value as { message?: unknown }).message;
+            } catch {
+                // a getter that throws: what was read so far
+            }
+            const nameText = textOf(name);
+            const messageText = textOf(message);
+            return { text: nameText ? (messageText ? nameText + ': ' + messageText : nameText) : messageText, characters: lengthOf(name) + lengthOf(message) };
         }
-        if (value === null || (typeof value !== 'object' && typeof value !== 'function' && typeof value !== 'symbol')) return '' + (value as string);
-        return describe(value);
+        if (value === null || (typeof value !== 'object' && typeof value !== 'function' && typeof value !== 'symbol')) return { text: '' + (value as string), characters: 0 };
+        return { text: describe(value), characters: 0 };
     };
+    const errorText = (value: unknown): string => reportOf(value).text;
     // "Uncaught …" once: Chromium's ErrorEvent message already starts with it, Firefox's and WebKit's do not.
     const uncaught = (text: string) => (apply(startsWith, text, ['Uncaught ']) ? text : 'Uncaught ' + text);
     // One argument's snapshot (C-3): its clone, or, for a value clone refuses deeper in (a function in an object, a
@@ -841,47 +950,128 @@ export function inSandboxScript(
         };
     }
 
-    // Uncaught errors and unhandled rejections (R4-2, R4-6): relayed as 'error' lines, "Uncaught …" and
-    // "Uncaught (in promise) …", from capture listeners on the global installed before any guest code runs, and left
-    // to reach the browser's console as well. Errors in cooperative and worker mode, trusted ones only; in strict
-    // mode the prelude owns the error event (an entry's own error ends the sandbox, in-sandbox-view.ts) and logs
-    // later ones through `log`. Unhandled rejections in every mode, trusted or not: WebKit (every realm) and Firefox
-    // (workers) dispatch the platform's own with isTrusted false (measured), and a forged one makes only a line the
-    // guest could log itself. What the browser gives is all there is: WebKit mutes the errors of the guest
-    // document's inline scripts and of a worker's blob: script ("Script error.", no error object; measured).
+    // ---- The listeners: the egress table's rows for this mode (src/lib/egress.ts; review round 5, N-1, class E-cpu), and
+    // no other. Every platform surface by which guest activity can make work on the host page's thread is a row there,
+    // with what is done about it; the host hands this bootstrap the rows it owns for its mode (`features.listeners`), and
+    // each listener below does what its row says: relay, cancel, count against the budget of uncaught errors. Before, the
+    // listeners were written by hand here, and each round found a surface nobody had listed (4:M-1, errors not cancelled;
+    // 5:N-1, rejections not cancelled). Capture listeners on the global, installed before any guest code runs.
     //
-    // Worker mode: once the port is attached, an error is cancelled after it is relayed (review round 4, the class of
-    // M-1). An uncaught error that is not cancelled reaches the Worker object in the frame, with its message, on the host
-    // page's thread in Firefox and WebKit, outside every budget: a worker that reported errors of 16 Mi characters in a
-    // loop kept Firefox's host page 99% busy and WebKit's 88%. The relay is the one sink, as for console lines. Before
-    // the port is attached an error still reaches the frame, which reads it as a worker that failed to start
-    // (worker-bootstrap.ts). Strict mode's prelude cancels the same errors (in-sandbox-view.ts).
-    if (typeof addGlobalListener === 'function') {
-        if (mode !== 'strict') {
-            apply(addGlobalListener, g, ['error', (event: any) => {
-                if (event.isTrusted !== true) return;
+    // Uncaught errors and unhandled rejections (R4-2, R4-6) are relayed as 'error' lines, "Uncaught …" and
+    // "Uncaught (in promise) …". Errors in cooperative and worker mode, trusted ones only; in strict mode the prelude
+    // relays the error event (an entry's own error ends the sandbox, in-sandbox-view.ts) and this listener only counts it.
+    // Unhandled rejections in every mode, trusted or not: WebKit (every realm) and Firefox (workers) dispatch the
+    // platform's own with isTrusted false (measured), and a forged one makes only a line the guest could log itself. What
+    // the browser gives is all there is: WebKit mutes the errors of the guest document's inline scripts and of a worker's
+    // blob: script ("Script error.", no error object; measured). Each event is read once, through the platform's getters
+    // (readEvent).
+    //
+    // Cancelled once relayed (worker and strict mode; cooperative mode leaves the browser's console to the guest document
+    // for debugging). An uncaught error that is not cancelled reaches the Worker object in the frame, with its message, on
+    // the host page's thread in Firefox and WebKit, outside every budget (review round 4, M-1: errors of 16 Mi characters
+    // in a loop kept Firefox's host page 99% busy and WebKit's 88%); before the port is attached an error still reaches the
+    // frame, which reads it as a worker that failed to start (worker-bootstrap.ts), so errors are cancelled from then on.
+    // A rejection that is not cancelled is reported by the browser (review round 5, N-1: Chromium's host page 11–12% busy
+    // under the reviewers' flood); cancelled, Chromium reports nothing.
+    //
+    // Counted (worker and strict mode): Firefox reports a worker's unhandled rejection to the host page's thread whether
+    // or not it is cancelled (measured: 99% busy under the reviewers' flood, cancelled or not; 7 GB in 25 s), and a
+    // rejection handled later (rejectionhandled) costs it too. Nothing in the worker can stop that report, so the guest
+    // that causes it is stopped instead: past UNCAUGHT_PER_SECOND uncaught errors and rejections, or
+    // UNCAUGHT_CHARACTERS_PER_SECOND characters of what the browser reports of them (reportOf), in any one second, the
+    // bootstrap tells the element once (UNCAUGHT_PAST_BUDGET, on the port only it holds), and the element ends the sandbox
+    // with its reason. A report the browser made before that is not undone: one error of hundreds of millions of
+    // characters costs what it costs, once. A rejection event the guest dispatches itself counts as well (WebKit's and
+    // Firefox's workers dispatch the platform's own untrusted, so the two cannot be told apart): it can only end its own
+    // sandbox, which a guest can do anyway.
+    const uncaughtBudget = features?.uncaught;
+    const uncaughtCount = uncaughtBudget ? slidingWindow(uncaughtBudget.count) : null;
+    const uncaughtCharacters = uncaughtBudget ? slidingWindow(uncaughtBudget.characters) : null;
+    // Past the budget the worker also stops itself, once its frame to the element is on the port: Firefox's host page is
+    // busy with the reports already made, so the element's own message waits behind them, and a guest still raising
+    // errors meanwhile would add more (measured: a flood of small rejections kept Firefox's host page 99% busy for the 4 s
+    // its frame took to arrive). close() ends the worker after the current task, and the frame, already on the port, is
+    // the element's to read. Before the port is attached the frame waits in the outbox, and the worker stops at attach.
+    // The frame leaves in a task of its own, after the event that crossed the budget is dispatched to its end: in strict
+    // mode the prelude relays an error from a listener after this one (in-sandbox-view.ts), and its line must leave
+    // before the frame that ends the sandbox, which would otherwise drop it.
+    let pastUncaught = false;
+    let pastSaid = false;
+    const stopPastUncaught = () => {
+        if (!pastSaid || !port || !closeWorker) return;
+        try {
+            apply(closeWorker, g, []);
+        } catch {
+            // no close() to call: the element ends the sandbox on the frame all the same
+        }
+    };
+    const countUncaught = (characters: number) => {
+        if (!uncaughtCount || !uncaughtCharacters || pastUncaught) return;
+        if (uncaughtCount(1, 'fits') && uncaughtCharacters(characters, 'fits')) {
+            uncaughtCount(1, 'spent');
+            uncaughtCharacters(characters, 'spent');
+            return;
+        }
+        pastUncaught = true;
+        const say = () => {
+            pastSaid = true;
+            send({ type: 'UNCAUGHT_PAST_BUDGET' });
+            stopPastUncaught();
+        };
+        try {
+            apply(setTimer, g, [say, 0]);
+        } catch {
+            say(); // no timer: at once
+        }
+    };
+    // One row's listener: what it reads of its event, and what the row says to do with it. Null for a type this
+    // bootstrap has no listener for.
+    const listenerFor = (row: { type: string; relay: boolean; cancel: boolean; budget: boolean }): ((event: Event) => void) | null => {
+        const type = row.type;
+        const relay = row.relay === true;
+        const cancel = row.cancel === true;
+        const budget = row.budget === true;
+        if (type === 'securitypolicyviolation') return relay ? relayViolation : null;
+        if (type === 'rejectionhandled') return budget ? () => countUncaught(0) : null;
+        if (type === 'error') {
+            return (event: Event) => {
+                if (event.isTrusted !== true) return; // isTrusted is an own, unforgeable property
+                const read = readEvent(event, 'error');
+                const message = read.message;
+                const error = read.error;
                 let text = '';
                 try {
-                    const error = event.error; // each read once (C-1)
-                    const message = event.message;
                     text = error !== null && error !== undefined ? errorText(error) : textOf(message);
                     if (!text) text = textOf(message) || 'an error';
                 } catch {
                     text = 'an error';
                 }
-                log('error', [uncaught(text)]);
-                if (mode === 'worker' && port) apply(cancelEvent, event, []);
-            }, true]);
+                // relayed and cancelled first, then counted: the line of the one past the budget still arrives
+                if (relay) log('error', [uncaught(text)]);
+                if (cancel && port) apply(cancelEvent, event, []);
+                if (budget) countUncaught(lengthOf(message));
+            };
         }
-        apply(addGlobalListener, g, ['unhandledrejection', (event: any) => {
-            let text = '';
-            try {
-                text = errorText(event.reason);
-            } catch {
-                text = 'a rejection';
-            }
-            log('error', ['Uncaught (in promise) ' + text]);
-        }, true]);
+        if (type === 'unhandledrejection') {
+            return (event: Event) => {
+                let report = { text: 'a rejection', characters: 0 };
+                try {
+                    report = reportOf(readEvent(event, 'rejection').reason);
+                } catch {
+                    // a reason that cannot be read: said as 'a rejection'
+                }
+                if (relay) log('error', ['Uncaught (in promise) ' + report.text]);
+                if (cancel) apply(cancelEvent, event, []);
+                if (budget) countUncaught(report.characters);
+            };
+        }
+        return null;
+    };
+    const rows = features?.listeners;
+    for (let i = 0; rows && typeof addGlobalListener === 'function' && i < rows.length; i++) {
+        const listener = rows[i]!;
+        const handler = listenerFor(listener);
+        if (handler) apply(addGlobalListener, g, [listener.type, handler, true]);
     }
 
     // One frame from the host that runs guest code: an EXECUTE, or an RPC_REQ (the broker calls the exposed method).
@@ -1003,11 +1193,13 @@ export function inSandboxScript(
             // broker, so it is not a callable method: it can never collide with a name the guest exposes,
             // and guest code cannot unexpose or replace it. Answering at all is the signal — a blocked
             // event loop cannot run this handler.
-            if (data?.type === 'PING') {
-                if (typeof data.n === 'number') post({ type: 'PONG', n: data.n });
+            const type = data?.type; // the host's frame, read once like any value (class G)
+            if (type === 'PING') {
+                const n = data.n;
+                if (typeof n === 'number') post({ type: 'PONG', n });
                 return;
             }
-            const runsGuestCode = data?.type === 'EXECUTE' || data?.type === 'RPC_REQ';
+            const runsGuestCode = type === 'EXECUTE' || type === 'RPC_REQ';
             if (runsGuestCode && (nextHeld < held.length || !gateOpen())) {
                 hold(data);
                 return;
@@ -1042,12 +1234,13 @@ export function inSandboxScript(
 
         // posted as it is, never swallowed: a port that cannot carry it is no port, and attach() throws (onInit)
         post({ type: 'LOG', level: 'info', args: [`${mode} Ready`], own: true });
+        stopPastUncaught(); // a guest past the budget of uncaught errors before the port arrived: its frame has just left
     };
 
     // Cooperative mode: the bootstrap's own end of the channel it announced, attached now, before any guest code runs.
     if (announced) {
         attach(announced.port1);
-        return { attach, writeFiles, log };
+        return { attach, writeFiles, log, readEvent };
     }
 
     // Worker mode: the one INIT_PORT (review B1), the port1 the frame made (worker-bootstrap.ts): a trusted message with
@@ -1081,5 +1274,5 @@ export function inSandboxScript(
         }
     };
     if (!features?.externalPort && typeof addGlobalListener === 'function') apply(addGlobalListener, g, ['message', onInit, true]);
-    return { attach, writeFiles, log };
+    return { attach, writeFiles, log, readEvent };
 }
