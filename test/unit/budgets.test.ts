@@ -2,17 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { budgetsTable, CHANNEL_BUDGETS, EGRESS, UNCAUGHT_CHARACTERS_PER_SECOND, UNCAUGHT_PER_SECOND } from '@src/lib/egress';
-import { LOG_BYTES_PER_SECOND, LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_BYTES, LOG_MAX_STRING } from '@src/lib/sandbox-log';
-import { MAX_INBOUND_IN_FLIGHT, RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
-import { DEFAULT_CALL_BUDGET } from '@src/lib/config-schema';
-import { GUEST_WRITE_BYTES_PER_SECOND, GUEST_WRITES_PER_SECOND } from '@src/lib/guest-writes';
-import { MAX_FILES, MAX_TOTAL_BYTES } from '@src/lib/files';
-import { toFetchPolicy } from '@src/lib/fetch-bridge';
-import { VIOLATION_EVENT_LIMIT, VIOLATION_MAX_STRING } from '@src/lib/violation';
-import { AUTO_RESIZE_MAX_HEIGHT, AUTO_RESIZE_MAX_UPDATES_PER_SECOND } from '@src/lib/auto-resize';
-import { EXECUTION_TIMEOUT_GRACE_MS, VIEW_LIVENESS_TIMEOUT_MS } from '@src/host';
-import * as view from '@src/lib/in-sandbox-view';
+import { budgetsTable, CHANNEL_BUDGETS, EGRESS } from '@src/lib/egress';
+import { LIMITS, limitValues, type LimitName } from '@src/lib/limits';
 
 /**
  * The budgets table (backlog S61.4): docs/API.md, "Budgets", is src/lib/egress.ts's CHANNEL_BUDGETS rendered with the
@@ -23,44 +14,9 @@ import * as view from '@src/lib/in-sandbox-view';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (file: string) => readFileSync(path.join(ROOT, file), 'utf8');
-// An internal constant, read where it is declared (no new exports for a test).
-const declared = (file: string, name: string) => Number(read(file).match(new RegExp(`const ${name} = (\\d+);`))![1]);
-const fetchBounds = toFetchPolicy({ allow: [], maxBytes: 1e15, timeoutMs: 1e15, maxConcurrent: 1e15 }, () => {})!;
 
-// Every constant the table may name, with the value the code has.
-const VALUES: Record<string, number> = {
-    LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_BYTES, LOG_BYTES_PER_SECOND, LOG_MAX_STRING,
-    UNCAUGHT_PER_SECOND, UNCAUGHT_CHARACTERS_PER_SECOND,
-    GUEST_CALLS_PER_SECOND: DEFAULT_CALL_BUDGET.calls,
-    GUEST_CALL_BYTES_PER_SECOND: DEFAULT_CALL_BUDGET.bytes,
-    MAX_INBOUND_IN_FLIGHT, RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES,
-    MAX_NAME_LENGTH: declared('src/lib/rpc.ts', 'MAX_NAME_LENGTH'),
-    MAX_TEXT_LENGTH: declared('src/lib/rpc.ts', 'MAX_TEXT_LENGTH'),
-    DEFAULT_TIMEOUT_MS: declared('src/lib/rpc.ts', 'DEFAULT_TIMEOUT_MS'),
-    GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECOND, MAX_FILES, MAX_TOTAL_BYTES,
-    MAX_MAX_CONCURRENT: fetchBounds.maxConcurrent,
-    MAX_MAX_BYTES: fetchBounds.maxBytes,
-    MAX_TIMEOUT_MS: fetchBounds.timeoutMs,
-    VIOLATION_EVENT_LIMIT, VIOLATION_MAX_STRING,
-    AUTO_RESIZE_MAX_UPDATES_PER_SECOND, AUTO_RESIZE_MAX_HEIGHT,
-    VIEW_LIVENESS_TIMEOUT_MS, EXECUTION_TIMEOUT_GRACE_MS,
-    'VIEW_OPTIONS.guestText.maxLength': view.VIEW_OPTIONS.guestText.maxLength,
-    VIEW_MAX_ELEMENTS: view.VIEW_MAX_ELEMENTS,
-    VIEW_MAX_DEPTH: view.VIEW_MAX_DEPTH,
-    VIEW_RENDER_MAX_LENGTH: view.VIEW_RENDER_MAX_LENGTH,
-    VIEW_RENDER_CHARACTERS_PER_SECOND: view.VIEW_RENDER_CHARACTERS_PER_SECOND,
-    VIEW_MAX_CHARACTERS: view.VIEW_MAX_CHARACTERS,
-    VIEW_APPLY_MS_PER_SECOND: view.VIEW_APPLY_MS_PER_SECOND,
-    VIEW_MAX_OPERATION_MS: view.VIEW_MAX_OPERATION_MS,
-    VIEW_OVERRUN_WINDOW_MS: view.VIEW_OVERRUN_WINDOW_MS,
-    VIEW_URLS_PER_SECOND: view.VIEW_URLS_PER_SECOND,
-    VIEW_MAX_URLS: view.VIEW_MAX_URLS,
-    VIEW_MAX_DISTINCT_URLS: view.VIEW_MAX_DISTINCT_URLS,
-    'VIEW_EVENT_LIMITS.maxIds': view.VIEW_EVENT_LIMITS.maxIds,
-    'VIEW_EVENT_LIMITS.maxFields': view.VIEW_EVENT_LIMITS.maxFields,
-    'VIEW_EVENT_LIMITS.maxString': view.VIEW_EVENT_LIMITS.maxString,
-    'VIEW_EVENT_LIMITS.maxTotal': view.VIEW_EVENT_LIMITS.maxTotal,
-};
+// Every constant the table may name, with the value the code has: the limits registry (src/lib/limits.ts).
+const VALUES: Record<string, number> = limitValues();
 
 /** docs/API.md's text under `## <heading>`, up to the next heading of that level. */
 function section(heading: string): string {
@@ -82,7 +38,9 @@ describe('docs/API.md, Budgets: every channel of guest activity, from egress.ts'
         for (const row of CHANNEL_BUDGETS) {
             for (const cell of [row.count, row.bytes, row.time]) for (const match of cell.matchAll(/\{([A-Za-z_.]+)\}/g)) named.add(match[1]!);
         }
-        expect([...named].sort()).toEqual(Object.keys(VALUES).sort());
+        // every name is a limit, and every limit the Limits table does not list is named here
+        expect([...named].filter(name => !Object.hasOwn(LIMITS, name))).toEqual([]);
+        expect((Object.keys(LIMITS) as LimitName[]).filter(name => LIMITS[name].label === null && !named.has(name))).toEqual([]);
         for (const [name, value] of Object.entries(VALUES)) expect(Number.isFinite(value) && value > 0, name).toBe(true);
     });
 

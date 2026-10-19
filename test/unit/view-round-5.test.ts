@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { inStrictWorker, RENDER_RULES, sanitizeRender, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_URLS_PER_SECOND, viewBootstrapSource, viewBudget, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { defineWebSandbox } from '@src/host';
+import { hostLine, reasonText } from '@src/lib/reasons';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { vi } from 'vitest';
@@ -156,11 +157,10 @@ describe("M-2 (class P): the view's time budget charges every operation in full"
     });
 
     it('the reason and the warn line the host gives say the limit and the window', () => {
-        const host = readFileSync(join(__dirname, '../../src/host.ts'), 'utf8');
         const minutes = VIEW_OVERRUN_WINDOW_MS / 60000;
         expect(Number.isInteger(minutes)).toBe(true);
-        expect(host).toContain(`const VIEW_OVERRUN_REASON = 'the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation twice within ${minutes} minutes';`);
-        expect(host).toContain(`const VIEW_FIRST_OVERRUN_LINE = '[Sandbox] the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation; a second such operation within ${minutes} minutes ends the sandbox.';`);
+        expect(reasonText('viewOverrun')).toBe(`the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation twice within ${minutes} minutes`);
+        expect(hostLine('viewFirstOverrun')).toBe(`[Sandbox] the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation; a second such operation within ${minutes} minutes ends the sandbox.`);
     });
 });
 

@@ -122,12 +122,13 @@ export interface FetchResult {
     body: Uint8Array;
 }
 
-const DEFAULT_MAX_BYTES = 1024 * 1024;
-const MAX_MAX_BYTES = 32 * 1024 * 1024;
-const DEFAULT_TIMEOUT_MS = 10000;
-const MAX_TIMEOUT_MS = 120000;
-const DEFAULT_MAX_CONCURRENT = 4;
-const MAX_MAX_CONCURRENT = 16;
+// The defaults and bounds of `fetchBridge` (toFetchPolicy), each a row of the limits registry (limits.ts).
+export const DEFAULT_MAX_BYTES = 1024 * 1024;
+export const MAX_MAX_BYTES = 32 * 1024 * 1024;
+export const DEFAULT_FETCH_TIMEOUT_MS = 10000;
+export const MAX_TIMEOUT_MS = 120000;
+export const DEFAULT_MAX_CONCURRENT = 4;
+export const MAX_MAX_CONCURRENT = 16;
 const DEFAULT_METHODS = ['GET', 'HEAD', 'POST'];
 const ALLOWED_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const SAFE_HEADERS = ['accept', 'accept-language', 'content-language', 'content-type'];
@@ -139,7 +140,7 @@ const MAX_HEADER_VALUE = 8192;
 // The longest URL the bridge takes, as the guest wrote it and as parsed (percent-encoding can make the parsed one
 // longer): past it a request is refused. A record reports the whole URL, so it is never longer than this either (review
 // round 3, M-4: records were cut to 2048 characters, so a valid request's URL was reported cut).
-const MAX_URL = 8192;
+export const MAX_URL = 8192;
 const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
 
 /** An Error with a library code, the only kind of refusal this module produces. */
@@ -217,7 +218,7 @@ export function toFetchPolicy(config: unknown, warn: (message: string) => void, 
     return Object.freeze({
         allow: Object.freeze([...allow]),
         maxBytes: boundedInteger(source.maxBytes, DEFAULT_MAX_BYTES, MAX_MAX_BYTES),
-        timeoutMs: boundedInteger(source.timeoutMs, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS),
+        timeoutMs: boundedInteger(source.timeoutMs, DEFAULT_FETCH_TIMEOUT_MS, MAX_TIMEOUT_MS),
         methods: Object.freeze([...methods]),
         headers: Object.freeze([...headers]),
         maxConcurrent: boundedInteger(source.maxConcurrent, DEFAULT_MAX_CONCURRENT, MAX_MAX_CONCURRENT),

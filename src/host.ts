@@ -18,7 +18,7 @@ import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { setLongTimeout, type LongTimeout } from "./lib/long-timer";
 import { createRateLimiter, type RateLimiter } from "./lib/rate-limit";
 import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT, type SandboxViolation } from "./lib/violation";
-import { createLogLimiter, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, LOG_OWN_LINES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
+import { createLogLimiter, LOG_MAX_BYTES, LOG_OWN_LINES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
@@ -27,6 +27,7 @@ import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./l
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
+import { hostLine, reasonText } from "./lib/reasons";
 import { INITIAL_LIFECYCLE, runNotices, step as runStep, type BuildContext, type LcInput, type LcState, type LifecycleHost, type Notice } from "./lib/lifecycle";
 import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
@@ -259,33 +260,12 @@ const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
 
 const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 
-const DEFAULT_TERMINATE_REASON = 'terminated by the host';
-const WATCHDOG_REASON = 'the guest stopped responding (watchdog)';
-const ENTRY_FAILED_REASON = 'the guest entry failed to start';
-const VIEW_LOST_REASON = 'the sandbox view stopped responding';
-// VIEW_MAX_OPERATION_MS and VIEW_OVERRUN_WINDOW_MS, in words (a unit test keeps them equal): the repeated-overrun rule
-// (in-sandbox-view.ts, viewBudget; backlog S72, class P). The reason, at the second overrun within the window; the warn
-// line, at the first overrun of an environment (VIEW_FIRST_OVERRUN, _onViewMessage).
-const VIEW_OVERRUN_REASON = 'the view spent more than 2000 ms on one operation twice within 5 minutes';
-const VIEW_FIRST_OVERRUN_LINE = '[Sandbox] the view spent more than 2000 ms on one operation; a second such operation within 5 minutes ends the sandbox.';
-const EXECUTION_TIMEOUT_REASON = 'the executed code ran longer than workerExecutionTimeout';
-const CONFIG_REFUSED_REASON = 'the configuration could not be used';
-const BUILD_FAILED_REASON = 'the environment could not be built';
-// The reasons the lifecycle decides (a second load, a second announcement, a missing guest frame, the load deadline's
-// two) are the reducer's: src/lib/lifecycle.ts, LIFECYCLE_REASONS.
-// Past the budget of uncaught errors and rejections the guest's bootstrap keeps (egress.ts, UNCAUGHT_PER_SECOND and
-// UNCAUGHT_CHARACTERS_PER_SECOND; review round 5, N-1): the bootstrap says so once, on the port only it holds.
-const UNCAUGHT_BUDGET_REASON = 'the guest raised more uncaught errors or unhandled rejections in one second than their budget allows';
-// What the host page's own policy can refuse (review round 1, R3-1): the sandbox's frames are srcdoc documents, and a
-// srcdoc document inherits the policies of the page that made it (CSP3: a copy of its policy list; Trusted Types;
-// COEP). Each reason names the policy, so a misconfigured host page is told what to allow (docs/API.md#host-page-policy).
-const WORKER_REFUSED_REASON = "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)";
-const TRUSTED_TYPES_REASON = `the host page's Trusted Types policy does not allow the policy name '${TRUSTED_TYPES_POLICY}' (trusted-types; see docs/API.md#host-page-policy)`;
+// Every reason the element gives, and every line it dispatches itself, is the texts registry's (src/lib/reasons.ts).
 // What worker mode's frame may announce instead of a port (worker-bootstrap.ts), and the reason each ends the build with.
 const WORKER_FRAME_REFUSALS: Readonly<Record<string, string>> = Object.freeze(Object.assign(Object.create(null), {
-    'worker': WORKER_REFUSED_REASON,
-    'trusted-types': TRUSTED_TYPES_REASON,
-    'failed': `${BUILD_FAILED_REASON} (Error)`,
+    'worker': reasonText('workerRefused'),
+    'trusted-types': reasonText('trustedTypes'),
+    'failed': reasonText('buildFailed', 'Error'),
 }));
 
 // Plain data, compared as data (R3-7): the same primitives, arrays and plain objects, key by key. Anything else (a
@@ -376,8 +356,6 @@ const uncaughtLine = (message: string) => (message.startsWith('Uncaught ') ? mes
 // reached 2056–2057 characters in Firefox and WebKit, whose messages carry no prefix of their own).
 const viewErrorLine = (message: unknown) => uncaughtLine(typeof message === 'string' ? message : '').slice(0, VIEW_OPTIONS.guestText.maxLength);
 
-// What the element says when the view dropped guest error texts past its window (review round 4, M-5).
-const VIEW_TEXT_DROPPED_LINE = `[Sandbox] the guest raised more than ${VIEW_OPTIONS.guestText.perSecond} uncaught errors in one second that only the view could describe; errors past that are dropped in the view.`;
 
 /**
  * workerExecutionTimeout's grace (focused review 2026-10-14, F2): at an execute()'s deadline the host pings the
@@ -587,10 +565,10 @@ export class WebSandbox extends ElementBase {
      * TERMINATED, later calls are refused at once, and `state` stays 'terminated' until reset(), load()
      * or setConfig(). Calling it again while terminated does nothing, so 'terminated' fires once per termination.
      */
-    terminate(reason: string = DEFAULT_TERMINATE_REASON): void {
+    terminate(reason: string = reasonText('host')): void {
         // a reason that says nothing (not a string, empty, only white space) is the default one (review round 2, L-7)
         // No generation: the embedder's own call ends whatever environment stands (src/lib/lifecycle.ts, `terminate`).
-        step(this, { t: 'terminate', reason: typeof reason === 'string' && reason.trim() !== '' ? reason : DEFAULT_TERMINATE_REASON });
+        step(this, { t: 'terminate', reason: typeof reason === 'string' && reason.trim() !== '' ? reason : reasonText('host') });
     }
 
     /**
@@ -650,7 +628,7 @@ export class WebSandbox extends ElementBase {
             return null;
         } catch (error) {
             this._lastConfig = null;
-            return `${CONFIG_REFUSED_REASON} (${errorName(error)})`;
+            return reasonText('configRefused', errorName(error));
         }
     }
 
@@ -1034,14 +1012,14 @@ export class WebSandbox extends ElementBase {
     // host.ts's own; there is none left here (test/unit/lifecycle-reducer.test.ts scans for one), and a notice is data
     // now, so it dispatches exactly one event by construction (the executor's `notice`, host.ts's `lifecycleHost`).
     private _onExecutionTimeout(gen: number) {
-        step(this, { t: 'terminate', reason: EXECUTION_TIMEOUT_REASON, gen, notices: [hostNotice('Execution Timeout')] });
+        step(this, { t: 'terminate', reason: reasonText('executionTimeout'), gen, notices: [hostNotice(hostLine('executionTimeout'))] });
     }
 
     // A frame of ours that the host page's policy refused, as it reported (R3-1; review round 2, C-5 and C-6): one host
     // line, then the termination with the reason that names the policy (unless a listener of that line acted first), of
     // the environment `gen` whose frame said so.
     private _refusedByHostPage(reason: string, gen: number) {
-        step(this, { t: 'terminate', reason, gen, notices: [hostNotice(`[Sandbox] ${reason}`)] });
+        step(this, { t: 'terminate', reason, gen, notices: [hostNotice(hostLine('refusedByHostPage', reason))] });
     }
 
     // The guest's port, announced by the guest frame itself (CB1), becomes this environment's port. Null when this
@@ -1129,7 +1107,7 @@ export class WebSandbox extends ElementBase {
             // The guest raised more uncaught errors and rejections in one second than their budget (egress.ts; review
             // round 5, N-1), counted by its bootstrap, which alone posts on this port. Firefox reports each to the host
             // page's thread, cancelled or not, so the guest that causes them is stopped.
-            step(this, { t: 'terminate', reason: UNCAUGHT_BUDGET_REASON, gen: this._lc.gen });
+            step(this, { t: 'terminate', reason: reasonText('uncaughtBudget'), gen: this._lc.gen });
             return;
         }
         // Everything else on this port is RPC (or not ours); the broker validates every frame.
@@ -1184,12 +1162,12 @@ export class WebSandbox extends ElementBase {
             // The view could not create its Trusted Types policy (review round 2, C-6): the host page's trusted-types
             // directive does not name it, though the host page itself never needed it (its own default policy took the
             // element's strings). The view checked before its check-in, so the build was never ready.
-            this._refusedByHostPage(TRUSTED_TYPES_REASON, gen);
+            this._refusedByHostPage(reasonText('trustedTypes'), gen);
             return;
         }
         if (data?.type === 'WORKER_REFUSED') {
             // The view could not load the worker at all (no script of the guest's ran): the host page's policy (R3-1).
-            this._refusedByHostPage(WORKER_REFUSED_REASON, gen);
+            this._refusedByHostPage(reasonText('workerRefused'), gen);
             return;
         }
         if (data?.type === 'VIEW_PONG') {
@@ -1209,13 +1187,13 @@ export class WebSandbox extends ElementBase {
             // per 9 s of debt; past the first, they are dropped here).
             if (this._warnedViewOverrun) return;
             this._warnedViewOverrun = true;
-            this._dispatchHostLog('warn', VIEW_FIRST_OVERRUN_LINE);
+            this._dispatchHostLog('warn', hostLine('viewFirstOverrun'));
             return;
         }
         if (data?.type === 'VIEW_OVERRUN') {
             // The second overrun of the view within VIEW_OVERRUN_WINDOW_MS (backlog S72, class P; review round 5, M-2;
             // in-sandbox-view.ts, viewBudget): the view has stopped applying operations.
-            step(this, { t: 'terminate', reason: VIEW_OVERRUN_REASON, gen });
+            step(this, { t: 'terminate', reason: reasonText('viewOverrun'), gen });
             return;
         }
         if (data?.type === 'VIEW_WRITTEN') {
@@ -1246,7 +1224,7 @@ export class WebSandbox extends ElementBase {
             // environment, as the console relay says its own drops, in a line of the relay's (not counted in the window).
             if (this._warnedViewTextDropped) return;
             this._warnedViewTextDropped = true;
-            this._dispatchLog({ level: 'warn', args: [VIEW_TEXT_DROPPED_LINE] }, 'guest');
+            this._dispatchLog({ level: 'warn', args: [hostLine('viewTextDropped')] }, 'guest');
             return;
         }
         if (data?.type === 'GUEST_ERROR') {
@@ -1254,7 +1232,7 @@ export class WebSandbox extends ElementBase {
             // clamped and rate-limited like every guest line, never part of the host line or the reason (F3).
             // The guest line goes through the guest relay's rate limit (the executor's notice, `source: 'guest'`).
             const line = viewErrorLine(data.message);
-            step(this, { t: 'terminate', reason: ENTRY_FAILED_REASON, gen, notices: [hostNotice(`[Sandbox] ${ENTRY_FAILED_REASON}`), { level: 'error', text: line, source: 'guest' }] });
+            step(this, { t: 'terminate', reason: reasonText('entryFailed'), gen, notices: [hostNotice(hostLine('entryFailed')), { level: 'error', text: line, source: 'guest' }] });
         }
     }
 
@@ -1327,7 +1305,7 @@ export class WebSandbox extends ElementBase {
             // Said where the lines are read, once per environment (review round 3, L-4): the guest's relay keeps the same
             // window, but lines delivered late (the host was busy) arrive bunched, past this window though the relay sent
             // them within its own, and only a console warning said they were gone.
-            const notice = `[Sandbox] the guest logged more than ${LOG_EVENTS_PER_SECOND} lines in one second; lines past that rate are not dispatched as 'sandbox-log' events.`;
+            const notice = hostLine('logLimit');
             console.warn(notice);
             this._dispatchHostLog('warn', notice);
             return;
@@ -1387,7 +1365,7 @@ export class WebSandbox extends ElementBase {
         this._watchdog = startWatchdog({
             timeoutMs: budget,
             ping: (n) => port.postMessage({ type: 'PING', n }),
-            onExpire: () => step(this, { t: 'terminate', reason: WATCHDOG_REASON, gen }),
+            onExpire: () => step(this, { t: 'terminate', reason: reasonText('watchdog'), gen }),
         });
     }
 
@@ -1536,7 +1514,7 @@ export class WebSandbox extends ElementBase {
         const entry = this._config.entry;
         if (this._config.mode === 'strict' && typeof entry === 'string' && entry !== '') {
             const file = this._files.list().find(candidate => candidate.path === entry);
-            if (!file || !isJavaScriptType(file.type)) return `the guest entry "${entry.slice(0, 256)}" is not a registered JavaScript file`;
+            if (!file || !isJavaScriptType(file.type)) return reasonText('entryNotRegistered', entry.slice(0, 256));
         }
         return null;
     }
@@ -1836,7 +1814,7 @@ export class WebSandbox extends ElementBase {
         this._viewWatchdog = startWatchdog({
             timeoutMs: VIEW_LIVENESS_TIMEOUT_MS,
             ping: (n) => viewPort.postMessage({ type: 'VIEW_PING', n }),
-            onExpire: () => step(this, { t: 'terminate', reason: VIEW_LOST_REASON, gen }),
+            onExpire: () => step(this, { t: 'terminate', reason: reasonText('viewLost'), gen }),
         });
     }
 
@@ -2046,8 +2024,8 @@ function hostNotice(text: string): Notice {
 // built (_prepareBuild), the host page's Trusted Types policy is named; while it completed (the wrapper's load, the
 // guest's check-in), any throw is a build failure.
 function buildFailureReason(error: unknown, phase: 'build' | 'complete'): string {
-    if (phase === 'build' && error instanceof TrustedTypesRefusal) return TRUSTED_TYPES_REASON;
-    return `${BUILD_FAILED_REASON} (${errorName(error)})`;
+    if (phase === 'build' && error instanceof TrustedTypesRefusal) return reasonText('trustedTypes');
+    return reasonText('buildFailed', errorName(error));
 }
 
 // One guest change as the strict view is told it (R4-4): the path, its store type (null after a removal) and, only for a

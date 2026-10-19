@@ -20,7 +20,9 @@ import { ELEMENT_EVENTS } from '@src/lib/element-events';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 import { CONFIG_SCHEMA } from '@src/lib/config-schema';
-import { LIFECYCLE_REASONS } from '@src/lib/lifecycle';
+import { HOST_LINES, TERMINATION_REASONS, type ReasonId } from '@src/lib/reasons';
+import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
+import { LIMITS, type LimitName, type LimitRow } from '@src/lib/limits';
 
 /**
  * docs/API.md is the consumer's reference (backlog D3): this test fails when the public surface and the
@@ -102,67 +104,45 @@ describe('docs/API.md lists the public surface', () => {
         for (const name of Object.keys(publicApi)) expect(names, name).toContain(name);
     });
 
-    it('every numeric export, with its value, in Limits', () => {
-        const limits = section('## Limits');
-        const numeric = Object.entries(publicApi).filter(([, value]) => typeof value === 'number');
-        expect(numeric.length).toBeGreaterThan(5);
-        for (const [name, value] of numeric) {
-            const line = limits.split('\n').find(candidate => candidate.includes(`\`${name}\``));
-            expect(line, name).toBeDefined();
-            expect(line!.split('|')[2]!.trim().split(' ')[0], name).toBe(String(value));
+    it('the Limits table is the limits registry: every row with a label, its value, and its exported constant', () => {
+        const cells = (line: string) => line.split('|').slice(1, -1).map(cell => cell.trim());
+        const rows = section('## Limits').split('\n').filter(line => line.startsWith('| ') && !line.startsWith('| Limit |') && !line.startsWith('| :')).map(cells);
+        const labelled = (Object.keys(LIMITS) as LimitName[]).filter(name => LIMITS[name].label !== null);
+        expect(sorted(rows.map(([label]) => label!))).toEqual(sorted(labelled.map(name => LIMITS[name].label!)));
+        for (const name of labelled) {
+            const limit: LimitRow = LIMITS[name];
+            const [, value, exported] = rows.find(([label]) => label === limit.label)!;
+            expect(value!.split(' ')[0], name).toBe(String(limit.value));
+            expect(exported, name).toBe(limit.exported ? `\`${name}\`` : '—');
         }
     });
 
-    it('the internal limits, with their values', () => {
-        const limits = section('## Limits');
-        const fetchDefaults = toFetchPolicy({ allow: [] }, () => {})!;
-        const fetchBounds = toFetchPolicy({ allow: [], maxBytes: 1e15, timeoutMs: 1e15, maxConcurrent: 1e15 }, () => {})!;
-        const rpcDefault = Number(read('src/lib/rpc.ts').match(/const DEFAULT_TIMEOUT_MS = (\d+);/)![1]);
-        // one window's worth (review round 2, M-2): the bootstrap derives it from its mirror of LOG_EVENTS_PER_SECOND
-        expect(read('src/lib/in-sandbox-script.ts')).toMatch(/const LOG_BUFFER_LIMIT = LOG_LINES_PER_SECOND;/);
-        const logBuffer = Number(read('src/lib/in-sandbox-script.ts').match(/const LOG_LINES_PER_SECOND = (\d+);/)![1]);
-        // internal constants, read where they are declared (review round 3: no new exports)
-        const constant = (file: string, name: string) => Number(read(file).match(new RegExp(`const ${name} = (\\d+);`))![1]);
-        const expected: [string, number][] = [
-            ['Guest calls per second', constant('src/lib/config-schema.ts', 'GUEST_CALLS_PER_SECOND')],
-            ['Bytes of guest calls per second', constant('src/lib/config-schema.ts', 'GUEST_CALL_BYTES_PER_SECOND')],
-            ['Uncaught errors and unhandled rejections per second', UNCAUGHT_PER_SECOND],
-            ['Characters of uncaught errors and unhandled rejections per second', UNCAUGHT_CHARACTERS_PER_SECOND],
-            ['Characters of a method name', constant('src/lib/rpc.ts', 'MAX_NAME_LENGTH')],
-            ['Characters of an error message a call carries', constant('src/lib/rpc.ts', 'MAX_TEXT_LENGTH')],
-            ['Fetch: characters of a URL', constant('src/lib/fetch-bridge.ts', 'MAX_URL')],
-            ['Default call timeout', rpcDefault],
-            ['Guest log lines kept until the guest is connected', logBuffer],
-            ['Strict: characters of a render or event target id', VIEW_TARGET_MAX_LENGTH],
-            ['Strict: elements in the view', VIEW_MAX_ELEMENTS],
-            ['Strict: characters in the view', VIEW_MAX_CHARACTERS],
-            ['Strict: characters of markup the view parses per second', VIEW_RENDER_CHARACTERS_PER_SECOND],
-            ['Strict: time the view spends applying operations per second', VIEW_APPLY_MS_PER_SECOND],
-            ['Strict: longest operation of the view', VIEW_MAX_OPERATION_MS],
-            ["Strict: window of the view's repeated-overrun rule", VIEW_OVERRUN_WINDOW_MS],
-            ['Strict: URL-bearing attributes in the view', VIEW_MAX_URLS],
-            ['Strict: loads of the view per second', VIEW_URLS_PER_SECOND],
-            ['Strict: distinct URLs one view loads', VIEW_MAX_DISTINCT_URLS],
-            ['Bytes per log line', LOG_MAX_BYTES],
-            ['Bytes of guest log lines sent per second', LOG_BYTES_PER_SECOND],
-            ['Bytes per RPC message', RPC_MAX_BYTES],
-            ['Bytes of arguments in inbound calls running at once', RPC_MAX_INBOUND_BYTES],
-            ['Strict: nesting depth below the view', VIEW_MAX_DEPTH],
-            ['Strict: characters of one event detail', VIEW_EVENT_LIMITS.maxTotal],
-            ['Strict: view liveness budget', VIEW_LIVENESS_TIMEOUT_MS],
-            ['Files: total bytes', MAX_TOTAL_BYTES],
-            ['Files: count', MAX_FILES],
-            ['Files: path length', MAX_PATH_LENGTH],
-            ['Fetch: default `maxBytes`', fetchDefaults.maxBytes],
-            ['Fetch: largest `maxBytes`', fetchBounds.maxBytes],
-            ['Fetch: default `timeoutMs`', fetchDefaults.timeoutMs],
-            ['Fetch: largest `timeoutMs`', fetchBounds.timeoutMs],
-            ['Fetch: default `maxConcurrent`', fetchDefaults.maxConcurrent],
-            ['Fetch: largest `maxConcurrent`', fetchBounds.maxConcurrent],
-        ];
-        for (const [label, value] of expected) {
-            expect(row(limits, label).split('|')[2]!.trim().split(' ')[0], label).toBe(String(value));
+    it('every numeric export of the package is a limit of the registry, with its value, and every exported limit is one', () => {
+        const numeric = Object.entries(publicApi).filter(([, value]) => typeof value === 'number');
+        expect(numeric.length).toBeGreaterThan(5);
+        for (const [name, value] of numeric) {
+            expect(Object.hasOwn(LIMITS, name), name).toBe(true);
+            expect(LIMITS[name as LimitName].exported, name).toBe(true);
+            expect(LIMITS[name as LimitName].value, name).toBe(value);
         }
+        for (const name of (Object.keys(LIMITS) as LimitName[]).filter(key => LIMITS[key].exported)) expect(publicApi, name).toHaveProperty(name);
+    });
+
+    it('a limit held inside a stringified function has the registry\'s value there, and the fetch bounds are the ones toFetchPolicy applies', () => {
+        for (const name of Object.keys(LIMITS) as LimitName[]) {
+            const limit: LimitRow = LIMITS[name];
+            if (!limit.mirror) continue;
+            const [file, constant] = limit.mirror;
+            const declared = read(file).match(new RegExp(`const ${constant}(?:: typeof \\w+)? = (\\d+);`));
+            expect(declared, `${file}: ${constant}`).not.toBeNull();
+            expect(Number(declared![1]), name).toBe(limit.value);
+        }
+        // one window's worth: the bootstrap derives its buffer from its mirror of LOG_EVENTS_PER_SECOND
+        expect(read('src/lib/in-sandbox-script.ts')).toMatch(/const LOG_BUFFER_LIMIT = LOG_LINES_PER_SECOND;/);
+        const defaults = toFetchPolicy({ allow: [] }, () => {})!;
+        const bounds = toFetchPolicy({ allow: [], maxBytes: 1e15, timeoutMs: 1e15, maxConcurrent: 1e15 }, () => {})!;
+        expect([defaults.maxBytes, defaults.timeoutMs, defaults.maxConcurrent]).toEqual([LIMITS.DEFAULT_MAX_BYTES.value, LIMITS.DEFAULT_FETCH_TIMEOUT_MS.value, LIMITS.DEFAULT_MAX_CONCURRENT.value]);
+        expect([bounds.maxBytes, bounds.timeoutMs, bounds.maxConcurrent]).toEqual([LIMITS.MAX_MAX_BYTES.value, LIMITS.MAX_TIMEOUT_MS.value, LIMITS.MAX_MAX_CONCURRENT.value]);
     });
 
     it('every config option, and no other', () => {
@@ -248,19 +228,36 @@ describe('docs/API.md lists the public surface', () => {
         expect(sorted(listed)).toEqual(sorted(INERT_TYPES));
     });
 
-    it('every termination reason', () => {
-        const source = read('src/host.ts');
-        const reasons = section('### `terminated` reasons');
-        const constants = [...source.matchAll(/^const \w+_REASON = '([^']+)';/gm)].map(match => match[1]!);
-        // a reason written at the termination itself (the lifecycle executor's input, S65), not as a constant
-        const literals = [...source.matchAll(/t: '(?:terminate|buildFailed)', reason: ['`]([^'`]+)['`]/g)].map(match => match[1]!);
-        expect(constants.length).toBeGreaterThan(3);
-        // and the reasons the lifecycle reducer decides (a second load or announcement, a missing guest frame, the load
-        // deadline's two), declared there only since S65's PR D
-        for (const reason of [...constants, ...literals, ...Object.values(LIFECYCLE_REASONS)]) {
-            const fixedPart = reason.split('${')[0]!.replace(/\s*"?$/, '');
-            expect(reasons, reason).toContain(fixedPart);
+    it('the termination reasons table is the reasons registry, each reason with its cause', () => {
+        const rows = section('### `terminated` reasons').split('\n').filter(line => line.startsWith('| `'))
+            .map(line => line.slice(2, -2).split(' | '));
+        const table = new Map(rows.map(([text, cause]) => [text!.slice(1, -1), cause!]));
+        const ids = Object.keys(TERMINATION_REASONS) as ReasonId[];
+        expect(sorted(table.keys())).toEqual(sorted(ids.map(id => TERMINATION_REASONS[id].text)));
+        for (const id of ids) expect(table.get(TERMINATION_REASONS[id].text), id).toBe(TERMINATION_REASONS[id].cause);
+    });
+
+    const STRING_KINDS = new Set([SyntaxKind.StringLiteral, SyntaxKind.NoSubstitutionTemplateLiteral, SyntaxKind.TemplateHead, SyntaxKind.TemplateMiddle, SyntaxKind.TemplateTail]);
+    it('the element writes no reason or host line of its own: every one comes from the registry', () => {
+        for (const file of ['src/host.ts', 'src/lib/lifecycle.ts', 'src/lib/config-schema.ts']) {
+            const source = read(file);
+            // a reason written at the termination itself, as a literal or a template
+            expect(source.match(/t: '(?:terminate|buildFailed)', reason: ['"`]/g), file).toBeNull();
+            expect(source.match(/^const \w+_REASON = /gm), file).toBeNull();
+            // and every host line through hostLine(): the notices of a termination, and the element's own lines
+            expect([...source.matchAll(/(?:hostNotice|_dispatchHostLog)\((?:'\w+', )?([^)]*)\)/g)].map(match => match[1]!).filter(arg => !arg.includes(':') && !/^hostLine\(|^notice$/.test(arg)), file).toEqual([]);
+            // nor a reason's text in a string of its own
+            const strings = tokenize(source).filter(token => STRING_KINDS.has(token.kind)).map(token => token.text).join('\n');
+            for (const id of Object.keys(TERMINATION_REASONS) as ReasonId[]) {
+                const fixed = TERMINATION_REASONS[id].text.split('…')[0]!;
+                if (fixed.length > 12) expect(strings, `${file}: ${id}`).not.toContain(fixed);
+            }
         }
+    });
+
+    it('every line the element dispatches itself, in sandbox-log', () => {
+        const log = section('### `sandbox-log`').replace(/\s+/g, ' ');
+        for (const [id, line] of Object.entries(HOST_LINES)) expect(log, id).toContain(`\`${line.text}\``);
     });
 
     it('every call code, with who sets it', () => {

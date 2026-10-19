@@ -36,16 +36,7 @@
  * at the place: search for "Today's code".
  */
 import type { SandboxState } from '../host';
-
-// The reasons the lifecycle itself decides, declared here only (S65 PR D: host.ts kept copies until it stepped the
-// completion of a build here). test/unit/api-docs.test.ts checks that docs/API.md lists each of them.
-export const LIFECYCLE_REASONS = Object.freeze({
-    secondLoad: 'the sandbox frame loaded a second time',
-    secondAnnouncement: 'the guest frame announced itself again (it reloaded or rewrote its document)',
-    frameMissing: 'the guest frame is missing',
-    loadTimeout: 'the sandbox did not finish loading',
-    startupBlocked: "the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)",
-});
+import { hostLine, reasonText } from './reasons';
 
 /**
  * What a build reads besides the reducer's own state, asked of the host at the moment the build starts: whether the
@@ -200,7 +191,7 @@ export type Effect =
 export interface LcOutput {
     state: LcState;
     effects: readonly Effect[];
-    // Whether an effect that throws ends the sandbox (`BUILD_FAILED_REASON`): the completion of a build, on all three of
+    // Whether an effect that throws ends the sandbox (the reason `buildFailed`, reasons.ts): the completion of a build, on all three of
     // its paths, the wrapper's load, the guest's check-in and the view's (S65 PR D; until then host.ts ran the first two
     // in a try/catch and the view's bare, so a throw there left the build `loading`, its load deadline already stopped).
     // These effects do not throw in practice (they are backstops); one that does leaves nothing half-done behind.
@@ -312,10 +303,10 @@ function frameLoad(state: LcState, input: Extract<LcInput, { t: 'frameLoad' }>):
     const build = state.build;
     if (!input.stillOurs || build === null) return unchanged(state);
     const guarded = (output: LcOutput): LcOutput => ({ ...output, guarded: true });
-    if (build.frameLoaded) return guarded(terminateNow(state, LIFECYCLE_REASONS.secondLoad));
+    if (build.frameLoaded) return guarded(terminateNow(state, reasonText('secondLoad')));
     const loaded: LcState = { ...state, build: { ...build, frameLoaded: true } };
-    if (build.announcer !== null) return guarded(input.guest === build.announcer ? unchanged(loaded) : terminateNow(loaded, LIFECYCLE_REASONS.secondLoad));
-    if (input.guest === null) return guarded(terminateNow(loaded, LIFECYCLE_REASONS.frameMissing));
+    if (build.announcer !== null) return guarded(input.guest === build.announcer ? unchanged(loaded) : terminateNow(loaded, reasonText('secondLoad')));
+    if (input.guest === null) return guarded(terminateNow(loaded, reasonText('frameMissing')));
     if (build.announces) return guarded(unchanged(loaded));
     if (build.strict) return { state: loaded, effects: [{ k: 'sendInitView', target: input.guest }], guarded: true };
     return finishBuild(loaded, null);
@@ -327,7 +318,7 @@ function frameLoad(state: LcState, input: Extract<LcInput, { t: 'frameLoad' }>):
 // refusal is the frame's one announcement: one host line, then the termination with its reason (review round 2, C-5).
 function announced(state: LcState, input: Extract<LcInput, { t: 'announced' }>): LcOutput {
     const build = state.build;
-    if (build === null || build.accepted || !build.announces || !input.valid) return terminateNow(state, LIFECYCLE_REASONS.secondAnnouncement);
+    if (build === null || build.accepted || !build.announces || !input.valid) return terminateNow(state, reasonText('secondAnnouncement'));
     if (input.refusal !== null) {
         const accepted: LcState = { ...state, build: { ...build, accepted: true } };
         return refusedByHostPage(accepted, input.refusal);
@@ -339,7 +330,7 @@ function announced(state: LcState, input: Extract<LcInput, { t: 'announced' }>):
 // A frame of ours the host page's policy refused (host.ts, `_refusedByHostPage`, for the view's refusals): one host line,
 // then the termination, unless a listener of that line acted first.
 function refusedByHostPage(state: LcState, reason: string): LcOutput {
-    return terminate(state, { t: 'terminate', reason, gen: state.gen, notices: [{ level: 'error', text: `[Sandbox] ${reason}`, source: 'host' }] });
+    return terminate(state, { t: 'terminate', reason, gen: state.gen, notices: [{ level: 'error', text: hostLine('refusedByHostPage', reason), source: 'host' }] });
 }
 
 // host.ts, `_notifyThenAct` and `_terminate`. With notices, the lines come first, one event each, and the termination is a
@@ -364,7 +355,7 @@ function loadDeadline(state: LcState): LcOutput {
     const build = state.build;
     if (state.state !== 'loading' || build === null) return unchanged(state);
     const scripted = build.strict || build.announces;
-    return terminateNow(state, build.frameLoaded && scripted ? LIFECYCLE_REASONS.startupBlocked : LIFECYCLE_REASONS.loadTimeout);
+    return terminateNow(state, build.frameLoaded && scripted ? reasonText('startupBlocked') : reasonText('loadTimeout'));
 }
 
 // host.ts, `_dispatchBuildTermination`: only if nothing tore the environment down since it was armed.
