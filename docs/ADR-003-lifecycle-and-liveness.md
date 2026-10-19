@@ -1,6 +1,6 @@
 # ADR-003: How does the host observe and control a sandbox's lifecycle?
 
-**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)), 2026-10-14 ([one rule per budget, build and missing environment](#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)), 2026-10-14 ([the execution budget is a free event loop at the deadline](#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline)), 2026-10-14 ([loading is bounded; one answer per build; one document](#amendment-2026-10-14-loading-is-bounded-one-answer-per-build-one-document)), 2026-10-14 ([`ready` is the guest's check-in](#amendment-2026-10-14-ready-is-the-guests-check-in)), 2026-10-15 ([review round 1](#amendment-2026-10-15-review-round-1-strict-ready-refused-builds-in-a-task-no-rebuild-for-the-same-config))
+**Status**: Accepted · **Date**: 2026-10-11 · **Amended**: 2026-10-13 ([strict mode bounds execution on every engine](#amendment-2026-10-13-strict-mode-bounds-execution-on-every-engine)), 2026-10-14 ([a listener's reset or terminate is never undone](#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)), 2026-10-14 ([one rule per budget, build and missing environment](#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)), 2026-10-14 ([the execution budget is a free event loop at the deadline](#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline)), 2026-10-14 ([loading is bounded; one answer per build; one document](#amendment-2026-10-14-loading-is-bounded-one-answer-per-build-one-document)), 2026-10-14 ([`ready` is the guest's check-in](#amendment-2026-10-14-ready-is-the-guests-check-in)), 2026-10-15 ([review round 1](#amendment-2026-10-15-review-round-1-strict-ready-refused-builds-in-a-task-no-rebuild-for-the-same-config)), 2026-10-19 ([review round 5: what waits for `ready` leaves at `ready`](#amendment-2026-10-19-review-round-5-what-waits-for-ready-leaves-at-ready))
 
 ## Why this ADR exists
 
@@ -316,3 +316,20 @@ startup gate").
   listener that builds again from the same inputs during the dispatch gets the same answer, once.
 - **`setConfig()` of the configuration the standing environment was built from is no change**: no rebuild, while the
   environment is `loading` or `ready` and nothing else a build reads (`load()`, the files) changed since.
+
+## Amendment (2026-10-19): review round 5: what waits for `ready` leaves at `ready`
+
+**When**: review round 5 (L-1, class L of [research 18](research/18_finding_classes/README.md)). **Why**: strict mode
+posted the queued calls and `execute()` code when the wrapper loaded, which hands the view its ports, and the build
+became `ready` later, at the view's check-in. A call made while loading whose timeout fell between the two had left
+already: its caller was told `TIMEOUT`, and the guest ran it (with a large initial view the window is wide enough to
+reproduce on every engine). CB3's rule, that a call which settles while queued never runs, held only where the flush and
+`ready` were one moment: the other modes flushed in `setupChannel`, just before `ready`. Two flush points for one rule.
+
+**Decision**: one flush point, the transition to `ready` (`_enterReady`), in every mode. Until then the queue holds
+everything, also while a port exists (strict mode has one from the load); after it, calls and `execute()` go straight to
+the port. The ports are still handed to the view at the load. This is the first slice of the lifecycle reducer (backlog
+S65): the transition to `ready` is the only one with a flush.
+
+Proof: `test/unit/review-round-5.test.ts` ("5:L-1": the owner's repro, and a model of the rule over random schedules in
+every mode), `test/e2e/review-round-5.spec.ts` ("L-1", on Chromium, Firefox and WebKit).

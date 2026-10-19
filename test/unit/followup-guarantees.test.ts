@@ -36,7 +36,7 @@ describe('B8, focused review F2: workerExecutionTimeout requires a free event lo
         const { EXECUTION_TIMEOUT_GRACE_MS } = await import('@src/host');
         const el = await mount({ mode, scriptUnsafe: true, workerExecutionTimeout: budget });
         const port = recordingPort();
-        el._port = port;
+        el._finishBuild(port); // the build is ready on this port (posting waits for `ready`, review round 5, L-1)
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         const logs: string[] = [];
@@ -59,7 +59,7 @@ describe('B8, focused review F2: workerExecutionTimeout requires a free event lo
         say({ type: 'PONG', n: -1 });
         const frame = el.shadowRoot.querySelector('iframe');
         vi.advanceTimersByTime(grace * 3);
-        expect([el.state, reasons, logs, pings()]).toEqual(['loading', [], [], [-1]]);
+        expect([el.state, reasons, logs, pings()]).toEqual(['ready', [], [], [-1]]);
         expect(el.shadowRoot.querySelector('iframe')).toBe(frame);
     });
 
@@ -67,7 +67,7 @@ describe('B8, focused review F2: workerExecutionTimeout requires a free event lo
         const { el, reasons, logs, pings, grace } = await start(mode);
         el.execute('for (;;) {}');
         vi.advanceTimersByTime(50 + grace - 1);
-        expect(el.state).toBe('loading');
+        expect(el.state).toBe('ready');
         expect(pings()).toEqual([-1, -2, -3, -4]);
         vi.advanceTimersByTime(1);
         expect([el.state, reasons, logs]).toEqual(['terminated', [REASON], ['Execution Timeout']]);

@@ -969,7 +969,8 @@ export class WebSandbox extends ElementBase {
             return;
         }
 
-        if (this._port) {
+        // Before `ready` it waits, even with a port (strict mode has one from the wrapper's load): _enterReady posts it.
+        if (this._port && this._state === 'ready') {
             this._postExecute(this._port, code);
         } else {
             this._queue.push({ code });
@@ -1069,12 +1070,13 @@ export class WebSandbox extends ElementBase {
         return null;
     }
 
-    // Sends one of the host's own RPC requests over the port, or queues it until setupChannel flushes (mirrors execute()).
+    // Sends one of the host's own RPC requests over the port once the build is ready, or queues it until _enterReady flushes
+    // (mirrors execute(); review round 5, L-1: strict mode has its port from the wrapper's load, before `ready`).
     // Only for the environment the call was made in, while it stands (L-2, _issue): otherwise nothing is sent, and the
     // text returned refuses the call TERMINATED.
     private _postRpc(frame: unknown): string | undefined {
         if (this._issuedIn !== this._generation || this._state === 'idle' || this._state === 'terminated') return RESET_CALL_MESSAGE;
-        if (this._port) {
+        if (this._port && this._state === 'ready') {
             this._port.postMessage(frame);
             return;
         }
@@ -1224,9 +1226,8 @@ export class WebSandbox extends ElementBase {
         // calls it runs per channel (review B7), so the count belongs to this environment.
         const reply = (frame: unknown, transfer?: Transferable[]) => port.postMessage(frame, transfer ?? []);
         // Setting onmessage starts the port: frames the guest posted before its announcement was accepted are
-        // delivered now, after 'ready'.
+        // delivered now, after 'ready'. What waits in the queue is posted by _enterReady, the one flush point.
         port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, null);
-        this._flushQueues(port);
     }
 
     /**
@@ -1326,10 +1327,13 @@ export class WebSandbox extends ElementBase {
         port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, 'logic');
         viewPort.onmessage = (e) => this._onViewMessage(viewPort, e.data);
 
+        // The ports go to the view now, at the wrapper's load; what waits in the queue does not (review round 5, L-1): it is
+        // posted when the build becomes ready, at the view's check-in (_enterReady). Flushed here, a call made while loading
+        // that timed out between the load and the check-in had already left, and ran in the guest after its caller had been
+        // told TIMEOUT, though docs/API.md says it never runs.
         const init = this._strictInit;
         this._strictInit = null;
         target.postMessage({ type: 'INIT_VIEW', ...init }, '*', [logic.port2, view.port2]);
-        this._flushQueues(port);
     }
 
     private _onViewMessage(viewPort: MessagePort, data: any) {
@@ -1416,12 +1420,11 @@ export class WebSandbox extends ElementBase {
         this._warnStrictOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or '${scriptHashSource(VIEW_STILL_STYLE)}' in style-src (see docs/API.md#host-page-policy).`);
     }
 
-    // Flushes what was queued before the guest's port existed onto it, in the order it was issued (L-3): execute() code
+    // Flushes what was queued before the build was ready onto its port, in the order it was issued (L-3): execute() code
     // (checked by execute() when queued) and the host's own RPC requests — the queue never holds answers (those go back
-    // on the port their request arrived on). Requests are cloned when the call is made (see callWithTimeout in rpc.ts),
-    // so a post failure is not expected here; the per-frame catch is a backstop so that one bad frame could never drop
-    // the frames behind it or — since _finishBuild dispatches 'ready' only after setupChannel returns — stop 'ready'
-    // from firing.
+    // on the port their request arrived on). Called by _enterReady only (review round 5, L-1). Requests are cloned when
+    // the call is made (see callWithTimeout in rpc.ts), so a post failure is not expected here; the per-frame catch is a
+    // backstop so that one bad frame could never drop the frames behind it or stop 'ready' from firing.
     private _flushQueues(port: MessagePort) {
         const queued = this._queue;
         this._queue = [];
@@ -2187,8 +2190,15 @@ export class WebSandbox extends ElementBase {
         }
     }
 
+    // The transition to `ready`, in every mode, and the one place what waited for it is released (review round 5, L-1; the
+    // first slice of the lifecycle reducer, backlog S65): the queued calls and execute() code are posted here, in the
+    // order they were made, and nowhere else. A call made while loading waits in the queue for this point; if it settles
+    // first (its timeout), it leaves the queue and is never posted (_queuedWhilePending), so a call that timed out before
+    // `ready` never runs. Before, strict mode flushed at the wrapper's load (_setupStrictChannels), the other modes in
+    // setupChannel, two flush points for one rule, and strict mode's was not this one.
     private _enterReady() {
         if (this._loadDeadline) { this._loadDeadline.stop(); this._loadDeadline = null; }
+        if (this._port) this._flushQueues(this._port);
         // Armed before 'ready' is dispatched: a 'ready' listener that resets or terminates the sandbox then
         // stops this watchdog with the rest, instead of leaving one running for a port that is gone.
         if (this._port) this._startWatchdog(this._port);

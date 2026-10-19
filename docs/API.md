@@ -295,7 +295,7 @@ before any guest code ran. Nothing reaches the host: no return value, no report 
 - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
 - While `idle` (not in the document) or `terminated` there is no environment: it warns and does nothing, as
   `call()` rejects then.
-- While `loading` the code is queued and sent when the guest is ready. In cooperative mode it runs once the guest
+- While `loading` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the guest
   document is parsed (see [the startup gate](#ready-and-the-startup-gate)), in order with calls.
 - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
 - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
@@ -341,8 +341,9 @@ handler.
   method name included: a name is at most 256 characters (`INVALID_CALL`).
 - Default timeout: 30 s. The element's timers and its copy of the arguments use the `setTimeout` and `structuredClone`
   it took when it was constructed: fake timers installed after that (a test's) do not control a call's timeout.
-- Calls made while `loading` are queued and sent when the guest is ready; one that settles while queued (its
-  timeout) leaves the queue and never runs. In cooperative mode a call reaches the guest's method once the guest
+- Calls made while `loading` are queued and sent when the build becomes `ready`, in every mode (strict mode included,
+  whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue and never
+  runs. In cooperative mode a call reaches the guest's method once the guest
   document is parsed (see [the startup gate](#ready-and-the-startup-gate)). Calls made while `idle` (not in the
   document) or `terminated` reject at once with `TERMINATED`, as `execute()` does nothing then.
 - Rejects with an `RpcError` (an `Error` with a `code`); see [Refusal codes](#refusal-codes).
