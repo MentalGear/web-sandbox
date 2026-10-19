@@ -82,6 +82,7 @@ later (S61), and the clean-up with independent reviews follows when the rounds e
 (S58, [report](security/REVIEW-ROUND-4-2026-10-18.md)) added and closed S62; round 5 is next (S63).
 Round 5 (S63) found the recurring classes behind the findings ([research 18](research/18_finding_classes/README.md));
 its fixes are made as slices of those classes (S64), followed by S65–S68. S65's model-based suite found LM-1 (S71, for the owner).
+The owner's decision on the 2 s operation limit, the repeated-overrun rule, is S72.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1640,7 +1641,8 @@ The owner's decisions, 2026-10-18:
   - the one-sided URL match;
   - the prelude's captured error getters.
 
-Residual, for the owner: the 2 s operation limit ends a 250,000-character textarea `set()` in WebKit.
+Residual, for the owner: the 2 s operation limit ends a 250,000-character textarea `set()` in WebKit. **Decided**
+(owner, 2026-10-19): the sandbox ends only after repeated overruns (S72).
 
 ### S65 · One lifecycle reducer, with the model-based suite (S61.2) — 🟡 step 1 of 2 done
 
@@ -1727,13 +1729,53 @@ docs/API.md, "The view's cost to the host page", states the bound per process pl
 - **(a) The long-run share.** At most 20% for the view's own work, plus the browser's work on at most
   `VIEW_URLS_PER_SECOND` loads, so up to 40%. It is an average, not a per-second cap.
 - **(b) One operation.** At most `VIEW_MAX_OPERATION_MS` as measured, then the sandbox ends, plus the operation's own
-  uninterruptible cost, bounded by the caps.
+  uninterruptible cost, bounded by the caps. Since S72: past `VIEW_MAX_OPERATION_MS` an operation is an overrun, and
+  the second within `VIEW_OVERRUN_WINDOW_MS` ends the sandbox.
 - **(c) The rates and caps.**
 - **(d) A closed list of what is outside the bound**, each item with its measured magnitude.
 
 `test/e2e/view-bound.spec.ts` runs the canonical floods on every engine and asserts (a) with a 10-point margin, and
 (b). `test/unit/view-bound.test.ts` keeps the statement's constants in step with the code. README and ADR-005 link to the
 statement instead of repeating it.
+
+### S72 · The repeated-overrun rule (owner's decision on the 2 s limit) — ✅ **done**
+
+Class P, a budget that counts a proxy: the meter measures wall time, a stand-in for the view's own cost, so under
+machine load one operation past `VIEW_MAX_OPERATION_MS` ended healthy sandboxes (a large initial view on a loaded CI
+runner, round 4's R4-2 and round 5's L-1 WebKit tests; WebKit's first `set()` of a 250,000-character textarea, always).
+The owner decided (2026-10-19) that the sandbox ends only after repeated overruns.
+
+What changed:
+- **The rule, in the pure budget arithmetic** (`viewBudget`'s `measured`, `src/lib/in-sandbox-view.ts`): an operation
+  past `VIEW_MAX_OPERATION_MS` is an overrun, charged in full to `VIEW_APPLY_MS_PER_SECOND` (the next operation waits
+  until the debt is repaid, at least 9 s), and the view goes on. The second overrun within `VIEW_OVERRUN_WINDOW_MS`
+  (300,000 ms, a module constant, not a public export) of the one before it ends the sandbox; a later one is a first
+  overrun again. A hidden-document measure is neither charged nor counted, and one operation is one overrun (its flush
+  and its rendering update are not counted twice).
+- **The reason**: "the view spent more than 2000 ms on one operation twice within 5 minutes".
+- **The first overrun is visible**: one `warn` host line on `sandbox-log` per environment, through the existing host
+  lines (API.md and the lifecycle model's whitelist): "[Sandbox] the view spent more than 2000 ms on one operation; a
+  second such operation within 5 minutes ends the sandbox." No new event or name.
+- **Tests**: the rule's edges in `test/unit/view-round-5.test.ts` (at the limit, one ms past it; exactly at the window
+  and one ms either side; the window running from the first of two; a first overrun followed by 1000 fast operations;
+  hidden measures; a property against a reference over 300 random runs; the host's line and reason);
+  `test/unit/review-round-3.test.ts` drives the real view in jsdom through both outcomes; the class's structural test
+  (`test/unit/view-bound.test.ts`) requires the window constant in the statement's table and (b) to state the rule in
+  the host's words. On every engine, `test/e2e/view-bound.spec.ts` (b) and `test/e2e/view-round-5.spec.ts` (M-2).
+- **Docs**: API.md (b), (c), (d), the reasons table, the limits table and the host lines; README; ADR-005; review
+  round 5's "What remains"; research 17's lifecycle model.
+
+Measured (2026-10-19, headless Playwright on the shared 4-core VM; Chromium, Firefox, WebKit):
+- `view-bound.spec.ts` (b), three renders under the `:has()` rule (30,000 elements in Chromium, 24,000 in Firefox and
+  WebKit; 3.9 s, 9.0 s and 6.5 s on a page of their own): the first stalled the host page 3.9 s, 8.9 s and 7.2 s and
+  the sandbox stood, with one warn line; the second ran 18.3 s, 43.5 s and 34.7 s later (its debt) and stalled it 4.0 s,
+  9.3 s and 6.5 s, and the sandbox ended with the new reason; the third never ran.
+- `view-round-5.spec.ts` (M-2): one overrun, then four operations well under the limit: the first of them applied
+  21.9 s, 21.0 s and 31.1 s after the warn line, all applied, the sandbox `ready`; a second overrun within the window
+  ended it with the reason. Operations of about 1 s one after the other: host 18% (Chromium) and 15% (WebKit) busy
+  (Firefox: no size of the family cost 0.7–1.4 s there, so that test skipped itself).
+- `review-round-2.spec.ts` (M-3), a 250,000-character textarea `set()` four times a second: the sandbox stays `ready`
+  on all three engines (WebKit's first `set()` ended it before).
 
 ### T6 · Two CPU-heavy unit tests failed once on a loaded machine — 🔎 **investigate**
 

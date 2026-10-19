@@ -16,7 +16,9 @@
  * - one diff for guest writes: exactly one `fileswritten` per change of what `listGuestWrites()` shows at a path;
  * - the autonomous terminations (watchdog, `workerExecutionTimeout`, entry failure, the load deadline) only when the
  *   environment allows them. The uncaught budget, `VIEW_MAX_OPERATION_MS` and `VIEW_MAX_DISTINCT_URLS` are never
- *   approached by the generator, so their terminations are divergences here (they have their own specs).
+ *   approached by the generator, so their terminations are divergences here (they have their own specs). The view's
+ *   first overrun (backlog S72) is a host line allowed in any standing strict environment: it is wall time, which a
+ *   loaded machine can push past the limit, and it changes no state; the second overrun's termination stays a divergence.
  */
 
 export type Mode = 'strict' | 'cooperative' | 'worker';
@@ -699,6 +701,10 @@ export class LifecycleModel {
             if (/^\[Sandbox\] the guest logged more than \d+ lines in one second/.test(text)) return;
             if (text === 'Execution Timeout' && env && env.execTimeout > 0 && env.execBusy) return;
             if (text.startsWith('[Sandbox] the guest entry failed to start') && env?.entryBad) return;
+            // The view's first overrun (backlog S72): wall time, so a loaded machine can reach it with the generator's
+            // small views; it changes no state, and is allowed in any standing strict environment. The second, which
+            // ends the sandbox, stays a divergence (autonomousAllowed).
+            if (/^\[Sandbox\] the view spent more than \d+ ms on one operation; a second such operation within \d+ minutes ends the sandbox\.$/.test(text) && env && this.mode === 'strict' && (this.state === 'loading' || this.state === 'ready')) return;
             this.fail(`host line not allowed here: ${text.slice(0, 200)}`);
         }
         if (!this.env || (this.state !== 'loading' && this.state !== 'ready')) this.fail(`guest line with no standing environment: ${text.slice(0, 200)}`);

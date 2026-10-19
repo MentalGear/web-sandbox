@@ -160,7 +160,10 @@ lifecycle reducer (S65) is refactored against them.
   guest), `workerExecutionTimeout` (a timeout and a busy `execute()`), the strict entry's failure (a throwing entry), the
   load deadline (`LOAD_TIMEOUT_MS` of loading). The uncaught budget, `VIEW_MAX_OPERATION_MS` and
   `VIEW_MAX_DISTINCT_URLS` are not approached by the generator, so their terminations are divergences here; their edges
-  have their own specs (`review-round-5.spec.ts`, `view-round-5.spec.ts`).
+  have their own specs (`review-round-5.spec.ts`, `view-round-5.spec.ts`). The view's first overrun (backlog S72) is
+  a host line the model allows in any standing strict environment: the meter measures wall time, which a loaded
+  machine can push past `VIEW_MAX_OPERATION_MS` with the generator's small views, and the line changes no state; the
+  second overrun's termination stays a divergence.
 
 **What it generates.** One mode per sequence (by seed), 0–3 re-entrant listener plans on `ready`, `terminated`,
 `sandbox-log`, `fileswritten` and `fetch`, a prologue, then 3–6 segments of churn, calm guest steps, or a scenario (an

@@ -1,7 +1,7 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { inView, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
-import { VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
+import { VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_OVERRUN_WINDOW_MS, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 
 /**
  * Review round 5, the strict view's findings where the browser decides, on Chromium, Firefox and WebKit: loads that only
@@ -280,29 +280,49 @@ async function sizeFor(page: Page, ms: number) {
     return found;
 }
 
-test.describe('M-2 (class P): the view charges every operation in full, and ends the sandbox on one past VIEW_MAX_OPERATION_MS', () => {
-    const REASON = `the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation`;
+test.describe('M-2 (class P): the view charges every operation in full; the second past VIEW_MAX_OPERATION_MS within VIEW_OVERRUN_WINDOW_MS ends the sandbox (S72)', () => {
+    const MINUTES = VIEW_OVERRUN_WINDOW_MS / 60000;
+    const REASON = `the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation twice within ${MINUTES} minutes`;
+    const FIRST_OVERRUN_LINE = `[Sandbox] the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation; a second such operation within ${MINUTES} minutes ends the sandbox.`;
 
-    test(`an operation that takes longer than ${VIEW_MAX_OPERATION_MS} ms ends the sandbox with the reason; one well under it does not`, async ({ sandbox, page, browserName }) => {
-        test.setTimeout(240000);
+    // Backlog S72, the repeated-overrun rule: before it, the first operation past the limit ended the sandbox, which on a
+    // loaded machine ended healthy ones (the meter measures wall time: a proxy of the view's own cost).
+    test(`one operation past ${VIEW_MAX_OPERATION_MS} ms, then operations well under it: the sandbox stays ready, said once; a second past it within the window ends it with the reason`, async ({ sandbox, page, browserName }) => {
+        test.setTimeout(300000);
         const long = await sizeFor(page, 2 * VIEW_MAX_OPERATION_MS);
         const short = { n: SIZES[0]!, cost: await operationCost(page, heavy(SIZES[0]!)) };
         console.log(`MEASURED ${browserName} M-2 calibration: ${long.n} elements under :has() ${long.cost} ms, ${short.n} ${short.cost} ms`);
         test.skip(long.cost < 1.5 * VIEW_MAX_OPERATION_MS, `the heaviest operation of the family takes ${long.cost} ms here`);
         expect(short.cost).toBeLessThan(VIEW_MAX_OPERATION_MS / 2);
-        await mountEntry(sandbox, `sandboxView.render('<div id="a"></div>'); globalThis.go = (n) => sandboxView.render(${JSON.stringify(heavy(1))}.replace('<i>x</i>', '<i>x</i>'.repeat(n)), 'a');`);
+        await mountEntry(sandbox, `sandboxView.render('<div id="a"></div>');
+            globalThis.go = (n) => sandboxView.render(${JSON.stringify(heavy(1))}.replace('<i>x</i>', '<i>x</i>'.repeat(n)), 'a');
+            globalThis.small = (k) => sandboxView.render('<p id="p' + k + '">' + k + '</p>', 'a');`);
         const reasons: string[] = [];
         await page.exposeFunction('__terminated', (reason: string) => reasons.push(reason));
         await page.evaluate(() => document.querySelector('web-sandbox')!.addEventListener('terminated', (e: any) => (window as any).__terminated(e.detail.reason)));
-        // well under the limit: applied, and the sandbox stays
-        await sandbox.run(`go(${short.n})`);
-        await waitInView(page, browserName, `document.querySelectorAll('#a i').length === ${short.n}`, 30000);
-        await page.waitForTimeout(500);
+        // past the limit: an overrun, said once on sandbox-log; the sandbox stands (before S72 it ended here)
+        await sandbox.run(`go(${long.n})`);
+        await sandbox.waitForLog(FIRST_OVERRUN_LINE, 3 * long.cost + 30000);
+        const first = Date.now();
         expect(await sandbox.state()).toBe('ready');
-        // past it: ended, with the reason (at 60814b5 it was applied, and the next waited 5 s)
+        // operations well under it: each applied, the first once the overrun's debt is repaid (five times its cost)
+        await sandbox.run(`go(${short.n})`);
+        await waitInView(page, browserName, `document.querySelectorAll('#a i').length === ${short.n}`, 8 * long.cost + 30000);
+        const resumed = Date.now() - first;
+        for (let k = 1; k <= 3; k++) {
+            await sandbox.run(`small(${k})`);
+            await waitInView(page, browserName, `!!document.getElementById('p${k}')`, 30000);
+        }
+        await page.waitForTimeout(500);
+        console.log(`MEASURED ${browserName} M-2 the first operation after the overrun applied ${resumed} ms after it was said`);
+        expect(await sandbox.state()).toBe('ready');
+        expect(reasons).toEqual([]);
+        // a second past the limit, within the window: ended, with the reason
         await sandbox.run(`go(${long.n})`);
         await expect.poll(() => sandbox.state(), { timeout: 3 * long.cost + 30000 }).toBe('terminated');
+        expect(Date.now() - first).toBeLessThan(VIEW_OVERRUN_WINDOW_MS);
         expect(reasons).toEqual([REASON]);
+        expect((await sandbox.logs()).filter(line => line === FIRST_OVERRUN_LINE)).toHaveLength(1);
     });
 
     test('operations of 1–1.5 s, one after the other, keep the view to about its long-run share of the host page', async ({ sandbox, page, browserName }) => {

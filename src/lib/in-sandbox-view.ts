@@ -78,17 +78,37 @@ export const VIEW_RENDER_CHARACTERS_PER_SECOND = 4 * VIEW_RENDER_MAX_LENGTH;
 export const VIEW_APPLY_MS_PER_SECOND = 200;
 
 /**
- * The most milliseconds one operation of the view may take: a flush and the rendering update that shows it, measured as
- * the time budget measures them (review round 5, M-2). An operation that took longer ends the sandbox ("the view spent
- * more than 2000 ms on one operation"): no rate can bound one operation's own cost (ADR-005), and a time budget that
- * charged only part of it let an operation of 7.5 s (Chromium's layout of 30 000 restyled elements) run again every few
- * seconds, 53% of the thread, while a budget that charges all of it would hold the view back five times as long as the
- * operation took. So the budget charges all of it, and this bounds what it charges. Two seconds: an order of magnitude
- * above what the view's budgets admit per render on every engine measured (a render of VIEW_MAX_ELEMENTS elements takes
- * 0.2–0.3 s), and the longest stall of the host page's thread that the view can cause per operation where it shares it.
- * Time in which no frame ran (a hidden or off-screen view) is never part of it (inSandboxView, the gap meter).
+ * The most milliseconds one operation of the view may take before it counts as an overrun: a flush and the rendering
+ * update that shows it, measured as the time budget measures them (review round 5, M-2). An overrun is charged in full,
+ * like every operation, and the view goes on; the second overrun within VIEW_OVERRUN_WINDOW_MS ends the sandbox ("the
+ * view spent more than 2000 ms on one operation twice within 5 minutes"; viewBudget decides). No rate can bound one
+ * operation's own cost (ADR-005), and a time budget that charged only part of it let an operation of 7.5 s (Chromium's
+ * layout of 30 000 restyled elements) run again every few seconds, 53% of the thread, while a budget that charges all of
+ * it holds the view back five times as long as the operation took. So the budget charges all of it, and this bounds how
+ * often it may charge that much. Two seconds: an order of magnitude above what the view's budgets admit per render on
+ * every engine measured (a render of VIEW_MAX_ELEMENTS elements takes 0.2–0.3 s). Time in which no frame ran (a hidden or
+ * off-screen view) is never part of it (inSandboxView, the gap meter).
  */
 export const VIEW_MAX_OPERATION_MS = 2000;
+
+/**
+ * The window of the repeated-overrun rule (backlog S72, the owner's decision of 2026-10-19; class P, a budget that counts
+ * a proxy): an overrun (an operation past VIEW_MAX_OPERATION_MS) ends the sandbox only when another overrun came at most
+ * this long before it; the window runs from the first of the two. Not a public name (src/index.ts does not export it).
+ *
+ * Why not the first overrun. The meter measures wall time on a thread the view shares with the host page, the machine's
+ * other processes, and the host page's own tasks (the gap meter, inSandboxView): a stand-in for the view's own cost, which
+ * the meter cannot see apart from what else ran. Under load the stand-in passes the limit for operations that are
+ * healthy: a large initial view on a loaded CI runner ended sandboxes now and then (review round 4, R4-2; round 5, L-1,
+ * WebKit), and WebKit's first set() of a 250 000-character textarea always took more than 2 s. One overrun says little
+ * about the guest; two within minutes, each after a debt of at least 9 s repaid, say that its operations are that slow.
+ * What it costs the host page: at most one stall past 2 s per window beyond the first, each still bounded only by the
+ * caps on what the document holds, and the long-run share (VIEW_APPLY_MS_PER_SECOND) as before, since every overrun is
+ * charged in full. Five minutes: long against the 9–10 s of debt an overrun leaves (so a guest whose operations are all
+ * slow meets the second within seconds of repaying), short against a session (so a load spike now and another one an
+ * hour later are two first overruns, not a second).
+ */
+export const VIEW_OVERRUN_WINDOW_MS = 300000;
 
 /**
  * The most URL-bearing attributes the view's body may hold (review round 4, M-2): RENDER_URL_ATTRIBUTES on the elements
@@ -1052,22 +1072,50 @@ export interface ViewRates {
     urls: number;
 }
 
+/** What bounds one operation of the view (ViewOptions has both; viewBudget's `measured`). */
+export interface ViewOperationLimits {
+    /** VIEW_MAX_OPERATION_MS */
+    maxOperation: number;
+    /** VIEW_OVERRUN_WINDOW_MS */
+    overrunWindow: number;
+}
+
+/** What one measure of an operation means (viewBudget's `measured`). */
+export type ViewVerdict = 'within' | 'uncounted' | 'overrun' | 'second-overrun';
+
 /**
  * The view's budgets, as arithmetic and nothing else (review round 1, R1-1; round 2, M-3; round 4, M-2; round 5, M-2 and
- * M-3): one token bucket per measure of ViewRates, each holding at most one second's worth, refilled at its rate as time
- * passes (`now`, ms, given by the caller: the view passes performance.now()). The view charges each bucket what it
- * measured or observed, in full, never capped: an operation of 1.5 s leaves the time budget 1.3 s in debt, which it
- * repays in 6.5 s, so the time budget bounds the view's long-run share of the thread at `time` per second (review round 5,
- * M-2: the debt was floored at 1 s, and operations of 7.5 s ran every 12.5 s). One operation's own cost is bounded by
- * VIEW_MAX_OPERATION_MS instead.
- *   charge(kind, amount, now)   takes `amount` from that bucket;
- *   owes(now)                   whether the time or the load budget is in debt: an operation waits until neither is;
- *   wait(characters, now)       the ms until neither owes and the characters budget covers `characters`.
+ * M-3; backlog S72): one token bucket per measure of ViewRates, each holding at most one second's worth, refilled at its
+ * rate as time passes (`now`, ms, given by the caller: the view passes performance.now()). The view charges each bucket
+ * what it measured or observed, in full, never capped: an operation of 1.5 s leaves the time budget 1.3 s in debt, which
+ * it repays in 6.5 s, so the time budget bounds the view's long-run share of the thread at `time` per second (review round
+ * 5, M-2: the debt was floored at 1 s, and operations of 7.5 s ran every 12.5 s). One operation's own cost is bounded by
+ * the repeated-overrun rule instead (`measured`, below).
+ *   charge(kind, amount, now)             takes `amount` from that bucket;
+ *   measured(ms, operation, now, shown)   one measure of the view's own time: charged, and its operation judged;
+ *   owes(now)                             whether the time or the load budget is in debt: an operation waits until neither is;
+ *   wait(characters, now)                 the ms until neither owes and the characters budget covers `characters`.
+ *
+ * The repeated-overrun rule (backlog S72, the owner's decision of 2026-10-19; class P, a budget that counts a proxy). `ms`
+ * is what this measure took (a flush, or the rendering update after one); `operation` the whole operation it belongs to,
+ * as measured so far (the flush, plus its rendering update), or 0 when the caller has judged that operation already; and
+ * `shown` false when the measure spans time in which the document was hidden. The verdict:
+ *   - 'uncounted': not shown. Neither charged nor counted: a hidden document's timers are throttled (Chromium runs a
+ *     background page's timers once a second), so the measure holds time in which nothing rendered;
+ *   - 'within': charged; the operation took at most `maxOperation`;
+ *   - 'overrun': charged in full, like any operation, so the next one waits until the debt is repaid (at least 9 s at
+ *     VIEW_APPLY_MS_PER_SECOND), and remembered; the view goes on;
+ *   - 'second-overrun': charged, and the last overrun's measure ended at most `overrunWindow` ms before this one's: the
+ *     view ends the sandbox.
+ * An overrun later than that is a first overrun again, and the window runs from it. So the rule is a function of the
+ * time of the last overrun alone: any two earlier ones that did not end the sandbox were more than a window apart. Why a
+ * second overrun and not the first: VIEW_OVERRUN_WINDOW_MS.
  * Stringified into the view bootstrap; self-contained.
  */
-export function viewBudget(rates: ViewRates, start: number) {
+export function viewBudget(rates: ViewRates, start: number, limits: ViewOperationLimits) {
     const held = { characters: rates.characters, time: rates.time, urls: rates.urls };
     let refilled = start;
+    let lastOverrun: number | null = null; // where the last overrun's measure ended (`now`)
     const refill = (now: number) => {
         const seconds = now > refilled ? (now - refilled) / 1000 : 0;
         held.characters = Math.min(rates.characters, held.characters + seconds * rates.characters);
@@ -1077,10 +1125,19 @@ export function viewBudget(rates: ViewRates, start: number) {
     };
     // ms until `owed` units are repaid at `rate` per second
     const repaid = (owed: number, rate: number) => (owed > 0 ? Math.ceil((owed / rate) * 1000) : 0);
+    const charge = (kind: keyof ViewRates, amount: number, now: number) => {
+        refill(now);
+        held[kind] -= amount;
+    };
     return {
-        charge(kind: keyof ViewRates, amount: number, now: number) {
-            refill(now);
-            held[kind] -= amount;
+        charge,
+        measured(ms: number, operation: number, now: number, shown: boolean): ViewVerdict {
+            if (!shown) return 'uncounted';
+            charge('time', ms, now);
+            if (!(operation > limits.maxOperation)) return 'within';
+            const second = lastOverrun !== null && now - lastOverrun <= limits.overrunWindow;
+            if (!second) lastOverrun = now;
+            return second ? 'second-overrun' : 'overrun';
         },
         owes(now: number): boolean {
             refill(now);
@@ -1106,6 +1163,8 @@ export interface ViewOptions {
     rates: ViewRates;
     /** VIEW_MAX_OPERATION_MS */
     maxOperation: number;
+    /** VIEW_OVERRUN_WINDOW_MS */
+    overrunWindow: number;
     /** VIEW_MAX_DISTINCT_URLS */
     maxDistinctUrls: number;
     violationLimit: number;
@@ -1137,7 +1196,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const runs = (g.__sandboxViewRuns || 0) + 1;
     g.__sandboxViewRuns = runs;
     if (runs > 1) return;
-    const budget = makeBudget(options.rates, performance.now()); // the view's budgets (viewBudget; the flush, below)
+    const budget = makeBudget(options.rates, performance.now(), options); // the view's budgets (viewBudget; the flush, below)
 
     // DOM access through the prototypes' own methods and getters, captured now, before any rendered markup
     // exists: Document and HTMLFormElement expose named elements as properties that override built-ins
@@ -1803,10 +1862,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // holds it back. Each is charged in full, however long it took (review round 5, M-2; viewBudget): the debt was floored
     // at one second of the view's time, so an operation of 7.5 s (Chromium's layout of 30 000 restyled elements) was
     // charged 1.2 s and ran again every 12.5 s, 53% of the thread, against a budget documented as a long-run share. One
-    // operation's own cost is not something a rate can bound (ADR-005); VIEW_MAX_OPERATION_MS bounds it instead: an
-    // operation, a flush and the rendering update measured after it, that took longer ends the sandbox (`overrun`).
-    // So no operation is charged much more than VIEW_MAX_OPERATION_MS, and none holds the view back for much longer than
-    // that repaid at VIEW_APPLY_MS_PER_SECOND (10 s).
+    // operation's own cost is not something a rate can bound (ADR-005); the repeated-overrun rule bounds how often it
+    // may be large instead (backlog S72; `judge`, below): an operation, a flush and the rendering update measured after
+    // it, that took longer than VIEW_MAX_OPERATION_MS is an overrun, charged in full like any other (one of 9 s holds the
+    // view back 45 s), and the second overrun within VIEW_OVERRUN_WINDOW_MS ends the sandbox. So past the first, at most
+    // one operation per window costs the thread more than VIEW_MAX_OPERATION_MS, and the long-run share is the rate's.
     //
     // The gap meter (review round 3, C-2 and M-5). The rendering update that shows a flush runs after the animation-frame
     // callbacks of the frame that follows it, and the first task after that frame's callbacks runs only once the update
@@ -1827,15 +1887,24 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // meanwhile, made the next render wait 18.3 s (C-2); and one frame's length went uncharged per flush (M-5). Where the
     // view shares the host page's renderer (an in-process frame), the update measured is the whole frame's, and a task of
     // the host page's that the event loop runs before the meter's task is in it too: both are charged to the view and
-    // count towards its operation, which slows the guest, and ends it only past VIEW_MAX_OPERATION_MS.
+    // count towards its operation, which slows the guest, and makes it an overrun only past VIEW_MAX_OPERATION_MS: one
+    // reason why one overrun does not end the sandbox (VIEW_OVERRUN_WINDOW_MS).
     type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: { value?: string; checked?: boolean; focus?: boolean } | null };
     let pending: Job[] = [];
     let scheduled = false;
-    // An operation past VIEW_MAX_OPERATION_MS (review round 5, M-2): the view says so on its port, once, and applies
-    // nothing more; the host ends the sandbox with the reason.
+    // What a measure's verdict does (viewBudget, the repeated-overrun rule; backlog S72, class P). An overrun that is not
+    // the second in its window: the view goes on, its debt holding the next operation back, and says so on its port
+    // (VIEW_FIRST_OVERRUN), for the host's one warning per environment (host.ts). The frame needs no budget of its own: one
+    // overrun leaves at least 9 s of debt, so at most one is posted per 9 s. The second within the window: the view says
+    // so on its port (VIEW_OVERRUN), once, and applies nothing more; the host ends the sandbox with the reason.
     let overran = false;
-    const overrun = (ms: number) => {
-        if (overran || ms <= options.maxOperation) return;
+    const judge = (verdict: ViewVerdict) => {
+        if (overran) return;
+        if (verdict === 'overrun') {
+            if (viewPort) viewPort.postMessage({ type: 'VIEW_FIRST_OVERRUN' });
+            return;
+        }
+        if (verdict !== 'second-overrun') return;
         overran = true;
         pending = [];
         if (viewPort) viewPort.postMessage({ type: 'VIEW_OVERRUN' });
@@ -1861,10 +1930,10 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             meter = IDLE;
             const now = performance.now();
             const rendering = now - gapStart - inGap;
-            if (visibility === visibilityChanges && !call(hiddenOf, document, [])) {
-                budget.charge('time', rendering, now);
-                overrun(flushed + rendering);
-            }
+            // the operation is the flush and this update; one whose flush alone overran was judged then (settleOperations),
+            // and one operation is one overrun, so it is charged here and not judged again
+            const shown = visibility === visibilityChanges && !call(hiddenOf, document, []);
+            judge(budget.measured(rendering, flushed > options.maxOperation ? 0 : flushed + rendering, now, shown));
             if (unmeasured) measureRendering(false, 0); // a flush ran after the measure started: the next frame renders it
         }, 0);
     };
@@ -1905,8 +1974,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         layout();
         const now = performance.now();
         const spent = now - started;
-        budget.charge('time', spent, now); // what the flush took (M-3)
-        overrun(spent);
+        // what the flush took (M-3), judged as soon as it is known: a flush past the limit is an overrun whether or not
+        // its rendering is ever measured (a document hidden right after it)
+        judge(budget.measured(spent, spent, now, true));
         measureRendering(inFrame, spent); // and what showing it takes
     };
     const flush = (inFrame: boolean) => {
@@ -2607,6 +2677,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     maxTarget: VIEW_TARGET_MAX_LENGTH,
     rates: { characters: VIEW_RENDER_CHARACTERS_PER_SECOND, time: VIEW_APPLY_MS_PER_SECOND, urls: VIEW_URLS_PER_SECOND },
     maxOperation: VIEW_MAX_OPERATION_MS,
+    overrunWindow: VIEW_OVERRUN_WINDOW_MS,
     maxDistinctUrls: VIEW_MAX_DISTINCT_URLS,
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
     events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },

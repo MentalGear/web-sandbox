@@ -173,7 +173,7 @@ const own: EgressRow[] = [
 
     // ---- the library's port, the host's end
     { realm: 'port', surface: 'message', modes: ['strict', 'worker', 'cooperative'], owner: 'host', handling: ['relayed', 'budgeted', 'capped'],
-        bound: 'the logic port: only the bootstrap posts on it, through its chokepoints: log lines (LOG_EVENTS_PER_SECOND), calls (callLimits), violations (VIOLATION_EVENT_LIMIT), heights (AUTO_RESIZE_MAX_UPDATES_PER_SECOND), PONG, the budget of uncaught errors; strict mode\'s view port: only the view posts on it, its own frames, bounded in the view (guestText, VIOLATION_EVENT_LIMIT per directive, heights)', test: 'test/unit/review-round-1.test.ts; test/e2e/review-round-4.spec.ts (M-6, M-5)' },
+        bound: 'the logic port: only the bootstrap posts on it, through its chokepoints: log lines (LOG_EVENTS_PER_SECOND), calls (callLimits), violations (VIOLATION_EVENT_LIMIT), heights (AUTO_RESIZE_MAX_UPDATES_PER_SECOND), PONG, the budget of uncaught errors; strict mode\'s view port: only the view posts on it, its own frames, bounded in the view (guestText, VIOLATION_EVENT_LIMIT per directive, heights, a first overrun\'s notice at most once per 9 s of its debt and one host line per environment)', test: 'test/unit/review-round-1.test.ts; test/e2e/review-round-4.spec.ts (M-6, M-5)' },
     { realm: 'port', surface: 'messageerror', modes: ['strict', 'worker', 'cooperative'], owner: 'host', handling: ['unreachable'],
         bound: 'only the bootstrap posts on the port, frames it built from clones, which deserialize', test: 'test/e2e/egress.spec.ts' },
 
@@ -195,7 +195,7 @@ const own: EgressRow[] = [
     { realm: 'view', surface: 'resource loads', modes: ['strict'], owner: 'view', handling: ['budgeted'],
         bound: 'VIEW_MAX_URLS and VIEW_URLS_PER_SECOND', test: 'test/e2e/review-round-4.spec.ts (M-2)' },
     { realm: 'view', surface: 'rendering', modes: ['strict'], owner: 'view', handling: ['budgeted'],
-        bound: 'the view\'s budgets: VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_ELEMENTS, VIEW_MAX_CHARACTERS', test: 'test/e2e/view-budget.spec.ts' },
+        bound: 'the view\'s budgets: VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_ELEMENTS, VIEW_MAX_CHARACTERS; one operation: the second past VIEW_MAX_OPERATION_MS within VIEW_OVERRUN_WINDOW_MS ends the sandbox (S72)', test: 'test/e2e/view-budget.spec.ts; test/e2e/view-bound.spec.ts (b)' },
     { realm: 'view', surface: 'click', modes: ['strict'], owner: 'view', handling: ['cancelled', 'relayed'],
         bound: 'a link\'s navigation cancelled; forwarded to sandboxView.on within VIEW_EVENT_LIMITS', test: 'test/e2e/strict-events.spec.ts' },
     { realm: 'view', surface: 'auxclick', modes: ['strict'], owner: 'view', handling: ['cancelled'],
