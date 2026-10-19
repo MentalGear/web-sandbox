@@ -103,7 +103,7 @@ describe('the details the element dispatches are frozen, every one', () => {
         document.body.appendChild(el);
         el.registerFiles({ 'a.txt': 'a' });
         el.setConfig({ mode: 'strict', guestWrites: true });
-        el._enterState('ready');
+        el._step({ t: 'viewReady', gen: el._lc.gen, height: null, stillStyleRefused: false }); // the view's check-in: 'ready'
         el._dispatchLog({ level: 'log', args: [{ a: [{ b: 1 }] }] }, 'guest');
         el._dispatchViolation({ type: 'VIOLATION', directive: 'img-src', blockedURI: 'https://x.example/' }, 'view');
         await el._handleGuestWrite(el._guestWrites, { change: 'write', path: 'w.txt', entry: 'w' });

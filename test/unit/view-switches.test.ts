@@ -214,7 +214,7 @@ describe('the configuration: allowAnimations and allowAutoplay', () => {
         for (const [name, other] of [['allowAnimations', true], ['allowAutoplay', false]] as const) {
             const config = { mode: 'strict', [name]: !other };
             el.setConfig(config);
-            el._state = 'ready'; // as after the view's check-in
+            el._lc = { ...el._lc, state: 'ready' }; // as after the view's check-in
             const frame = el.shadowRoot.querySelector('iframe');
             el.setConfig(structuredClone(config));
             expect(el.shadowRoot.querySelector('iframe'), `${name}: the same`).toBe(frame);
@@ -230,7 +230,7 @@ describe('the configuration: allowAnimations and allowAutoplay', () => {
         el._viewPort = port1;
         const warn = vi.mocked(console.warn);
         el._onViewMessage(port1, { type: 'VIEW_READY', width: 400, height: 300, stillStyleRefused: true });
-        el._state = 'loading';
+        el._lc = { ...el._lc, state: 'loading' };
         el._onViewMessage(port1, { type: 'VIEW_READY', width: 400, height: 300, stillStyleRefused: true });
         const said = warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('stops animations'));
         expect(said).toEqual([`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or '${scriptHashSource(VIEW_STILL_STYLE)}' in style-src (see docs/API.md#host-page-policy).`]);

@@ -123,8 +123,16 @@ describe('lifecycle: discarded by the next build and on removal, kept through a 
 
     it.each([
         ['terminate()', async (el: any) => el.terminate()],
-        ['the watchdog', async (el: any) => { el._terminate('the guest stopped responding (watchdog)'); }],
-        ['the execution timeout', async (el: any) => { el._onExecutionTimeout(1); }],
+        // the watchdog itself, armed on the environment's port and left unanswered
+        ['the watchdog', async (el: any) => {
+            vi.useFakeTimers();
+            el._config.watchdogTimeout = 100;
+            el._startWatchdog({ postMessage() {} });
+            vi.advanceTimersByTime(1000);
+            vi.useRealTimers();
+        }],
+        // the probe's expiry, for the standing environment (a termination the element starts carries its generation)
+        ['the execution timeout', async (el: any) => { el._onExecutionTimeout(el._lc.gen); }],
     ])('%s keeps it: listable and committable afterwards, and the commit reaches the store', async (_label, act) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const { el, send, answers, close } = await withWrite();

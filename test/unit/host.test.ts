@@ -219,9 +219,9 @@ describe('the guest bootstrap always runs where scripts are allowed (backlog S13
     for (const mode of ['cooperative', 'worker']) {
       const el = await mount({ mode, capabilities: ['allow-scripts'], origins: { scripts: ['https://cdn.example'] } });
       expect(frames(el).policy, mode).toMatch(/script-src 'unsafe-inline'[ ;]/);
-      expect(el._expectAnnouncement, mode).toBe(true);
+      expect(el._lc.build.announces, mode).toBe(true);
       el.setConfig({ mode, capabilities: [] });
-      expect(el._expectAnnouncement, mode).toBe(mode === 'worker'); // worker mode always adds allow-scripts
+      expect(el._lc.build.announces, mode).toBe(mode === 'worker'); // worker mode always adds allow-scripts
       el.remove();
     }
   });
