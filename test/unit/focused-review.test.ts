@@ -329,13 +329,14 @@ describe("F5: 'unsafe-eval' is written in one place, the generator, and only wit
 describe('F6: a refused config is never stored', () => {
     it("strict mode with origins: null is refused before anything is stored: the previous config stays", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'worker', html: 'previous', workerExecutionTimeout: 7, origins: { images: ['https://kept.example'] } });
+        // (worker mode ignores html, which the schema stores as its default there: watchdogTimeout marks the previous config)
+        const el = await mount({ mode: 'worker', watchdogTimeout: 9, workerExecutionTimeout: 7, origins: { images: ['https://kept.example'] } });
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         el.setConfig({ mode: 'strict', origins: null });
         await new Promise(resolve => setTimeout(resolve, 0)); // a build's 'terminated' comes in a task (review round 1, R3-2)
         expect(reasons).toEqual(['the configuration could not be used (TypeError)']);
-        expect([el._config.mode, el._config.html, el._config.workerExecutionTimeout, el._origins.images]).toEqual(['worker', 'previous', 7, ['https://kept.example']]);
+        expect([el._config.mode, el._config.watchdogTimeout, el._config.workerExecutionTimeout, el._origins.images]).toEqual(['worker', 9, 7, ['https://kept.example']]);
     });
 
     it('origins that is not an object, or a kind that is not a list, is refused in every mode, before a build', async () => {
