@@ -197,11 +197,21 @@ describe('C-1: every RPC frame is built from bounded parts at the sender, and ch
         for (const path of files('src')) {
             const tokens = tokenize(readFileSync(path, 'utf8'));
             const builders = path === join('src', 'lib', 'rpc.ts') ? BUILDERS.map(name => bodyOf(tokens, name)) : [];
+            // The branded frame type (rpc.ts, RpcFrame; backlog S61.3) names the literals as types, which make no frame:
+            // the tokens from `type RpcFrame =` to its end, the one type declaration that may.
+            const typeStart = tokens.findIndex((token, i) => token.text === 'RpcFrame' && tokens[i - 1]?.kind === SyntaxKind.TypeKeyword);
+            let typeEnd = -1;
+            for (let i = typeStart + 1, depth = 0; typeStart >= 0 && i < tokens.length; i++) {
+                if (tokens[i]!.kind === SyntaxKind.OpenBraceToken) depth++;
+                if (tokens[i]!.kind === SyntaxKind.CloseBraceToken) depth--;
+                if (tokens[i]!.kind === SyntaxKind.SemicolonToken && depth === 0) { typeEnd = i; break; }
+            }
             for (let i = 0; i < tokens.length; i++) {
                 const token = tokens[i]!;
                 if (token.kind !== SyntaxKind.StringLiteral || !/^['"]RPC_RE[QS]['"]$/.test(token.text)) continue;
                 const before = tokens[i - 1]?.kind;
                 if (before === SyntaxKind.EqualsEqualsEqualsToken || before === SyntaxKind.ExclamationEqualsEqualsToken) continue;
+                if (path === join('src', 'lib', 'rpc.ts') && i > typeStart && i < typeEnd) continue;
                 if (builders.some(range => range !== null && i > range[0] && i < range[1])) {
                     built++;
                     continue;

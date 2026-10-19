@@ -81,7 +81,23 @@ export type RpcMethod = (...args: any[]) => unknown;
 // L-2: the host's send, when a getter in the arguments ended it while they were copied). The call is refused at once
 // with TERMINATED and that text, so no call is ever left pending on a transport that will not answer it. Any other
 // return value means the frame was posted (or queued for its environment's port).
-export type RpcSend = (frame: unknown, transfer?: Transferable[]) => unknown;
+// It takes an RpcFrame only, so inside createBroker nothing but a builder's frame can be posted (backlog S61.3).
+export type RpcSend = (frame: RpcFrame, transfer?: Transferable[]) => unknown;
+
+declare const rpcFrameBrand: unique symbol;
+/**
+ * One RPC frame, as the builders inside createBroker make it (requestFrame, resultFrame, refusalFrame; review round 3,
+ * C-1; class P, a budget that counts a proxy: part of a frame was measured, and the rest crossed whole). The brand is a
+ * type only, nothing at run time: no value of this type can be written as an object literal, so the type checker refuses
+ * any other frame where a broker posts (RpcSend), and a source scan (test/unit/structural.test.ts) keeps the one cast
+ * that mints it inside those three builders. Each builder takes parts already bounded (see the header), and cuts the
+ * error text itself.
+ */
+export type RpcFrame = (
+    | { readonly type: 'RPC_REQ'; readonly id: number; readonly method: string; readonly args: unknown[] }
+    | { readonly type: 'RPC_RES'; readonly id: number | string; readonly ok: true; readonly value: unknown }
+    | { readonly type: 'RPC_RES'; readonly id: number | string; readonly ok: false; readonly error: string; readonly code: string }
+) & { readonly [rpcFrameBrand]: true };
 
 /**
  * Why a call was refused. The set is closed and the strings are wire protocol (pinned by a test).
@@ -366,14 +382,15 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // ---- The one builder of RPC frames (C-1; see the header). Each takes parts already bounded: `id` is our counter or
     // passed isId, `method` was checked against MAX_NAME_LENGTH by request(), `args` and `value` are snapshots whose frame
     // the caller measures before posting it, `code` is one of our constants; `error` is cut here.
-    function requestFrame(id: number, method: string, args: unknown[]) {
-        return { type: 'RPC_REQ', id, method, args };
+    // Each returns the brand (RpcFrame), cast here and nowhere else.
+    function requestFrame(id: number, method: string, args: unknown[]): RpcFrame {
+        return { type: 'RPC_REQ', id, method, args } as RpcFrame;
     }
-    function resultFrame(id: RpcId, value: unknown) {
-        return { type: 'RPC_RES', id, ok: true, value };
+    function resultFrame(id: RpcId, value: unknown): RpcFrame {
+        return { type: 'RPC_RES', id, ok: true, value } as RpcFrame;
     }
-    function refusalFrame(id: RpcId, error: unknown, code: string) {
-        return { type: 'RPC_RES', id, ok: false, error: cutText(error), code };
+    function refusalFrame(id: RpcId, error: unknown, code: string): RpcFrame {
+        return { type: 'RPC_RES', id, ok: false, error: cutText(error), code } as RpcFrame;
     }
 
     // Methods WE expose. Using a Map (not a plain object) is the core of the hardening — see handleRequest.

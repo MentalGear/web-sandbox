@@ -84,6 +84,8 @@ Round 5 (S63) found the recurring classes behind the findings ([research 18](res
 its fixes are made as slices of those classes (S64), followed by S65–S68. S65 is done: the element runs on one lifecycle
 reducer, and its model-based suite found LM-1 (S71) and LM-2, both fixed by construction.
 The owner's decision on the 2 s operation limit, the repeated-overrun rule, is S72. S73 closes the M-3 burst behind a slow server that PR #47's CI found.
+S61 is done: research 17's properties, the structural checks and the budgets table run in CI; the two lows they found
+are fixed.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1551,27 +1553,55 @@ Once the review rounds end: a proper clean-up of the repository and the docs:
 - research notes indexed;
 - the backlog compacted.
 
-Then independent adversarial reviews of the cleaned-up repository and docs by sub-agents of other model families (Sonnet and Haiku), with their findings verified and fixed the same way as the review rounds.
+The independent adversarial reviews by sub-agents of other model families (Sonnet and Haiku) are folded into the
+final review board (S74, owner, 2026-10-19), which reviews the cleaned-up repository and docs.
 
-### S61 · Property, model-based and structural tests (from research 17) — ⏸️ **later** (owner)
+### S61 · Property, model-based and structural tests (from research 17) — ✅ **done** (2026-10-19)
 
 The tests [research 17](research/17_formal_methods/README.md) found would have caught most of rounds 1–3's findings in
-our own logic. Estimated about two weeks of work; about 20–60 s more unit CI, plus a nightly job.
-1. **Property tests** (fast-check as a dev dependency):
-   - the sliding-window limiter, porting research 17's properties, and refusing a weight that is not a finite number ≥ 0;
-   - the guest's copy of the rule against the host's (a differential test);
-   - the view's time-budget arithmetic moved into a pure function and tested.
-2. **A permanent model-based lifecycle suite** (`fc.commands`), from reviewer L's reference model (rounds 2 and 3; not in
-   the repo today):
-   - re-entrant listeners, argument getters and a worker that fails to start;
-   - round 2's "What held" invariants;
-   - about 200 sequences per unit run, thousands nightly, and a Playwright subset per engine.
-3. **Structural checks:**
-   - a branded `RpcFrame` type and a source scan that only the builders make frames and that every string the guest sends is cut;
-   - the size measure against the real `structuredClone` (`fc.anything()`);
-   - a differential test of the console relay against the measure.
-4. **A budgets table** in the docs: every channel against its count, byte and time bound, and the test for each, so that
-   a bound is written down before a review has to find it missing.
+our own logic. fast-check is a dev dependency; the four new unit files take about 2 s of test time (3.4 s run alone).
+1. ✅ **Property tests:**
+   - `test/unit/rate-limit.prop.test.ts`: research 17's limiter properties against the real `rate-limit.ts`, with its two
+     preconditions (time never goes back; the delay never shrinks) kept as their known counterexamples;
+   - **the weight rule (class C):** a weight that is not a finite number ≥ 0 is refused by both sides with one rule,
+     `isWeight` in `rate-limit.ts`, spelled out in the guest's copy (a test compares the texts). The host admitted NaN,
+     which the guest refused, and both admitted negative weights; latent, since every caller passes a count or a measure;
+   - the guest's copy of the rule, lifted out of the built bootstrap, against the host's: a permanent differential
+     property over any weight, for `admit`, `fits` and the call budget's fits-then-spend;
+   - `viewBudget` was already pure (S72, S73) and its pieces tested on fixed and seeded cases; `test/unit/view-budget.prop.test.ts`
+     adds API.md's long-run bound (a) as fast-check properties: the time share over a run and over any stretch, and the
+     loads charged over any stretch, for operations of any cost, overruns included. Under mutation they find round 5's
+     M-2 (the debt floored at 1 s).
+2. ✅ **The model-based lifecycle suite:** S65.
+3. ✅ **Structural checks** (`test/unit/structural.test.ts`). The frame builders and their literal scan existed (round 3,
+   `test/unit/review-round-3.test.ts`); added:
+   - a branded `RpcFrame` (`rpc.ts`): `RpcSend` takes only it, the builders are the only cast to it, and a scan keeps
+     that cast there;
+   - a scan of every frame literal of every function the library stringifies into a realm (and a check that the list of
+     those functions is complete), against one table of each field and what bounds it: cut, checked, measured, constant;
+   - the size measure against the real `structuredClone` (fast-check's `anything()`, every kind clone takes): finite,
+     equal at both ends, at least what V8's serializer writes, an early stop that changes nothing, and its buffers;
+   - the console relay against the measure and against the host's reading of a line (`toLogDetail`).
+4. ✅ **A budgets table:** [API.md, Budgets](API.md#budgets), generated from `CHANNEL_BUDGETS` next to the egress
+   table (`src/lib/egress.ts`; S64), with a cost column where CONTRIBUTING's availability rule puts documented host-page
+   costs, the view's linking its own section (S68). `test/unit/budgets.test.ts` keeps the table and the code in step,
+   resolves every constant to its value, checks every test named exists, and fails on a surface of the egress table that
+   relays, budgets or caps and is no channel's.
+
+**Found, and fixed** (the owner's request, 2026-10-19, after the report):
+- **The violation reports' strings were posted uncut (class E-cpu, low).** The bootstrap and the view posted a report's
+  `directive`, `blockedURI` and `sourceFile` as the browser gave them, and the host cut them to 2048 characters only once
+  it had deserialized them. Measured (`test/e2e/violation-strings.spec.ts`): a 100 000-character https URL crossed whole
+  on all three engines (cooperative mode, the worker in Chromium and Firefox, the view everywhere); every engine reports
+  a `data:` or `blob:` URL by its scheme alone. Now both cut at `VIOLATION_MAX_STRING` before posting, with one helper
+  each (`cutAt` in the bootstrap, `cutText` in the view), each field read once; the host still cuts on receipt. The
+  scan has no open row, and fails on one.
+- **A relay placeholder could pass what was left of a line's budget (class P, low).** The relay charged the placeholder
+  it wrote for an argument past the budget without checking that it fit, so with less than its size left the line
+  crossed past `LOG_MAX_BYTES` as the host measures it, and the host dropped the placeholder and warned wrongly. Now
+  room for one tail is kept back from the start, a placeholder must fit what is left besides it, and when it does not
+  the line ends with the tail, which says how many arguments it dropped. The fast-check property, with the
+  counterexample, is the test: the host drops nothing of any line the relay posts.
 
 ### S62 · Review round 4: the worker's only way out, values read once, the view's URL budget, build completion after load — ✅ **done**
 
@@ -1850,9 +1880,73 @@ Measured (2026-10-19, headless Playwright on the shared 4-core VM; Chromium, Fir
 - `review-round-2.spec.ts` (M-3), a 250,000-character textarea `set()` four times a second: the sandbox stays `ready`
   on all three engines (WebKit's first `set()` ended it before).
 
+### S76 · Self-explaining code, generated reference docs: review the current state — ⏸️ **before S60** (owner, 2026-10-19)
+
+The owner's direction: code that mostly explains itself, with strong types and comments where they are needed, and the
+reference docs generated from it. A review first (reported to the owner before anything changes), against five points:
+1. **Types that carry the rules.** Where an invariant can be a type, the wrong code does not compile: what is typed
+   today (typed origins, the branded `RpcFrame`, the reducer's input and effect unions) and what could be (readonly
+   state, branded generations, exhaustive `never` checks, option types narrower than `unknown`).
+2. **TSDoc on the public surface, the reference generated from it.** Measure the coverage of `src/index.ts`'s exports.
+   Evaluate api-extractor, which generates the reference and a checked-in public-API report that fails CI on an
+   unreviewed change (the owner's rule that public names need approval, by construction), against TypeDoc.
+3. **Data in code, docs rendered from it**, each with a doc-sync test: `CONFIG_SCHEMA`, `CHANNEL_BUDGETS` and the egress
+   table do this already; list the docs that still restate code by hand (limits, reasons, events, host lines).
+4. **Comments that say why, briefly.** Many comments tell a fix's history (the round, the measurement, the commit).
+   Measure it, and propose a convention: the current reason plus a link to the finding or ADR, with history kept in the
+   review reports and ADRs.
+5. **Handwritten docs only where code cannot explain:** the threat and security model, ADRs, research, the README's
+   tutorial. Which parts of API.md become generated.
+
+Output: a report with measurements and a migration plan in PR-sized steps, for the owner. S60's clean-up applies its
+outcome.
+
+**The plan (owner, 2026-10-19).** The code and the docs state the current state only; history is archived, and reached
+on demand through stable IDs. Four layers, each linking to the one below:
+- **Code:** types, TSDoc and short comments. A comment says what holds now and why, plus a stable ID to the decision
+  or finding (`ADR-005#…`, `R5:M-2`). Measured numbers stay only where they justify a constant today.
+- **Reference:** generated. api-extractor and api-documenter for the public surface, with a checked-in API report
+  that fails CI on an unreviewed public change. Tables rendered from code for config, limits, budgets, reasons and
+  events.
+- **Current docs:** handwritten prose, with generated regions. README, a new one-page ARCHITECTURE.md, the security
+  and threat model, and ADRs that state each decision as it stands.
+- **Archive:** `docs/archive/` holds review reports, finished research, done backlog items and superseded ADR text.
+  Git history stays the final archive.
+
+Steps, one PR each, merged when green:
+0. **Measure.** This review, reported to the owner.
+1. **Conventions and guards.** A CONTRIBUTING section on comments and docs, with the ID scheme. A link check: every ID
+   resolves. A history-pattern ratchet: SHAs, "before", "at round N" and the like; the count may only go down.
+2. **Generated docs.** A small `bun run docs:gen`, using the TypeScript compiler API, rewrites only
+   `<!-- generated:begin … -->` regions. It renders:
+   - realms and the code each runs;
+   - channels and frames, from the frame and egress tables and `CHANNEL_BUDGETS`;
+   - the lifecycle's states, inputs and effects from the reducer's types, and a Mermaid state diagram from exploring
+     the pure `reduce`;
+   - config, limits and reasons;
+   - the module map.
+
+   CI regenerates the docs and fails on any difference, so every structural change shows in its PR's diff. Handwritten
+   sections declare what they describe (`<!-- describes: channel:view-port, input:frameLoad -->`), with a hash of
+   those items' semantic signature only (names, types, values, transitions; never formatting). When an item changes,
+   the sections that describe it fail CI until they are reviewed (`docs:gen --accept`). If the markers prove noisy,
+   they are dropped without losing the rest. ARCHITECTURE.md is the first document built this way.
+3. **The archive.** Move the reports and research, and compact the backlog to open items. The research reproductions
+   stay runnable (Playwright's `testMatch`), and the link check keeps every link.
+4. **ADRs.** Each states its current decision; its amendment trail moves to the archive, linked.
+5. **Code comments, file by file**, largest first: `host.ts`, `in-sandbox-view.ts`, `in-sandbox-script.ts`, then
+   `lib/`. Each comment is rewritten to the current reason plus a link, and any history worth keeping moves into the
+   matching archived report. The ratchet keeps history out.
+6. **The public API.** TSDoc on every export and the api-extractor report. API.md's reference parts become
+   generated; its guide parts stay handwritten.
+
+S60's remaining clean-up (stale files and branches) follows, then the review board (S74), which reviews the current
+state.
+
 ### S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
 
-Once S65, the rest of S61 and S60 are merged: an independent adversarial review board of the whole repository. The
+Once S65, the rest of S61, S76 and S60 are merged: an independent adversarial review board of the whole repository and its
+docs, with reviewers from several model families (Opus, Sonnet and Haiku; S60's independent reviews are folded in). The
 board clears after **two consecutive passes with no finding of high severity or above** (a stricter severity floor than
 the review rounds' medium, as the owner set it). Findings are fixed as before: by class, each naming its class and
 extending its chokepoint and structural test (CONTRIBUTING.md, "Fixing a finding"), after the owner has seen them.
