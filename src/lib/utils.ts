@@ -8,6 +8,15 @@
 // The one helper for every write of a key that came from a config, in the merge and in parseOrigins
 // (focused review 2026-10-14, F4: a policy step of the time assigned `output[name] = values`, so a configured
 // "__proto__" directive became the prototype of its output).
+/**
+ * Compiles to `true` only when `List` names every member of `Union`: with `satisfies readonly Union[]` on the list,
+ * which keeps it from naming anything else, a closed set written as a value is complete by construction.
+ */
+export type Complete<Union, List extends readonly unknown[]> = [Exclude<Union, List[number]>] extends [never] ? true : { missing: Exclude<Union, List[number]> };
+
+/** A compile-time assertion: `Holds<Complete<…>>` fails to compile, naming what is missing, unless it is true. */
+export type Holds<T extends true> = T;
+
 export const defineData = (target: object, key: string, value: unknown) =>
     Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
 

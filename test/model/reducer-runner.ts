@@ -27,7 +27,7 @@
  * same `state`, the same pending build termination, no 'terminated' still being dispatched, and the generation changed
  * exactly when the model's did (the element counts two teardowns for a refused build, the model one).
  */
-import { isStale, reduce, step, type BuildContext, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice, INITIAL_LIFECYCLE } from '../../src/lib/lifecycle';
+import { admits, isStale, reduce, step, type BuildContext, type Generation, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice, INITIAL_LIFECYCLE } from '../../src/lib/lifecycle';
 import { defaultConfig, normaliseConfig, unknownModeReason, type StoredConfig } from '../../src/lib/config-schema';
 import { isJavaScriptType, mimeTypeFor } from '../../src/lib/files';
 import { CONFIG_REFUSED, DEFAULT_TERMINATE_REASON, LifecycleModel, type Cmd, type ConfigDesc, type Sequence } from './lifecycle-model';
@@ -79,7 +79,7 @@ interface Task {
 
 interface Frame {
     id: number;
-    gen: number; // the generation it was built in
+    gen: Generation; // the generation it was built in
     silent: boolean;
     connected: boolean;
     onload: (() => void) | null;
@@ -176,6 +176,8 @@ export class FakeElement implements LifecycleHost {
     step(input: LcInput) {
         const before = this.lc;
         this.count(`input:${input.t}`);
+        // the fake element delivers only what the reducer's declaration admits (LC_INPUTS); reduce throws on anything else
+        if (!isStale(before, input) && !admits(before, input)) throw new Error(`the fake element stepped ${input.t} in ${before.state}, which LC_INPUTS does not admit`);
         if (this.options.onStep) this.options.onStep(before, input, reduce(before, input));
         step(this, input);
         if (isStale(before, input)) this.count(`stale:${input.t}`);

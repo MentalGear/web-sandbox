@@ -75,7 +75,7 @@ export interface EgressRow {
 
 /**
  * Most uncaught errors and unhandled rejections, and rejections handled later (`rejectionhandled`), in any one-second
- * window, per environment, in worker and strict mode; past it the sandbox ends (UNCAUGHT_BUDGET_REASON, host.ts).
+ * window, per environment, in worker and strict mode; past it the sandbox ends (the reason `uncaughtBudget`, reasons.ts).
  * Measured (test/e2e/review-round-5.spec.ts, "N-1"): Firefox reports every unhandled rejection of a worker to the host
  * page's thread, cancelled or not, and a flood of small ones (about 25 000 a second) kept it 99% busy; 1000 cancelled
  * rejections a second left it idle, and 1000 a second each handled a tick later, 4–7% busy. Chromium's cost went with
@@ -404,8 +404,8 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
 ] as ChannelBudget[]).map(row => Object.freeze(row)));
 
 /**
- * CHANNEL_BUDGETS as docs/API.md's table. `values` gives each `{NAME}` its value (test/unit/budgets.test.ts gives the
- * code's); a name it does not give throws.
+ * CHANNEL_BUDGETS as docs/API.md's table. `values` gives each `{NAME}` its value: the limits registry's (limits.ts,
+ * limitValues), whose keys are the names a cell may use; a name it does not give throws.
  */
 export function budgetsTable(values: Readonly<Record<string, number>>): string {
     const cell = (text: string) => text.replace(/\{([A-Za-z_.]+)\}/g, (_, name: string) => {

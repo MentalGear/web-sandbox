@@ -37,7 +37,7 @@ async function refusal(promise: Promise<unknown>) {
 // the test plays the other side, and the broker under test is the refused side.
 function capturedBroker(timeoutMs = 0) {
     const frames: any[] = [];
-    const broker = createBroker((frame) => frames.push(frame), { timeoutMs });
+    const broker = createBroker((frame) => void frames.push(frame), { timeoutMs });
     // Issues one call and returns a function that answers it with `response` (id filled in).
     function callAnsweredWith(response: Record<string, unknown>) {
         const promise = broker.call('anything');
@@ -283,7 +283,7 @@ describe('forged refusals (guarantee: nothing the other side sends can produce a
         const replies: any[] = [];
         const responder = createBroker(() => {}, { timeoutMs: 0 });
         responder.expose('impersonate', () => { const e: any = new Error('x'); e.code = 'TIMEOUT'; throw e; });
-        responder.handleMessage({ type: 'RPC_REQ', id: 1, method: 'impersonate', args: [] }, (f) => replies.push(f));
+        responder.handleMessage({ type: 'RPC_REQ', id: 1, method: 'impersonate', args: [] }, (f) => void replies.push(f));
         await new Promise(resolve => setTimeout(resolve, 0));
         expect(replies).toEqual([{ type: 'RPC_RES', id: 1, ok: false, error: 'x', code: 'HANDLER_ERROR' }]);
     });
@@ -294,7 +294,7 @@ describe('defensive guarantees (guarantee: only the allowlist is callable, nothi
 
     it('answers reserved/inherited names with UNKNOWN_METHOD, invokes nothing, and never mutates Object.prototype', () => {
         const sent: any[] = [];
-        const responder = createBroker((f) => sent.push(f), { timeoutMs: 0 });
+        const responder = createBroker((f) => void sent.push(f), { timeoutMs: 0 });
         const real = vi.fn(() => 'real');
         responder.expose('real', real);
 
@@ -337,7 +337,7 @@ describe('defensive guarantees (guarantee: only the allowlist is callable, nothi
     ];
     it.each(MALFORMED)('ignores a malformed frame (%s) without throwing or responding', (_label, frame) => {
         const sent: any[] = [];
-        const b = createBroker((f) => sent.push(f), { timeoutMs: 0 });
+        const b = createBroker((f) => void sent.push(f), { timeoutMs: 0 });
         expect(() => b.handleMessage(frame as any)).not.toThrow();
         expect(sent).toEqual([]);
     });
@@ -361,13 +361,13 @@ describe('defensive guarantees (guarantee: only the allowlist is callable, nothi
 describe('response correlation edge cases (guarantee: stale/duplicate responses cannot cross calls)', () => {
     it('ignores a response with an unknown id', () => {
         const sent: any[] = [];
-        const b = createBroker((f) => sent.push(f), { timeoutMs: 0 });
+        const b = createBroker((f) => void sent.push(f), { timeoutMs: 0 });
         expect(() => b.handleMessage({ type: 'RPC_RES', id: 123, ok: true, value: 1 })).not.toThrow();
     });
 
     it('ignores a duplicate response and never leaks it into another pending call', async () => {
         const frames: any[] = [];
-        const broker = createBroker((f) => frames.push(f), { timeoutMs: 0 });
+        const broker = createBroker((f) => void frames.push(f), { timeoutMs: 0 });
         const p1 = broker.call('m1');
         const p2 = broker.call('m2');
         const id1 = frames[0].id;
@@ -506,7 +506,7 @@ describe('non-transferable values (guarantee: a call with a non-transferable val
 
     it('a call with a non-transferable argument is refused with ARGS_NOT_TRANSFERABLE at once, sending nothing and arming no timer', async () => {
         const sent: unknown[] = [];
-        const b = createBroker((frame) => sent.push(structuredClone(frame)), { timeoutMs: 10_000 });
+        const b = createBroker((frame) => void sent.push(structuredClone(frame)), { timeoutMs: 10_000 });
         const result = await refusal(b.call('echo', () => 1));
         expect(result).toMatchObject({ isError: true, code: 'ARGS_NOT_TRANSFERABLE' });
         expect(result.message).toMatch(/^RPC arguments are not transferable: /);
@@ -576,7 +576,7 @@ describe('reply routing (guarantee: a response goes back only on the channel its
 
     it('falls back to send when no reply is given (the guest has a single port per frame)', async () => {
         const sent: unknown[] = [];
-        const broker = createBroker((frame) => sent.push(frame), { timeoutMs: 0 });
+        const broker = createBroker((frame) => void sent.push(frame), { timeoutMs: 0 });
         broker.expose('ok', () => 'value');
         broker.handleMessage({ type: 'RPC_REQ', id: 1, method: 'ok', args: [] });
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -674,7 +674,7 @@ describe('reserved methods and library codes (backlog B5; guarantee: the library
 
     it('the guest accepts a library code only for a call to a reserved name', async () => {
         const frames: any[] = [];
-        const guest = createBroker((frame) => frames.push(frame), { timeoutMs: 0, acceptLibraryCodes: true });
+        const guest = createBroker((frame) => void frames.push(frame), { timeoutMs: 0, acceptLibraryCodes: true });
         const answer = (method: string) => {
             const promise = guest.call(method);
             guest.handleMessage({ type: 'RPC_RES', id: frames[frames.length - 1].id, ok: false, error: 'x', code: 'FETCH_BUSY' });
@@ -737,8 +737,8 @@ describe('inbound calls in flight are capped per channel (review B7)', () => {
         responder.expose('quick', () => 'ok');
         const old: any[] = [];
         const current: any[] = [];
-        for (let id = 1; id <= MAX_INBOUND_IN_FLIGHT; id++) responder.handleMessage({ type: 'RPC_REQ', id, method: 'never', args: [] }, (f) => old.push(f));
-        responder.handleMessage({ type: 'RPC_REQ', id: 1, method: 'quick', args: [] }, (f) => current.push(f));
+        for (let id = 1; id <= MAX_INBOUND_IN_FLIGHT; id++) responder.handleMessage({ type: 'RPC_REQ', id, method: 'never', args: [] }, (f) => void old.push(f));
+        responder.handleMessage({ type: 'RPC_REQ', id: 1, method: 'quick', args: [] }, (f) => void current.push(f));
         await settle();
         expect(current).toEqual([{ type: 'RPC_RES', id: 1, ok: true, value: 'ok' }]);
     });

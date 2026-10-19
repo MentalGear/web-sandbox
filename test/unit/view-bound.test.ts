@@ -6,6 +6,7 @@ import * as view from '@src/lib/in-sandbox-view';
 import { LOG_EVENTS_PER_SECOND } from '@src/lib/sandbox-log';
 import { VIOLATION_EVENT_LIMIT } from '@src/lib/violation';
 import { UNCAUGHT_CHARACTERS_PER_SECOND, UNCAUGHT_PER_SECOND } from '@src/lib/egress';
+import { hostLine, reasonText } from '@src/lib/reasons';
 
 /**
  * The view's cost bound (backlog S68): docs/API.md states it once, in "The view's cost to the host page", and
@@ -83,11 +84,10 @@ describe("docs/API.md, the view's cost to the host page", () => {
     });
 
     // Backlog S72 (class P): the single-operation bound is the repeated-overrun rule; (b) states it in the words the host
-    // gives, and API.md's reasons and host lines name them as host.ts has them.
-    it('(b) states the repeated-overrun rule, with the reason and the warn line host.ts gives', () => {
-        const host = read('src/host.ts');
-        const reason = host.match(/const VIEW_OVERRUN_REASON = '([^']+)';/)![1]!;
-        const warning = host.match(/const VIEW_FIRST_OVERRUN_LINE = '([^']+)';/)![1]!;
+    // gives, and API.md's reasons and host lines name them as the registry has them (src/lib/reasons.ts).
+    it('(b) states the repeated-overrun rule, with the reason and the warn line the element gives', () => {
+        const reason = reasonText('viewOverrun');
+        const warning = hostLine('viewFirstOverrun');
         const b = SECTION.slice(SECTION.indexOf('### (b)'), SECTION.indexOf('### (c)')).replace(/\s+/g, ' ');
         expect(b).toContain(`(\`${reason}\`)`);
         expect(b).toContain('`VIEW_OVERRUN_WINDOW_MS`');

@@ -514,7 +514,8 @@ with a message of hundreds of millions of characters costs your page's thread th
 
 Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`);
 `[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
-`Uncaught …`, at most 2048 characters); and one `warn` line per environment when the element first drops guest lines
+`Uncaught …`, at most 2048 characters); `[Sandbox] …` when the host page's policy refused a frame of the library's,
+with the reason the sandbox then ends with in place of `…` (see [`terminated` reasons](#terminated-reasons)); and one `warn` line per environment when the element first drops guest lines
 past `LOG_EVENTS_PER_SECOND` (lines delivered late, while your page was busy, can arrive closer together than the guest
 sent them): `[Sandbox] the guest logged more than 1000 lines in one second; lines past that rate are not dispatched as
 'sandbox-log' events.`; and, in strict mode, one `warn` line per environment at the view's first overrun (an operation

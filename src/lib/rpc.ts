@@ -69,6 +69,9 @@
  * initiated) and its own registry (methods it exposed). ids only need to be unique within the
  * caller's own pending map — the responder merely echoes them back — so a per-side counter is enough.
  */
+import type { LimitValue } from './limits';
+import type { MAX_TIMER_DELAY as LONGEST_TIMER_DELAY } from './long-timer';
+import type { Complete, Holds } from './utils';
 
 // A method the other side may call. Args and the return value cross via structured clone.
 export type RpcMethod = (...args: any[]) => unknown;
@@ -79,10 +82,10 @@ export type RpcMethod = (...args: any[]) => unknown;
 // ArrayBuffers of a result's snapshot, which no one else holds (sendResult).
 // A send that returns a string did not post the frame: the environment the call was made for is gone (review round 3,
 // L-2: the host's send, when a getter in the arguments ended it while they were copied). The call is refused at once
-// with TERMINATED and that text, so no call is ever left pending on a transport that will not answer it. Any other
-// return value means the frame was posted (or queued for its environment's port).
+// with TERMINATED and that text, so no call is ever left pending on a transport that will not answer it. Nothing
+// returned means the frame was posted (or queued for its environment's port): the type says both.
 // It takes an RpcFrame only, so inside createBroker nothing but a builder's frame can be posted (backlog S61.3).
-export type RpcSend = (frame: RpcFrame, transfer?: Transferable[]) => unknown;
+export type RpcSend = (frame: RpcFrame, transfer?: Transferable[]) => string | void;
 
 declare const rpcFrameBrand: unique symbol;
 /**
@@ -129,6 +132,13 @@ export type RpcErrorCode =
     | 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE' | 'BUSY';
 
 /**
+ * Every RpcErrorCode, as a value (S76): what docs/API.md's Calls table lists. The public type stays written out, as
+ * the API report has it; Complete keeps the two equal.
+ */
+export const RPC_ERROR_CODES = ['TIMEOUT', 'TERMINATED', 'ARGS_NOT_TRANSFERABLE', 'SEND_FAILED', 'INVALID_CALL', 'UNKNOWN_METHOD', 'HANDLER_ERROR', 'RESULT_NOT_TRANSFERABLE', 'BUSY'] as const satisfies readonly RpcErrorCode[];
+type RpcErrorCodesComplete = Holds<Complete<RpcErrorCode, typeof RPC_ERROR_CODES>>;
+
+/**
  * Most inbound calls a broker runs at once per channel (review B7): a further request is answered at once with
  * BUSY and its method is not called. Bounds the work and memory the other side can hold open on this side
  * with calls to a method that is slow or never settles. Mirrored inside createBroker (a test keeps them equal).
@@ -162,6 +172,13 @@ export const RPC_MAX_INBOUND_BYTES = 67108864;
 export type RpcLibraryCode =
     | 'FETCH_NOT_ALLOWED' | 'FETCH_BUSY' | 'FETCH_REDIRECT' | 'FETCH_TOO_LARGE' | 'FETCH_TIMEOUT' | 'FETCH_FAILED'
     | 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEEDED' | 'FILES_NOT_ALLOWED' | 'FILES_BUSY';
+
+/** Every RpcLibraryCode, as a value: createBroker's LIBRARY_CODES mirrors it, typed by it. */
+export const RPC_LIBRARY_CODES = [
+    'FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED',
+    'INVALID_PATH', 'INVALID_FILE', 'FILES_QUOTA_EXCEEDED', 'FILES_NOT_ALLOWED', 'FILES_BUSY',
+] as const satisfies readonly RpcLibraryCode[];
+type RpcLibraryCodesComplete = Holds<Complete<RpcLibraryCode, typeof RPC_LIBRARY_CODES>>;
 
 /** Every library-reserved method name starts with this prefix; expose() never registers one. */
 export const RESERVED_METHOD_PREFIX = 'sandbox:';
@@ -270,7 +287,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // Declared INSIDE the function so it survives stringification into the guest. A call whose
     // handler never answers would otherwise hang forever; 30s is generous for a local same-process
     // port yet still bounds an unresponsive other side.
-    const DEFAULT_TIMEOUT_MS = 30000;
+    const DEFAULT_TIMEOUT_MS: LimitValue<'DEFAULT_TIMEOUT_MS'> = 30000;
     const defaultTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const acceptLibraryCodes = options.acceptLibraryCodes === true;
     const transferResults = options.transferResults === true;
@@ -285,18 +302,19 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     const takeBusyRefusal = typeof takeBusyRefusalOption === 'function' ? takeBusyRefusalOption : null;
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
-    // Mirrors the exported RESERVED_METHOD_PREFIX (a test keeps them equal): declared here to survive stringification.
-    const RESERVED_PREFIX = 'sandbox:';
+    // Mirrors the exported RESERVED_METHOD_PREFIX: declared here to survive stringification, and typed by it, so the two
+    // compile only while equal (as every mirror below: typed by its constant, or by its row of the limits registry).
+    const RESERVED_PREFIX: typeof RESERVED_METHOD_PREFIX = 'sandbox:';
     // Mirrors the exported MAX_INBOUND_IN_FLIGHT, for the same reason.
-    const MAX_IN_FLIGHT = 256;
+    const MAX_IN_FLIGHT: typeof MAX_INBOUND_IN_FLIGHT = 256;
     // Mirror RPC_MAX_BYTES and RPC_MAX_INBOUND_BYTES, for the same reason.
-    const MAX_BYTES = 34603008;
-    const MAX_INBOUND_BYTES = 67108864;
+    const MAX_BYTES: typeof RPC_MAX_BYTES = 34603008;
+    const MAX_INBOUND_BYTES: typeof RPC_MAX_INBOUND_BYTES = 67108864;
     // The longest method name, and the longest string id (C-1): a name is chosen by whoever exposes it, so this bounds
     // what a frame and an UNKNOWN_METHOD text can carry of it. The library's own longest is 'sandbox:write'.
-    const MAX_NAME_LENGTH = 256;
+    const MAX_NAME_LENGTH: LimitValue<'MAX_NAME_LENGTH'> = 256;
     // The longest error text a frame or a rejection carries, the marker included (C-1): 64 Ki characters, as a log string.
-    const MAX_TEXT_LENGTH = 65536;
+    const MAX_TEXT_LENGTH: LimitValue<'MAX_TEXT_LENGTH'> = 65536;
     const CUT_MARKER = ` [… cut at ${MAX_TEXT_LENGTH} characters]`;
     const UNKNOWN_ERROR = 'unknown error';
     // The bytes of a value by the snapshot measure; a kind the measure does not know is written to `unsupported` (C-3).
@@ -304,7 +322,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
     // Mirrors MAX_TIMER_DELAY (long-timer.ts; a test keeps them equal), for the same reason. A call's timeout is the
     // caller's to choose, and setTimeout overflows at 2^31 ms and fires at once (review round 2, L-2): a longer timeout
     // is waited out in steps of at most this, and Infinity never fires. Returns how to disarm it.
-    const MAX_TIMER_DELAY = 2147483647;
+    const MAX_TIMER_DELAY: typeof LONGEST_TIMER_DELAY = 2147483647;
     const armTimer = (onTimeout: () => void, ms: number): (() => void) => {
         let timer: ReturnType<typeof setTimeout> | null = null;
         let disarmed = false;
@@ -339,8 +357,9 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         BUSY: 'BUSY',
     };
 
-    // The library codes (RpcLibraryCode), closed: what a reserved method may report. Read by index only.
-    const LIBRARY_CODES: readonly RpcLibraryCode[] = [
+    // The library codes (RpcLibraryCode), closed: what a reserved method may report. Read by index only. The mirror of
+    // RPC_LIBRARY_CODES, declared here to survive stringification, and typed by it: the two compile only while equal.
+    const LIBRARY_CODES: typeof RPC_LIBRARY_CODES = [
         'FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED',
         'INVALID_PATH', 'INVALID_FILE', 'FILES_QUOTA_EXCEEDED', 'FILES_NOT_ALLOWED', 'FILES_BUSY',
     ];
@@ -724,7 +743,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             }, timeoutMs) : null;
             // Record the pending promise BEFORE sending, so a response can never arrive first.
             set(pending, id, { resolve, reject, disarm, reserved: isReservedName(method) });
-            let unsent: unknown;
+            let unsent: string | void;
             try {
                 unsent = send(frame);
             } catch (error) {

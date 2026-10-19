@@ -32,6 +32,7 @@ import { RPC_MAX_BYTES, type BudgetRefusal } from './rpc';
 import { MAX_TOTAL_BYTES } from './files';
 import { defineData } from './utils';
 import { watchdogBudget } from './watchdog';
+import { reasonText } from './reasons';
 
 /** The per-second budget of the calls the guest makes, per environment: what both ends count. */
 export interface CallBudget {
@@ -44,8 +45,8 @@ export interface CallBudget {
 // calls per second, with gaps of 1.8 s in bursts. At 1000, a strict guest calling paced at the budget and one sending
 // a second's worth at once each second left Firefox's host page its idle ticks, longest gap 15–27 ms
 // (test/e2e/review-round-4.spec.ts, "M-6").
-const GUEST_CALLS_PER_SECOND = 1000;
-const GUEST_CALL_BYTES_PER_SECOND = 67108864;
+export const GUEST_CALLS_PER_SECOND = 1000;
+export const GUEST_CALL_BYTES_PER_SECOND = 67108864;
 
 export const DEFAULT_CALL_BUDGET: Readonly<CallBudget> = Object.freeze({ calls: GUEST_CALLS_PER_SECOND, bytes: GUEST_CALL_BYTES_PER_SECOND });
 
@@ -142,7 +143,7 @@ export function renamedModeNote(mode: unknown): string {
 export const describeMode = (mode: unknown): string => (typeof mode === 'string' ? JSON.stringify(mode.slice(0, 32)) : `of type ${mode === null ? 'null' : typeof mode}`);
 
 /** Why no environment is built for a mode that is not one (the build's refusal, _buildRefusal), or null. */
-export const unknownModeReason = (mode: unknown): string | null => (isSandboxMode(mode) ? null : `unknown mode ${describeMode(mode)}${renamedModeNote(mode)}`);
+export const unknownModeReason = (mode: unknown): string | null => (isSandboxMode(mode) ? null : reasonText('unknownMode', `${describeMode(mode)}${renamedModeNote(mode)}`));
 
 // The sandbox flags of strict mode's view, always (why: host.ts, at its import): listing one of them in `capabilities`
 // there asks for nothing more, so it is kept, not dropped.
