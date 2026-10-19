@@ -1642,7 +1642,7 @@ The owner's decisions, 2026-10-18:
 
 Residual, for the owner: the 2 s operation limit ends a 250,000-character textarea `set()` in WebKit.
 
-### S65 · One lifecycle reducer, with the model-based suite (S61.2) — 🟡 step 1 of 2 done
+### S65 · One lifecycle reducer, with the model-based suite (S61.2) — 🟡 step 2 in progress (PR A of 4 done)
 
 Every transition becomes a pure function of state and event. Effects and event dispatch run only after the state
 settles, and `ready` is the only point where queued work flushes. It is tested by the permanent fast-check `commands`
@@ -1651,7 +1651,18 @@ suite built from [the lifecycle model](research/17_formal_methods/lifecycle-mode
 1. ✅ **The model-based suite.** The reference model is a module (`test/model/`), with its generator and runner, unit
    tests (`test/unit/lifecycle-model.test.ts`) and an e2e on every engine (`test/e2e/lifecycle-model.spec.ts`), which
    also keeps round 4's L-1 loop as a property. Its first finding is LM-1 (S71).
-2. ⏸️ **The reducer**, tested by that suite.
+2. 🟡 **The reducer**, tested by that suite, in four PRs, each merged on its own:
+   - ✅ **PR A: the reducer as a pure module, and its oracle.** `src/lib/lifecycle.ts` (`reduce`, `step`,
+     `runEffects`; internal, not exported) describes exactly what `host.ts` does today, and `host.ts` does not use it
+     yet. `test/model/reducer-runner.ts` runs the real reducer against a fake element and the reference model;
+     `test/unit/lifecycle-reducer.test.ts` runs 5,000 generated sequences (about 2 s), the reducer's properties, and
+     each class-L finding as a trace. Where today's code and the plan differ, the reducer follows the code; the
+     differences are noted in the module, among them a latent leak: a build re-entered from a host page's Trusted
+     Types default policy starts a second load deadline, and the first is never stopped.
+   - ⏸️ PR B: the terminations through the reducer.
+   - ⏸️ PR C: the builds and the DOM callbacks.
+   - ⏸️ PR D: the completion of a build and the `ready` gate; a source scan that `state` and the lifecycle events
+     change only in the executor.
 
 ### S71 · For the owner: LM-1, a `fetch` record after its environment's teardown — ⏸️ **decide**
 
