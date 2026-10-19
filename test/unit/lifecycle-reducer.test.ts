@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { INITIAL_LIFECYCLE, isStale, reduce, runEffects, step, type BuildContext, type Effect, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice } from '../../src/lib/lifecycle';
+import { INITIAL_LIFECYCLE, admits, isStale, reduce, runEffects, step, type BuildContext, type Effect, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice } from '../../src/lib/lifecycle';
 import { reasonText, TERMINATION_REASONS } from '../../src/lib/reasons';
 import { generate, shrink } from '../model/generator';
 import { DEFAULT_TERMINATE_REASON, ENTRY_FAILED_REASON, unknownModeReason, type Sequence } from '../model/lifecycle-model';
@@ -122,13 +122,19 @@ describe("the reducer's properties on fuzzed inputs", () => {
         return inputs;
     }
 
-    it('every input on every sampled state: stale gens give nothing, connect and disconnect never dispatch, flush only with ready, dispatches last', () => {
+    it('every input on every sampled state: stale gens give nothing, connect and disconnect never dispatch, flush only with ready, dispatches last; one the declaration does not admit throws', () => {
         // the states the oracle reached (the test above), and the same ones with a 'terminated' being dispatched
         const states = sampled.size > 0 ? [...sampled.values()] : [INITIAL_LIFECYCLE];
         let checked = 0;
+        let refused = 0;
         for (const base of states) {
             for (const state of [base, { ...base, dispatching: [...base.dispatching, 'bye'] }]) {
                 for (const input of inputsFor(state)) {
+                    if (!isStale(state, input) && !admits(state, input)) {
+                        expect(() => reduce(state, input), `${input.t} in ${state.state}`).toThrow(/cannot arrive in/);
+                        refused++;
+                        continue;
+                    }
                     const output = reduce(state, input);
                     checked++;
                     const broken = brokenProperty(state, input, output);
@@ -137,6 +143,7 @@ describe("the reducer's properties on fuzzed inputs", () => {
             }
         }
         expect(checked).toBeGreaterThan(10_000);
+        expect(refused).toBeGreaterThan(1000);
     });
 
     it('connect, with a build that throws: no synchronous dispatch; the termination comes in a task', () => {
