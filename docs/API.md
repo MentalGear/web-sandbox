@@ -86,8 +86,8 @@ a config without `mode` is a strict config (strict mode is the default).
 - The argument is copied (structured clone) before anything reads it: changing your objects or arrays afterwards
   changes nothing, not even at the next `reset()`.
 - Values are validated before they are applied; what cannot be used is dropped with one `console.warn` per
-  element, never applied half-way: an entry that is not allowed, a list option that is not a list, `html` that is not
-  a string.
+  element and message, never applied half-way: an entry that is not allowed, a list option that is not a list, `html`
+  that is not a string.
 - The configuration the environment already stands on, set again, changes nothing: no rebuild and no event, so read
   `state` rather than wait for `ready` (anything a build reads
   that changed since, `load()` or the files, rebuilds as usual).
@@ -99,7 +99,15 @@ a config without `mode` is a strict config (strict mode is the default).
   `ready`, and not at all if another build started meanwhile.
 - `SandboxConfig` narrows each mode: `entry`, `allowAnimations` and `allowAutoplay` only in strict mode, `workerExecutionTimeout` not in cooperative mode,
   `html` and `autoResize` not in worker mode, `unsafeCapabilities` not in strict mode. A config from JSON is held to
-  the same rules at run time.
+  the same rules at run time: an option outside its modes (the Modes column) is ignored and takes its default, with one
+  warning for `entry`, `allowAnimations`, `allowAutoplay`, `unsafeCapabilities` and `autoResize`, silently for `html`
+  and `workerExecutionTimeout`.
+- Each option's default, accepted values, bounds, warnings and modes are declared once (`src/lib/config-schema.ts`), and
+  so are the checks across options, which hold for every config: every call that `callLimits` can carry fits an empty
+  window ([below](#calllimits)); a `fetchBridge` response of `maxBytes` fits one call result; a `fetchBridge` request
+  body of `maxBytes`, and a guest write of the whole file quota, fit one call, unless a `maxBytesPerSecond` below
+  `RPC_MAX_BYTES` caps calls, which it says once. `watchdogTimeout` and `workerExecutionTimeout` are independent: either
+  may be the shorter.
 
 | Option | Type | Default | Modes | What it does |
 | :--- | :--- | :--- | :--- | :--- |

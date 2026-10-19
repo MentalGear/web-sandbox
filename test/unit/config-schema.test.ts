@@ -306,6 +306,16 @@ describe("docs/API.md's Configuration table and the config schema", () => {
         expect(rows.get('callLimits')!.documented).toBe(`${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes / 1048576} MiB per second`);
     });
 
+    it('the options ignored outside their modes, with a warning or silently, as the Configuration section lists them', () => {
+        const said = API.replace(/\s+/g, ' ').match(/with one warning for ((?:`\w+`(?:, | and )?)+), silently for ((?:`\w+`(?: and )?)+)\./);
+        expect(said).not.toBeNull();
+        const names = (text: string) => [...text.matchAll(/`(\w+)`/g)].map(match => match[1]!).sort();
+        const rules = CONFIG_SCHEMA as Record<string, OptionRule>;
+        const ignored = CONFIG_OPTIONS.filter(name => rules[name]!.ignoredIn !== undefined);
+        expect(names(said![1]!)).toEqual(ignored.filter(name => rules[name]!.ignoredWarning !== undefined).sort());
+        expect(names(said![2]!)).toEqual(ignored.filter(name => rules[name]!.ignoredWarning === undefined).sort());
+    });
+
     // Each option's edges, as its row describes them: [option, given, mode, stored, a warning that contains this or null].
     const EDGE_TABLE: [string, unknown, SandboxMode, unknown, string | null][] = [
         ['mode', undefined, 'strict', 'strict', null],
