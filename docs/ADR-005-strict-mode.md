@@ -76,8 +76,10 @@ text stays constant) and hands the worker the logic and render ports.
   and a URL in rendered markup is kept only where every engine's policy check admits it (its exact origin is listed,
   or it is an image's `http:` URL whose `https:` upgrade is, off a loopback host), else dropped by the renderer before
   the browser sees it and, an `http(s)` one, reported as a violation; the ones it keeps are bounded in number
-  (`VIEW_MAX_URLS`), and every load, as the renderer kept it or as the browser reports it (resource timing, CSS-borne
-  loads included, and violations), per second (`VIEW_URLS_PER_SECOND`) and in distinct URLs over the view's life
+  (`VIEW_MAX_URLS`), and every load, charged before the browser can start it (a kept URL attribute when it is
+  rendered, what applied CSS can load, counted from its text, when it is applied; backlog S73) and otherwise as the
+  browser reports it (resource timing, CSS-borne loads included, and violations), per second (`VIEW_URLS_PER_SECOND`)
+  and in distinct URLs over the view's life
   (`VIEW_MAX_DISTINCT_URLS`). The renderer's prediction may only err toward refusing, and no bound depends on it.
   No WebRTC is reachable. The view cancels the default of every click on or inside a link (HTML and SVG `a`,
   `area`, anything with an `href`, including fragment links, which resolve against the inherited `about:blank`

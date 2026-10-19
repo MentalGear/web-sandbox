@@ -82,7 +82,7 @@ later (S61), and the clean-up with independent reviews follows when the rounds e
 (S58, [report](security/REVIEW-ROUND-4-2026-10-18.md)) added and closed S62; round 5 is next (S63).
 Round 5 (S63) found the recurring classes behind the findings ([research 18](research/18_finding_classes/README.md));
 its fixes are made as slices of those classes (S64), followed by S65–S68. S65's model-based suite found LM-1, fixed by construction (S71).
-The owner's decision on the 2 s operation limit, the repeated-overrun rule, is S72.
+The owner's decision on the 2 s operation limit, the repeated-overrun rule, is S72. S73 closes the M-3 burst behind a slow server that PR #47's CI found.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1799,6 +1799,83 @@ Measured (2026-10-19, headless Playwright on the shared 4-core VM; Chromium, Fir
   (Firefox: no size of the family cost 0.7–1.4 s there, so that test skipped itself).
 - `review-round-2.spec.ts` (M-3), a 250,000-character textarea `set()` four times a second: the sandbox stays `ready`
   on all three engines (WebKit's first `set()` ended it before).
+
+### S73 · CSS-borne loads charged before they start — ✅ **done** (2026-10-19)
+
+Classes E-net and P ([research 18](research/18_finding_classes/README.md)): a load the policy admits is egress, and
+its budget counted it by a stand-in, the platform's report of it, which arrives only once the response has ended.
+
+**The cause.** PR #47's CI failed on Firefox: `view-round-5.spec.ts` M-3, "CSS backgrounds to an admitted origin",
+counted 5,000 loads over an 11.1 s flood against the test's bound of 4,935.6 (twice `VIEW_URLS_PER_SECOND` over the
+flood, plus one render). A URL the renderer kept in an attribute was charged when it was rendered, but a CSS-borne load
+(a style attribute's `url()` or `image-set()`, a `<style>`, an `@import`, a font) only when its resource-timing entry
+arrived. Behind a slow server every render the view applied before the first charge arrived got through: the first
+burst was the server's latency times the view's render rate, not the budget, and the test's "twice the rate" was
+empirical.
+
+**The design** (`src/lib/in-sandbox-view.ts`): every load is charged before the browser can start it, as kept URL
+attributes already were.
+- **Counted when applied.** `cssLoadBound` counts, in the CSS an operation adds, the function tokens named `url`,
+  `image-set`, `-webkit-image-set`, `image`, `cross-fade` or `src` (each 1) and each `@import` (a second's worth, 200,
+  for what the sheet it imports names, which the view cannot read then). The CSS an operation adds: a render's kept
+  style attributes (collected by the renderer as it walks them), the text of its `<style>` elements (HTML and SVG),
+  the fragment's text when the target is a `<style>` or inside one, and 200 per stylesheet `<link>` (only registered
+  sheets are kept); a `text()` into a `<style>` (or inside one); a `set()` of a textarea or an output inside one. The
+  texts are counted joined, in one pass.
+- **The counter**, a minimal subset of the CSS tokenizer: each code point of a name is matched in each way it can be
+  written (itself in either case; a backslash and itself, where it is no hex digit; 1–6 hex digits of either case's
+  value, with one optional whitespace, CR LF one, the digits ending at six or before a non-hex code point), then `(`.
+  One native regular expression, tried at every position, comments and strings included: it assumes no token
+  boundary, so wherever the tokenizer starts a token that loads, the pattern matches what it reads. It only
+  over-counts (`xurl(`, `5url(`, a name in a comment or string). Skipping comments and strings was rejected: a skip that
+  ends one where the tokenizer does not hides what follows, an under-count.
+- **Charged with the operation.** The count is prepaid to the load budget when the flush is settled, before it forces
+  layout (which starts the loads), like the attribute URLs, so the next operation waits until the budget has refilled.
+- **Reconciled as credit** (`viewBudget`'s `prepay` and `observed`). A load the platform reports that no render's
+  attribute charged, and a violation, takes from the prepaid credit first and is charged only once it is spent. The
+  credit is capped at `VIEW_URLS_PER_SECOND` (a second's worth); past it the prepayment is forfeited, so an
+  over-counting render cannot store a burst for later. An attribute-charged URL is still never charged again, and the
+  M-4 distinct-URL accounting is unchanged.
+- **The bound** (R the rate, over any t seconds): R·t + R (what the budget holds) + one operation's charge (at most
+  `VIEW_MAX_URLS` attributes and its CSS's count) + R (the credit carried in) + what CSS already in the view loads past
+  what was prepaid for it (a rule matching later, a sheet past its allowance), which only that CSS's text bounds. The
+  server's latency is in none of the first four terms. Stated in `VIEW_URLS_PER_SECOND`'s comment and API.md (a).
+
+**Tests.**
+- Unit, `test/unit/view-css-loads.test.ts`: the counter's forms (`url(`, `URL(`, `u\72 l(`, `\75 rl(`, six-digit and
+  CR LF escapes, `image-set(`, a nested `image-set(url() url())`, `@import`, `@\69mport`), what it does not count, and
+  what it counts by decision (comments, strings, `xurl(`); a property over 500 random texts with N tokens in random
+  escape forms (count ≥ N); a property over 4,000 random texts against a reference implementation of the css-syntax-3
+  tokenizer in the test (count ≥ the tokens that load, and the joined count ≥ the sum of the parts); the credit
+  (consumed before charging, capped, and a property that every load is charged at least once); and the real view in
+  jsdom with stand-ins for resource timing: what each operation prepays, a reported load and a violation taking the
+  credit, and an attribute-charged URL not charged again. Mutating the escape pattern (CR LF, six digits, the
+  whitespaces) fails them.
+- e2e, `test/e2e/view-round-5.spec.ts`: M-3's admitted-origin assertion is now the derived bound (R·t + R + 500 + R),
+  with no slack factor; "S73: behind a slow server" delays every response 1 s and asserts the same bound over the
+  first second and over the flood; "S73: counting" measures the counter.
+
+**Measured** (2026-10-19, the shared 4-core VM, headless Playwright):
+- **Behind a server 1 s late** ("S73: behind a slow server", bound 1,100 for the first second and 2,100 for the 6 s
+  flood): before the fix, Chromium 1,024 loads in the first second and 2,440 over the flood, Firefox 115 and 2,500,
+  WebKit 2,500 and 6,112, so the test failed on all three engines; after it, 500 and 1,000 on all three.
+- **M-3, an admitted origin, the derived bound** (R·t + R + 500 + R: 3,101–3,104 over the 11.0 s flood): 1,500 loads on
+  every engine, 136 a second; host 11%, 7% and 8% busy (Chromium, Firefox, WebKit). Refused source: 63, 125 and 125
+  refusals a second, host 4%, 2% and 1% busy.
+- **The counter's cost** on a 256 KiB render full of CSS (half style attributes, half one stylesheet; best of 3 rounds of
+  10), as count (of it, `cssLoadBound`) against the bare parse and against parse and clean:
+  - without escapes: Chromium 0.41 ms (3% of 11.9 ms), Firefox 1.2 ms (52% of 2.3 ms; 17% of 6.9 ms), WebKit 1.0 ms
+    (12% of 8.2 ms);
+  - one escape per rule: Chromium 0.60 ms (6%), Firefox 1.1 ms (37%; 12% of parse and clean), WebKit 1.2 ms (9%);
+  - every name escaped: Chromium 1.4 ms (12%), Firefox 1.4 ms (87% of its 1.6 ms parse; 32% of parse and clean),
+    WebKit 1.1 ms (13%).
+  Firefox parses three to seven times as fast as the others, so there the count is half its bare parse or more; the
+  test asserts it under half of parse and clean on every engine. A first version, a hand-written decoder in a loop,
+  cost 11.6 ms (Chromium) and 6 ms (Firefox, 150% of the parse); one escape-decoding pass with a callback, then two
+  matches, up to 10.7 ms in Firefox on escaped names. The count runs inside the flush, so it is in the view's
+  measured and charged time.
+- **Behaviour change**: a guest's own CSS now holds its next operation back by what it can load, whether or not it
+  loads it (a `url()` in a comment, a cached image); each `@import` or stylesheet `<link>` by a second.
 
 ### T6 · Two CPU-heavy unit tests failed once on a loaded machine — 🔎 **investigate**
 
