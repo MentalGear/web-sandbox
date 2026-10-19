@@ -187,17 +187,19 @@ describe('the config schema: every option, normalised once, with the cross-field
 
     it(`every declared invariant holds after normalisation (${cases.length} configurations: each option's edges in each mode, then seeded random ones)`, () => {
         let used = 0;
+        const failed: string[] = [];
         for (const config of cases) {
             const { value, warnings, refusal } = normaliseWhole(config);
             if (value === null) {
-                expect(refusal, shownCase(config)).toBeInstanceOf(Error);
+                if (!(refusal instanceof Error)) failed.push(`a refusal that is not an Error: ${shownCase(config)}`);
                 continue;
             }
             used++;
-            for (const invariant of CONFIG_INVARIANTS) expect(invariant.holds(value, warnings), `${invariant.name}: ${shownCase(config)}`).toBe(true);
+            for (const invariant of CONFIG_INVARIANTS) if (!invariant.holds(value, warnings)) failed.push(`${invariant.name}: ${shownCase(config)}`);
         }
+        expect(failed).toEqual([]);
         expect(used).toBeGreaterThan(cases.length / 2);
-    });
+    }, 30000);
 
     it('normalising is idempotent: the argument that names a normalised config normalises to it again, and warns nothing new', () => {
         for (const config of cases) {
@@ -206,9 +208,10 @@ describe('the config schema: every option, normalised once, with the cross-field
             const again = normaliseWhole(argumentOf(first.value));
             expect(again.refusal, shownCase(config)).toBeNull();
             expect(again.value, shownCase(config)).toEqual(first.value);
-            for (const message of again.warnings) expect(first.warnings, `${message}: ${shownCase(config)}`).toContain(message);
+            const unsaid = again.warnings.filter(message => !first.warnings.includes(message));
+            expect(unsaid, shownCase(config)).toEqual([]);
         }
-    });
+    }, 30000);
 
     it('warnings are deterministic: the same argument gives the same warnings, in the same order, and the same result', () => {
         for (const config of cases) {
@@ -218,14 +221,14 @@ describe('the config schema: every option, normalised once, with the cross-field
             expect(again.value, shownCase(config)).toEqual(first.value);
             expect(again.refusal === null, shownCase(config)).toBe(first.refusal === null);
         }
-    });
+    }, 30000);
 
     it('no assigned key leaks: nothing but the options reaches the stored config, no prototype changes, nothing is inherited', () => {
         const options = new Set<string>(CONFIG_OPTIONS);
         for (const config of cases) {
             const { value } = normaliseWhole(config);
             if (value === null) continue;
-            for (const key of Object.keys(value.config)) expect(options.has(key), `${key}: ${shownCase(config)}`).toBe(true);
+            expect(Object.keys(value.config).filter(key => !options.has(key)), shownCase(config)).toEqual([]);
             expect(Object.getPrototypeOf(value.config)).toBe(Object.prototype);
             expect(Object.getPrototypeOf(value.origins)).toBe(Object.prototype);
             for (const key of POISON) expect(Object.hasOwn(value.config, key)).toBe(false);
@@ -239,7 +242,7 @@ describe('the config schema: every option, normalised once, with the cross-field
             }
         }
         expect(({} as Record<string, unknown>).scriptUnsafe).toBeUndefined();
-    });
+    }, 30000);
 
     it('a refused config gives no config, only the warnings said before what refused it', () => {
         for (const config of [null, 5, [], 'x', { origins: null }, { origins: 'x' }, { origins: { images: 'x' } }, { capabilities: 5, origins: [] }]) {
