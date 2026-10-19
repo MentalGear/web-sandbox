@@ -1,7 +1,7 @@
 /**
  * What counts as a host meter of a spec's own (backlog T9): code that counts the host page's ticks, measures the gaps
  * between them, or computes a busy share from them, anywhere but test/e2e/host-share.ts. A source scan, by the shapes
- * every such meter took before: a 10 ms interval (`setInterval(..., 10)`), a timer that re-arms itself every 10 ms
+ * such a meter takes: a 10 ms interval (`setInterval(..., 10)`), a timer that re-arms itself every 10 ms
  * (`setTimeout(tick, 10)`), a gap read off the clock (`now - last`), a share or a limit taken against idle ticks
  * (`1 - loaded / idle`, `idle * 0.7`), the helpers' old names (`countTicks`, `longestGapWhile`, `START_LAG`), a calibration
  * of a spec's own (`operationCost`), a stall bounded by a fixed number or a table per engine instead of by a calibration in

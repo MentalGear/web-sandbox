@@ -165,7 +165,7 @@ test.describe("(a) the long-run bound: under each canonical flood the host page'
     });
 });
 
-// One operation's own cost, measured on a page of its own: operationCost() (./host-share.ts).
+// One operation's own cost, on a page of its own: operationCost() (./host-share.ts).
 
 // An operation whose cost grows faster than its size on every engine: elements matched by a rule whose :has() looks at
 // all their later siblings (test/e2e/view-round-5.spec.ts, M-2).

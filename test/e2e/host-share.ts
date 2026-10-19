@@ -162,8 +162,8 @@ export const operationCost = async (page: Page, html: string) => {
  * The view does more per apply than the bare replacement (the renderer's walk over every element, the move into its
  * document): measured 1.0–3.8 times it. Three times it is about one apply, and far from the many applies a lost flow
  * control would stack. Calibrated in the same run, before and after what it bounds, so the machine's load raises the
- * bound with the stall it measures: a fixed bound read WebKit's 1926 ms under load against 1500 ms, for an apply that
- * cost 460–1034 ms then. Idle, the bounds are at or under the fixed ones they replace.
+ * bound with the stall it measures: under load, one apply's stall grows with the load, past any number fixed per engine
+ * (T9). Idle, these bounds are at or under such numbers.
  */
 export const APPLY_FACTOR = 3;
 export const STALL_MARGIN = 100;
@@ -176,10 +176,10 @@ export async function oneApplyStall(page: Page, html: string, samples = 3) {
 
 /**
  * The busy share with each loaded window between two idle baselines, taken right before and right after it with the
- * flood paused (`pause()`, then `settle` ms, SETTLE_MS by default, for what was in flight), and the share of a window taken against the mean of
- * the two. A baseline taken once, before the flood, is taken at another time than the windows it is compared with, and
- * the machine's other load varies between them: WebKit's set loop read 30.1% against its 30% on a machine at load
- * average 7–9. Interleaved, the baseline of each window brackets it in time. `resume()` starts the flood again (the first
+ * flood paused (`pause()`, then `settle` ms, SETTLE_MS by default, for what is in flight), and the share of a window
+ * taken against the mean of the two. A baseline taken once, before the flood, is taken at another time than the windows
+ * it is compared with, and the machine's other load varies between them (T9). Interleaved, the baseline of each window
+ * brackets it in time. `resume()` starts the flood again (the first
  * time, starts it). The busy share is that of the best window; a flood that can be paused and resumed uses this.
  */
 export const SETTLE_MS = 1000;

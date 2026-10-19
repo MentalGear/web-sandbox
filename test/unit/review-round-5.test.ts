@@ -127,7 +127,7 @@ describe('5:L-1 (class L): a call made while loading that settles before `ready`
     // jsdom (about four fifths of the cost) and 101 steps of the fake clock. Nothing grows from one schedule to the
     // next: measured, about 100 ms for the first (jsdom warming up), then 6–34 ms each to the last. It is all CPU: 1.4–1.7 s
     // alone, 1.5 s in a full idle run on 4 cores, 3.3–4.6 s in full runs with two busy loops on the machine (load
-    // average 8). Vitest's default 5 s was 3 times the idle cost, so a loaded machine took it past. The budget is 250 ms
+    // average 8). Vitest's default 5 s is 3 times the idle cost, which a loaded machine passes. The budget is 250 ms
     // per schedule, about 20 times the idle cost.
     const SEEDS = 40;
     const MODES = ['cooperative', 'worker', 'strict'] as const;

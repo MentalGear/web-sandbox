@@ -49,9 +49,8 @@ const FLOODS: Record<string, string> = {
     markup: `'<p>The quick brown fox jumps over the lazy dog, again and again.</p>'.repeat(3700)`,
 };
 // The bound is one apply as it costs here and now (./host-share.ts, oneApplyStall: three times the most of the
-// calibrations taken before and after the flood, the machine's own gap, and a margin), not a number per engine (they
-// were 600 ms, and 1500 ms for WebKit): a loaded machine raises the stall and its calibration together. A call waits for
-// at most that and its own trip.
+// calibrations taken before and after the flood, the machine's own gap, and a margin), not a number per engine: a
+// loaded machine raises the stall and its calibration together (T9). A call waits for at most that and its own trip.
 const ROUND_TRIP_MARGIN = 1000;
 
 for (const [name, expression] of Object.entries(FLOODS)) {

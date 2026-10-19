@@ -70,7 +70,7 @@ describe("docs/API.md, the view's cost to the host page", () => {
     });
 
     it('the e2e suite that measures it, the constants it uses, and its links exist', () => {
-        // the spec and the measure it shares with review-round-4.spec.ts (the bound's terms live there)
+        // the spec and the measure it shares with the other host-share specs (the bound's terms live there)
         const spec = read('test/e2e/view-bound.spec.ts') + read('test/e2e/host-share.ts');
         for (const name of ['VIEW_APPLY_MS_PER_SECOND', 'VIEW_MAX_OPERATION_MS', 'VIEW_OVERRUN_WINDOW_MS', 'VIEW_URLS_PER_SECOND', 'VIEW_MAX_URLS', 'VIEW_MAX_DISTINCT_URLS']) {
             expect(spec).toContain(name);

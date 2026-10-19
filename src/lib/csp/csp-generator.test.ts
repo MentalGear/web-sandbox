@@ -111,7 +111,7 @@ describe('properties over any `origins` input', () => {
     }
 
     // An explicit budget for fixed work (backlog T6's class): 3000 policies generated and parsed. 2.6 s in a full idle
-    // run, 5.5 s at load average 14: vitest's 5 s was under twice the idle cost. 12 times it.
+    // run, 5.5 s at load average 14: vitest's default 5 s is under twice the idle cost. 12 times it.
     it('3000 random configs, files and switches: the directives are exactly the template\'s, in order, each once; the fixed ones byte-identical; every other source is an origin', { timeout: 30000 }, () => {
         const random = prng(0x0219);
         const fixedOf = (policy: string, names: Set<string>) => policy.split('; ').filter(part => !names.has(part.split(' ')[0]!)).join('; ');

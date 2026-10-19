@@ -111,7 +111,7 @@ test.describe('C-2: a view hidden for 5 s, with a render applied meanwhile, appl
 // Review round 3, M-5: the time budget left one frame's length per flush uncharged (it charged the wait to the next
 // frame past 16.7 ms), so under a flood of operations whose rendering takes long the view took 22–25% of the host page's
 // thread against its 20% budget. It now charges the rendering it measured, in full. Re-rendering 37 449 empty elements
-// without pause, as in review-round-2.spec.ts (M-3): the host page's busy share stays within the budget, 20%, plus the
+// without pause, as in R2:M-3's flood: the host page's busy share stays within the budget, 20%, plus the
 // measure's margin, 10 points (a 10 ms interval on a shared machine; docs/API.md).
 test('M-5: under a flood of re-renders the view takes about its budget of the host page, not more', async ({ sandbox, page, browserName }) => {
     test.setTimeout(90000);

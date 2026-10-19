@@ -40,7 +40,7 @@ const read = (file: string) => readFileSync(path.join(ROOT, file), 'utf8');
 // machine. Reviewed; none today.
 const WALL_CLOCK_ALLOWED: Record<string, string> = {};
 
-// The base commit's meters, verbatim (cacc0bf): one of each shape, so the scan is shown to catch what it replaced.
+// The meters this scan replaced, verbatim: one of each shape, so the scan is shown to catch them.
 const OLD_METERS: Record<string, string> = {
     'review-round-4.spec.ts countTicks': `const countTicks = (page: Page, ms: number) => page.evaluate((duration) => new Promise<number>(resolve => {
     let count = 0;
@@ -70,7 +70,7 @@ const OLD_METERS: Record<string, string> = {
     'view-budget.spec.ts M-5, its share': `const busy = Math.round((1 - loaded / idle) * 100);`,
     'research 16, a share against the ideal': `busyPercent: Math.max(0, Math.round((1 - ticks / (WINDOW_MS / 10)) * 100)),`,
     'view-round-5.spec.ts, a limit over another window': `expect(loaded).toBeGreaterThan(idle * (30 / 8) * 0.7);`,
-    // the four the coordinator's full run at 6da64e6 failed on (load average 7–9), each in the shape it had then
+    // the four that failed on a loaded machine (T9), each in its old shape
     'view-round-5.spec.ts M-3, "observing the loads costs nothing": one window on each side': `expect(idle).toBeGreaterThan(before * 0.95);`,
     'review-round-4.spec.ts M-2, an admitted origin (before T7)': `expect(loaded).toBeGreaterThan(idle * 0.7);`,
     'view-bound.spec.ts (a) at T7: a pausable flood against one baseline': `const flood = (setup: string, step: string) => \`
@@ -117,7 +117,7 @@ describe('T9: every host-tick measure goes through test/e2e/host-share.ts', () =
         expect(tests.length).toBeGreaterThan(40);
         expect(tests.filter(file => !(file in WALL_CLOCK_ALLOWED)).flatMap(file => wallClockBounds(read(file)).map(hit => `${file}:${hit.line} ${hit.text}`))).toEqual([]);
         for (const file of Object.keys(WALL_CLOCK_ALLOWED)) expect(wallClockBounds(read(file)).length, `${file} is listed, so it still has one`).toBeGreaterThan(0);
-        // the two it replaced, verbatim (cacc0bf), and the indirect form
+        // the two it replaced, verbatim, and the indirect form
         expect(wallClockBounds(`const started = performance.now();\n        expect(count(css)).toBe(3 * 13000);\n        expect(performance.now() - started).toBeLessThan(1000);`)).toHaveLength(1);
         expect(wallClockBounds(`expect(performance.now() - started).toBeLessThan(3000);`)).toHaveLength(1);
         expect(wallClockBounds(`const elapsed = Date.now() - started;\nexpect(elapsed, 'ms').toBeLessThanOrEqual(500);`)).toHaveLength(1);

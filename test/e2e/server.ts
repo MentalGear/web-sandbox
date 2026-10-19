@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url';
  *   the root asked for is the root it serves (vite.config.ts, /__e2e-root), and 409 to any other, which Playwright counts
  *   as no server: it then starts this checkout's own, which fails on the taken port, and the run stops with that error.
  *   So a run never tests another checkout's code, even when two derived ports collide or a server is left running.
- *   The path is new on purpose: a server of a checkout from before this (whose /__e2e answers 200 to any query) answers
- *   it 404, so it is never reused either.
+ *   The path is its own on purpose: a server that answers only `/__e2e`, which answers 200 to any query, answers this
+ *   path 404, so it is never reused either.
  */
 export const E2E_ROOT = realpathSync.native(resolve(dirname(fileURLToPath(import.meta.url)), '../..'));
 

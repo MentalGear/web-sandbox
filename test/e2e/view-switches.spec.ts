@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test';
 import { idleBaseline, loadedShare, MARGIN } from './host-share';
 
 // The host page's busy share with the view's animations running, against its idle baseline before the sandbox
-// (./host-share.ts): the best of 2 windows of 1.5 s, 3 s in all as before.
+// (./host-share.ts): the best of 2 windows of 1.5 s, 3 s in all.
 const ANIMATED = { windows: 2, ms: 1500 };
 
 /**

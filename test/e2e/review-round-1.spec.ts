@@ -122,8 +122,7 @@ test.describe('R3-3: byte budgets on log lines and RPC messages', () => {
             setTimeout(() => console.log('R33 flood done'), 1100); // the budget refills: a line right after a flood is dropped`), { windows: 2, ms: 1250 }, 300);
         await sandbox.waitForLog('R33 flood done', 10000);
         console.log(`MEASURED ${browserName} R3-3 during a log flood: ${describeShare(share)}`);
-        // at 5ede7ba: Firefox 47 of 242 ticks, WebKit never finished; now near idle on all three. docs/API.md: "a flood never
-        // reaches the host page's thread", so nothing past the measure's own margin
+        // docs/API.md: "a flood never reaches the host page's thread", so nothing past the measure's own margin
         expect(share.busy).toBeLessThanOrEqual(MARGIN);
     });
 });

@@ -39,7 +39,7 @@ const UNCAUGHT_REASON = /uncaught errors or unhandled rejections/;
 
 // A flood that runs its tick on every timer turn for 5 s of running in all, then stops: long enough to measure, short
 // enough that a flood the sandbox does not end cannot run the test's browser out of memory (Firefox's console kept about
-// 7 GB in 25 s at 60814b5, past this machine's memory limit). Pausable, so that each loaded window lies between two idle
+// 7 GB in 25 s, past this machine's memory limit). Pausable, so that each loaded window lies between two idle
 // baselines (./host-share.ts, interleavedShare): the WITHIN_FLOOD windows and their warm-ups are its 5 s.
 const FOR_5_SECONDS = (setup: string, tick: string) => pausableFlood(setup, tick, 5000);
 

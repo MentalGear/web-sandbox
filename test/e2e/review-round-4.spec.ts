@@ -321,11 +321,10 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
     //
     // The share is the host page's busy share over its own idle baseline, measured as view-bound.spec.ts measures the
     // bound (./host-share.ts: the best of short windows, each between two idle baselines taken with the flood paused,
-    // so that another process's load on the machine is in the baseline as in the window), and bounded by the statement's (a) for a flood that loads
-    // (docs/API.md, "The view's cost to the host page": TIME_SHARE + LOAD_SHARE, 40%), without view-bound's 10-point
-    // margin. Until backlog T7 it was one 8 s window on each side against 70% of the idle ticks: on a loaded machine
-    // that one window read the machine's load as the view's (41–45% on Chromium, at the base commit too), and its 30%
-    // was not a bound the library states.
+    // so that another process's load on the machine is in the baseline as in the window), and bounded by the
+    // statement's (a) for a flood that loads (docs/API.md, "The view's cost to the host page": TIME_SHARE + LOAD_SHARE,
+    // 40%), without view-bound's 10-point margin. One window on each side reads a loaded machine's load as the view's
+    // (T7).
     for (const [name, prefix, config, perRender] of [
         ['a refused source', 'https://r.example/', {}, 6500],
         ['an admitted origin', 'https://a.example/', { origins: { images: ['https://a.example'] } }, VIEW_MAX_URLS],

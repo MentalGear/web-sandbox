@@ -329,7 +329,7 @@ describe('C-4: a view operation costs what it changes, not the size of the whole
     });
 
     // An explicit budget for fixed work (backlog T6's class): a view of about 1 M characters built in jsdom, then 20
-    // operations on it. 2.1 s in a full idle run: vitest's 5 s was 2.4 times that. 15 times the idle cost.
+    // operations on it. 2.1 s in a full idle run: vitest's default 5 s is 2.4 times that. 15 times the idle cost.
     it('set({ value }) and text() on a view of ~1 M characters serialize a bounded amount each, not the whole body', { timeout: 30000 }, async () => {
         // the real platform for the view (jsdom's), not the stand-ins above
         for (const name of Object.keys(PLATFORM)) (globalThis as any)[name] = originals[name];
@@ -400,13 +400,11 @@ describe("C-7: setConfig()'s equal-config check is linear in the config, shared 
         el.remove();
     });
 
-    // Sized from the cap, not by a constant far past it (backlog T6): a config of `wide` objects is compared in wide + 3
-    // pairs (the config, its capabilities, `data`, then one per object). Before, 200 000 objects, 20 times the cap. The
-    // comparison stops at the cap either way, but each setConfig() structured-clones the whole config, so the test spent
-    // its time (2.2 s in a full idle run, 4.2 s with two busy loops on the machine) building and cloning 200 000 objects
-    // that decide nothing, and a loaded machine took it past vitest's 5 s. Now it tests both sides of the cap. The control,
-    // just within the cap, rebuilds nothing, so the rebuild past it is the cap's doing (0.2–0.5 s in full runs, idle or
-    // loaded).
+    // Sized from the cap (T6): a config of `wide` objects is compared in wide + 3 pairs (the config, its capabilities,
+    // `data`, then one per object). The comparison stops at the cap, but each setConfig() structured-clones the whole
+    // config, so objects far past the cap only cost time (the clone of 200 000 takes about 640 ms), which a loaded machine
+    // turns into vitest's 5 s. Both sides of the cap: the control, just within it, rebuilds nothing, so the rebuild past
+    // it is the cap's doing (0.2–0.5 s in full runs, idle or loaded).
     it('past the comparison cap the configs count as different: the sandbox rebuilds (the safe answer)', () => {
         defineWebSandbox();
         vi.spyOn(console, 'warn').mockImplementation(() => {});

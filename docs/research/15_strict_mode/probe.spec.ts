@@ -482,9 +482,10 @@ const ONE_WORD_64KIB = `'<p>' + 'x'.repeat(65536 - 32) + '</p>'`;
 test('P7 render flood: host responsiveness while the worker renders as fast as it can', async ({ page, browserName }) => {
     test.setTimeout(180000);
     const m: Record<string, any> = {};
-    // The upper bounds are relative to this run (test/e2e/host-share.ts): one apply of each render as it costs here and
-    // now (calibrated before and after), and the machine's own stall; fixed numbers per engine read a loaded machine's
-    // stalls as the view's. The lower bounds (the view shares the host's thread) stay as they were.
+    // The upper bounds are relative to this run (test/e2e/host-share.ts, T9): one apply of each render as it costs here
+    // and now (calibrated before and after), and the machine's own stall, since a number per engine would read a loaded
+    // machine's stalls as the view's. The lower bounds (the view shares the host's thread) are numbers: a loaded machine
+    // only lengthens a stall.
     const renders: Record<string, string> = { oneWord1MiB: new Function(`return ${ONE_WORD_1MIB}`)(), markup1MiB: new Function(`return ${MARKUP_1MIB}`)(), oneWord64KiB: new Function(`return ${ONE_WORD_64KIB}`)() };
     const applyBound: Record<string, number> = {};
     for (const [key, html] of Object.entries(renders)) applyBound[key] = (await oneApplyStall(page, html, 2)).bound;
