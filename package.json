@@ -26,12 +26,15 @@
     "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "test:probes": "playwright test -c docs/research/15_strict_mode",
-    "build:lib": "rm -rf dist && bun scripts/build-lib.ts && tsc -p tsconfig.build.json && bun scripts/declaration-specifiers.ts",
+    "build:lib": "rm -rf dist && bun scripts/build-lib.ts && tsc -p tsconfig.build.json && bun scripts/declaration-specifiers.ts && bun scripts/declaration-base.ts",
     "typecheck": "tsc --noEmit -p .",
+    "api:check": "bun run build:lib && api-extractor run",
+    "api:update": "bun run build:lib && api-extractor run --local",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "@microsoft/api-extractor": "7.59.4",
     "@playwright/test": "^1.58.1",
     "@types/bun": "^1.3.8",
     "es-module-lexer": "1.7.0",
