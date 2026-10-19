@@ -301,6 +301,9 @@ describe('the frame table (src/lib/frames.ts) and the realms registry (src/lib/r
         }
         expect([...stringified].sort()).toEqual(Object.keys(STRINGIFIED).sort());
         for (const [name, row] of Object.entries(STRINGIFIED)) expect(() => bodyOf(tokenize(read(row.module)), name), name).not.toThrow();
+        // and no function is stringified another way: interpolated whole, or through String()
+        const names = Object.keys(STRINGIFIED).join('|');
+        for (const file of sourceFiles('src')) expect(read(file).match(new RegExp(`\\$\\{(?:${names})\\}|String\\((?:${names})\\)`, 'g')), file).toBeNull();
         // the files that stringify are the realms' builders, and every realm a function runs in has one
         const declared = new Set(Object.values(REALMS).flatMap(realm => (realm.builder === null ? [] : [realm.builder.split(',')[0]!])));
         expect([...builders].sort()).toEqual([...declared].sort());
