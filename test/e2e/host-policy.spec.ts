@@ -158,6 +158,34 @@ test.describe('host page policy', () => {
         expect(await sandbox.callWithTimeoutOutcome(4000, 'nothing-exposed')).toMatchObject({ status: 'rejected', code: 'UNKNOWN_METHOD' });
     });
 
+    // LM-2 (class L; S65 step 2, PR C): a host page's own Trusted Types default policy is embedder code that runs inside
+    // the element's build, at each HTML sink (the wrapper's srcdoc, the inert parse of the markup). One that called reset()
+    // there re-entered the build: the nested build stood, and the outer one then went on over it (a second load deadline,
+    // which overwrote the first, its announcement listener on the nested frame, which overwrote the nested one's, and a
+    // second appendChild of the nested frame). The nested build's deadline was never stopped, and ended the sandbox
+    // LOAD_TIMEOUT_MS later, `ready` as it was.
+    test("LM-2: a reset() from the host page's Trusted Types default policy, inside the build, leaves one build that is ready and stays ready past LOAD_TIMEOUT_MS (Firefox: no Trusted Types, nothing runs there)", async ({ sandbox, page }) => {
+        await openWithPolicy(page, { csp: "require-trusted-types-for 'script'; trusted-types default web-sandbox", ttDefault: true });
+        test.skip(!(await page.evaluate(() => 'trustedTypes' in window)), 'no Trusted Types in this engine: no embedder code runs inside a build');
+        for (const config of [COOPERATIVE, {}]) {
+            const label = JSON.stringify(config);
+            await page.evaluate((c) => {
+                const w = window as any;
+                w.sandboxEvents.length = 0;
+                const element = document.querySelector('web-sandbox') as any;
+                let resets = 0;
+                w.ttDefaultHook = () => { resets++; element.reset(); };
+                element.setConfig(c);
+                w.lm2Resets = () => resets;
+            }, config as any);
+            await expect.poll(() => page.evaluate(() => (window as any).sandboxEvents), { message: label }).toEqual([{ type: 'ready', reason: null }]);
+            expect(await page.evaluate(() => (window as any).lm2Resets()), label).toBe(1);
+            expect(await page.evaluate(() => (document.querySelector('web-sandbox') as any).shadowRoot.querySelectorAll('iframe').length), label).toBe(1);
+            await page.waitForTimeout(5000 + 1500); // LOAD_TIMEOUT_MS, and a margin
+            expect(await page.evaluate(() => [(document.querySelector('web-sandbox') as any).state, (window as any).sandboxEvents]), label).toEqual(['ready', [{ type: 'ready', reason: null }]]);
+        }
+    });
+
     test(`style-src 'self': the frame is 150 px high and the element warns once, naming the hash; with ${WRAPPER_STYLE_HASH} it fills the element, no warning`, async ({ sandbox, page, browserName }) => {
         const warnings: string[] = [];
         page.on('console', (message) => { if (message.type() === 'warning' && message.text().includes('style-src')) warnings.push(message.text()); });

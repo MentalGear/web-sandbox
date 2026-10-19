@@ -8,6 +8,7 @@ import { createSizeOf } from '@src/lib/structured-size';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { isViewFileType, VIEW_WRITE_TYPES } from '@src/lib/in-sandbox-view';
 import { mimeTypeFor as typeForPath } from '@src/lib/files';
+import { checkIn } from './check-in';
 
 /**
  * Review round 5: each finding where the library's own logic decides, reproduced here first against the code it names
@@ -77,7 +78,7 @@ function playBuild(el: any, mode: 'cooperative' | 'worker' | 'strict') {
     if (el._iframe) el._iframe.onload = null; // jsdom's own load would race the test's
     if (mode !== 'strict') {
         const port = new KeptPort();
-        return { port, load: () => {}, ready: () => el._finishBuild(port) };
+        return { port, load: () => {}, ready: () => checkIn(el, port) };
     }
     vi.stubGlobal('MessageChannel', KeptChannel);
     let port: KeptPort | null = null;

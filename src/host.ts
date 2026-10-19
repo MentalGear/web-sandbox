@@ -27,6 +27,7 @@ import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./l
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
+import { INITIAL_LIFECYCLE, runNotices, step as runStep, type BuildContext, type LcInput, type LcState, type LifecycleHost, type Notice } from "./lib/lifecycle";
 import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
@@ -270,16 +271,14 @@ const VIEW_FIRST_OVERRUN_LINE = '[Sandbox] the view spent more than 2000 ms on o
 const EXECUTION_TIMEOUT_REASON = 'the executed code ran longer than workerExecutionTimeout';
 const CONFIG_REFUSED_REASON = 'the configuration could not be used';
 const BUILD_FAILED_REASON = 'the environment could not be built';
-const SECOND_LOAD_REASON = 'the sandbox frame loaded a second time';
-const SECOND_ANNOUNCEMENT_REASON = 'the guest frame announced itself again (it reloaded or rewrote its document)';
-const LOAD_TIMEOUT_REASON = 'the sandbox did not finish loading';
+// The reasons the lifecycle decides (a second load, a second announcement, a missing guest frame, the load deadline's
+// two) are the reducer's: src/lib/lifecycle.ts, LIFECYCLE_REASONS.
 // Past the budget of uncaught errors and rejections the guest's bootstrap keeps (egress.ts, UNCAUGHT_PER_SECOND and
 // UNCAUGHT_CHARACTERS_PER_SECOND; review round 5, N-1): the bootstrap says so once, on the port only it holds.
 const UNCAUGHT_BUDGET_REASON = 'the guest raised more uncaught errors or unhandled rejections in one second than their budget allows';
 // What the host page's own policy can refuse (review round 1, R3-1): the sandbox's frames are srcdoc documents, and a
 // srcdoc document inherits the policies of the page that made it (CSP3: a copy of its policy list; Trusted Types;
 // COEP). Each reason names the policy, so a misconfigured host page is told what to allow (docs/API.md#host-page-policy).
-const STARTUP_BLOCKED_REASON = "the sandbox's startup script did not run: the host page's Content-Security-Policy must allow it (see docs/API.md#host-page-policy)";
 const WORKER_REFUSED_REASON = "the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; see docs/API.md#host-page-policy)";
 const TRUSTED_TYPES_REASON = `the host page's Trusted Types policy does not allow the policy name '${TRUSTED_TYPES_POLICY}' (trusted-types; see docs/API.md#host-page-policy)`;
 // What worker mode's frame may announce instead of a port (worker-bootstrap.ts), and the reason each ends the build with.
@@ -448,20 +447,18 @@ const ElementBase: typeof HTMLElement = typeof HTMLElement === 'function' ? HTML
 
 export class WebSandbox extends ElementBase {
     private _iframe: HTMLIFrameElement | null = null;
-    private _frameLoaded = false;
-    // The reversed handshake (broad review 2026-10-14, CB1): whether this build's guest runs a bootstrap that announces
-    // its port; the guest frame's window whose announcement was accepted (S46: the wrapper's load must still hold it);
-    // and the listener on the host's window, removed by _teardown. Cooperative and worker mode only.
-    private _expectAnnouncement = false;
-    private _guestWindow: Window | null = null;
+    // The reversed handshake (broad review 2026-10-14, CB1): the listener on the host's window, removed by _teardown
+    // (cooperative and worker mode). Whether this build's guest announces, whether the wrapper loaded and the window
+    // whose announcement was accepted are the build's progress in the reducer (`_lc.build`; S65 PR D).
     private _stopListening: (() => void) | null = null;
     private _loadDeadline: Watchdog | null = null; // LOAD_TIMEOUT_MS until the guest checks in, or a frame with no bootstrap loads (CB3, S46)
-    // The reason of the 'terminated' being dispatched, while it is, or null (CB5; see _terminateBuild). Every 'terminated'
-    // is dispatched through _dispatchTerminated, which sets it (review round 4, L-3).
-    private _terminationDispatched: string | null = null;
-    private _buildInputs = 0; // counts changes to what a build reads: setConfig(), load(), the files
-    private _buildWithin: string | null = null; // the 'terminated' being dispatched when this build started (L-4)
-    private _state: SandboxState = 'idle'; // changed only by _enterState()
+    // The lifecycle's state (src/lib/lifecycle.ts, LcState; backlog S65): `state`, the environment count (`gen`: every
+    // teardown increments it), a build's 'terminated' waiting for its task (`pending`, R3-2), the 'terminated' reasons
+    // being dispatched (`dispatching`, round 4's L-3), the one being dispatched when the last build started (`within`,
+    // round 2's L-4: CB5's no-repeat rule), the standing build's progress, how often what a build reads changed (setConfig(),
+    // load(), the files: `inputs`, R3-7) and the refusal of the last setConfig() argument (`refused`). One value. The
+    // executor's `step` (module level, below) writes it, and nothing else does.
+    private _lc: LcState = INITIAL_LIFECYCLE;
     private _watchdog: Watchdog | null = null;
     private _resizer: AutoResizer | null = null; // this environment's auto-sizing (B6), or null when off
     private _autoHeight: string | null = null;   // the inline height auto-sizing last wrote on the element
@@ -485,17 +482,14 @@ export class WebSandbox extends ElementBase {
     private _warnedLogBytes = false;          // a guest line past LOG_MAX_BYTES warned for the current environment
     private _warnedViewTextDropped = false;   // the view's notice that it dropped guest error texts, for the current environment (M-5)
     private _warnedViewOverrun = false;       // the view's first overrun of the current environment was said (S72)
-    // Counts environments: every teardown increments it. Read by _notifyThenAct, the one path for a host action that
-    // dispatches an event and then acts on the environment, so a listener that reset or terminated the sandbox in between
-    // is never undone (review B5); and by _postRpc, so a call is sent only to the environment it was made in (L-2).
-    private _generation = 0;
-    // The environment (its _generation) of the host call being made now, while the broker copies its arguments and
-    // sends it (_issue), or null outside one.
+    // The environment (its `_lc.gen`) of the host call being made now, while the broker copies its arguments and sends it
+    // (_issue), or null outside one: _postRpc sends a call's frame only to the environment it was made in (L-2).
     private _issuedIn: number | null = null;
     private _config: StoredConfig = defaultConfig();
-    // Why the last setConfig() argument could not be used, or null: while set, every build is refused with
-    // this reason (initialize), as for an unknown mode.
-    private _configRefusal: string | null = null;
+    // The setConfig() argument being applied, as its structured clone or what refused cloning it: setConfig() holds it
+    // for the executor's `applyConfig` effect (_configure), within its own call. Why the last argument could not be used
+    // is the reducer's (`_lc.refused`): while set, every build is refused with it, as for an unknown mode.
+    private _configuring: { copy: unknown; unusable: unknown } | null = null;
     private _port: MessagePort | null = null;     // the guest's port: the guest document's bootstrap, or the worker (logic port)
     private _viewPort: MessagePort | null = null; // strict mode: the view's port (violations, resize, entry errors, liveness)
     private _viewWatchdog: Watchdog | null = null; // strict mode: the view liveness check (A5)
@@ -517,13 +511,14 @@ export class WebSandbox extends ElementBase {
     private _warnedStrict = new Set<string>(); // strict-mode warnings of a build (the view's stylesheet, html's scripts), once each per instance
     private _warnedForeignDocument = false; // inserted into a document of another realm (CB7), once per instance
     private _warnedWrapperStyle = false;    // the host page's style-src refused the wrapper's style (R3-1), once per instance
-    private _lastConfig: { copy: unknown; inputs: number } | null = null; // the copy of the last usable setConfig() argument (R3-7)
-    private _pendingTermination: object | null = null; // a build's 'terminated' waiting for its task (R3-2), cleared by every teardown
+    // The copy of the last usable setConfig() argument (R3-7), compared as data with the next one; whether nothing else a
+    // build reads changed since is the reducer's (`_lc.lastInputs`, `_lc.inputs`).
+    private _lastConfig: { copy: unknown } | null = null;
     private _heightBeforeAuto: string | null = null; // the embedder's inline height before auto-sizing first wrote one (R3-8)
     private _exposedNames = new Set<string>(); // what expose() published, for the no-allow-scripts warning (R3-4)
 
     // Files are part of the environment: they live on the element, survive reset(), load(), setConfig()
-    // and terminate(), and every environment build takes a snapshot (createIframe). See src/lib/files.ts.
+    // and terminate(), and every environment build takes a snapshot (_prepareBuild). See src/lib/files.ts.
     private _files = new FileStore();
 
     // One broker lives on the element for its whole life, so host-exposed methods persist across
@@ -560,7 +555,7 @@ export class WebSandbox extends ElementBase {
 
     /** Where the sandbox is in its lifecycle; see SandboxState. Agrees with 'ready' / 'terminated' when they fire. */
     get state(): SandboxState {
-        return this._state;
+        return this._lc.state;
     }
 
     // The lifecycle callbacks call module-level functions (connected, disconnected, adopted below), never a method
@@ -592,7 +587,8 @@ export class WebSandbox extends ElementBase {
      */
     terminate(reason: string = DEFAULT_TERMINATE_REASON): void {
         // a reason that says nothing (not a string, empty, only white space) is the default one (review round 2, L-7)
-        this._terminate(typeof reason === 'string' && reason.trim() !== '' ? reason : DEFAULT_TERMINATE_REASON);
+        // No generation: the embedder's own call ends whatever environment stands (src/lib/lifecycle.ts, `terminate`).
+        step(this, { t: 'terminate', reason: typeof reason === 'string' && reason.trim() !== '' ? reason : DEFAULT_TERMINATE_REASON });
     }
 
     /**
@@ -601,7 +597,7 @@ export class WebSandbox extends ElementBase {
      * and pending calls reject with TERMINATED. Wait for 'ready' before relying on the new frame.
      */
     reset(): void {
-        this.initialize();
+        step(this, { t: 'build', why: 'reset', ctx: this._buildContext() });
     }
 
     /**
@@ -611,8 +607,8 @@ export class WebSandbox extends ElementBase {
      */
     setConfig(config: SandboxConfig) {
         // A config the element cannot use is a termination with a reason, never a throw that leaves the old
-        // environment torn down and no new one built (follow-up audit 2026-10-14): initialize() refuses every
-        // build while _configRefusal is set, as it does for an unknown mode (review A4), until a usable config
+        // environment torn down and no new one built (follow-up audit 2026-10-14): the reducer refuses every build
+        // while its refusal stands (`_lc.refused`), as it does for an unknown mode (review A4), until a usable config
         // arrives. Nothing of a refused config is applied.
         //
         // One structured clone of the whole argument before anything reads it: every check, and every later build,
@@ -629,26 +625,31 @@ export class WebSandbox extends ElementBase {
         // The configuration the environment was built from, again, while that environment stands (review round 1,
         // R3-7): nothing to change, so nothing is rebuilt (an embedder that applies its config on every edit, as the
         // playground does, keeps its guest). Anything a build reads changed since (load(), the files) builds as usual.
-        if (unusable === null && this._isCurrentConfig(copy)) return;
-        this._buildInputs++;
+        // The comparison of the data is the host's (`same`); the rest of the no-op rule is the reducer's (`setConfig`),
+        // and decides it before anything of the argument is applied. Otherwise the executor applies the copy
+        // (`applyConfig`: _configure), then builds from it.
+        const same = unusable === null && this._lastConfig !== null && sameData(copy, this._lastConfig.copy);
+        this._configuring = { copy, unusable };
+        try {
+            step(this, { t: 'setConfig', same });
+        } finally {
+            this._configuring = null;
+        }
+    }
+
+    // The executor's `applyConfig` effect: the argument setConfig() holds, applied (_applyConfig), and its refusal, or null.
+    // The reducer stores the refusal and starts the build from it (`configured`).
+    private _configure(): string | null {
+        const { copy, unusable } = this._configuring!;
         try {
             if (unusable !== null) throw unusable;
             this._applyConfig(copy);
-            this._configRefusal = null;
-            this._lastConfig = { copy, inputs: this._buildInputs };
+            this._lastConfig = { copy };
+            return null;
         } catch (error) {
-            this._configRefusal = `${CONFIG_REFUSED_REASON} (${errorName(error)})`;
             this._lastConfig = null;
+            return `${CONFIG_REFUSED_REASON} (${errorName(error)})`;
         }
-        this.initialize();
-    }
-
-    // Whether `copy` is the configuration the standing environment was built from, with nothing else changed since.
-    private _isCurrentConfig(copy: unknown): boolean {
-        const last = this._lastConfig;
-        if (!last || last.inputs !== this._buildInputs || this._configRefusal !== null) return false;
-        if (this._state !== 'ready' && this._state !== 'loading') return false;
-        return sameData(copy, last.copy);
     }
 
     // Stores one setConfig() argument, already copied (setConfig), as the config schema normalised it
@@ -726,7 +727,7 @@ export class WebSandbox extends ElementBase {
     // Synchronous, once per call that changed something.
     private _dispatchFilesChanged(paths: string[]) {
         if (paths.length === 0) return;
-        this._buildInputs++;
+        step(this, { t: 'filesChanged' }); // what a build reads changed (R3-7: the same config again rebuilds now)
         this.dispatchEvent(elementEvent('fileschanged', { paths }));
     }
 
@@ -735,7 +736,7 @@ export class WebSandbox extends ElementBase {
     // (handleRequest, rpc.ts), and only the current port's frames arrive (_onGuestMessage, B4), so a request is
     // always handled by the overlay of the environment that sent it, even if it runs after a listener rebuilt the
     // sandbox. Never the next environment's.
-    // `built` is the copy of the store this build delivers (createIframe): the overlay answers the guest from it, so
+    // `built` is the copy of the store this build delivers (_prepareBuild): the overlay answers the guest from it, so
     // nothing registered after the build shows through a write's answer or its quota (broad review 2026-10-14, CB4).
     private _startGuestWrites(built: FileStore) {
         this._guestWrites = this._config.guestWrites === true ? createGuestWrites({ store: this._files, built }) : null;
@@ -756,9 +757,9 @@ export class WebSandbox extends ElementBase {
 
     // The reserved sandbox:write method. Every refusal is a FileError with a library code (guest-writes.ts); with
     // writes off, FILES_NOT_ALLOWED: the guarantee, whatever the guest's own sandboxFiles does first. A recorded
-    // change is announced last, through _notifyThenAct (B5): 'fileswritten' runs embedder listeners, and the guest is
-    // told its change stands only if no listener reset or terminated the sandbox meanwhile (then the overlay that
-    // held it is gone or closed, and the answer could only reach a closed port anyway).
+    // change is announced last, through the lifecycle executor's runNotices (B5): 'fileswritten' runs embedder listeners,
+    // and the guest is told its change stands only if no listener reset or terminated the sandbox meanwhile (then the
+    // overlay that held it is gone or closed, and the answer could only reach a closed port anyway).
     // In strict mode the change goes to the view as well (R4-4), and the guest is answered once the view has it.
     // What is announced and what the view is told are both projections of the one diff the overlay reports for the
     // request (guest-writes.ts, record; review round 5, N-4 and L-4): 'fileswritten' exactly when the entry
@@ -778,11 +779,7 @@ export class WebSandbox extends ElementBase {
         const shown = diff.view && this._viewPort ? viewWriteOf(answer.path, diff.shown) : null;
         if (!diff.listed) return new Promise((resolve, reject) => this._showInView(shown, () => resolve(answer), reject));
         return new Promise((resolve, reject) => {
-            let acted = false;
-            this._notifyThenAct([() => this._dispatchFilesWritten(answer.path)], () => {
-                acted = true;
-                this._showInView(shown, () => resolve(answer), reject);
-            });
+            const acted = runNotices(lifecycleHost(this), [() => this._dispatchFilesWritten(answer.path)], () => this._showInView(shown, () => resolve(answer), reject));
             if (!acted) reject(new Error('[Sandbox] the sandbox was reset or terminated while this write was announced.'));
         });
     }
@@ -813,9 +810,8 @@ export class WebSandbox extends ElementBase {
      * and rebuilds the environment now. Worker mode ignores the markup but still rebuilds.
      */
     load(html: string) {
-        this._buildInputs++;
         this._config.html = html;
-        this.initialize();
+        step(this, { t: 'build', why: 'load', ctx: this._buildContext() }); // the reducer counts the change of `html`
     }
 
     /**
@@ -837,13 +833,13 @@ export class WebSandbox extends ElementBase {
         // One rule for work handed to the guest (backlog B8): it belongs to an environment, and while idle or
         // terminated there is none. execute() warns and does nothing; call() rejects at once with TERMINATED.
         // (While idle, execute() used to queue code that the build on insertion then dropped silently.)
-        if (this._state === 'terminated' || this._state === 'idle') {
-            console.warn(`[Sandbox] execute() ignored: the sandbox ${this._state === 'idle' ? 'is not in the document' : 'was terminated'}. Call it once the element is in the document and not terminated (reset(), setConfig() or load() start a new environment).`);
+        if (this._lc.state === 'terminated' || this._lc.state === 'idle') {
+            console.warn(`[Sandbox] execute() ignored: the sandbox ${this._lc.state === 'idle' ? 'is not in the document' : 'was terminated'}. Call it once the element is in the document and not terminated (reset(), setConfig() or load() start a new environment).`);
             return;
         }
 
-        // Before `ready` it waits, even with a port (strict mode has one from the wrapper's load): _enterReady posts it.
-        if (this._port && this._state === 'ready') {
+        // Before `ready` it waits, even with a port (strict mode has one from the wrapper's load): the `flush` effect posts it.
+        if (this._port && this._lc.state === 'ready') {
             this._postExecute(this._port, code);
         } else {
             this._queue.push({ code });
@@ -906,7 +902,7 @@ export class WebSandbox extends ElementBase {
     // TERMINATED, at once (RpcSend in rpc.ts). Every call settles, whatever runs while its arguments are copied.
     private _issue(makeCall: () => Promise<unknown>): Promise<unknown> {
         const outer = this._issuedIn;
-        this._issuedIn = this._generation;
+        this._issuedIn = this._lc.gen;
         try {
             return this._queuedWhilePending(makeCall);
         } finally {
@@ -938,18 +934,18 @@ export class WebSandbox extends ElementBase {
     // is refused at once with TERMINATED. (While idle, a call used to wait for the element's insertion, whose
     // build then rejected it with TERMINATED anyway.)
     private _noEnvironmentError(): Error | null {
-        if (this._state === 'terminated') return this._broker.terminationError(TERMINATED_CALL_MESSAGE);
-        if (this._state === 'idle') return this._broker.terminationError(IDLE_CALL_MESSAGE);
+        if (this._lc.state === 'terminated') return this._broker.terminationError(TERMINATED_CALL_MESSAGE);
+        if (this._lc.state === 'idle') return this._broker.terminationError(IDLE_CALL_MESSAGE);
         return null;
     }
 
-    // Sends one of the host's own RPC requests over the port once the build is ready, or queues it until _enterReady flushes
+    // Sends one of the host's own RPC requests over the port once the build is ready, or queues it until `ready` flushes
     // (mirrors execute(); review round 5, L-1: strict mode has its port from the wrapper's load, before `ready`).
     // Only for the environment the call was made in, while it stands (L-2, _issue): otherwise nothing is sent, and the
     // text returned refuses the call TERMINATED.
     private _postRpc(frame: unknown): string | undefined {
-        if (this._issuedIn !== this._generation || this._state === 'idle' || this._state === 'terminated') return RESET_CALL_MESSAGE;
-        if (this._port && this._state === 'ready') {
+        if (this._issuedIn !== this._lc.gen || this._lc.state === 'idle' || this._lc.state === 'terminated') return RESET_CALL_MESSAGE;
+        if (this._port && this._lc.state === 'ready') {
             this._port.postMessage(frame);
             return;
         }
@@ -980,9 +976,10 @@ export class WebSandbox extends ElementBase {
         if (this._config.mode !== 'worker' && this._config.mode !== 'strict') return;
         const budget = watchdogBudget(this._config.workerExecutionTimeout); // a finite number > 0, else off
         if (budget === 0) return;
+        const gen = this._lc.gen; // the environment the code was posted to: its timeout ends that one only
         const timer = setLongTimeout(() => {
             this._executionTimers.delete(timer);
-            this._probeExecution();
+            this._probeExecution(gen);
         }, budget); // any budget, 2^31 ms and past (L-2: long-timer.ts)
         this._executionTimers.add(timer);
     }
@@ -990,7 +987,7 @@ export class WebSandbox extends ElementBase {
     // The check at a deadline: a one-off watchdog over EXECUTION_TIMEOUT_GRACE_MS (watchdog.ts: pings each tick until
     // an answer, expires after a whole grace of silent ticks, so a host stall is never counted against the guest).
     // Its pings carry negative numbers of their own, so a PONG names the probe it answers and never the watchdog's.
-    private _probeExecution() {
+    private _probeExecution(gen: number) {
         const port = this._port;
         if (!port) return;
         const pings: number[] = [];
@@ -1009,7 +1006,7 @@ export class WebSandbox extends ElementBase {
             },
             onExpire: () => {
                 end();
-                this._onExecutionTimeout();
+                this._onExecutionTimeout(gen);
             },
         });
     }
@@ -1022,36 +1019,26 @@ export class WebSandbox extends ElementBase {
         return true;
     }
 
-    private _onExecutionTimeout() {
-        this._notifyThenAct([() => this._dispatchHostLog('error', 'Execution Timeout')], () => this._terminate(EXECUTION_TIMEOUT_REASON));
-    }
-
-    /**
-     * The one way the host dispatches an event and then acts on the environment (review B5). Dispatching runs
-     * embedder listeners synchronously, and a listener may reset() or terminate() the sandbox; acting afterwards
-     * on the environment that is gone would undo what the listener did (rebuild what it terminated, tear down
-     * what it just built). So the action runs only if no teardown happened in between: every teardown counts up
-     * _generation, and this is the only place that compares it. A path that dispatches and then acts goes through
-     * here; none compares the count by hand (test/unit/channel-guarantees.test.ts enumerates them).
-     *
-     * Each notice dispatches ONE event, and the next one is dispatched only if no teardown happened during the one before
-     * (review round 4, L-2): an entry failure announces a host line and then the guest's own line, and the guest line,
-     * dispatched from the same callback after a listener of the host line had reset or removed the element, reached the
-     * next environment's listeners, or an idle element's. The same test checks that each notice dispatches one event.
-     */
-    private _notifyThenAct(notices: readonly (() => void)[], act: () => void) {
-        const generation = this._generation;
-        for (const notice of notices) {
-            notice();
-            if (generation !== this._generation) return;
-        }
-        act();
+    // The deadline's probe went unanswered: one host line, then the termination, of the environment the code ran in.
+    //
+    // A termination the element starts that says something first carries its lines as `notices` (src/lib/lifecycle.ts,
+    // Notice), and the executor dispatches them, one event each, then the termination as a nested step. Review B5: a
+    // listener of a line may reset() or terminate() the sandbox, and acting afterwards on the environment that is gone
+    // would undo what the listener did; round 4's L-2: a second line of one callback, dispatched after a listener of the
+    // first had reset or removed the element, reached the next environment's listeners, or an idle element's. So the
+    // executor stops before the next line and before the step once the generation moved (lifecycle.ts, `runEffects`),
+    // and the step itself carries `gen`, which `reduce` drops once it is stale. This was `_notifyThenAct`, a comparison of
+    // host.ts's own; there is none left here (test/unit/lifecycle-reducer.test.ts scans for one), and a notice is data
+    // now, so it dispatches exactly one event by construction (the executor's `notice`, host.ts's `lifecycleHost`).
+    private _onExecutionTimeout(gen: number) {
+        step(this, { t: 'terminate', reason: EXECUTION_TIMEOUT_REASON, gen, notices: [hostNotice('Execution Timeout')] });
     }
 
     // A frame of ours that the host page's policy refused, as it reported (R3-1; review round 2, C-5 and C-6): one host
-    // line, then the termination with the reason that names the policy (unless a listener of that line acted first).
-    private _refusedByHostPage(reason: string) {
-        this._notifyThenAct([() => this._dispatchHostLog('error', `[Sandbox] ${reason}`)], () => this._terminate(reason));
+    // line, then the termination with the reason that names the policy (unless a listener of that line acted first), of
+    // the environment `gen` whose frame said so.
+    private _refusedByHostPage(reason: string, gen: number) {
+        step(this, { t: 'terminate', reason, gen, notices: [hostNotice(`[Sandbox] ${reason}`)] });
     }
 
     // The guest's port, announced by the guest frame itself (CB1), becomes this environment's port. Null when this
@@ -1065,7 +1052,7 @@ export class WebSandbox extends ElementBase {
         // calls it runs per channel (review B7), so the count belongs to this environment.
         const reply = (frame: unknown, transfer?: Transferable[]) => port.postMessage(frame, transfer ?? []);
         // Setting onmessage starts the port: frames the guest posted before its announcement was accepted are
-        // delivered now, after 'ready'. What waits in the queue is posted by _enterReady, the one flush point.
+        // delivered now, after 'ready'. What waits in the queue is posted by the `flush` effect, the one flush point.
         port.onmessage = (e) => this._onGuestMessage(port, reply, e.data, null);
     }
 
@@ -1079,10 +1066,16 @@ export class WebSandbox extends ElementBase {
      * itself (location.reload(), a <meta refresh> without a URL) or rewrites its document so a bootstrap runs again
      * announces again, and a guest that forges one can only end its own environment (PD8). Messages from any other
      * window, and the guest's other messages, are not this listener's (they reach the embedder's own listeners).
+     *
+     * What the announcement is (from the guest frame's window, trusted, with exactly one port or worker mode's refusal)
+     * is read here; what it does is the reducer's (`announced`): which one is accepted, and whether the build expects one,
+     * are the build's progress there, and so is the window it came from, which the wrapper's load must still hold.
      */
     private _listenForAnnouncement(iframe: HTMLIFrameElement) {
         const host = window;
-        let accepted = false;
+        // The environment this listener belongs to: installed by its build, removed by its teardown (_stopListening).
+        // Its input carries it, so one that a teardown made stale is dropped (S65).
+        const gen = this._lc.gen;
         const onMessage = (event: MessageEvent) => {
             const guestWindow = guestWindowOf(iframe);
             if (!guestWindow || event.source !== guestWindow) return;
@@ -1092,20 +1085,11 @@ export class WebSandbox extends ElementBase {
             // Worker mode's frame announces a worker that could not start as its one announcement, with no port (review
             // round 2, C-5, worker-bootstrap.ts): the build ends with the reason strict mode gives for the same refusal,
             // and is never 'ready'. Only in worker mode, whose frame runs no guest code: elsewhere it is a forgery.
-            const refusal = this._config.mode === 'worker' && event.ports.length === 0 ? WORKER_FRAME_REFUSALS[data.refused as string] : undefined;
-            if (accepted || !this._expectAnnouncement || !event.isTrusted || (event.ports.length !== 1 && refusal === undefined)) {
-                this._terminate(SECOND_ANNOUNCEMENT_REASON);
-                return;
-            }
-            accepted = true;
-            if (refusal !== undefined) {
-                this._refusedByHostPage(refusal);
-                return;
-            }
-            // The check-in (S46): the environment is ready now, whether or not the wrapper has loaded (its load waits
-            // for the guest's subresources). The guest frame it came from is the one the wrapper's load must still hold.
-            this._guestWindow = guestWindow;
-            this._finishBuild(event.ports[0]!);
+            const refusal = this._config.mode === 'worker' && event.ports.length === 0 ? WORKER_FRAME_REFUSALS[data.refused as string] ?? null : null;
+            const valid = event.isTrusted && (event.ports.length === 1 || refusal !== null);
+            // The check-in (S46): the environment is ready then, whether or not the wrapper has loaded (its load waits for
+            // the guest's subresources).
+            step(this, { t: 'announced', gen, valid, refusal, port: valid && refusal === null ? event.ports[0]! : null, source: guestWindow });
         };
         host.addEventListener('message', onMessage, true);
         this._stopListening = () => host.removeEventListener('message', onMessage, true);
@@ -1115,6 +1099,8 @@ export class WebSandbox extends ElementBase {
     // `source` labels its violation reports in strict mode ('logic'); null elsewhere.
     // Only the current environment's port is heard (review B4): teardown closes a port, and a closed port
     // delivers nothing more, but this does not rely on it — a frame from any other port changes nothing.
+    // So past that check the port is the standing environment's, and the generation read then is the one the port was
+    // opened in: the termination a frame starts carries it (S65), as _onViewMessage's do.
     private _onGuestMessage(port: MessagePort, reply: (frame: unknown) => void, data: any, source: 'logic' | null) {
         if (!port || port !== this._port) return;
         if (data?.type === 'PONG') {
@@ -1140,7 +1126,7 @@ export class WebSandbox extends ElementBase {
             // The guest raised more uncaught errors and rejections in one second than their budget (egress.ts; review
             // round 5, N-1), counted by its bootstrap, which alone posts on this port. Firefox reports each to the host
             // page's thread, cancelled or not, so the guest that causes them is stopped.
-            this._terminate(UNCAUGHT_BUDGET_REASON);
+            step(this, { t: 'terminate', reason: UNCAUGHT_BUDGET_REASON, gen: this._lc.gen });
             return;
         }
         // Everything else on this port is RPC (or not ours); the broker validates every frame.
@@ -1174,7 +1160,7 @@ export class WebSandbox extends ElementBase {
         viewPort.onmessage = (e) => this._onViewMessage(viewPort, e.data);
 
         // The ports go to the view now, at the wrapper's load; what waits in the queue does not (review round 5, L-1): it is
-        // posted when the build becomes ready, at the view's check-in (_enterReady). Flushed here, a call made while loading
+        // posted when the build becomes ready, at the view's check-in (the `flush` effect). Flushed here, a call made while loading
         // that timed out between the load and the check-in had already left, and ran in the guest after its caller had been
         // told TIMEOUT, though docs/API.md says it never runs.
         const init = this._strictInit;
@@ -1184,24 +1170,23 @@ export class WebSandbox extends ElementBase {
 
     private _onViewMessage(viewPort: MessagePort, data: any) {
         if (!viewPort || viewPort !== this._viewPort) return; // only the current environment's view (review B4)
+        const gen = this._lc.gen; // so the environment the view port was opened in (see _onGuestMessage)
         if (data?.type === 'VIEW_READY') {
-            // The view's check-in, the first frame on the port only its bootstrap holds (R3-1): the strict build is ready.
-            if (this._state !== 'loading') return;
-            this._checkViewSize(data.height);
-            if (data.stillStyleRefused === true) this._warnStillStyleRefused();
-            this._enterReady();
+            // The view's check-in, the first frame on the port only its bootstrap holds (R3-1): the strict build is ready,
+            // if it is still loading (the reducer's `viewReady`), and what the view measured is checked then (`checkView`).
+            step(this, { t: 'viewReady', gen, height: data.height, stillStyleRefused: data.stillStyleRefused === true });
             return;
         }
         if (data?.type === 'TRUSTED_TYPES_REFUSED') {
             // The view could not create its Trusted Types policy (review round 2, C-6): the host page's trusted-types
             // directive does not name it, though the host page itself never needed it (its own default policy took the
             // element's strings). The view checked before its check-in, so the build was never ready.
-            this._refusedByHostPage(TRUSTED_TYPES_REASON);
+            this._refusedByHostPage(TRUSTED_TYPES_REASON, gen);
             return;
         }
         if (data?.type === 'WORKER_REFUSED') {
             // The view could not load the worker at all (no script of the guest's ran): the host page's policy (R3-1).
-            this._refusedByHostPage(WORKER_REFUSED_REASON);
+            this._refusedByHostPage(WORKER_REFUSED_REASON, gen);
             return;
         }
         if (data?.type === 'VIEW_PONG') {
@@ -1227,7 +1212,7 @@ export class WebSandbox extends ElementBase {
         if (data?.type === 'VIEW_OVERRUN') {
             // The second overrun of the view within VIEW_OVERRUN_WINDOW_MS (backlog S72, class P; review round 5, M-2;
             // in-sandbox-view.ts, viewBudget): the view has stopped applying operations.
-            this._terminate(VIEW_OVERRUN_REASON);
+            step(this, { t: 'terminate', reason: VIEW_OVERRUN_REASON, gen });
             return;
         }
         if (data?.type === 'VIEW_WRITTEN') {
@@ -1264,11 +1249,9 @@ export class WebSandbox extends ElementBase {
         if (data?.type === 'GUEST_ERROR') {
             // The entry's own error text is the guest's (it wrote the code, or threw the value): a 'guest' line,
             // clamped and rate-limited like every guest line, never part of the host line or the reason (F3).
+            // The guest line goes through the guest relay's rate limit (the executor's notice, `source: 'guest'`).
             const line = viewErrorLine(data.message);
-            this._notifyThenAct([
-                () => this._dispatchHostLog('error', `[Sandbox] ${ENTRY_FAILED_REASON}`),
-                () => this._dispatchGuestLog({ level: 'error', args: [line] }),
-            ], () => this._terminate(ENTRY_FAILED_REASON));
+            step(this, { t: 'terminate', reason: ENTRY_FAILED_REASON, gen, notices: [hostNotice(`[Sandbox] ${ENTRY_FAILED_REASON}`), { level: 'error', text: line, source: 'guest' }] });
         }
     }
 
@@ -1290,7 +1273,7 @@ export class WebSandbox extends ElementBase {
 
     // Flushes what was queued before the build was ready onto its port, in the order it was issued (L-3): execute() code
     // (checked by execute() when queued) and the host's own RPC requests — the queue never holds answers (those go back
-    // on the port their request arrived on). Called by _enterReady only (review round 5, L-1). Requests are cloned when
+    // on the port their request arrived on). Reached by the `flush` effect only (review round 5, L-1). Requests are cloned when
     // the call is made (see callWithTimeout in rpc.ts), so a post failure is not expected here; the per-frame catch is a
     // backstop so that one bad frame could never drop the frames behind it or stop 'ready' from firing.
     private _flushQueues(port: MessagePort) {
@@ -1397,10 +1380,11 @@ export class WebSandbox extends ElementBase {
     private _startWatchdog(port: MessagePort) {
         const budget = watchdogBudget(this._config.watchdogTimeout);
         if (budget === 0) return;
+        const gen = this._lc.gen; // armed for this environment's port (`startWatchdogs`): its expiry ends that one only
         this._watchdog = startWatchdog({
             timeoutMs: budget,
             ping: (n) => port.postMessage({ type: 'PING', n }),
-            onExpire: () => this._terminate(WATCHDOG_REASON),
+            onExpire: () => step(this, { t: 'terminate', reason: WATCHDOG_REASON, gen }),
         });
     }
 
@@ -1464,26 +1448,10 @@ export class WebSandbox extends ElementBase {
         this.dispatchEvent(elementEvent('fetch', record));
     }
 
-    // The one place `state` changes. The 'ready' and 'terminated' events are dispatched here, after the
-    // state is set, so a listener always reads the state its event announces; a build's 'terminated' in a task of its
-    // own (`dispatch: 'task'`, _terminateBuild).
-    private _enterState(next: SandboxState, reason?: string, dispatch: 'now' | 'task' | 'none' = 'now') {
-        this._state = next;
-        if (next === 'ready') this.dispatchEvent(elementEvent('ready'));
-        if (next !== 'terminated' || dispatch === 'none') return;
-        if (dispatch === 'now') {
-            this._dispatchTerminated(reason ?? '');
-            return;
-        }
-        const token = {};
-        this._pendingTermination = token;
-        setTimeout(() => this._dispatchBuildTermination(reason ?? '', token), 0);
-    }
-
+    // The resources of the environment (the executor's `teardown` effect): its generation is the reducer's. Everything a
+    // build makes is made in _attachBuild or later, and released here (LM-2).
     private _teardown() {
-        this._generation++;
-        this._pendingTermination = null; // a build's 'terminated' still to come is no longer the sandbox's state (R3-2)
-        this._guestWrites?.close(); // its writes stay listable and committable until the next build (initialize)
+        this._guestWrites?.close(); // its writes stay listable and committable until the next build
         this._logLimiter = createLogLimiter(); // the log rate limit is per environment
         this._warnedLogLimit = false;
         this._guestCalls = createRateLimiter(this._callBudget.calls); // and so is the call budget (M-2)
@@ -1500,8 +1468,6 @@ export class WebSandbox extends ElementBase {
         this._broker.rejectAllPending(RESET_CALL_MESSAGE);
         if (this._stopListening) { this._stopListening(); this._stopListening = null; }
         if (this._loadDeadline) { this._loadDeadline.stop(); this._loadDeadline = null; }
-        this._expectAnnouncement = false;
-        this._guestWindow = null;
         if (this._iframe) { this._iframe.onload = null; this._iframe.remove(); this._iframe = null; }
         if (this._port) { this._port.close(); this._port = null; }
         if (this._viewPort) { this._viewPort.close(); this._viewPort = null; }
@@ -1517,131 +1483,51 @@ export class WebSandbox extends ElementBase {
         if (this._fetchBridge) { this._fetchBridge.abortAll(); this._fetchBridge = null; } // upstream requests end with the environment
     }
 
-    // Every termination comes through here: terminate(), the frame-integrity checks in _onFrameLoad and
-    // the watchdog. Already terminated means nothing to do, which is what makes 'terminated' fire once.
-    private _terminate(reason: string) {
-        if (this._state === 'terminated') return;
-        console.warn(`[Sandbox] terminated: ${reason}`);
-        this._teardown();
-        this._enterState('terminated', reason);
-    }
-
-    // Builds a fresh environment from the current config: the one place a build starts (connectedCallback,
-    // reset(), load(), setConfig()). Outside the document there is nothing to build into (a detached iframe
-    // never loads), so the element stays idle and connectedCallback builds it.
-    //
-    // Every build failure is a termination (follow-up audit 2026-10-14). A build that threw used to leave the
-    // old environment torn down, state 'loading', no frame and no 'terminated' event, and the throw escaped to
-    // whoever called setConfig() or reset(): a configured string where a directive took a list
-    // ("img-src": "x; script-src *") made the policy generator throw there. Now a refusal known up front (a config that
-    // could not be used, an unknown mode) and anything the build throws end the same way: state 'terminated',
-    // one 'terminated' event with the reason, nothing half-built (_teardown).
-    private initialize() {
-        // Every build runs, from a 'terminated' listener too: CB5's rule is in _terminateBuild (the answer it gives is
-        // not dispatched again), never a build skipped here (review round 3, L-1).
-        this._buildWithin = this._terminationDispatched;
-        this._teardown();
-        this._discardGuestWrites(); // every build starts without the last environment's uncommitted writes
-        // Where the element may build is one rule (review round 2, L-1: buildsHere, below), asked by every build, however
-        // it starts: in another window's document, reset(), load() and setConfig() built there before (the guest ran,
-        // and announced itself to a window the element does not listen to); now they stop the environment, as
-        // insertion there does, and the element stays idle.
-        if (!buildsHere(this)) {
-            this._enterState('idle');
-            return;
-        }
-        // 'loading' first: every build attempt that fails is one termination with its own reason, also when the
-        // sandbox was already terminated (reset() of a refused config says again why it cannot start).
-        this._enterState('loading');
-        const refusal = this._buildRefusal();
-        if (refusal !== null) {
-            this._terminateBuild(refusal);
-            return;
-        }
-        try {
-            this.createIframe();
-        } catch (error) {
-            this._terminateBuild(error instanceof TrustedTypesRefusal ? TRUSTED_TYPES_REASON : `${BUILD_FAILED_REASON} (${errorName(error)})`);
-            return;
-        }
-        if (this._state === 'loading') this._startLoadDeadline();
-    }
-
-    // A termination of the build initialize() is making. The state is 'terminated' at once; the 'terminated' event comes
-    // in a task of its own, like 'ready' (review round 1, R3-2): a listener added right after setConfig(), reset() or
-    // load() hears it, where it used to be dispatched inside the call. Not at all if the environment changed meanwhile
-    // (another build, the element's removal): that answer is no longer the sandbox's state. While it is dispatched, a
-    // listener that builds again gets the same answer, which is not dispatched again (CB5), in one rule: a build started
-    // while a build termination is dispatched, and refused or failed with that same reason, ends 'terminated' and
-    // dispatches nothing. Without it a 'terminated' listener that built again (reset(), load()) from the same inputs got
-    // the same refusal, dispatched it again, and recursed until the stack ran out (broad review 2026-10-14: about 590
-    // dispatches, then a RangeError); with it, every such build ends at once, so no listener can loop.
-    // The rule is on the answer, so it covers alike a refusal known before building (an unknown mode, an unregistered
-    // entry), and a reason initialize() only learns by building (the host page's Trusted Types policy, a build that
-    // threw: review round 2, L-4). It used to be a check that skipped the build when its inputs had not changed, which
-    // also skipped the state the build stands for (review round 3, L-1): a listener that moved the element (appendChild
-    // elsewhere: disconnected, so 'idle', then connected) left it connected and 'idle', with no frame. Now that build runs,
-    // and ends 'terminated' with the reason being dispatched. A listener that changes what decides the answer (a usable
-    // config, the files for a build that failed) builds normally.
-    private _terminateBuild(reason: string) {
-        if (this._state === 'terminated') return;
-        const repeated = this._buildWithin === reason; // the answer being dispatched now: said once, already
-        if (!repeated) console.warn(`[Sandbox] terminated: ${reason}`);
-        this._teardown();
-        this._enterState('terminated', reason, repeated ? 'none' : 'task');
-    }
-
-    // The deferred 'terminated' of a build (above), dispatched only if nothing tore the environment down since: every
-    // teardown clears _pendingTermination, so a token that is no longer the pending one is a stale answer.
-    private _dispatchBuildTermination(reason: string, token: object) {
-        if (this._pendingTermination !== token || this._state !== 'terminated') return;
-        this._pendingTermination = null;
-        this._dispatchTerminated(reason);
-    }
-
-    // The one place 'terminated' is dispatched (review round 4, L-3): CB5's rule holds for every termination, not only a
-    // build's. A listener that rebuilt after terminate(reason), and whose build was refused with that very reason, used to
-    // get a second 'terminated' with it (and, with a listener that rebuilt again, one per task, without end): the marker was
-    // set only around a build's deferred dispatch.
-    private _dispatchTerminated(reason: string) {
-        const outer = this._terminationDispatched;
-        this._terminationDispatched = reason;
-        try {
-            this.dispatchEvent(elementEvent('terminated', { reason }));
-        } finally {
-            this._terminationDispatched = outer;
-        }
+    // What a build reads besides the reducer's state, asked as it starts (src/lib/lifecycle.ts, BuildContext). Every build
+    // starts in the reducer (`connect`, `build`, `configured`: its `initialize`), the one place a build starts, and every
+    // build failure is a termination there (follow-up audit 2026-10-14). A build that threw used to leave the old
+    // environment torn down, state 'loading', no frame and no 'terminated' event, and the throw escaped to whoever called
+    // setConfig() or reset(): a configured string where a directive took a list ("img-src": "x; script-src *") made the
+    // policy generator throw there. Now a refusal known up front (a config that could not be used, an unknown mode, an
+    // entry that is not registered) and anything the build throws end the same way: state 'terminated', one 'terminated'
+    // event with the reason, nothing half-built (the `teardown` effect).
+    // Where the element may build is one rule (review round 2, L-1: buildsHere, below), asked by every build, however it
+    // starts: in another window's document, reset(), load() and setConfig() built there before (the guest ran, and
+    // announced itself to a window the element does not listen to); now they stop the environment, as insertion there
+    // does, and the element stays idle. Asked first: in another document the element may have lost its prototype (CB7),
+    // and nothing else here is asked there.
+    private _buildContext(): BuildContext {
+        if (!buildsHere(this)) return NOT_HERE;
+        const strict = this._config.mode === 'strict';
+        // a bootstrap runs, and announces its port, exactly where the inline script can run (_getMarkupPlan's test, CB1)
+        return { buildsHere: true, blocked: this._buildRefusal(), strict, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
     }
 
     // `loading` is bounded (CB3): a build that has not completed within LOAD_TIMEOUT_MS of host ticks ends with a
     // reason. Completed means the guest checked in (S46; strict mode: the view's VIEW_READY), or, without a bootstrap,
     // the frame loaded.
     // A watchdog that nothing answers: it expires after the whole budget, never counting a host stall.
+    // One per build (LM-2): the executor's `startLoadDeadline` effect, which the reducer gives once per build, when the
+    // build is attached (`built`). It carries its build's generation, and the reducer lets it act only while that build is
+    // `loading` (`loadDeadline`), which also decides the reason: once the wrapper has loaded, the frame that runs the
+    // library's startup script (the strict view, or the guest's bootstrap) has loaded too, and that script runs before
+    // anything else in it, so had it run it would have checked in; what stops an inline script of ours there is the host
+    // page's policy, which srcdoc documents inherit (R3-1).
     private _startLoadDeadline() {
+        const gen = this._lc.gen;
         this._loadDeadline = startWatchdog({
             timeoutMs: LOAD_TIMEOUT_MS,
             ping: () => {},
-            onExpire: () => this._terminate(this._loadTimeoutReason()),
+            onExpire: () => step(this, { t: 'loadDeadline', gen }),
         });
     }
 
-    // Why a build is still `loading` at its deadline. Once the wrapper has loaded, the frame that runs the library's
-    // startup script (the strict view, or the guest's bootstrap) has loaded too, and that script runs before anything
-    // else in it: had it run, it would have checked in long before. So it did not run, and what stops an inline script
-    // of ours there is the host page's policy, which srcdoc documents inherit (R3-1). Before the wrapper's load, the
-    // frame itself did not finish loading.
-    private _loadTimeoutReason(): string {
-        const scripted = this._config.mode === 'strict' || this._expectAnnouncement;
-        return this._frameLoaded && scripted ? STARTUP_BLOCKED_REASON : LOAD_TIMEOUT_REASON;
-    }
-
-    // Why no environment may be built from the current config, or null. Fail closed on a config that could not be
-    // used, and on a mode the element does not know (review A4): no environment at all, rather than one of a mode
-    // the embedder did not ask for.
+    // Why no environment may be built from the current config and files, or null (BuildContext.blocked). Fail closed on a
+    // mode the element does not know (review A4): no environment at all, rather than one of a mode the embedder did not
+    // ask for. A config that could not be used is the reducer's own refusal (`_lc.refused`).
     // The strict entry that names no registered JavaScript file is one of them (review round 2, L-4): decided here, so
-    // the re-entrancy rule of initialize() (CB5) knows it before building.
+    // the no-repeat rule (CB5) knows it before building.
     private _buildRefusal(): string | null {
-        if (this._configRefusal !== null) return this._configRefusal;
         const unknownMode = unknownModeReason(this._config.mode);
         if (unknownMode !== null) return unknownMode;
         const entry = this._config.entry;
@@ -1789,20 +1675,24 @@ export class WebSandbox extends ElementBase {
         console.warn(message);
     }
 
-    private createIframe() {
+    // The build effect (src/lib/lifecycle.ts, `build`): everything of a build that can run embedder code, into values the
+    // element does not hold yet. LM-2: a host page's Trusted Types default policy runs at each HTML sink written here (the
+    // wrapper's srcdoc, the inert parse of the markup in the warnings and the markup plan), and a patched console.warn at
+    // each warning; one that calls reset() builds again from inside this one. Before, this was createIframe, which set the
+    // element's fields as it went (the frame, the strict view's init, the bridge and the overlay, then its announcement
+    // listener and the frame's insertion after the srcdoc), so the outer build went on over the nested one with them. Now
+    // the frame is made and written detached, nothing is the element's until `attach`, and the reducer attaches only the
+    // build that is still the element's (`built{gen}`): an outer build that a nested one replaced is dropped whole.
+    private _prepareBuild(): PreparedBuild {
         const isWorkerMode = this._config.mode === 'worker';
+        // The embedder's own inline height, back as soon as a build without auto-sizing starts (R3-8), whether or not it
+        // then completes, as before PR C: the element's, not a resource of the build, and written without embedder code.
         if (!this._autoResizeEnabled()) this._releaseAutoHeight();
-        this._startFetchBridge();
         // One copy of the store per build, taken now: the guest's files and the policy come from its snapshot, and the
         // guest-write overlay answers from it (CB4). Later registerFiles() calls reach the guest only through the next build.
         const built = this._files.copy();
-        this._startGuestWrites(built);
-
         const files = built.snapshot();
-        if (this._config.mode === 'strict') {
-            this._createStrictFrame(files);
-            return;
-        }
+        if (this._config.mode === 'strict') return this._prepareStrictFrame(built, files);
 
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
@@ -1826,25 +1716,18 @@ export class WebSandbox extends ElementBase {
             });
         }
 
-        this._iframe = document.createElement("iframe");
-        this._iframe.setAttribute("sandbox", sandboxFlags);
+        const iframe = document.createElement("iframe");
+        iframe.setAttribute("sandbox", sandboxFlags);
         // the wrapper's own document.referrer is never the host page (S15; the guest's is set in the wrapper)
-        this._iframe.setAttribute("referrerpolicy", FRAME_REFERRER_POLICY);
+        iframe.setAttribute("referrerpolicy", FRAME_REFERRER_POLICY);
         for (const [name, value] of Object.entries(permissionAttributes(permissions))) {
-            this._iframe.setAttribute(name, value);
+            iframe.setAttribute(name, value);
         }
-        this._iframe.style.cssText = isWorkerMode ? "display:none" : "width:100%;height:100%;border:none";
-        this._frameLoaded = false;
-        this._iframe.onload = this._frameLoadHandler(this._iframe);
-
+        iframe.style.cssText = isWorkerMode ? "display:none" : "width:100%;height:100%;border:none";
         // srcdoc goes in before the frame is inserted: an iframe inserted without one first
-        // loads about:blank, which would count as the frame's one load (see _onFrameLoad)
-        setWrapperSrcdoc(this._iframe, buildWrapperDocument(guestDocument, sandboxFlags, permissions));
-        // The guest announces its port from its first statement (CB1), so the listener is in place before the frame
-        // exists. A bootstrap runs, and announces, exactly where the inline script can run (_getMarkupPlan's test).
-        this._expectAnnouncement = sandboxFlags.split(' ').includes('allow-scripts');
-        this._listenForAnnouncement(this._iframe);
-        this.shadowRoot!.appendChild(this._iframe);
+        // loads about:blank, which would count as the frame's one load (see _frameLoadHandler)
+        setWrapperSrcdoc(iframe, buildWrapperDocument(guestDocument, sandboxFlags, permissions));
+        return { iframe, built, strictInit: null };
     }
 
     /**
@@ -1853,7 +1736,7 @@ export class WebSandbox extends ElementBase {
      * INIT_VIEW once the wrapper has loaded. The view mints its own blob: URLs for the registered files it may
      * show, so no JavaScript file is ever given to it.
      */
-    private _createStrictFrame(files: FileSnapshotEntry[]) {
+    private _prepareStrictFrame(built: FileStore, files: FileSnapshotEntry[]): PreparedBuild {
         let entrySource = '';
         const entry = this._config.entry;
         if (typeof entry === 'string' && entry !== '') {
@@ -1867,7 +1750,7 @@ export class WebSandbox extends ElementBase {
         const sandboxFlags = this._getSandboxFlags();
         const policy = this._guestPolicy(files);
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)
-        this._strictInit = {
+        const strictInit: StrictInit = {
             workerSource: this._getStrictWorkerSource(files, entrySource, marker),
             entryDone: marker,
             viewFiles: files.filter(candidate => isViewFileType(candidate[1])), // never a type that opens as a document (broad review ST1)
@@ -1879,14 +1762,31 @@ export class WebSandbox extends ElementBase {
         };
         const view = buildViewDocument(policy, viewBootstrapText());
 
-        this._iframe = document.createElement("iframe");
-        this._iframe.setAttribute("sandbox", sandboxFlags);
-        this._iframe.setAttribute("referrerpolicy", FRAME_REFERRER_POLICY);
-        this._iframe.style.cssText = "width:100%;height:100%;border:none";
-        this._frameLoaded = false;
-        this._iframe.onload = this._frameLoadHandler(this._iframe);
-        setWrapperSrcdoc(this._iframe, buildWrapperDocument(view, sandboxFlags, []));
-        this.shadowRoot!.appendChild(this._iframe);
+        const iframe = document.createElement("iframe");
+        iframe.setAttribute("sandbox", sandboxFlags);
+        iframe.setAttribute("referrerpolicy", FRAME_REFERRER_POLICY);
+        iframe.style.cssText = "width:100%;height:100%;border:none";
+        setWrapperSrcdoc(iframe, buildWrapperDocument(view, sandboxFlags, []));
+        return { iframe, built, strictInit };
+    }
+
+    // The executor's `attach` effect: the prepared build becomes the element's, every per-build resource made here (the
+    // frame and its load handler, the strict view's init, the announcement listener, the fetch bridge, the guest-write
+    // overlay) and released by the teardown (LM-2). Nothing here runs embedder code: inserting a frame whose srcdoc is set
+    // fires no load synchronously (a load the engine fires inside a DOM operation is handled in a microtask anyway,
+    // _frameLoadHandler), and no HTML sink is written. So no other build can start in between, and this build's
+    // resources are one set.
+    private _attachBuild(prepared: PreparedBuild) {
+        this._startFetchBridge();
+        this._startGuestWrites(prepared.built);
+        const iframe = prepared.iframe;
+        this._iframe = iframe;
+        this._strictInit = prepared.strictInit;
+        iframe.onload = this._frameLoadHandler(iframe);
+        // The guest announces its port from its first statement (CB1), so the listener is in place before the frame is
+        // inserted. Strict mode's view checks in on its own port instead (R3-1).
+        if (prepared.strictInit === null) this._listenForAnnouncement(iframe);
+        this.shadowRoot!.appendChild(iframe);
     }
 
     // The worker's source in strict mode: the scope check, the globals allowlist, the comms script (bridge, logs, violations, execute,
@@ -1929,16 +1829,14 @@ export class WebSandbox extends ElementBase {
 
     // The view liveness check (A5): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.
     private _startViewWatchdog(viewPort: MessagePort) {
+        const gen = this._lc.gen; // armed for this environment's view (`startWatchdogs`): its expiry ends that one only
         this._viewWatchdog = startWatchdog({
             timeoutMs: VIEW_LIVENESS_TIMEOUT_MS,
             ping: (n) => viewPort.postMessage({ type: 'VIEW_PING', n }),
-            onExpire: () => this._terminate(VIEW_LOST_REASON),
+            onExpire: () => step(this, { t: 'terminate', reason: VIEW_LOST_REASON, gen }),
         });
     }
 
-    // The wrapper's one load: completes a build that waits for it (strict mode, or a guest that runs no bootstrap), and
-    // checks the frame's integrity in every mode. Like createIframe(), anything it throws ends the sandbox with a reason
-    // instead of leaving it 'loading' (initialize).
     // The wrapper's load handler for `iframe` (review round 2, L-6): a load counts only for the element's current frame
     // while both are in the document. Chromium and WebKit fire a frame's load when it is detached, from inside remove()
     // or appendChild() and before the element's disconnectedCallback: a cooperative build without a bootstrap became
@@ -1949,106 +1847,205 @@ export class WebSandbox extends ElementBase {
     // and the element still read as connected there, and 'ready' was dispatched from inside the embedder's own call. The
     // build completes in a microtask instead, after the element's own lifecycle reactions (disconnectedCallback, then
     // connectedCallback), which run before appendChild() or remove() returns: a frame that the move tore down is no
-    // longer the element's then, and its load completes nothing. The microtask asks again: the same frame, both still
-    // connected, and the same environment.
+    // longer the element's then, and its load completes nothing. The microtask asks again: the same frame, and both still
+    // connected (`stillOurs`).
+    //
+    // What the load is, is read here: whether it is still ours, and the guest frame's window it holds. What it does is the
+    // reducer's (`frameLoad`, S65 PR D): a second load, a guest frame other than the one that checked in, or none, end the
+    // environment; strict mode hands the view its ports (`sendInitView`); a guest with no bootstrap completes the build.
+    // It carries the generation the load event found, so the load of an environment torn down since is dropped. Anything
+    // reading the frame throws ends the build it completes, as the completion's own effects do (they are guarded).
     private _frameLoadHandler(iframe: HTMLIFrameElement) {
         return () => {
-            const generation = this._generation;
+            const gen = this._lc.gen;
             queueMicrotask(() => {
-                if (iframe !== this._iframe || generation !== this._generation || !iframe.isConnected || !this.isConnected) return;
-                this._onFrameLoad();
+                const stillOurs = iframe === this._iframe && iframe.isConnected && this.isConnected;
+                let guest: Window | null;
+                try {
+                    guest = stillOurs ? guestWindowOf(iframe) : null;
+                } catch (error) {
+                    step(this, { t: 'terminate', reason: buildFailureReason(error, 'complete'), gen });
+                    return;
+                }
+                step(this, { t: 'frameLoad', gen, stillOurs, guest });
             });
         };
     }
 
-    private _onFrameLoad() {
-        try {
-            this._completeBuild();
-        } catch (error) {
-            this._terminate(`${BUILD_FAILED_REASON} (${errorName(error)})`);
-        }
-    }
+    // The executor's completion effects (src/lib/lifecycle.ts: `enterReady`, `finishBuild`, `frameLoad`), each one thing
+    // done to this environment's resources; the reducer decides when, and in which order.
 
-    private _completeBuild() {
-        // The wrapper is written once and has no script, so it loads exactly once.
-        // A second load means something navigated or reloaded it: never hand a port
-        // (or queued code) to a document we did not write.
-        if (this._frameLoaded) {
-            this._terminate(SECOND_LOAD_REASON);
-            return;
-        }
-        this._frameLoaded = true;
-
-        const guestWindow = guestWindowOf(this._iframe);
-        // The guest checked in already (S46), and the build completed then: the load must hold the frame that
-        // announced. A wrapper navigated before its first load fires one load only, for a document we did not write.
-        if (this._guestWindow) {
-            if (guestWindow !== this._guestWindow) this._terminate(SECOND_LOAD_REASON);
-            return;
-        }
-        if (!guestWindow) {
-            this._terminate('the guest frame is missing');
-            return;
-        }
-        // A bootstrap runs: its check-in completes the build, after this load.
-        if (this._expectAnnouncement) return;
-
-        // Strict mode: the view gets its ports now, and the build completes when the view checks in on its port
-        // (VIEW_READY, _onViewMessage): never on this load alone, which also fires for a view whose bootstrap did not
-        // run (refused by the host page's policy, R3-1: 'ready' came, and 5 s later "the sandbox view stopped
-        // responding").
-        if (this._config.mode === 'strict') {
-            this._setupStrictChannels(guestWindow);
-            return;
-        }
-        this._finishBuild(null);
-    }
-
-    // Cooperative and worker mode: the build completes when the guest checks in, its bootstrap's announcement accepted
-    // (CB1, S46), with the port it announced; where this build's guest runs no bootstrap (no allow-scripts), on the
-    // wrapper's one load, with no port. Anything it throws ends the sandbox, as in _onFrameLoad.
-    private _finishBuild(port: MessagePort | null) {
-        if (this._state !== 'loading') {
-            port?.close();
-            return;
-        }
-        try {
-            this.setupChannel(port);
-            this._enterReady();
-        } catch (error) {
-            this._terminate(`${BUILD_FAILED_REASON} (${errorName(error)})`);
-        }
-    }
-
-    // The transition to `ready`, in every mode, and the one place what waited for it is released (review round 5, L-1; the
-    // first slice of the lifecycle reducer, backlog S65): the queued calls and execute() code are posted here, in the
-    // order they were made, and nowhere else. A call made while loading waits in the queue for this point; if it settles
-    // first (its timeout), it leaves the queue and is never posted (_queuedWhilePending), so a call that timed out before
-    // `ready` never runs. Before, strict mode flushed at the wrapper's load (_setupStrictChannels), the other modes in
-    // setupChannel, two flush points for one rule, and strict mode's was not this one.
-    private _enterReady() {
+    // `stopLoadDeadline`: the build is ready, its bound is met.
+    private _stopLoadDeadline() {
         if (this._loadDeadline) { this._loadDeadline.stop(); this._loadDeadline = null; }
+    }
+
+    // `flush`: the one place what waited for `ready` is released (review round 5, L-1; the first slice of the lifecycle
+    // reducer, backlog S65). The reducer emits it in one output only, the transition to `ready`, in every mode, and
+    // test/unit/lifecycle-reducer.test.ts checks that nothing else reaches _flushQueues. The queued calls and execute()
+    // code are posted in the order they were made, and nowhere else. A call made while loading waits in the queue for this
+    // point; if it settles first (its timeout), it leaves the queue and is never posted (_queuedWhilePending), so a call
+    // that timed out before `ready` never runs. Before, strict mode flushed at the wrapper's load (_setupStrictChannels),
+    // the other modes in setupChannel, two flush points for one rule, and strict mode's was not this one.
+    private _flush() {
         if (this._port) this._flushQueues(this._port);
-        // Armed before 'ready' is dispatched: a 'ready' listener that resets or terminates the sandbox then
-        // stops this watchdog with the rest, instead of leaving one running for a port that is gone.
+    }
+
+    // `startWatchdogs`: armed before 'ready' is dispatched, so a 'ready' listener that resets or terminates the sandbox
+    // stops them with the rest, instead of leaving one running for a port that is gone.
+    private _startWatchdogs() {
         if (this._port) this._startWatchdog(this._port);
         if (this._viewPort) this._startViewWatchdog(this._viewPort);
-        // Reports buffered before the port existed arrive after this, so the resizer is in place for them.
-        this._startAutoResize();
-        this._enterState('ready');
+    }
+
+    // `checkView`: what the strict view measured at its check-in (R3-1).
+    private _checkView(height: unknown, stillStyleRefused: boolean) {
+        this._checkViewSize(height);
+        if (stillStyleRefused) this._warnStillStyleRefused();
+    }
+
+    // For tests: the platform's lifecycle inputs, delivered by hand where jsdom cannot deliver them (a guest frame's
+    // announcement, the view's check-in, the wrapper's load; test/unit/check-in.ts). The element itself never calls it.
+    private _step(input: LcInput) {
+        step(this, input);
     }
 }
 
 // The lifecycle (CB7). Each function reaches the element's own fields and the class's methods through
 // WebSandbox.prototype, never through the element's prototype chain: in Firefox an element adopted into another
-// document has that document's HTMLElement prototype. The methods applied here (_teardown, _discardGuestWrites,
-// _enterState, and initialize only in the defining document) use the element's own fields.
+// document has that document's HTMLElement prototype. The methods applied here use the element's own fields, and those
+// that build (_buildContext past its first line, _configure, _prepareBuild, _attachBuild, _startLoadDeadline) run only
+// in the defining document, where the element has its own prototype (connected restores it first).
 const LIFECYCLE = WebSandbox.prototype as unknown as {
-    initialize(): void;
+    _buildContext(): BuildContext;
+    _configure(): string | null;
+    _prepareBuild(): PreparedBuild;
+    _attachBuild(prepared: PreparedBuild): void;
+    _startLoadDeadline(): void;
     _teardown(): void;
     _discardGuestWrites(): void;
-    _enterState(state: SandboxState): void;
+    _dispatchHostLog(level: SandboxLogLevel, text: string): void;
+    _dispatchGuestLog(frame: unknown): void;
+    _stopLoadDeadline(): void;
+    _setupStrictChannels(target: Window): void;
+    setupChannel(port: MessagePort | null): void;
+    _checkView(height: unknown, stillStyleRefused: boolean): void;
+    _flush(): void;
+    _startWatchdogs(): void;
+    _startAutoResize(): void;
 };
+
+// What the executor reaches on the element: its own fields, whatever its prototype (CB7).
+interface LifecycleFields {
+    _lc: LcState;
+    _warnedForeignDocument: boolean;
+}
+
+// What a build prepared (_prepareBuild), until the reducer attaches it (`built`, then `attach`) or drops it (LM-2).
+interface PreparedBuild {
+    iframe: HTMLIFrameElement; // the wrapper, its srcdoc written, not in the document
+    built: FileStore; // the copy of the store this build delivers (CB4)
+    strictInit: StrictInit | null; // strict mode: what the wrapper's load hands the view
+}
+
+// The context of a build where the element may not build (buildsHere): it stops instead, and asks nothing else.
+const NOT_HERE: BuildContext = Object.freeze({ buildsHere: false, blocked: null, strict: false, announces: false });
+
+/**
+ * The lifecycle executor's one entry (backlog S65; src/lib/lifecycle.ts, `step`): reduce `input` against the element's
+ * `_lc`, store the next state, then run the effects on the element. Every transition comes through here: every build
+ * (the DOM callbacks, reset(), load(), setConfig()) and its completion (the wrapper's load, the guest's announcement,
+ * the view's check-in), and every termination: terminate(), a build's failure and its deferred 'terminated', and every
+ * one the element starts itself. What a platform callback or a timer delivers is stamped with the generation it was
+ * armed in, which `reduce` drops once a teardown made it stale (research 18, class L: "an actor of an old environment
+ * cannot act"). The executor is the only writer of `_lc` and makes the lifecycle's two events. Module level, and
+ * every effect is applied through LIFECYCLE (CB7): in Firefox an element adopted into another document has lost its
+ * prototype, and a step must still end its environment there.
+ * Steps nest synchronously (a listener's terminate() dispatches inside that listener, as docs/API.md says).
+ */
+function step(element: WebSandbox, input: LcInput): void {
+    runStep(lifecycleHost(element), input);
+}
+
+// One adapter per element, made on its first step.
+const LIFECYCLE_HOSTS = new WeakMap<WebSandbox, LifecycleHost>();
+
+function lifecycleHost(element: WebSandbox): LifecycleHost {
+    let host = LIFECYCLE_HOSTS.get(element);
+    if (!host) {
+        host = lifecycleHostOf(element);
+        LIFECYCLE_HOSTS.set(element, host);
+    }
+    return host;
+}
+
+function lifecycleHostOf(element: WebSandbox): LifecycleHost {
+    const own = element as unknown as LifecycleFields;
+    return {
+        get lc() {
+            return own._lc;
+        },
+        set lc(next: LcState) {
+            own._lc = next;
+        },
+        step: (input) => step(element, input),
+        task: (input) => {
+            setTimeout(() => step(element, input), 0);
+        },
+        teardown: () => Reflect.apply(LIFECYCLE._teardown, element, []),
+        discardWrites: () => Reflect.apply(LIFECYCLE._discardGuestWrites, element, []),
+        applyConfig: () => Reflect.apply(LIFECYCLE._configure, element, []),
+        buildContext: () => Reflect.apply(LIFECYCLE._buildContext, element, []),
+        build: () => Reflect.apply(LIFECYCLE._prepareBuild, element, []),
+        attach: (prepared) => Reflect.apply(LIFECYCLE._attachBuild, element, [prepared as PreparedBuild]),
+        startLoadDeadline: () => Reflect.apply(LIFECYCLE._startLoadDeadline, element, []),
+        failureReason: buildFailureReason,
+        warn: (text) => console.warn(text),
+        // Once per element (CB7): inserted into a document of another window, where it builds nothing.
+        warnForeignDocument: () => {
+            if (own._warnedForeignDocument) return;
+            own._warnedForeignDocument = true;
+            console.warn('[Sandbox] the element was inserted into a document of another window: it builds no environment there. Insert it into the document of the window that defined it.');
+        },
+        // The one dispatch of 'terminated' (round 4's L-3): the executor runs it between its `dispatchStarted` and
+        // `dispatchEnded` steps, so the no-repeat rule (CB5) knows the reason while the listeners run.
+        // test/unit/lifecycle-reducer.test.ts checks that host.ts makes this event nowhere else.
+        dispatchTerminated: (reason) => {
+            element.dispatchEvent(elementEvent('terminated', { reason }));
+        },
+        // One notice, one event: a host line, or the guest's own words through the guest relay's rate limit (F3).
+        notice: (notice: Notice) => {
+            if (notice.source === 'host') Reflect.apply(LIFECYCLE._dispatchHostLog, element, [notice.level, notice.text]);
+            else Reflect.apply(LIFECYCLE._dispatchGuestLog, element, [{ level: notice.level, args: [notice.text] }]);
+        },
+        // The completion of a build (S65 PR D), in the order `enterReady` gives them.
+        stopLoadDeadline: () => Reflect.apply(LIFECYCLE._stopLoadDeadline, element, []),
+        sendInitView: (target) => Reflect.apply(LIFECYCLE._setupStrictChannels, element, [target as Window]),
+        openChannel: (port) => Reflect.apply(LIFECYCLE.setupChannel, element, [port as MessagePort | null]),
+        closePort: (port) => (port as MessagePort | null)?.close(),
+        checkView: (height, stillStyleRefused) => Reflect.apply(LIFECYCLE._checkView, element, [height, stillStyleRefused]),
+        flush: () => Reflect.apply(LIFECYCLE._flush, element, []),
+        startWatchdogs: () => Reflect.apply(LIFECYCLE._startWatchdogs, element, []),
+        startAutoResize: () => Reflect.apply(LIFECYCLE._startAutoResize, element, []),
+        // The one dispatch of 'ready', after the state settled and the watchdogs and the resizer are in place.
+        dispatchReady: () => {
+            element.dispatchEvent(elementEvent('ready'));
+        },
+    };
+}
+
+// A line of the element's own, said before the termination it announces (the executor dispatches it: `notices`).
+function hostNotice(text: string): Notice {
+    return { level: 'error', text, source: 'host' };
+}
+
+// The reason of a build that threw (follow-up audit 2026-10-14; F3: the error's name, never its message): while it was
+// built (_prepareBuild), the host page's Trusted Types policy is named; while it completed (the wrapper's load, the
+// guest's check-in), any throw is a build failure.
+function buildFailureReason(error: unknown, phase: 'build' | 'complete'): string {
+    if (phase === 'build' && error instanceof TrustedTypesRefusal) return TRUSTED_TYPES_REASON;
+    return `${BUILD_FAILED_REASON} (${errorName(error)})`;
+}
 
 // One guest change as the strict view is told it (R4-4): the path, its store type (null after a removal) and, only for a
 // type the view mints a URL for (VIEW_WRITE_TYPES), a copy of the bytes. Any other change still names the path, so the
@@ -2069,33 +2066,21 @@ function refuseGuestWrite(): Promise<never> {
     return Promise.reject(fileError('FILES_NOT_ALLOWED', 'guest writes are off (guestWrites is not set).'));
 }
 
-// The environment ends; no 'terminated' event: the element left (or never reached) a document it can build in.
-function stop(element: WebSandbox) {
-    Reflect.apply(LIFECYCLE._teardown, element, []);
-    Reflect.apply(LIFECYCLE._discardGuestWrites, element, []);
-    Reflect.apply(LIFECYCLE._enterState, element, ['idle']);
-}
-
 // An environment is built only in the document of the realm that defined the element, while the element is in it. In
 // another document (an iframe's, one made with document.implementation) the guest would announce itself to that
 // document's window, which the element does not listen to (Chromium and WebKit built a bridge that never connected),
 // and in Firefox the element has lost its methods. So it stays idle there, with one warning, until it is back in its
-// own document. The one predicate both connected() and initialize() ask (review round 2, L-1).
+// own document. The one predicate every build asks (review round 2, L-1: _buildContext).
 function buildsHere(element: WebSandbox): boolean {
     return element.isConnected && element.ownerDocument === document;
 }
 
+// Insertion: the reducer's `connect` builds, or, where the element may not build, stops and warns once (`initialize`,
+// `warnForeignDocument`). Neither dispatches anything synchronously: a build's failure comes in a task (R3-2).
 function connected(element: WebSandbox) {
-    if (!buildsHere(element)) {
-        stop(element);
-        const own = element as unknown as { _warnedForeignDocument: boolean };
-        if (own._warnedForeignDocument) return;
-        own._warnedForeignDocument = true;
-        console.warn('[Sandbox] the element was inserted into a document of another window: it builds no environment there. Insert it into the document of the window that defined it.');
-        return;
-    }
-    if (!restorePrototype(element)) return; // the engine refuses: the element stays idle (stop() ran when it left)
-    Reflect.apply(LIFECYCLE.initialize, element, []);
+    // The engine refuses to give a Firefox-adopted element its prototype back: it stays idle (it stopped when it left).
+    if (buildsHere(element) && !restorePrototype(element)) return;
+    step(element, { t: 'connect', ctx: Reflect.apply(LIFECYCLE._buildContext, element, []) });
 }
 
 // Firefox gives an element adopted into another document that document's HTMLElement prototype (CB7): its methods were
@@ -2113,12 +2098,13 @@ function restorePrototype(element: WebSandbox): boolean {
     }
 }
 
+// Removal, and adoption into another document: the environment ends, with no 'terminated' event (the reducer's `stop`).
 function disconnected(element: WebSandbox) {
-    stop(element);
+    step(element, { t: 'disconnect' });
 }
 
 function adopted(element: WebSandbox) {
-    stop(element);
+    step(element, { t: 'disconnect' });
     restorePrototype(element);
 }
 

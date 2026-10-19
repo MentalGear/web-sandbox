@@ -5,6 +5,7 @@ import { defineWebSandbox } from '@src/host';
 import { createBroker } from '@src/lib/rpc';
 import { startWatchdog } from '@src/lib/watchdog';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
+import { checkIn } from './check-in';
 
 /**
  * Review round 2, reviewer L (model-based lifecycle testing): each finding reproduced here first, against the element
@@ -143,7 +144,7 @@ describe('L-3: work queued while loading is sent in the order it was issued', ()
         const { port1 } = new MessageChannel();
         const posted: any[] = [];
         port1.postMessage = (frame: unknown) => { posted.push(frame); };
-        el._finishBuild(port1); // the build becomes ready: what waited is posted then (review round 5, L-1)
+        checkIn(el, port1); // the build becomes ready: what waited is posted then (review round 5, L-1)
         expect(posted.map(frame => (frame.type === 'RPC_REQ' ? `call ${frame.method}` : `execute ${frame.code}`))).toEqual(['call get', 'execute v = 1', 'call after']);
         port1.close();
     });
@@ -154,7 +155,8 @@ describe("L-4: a 'terminated' listener that builds again to the same answer hear
         const { el, events } = element({ mode: 'cooperative' });
         await task();
         events.length = 0;
-        el.createIframe = () => { throw new TypeError('no frame'); }; // the build's own failure, whatever its cause
+        // the build's own failure, whatever its cause (the executor applies the build through the class's prototype, CB7)
+        const build = vi.spyOn(Object.getPrototypeOf(el), '_prepareBuild').mockImplementation(() => { throw new TypeError('no frame'); });
         let builds = 0;
         el.addEventListener('terminated', () => {
             if (++builds <= 50) el.load(`<p>${builds}</p>`);
@@ -163,7 +165,7 @@ describe("L-4: a 'terminated' listener that builds again to the same answer hear
         for (let i = 0; i < 20; i++) await task();
         expect(events).toEqual(['terminated: the environment could not be built (TypeError)']);
         expect(el.state).toBe('terminated');
-        delete el.createIframe;
+        build.mockRestore();
         el.load('<p>again</p>'); // positive control: a build that works builds
         expect(el.state).toBe('loading');
     });

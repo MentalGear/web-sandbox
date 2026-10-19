@@ -412,6 +412,24 @@ paths.
 
   Mitigation: the existing e2e suite is the differential oracle. Migrate one path at a time behind the same public API.
 
+**As built (S65, done 2026-10-19).** Class L's chokepoint is `src/lib/lifecycle.ts`: one pure `reduce`, the only place a
+next state is computed, and one executor (`step`, `runEffects`), which host.ts reaches through one module-level `step`
+(CB7). Every transition is an input: the public calls, the DOM callbacks, the build effect's answer, the wrapper's load,
+the guest's announcement, the view's check-in, the timers and every termination the element starts, each stamped with
+its generation, which `reduce` drops once stale. Differences from the design above:
+- Effects nest: a public method's effects run inside its call, not at the end of its outermost call, so `terminate()`
+  from a listener dispatches inside that listener, as docs/API.md says. The executor stops at the first effect of an
+  output once embedder code tore its environment down.
+- A build runs in two effects (LM-2): `build` prepares it detached, where embedder code can run (a Trusted Types default
+  policy, a patched `console.warn`), and `attach` makes it the element's only if `reduce` still holds it to be current.
+- The frame-load microtask stays in the adapter (round 4's L-1); the reducer gets its `stillOurs`.
+The structural test (`test/unit/lifecycle-reducer.test.ts`, "class L in host.ts"): `_lc` is written by the executor
+only; `ready` and `terminated` are made in one place each; `_flushQueues` is reached only from the `flush` effect,
+which only the transition to `ready` emits; the generation is compared only in `reduce`, the executor and a call's own
+environment (`_issue`, `_postRpc`); every termination the element starts carries its generation; and preparing a build
+assigns nothing on the element. The model-based suite (S61.2) checks the reducer in a unit run and the element on every
+engine. Its findings: LM-1 (S71) and LM-2.
+
 ### 4. One config schema (C)
 
 **Design.**
