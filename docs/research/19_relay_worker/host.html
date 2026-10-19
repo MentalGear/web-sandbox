@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>relay-worker probes host</title>
+</head>
+<body>
+<script>
+// The host page of the relay-worker probes (research 19). It plays the library's host role only: it inserts the
+// wrapper frame, posts INIT_VIEW with the logic, view and beat ports, and records what reaches it. The documents and
+// sources are built in Node (harness.ts) and passed in; with ?auto=<id> the page fetches them from the server and runs
+// one measurement on its own, without Playwright (the standalone control), posting the result back.
+window.envs = [];
+
+window.mount = (srcdoc) => new Promise((resolve) => {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-scripts allow-forms');
+    frame.setAttribute('referrerpolicy', 'no-referrer');
+    frame.style.cssText = 'width:200px;height:100px;border:0';
+    const index = window.envs.length;
+    const env = { frame, inbox: [], counts: {}, beats: 0, firstBeat: 0, lastBeat: 0, waiters: [] };
+    window.envs.push(env);
+    frame.onload = () => resolve(index);
+    frame.srcdoc = srcdoc;
+    document.body.appendChild(frame);
+});
+
+// The guest's own traffic forwarded whole or as notices is counted, not kept (a flood would hold every 8 MiB copy).
+const COUNTED_ONLY = ['GUEST_DATA', 'GUEST_NOTICE', 'RELAY_GUEST_ERROR'];
+const deliver = (env, port, data) => {
+    const type = data && data.type;
+    env.counts[type] = (env.counts[type] || 0) + 1;
+    if (COUNTED_ONLY.includes(type) && env.counts[type] > 1) return;
+    env.inbox.push({ port, data, at: performance.now() });
+    for (const waiter of [...env.waiters]) {
+        if (data && data.type === waiter.type) {
+            env.waiters.splice(env.waiters.indexOf(waiter), 1);
+            waiter.resolve(data);
+        }
+    }
+};
+
+window.init = (index, payload) => {
+    const env = window.envs[index];
+    const logic = new MessageChannel();
+    const view = new MessageChannel();
+    const beat = new MessageChannel();
+    logic.port1.onmessage = (e) => deliver(env, 'logic', e.data);
+    view.port1.onmessage = (e) => deliver(env, 'view', e.data);
+    beat.port1.onmessage = () => {
+        const now = performance.now();
+        if (env.beats === 0) env.firstBeat = now;
+        env.beats++;
+        env.lastBeat = now;
+    };
+    env.logic = logic.port1;
+    env.view = view.port1;
+    env.initAt = performance.now();
+    env.frame.contentWindow.frames[0].postMessage({ type: 'INIT_VIEW', workerSource: payload.workerSource, guestSource: payload.guestSource, opts: payload.opts }, '*', [logic.port2, view.port2, beat.port2]);
+};
+
+// the next message of `type` on any port of env `index` (one already received counts), or 'timeout'
+window.waitFor = (index, type, timeout = 10000) => new Promise((resolve) => {
+    const env = window.envs[index];
+    const seen = env.inbox.find((m) => m.data && m.data.type === type);
+    if (seen) return resolve(seen.data);
+    env.waiters.push({ type, resolve });
+    setTimeout(() => resolve('timeout'), timeout);
+});
+window.clearInbox = (index) => { window.envs[index].inbox.length = 0; };
+
+// posts `data` on the view port and waits for the next `replyType` (an earlier one does not count)
+window.ask = (index, data, replyType, timeout = 5000) => {
+    const env = window.envs[index];
+    env.inbox = env.inbox.filter((m) => !(m.data && m.data.type === replyType));
+    const reply = window.waitFor(index, replyType, timeout);
+    env.view.postMessage(data);
+    return reply;
+};
+
+window.toLogic = (index, data) => window.envs[index].logic.postMessage(data);
+window.toView = (index, data) => window.envs[index].view.postMessage(data);
+// After a termination at `since` (performance.now()): waits until no beat arrived for 600 ms (at most 10 s), and says
+// how long after `since` the last beat arrived (0 when none did) and how many arrived.
+window.beatsStop = (index, since) => new Promise((resolve) => {
+    const env = window.envs[index];
+    const before = env.beats;
+    const look = () => {
+        const now = performance.now();
+        if (now - Math.max(env.lastBeat, since) > 600 || now - since > 10000) {
+            return resolve({ lastBeatMs: env.lastBeat > since ? Math.round(env.lastBeat - since) : 0, beatsAfter: env.beats - before, gaveUp: now - since > 10000 });
+        }
+        setTimeout(look, 50);
+    };
+    look();
+});
+window.removeFrame = (index) => { window.envs[index].frame.remove(); return performance.now(); };
+
+// ticks of a 10 ms interval over `ms`, and the longest gap between two
+window.countTicks = (ms) => new Promise((resolve) => {
+    let ticks = 0;
+    let last = performance.now();
+    let longest = 0;
+    const timer = setInterval(() => {
+        const now = performance.now();
+        longest = Math.max(longest, now - last);
+        last = now;
+        ticks++;
+    }, 10);
+    setTimeout(() => { clearInterval(timer); resolve({ ticks, longest: Math.round(longest) }); }, ms);
+});
+
+// one logic-port round trip host → guest → host (through the relay in 'relay'), in ms, or 'timeout'
+window.ping = (index, timeout = 5000) => new Promise((resolve) => {
+    const env = window.envs[index];
+    const n = Math.random();
+    const started = performance.now();
+    const listener = (e) => {
+        if (e.data && e.data.type === 'PONG' && e.data.n === n) {
+            env.logic.removeEventListener('message', listener);
+            resolve(performance.now() - started);
+        }
+    };
+    env.logic.addEventListener('message', listener);
+    env.logic.postMessage({ type: 'PING', n });
+    setTimeout(() => { env.logic.removeEventListener('message', listener); resolve('timeout'); }, timeout);
+});
+
+// `count` sequential RPC round trips, each RPC { id, args: [a, b] } answered { id, result }; the times in ms
+window.rpcBench = (index, count) => new Promise((resolve) => {
+    const env = window.envs[index];
+    const times = [];
+    let id = 0;
+    let started = 0;
+    const next = () => {
+        if (times.length === count) {
+            env.logic.removeEventListener('message', listener);
+            return resolve(times);
+        }
+        started = performance.now();
+        env.logic.postMessage({ type: 'RPC', id: ++id, args: [id, 1] });
+    };
+    const listener = (e) => {
+        if (!e.data || e.data.type !== 'RPC_RES' || e.data.id !== id) return;
+        times.push(performance.now() - started);
+        next();
+    };
+    env.logic.addEventListener('message', listener);
+    next();
+});
+
+// ---- one flood, measured on the host page ---------------------------------------------------------------------------------
+// Idle ticks with the sandbox mounted, START, 500 ms, ticks under the flood (with the relay's own ticks around them), then
+// three logic round trips (the watchdog's view of it) and the view's counts. Run by the spec, or by ?auto=<id>.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const relayStats = (index) => window.ask(index, { type: 'TO_WORKER', data: { type: 'STATS' } }, 'RELAY_STATS', 8000);
+window.measureFlood = async (index, scenario, windowMs, relay) => {
+    const ready = await window.waitFor(index, 'GUEST_READY', 10000);
+    if (ready === 'timeout') return { ready: false };
+    await sleep(300);
+    const idle = await window.countTicks(windowMs);
+    window.toLogic(index, { type: 'START', scenario });
+    await sleep(500);
+    const before = relay ? await relayStats(index) : null;
+    // the watchdog's view during the flood: one logic round trip at a time, each given 1 s
+    let flooding = true;
+    const during = [];
+    const pingLoop = (async () => {
+        while (flooding) {
+            const p = await window.ping(index, 1000);
+            during.push(typeof p === 'number' ? Math.round(p) : p);
+            await sleep(100);
+        }
+    })();
+    const loaded = await window.countTicks(windowMs);
+    flooding = false;
+    await pingLoop;
+    const after = relay ? await relayStats(index) : null;
+    const pings = [];
+    for (let i = 0; i < 3; i++) {
+        const p = await window.ping(index, 3000);
+        pings.push(typeof p === 'number' ? Math.round(p) : p);
+    }
+    const answered = during.filter((p) => typeof p === 'number');
+    const view = await window.ask(index, { type: 'STATS' }, 'VIEW_STATS', 8000);
+    const result = {
+        busy: Math.max(0, Math.round((1 - loaded.ticks / idle.ticks) * 100)),
+        idleTicks: idle.ticks,
+        loadedTicks: loaded.ticks,
+        longestGap: loaded.longest,
+        pingsDuring: { sent: during.length, unanswered: during.length - answered.length, max: answered.length ? Math.max(...answered) : null },
+        pingsAfter: pings,
+        view: view === 'timeout' ? 'timeout' : { errors: view.stats.errors, errorMiB: +(view.stats.errorChars / 1048576).toFixed(1), messages: view.stats.messages, forwarded: view.stats.forwarded },
+        host: window.envs[index].counts,
+    };
+    if (relay) {
+        if (!before || !after || before === 'timeout' || after === 'timeout') result.relay = { stats: 'timeout' };
+        else {
+            const span = after.now - before.now;
+            const messages = after.stats.messages - before.stats.messages;
+            result.relay = {
+                busy: Math.max(0, Math.round((1 - (after.stats.ticks - before.stats.ticks) / (span / 10)) * 100)),
+                messagesPerSecond: Math.round((messages / span) * 1000),
+                measureMicrosecondsPerMessage: messages > 0 ? Math.round(((after.stats.measureMs - before.stats.measureMs) / messages) * 1000) : null,
+                errorsPerSecond: Math.round(((after.stats.errors - before.stats.errors) / span) * 1000),
+                errorMiB: +(after.stats.errorChars / 1048576).toFixed(1),
+                notices: after.stats.notices,
+            };
+        }
+    }
+    return result;
+};
+
+// ---- the standalone control: ?auto=<id> ---------------------------------------------------------------------------------
+// One flood measured without Playwright attached (a browser started on this URL alone), the result posted back.
+(async () => {
+    const id = new URLSearchParams(location.search).get('auto');
+    if (!id) return;
+    const job = await (await fetch(`/job?id=${encodeURIComponent(id)}`)).json();
+    const index = await window.mount(job.wrapper);
+    window.init(index, job.payload);
+    let result;
+    try {
+        result = await window.measureFlood(index, job.scenario, job.windowMs, job.payload.opts.layout === 'relay');
+    } catch (error) {
+        result = { error: String(error) };
+    }
+    result.ua = navigator.userAgent;
+    await fetch(`/result?id=${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(result) });
+})();
+</script>
+</body>
+</html>
