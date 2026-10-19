@@ -27,6 +27,7 @@ import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permis
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { admitGuestCall, callBudgetOf, DEFAULT_CALL_BUDGET, type CallBudget } from "./lib/config-schema";
+import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
 import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
@@ -303,6 +304,9 @@ const BUILD_FAILED_REASON = 'the environment could not be built';
 const SECOND_LOAD_REASON = 'the sandbox frame loaded a second time';
 const SECOND_ANNOUNCEMENT_REASON = 'the guest frame announced itself again (it reloaded or rewrote its document)';
 const LOAD_TIMEOUT_REASON = 'the sandbox did not finish loading';
+// Past the budget of uncaught errors and rejections the guest's bootstrap keeps (egress.ts, UNCAUGHT_PER_SECOND and
+// UNCAUGHT_CHARACTERS_PER_SECOND; review round 5, N-1): the bootstrap says so once, on the port only it holds.
+const UNCAUGHT_BUDGET_REASON = 'the guest raised more uncaught errors or unhandled rejections in one second than their budget allows';
 // What the host page's own policy can refuse (review round 1, R3-1): the sandbox's frames are srcdoc documents, and a
 // srcdoc document inherits the policies of the page that made it (CSP3: a copy of its policy list; Trusted Types;
 // COEP). Each reason names the policy, so a misconfigured host page is told what to allow (docs/API.md#host-page-policy).
@@ -434,6 +438,19 @@ export const VIEW_LIVENESS_TIMEOUT_MS = 5000;
  * document, is `ready`. Without one, the frame's load waits for the guest's subresources, and they count.
  */
 export const LOAD_TIMEOUT_MS = VIEW_LIVENESS_TIMEOUT_MS;
+
+// The features literal a bootstrap is given (in-sandbox-script.ts): the opt-in ones only when on, the call budget
+// always, the listeners of its rows in the egress table (egress.ts), and in worker and strict mode the budget of uncaught
+// errors and rejections.
+interface BootstrapFeatures {
+    autoResize?: true;
+    fetchBridge?: { timeoutMs: number };
+    externalPort?: true;
+    guestWrites?: true;
+    callBudget: CallBudget;
+    listeners: BootstrapListener[];
+    uncaught?: { count: number; characters: number };
+}
 
 // What the host posts to a strict view with its two ports (INIT_VIEW).
 interface StrictInit {
@@ -1257,6 +1274,13 @@ export class WebSandbox extends ElementBase {
             if (source === null) this._resizer?.report(data);
             return;
         }
+        if (data?.type === 'UNCAUGHT_PAST_BUDGET') {
+            // The guest raised more uncaught errors and rejections in one second than their budget (egress.ts; review
+            // round 5, N-1), counted by its bootstrap, which alone posts on this port. Firefox reports each to the host
+            // page's thread, cancelled or not, so the guest that causes them is stopped.
+            this._terminate(UNCAUGHT_BUDGET_REASON);
+            return;
+        }
         // Everything else on this port is RPC (or not ours); the broker validates every frame.
         // Answers go back on THIS port — the one the request arrived on — never on whatever port is
         // current. Teardown closes it, and a message posted on a closed port is silently discarded
@@ -1767,7 +1791,10 @@ export class WebSandbox extends ElementBase {
         // communication, logs and RPC bridge template that any content running in the sandbox uses.
         // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
         // The features as one literal: the opt-in ones only when on, and the call budget always (M-2).
-        const features: { autoResize?: true; fetchBridge?: { timeoutMs: number }; guestWrites?: true; callBudget: CallBudget } = { callBudget: { ...this._callBudget } };
+        // The listeners the bootstrap installs are the egress table's rows for this mode (egress.ts), and worker mode's guest also
+        // counts its uncaught errors and rejections against their budget (review round 5, N-1).
+        const features: BootstrapFeatures = { callBudget: { ...this._callBudget }, listeners: bootstrapListeners(mode) };
+        if (mode === 'worker') features.uncaught = { ...UNCAUGHT_BUDGET };
         if (mode === 'cooperative' && this._autoResizeEnabled()) features.autoResize = true;
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
@@ -2001,7 +2028,7 @@ export class WebSandbox extends ElementBase {
     // (globalThis.x = …). `this` inside is the global object, as at a script's top level. The scope check
     // (assertEntryScoped) refuses to start a worker whose entry escaped that scope.
     private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string): string {
-        const features: { fetchBridge?: { timeoutMs: number }; externalPort: true; guestWrites?: true; callBudget: CallBudget } = { externalPort: true, callBudget: { ...this._callBudget } };
+        const features: BootstrapFeatures = { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET } };
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)

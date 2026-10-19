@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./in-sandbox-script";
 import { createBroker, MAX_INBOUND_IN_FLIGHT } from "./rpc";
 import { workerBootstrap } from "./worker-bootstrap";
+import { bootstrapListeners } from "./egress";
 
 // The bootstrap captures MessagePort.prototype.postMessage and its onmessage setter, and the MessageEvent
 // getters, before any guest code runs, and only ever calls those (review B2). The tests run it against
@@ -445,7 +446,8 @@ describe("inSandboxScript", () => {
             (globalThis as any).addEventListener = (type: string, cb: Function, options?: unknown) => {
                 registered.push({ type, cb, options });
             };
-            inSandboxScript(false, 'worker', createMockConsole(), createBroker);
+            // the listeners the host hands it: the egress table's rows for worker mode (egress.ts)
+            inSandboxScript(false, 'worker', createMockConsole(), createBroker, { listeners: bootstrapListeners('worker') });
             const listener = (type: string) => registered.find(r => r.type === type)!;
             return { registered, listener };
         };
@@ -460,8 +462,8 @@ describe("inSandboxScript", () => {
             const entry = registered.find(r => r.type === 'securitypolicyviolation');
             expect(entry).toBeDefined();
             expect(entry!.options).toBe(true);
-            // the first listener the bootstrap registers: nothing of ours runs before it
-            expect(registered[0]!.type).toBe('securitypolicyviolation');
+            // one of the table's listeners, all registered while the bootstrap runs, before any guest code (test/unit/egress.test.ts)
+            expect(registered.map(r => r.type)).toEqual([...bootstrapListeners('worker').map(row => row.type), 'message']);
         });
 
         it("forwards a report raised before INIT_PORT once the port arrives, and later ones at once, as VIOLATION frames", () => {

@@ -489,6 +489,14 @@ raises them there) within the same `LOG_EVENTS_PER_SECOND` window; the first one
 not counted: `[Sandbox] the guest raised more than 1000 uncaught errors in one second that only the view could
 describe; errors past that are dropped in the view.`
 
+In worker and strict mode an uncaught error or an unhandled rejection is cancelled once it is relayed, so the browser
+does not report it as well. Firefox reports a worker's unhandled rejections to your page's thread all the same, so in
+those modes they have a budget per environment: past 1000 uncaught errors and rejections (rejections handled later
+included), or 1048576 characters of their names and messages (of a rejected string, its length), in any one-second
+window, the sandbox ends: `the guest raised more uncaught errors or unhandled rejections in one second than their
+budget allows`. One error or rejection is not bounded by it: the browser reports it before the sandbox can end, so one
+with a message of hundreds of millions of characters costs your page's thread that one report.
+
 Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`);
 `[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
 `Uncaught …`, at most 2048 characters); and one `warn` line per environment when the element first drops guest lines
@@ -550,6 +558,7 @@ build is loading.
 | `the guest frame announced itself again (it reloaded or rewrote its document)` | Cooperative and worker mode: the guest frame announced a second port (it reloaded itself, rewrote its document so the bootstrap ran again, or posted a forged announcement), or announced one where no bootstrap runs. |
 | `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time and its frame had not loaded (without `allow-scripts`: subresources included). |
 | `the guest frame is missing` | The library's frame has no guest frame. |
+| `the guest raised more uncaught errors or unhandled rejections in one second than their budget allows` | Worker and strict mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)). |
 
 Branch on `state` and the event, not on these texts. A reason never carries the text of an error the element
 caught (that can quote your config, or be the guest's words): only a fixed text and, in parentheses, the error's
@@ -699,8 +708,10 @@ encoding, streams, `crypto`, `Blob`, `File`, `URL`, IndexedDB, `OffscreenCanvas`
 and `fonts`, `caches`, `Notification`, `Worker` and `SharedWorker` (no nested workers), the Service Worker, Push, RTC,
 MediaSource and Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`; and the worker's own
 `postMessage`, `onmessage` and `onmessageerror`: the library's port, with its budgets, is the only way from the worker
-to its parent (worker mode's frame, strict mode's view). Its uncaught errors leave it the same way, as
-[`sandbox-log`](#sandbox-log--sandboxlog) lines.
+to its parent (worker mode's frame, strict mode's view). Its uncaught errors and unhandled rejections leave it the same
+way, as [`sandbox-log`](#sandbox-log--sandboxlog) lines, within their budget. Every surface of the worker and its parent
+document by which guest activity can make work on your page's thread is listed, with its bound, in
+`src/lib/egress.ts`.
 
 ### `bridge`
 
@@ -940,6 +951,8 @@ in strict mode.
 | Characters kept per string log argument | 65536 | `LOG_MAX_STRING` |
 | Bytes per log line, all arguments together | 1048576 (1 MiB) | — |
 | Bytes of guest log lines sent per second | 4194304 (4 MiB) | — |
+| Uncaught errors and unhandled rejections per second, per environment (worker and strict mode; rejections handled later included); past it the sandbox ends | 1000 | — |
+| Characters of uncaught errors and unhandled rejections per second, per environment (worker and strict mode; their names and messages); past it the sandbox ends | 1048576 | — |
 | Bytes per RPC message (arguments, or a result) | 34603008 (33 MiB) | — |
 | Bytes of arguments in inbound calls running at once, per side and environment | 67108864 (64 MiB) | — |
 | `violation` events per environment (strict mode: per source, and per directive for the view) | 100 | `VIOLATION_EVENT_LIMIT` |

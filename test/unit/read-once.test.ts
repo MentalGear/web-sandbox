@@ -29,7 +29,6 @@ const LIBRARY_VALUES: Record<string, Record<string, string>> = {
         TRAVERSALS: 'its own constant list',
         times: 'its own list',
         tag: 'a string: what Object.prototype.toString answered',
-        form: 'its own record',
         objects: 'its own list',
         depths: 'its own list',
         keys: 'its own list (Object.keys of a snapshot)',

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
+import { bootstrapListeners } from '@src/lib/egress';
 import { defineWebSandbox } from '@src/host';
 import { createBroker, RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
@@ -13,6 +14,7 @@ import { LOG_BYTES_PER_SECOND, LOG_DROPPED_ARGUMENT, LOG_EVENTS_PER_SECOND, LOG_
 
 class FakeEvent {
     stopImmediatePropagation() {}
+    preventDefault() {}
 }
 class FakeMessageEvent extends FakeEvent {
     readonly isTrusted = true;
@@ -72,7 +74,7 @@ const silentConsole = () => ({ log() {}, info() {}, warn() {}, error() {}, debug
 
 /** The bootstrap as the host builds it (strict mode's comms: externalPort), attached to a cloning port. */
 function strictComms(console = silentConsole()) {
-    const comms = inSandboxScript(false, 'strict', console, createBroker, { externalPort: true }, createSizeOf);
+    const comms = inSandboxScript(false, 'strict', console, createBroker, { externalPort: true, listeners: bootstrapListeners('strict') }, createSizeOf);
     const port = new ClonePort();
     comms.attach(port as any);
     port.frames.length = 0;
@@ -84,7 +86,7 @@ function strictComms(console = silentConsole()) {
 function cooperativeComms(console = silentConsole()) {
     const port = new ClonePort();
     FakeMessageChannel.next = port;
-    inSandboxScript(false, 'cooperative', console, createBroker, undefined, createSizeOf);
+    inSandboxScript(false, 'cooperative', console, createBroker, { listeners: bootstrapListeners('cooperative') }, createSizeOf);
     port.frames.length = 0;
     return { port, console, lines: () => port.frames.filter(frame => frame.type === 'LOG') };
 }
@@ -134,7 +136,7 @@ describe('R4-2, R4-6, R4-7: uncaught errors and rejections are log lines; errors
         ]);
     });
 
-    it('every mode: an unhandled rejection is one "Uncaught (in promise) …" line; strict mode leaves the error event to its prelude', () => {
+    it('every mode: an unhandled rejection is one "Uncaught (in promise) …" line; strict mode leaves relaying the error event to its prelude, and only counts it', () => {
         for (const start of [cooperativeComms, strictComms]) {
             listeners = {};
             const { lines } = start();
@@ -144,8 +146,9 @@ describe('R4-2, R4-6, R4-7: uncaught errors and rejections are log lines; errors
             expect(lines().map(line => line.args[0])).toEqual(['Uncaught (in promise) RangeError: no', 'Uncaught (in promise) 42', 'Uncaught (in promise) [object Object]']);
         }
         listeners = {};
-        strictComms();
-        expect(listeners['error']).toBeUndefined();
+        const { lines } = strictComms();
+        listeners['error']!(trusted({ error: new Error('counted'), message: 'Error: counted' }));
+        expect(lines()).toEqual([]);
     });
 
     it('an Error argument crosses as { name, message, stack }; debug, trace, assert, dir, dirxml, table, group and groupCollapsed relay; a passing assert and groupEnd do not', () => {

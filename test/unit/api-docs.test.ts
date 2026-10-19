@@ -15,6 +15,7 @@ import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MAX_DEBT_MS, VIEW_
 import { LOG_BYTES_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { WORKER_GLOBALS } from '@src/lib/worker-globals';
+import { UNCAUGHT_CHARACTERS_PER_SECOND, UNCAUGHT_PER_SECOND } from '@src/lib/egress';
 import { ELEMENT_EVENTS } from '@src/lib/element-events';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
@@ -123,6 +124,8 @@ describe('docs/API.md lists the public surface', () => {
         const expected: [string, number][] = [
             ['Guest calls per second', constant('src/lib/config-schema.ts', 'GUEST_CALLS_PER_SECOND')],
             ['Bytes of guest calls per second', constant('src/lib/config-schema.ts', 'GUEST_CALL_BYTES_PER_SECOND')],
+            ['Uncaught errors and unhandled rejections per second', UNCAUGHT_PER_SECOND],
+            ['Characters of uncaught errors and unhandled rejections per second', UNCAUGHT_CHARACTERS_PER_SECOND],
             ['Characters of a method name', constant('src/lib/rpc.ts', 'MAX_NAME_LENGTH')],
             ['Characters of an error message a call carries', constant('src/lib/rpc.ts', 'MAX_TEXT_LENGTH')],
             ['Fetch: characters of a URL', constant('src/lib/fetch-bridge.ts', 'MAX_URL')],

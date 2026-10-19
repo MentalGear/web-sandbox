@@ -164,7 +164,9 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     `error`; `source` is `'host'` for the element's own lines (an execution timeout, an entry that failed, guest lines
     it dropped past its per-second window) and
     `'guest'` for everything from the guest, whatever it claims. Guest lines carry the guest's `console` calls (every
-    method), uncaught errors and unhandled rejections (`Uncaught …`), in every mode; the guest's console never throws:
+    method), uncaught errors and unhandled rejections (`Uncaught …`), in every mode (in worker and strict mode they are
+    cancelled once relayed, and more than 1000 of them, or 1 Mi characters of them, in one second end the sandbox);
+    the guest's console never throws:
     a function, a DOM node or anything else structured clone refuses arrives as a string naming its kind, an `Error`
     (also inside an object, an array or `Promise.allSettled`'s results) as `{ name, message, stack }`. Bounded in the
     guest before anything is posted: 64 arguments, strings cut at
