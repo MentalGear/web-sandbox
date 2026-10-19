@@ -1,7 +1,7 @@
 import type { SafeCapability, UnsafeCapability } from "./csp-directives";
-import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_PERMISSIONS } from "./csp-directives";
+import { UNSAFE_PERMISSIONS } from "./csp-directives";
 import { cooperativePolicy, fileKinds, strictViewPolicy } from "./lib/csp/csp-generator";
-import { NO_ORIGINS, parseOrigins, shown, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
+import { NO_ORIGINS, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
@@ -9,31 +9,29 @@ import { kindMismatchMessage, rewriteGuestMarkup, type MarkupParts } from "./lib
 import { scriptInMarkup } from "./lib/markup-scripts";
 import { LOAD_KINDS } from "./lib/load-kinds";
 import { mergeGuestImportMaps } from "./lib/import-map";
-import { deepMerge } from "./lib/utils";
 import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
 import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
 import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
-import { filterCapabilities } from "./lib/capabilities";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { setLongTimeout, type LongTimeout } from "./lib/long-timer";
 import { createRateLimiter, type RateLimiter } from "./lib/rate-limit";
 import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT, type SandboxViolation } from "./lib/violation";
 import { createLogLimiter, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, LOG_OWN_LINES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
-import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
+import { createFetchBridge, fetchRefusal, FETCH_METHOD, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { admitGuestCall, callBudgetOf, DEFAULT_CALL_BUDGET, type CallBudget } from "./lib/config-schema";
+import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
 import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
  * The element's configuration, passed to setConfig(): every option left out takes its default
- * (DEFAULT_SANDBOX_CONFIG), not its previous value. Reference with defaults and modes: docs/API.md#configuration.
+ * (CONFIG_SCHEMA, src/lib/config-schema.ts), not its previous value. Reference with defaults and modes: docs/API.md#configuration.
  *
  * A union keyed by `mode` (ADR-007), so what a mode cannot use does not type-check: strict mode's `origins` has no
  * `scripts`. A config from JSON is held to the same rules at run time (dropped with a warning). Strict mode is the
@@ -229,41 +227,8 @@ export interface CallLimits {
  */
 export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 
-/** The execution modes. Anything else is refused: the sandbox does not start (review A4). */
-const SANDBOX_MODES = ['strict', 'cooperative', 'worker'] as const;
-type SandboxMode = (typeof SANDBOX_MODES)[number];
-const isSandboxMode = (mode: unknown): mode is SandboxMode => (SANDBOX_MODES as readonly unknown[]).includes(mode);
-
-// Old names of modes: refused like any other value that is not a mode, never an alias (nothing is published, so no
-// config needs one), and the refusal names the new one.
-const RENAMED_MODES: Readonly<Record<string, SandboxMode>> = Object.freeze({ iframe: 'cooperative' });
-
-// " ('iframe' was renamed 'cooperative')" for an old name, else ''.
-function renamedModeNote(mode: unknown): string {
-    if (typeof mode !== 'string' || !Object.hasOwn(RENAMED_MODES, mode)) return '';
-    return ` ('${mode}' was renamed '${RENAMED_MODES[mode]}')`;
-}
-
-/**
- * The configuration as the element keeps it: the options merged over the defaults. `origins` is not kept here: it is
- * parsed into an OriginPolicy by setConfig() (_origins). `mode` can hold a value that is not a mode; every build
- * is refused then (_buildRefusal).
- */
-type StoredConfig = SandboxConfigOptions & { mode?: SandboxMode };
-
-const DEFAULT_SANDBOX_CONFIG: StoredConfig = {
-    scriptUnsafe: false,
-    capabilities: [],
-    unsafeCapabilities: [],
-    html: '',
-    mode: 'strict',
-    workerExecutionTimeout: 0,
-    watchdogTimeout: 0,
-    autoResize: false,
-    guestWrites: false,
-    allowAnimations: true,
-    allowAutoplay: false,
-};
+// The configuration as the element keeps it, its modes and their refusal: src/lib/config-schema.ts (the config schema,
+// backlog S67), which declares every option once. Every option left out takes its default there, not its previous value.
 
 // Texts of the host's own refusals, for people reading them. Code branches on the error's `code`
 // ('TERMINATED', set by the broker), never on these texts: a guest handler can throw the very same text,
@@ -289,8 +254,7 @@ const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
 // submission opens a new tab past form-action in Chromium), not here: no guest script runs in the view to synthesize a
 // click, the view cancels every submit, and its forms keep no action, formaction, method or target (ADR-005). So the
 // owner's move of allow-forms leaves strict mode as it was.
-const STRICT_VIEW_FLAGS = ['allow-scripts', 'allow-forms'] as const;
-const STRICT_CAPABILITIES = [...SAFE_CAPABILITIES, ...STRICT_VIEW_FLAGS] as const;
+// (STRICT_VIEW_FLAGS, declared with the config schema, which keeps them in `capabilities` there.)
 
 const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 
@@ -467,16 +431,6 @@ interface StrictInit {
     origins: { images: readonly string[]; media: readonly string[] };
 }
 
-// The strict view's two switches and the value each takes when it is left out. A value that is a boolean is itself; one
-// left out (or undefined) takes its default; anything else is false, the safe side of both (animations removed, no
-// autoplay), with a warning.
-const VIEW_SWITCHES = { allowAnimations: true, allowAutoplay: false } as const;
-type ViewSwitch = keyof typeof VIEW_SWITCHES;
-const VIEW_SWITCH_OFF: Readonly<Record<ViewSwitch, string>> = {
-    allowAnimations: 'animations and transitions are removed from the view',
-    allowAutoplay: 'media in the view does not autoplay',
-};
-
 /**
  * The `<web-sandbox>` element: one sandboxed environment for untrusted web content, rebuilt by setConfig(),
  * load() and reset(). Register it with defineWebSandbox(). Public surface: docs/API.md.
@@ -507,17 +461,15 @@ export class WebSandbox extends ElementBase {
     private _autoHeight: string | null = null;   // the inline height auto-sizing last wrote on the element
     private _fetchPolicy: FetchPolicy | null = null; // the validated fetchBridge config, or null when off (B5)
     private _origins: OriginPolicy = NO_ORIGINS; // the parsed `origins` (ADR-007), what the guest policy admits
-    private _warnedOrigins = new Set<string>();  // origins warnings (an entry dropped, connectionsAllowed), once each per instance
+    private _warnedConfig = new Set<string>();   // the config schema's warnings (normaliseConfig), once each per instance
     private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
-    private _warnedFetchBridge = new Set<string>();  // fetchBridge config warnings, once each per instance
-    private _warnedCallLimits = new Set<string>();   // callLimits config warnings, once each per instance
     // The guest-write overlay (C5): created by each build when guestWrites is on, else null. It outlives its
     // environment's termination (closed, still listable and committable) and is discarded by the next build and on
     // removal (_discardGuestWrites).
     private _guestWrites: GuestWrites | null = null;
     private _violationCounts = new Map<string, number>(); // 'violation' events dispatched per source for the current environment (capped, violation.ts)
     private _logLimiter = createLogLimiter(); // guest 'sandbox-log' events per second for the current environment (sandbox-log.ts)
-    // The per-second budget of the guest's calls (M-2): what the config gives (callBudgetOf), and this environment's
+    // The per-second budget of the guest's calls (M-2): what the config gives (the config schema, callBudgetOf), and this environment's
     // windows, made again by every teardown.
     private _callBudget: Readonly<CallBudget> = DEFAULT_CALL_BUDGET;
     private _guestCalls: RateLimiter = createRateLimiter(DEFAULT_CALL_BUDGET.calls);
@@ -533,7 +485,7 @@ export class WebSandbox extends ElementBase {
     // The environment (its _generation) of the host call being made now, while the broker copies its arguments and
     // sends it (_issue), or null outside one.
     private _issuedIn: number | null = null;
-    private _config: StoredConfig = structuredClone(DEFAULT_SANDBOX_CONFIG);
+    private _config: StoredConfig = defaultConfig();
     // Why the last setConfig() argument could not be used, or null: while set, every build is refused with
     // this reason (initialize), as for an unknown mode.
     private _configRefusal: string | null = null;
@@ -554,12 +506,8 @@ export class WebSandbox extends ElementBase {
     // host's own RPC requests (cloned at call time). Two queues, flushed one after the other, sent a call made before an
     // execute() after it.
     private _queue: ({ code: string } | { frame: unknown })[] = [];
-    private _warnedUnsafeCapabilities = new Set<string>();
-    private _warnedScriptUnsafe = false; // the scriptUnsafe guard rail warns once per instance (S4)
-    private _warnedVirtualFilesUrl = false;
-    private _warnedAutoResizeWorker = false; // autoResize asked for in worker mode, once per instance
     private _warnedGuestMarkup = new Set<string>(); // module-graph warnings about guest markup, once per text (_warnOnce)
-    private _warnedStrict = new Set<string>(); // strict-mode config warnings, once each per instance
+    private _warnedStrict = new Set<string>(); // strict-mode warnings of a build (the view's stylesheet, html's scripts), once each per instance
     private _warnedForeignDocument = false; // inserted into a document of another realm (CB7), once per instance
     private _warnedWrapperStyle = false;    // the host page's style-src refused the wrapper's style (R3-1), once per instance
     private _lastConfig: { copy: unknown; inputs: number } | null = null; // the copy of the last usable setConfig() argument (R3-7)
@@ -651,7 +599,7 @@ export class WebSandbox extends ElementBase {
 
     /**
      * Replaces the configuration and rebuilds the environment now (when the element is in the document).
-     * Anything left out keeps its default (see DEFAULT_SANDBOX_CONFIG), not its previous value: `html`
+     * Anything left out keeps its default (see CONFIG_SCHEMA), not its previous value: `html`
      * included. Values that cannot be used are dropped with a warning before anything is applied.
      */
     setConfig(config: SandboxConfig) {
@@ -696,65 +644,27 @@ export class WebSandbox extends ElementBase {
         return sameData(copy, last.copy);
     }
 
-    // Parses, sanitizes, checks and stores one setConfig() argument, already copied (setConfig). Throws for a config
-    // that cannot be used; then nothing is stored (the fields are assigned last, after every check and warning).
+    // Stores one setConfig() argument, already copied (setConfig), as the config schema normalised it
+    // (src/lib/config-schema.ts, normaliseConfig: every option's rule and the cross-field ones, decided there once).
+    // Throws what refused a config that cannot be used; then nothing is stored. Its warnings are said first, once per
+    // element and message (the same config is set again and again: the playground applies it on every edit), those of
+    // a refused config too, up to what refused it; only a config that passed every check is stored, last (focused
+    // review 2026-10-14, F6).
     private _applyConfig(copy: unknown) {
-        // ---- Parse and sanitize the copy
-        if (!copy || typeof copy !== 'object' || Array.isArray(copy)) throw new TypeError('setConfig() takes an object');
-        const input = copy as SandboxConfig;
+        const { value, warnings, refusal } = normaliseConfig(copy, { hostOrigin: globalThis.location?.origin ?? '' });
+        for (const message of warnings) this._warnConfig(message);
+        if (value === null) throw refusal;
+        this._config = value.config;
+        this._fetchPolicy = value.fetchPolicy;
+        this._origins = value.origins;
+        this._callBudget = value.callBudget;
+    }
 
-        // Filter out any forbidden capabilities that might have been passed. Strict mode's view always has its own
-        // flags (STRICT_VIEW_FLAGS), so listing one of them there asks for nothing more and is not dropped.
-        const strict = (input.mode ?? DEFAULT_SANDBOX_CONFIG.mode) === 'strict';
-        const sanitizedConfig: Partial<StoredConfig> & { origins?: unknown } = {
-            ...input,
-            capabilities: filterCapabilities(input.capabilities, strict ? STRICT_CAPABILITIES : SAFE_CAPABILITIES, 'capabilities') as SafeCapability[] | undefined,
-            unsafeCapabilities: filterCapabilities(input.unsafeCapabilities, UNSAFE_CAPABILITIES, 'unsafeCapabilities'),
-        };
-        // The entry is a registered path or nothing; it is looked up in each build's snapshot.
-        if (Object.hasOwn(input, 'entry') && typeof input.entry !== 'string') delete sanitizedConfig.entry;
-        // Markup is a string or nothing (R1-3): anything else is dropped with a warning, never refuses the config.
-        if (Object.hasOwn(input, 'html') && typeof input.html !== 'string') {
-            delete sanitizedConfig.html;
-            this._warnOnce(`[Sandbox] "html" must be a string; ${shown(input.html)} was dropped.`);
-        }
-        // The fetch bridge config is validated into a policy here and kept out of the merged config: a
-        // config without it turns the bridge off.
-        const fetchPolicy = toFetchPolicy(input.fetchBridge, (message) => this._warnFetchBridge(message), globalThis.location?.origin ?? '');
-        delete sanitizedConfig.fetchBridge;
-        // `callLimits` too: parsed into the call budget both ends take (M-2), kept out of the merged config.
-        const callBudget = callBudgetOf(input.callLimits, (message) => this._warnCallLimits(message));
-        delete sanitizedConfig.callLimits;
-        // `origins` is kept out of the merged config too: it is parsed below, for the mode the merged config has.
-        delete sanitizedConfig.origins;
-        this._dropRemovedOptions(sanitizedConfig);
-
-        const merged = deepMerge(DEFAULT_SANDBOX_CONFIG, sanitizedConfig as Partial<StoredConfig>);
-        // `origins` is parsed into the policy's origins here, once (origins.ts): an entry that is not an origin is
-        // dropped with a warning; a value that cannot be read refuses the config. Parsed for the mode the build will
-        // have, the default included, so strict mode drops `scripts` whether the config names it or not.
-        const origins = parseOrigins(input.origins, merged.mode, (message) => this._warnOrigins(message));
-        // Only a literal true enables eval or auto-sizing: both values are interpolated into the guest bootstrap.
-        merged.scriptUnsafe = merged.scriptUnsafe === true;
-        merged.autoResize = merged.autoResize === true;
-        // Guest writes too: the build reads only this normalised copy.
-        merged.guestWrites = merged.guestWrites === true;
-        if (typeof merged.entry !== 'string') delete merged.entry;
-        // The view's switches: always a boolean in the stored config (VIEW_SWITCHES).
-        for (const name of Object.keys(VIEW_SWITCHES) as ViewSwitch[]) merged[name] = this._viewSwitch(input, name, merged.mode);
-
-        // Every check and warning reads the candidate, and only a config that passed them all is stored, last
-        // (focused review 2026-10-14, F6: the warnings ran after the assignment, so a config one of them refused
-        // was stored all the same).
-        this._warnAboutUnknownMode(merged);
-        this._warnAboutUnsafeCapabilities(merged);
-        this._warnAboutScriptUnsafe(merged);
-        this._warnAboutAutoResizeInWorker(merged);
-        this._warnAboutStrictConfig(merged, input);
-        this._config = merged;
-        this._fetchPolicy = fetchPolicy;
-        this._origins = origins;
-        this._callBudget = callBudget;
+    // A warning of the config schema: once per element and message.
+    private _warnConfig(message: string) {
+        if (this._warnedConfig.has(message)) return;
+        this._warnedConfig.add(message);
+        console.warn(message);
     }
 
     /**
@@ -889,29 +799,6 @@ export class WebSandbox extends ElementBase {
     // causes. At most GUEST_WRITES_PER_SECOND per environment (guest-writes.ts).
     private _dispatchFilesWritten(path: string) {
         this.dispatchEvent(elementEvent('fileswritten', { paths: [path] }));
-    }
-
-    // Options that were removed, dropped from the config with one warning per instance each, so an old config keeps
-    // working without them. virtualFilesUrl configured the removed Service-Worker hub (ADR-004). connectionsAllowed
-    // was the raw policy, replaced by `origins` (ADR-007): ignored, never adapted, so it fails closed (no origin).
-    private _dropRemovedOptions(config: object) {
-        if (Object.hasOwn(config, 'connectionsAllowed')) {
-            delete (config as Record<string, unknown>).connectionsAllowed;
-            this._warnOrigins('[Sandbox] connectionsAllowed was removed; use origins. It was ignored: the guest policy admits only the exact origins listed in `origins` (see docs/API.md#origins).');
-        }
-        if (!Object.hasOwn(config, 'virtualFilesUrl')) return;
-        delete (config as Record<string, unknown>).virtualFilesUrl;
-        if (this._warnedVirtualFilesUrl) return;
-        this._warnedVirtualFilesUrl = true;
-        console.warn('[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).');
-    }
-
-    // What setConfig() dropped from `origins` (origins.ts), and the connectionsAllowed removal: the same config is set
-    // again and again (the playground applies it on every edit), so each message is said once per element.
-    private _warnOrigins(message: string) {
-        if (this._warnedOrigins.has(message)) return;
-        this._warnedOrigins.add(message);
-        console.warn(message);
     }
 
     /**
@@ -1060,40 +947,6 @@ export class WebSandbox extends ElementBase {
             return;
         }
         this._queue.push({ frame });
-    }
-
-    // A mode the element does not know is refused, never read as the default (review A4): strict mode is a
-    // security opt-in, so a misspelt 'Strict' must not quietly give the weaker cooperative mode. initialize() then
-    // terminates every build with a reason until a config names a valid mode; this says why, once per value.
-    private _warnAboutUnknownMode(config: StoredConfig) {
-        const mode = config.mode;
-        if (isSandboxMode(mode)) return;
-        const message = `[Sandbox] mode ${this._describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}${renamedModeNote(mode)}: the sandbox will not start until setConfig() names one of them.`;
-        if (this._warnedStrict.has(message)) return;
-        this._warnedStrict.add(message);
-        console.warn(message);
-    }
-
-    private _describeMode(mode: unknown): string {
-        return typeof mode === 'string' ? JSON.stringify(mode.slice(0, 32)) : `of type ${mode === null ? 'null' : typeof mode}`;
-    }
-
-    private _warnAboutUnsafeCapabilities(config: StoredConfig) {
-        if (config.mode === 'strict') return; // dropped there instead, with one warning (_warnAboutStrictConfig)
-        for (const capability of config.unsafeCapabilities || []) {
-            if (this._warnedUnsafeCapabilities.has(capability)) continue;
-            this._warnedUnsafeCapabilities.add(capability);
-            console.warn(`[Sandbox] unsafe capability "${capability}" is enabled: it lets guest content act outside the sandbox.`);
-        }
-    }
-
-    // The guard rail for scriptUnsafe (backlog S4). It is on in most presets and every e2e spec, so it is the
-    // path of least resistance for a copy-paste consumer; one warning per instance says what it costs
-    // without repeating on every reset(), load() or setConfig().
-    private _warnAboutScriptUnsafe(config: StoredConfig) {
-        if (config.scriptUnsafe !== true || this._warnedScriptUnsafe) return;
-        this._warnedScriptUnsafe = true;
-        console.warn("[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content.");
     }
 
     // workerExecutionTimeout (focused review 2026-10-14, F2; ADR-003 amendment): what it bounds is "the guest's
@@ -1533,12 +1386,6 @@ export class WebSandbox extends ElementBase {
         return this._config.autoResize === true && this._config.mode !== 'worker';
     }
 
-    private _warnAboutAutoResizeInWorker(config: StoredConfig) {
-        if (config.autoResize !== true || config.mode !== 'worker' || this._warnedAutoResizeWorker) return;
-        this._warnedAutoResizeWorker = true;
-        console.warn('[Sandbox] autoResize has no effect in worker mode: a worker has no document to measure.');
-    }
-
     // One resizer per environment (backlog B6, src/lib/auto-resize.ts), started with the port it listens on
     // and stopped by _teardown. It is the only path from a RESIZE frame to the element's height.
     private _startAutoResize() {
@@ -1592,19 +1439,6 @@ export class WebSandbox extends ElementBase {
     // 'violation'. The record is built by the host from validated fields (fetch-bridge.ts).
     private _dispatchFetch(record: FetchRecord) {
         this.dispatchEvent(elementEvent('fetch', record));
-    }
-
-    // What setConfig() did not take of `callLimits`: once per element and message, as the same config is set again and again.
-    private _warnCallLimits(message: string) {
-        if (this._warnedCallLimits.has(message)) return;
-        this._warnedCallLimits.add(message);
-        console.warn(message);
-    }
-
-    private _warnFetchBridge(message: string) {
-        if (this._warnedFetchBridge.has(message)) return;
-        this._warnedFetchBridge.add(message);
-        console.warn(message);
     }
 
     // The one place `state` changes. The 'ready' and 'terminated' events are dispatched here, after the
@@ -1784,7 +1618,8 @@ export class WebSandbox extends ElementBase {
     // the re-entrancy rule of initialize() (CB5) knows it before building.
     private _buildRefusal(): string | null {
         if (this._configRefusal !== null) return this._configRefusal;
-        if (!isSandboxMode(this._config.mode)) return `unknown mode ${this._describeMode(this._config.mode)}${renamedModeNote(this._config.mode)}`;
+        const unknownMode = unknownModeReason(this._config.mode);
+        if (unknownMode !== null) return unknownMode;
         const entry = this._config.entry;
         if (this._config.mode === 'strict' && typeof entry === 'string' && entry !== '') {
             const file = this._files.list().find(candidate => candidate.path === entry);
@@ -2051,34 +1886,10 @@ export class WebSandbox extends ElementBase {
         return `${prelude}\n(function () {\n${entrySource}\n}).call(this);\n${marker}();\n`;
     }
 
-    // One of the view's switches as the config gives it (VIEW_SWITCHES): its default when left out, the boolean it is,
-    // else false, with a warning in strict mode (in the other modes it is ignored, which _warnAboutStrictConfig says).
-    private _viewSwitch(input: object, name: ViewSwitch, mode: unknown): boolean {
-        const value = (input as Record<string, unknown>)[name];
-        if (value === undefined) return VIEW_SWITCHES[name];
-        if (typeof value === 'boolean') return value;
-        if (mode === 'strict') this._warnStrictOnce(`[Sandbox] ${name} must be a boolean; ${shown(value)} was taken as false: ${VIEW_SWITCH_OFF[name]}.`);
-        return false;
-    }
-
     private _warnStrictOnce(message: string) {
         if (this._warnedStrict.has(message)) return;
         this._warnedStrict.add(message);
         console.warn(message);
-    }
-
-    // Strict-mode configuration the element will not honour, said once per instance each.
-    private _warnAboutStrictConfig(config: StoredConfig, input: object) {
-        const warn = (message: string) => this._warnStrictOnce(message);
-        if (config.mode !== 'strict') {
-            if (config.entry) warn('[Sandbox] "entry" is used only in strict mode and was ignored.');
-            for (const name of Object.keys(VIEW_SWITCHES) as ViewSwitch[]) {
-                if ((input as Record<string, unknown>)[name] !== undefined) warn(`[Sandbox] "${name}" is used only in strict mode and was ignored.`);
-            }
-            return;
-        }
-        const unsafe = config.unsafeCapabilities || [];
-        if (unsafe.length > 0) warn(`[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: ${unsafe.join(', ')}.`);
     }
 
     // Strict mode is the default, so markup written for cooperative mode reaches it unchanged: its scripts and
