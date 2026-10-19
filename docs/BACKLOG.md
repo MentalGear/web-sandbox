@@ -1962,6 +1962,44 @@ Steps, one PR each, merged when green:
 S60's remaining clean-up (stale files and branches) follows, then the review board (S74), which reviews the current
 state.
 
+**Step 0 done (2026-10-19), and the owner's decisions on it.** The measurement report has the counts. In short:
+- 60% TSDoc coverage of the public surface;
+- no exhaustive `never` check;
+- ADR-005's port table has drifted by 7 frame types;
+- 713 finding-ID citations, 358 of them ambiguous;
+- 174 KB of done items in this backlog;
+- api-extractor works on `dist/*.d.ts`, and TypeDoc cannot run here.
+
+The owner adopted all of the report's recommendations:
+- **A. The plan's amendments.**
+  1. The api-extractor gate comes first.
+  2. The frame table and the realms registry are written as code before ARCHITECTURE.md.
+  3. Input preconditions per state are declared before the state diagram is drawn.
+  4. Research 01–15 stay where they are; only loose notes are archived.
+  5. The ratchet takes only the strict history patterns (SHAs, dates, rounds, named reviews, "measured at", "used to",
+     "no longer").
+  6. An ID registry with anchors, so that `R5:M-2` resolves.
+  7. Test files named after review events are renamed by subject, and the finding IDs stay in the test titles.
+  8. TSDoc is rendered into the docs only after its history has been cleaned.
+- **Single source of truth, by construction: values first, types derived from them.** Anything a doc renders exists as
+  a runtime value: `CONFIG_SCHEMA`, `CHANNEL_BUDGETS`, the egress table, and the new `FRAMES` table, realms registry and
+  registries for limits, reasons and host lines. The types are derived from those values (`as const`, `typeof`,
+  `satisfies`), so the generator imports values and needs no compiler.
+  - **The reducer.** Its input and effect kinds, and which inputs may arrive in which state, are declared once as data.
+    `LcInput` and `Effect` are derived from it. `reduce` asserts the preconditions, the state diagram is drawn from them,
+    and the model checks against them. No unstable compiler API is used, and no TypeScript version is pinned.
+  - **Public signatures** come from api-extractor's model of the compiled `.d.ts`, and its checked-in report gates them.
+  - **The drift checks.** CI regenerates every region and fails on a difference. Exhaustive `never` checks and
+    `satisfies` catch a value and its use disagreeing.
+- **B. Measured numbers.** A doc states each bound itself, rendered from code and checked by tests. A measured figure
+  may stand beside the bound as an example, with its date and engine, but is never generated and never pinned by a test.
+  The pin at `review-round-4.test.ts:492` goes.
+- **C. Public names.** `StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, `WebSandboxEventMap`
+  and `RpcLibraryCode` are exported as types. `ALLOWED_CAPABILITIES` is marked internal. `ElementBase` is hidden from the
+  declaration files.
+- **D.** The public `FetchRecord` becomes a union keyed by `outcome`, in step 6.
+- **E.** A threat-model document is written new, in the current-docs layer.
+
 ### S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
 
 Once S65, the rest of S61, S76 and S60 are merged: an independent adversarial review board of the whole repository and its
