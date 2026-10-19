@@ -14,6 +14,7 @@ is built the way it is, follow the links to the decision records (ADRs).
 - [Guest globals](#guest-globals)
 - [Modes](#modes)
 - [Limits](#limits)
+- [The view's cost to the host page](#the-views-cost-to-the-host-page)
 - [Host page policy](#host-page-policy)
 - [Exports](#exports)
 - [Examples](#examples)
@@ -934,12 +935,8 @@ a mode. [ADR-005](ADR-005-strict-mode.md)
 
 **What strict mode does not cover**: the host page's availability wherever the view shares the host page's thread
 (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation; desktop Chromium 127+ runs it in a
-process of its own; [above](#allowanimations-and-allowautoplay)): the view's budgets bound the common cases, but not
-layout and paint costs beyond what the markup weighs (CSS filters; bidirectional text in one paragraph; small CSS
-changes over many elements, which cost style recalculation and layout), nor what runs without the view doing anything:
-CSS animations and transitions while `allowAnimations` is `true` (the default; 80–98% of the thread), `:hover`
-restyles over many elements while the user's pointer moves (80–100% while it moves), animated images, indeterminate
-`<progress>`, and autoplaying media with `allowAutoplay: true`. Cooperative mode is no better there. Also
+process of its own): there the view's cost is the bound stated in [The view's cost to the host page](#the-views-cost-to-the-host-page),
+and what it lists as outside it. Cooperative mode is no better there. Also
 CSS within what the policy allows, the worker's `violation` reports (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the host site's
 cookies on requests to allowed same-site origins (every mode).
 
@@ -1004,6 +1001,127 @@ in strict mode.
 | Fetch: characters of a URL, as written and as parsed | 8192 | — |
 | Guest writes: requests per second, per environment | 100 | `GUEST_WRITES_PER_SECOND` |
 | Guest writes: bytes per second, per environment | 8388608 (8 MiB) | `GUEST_WRITE_BYTES_PER_SECOND` |
+
+---
+
+## The view's cost to the host page
+
+Strict mode's one statement of what the view can cost the thread it runs on. Every other place that speaks
+of the view's cost (the [README's limits](../README.md#what-strict-mode-does-not-cover), [ADR-005](ADR-005-strict-mode.md),
+the comments of `src/lib/in-sandbox-view.ts`) links here. `test/e2e/view-bound.spec.ts` measures (a) and (b) on every
+engine CI runs, and `test/unit/view-bound.test.ts` keeps the constants named below equal to the code's.
+
+Measured on headless Playwright 1.58.1 (Chromium's headless shell, Firefox, WebKit) on a shared 4-core VM, 2026-10-19,
+unless a row names another source. The shapes are what the statement rests on; the absolute numbers are that machine's.
+Busy share is `1 − ticks / idle ticks` of a 10 ms interval on the host page, the idle baseline the best of 3 windows on
+the same page right before, the loaded figure the best of 2 windows once the flood is under way.
+
+**Where it applies.** The bound is on the thread the view runs on ([research 16](research/16_view_isolation/README.md)):
+
+| Engine and build | The view runs on | So the bound is on |
+| :--- | :--- | :--- |
+| Desktop Chromium 127+ (`IsolateSandboxedIframes`) | a process of its own | the view's own process; the host page's thread gets only the view's bounded notices (VIOLATION, GUEST_ERROR, RESIZE) |
+| Chromium's headless shell, Chromium with that isolation off | the host page's thread | the host page's thread |
+| Firefox (Fission isolates only cross-site frames; the view is placed with the site that made it) | the host page's thread | the host page's thread |
+| WebKit and Safari (no site isolation) | the host page's thread | the host page's thread |
+| Android WebView (no out-of-process frames); Chromium on Android isolates partially | the host page's thread | the host page's thread |
+
+### (a) The long-run bound
+
+For operations (a `render()`, `text()` or `set()` applied) of at most `VIEW_MAX_OPERATION_MS` each, the view's share of
+the thread, averaged over runs long against a second, is at most
+
+- **20%**: `VIEW_APPLY_MS_PER_SECOND` (200) ms per second of the view's own time: each operation's flush, the layout it
+  forces and the rendering update after it, measured and charged in full, however long;
+- **plus the browser's work on the view's loads**, which the meter cannot see (fetching, decoding and laying out an
+  image, a CSS background or a font; processing a refusal): at most `VIEW_URLS_PER_SECOND` (200) loads a second, each
+  measured at about 1 ms of the host page's thread or less (one render of 4 000 new admitted images: Chromium 52%,
+  Firefox 46% busy over the 8 s after it; [research 16](research/16_view_isolation/README.md#what-the-browser-does-with-a-renders-urls)),
+  so at most **20 points** more for a guest that loads, and none for one that does not.
+
+That is 20% for a view that loads nothing and 40% for one that loads at the rate, on every engine where the view shares
+the thread. It is an average, not a cap on each second: an operation is charged after it ran, so a single second can
+hold more (398–553 ms of operations of at most 200 ms, simulated: [research 17](research/17_formal_methods/README.md)).
+A load is charged when its response ends, so behind a slow server the renders made meanwhile get through first (Firefox
+made 1.8 times the rate under the tests' slow route, review round 5, M-3); the long-run rate holds.
+
+Measured, the canonical floods (busy share). The suite asserts each against the bound plus 10 points, the measure's own
+error: a 10 ms interval loses a tick for every slot a task straddles, so a stream of short tasks reads up to one tick
+per task more than the time they took; the time budget alone measured 15–23% under a flood against its 20% (research
+16); and the machine is shared, so a window can lose ticks to another process.
+
+| Flood, operations as fast as the view takes them | Bound | Chromium | Firefox | WebKit |
+| :--- | :--- | :--- | :--- | :--- |
+| Renders: 261 000 characters of text, replacing one of three targets | 20% | 15% (17%) | 7% (9%) | 11% (14%) |
+| Element flood: 37 449 empty elements re-rendered | 20% | 15% (43%: one window held a 1.6 s gap; over 4 windows of 10 s, 16% (19%)) | 11% (12%); over 4 windows of 10 s, 20% (23%) | 15% (17%) |
+| `set()` loop: a 65 536-character textarea value | 20% | 0% (4%) | 4% (7%) | 14% (16%) |
+| Class toggles: `text()` of one rule into a `<style>` over 5 000 elements | 20% | 8% (9%) | 8% (12%) | 16% (16%) |
+| `<img>` from a refused source, 6 500 per render (the renderer drops them) | 40% | 1% (8%) | 1% (1%) | 2% (2%) |
+| `<img>` from an admitted origin, 1 000 per render, the same URLs | 40% | 14% (17%) | 1% (16%) | 2% (8%) |
+| CSS backgrounds from an admitted origin, 500 new per render | 40% | 26% (32%); over 4 windows of 10 s, 9% (15%) | 12% (27%); over 4 windows of 10 s, 3% (13%) | 0% (4%) |
+| CSS backgrounds from a refused source, 500 new per render | 40% | 0% (2%) | 9% (9%) | 2% (5%) |
+| 1 000 new images per render, every 5.2 s, up to `VIEW_MAX_DISTINCT_URLS` (then refused) | 40% | 18–32% per 10 s window | 10–21% | 17–27% |
+
+The first figure is the best of the windows, the one in parentheses their mean. The machine ran other test suites at the
+same time (load average 5–11 on 4 cores), which is why the suite asserts the best window.
+
+### (b) The single-operation bound
+
+One operation costs at most `VIEW_MAX_OPERATION_MS` (2000) ms as the meter measures it (its flush, forced layout and
+rendering update); one that took longer ends the sandbox (`the view spent more than 2000 ms on one operation`) and no
+operation runs after it. **Plus what that one operation costs before the view can observe it**: an operation is not
+interruptible, so the view learns its cost only when it has ended, and the host page stalls for all of it. That cost is
+bounded only by the caps of (c) on what the document holds. Measured (`test/e2e/view-bound.spec.ts`, (b)): one render
+of 24 000 elements under a rule whose `:has()` looks at all their later siblings, an operation of 4.2 s (Chromium),
+9.2 s (Firefox) and 8.6 s (WebKit) on a page of its own, stalled the host page once, for 3.6 s, 12.0 s and 9.7 s (the
+view's own work on it included); the sandbox ended, and the same render, already queued for another target, never
+ran. What one operation within the caps can cost is listed in (d), the documented single-operation stalls.
+
+One render's loads add to it, after the operation: up to `VIEW_MAX_URLS` (1000) of them, about a second of the host
+page's thread at most, and the next operation waits until the load budget has repaid them. Measured at
+`VIEW_MAX_DISTINCT_URLS`, the host page's longest stall: Chromium 297 ms, Firefox 654 ms, WebKit 809 ms (review round 5,
+M-4).
+
+### (c) The rates and caps that bound what the meter does not see
+
+The first two rows are (a)'s and (b)'s; the rest bound what the view's meter cannot see.
+
+| Constant | Value | Bounds |
+| :--- | :--- | :--- |
+| `VIEW_APPLY_MS_PER_SECOND` | 200 | (a): milliseconds of the view's own time per second, on average; an operation past it waits. |
+| `VIEW_MAX_OPERATION_MS` | 2000 | (b): milliseconds of one operation, as the meter measures it; past it the sandbox ends. |
+| `VIEW_URLS_PER_SECOND` | 200 | Loads per second: every URL-bearing attribute a render keeps, when it is rendered, and every load the document's resource timing reports and every violation the view observes that no render charged. A render past it applies; the next operation waits. |
+| `VIEW_MAX_URLS` | 1000 | URL-bearing attributes the view's body holds: what one render can make the browser load. |
+| `VIEW_MAX_DISTINCT_URLS` | 10000 | Distinct URLs one view loads over its life: what stays in the engine's caches (WebKit's stalls grew with it: 1.2 s near 8 000, 8.8 s near 43 000). |
+| `VIEW_MAX_ELEMENTS` | 50000 | Elements the body holds: what any restyle, relayout or repaint, seen or not, covers. |
+| `VIEW_MAX_DEPTH` | 256 | Nesting below the body. |
+| `VIEW_MAX_CHARACTERS` | 1048576 | Characters the body holds (its serialization: text, attributes and markup). |
+| `VIEW_RENDER_CHARACTERS_PER_SECOND` | 1048576 | Characters of markup the view parses per second, refused renders included. |
+| `VIEW_RENDER_MAX_LENGTH` | 262144 | Characters of one operation. |
+| `LOG_EVENTS_PER_SECOND` | 1000 | The guest's error texts the view posts to the host page per second (GUEST_ERROR and GUEST_UNCAUGHT frames, each cut to 2048 characters before posting). |
+| `VIOLATION_EVENT_LIMIT` | 100 | `violation` events the host page dispatches from the view, per directive; every refusal is charged to `VIEW_URLS_PER_SECOND` all the same. |
+| `UNCAUGHT_PER_SECOND` | 1000 | Uncaught errors and unhandled rejections of the guest's worker per second, which Firefox reports on the view's thread; past it the sandbox ends. |
+| `UNCAUGHT_CHARACTERS_PER_SECOND` | 1048576 | Their characters per second; past it the sandbox ends. |
+
+The call budgets (`callLimits`) and the worker's log budget do not touch the view: calls and log lines go between the
+host page and the worker over the logic port, never through the view.
+
+### (d) Outside the bound
+
+This list is closed: a cost of the view not listed here and not inside (a) or (b) is a finding.
+
+| What | Magnitude, measured | Source |
+| :--- | :--- | :--- |
+| CSS animations and transitions while `allowAnimations: true` (the default), and while they run | 5 000 animated elements: 81–92% busy (Firefox 21–89% by property); transitions 75–87%; scroll-driven animations 47–92%. `false` brings every vector back to idle. | [research 16](research/16_view_isolation/README.md#what-keeps-a-shared-thread-busy); [`allowAnimations`](#allowanimations-and-allowautoplay) |
+| What else runs on its own, which `allowAnimations: false` does not stop: animated images, indeterminate `<progress>`, autoplaying media with `allowAutoplay: true` | 2 000 animated PNGs: WebKit 39% (+22 points), Firefox 12%; 5 000 `<progress>`: up to +4 points; 20 looping videos: up to +6 points | research 16 |
+| Relayout after image decodes or font swaps: the browser's work after the frame the meter measured; only the load rate and the caps of (c) bound it | One render of 1 000 admitted images without dimensions above 15 000 paragraphs, the responses spread over 2 s, so that each arrival lays the paragraphs out again: over the 3 s after it, Chromium 40%, Firefox 22%, WebKit 37% busy, longest gap 226, 55 and 289 ms (the loads themselves included; (a)'s flood of images with dimensions, 3–8%). One `@font-face` swap over 15 000 paragraphs: 2%, 5% and 23% busy over the 3 s around it, longest gap 31, 54 and 214 ms. | [review round 5](security/REVIEW-ROUND-5-2026-10-19.md), "What remains"; `test/e2e/view-bound.spec.ts` (d), on demand |
+| The documented single-operation stalls, each one operation's own cost: CSS filters, bidirectional text, small CSS changes over many elements, selectors whose matching grows faster than the elements, `<img>` in Chromium, and WebKit's first value of a 250 000-character textarea | 10 `blur()`s on 1 000 elements: WebKit 3.7 s (100 on 1 000: over 180 s); 240 000 characters of bidirectional text in one paragraph: tens of seconds in Chromium and WebKit; a 31-character `text()` into a `<style>` over 46 000 elements: Firefox 7 s; a rule whose `:has()` looks at every later sibling, over 24 000 elements: Chromium 4.2 s, Firefox 8.9–9.2 s, WebKit 7.1–8.6 s; 6 500 `<img alt>`: Chromium 1.9–2.6 s (Firefox and WebKit about 150 ms); the first `set()` of a 250 000-character textarea: WebKit over 2 s, so the sandbox ends. Past `VIEW_MAX_OPERATION_MS` each ends the sandbox, after the stall. | [broad review](security/BROAD-REVIEW-2026-10-14.md), review rounds [1](security/REVIEW-ROUND-1-2026-10-15.md), [4](security/REVIEW-ROUND-4-2026-10-18.md) and [5](security/REVIEW-ROUND-5-2026-10-19.md) |
+| Memory: not bounded | No budget counts it. The caps of (c) bound what the document holds, not what that costs in memory (decoded images, the caches of up to `VIEW_MAX_DISTINCT_URLS` URLs, layout structures); measured only where it ended a run: a flood of large rejections took Firefox's content process to 7 GB before the uncaught budget ended such floods | [review round 5](security/REVIEW-ROUND-5-2026-10-19.md), N-1 |
+| `:hover` restyles driven by the user's pointer over many elements | 80–100% busy while the pointer moves (5 000 elements under a `:hover ~` rule) | research 16 |
+| Firefox's cost of the worker's unhandled rejections, which it reports on the view's thread, cancelled or not | Within `UNCAUGHT_PER_SECOND`: 1 000 cancelled a second idle, 1 000 handled a tick later 4–7% busy, 1 Mi characters a second 6%; one rejection of 16 Mi characters about 0.5 s, after which the sandbox ends. A relay worker does not change it. | `src/lib/egress.ts`; [research 19](research/19_relay_worker/README.md) |
+
+Outside the statement altogether, as everywhere: cooperative mode, whose guest runs in a frame that can freeze the host
+page with one loop where it shares its thread ([Modes](#modes)).
 
 ---
 
