@@ -154,7 +154,8 @@ describe("L-4: a 'terminated' listener that builds again to the same answer hear
         const { el, events } = element({ mode: 'cooperative' });
         await task();
         events.length = 0;
-        el.createIframe = () => { throw new TypeError('no frame'); }; // the build's own failure, whatever its cause
+        // the build's own failure, whatever its cause (the executor applies the build through the class's prototype, CB7)
+        const build = vi.spyOn(Object.getPrototypeOf(el), '_prepareBuild').mockImplementation(() => { throw new TypeError('no frame'); });
         let builds = 0;
         el.addEventListener('terminated', () => {
             if (++builds <= 50) el.load(`<p>${builds}</p>`);
@@ -163,7 +164,7 @@ describe("L-4: a 'terminated' listener that builds again to the same answer hear
         for (let i = 0; i < 20; i++) await task();
         expect(events).toEqual(['terminated: the environment could not be built (TypeError)']);
         expect(el.state).toBe('terminated');
-        delete el.createIframe;
+        build.mockRestore();
         el.load('<p>again</p>'); // positive control: a build that works builds
         expect(el.state).toBe('loading');
     });

@@ -1644,7 +1644,7 @@ The owner's decisions, 2026-10-18:
 Residual, for the owner: the 2 s operation limit ends a 250,000-character textarea `set()` in WebKit. **Decided**
 (owner, 2026-10-19): the sandbox ends only after repeated overruns (S72).
 
-### S65 · One lifecycle reducer, with the model-based suite (S61.2) — 🟡 step 2 in progress (PRs A and B of 4 done)
+### S65 · One lifecycle reducer, with the model-based suite (S61.2) — 🟡 step 2 in progress (PRs A, B and C of 4 done)
 
 Every transition becomes a pure function of state and event. Effects and event dispatch run only after the state
 settles, and `ready` is the only point where queued work flushes. It is tested by the permanent fast-check `commands`
@@ -1662,7 +1662,8 @@ suite built from [the lifecycle model](research/17_formal_methods/lifecycle-mode
      differences are noted in the module, among them finding **LM-2** (low, class L): a build re-entered from the
      host page's own Trusted Types default policy (a `reset()` inside `createIframe`) starts a second load deadline,
      and the first is never stopped, so 5 s later it ends whatever environment stands. Only the embedder's own code
-     can reach it. The reducer's `loadDeadline{gen}` input drops the stale deadline; it takes effect in PR C.
+     can reach it. The reducer's `loadDeadline{gen}` input drops the stale deadline; it takes effect in PR C, which
+     fixed LM-2 (below).
    - ✅ **PR B: the terminations through the reducer.** `host.ts` keeps the lifecycle state in the reducer's `LcState`
      (`_lc`: `state`, the generation, the pending build termination, the reasons being dispatched, `within`) and steps
      every termination through one module-level executor, `step`, applied through `LIFECYCLE` (CB7): `terminate()`,
@@ -1674,9 +1675,26 @@ suite built from [the lifecycle model](research/17_formal_methods/lifecycle-mode
      the reducer, the executor and `_postRpc`, checked by a source scan (`test/unit/lifecycle-reducer.test.ts`). The
      reasons are unchanged. Side effect on **LM-2**: the stray deadline no longer ends a later environment; it still ends
      the re-entered build's own environment if that one stands 5 s later, `ready` or not (the reducer's `loadDeadline`
-     also asks for `loading`; that half stays PR C's). The builds, the DOM callbacks and `ready` still write `_lc` in `_endEnvironment`
-     and `_enterState`.
-   - ⏸️ PR C: the builds and the DOM callbacks (fixes LM-2, with an e2e that reproduces it first).
+     also asks for `loading`; that half stays PR C's). The builds, the DOM callbacks and `ready` still write `_lc` in
+     `_endEnvironment` and `_enterState`.
+   - ✅ **PR C: the builds and the DOM callbacks through the reducer; LM-2 fixed.** Every build starts as a reducer
+     input: insertion (`connect`), `reset()` and `load()` (`build`), `setConfig()` (`setConfig`, then the executor's
+     `applyConfig` and `configured`); removal and adoption are `disconnect`; the files are `filesChanged`. The
+     build-input count, the config refusal and the build-within reason live in `_lc`; `initialize`, `stop` and
+     `_endEnvironment` are gone, and `LIFECYCLE` only applies the executor's effects. The build effect is split in two:
+     `_prepareBuild` does everything that can run embedder code (the HTML sinks a host page's Trusted Types default
+     policy runs at, the warnings) on a detached frame and assigns nothing on the element; the reducer then attaches
+     only the build that is still the element's (`built{gen}`), and `_attachBuild`, which runs no embedder code, makes
+     every per-build resource (the frame, the announcement listener, the strict view's init, the bridge, the overlay).
+     **LM-2 is fixed by construction:** one load deadline per build, started when the build is attached, carrying its
+     generation, and acting only while that build is `loading` (`loadDeadline{gen}`, which also decides the reason; the
+     host reports whether the wrapper loaded until PR D). A build's failure carries its generation too (`buildFailed{gen}`):
+     an outer build's failure after a nested build stood no longer ends it. The executor now stops at the first effect,
+     of any kind, once embedder code tore the output's environment down (a patched `console.warn` that reset during a
+     termination left the new build `loading` with no frame). Reproduced first, failing at the PR B commit: an e2e with a
+     real default policy (`host-policy.spec.ts`, "LM-2", Chromium and WebKit: `ready`, then the startup reason 5 s later)
+     and jsdom unit tests (`test/unit/lifecycle-reentry.test.ts`: the stray deadline, the leaked listener, the double
+     `appendChild`, the outer failure, the warning hook). The reasons are unchanged.
    - ⏸️ PR D: the completion of a build and the `ready` gate; a source scan that `state` and the lifecycle events
      change only in the executor.
 

@@ -8,11 +8,13 @@
  * test/model/reducer-runner.ts, which runs `reduce` and `runEffects` against a fake host on thousands of generated
  * sequences (test/unit/lifecycle-reducer.test.ts), and on each class-L finding's trace.
  *
- * Since PR B, host.ts keeps the lifecycle state in this module's `LcState` (the element's `_lc`), and every termination
- * is an input stepped through this executor (host.ts, the module-level `step`): terminate(), a build's failure and its
- * deferred 'terminated' (`buildFailed`, `buildTerminationDue`), and each termination the element starts itself, with the
- * generation it was armed in (`terminate{gen}`). The builds, the DOM callbacks and `ready` still write `_lc` in host.ts
- * (`_endEnvironment`, `_enterState`) until PRs C and D; the inputs they will step are not stepped yet.
+ * host.ts keeps the lifecycle state in this module's `LcState` (the element's `_lc`) and steps its inputs through this
+ * executor (host.ts, the module-level `step`). Since PR B: every termination, terminate() and the element's own, each
+ * with the generation it was armed in (`terminate{gen}`). Since PR C: every build (connect, reset(), load(),
+ * setConfig(): `connect`, `build`, `setConfig`, `configured`, and the build effect's `built` and `buildFailed`), the
+ * element's removal and adoption (`disconnect`), the files (`filesChanged`) and the load deadline (`loadDeadline`).
+ * Until PR D, the completion of a build and `ready` stay host.ts's (`_completeBuild`, `_finishBuild`, `_enterReady`,
+ * which writes `state: 'ready'` itself).
  *
  * Class L's invariant (research 18): each transition is reachable by one path, guarded by one predicate; events are
  * dispatched only after the state has settled, never from inside the embedder's own call; queued work is released only
@@ -22,10 +24,12 @@
  *   output the resource effects come before the dispatches (a listener finds the environment it is told about in place);
  * - one gate: `flush` is emitted by one function (`enterReady`), always together with `dispatch ready`, and `ready` is
  *   reached only from `loading` (review round 5, L-1: strict mode flushed at the wrapper's load);
- * - an old environment cannot act: every input a platform callback or a timer delivers carries the generation it was
- *   armed in, and `reduce` drops a stale one with no effect at all (review B4's rule, by construction rather than by
- *   port identity and stopped timers); the executor stops before each dispatch, notice or nested step once a listener
- *   tore the environment down (review B5 and round 4's L-2: `_notifyThenAct`'s rule, at one comparison site).
+ * - an old environment cannot act: every input a platform callback, a timer or the build effect delivers carries the
+ *   generation it was armed in, and `reduce` drops a stale one with no effect at all (review B4's rule, by construction
+ *   rather than by port identity and stopped timers); and the executor runs an output's effects only while the
+ *   environment it was computed for stands, so it stops at the first effect after embedder code tore that environment
+ *   down (review B5 and round 4's L-2: `_notifyThenAct`'s rule, at one comparison site; LM-2: embedder code that runs
+ *   inside the element's own build, or inside its warning, and builds again).
  *
  * Where src/host.ts and the S65 plan disagree, this module follows host.ts (and README.md and docs/API.md), and says so
  * at the place: search for "Today's code".
@@ -87,17 +91,17 @@ export interface LcState {
     // The 'terminated' reasons being dispatched, innermost last (host.ts, `_terminationDispatched`, saved and restored
     // around each dispatch: the same stack, kept as one value and the call stack).
     readonly dispatching: readonly string[];
-    // The 'terminated' being dispatched when the last build started, or null (host.ts, `_buildWithin`; round 2's L-4).
-    // Kept across teardowns, as host.ts keeps it: only the next build replaces it.
+    // The 'terminated' being dispatched when the last build started, or null (round 2's L-4; host.ts's `_buildWithin`
+    // until S65's PR B). Kept across teardowns: only the next build replaces it.
     readonly within: string | null;
     readonly build: BuildProgress | null;
-    // What a build reads changed this many times: setConfig(), load(), the files (host.ts, `_buildInputs`).
+    // What a build reads changed this many times: setConfig(), load(), the files (host.ts's `_buildInputs` until PR C).
     readonly inputs: number;
-    // `inputs` when the last usable setConfig() argument was stored, or null after a refusal (host.ts, `_lastConfig`;
-    // the copy itself is the host's data, compared by the host: `setConfig.same`).
+    // `inputs` when the last usable setConfig() argument was stored, or null after a refusal (the copy itself is the
+    // host's data, host.ts's `_lastConfig`, compared by the host: `setConfig.same`).
     readonly lastInputs: number | null;
-    // Why the last setConfig() argument could not be used, or null (host.ts, `_configRefusal`): every build is refused
-    // with it while it is set.
+    // Why the last setConfig() argument could not be used, or null (host.ts's `_configRefusal` until PR C): every build
+    // is refused with it while it is set.
     readonly refused: string | null;
 }
 
@@ -120,33 +124,36 @@ export const INITIAL_LIFECYCLE: LcState = Object.freeze({
  */
 export type LcInput =
     // connectedCallback (host.ts, `connected`); the host does not step it when the engine refused to give a Firefox-adopted
-    // element its prototype back (restorePrototype: the element stays idle, as stop() left it).
+    // element its prototype back (restorePrototype: the element stays idle, as its `disconnect` left it).
     | { t: 'connect'; ctx: BuildContext }
-    // disconnectedCallback and adoptedCallback alike (host.ts, `stop`): the environment ends, no event.
+    // disconnectedCallback and adoptedCallback alike (host.ts, `disconnected`, `adopted`): the environment ends, quietly.
     | { t: 'disconnect' }
     // reset() and load() (load() stores its html first: the host's data).
     | { t: 'build'; why: 'reset' | 'load'; ctx: BuildContext }
     // setConfig(): `same` is the host's comparison of the structured clone with the last usable copy (a clone that failed
-    // is never the same). The rest of the no-op predicate is the reducer's (R3-7, `_isCurrentConfig`).
+    // is never the same). The rest of the no-op predicate is the reducer's (R3-7).
     | { t: 'setConfig'; same: boolean }
     // The config was applied (the `applyConfig` effect): its refusal, or null, and the context of the build it starts.
     | { t: 'configured'; refusal: string | null; ctx: BuildContext }
     // registerFiles(), unregisterFiles() or commitGuestWrites() changed the store (its 'fileschanged' is the host's).
     | { t: 'filesChanged' }
-    // The build effect returned, or threw (the reason the host gives for what it threw).
-    | { t: 'built' }
-    | { t: 'buildFailed'; reason: string }
+    // The build effect returned what it prepared, or threw (the reason the host gives for what it threw), for the build of
+    // `gen` (LM-2: embedder code can run inside the build effect and build again, and then this build is gone). The
+    // `attach` effect's own throw is a `buildFailed` of its build too.
+    | { t: 'built'; gen: number; prepared: unknown }
+    | { t: 'buildFailed'; gen: number; reason: string }
     // The task of a build's 'terminated' (R3-2).
     | { t: 'buildTerminationDue'; gen: number }
     // A termination. Without `gen`: terminate() (its reason already defaulted, review round 2, L-7), or a build failure
     // the executor caught. With `gen`: one the element starts (the watchdog, the view's watchdog, workerExecutionTimeout,
     // the uncaught budget, VIEW_OVERRUN, an entry failure, a host-page refusal, a second announcement, the frame-integrity
-    // checks at the wrapper's load, and, until PR D moves the build's progress here, the load deadline), whatever decides
-    // it (the host decides, for instance, which VIEW_OVERRUN ends the sandbox); with `notices`, the lines dispatched before
-    // it, one by one.
+    // checks at the wrapper's load), whatever decides it (the host decides, for instance, which VIEW_OVERRUN ends the
+    // sandbox); with `notices`, the lines dispatched before it, one by one.
     | { t: 'terminate'; reason: string; gen?: number; notices?: readonly Notice[] }
-    // The load deadline (CB3): LOAD_TIMEOUT_MS of loading.
-    | { t: 'loadDeadline'; gen: number }
+    // The load deadline (CB3): LOAD_TIMEOUT_MS of loading. `wrapperLoaded`: whether the wrapper's one load arrived, as
+    // host.ts reports it until PR D steps that load here (`frameLoad`, which records it in the build's progress); left
+    // out, the build's progress says.
+    | { t: 'loadDeadline'; gen: number; wrapperLoaded?: boolean }
     // The wrapper's load, in the microtask the host's load handler queues (review round 4, L-1): `gen` as the load event
     // found it; `stillOurs` whether, in the microtask, the frame is still the element's and both are connected; `guest`
     // the guest frame's window: none, the one whose announcement was accepted, or another (round 2's L-6, S46).
@@ -164,7 +171,13 @@ export type Effect =
     | { k: 'teardown' } // host.ts, `_teardown` without its generation and pending-termination lines, which are the reducer's
     | { k: 'discardWrites' }
     | { k: 'applyConfig' } // stores the clone (normaliseConfig), and answers with its refusal: then `configured`
-    | { k: 'build' } // host.ts, `createIframe`: then `built`, or `buildFailed` if it threw
+    // host.ts, `_prepareBuild`: everything of the build that can run embedder code (the HTML sinks a host page's Trusted
+    // Types default policy runs at, the warnings), into values the element does not hold yet; then `built`, or
+    // `buildFailed` if it threw
+    | { k: 'build' }
+    // host.ts, `_attachBuild`: the prepared build becomes the element's (its frame, its announcement listener, its bridge
+    // and overlay); no embedder code runs there, so no other build can come in between (LM-2)
+    | { k: 'attach'; prepared: unknown }
     | { k: 'startLoadDeadline' }
     | { k: 'stopLoadDeadline' }
     | { k: 'sendInitView' } // strict mode, at the wrapper's load: the view gets its ports (`_setupStrictChannels`)
@@ -226,8 +239,9 @@ function terminateNow(state: LcState, reason: string): LcOutput {
 // (the answer being dispatched was warned already). Without it a 'terminated' listener that built again from the same
 // inputs recursed until the stack ran out (CB5); with it every such build ends at once, so no listener can loop. The rule
 // is on the answer, never a build skipped (round 3's L-1: a listener's move left the element connected and 'idle').
-// The second teardown is today's code (host.ts tears down in initialize() and again here), so a refused build counts
-// the generation up twice; the reference model counts once, and the oracle compares only whether it changed.
+// The second teardown is what host.ts did before the reducer drove its builds (it tore down in initialize() and again
+// in _terminateBuild), kept: a refused build counts the generation up twice (`initialize`, then here); the reference
+// model counts once, and the oracle compares only whether it changed.
 function terminateBuild(state: LcState, reason: string): LcOutput {
     if (state.state === 'terminated') return unchanged(state);
     const repeated = state.within === reason;
@@ -240,12 +254,13 @@ function terminateBuild(state: LcState, reason: string): LcOutput {
     return { state: { ...next, pending: { reason, gen: next.gen } }, effects };
 }
 
-// host.ts, `stop`: the element left (or never reached) a document it can build in. No event.
+// The element left (or never reached) a document it can build in (host.ts's `stop` until PR C). No event.
 function stop(state: LcState): LcOutput {
     return { state: { ...tornDown(state), state: 'idle' }, effects: [{ k: 'teardown' }, { k: 'discardWrites' }] };
 }
 
-// host.ts, `initialize`: the one place a build starts (connection, reset(), load(), setConfig()). Every build runs, from a
+// The one place a build starts (connection, reset(), load(), setConfig(); host.ts's `initialize` until PR C), then the
+// build effect, whose answer is `built` or `buildFailed` (LM-2: see there). Every build runs, from a
 // 'terminated' listener too (round 3's L-1); the no-repeat rule is on its answer (terminateBuild). Where the element may
 // not build (round 2's L-1: one predicate, asked by every build), it stops instead and stays idle. Otherwise 'loading'
 // first: every attempt that fails is one termination with its own reason, also from 'terminated' (reset() of a refused
@@ -337,15 +352,18 @@ function terminate(state: LcState, input: Extract<LcInput, { t: 'terminate' }>):
     return { state, effects };
 }
 
-// host.ts, `_loadTimeoutReason`: once the wrapper has loaded, the frame that runs the library's startup script (the
-// strict view, or the guest's bootstrap) has loaded too, and that script runs first: had it run, it would have checked in.
-// So the host page's policy stopped it (R3-1). Before the wrapper's load, the frame did not finish loading. A deadline
-// bounds `loading` only: `_enterReady` stops it, so at `ready` it never fires.
-function loadDeadline(state: LcState): LcOutput {
+// Why a build is still `loading` at its deadline (host.ts's `_loadTimeoutReason` until PR C): once the wrapper has
+// loaded, the frame that runs the library's startup script (the strict view, or the guest's bootstrap) has loaded too,
+// and that script runs first: had it run, it would have checked in. So the host page's policy stopped it (R3-1). Before
+// the wrapper's load, the frame did not finish loading. A deadline
+// bounds `loading` only, of the build it was started for (LM-2): the input carries that build's generation, and it acts
+// only while that build is `loading`; `_enterReady` stops it as well, but the bound does not rest on a timer stopped.
+function loadDeadline(state: LcState, input: Extract<LcInput, { t: 'loadDeadline' }>): LcOutput {
     const build = state.build;
     if (state.state !== 'loading' || build === null) return unchanged(state);
     const scripted = build.strict || build.announces;
-    return terminateNow(state, build.frameLoaded && scripted ? LIFECYCLE_REASONS.startupBlocked : LIFECYCLE_REASONS.loadTimeout);
+    const loaded = input.wrapperLoaded ?? build.frameLoaded;
+    return terminateNow(state, loaded && scripted ? LIFECYCLE_REASONS.startupBlocked : LIFECYCLE_REASONS.loadTimeout);
 }
 
 // host.ts, `_dispatchBuildTermination`: only if nothing tore the environment down since it was armed.
@@ -355,10 +373,10 @@ function buildTerminationDue(state: LcState): LcOutput {
     return { state: { ...state, pending: null }, effects: [{ k: 'dispatch', event: 'terminated', reason: pending.reason }] };
 }
 
-// host.ts, `setConfig` and `_isCurrentConfig` (review round 1, R3-7): the configuration the standing environment was built
-// from, again, with nothing a build reads changed since and no refusal standing, rebuilds nothing (an embedder that applies
-// its config on every edit keeps its guest). Otherwise the inputs count up, and the host applies the copy: the order of
-// today's code, which decides the no-op before anything of the argument is applied (warnings, the stored config).
+// setConfig() (host.ts's `_isCurrentConfig` until PR C; review round 1, R3-7): the configuration the standing
+// environment was built from, again, with nothing a build reads changed since and no refusal standing, rebuilds nothing
+// (an embedder that applies its config on every edit keeps its guest). Otherwise the inputs count up, and the host
+// applies the copy: the no-op is decided before anything of the argument is applied (warnings, the stored config).
 function setConfig(state: LcState, same: boolean): LcOutput {
     const current = same && state.lastInputs === state.inputs && state.refused === null && (state.state === 'ready' || state.state === 'loading');
     if (current) return unchanged(state);
@@ -371,7 +389,7 @@ function configured(state: LcState, input: Extract<LcInput, { t: 'configured' }>
 }
 
 // The inputs that carry the generation they were armed in: dropped, with no effect and no change, once it is gone.
-const STAMPED = new Set<LcInput['t']>(['buildTerminationDue', 'loadDeadline', 'frameLoad', 'announced', 'viewReady']);
+const STAMPED = new Set<LcInput['t']>(['built', 'buildFailed', 'buildTerminationDue', 'loadDeadline', 'frameLoad', 'announced', 'viewReady']);
 
 /** Whether `input` belongs to an environment that is gone: then `reduce` gives no effects and leaves the state as it is. */
 export function isStale(state: LcState, input: LcInput): boolean {
@@ -400,29 +418,37 @@ export function reduce(state: LcState, input: LcInput): LcOutput {
         case 'filesChanged':
             return { state: { ...state, inputs: state.inputs + 1 }, effects: NOTHING };
         case 'built':
-            // Today's code (host.ts, initialize): the deadline starts if the state is 'loading' once the build returned,
-            // not if the generation is unchanged as the S65 plan has it. They differ only when the build re-entered the
-            // element: a host page's Trusted Types default policy runs embedder code inside createIframe (setWrapperSrcdoc),
-            // and one that called reset() there leaves a nested build 'loading'. Then today's code starts a second
-            // deadline and overwrites `_loadDeadline`, so the nested build's deadline is never stopped and ends whatever
-            // environment stands LOAD_TIMEOUT_MS later. Here the leaked deadline would carry its generation and be dropped
-            // (`loadDeadline` is stamped); the second start is kept, as today. Listed in the PR for PR C.
-            // Since PR B, host.ts's deadline steps `terminate{gen}` with the generation it was started in, so the leaked
-            // one no longer ends a later environment. It still ends the nested build's own environment, `ready` or not, if
-            // that one still stands: both deadlines were started in it (the outer one after the nested build returned),
-            // and `terminate` asks the generation only, where `loadDeadline` also asks for `loading`. That half is PR C's.
-            return state.state === 'loading' ? { state, effects: [{ k: 'startLoadDeadline' }] } : unchanged(state);
+            // LM-2 (class L; S65 step 2, PR C). Embedder code runs inside the build effect: a host page's Trusted Types
+            // default policy at each HTML sink it writes (the wrapper's srcdoc, the inert parse of the markup), a patched
+            // console.warn at each warning. One that called reset() there built again, from inside the build: the nested
+            // build stood, and the outer one then went on over it with the element's fields. It started a second load
+            // deadline and overwrote the first, which was never stopped and ended the sandbox LOAD_TIMEOUT_MS later,
+            // `ready` as it was; it put its announcement listener on the nested frame and overwrote the nested one's stop,
+            // so one listener outlived its environment; it appended the nested frame a second time; and its failure, had
+            // it thrown, ended the nested build. Fixed by construction, in three parts:
+            // - the build effect prepares and attaches nothing (host.ts, `_prepareBuild`), and this input carries the
+            //   generation of its build: a build that a nested one replaced is stale here, and what it prepared is
+            //   dropped, never the element's;
+            // - the build becomes the element's in `attach`, which runs no embedder code, and every per-build resource is
+            //   made there or later and released by the `teardown` effect: one frame, one listener, one deadline per build;
+            // - the deadline starts here, once per build (one `built` per build effect), and acts only for its generation
+            //   and only while that build is `loading` (`loadDeadline`).
+            return state.state === 'loading' ? { state, effects: [{ k: 'attach', prepared: input.prepared }, { k: 'startLoadDeadline' }] } : unchanged(state);
         case 'buildFailed':
-            // Today's code: `_terminateBuild` was guarded by the state only, not by the generation the S65 plan gives it
-            // (`buildFailed{gen}`). After a re-entered build (above) the outer build's failure ends the nested build.
-            // PR B kept that: host.ts's initialize() steps this input with no generation; PR C decides it with LM-2.
+            // A build's failure carries the generation of its build (S65 PR C; it carried none before, as `_terminateBuild`
+            // was guarded by the state only). It is that build's answer: a refusal known before building is decided inside
+            // `initialize` and needs no input, so this input comes only from the build effect (or `attach`), and the only
+            // way its build can be gone by then is embedder code inside the build that built again (LM-2). That nested
+            // build then stands, complete, and the outer build's failure is no longer the sandbox's state, exactly as a
+            // build's deferred 'terminated' is not once another build started (`buildTerminationDue`, R3-2). Without the
+            // generation, the outer build's throw ended a build that had nothing wrong with it.
             return terminateBuild(state, input.reason);
         case 'buildTerminationDue':
             return buildTerminationDue(state);
         case 'terminate':
             return terminate(state, input);
         case 'loadDeadline':
-            return loadDeadline(state);
+            return loadDeadline(state, input);
         case 'frameLoad':
             return frameLoad(state, input);
         case 'announced':
@@ -454,7 +480,9 @@ export interface LifecycleHost {
     discardWrites(): void;
     applyConfig(): string | null;
     buildContext(): BuildContext;
-    build(): void;
+    // The build effect: prepares the build, and returns what it prepared, which `attach` makes the element's (LM-2).
+    build(): unknown;
+    attach(prepared: unknown): void;
     failureReason(error: unknown, phase: 'build' | 'complete'): string;
     startLoadDeadline(): void;
     stopLoadDeadline(): void;
@@ -487,29 +515,33 @@ export function step(host: LifecycleHost, input: LcInput): void {
 
 const isEmbedderFacing = (effect: Effect) => effect.k === 'dispatch' || effect.k === 'notice' || effect.k === 'step';
 
-// The executor's one comparison of generations (review B5; round 4's L-2): whether the environment an output, or a host
-// path's announcement, was made for was torn down since, by a listener of what was just dispatched. `reduce` drops a
-// stale input (isStale); this stops what is left of a run once its environment is gone. host.ts compares generations
+// The executor's one comparison of generations (review B5; round 4's L-2; LM-2): whether the environment an output, or a
+// host path's announcement, was made for was torn down since, by embedder code that ran in between (a listener of what
+// was just dispatched, a Trusted Types default policy inside the build, a patched console.warn). `reduce` drops a stale
+// input (isStale); this stops what is left of a run once its environment is gone. host.ts compares generations
 // nowhere else, apart from a call's own environment (`_issue`, `_postRpc`; review round 3, L-2), and
 // test/unit/lifecycle-reducer.test.ts scans for it.
 const tornDownSince = (host: { readonly lc: LcState }, stampGen: number): boolean => host.lc.gen !== stampGen;
 
 /**
- * Applies one output's effects in order. `stampGen` is the generation the output was computed at: before each dispatch,
- * notice or nested step the executor compares it with the state's, and stops once a listener tore the environment down
- * in between, so nothing it did is undone (review B5; round 4's L-2). That comparison is `_notifyThenAct`'s, here at one
- * site. With `guarded`, an effect other than a dispatch that throws ends the sandbox, as today's try/catch at the
- * completion of a build does (`_onFrameLoad`, `_finishBuild`).
+ * Applies one output's effects in order. `stampGen` is the generation the output was computed at: before each effect the
+ * executor compares it with the state's, and stops once embedder code tore the environment down in between, so nothing
+ * of the output acts on the environment that replaced it (review B5; round 4's L-2: that comparison is `_notifyThenAct`'s,
+ * here at one site). Until S65's PR C it was made before a dispatch, a notice or a nested step only, since only those run
+ * embedder code; but a resource effect can too (a warning, through a patched console.warn), and a `teardown` after a
+ * warning whose hook built again tore down that new build, leaving it `loading` with no frame. Now no effect of a gone
+ * environment runs. With `guarded`, an effect other than a dispatch that throws ends the sandbox, as today's try/catch at
+ * the completion of a build does (`_onFrameLoad`, `_finishBuild`).
  */
 export function runEffects(host: LifecycleHost, effects: readonly Effect[], stampGen: number, guarded = false): void {
     for (const effect of effects) {
-        if (isEmbedderFacing(effect) && tornDownSince(host, stampGen)) return;
+        if (tornDownSince(host, stampGen)) return;
         if (!guarded || isEmbedderFacing(effect)) {
-            runEffect(host, effect);
+            runEffect(host, effect, stampGen);
             continue;
         }
         try {
-            runEffect(host, effect);
+            runEffect(host, effect, stampGen);
         } catch (error) {
             host.step({ t: 'terminate', reason: host.failureReason(error, 'complete') });
             return;
@@ -534,7 +566,7 @@ export function runNotices(host: { readonly lc: LcState }, notices: readonly (()
     return true;
 }
 
-function runEffect(host: LifecycleHost, effect: Effect): void {
+function runEffect(host: LifecycleHost, effect: Effect, stampGen: number): void {
     switch (effect.k) {
         case 'teardown': host.teardown(); return;
         case 'discardWrites': host.discardWrites(); return;
@@ -545,7 +577,15 @@ function runEffect(host: LifecycleHost, effect: Effect): void {
             return;
         }
         case 'build':
-            runBuild(host);
+            runBuild(host, stampGen);
+            return;
+        case 'attach':
+            // a throw while attaching is a failure of this build, like one while preparing it (`runBuild`)
+            try {
+                host.attach(effect.prepared);
+            } catch (error) {
+                host.step({ t: 'buildFailed', gen: stampGen, reason: host.failureReason(error, 'build') });
+            }
             return;
         case 'startLoadDeadline': host.startLoadDeadline(); return;
         case 'stopLoadDeadline': host.stopLoadDeadline(); return;
@@ -568,17 +608,19 @@ function runEffect(host: LifecycleHost, effect: Effect): void {
     }
 }
 
-// host.ts, the end of `initialize`: anything the build throws ends it with a reason (follow-up audit 2026-10-14), and a
-// build that returned starts its deadline. Neither follow-up is compared with `stampGen`: today's code has no check there
-// (see `built` and `buildFailed` in reduce).
-function runBuild(host: LifecycleHost): void {
+// The build effect: anything the build throws ends it with a reason (follow-up audit 2026-10-14), and a build that
+// returned is attached and starts its deadline. Both answers carry the generation of the build (`stampGen`, the one its
+// output was computed at), and `reduce` drops them once embedder code inside the build built again (LM-2: see `built`
+// and `buildFailed` in reduce).
+function runBuild(host: LifecycleHost, stampGen: number): void {
+    let prepared: unknown;
     try {
-        host.build();
+        prepared = host.build();
     } catch (error) {
-        host.step({ t: 'buildFailed', reason: host.failureReason(error, 'build') });
+        host.step({ t: 'buildFailed', gen: stampGen, reason: host.failureReason(error, 'build') });
         return;
     }
-    host.step({ t: 'built' });
+    host.step({ t: 'built', gen: stampGen, prepared });
 }
 
 // host.ts, `_dispatchTerminated`: the one place 'terminated' is dispatched (round 4's L-3), with its reason on the

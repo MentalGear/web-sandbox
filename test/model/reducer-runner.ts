@@ -232,12 +232,18 @@ export class FakeElement implements LifecycleHost {
         return `the guest entry "${entry.slice(0, 256)}" is not a registered JavaScript file`;
     }
 
-    build() {
-        const ctx = this.buildContext();
+    // host.ts, `_prepareBuild`: a frame the element does not hold yet
+    build(): Frame {
         // never two silent guests in a row: a rebuild from the deadline's 'terminated' listener must settle within 8 s
         const silent = !this.lastSilent && this.rng.chance(this.options.silentGuests ?? 1 / 40);
         this.lastSilent = silent;
-        const frame: Frame = { id: ++this.frames, gen: this.lc.gen, silent, connected: true, onload: null };
+        return { id: ++this.frames, gen: this.lc.gen, silent, connected: true, onload: null };
+    }
+
+    // host.ts, `_attachBuild`: the frame becomes the element's, and its guest starts
+    attach(prepared: unknown) {
+        const frame = prepared as Frame;
+        const ctx = this.buildContext();
         frame.onload = this.loadHandler(frame);
         this.frame = frame;
         this.lastBuildAt = this.now;

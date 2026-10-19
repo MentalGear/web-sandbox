@@ -6,8 +6,15 @@ import { viewScriptHash } from '@src/index';
 
 // `?tt-default`: the host page has a Trusted Types default policy of its own (review round 2, C-6), which every string
 // the page assigns to a sink passes through; created first, before the element assigns anything.
+// `window.ttDefaultHook`, when a spec sets it, runs once, inside the next sink the policy is asked about: embedder code
+// running in the middle of the element's own build (S65, LM-2: a reset() there re-entered the build).
 if (new URLSearchParams(location.search).has('tt-default')) {
-    const pass = (input: string) => input;
+    const pass = (input: string) => {
+        const hook = (window as any).ttDefaultHook;
+        (window as any).ttDefaultHook = null;
+        if (typeof hook === 'function') hook();
+        return input;
+    };
     (window as any).trustedTypes?.createPolicy('default', { createHTML: pass, createScript: pass, createScriptURL: pass });
 }
 

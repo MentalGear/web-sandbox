@@ -203,6 +203,18 @@ the outcome from the bridge's lifetime, so every record made after `abortAll()` 
 settled on, and the guest is told the sandbox was torn down. `test/unit/fetch-bridge-lifecycle.test.ts` enumerates every
 settle path with the teardown at its last possible point; the focused e2e test passes on all three engines.
 
+**LM-2 (found writing the reducer, fixed 2026-10-19, S65 step 2, PR C).** Embedder code can run inside the element's own
+build: a host page's Trusted Types default policy at each HTML sink the build writes, a patched `console.warn` at each
+warning. A `reset()` there built again from inside the build, and the outer build went on over the nested one: a second
+load deadline (the nested one's never stopped, so it ended the sandbox 5 s later, `ready` as it was), a second
+announcement listener (one leaked), a second `appendChild` of the nested frame, and its failure ended the nested build.
+The model's sequences cannot reach it (no operation runs inside a build), so it was reproduced on its own: an e2e with a
+real default policy (`host-policy.spec.ts`, Chromium and WebKit; Firefox has no Trusted Types) and jsdom unit tests
+(`test/unit/lifecycle-reentry.test.ts`), both failing before the fix. Fixed by construction (class L): the build is
+prepared without touching the element, attached only if the reducer still holds it to be the element's (`built{gen}`),
+and every per-build resource, the one load deadline included, is made by the attached build and released by the
+teardown; a deadline acts only while its build is `loading`.
+
 ## The reducer runner (S65 step 2)
 
 The lifecycle reducer (`src/lib/lifecycle.ts`) is checked against the same model in a unit run, with no browser.

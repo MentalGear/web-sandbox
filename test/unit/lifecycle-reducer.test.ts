@@ -108,11 +108,13 @@ describe("the reducer's properties on fuzzed inputs", () => {
     ];
     function inputsFor(state: LcState): LcInput[] {
         const gens = [state.gen, state.gen - 1, state.gen + 1];
-        const inputs: LcInput[] = [{ t: 'disconnect' }, { t: 'filesChanged' }, { t: 'built' }, { t: 'buildFailed', reason: 'x' }, { t: 'setConfig', same: true }, { t: 'setConfig', same: false }, { t: 'terminate', reason: 'bye' }, { t: 'dispatchStarted', reason: 'bye' }];
+        const inputs: LcInput[] = [{ t: 'disconnect' }, { t: 'filesChanged' }, { t: 'setConfig', same: true }, { t: 'setConfig', same: false }, { t: 'terminate', reason: 'bye' }, { t: 'dispatchStarted', reason: 'bye' }];
         if (state.dispatching.length > 0) inputs.push({ t: 'dispatchEnded' });
         for (const ctx of contexts) inputs.push({ t: 'connect', ctx }, { t: 'build', why: 'reset', ctx }, { t: 'build', why: 'load', ctx }, { t: 'configured', refusal: null, ctx }, { t: 'configured', refusal: 'refused', ctx });
         for (const gen of gens) {
             inputs.push({ t: 'buildTerminationDue', gen }, { t: 'loadDeadline', gen }, { t: 'viewReady', gen, height: 100, stillStyleRefused: false });
+            inputs.push({ t: 'built', gen, prepared: {} }, { t: 'buildFailed', gen, reason: 'x' });
+            for (const wrapperLoaded of [true, false]) inputs.push({ t: 'loadDeadline', gen, wrapperLoaded });
             inputs.push({ t: 'terminate', reason: 'self', gen }, { t: 'terminate', reason: 'self', gen, notices: [{ level: 'error', text: 'line', source: 'host' }] });
             for (const guest of ['none', 'announcer', 'other'] as const) for (const stillOurs of [true, false]) inputs.push({ t: 'frameLoad', gen, stillOurs, guest });
             for (const valid of [true, false]) for (const refusal of [null, 'refused']) inputs.push({ t: 'announced', gen, valid, refusal, port: {} });
@@ -137,9 +139,9 @@ describe("the reducer's properties on fuzzed inputs", () => {
         expect(checked).toBeGreaterThan(10_000);
     });
 
-    // S65 step 2, PR B: host.ts steps the terminations only, and its executor applies only their effects (the others are
-    // `notYet` there, until PRs C and D). On every sampled state, what those inputs give, nested steps and tasks included,
-    // stays inside what host.ts applies; the source scan below checks that host.ts steps no other input.
+    // S65 step 2, PRs B and C: host.ts steps the terminations and the builds, and its executor applies only their effects
+    // (the others are `notYet` there, until PR D). On every sampled state, what those inputs give, nested steps and tasks
+    // included, stays inside what host.ts applies; the source scan below checks that host.ts steps no other input.
     it('the inputs host.ts steps give only the effects its executor applies, on every sampled state', () => {
         const states = sampled.size > 0 ? [...sampled.values()] : [INITIAL_LIFECYCLE];
         let checked = 0;
@@ -151,6 +153,7 @@ describe("the reducer's properties on fuzzed inputs", () => {
                     for (const effect of reduce(state, input).effects) {
                         checked++;
                         if (!HOST_EFFECTS.has(effect.k)) expect.fail(`${input.t} gave ${effect.k}\nstate ${JSON.stringify(state)}`);
+                        if (effect.k === 'dispatch' && effect.event === 'ready') expect.fail(`${input.t} dispatched ready\nstate ${JSON.stringify(state)}`);
                         if (effect.k === 'step' || effect.k === 'task') {
                             if (!HOST_STEPS.has(effect.input.t)) expect.fail(`${input.t} stepped ${effect.input.t}`);
                             pending.push(effect.input);
@@ -201,11 +204,14 @@ class RecordingHost implements LifecycleHost {
     buildContext() { return this.ctx; }
     build() {
         this.log.push('build');
+        const prepared = { build: this.log.filter(line => line === 'build').length }; // which build, counted from 1
         const reenter = this.onBuild;
         this.onBuild = null;
         reenter?.();
         if (this.buildThrows) throw new Error('the build throws');
+        return prepared;
     }
+    attach(prepared: unknown) { this.log.push(`attach ${JSON.stringify(prepared)}`); }
     failureReason(_error: unknown, phase: string) { return `failed (${phase})`; }
     startLoadDeadline() { this.log.push('startLoadDeadline'); }
     stopLoadDeadline() { this.log.push('stopLoadDeadline'); }
@@ -430,23 +436,45 @@ describe("the reducer describes today's host.ts", () => {
         expect(host.log).not.toContain('flush');
     });
 
-    it('a build re-entered from inside the build effect (a host page Trusted Types default policy calling reset()): the outer build still starts a load deadline', () => {
+    // LM-2 (S65 step 2, PR C): until PR B the reducer described today's code here, which started a second deadline for
+    // the outer build and let its failure end the nested one; test/unit/lifecycle-reentry.test.ts has the element's half.
+    it('LM-2: a build re-entered from inside the build effect (a host page Trusted Types default policy calling reset()): only the nested build is attached, with one deadline', () => {
         const host = new RecordingHost();
         host.onBuild = () => host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE });
         host.step({ t: 'connect', ctx: COOPERATIVE });
-        // today's code: two deadlines started for one standing build (host.ts overwrites `_loadDeadline`, and the first
-        // one is never stopped); the reducer's `loadDeadline` carries its generation, so the leaked one would be dropped
-        expect(host.log.filter(line => line === 'startLoadDeadline')).toHaveLength(2);
+        // the outer build prepared first and the nested one second; only the nested one, prepared second, is attached
+        expect(host.log.filter(line => line.startsWith('attach') || line === 'startLoadDeadline')).toEqual(['attach {"build":2}', 'startLoadDeadline']);
         expect(host.lc.state).toBe('loading');
-        expect(isStale(host.lc, { t: 'loadDeadline', gen: host.lc.gen - 2 })).toBe(true);
+        // and a deadline acts only for its own build, while it is loading
+        expect(isStale(host.lc, { t: 'loadDeadline', gen: host.lc.gen - 1 })).toBe(true);
+        expect(reduce({ ...host.lc, state: 'ready' }, { t: 'loadDeadline', gen: host.lc.gen }).effects).toEqual([]);
     });
 
-    it("and if the outer build then throws, its failure ends the nested build (host.ts's `buildFailed` carries no generation, as the code before it had none)", () => {
+    it('LM-2: if the outer build then throws, its failure is stale: the nested build stands, nothing is dispatched', () => {
         const host = new RecordingHost();
-        host.onBuild = () => host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE });
-        host.buildThrows = true;
+        host.onBuild = () => {
+            host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE }); // the nested build succeeds
+            host.buildThrows = true; // the outer one throws once the nested one returned
+        };
         host.step({ t: 'connect', ctx: COOPERATIVE });
-        expect(host.lc.state).toBe('terminated');
+        expect(host.lc.state).toBe('loading');
+        expect(host.tasks).toEqual([]);
+        expect(host.log.filter(line => line.startsWith('attach'))).toEqual(['attach {"build":2}']);
+    });
+
+    it('LM-2: an effect that runs embedder code and builds again (a warning through a patched console.warn) stops the rest of its output', () => {
+        const host = readyHost();
+        const warn = host.warn.bind(host);
+        host.warn = (text) => {
+            warn(text);
+            host.warn = warn;
+            host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE });
+        };
+        host.step({ t: 'terminate', reason: 'bye' });
+        // the termination's teardown and dispatch belong to an environment that is gone: the new build stands, attached
+        expect(host.log.filter(line => line === 'teardown')).toHaveLength(1); // the new build's own
+        expect(host.events).toEqual([]);
+        expect(host.lc.state).toBe('loading');
     });
 
     it("the wrapper's load: a second one ends the environment; one that is no longer the element's counts for nothing", () => {
@@ -504,14 +532,16 @@ describe("the reducer describes today's host.ts", () => {
     });
 });
 
-// ---- class L in host.ts, by its source (S65 step 2, PR B) -----------------------------------------------------------
+// ---- class L in host.ts, by its source (S65 step 2, PRs B and C) ----------------------------------------------------
 
-// What host.ts steps since PR B (the terminations, and the executor's own steps around a 'terminated'), and the effects
-// its executor applies (src/host.ts, lifecycleHostOf; every other effect is `notYet` there until PRs C and D).
-const HOST_STEPS = new Set<LcInput['t']>(['terminate', 'buildFailed', 'buildTerminationDue', 'dispatchStarted', 'dispatchEnded']);
-const HOST_EFFECTS = new Set<Effect['k']>(['teardown', 'warn', 'dispatch', 'notice', 'step', 'task']);
+// What host.ts steps (PR B: the terminations; PR C: the builds, the DOM callbacks, the files and the load deadline), with
+// what the executor steps for it (a build's answer, the config applied, the deferred 'terminated', the steps around a
+// dispatch), and the effects its executor applies (src/host.ts, lifecycleHostOf; every other effect is `notYet` there
+// until PR D). `dispatch` here is 'terminated' only: 'ready' is PR D's.
+const HOST_STEPS = new Set<LcInput['t']>(['connect', 'disconnect', 'build', 'setConfig', 'configured', 'filesChanged', 'built', 'buildFailed', 'loadDeadline', 'terminate', 'buildTerminationDue', 'dispatchStarted', 'dispatchEnded']);
+const HOST_EFFECTS = new Set<Effect['k']>(['teardown', 'discardWrites', 'applyConfig', 'build', 'attach', 'startLoadDeadline', 'warn', 'warnForeignDocument', 'dispatch', 'notice', 'step', 'task']);
 
-describe('class L in host.ts, by its source (S65 step 2, PR B)', () => {
+describe('class L in host.ts, by its source (S65 step 2, PRs B and C)', () => {
     // Comments say what the code did before; they are not code.
     const code = (file: string) => readFileSync(path.join(ROOT, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
     const host = code('src/host.ts');
@@ -557,7 +587,7 @@ describe('class L in host.ts, by its source (S65 step 2, PR B)', () => {
         expect([...lifecycle.matchAll(/tornDownSince\(host, stampGen\)/g)]).toHaveLength(2);
     });
 
-    it('every termination the element starts carries its generation; only terminate() and a build failure carry none', () => {
+    it('every termination the element starts carries its generation; only terminate() carries none', () => {
         const terminations = [...host.matchAll(/step\(this, \{ t: 'terminate', ([^\n]*)\}\)/g)];
         expect(terminations.length).toBeGreaterThanOrEqual(12);
         const without = terminations.filter(match => !/\bgen\b/.test(match[1]!)).map(match => match.index!);
@@ -565,17 +595,51 @@ describe('class L in host.ts, by its source (S65 step 2, PR B)', () => {
         expect(inside(without[0]!, bodyOf(host, '    terminate(reason', '\n    }\n'))).toBe(true);
         // every other termination goes through the reducer: no `_terminate`, `_terminateBuild` or token is left
         expect(host).not.toMatch(/_terminate\(|_terminateBuild|_dispatchBuildTermination|_dispatchTerminated\(|_pendingTermination|_terminationDispatched|_notifyThenAct|_generation\b/);
-        expect([...host.matchAll(/t: 'buildFailed'/g)]).toHaveLength(2); // initialize(): a refusal, a build that threw
+        // a build's answer is the executor's alone (PR C), with its build's generation (LM-2)
+        expect(host).not.toMatch(/t: 'buildFailed'|t: 'built'/);
+        const answers = [...lifecycle.matchAll(/t: '(built|buildFailed)', ([^}]*)\}/g)];
+        expect(answers.map(match => match[1])).toEqual(['buildFailed', 'buildFailed', 'built']); // attach's, the build's, the build's
+        for (const match of answers) expect(match[2], match[0]).toMatch(/^gen: stampGen, /);
     });
 
-    it('host.ts steps only the terminations (and the executor, its own steps); `_lc` is written by the executor and, until PRs C and D, two methods', () => {
-        const stepped = new Set([...host.matchAll(/step\(this, \{ t: '(\w+)'/g)].map(match => match[1]!));
-        expect([...stepped].sort()).toEqual(['buildFailed', 'terminate']);
-        // the executor's own: the 'terminated' a build defers (a task), and the steps around a dispatch (lifecycle.ts)
+    it('host.ts steps the builds, the DOM callbacks and the terminations; `_lc` is written by the executor and, until PR D, _enterState', () => {
+        const stepped = new Set([...host.matchAll(/step\((?:this|element), \{ t: '(\w+)'/g)].map(match => match[1]!));
+        expect([...stepped].sort()).toEqual(['build', 'connect', 'disconnect', 'filesChanged', 'loadDeadline', 'setConfig', 'terminate']);
         for (const t of stepped) expect(HOST_STEPS.has(t as LcInput['t'])).toBe(true);
+        expect(host).not.toMatch(/_endEnvironment|private initialize\(|function stop\(|_buildInputs|_configRefusal|_isCurrentConfig/);
         const writes = [...host.matchAll(/\._lc = |\blc = next/g)].map(match => match.index!);
-        const writers = [bodyOf(host, 'function lifecycleHostOf('), method('_enterState'), method('_endEnvironment')];
-        expect(writes).toHaveLength(3);
+        const writers = [bodyOf(host, 'function lifecycleHostOf('), method('_enterState')];
+        expect(writes).toHaveLength(2);
         for (const index of writes) expect(writers.some(writer => inside(index, writer)), host.slice(index - 40, index + 40)).toBe(true);
+    });
+
+    // LM-2: a build's resources are one set, made by the build the reducer attached and released by the teardown.
+    it("LM-2: preparing a build assigns nothing on the element; every per-build resource is made by _attachBuild, or by what it alone calls", () => {
+        for (const name of ['_prepareBuild', '_prepareStrictFrame']) {
+            expect(host.slice(...method(name)), name).not.toMatch(/this\.\w+ = |this\._listenForAnnouncement\(|appendChild\(|this\._start\w+\(/);
+        }
+        // field: the methods that may give it a value other than null (the teardown, and strict mode's hand-over, clear them)
+        const OWNERS: [string, string[]][] = [
+            ['_iframe', ['_attachBuild']],
+            ['_strictInit', ['_attachBuild']],
+            ['_stopListening', ['_listenForAnnouncement']],
+            ['_fetchBridge', ['_startFetchBridge']],
+            ['_guestWrites', ['_startGuestWrites']],
+            ['_loadDeadline', ['_startLoadDeadline']],
+            ['_expectAnnouncement', ['_attachBuild']],
+        ];
+        for (const [field, owners] of OWNERS) {
+            const sets = [...host.matchAll(new RegExp(`this\\.${field} = (?!null;|false;)`, 'g'))].map(match => match.index!);
+            expect(sets.length, field).toBeGreaterThanOrEqual(1);
+            for (const index of sets) expect(owners.some(owner => inside(index, method(owner))), `${field}: ${host.slice(index - 60, index + 40)}`).toBe(true);
+        }
+        // and those starters run from _attachBuild only, or (the deadline) from the executor's effect that follows it
+        for (const starter of ['_listenForAnnouncement', '_startFetchBridge', '_startGuestWrites']) {
+            const calls = [...host.matchAll(new RegExp(`this\\.${starter}\\(`, 'g'))].map(match => match.index!);
+            expect(calls, starter).toHaveLength(1);
+            expect(inside(calls[0]!, method('_attachBuild')), starter).toBe(true);
+        }
+        expect(host).not.toMatch(/this\._startLoadDeadline\(/);
+        expect(host.slice(...bodyOf(host, 'function lifecycleHostOf('))).toContain('startLoadDeadline: () => Reflect.apply(LIFECYCLE._startLoadDeadline, element, [])');
     });
 });
