@@ -1681,13 +1681,27 @@ This closes the worker side of E-cpu and G by construction ([research 18](resear
 
 Defaults, clamps, cross-field invariants and warnings come from one declarative description, checked by a property test.
 
-### S68 · State the view's cost bound — ⏸️ phase 5
+### S68 · State the view's cost bound — ✅ **done** (phase 5)
 
-State the view's cost bound per engine in a form that new measurements fall inside. It covers what the budgets bound,
-what one operation may cost, and what remains, so that review rounds measure against a stated bound rather than
-finding its edges.
+docs/API.md, "The view's cost to the host page", states the bound per process placement:
+- **(a) The long-run share.** At most 20% for the view's own work, plus the browser's work on at most
+  `VIEW_URLS_PER_SECOND` loads, so up to 40%. It is an average, not a per-second cap.
+- **(b) One operation.** At most `VIEW_MAX_OPERATION_MS` as measured, then the sandbox ends, plus the operation's own
+  uninterruptible cost, bounded by the caps.
+- **(c) The rates and caps.**
+- **(d) A closed list of what is outside the bound**, each item with its measured magnitude.
 
-## B · API Surface & DX
+`test/e2e/view-bound.spec.ts` runs the canonical floods on every engine and asserts (a) with a 10-point margin, and
+(b). `test/unit/view-bound.test.ts` keeps the statement's constants in step with the code. README and ADR-005 link to the
+statement instead of repeating it.
+
+### T6 · Two CPU-heavy unit tests failed once on a loaded machine — 🔎 **investigate**
+
+`review-round-2.test.ts` (C-7: past the comparison cap the sandbox rebuilds) and `review-round-5.test.ts` (5:L-1: the
+model over random schedules) failed once in a full unit run on 2026-10-19, at a load average of about 9. Three agents were
+running there at the time. Both passed alone and in the next full run (1635 passed), and both pass in CI. The failure
+text was not captured. Next: reproduce under load, then bound the work or give the test an explicit budget. A flake is
+not a root cause.
 
 ### B1 · Promise-based RPC in both directions — ✅ **done**
 
