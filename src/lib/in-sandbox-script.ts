@@ -340,6 +340,10 @@ export function inSandboxScript(
     // guest creates can still be named (`<iframe name>`): host pages should not use named targets (README).
     if (mode === 'cooperative') defineOwn(g, 'name', { get: function () { return ''; }, set: nothing, enumerable: true, configurable: true });
 
+    // The one cut of the strings this bootstrap posts (a log line's, a violation report's): a string longer than `most` is
+    // cut to it, through the captured slice; anything else is returned as it is, for the receiver to validate.
+    const cutAt = (value: unknown, most: number): unknown => (typeof value === 'string' && value.length > most ? apply(slice, value, [0, most]) : value);
+
     // CSP violation reports (backlog S5, src/lib/violation.ts): the egress table's securitypolicyviolation row, installed
     // with the others below, before any guest code runs: a capture listener on the global object is the first listener on
     // the event's path, so guest code cannot stop it from seeing a violation by registering first. Guest
@@ -350,7 +354,13 @@ export function inSandboxScript(
     // At most VIOLATION_LIMIT per environment (the host caps at the same number, VIOLATION_EVENT_LIMIT,
     // and is the authoritative bound); declared here because this function is stringified. Its fields are read once
     // each, through the platform's getters (readEvent), so a getter the guest put on the prototype answers nothing here.
+    // Its strings are cut before they are posted (backlog S61.3; class E-cpu, "cut before posting"), at
+    // VIOLATION_MAX_STRING, the length the host keeps (violation.ts, which cuts them again on receipt): a report names a
+    // URL the guest chose, and every engine reports an https URL whole, so a fetch of a 100 000-character URL crossed
+    // whole to the host page's thread, up to VIOLATION_LIMIT times (measured: test/e2e/violation-strings.spec.ts). The
+    // cut is the bootstrap's one helper (cutAt), on the snapshot readEvent made.
     const VIOLATION_LIMIT = 100;
+    const VIOLATION_MAX_STRING = 2048; // VIOLATION_MAX_STRING (violation.ts); a test keeps them equal
     let violationsSent = 0;
     const relayViolation = (event: Event) => {
         if (!event.isTrusted || violationsSent >= VIOLATION_LIMIT) return;
@@ -358,9 +368,9 @@ export function inSandboxScript(
         const read = readEvent(event, 'violation');
         send({
             type: 'VIOLATION',
-            directive: read.effectiveDirective || read.violatedDirective,
-            blockedURI: read.blockedURI,
-            sourceFile: read.sourceFile,
+            directive: cutAt(read.effectiveDirective || read.violatedDirective, VIOLATION_MAX_STRING),
+            blockedURI: cutAt(read.blockedURI, VIOLATION_MAX_STRING),
+            sourceFile: cutAt(read.sourceFile, VIOLATION_MAX_STRING),
             lineNumber: read.lineNumber,
             columnNumber: read.columnNumber,
         });
@@ -597,7 +607,7 @@ export function inSandboxScript(
     // the host's window when they are flushed (M-2). Past either they are counted, and one warning on attach says how
     // many were dropped, and for which cap.
     const LOG_BUFFER_LIMIT = LOG_LINES_PER_SECOND;
-    const cut = (text: string) => (text.length > LOG_MAX_STRING ? apply(slice, text, [0, LOG_MAX_STRING]) as string : text);
+    const cut = (text: string) => cutAt(text, LOG_MAX_STRING) as string;
     const tagOf = (value: unknown): string => {
         try {
             return apply(toTag, value, []) as string;
@@ -790,11 +800,23 @@ export function inSandboxScript(
 
     // The line to post, its bytes, and whether it is smaller than what was logged (an argument, a string or a byte
     // budget cut). Its arguments are snapshots, strings, and primitives.
+    // The placeholders are part of the budget by construction (backlog S61.3; class P, the two ends of one budget measuring
+    // different things). An argument past what is left becomes a placeholder that says so, and the placeholder takes its
+    // own bytes from what is left; before, nothing checked that it fit, so with less than its size left (50 bytes, and a
+    // placeholder of 118) the line crossed past LOG_MAX_BYTES as the host measures it (sandbox-log.ts, toLogDetail): the
+    // host dropped the placeholder and warned that the guest's line was too large, which the relay never sends. Now room
+    // for one tail is kept back from the start (TAIL_BYTES, the longest tail), and an argument and its placeholder are
+    // measured against what is left besides it; when even the placeholder does not fit, the tail ends the line, saying how
+    // many arguments it drops. So every prefix of the line fits LOG_MAX_BYTES as the host measures it, argument by argument
+    // (test/unit/structural.test.ts, the relay against the host's reading, with fast-check).
+    const tailOf = (dropped: number) => '[Sandbox] ' + dropped + ' more argument(s) past the log line\'s byte budget (' + LOG_MAX_BYTES + ')';
+    const TAIL_BYTES = tailOf(LOG_MAX_ARGS).length * 2 + 8; // at most LOG_MAX_ARGS dropped: no tail has more digits
     const safeArgs = (args: unknown[]): { line: unknown[]; bytes: number; cut: boolean } => {
         let reduced = args.length > LOG_MAX_ARGS;
         const count = reduced ? LOG_MAX_ARGS : args.length;
         const out: unknown[] = list();
-        let left = LOG_MAX_BYTES;
+        let left = LOG_MAX_BYTES - TAIL_BYTES; // what an argument or a placeholder may take; the tail's room is kept apart
+        let tail = 0; // the bytes of the tail, when the line ends with one
         for (let i = 0; i < count; i++) {
             let value = args[i];
             if (typeof value === 'string') {
@@ -808,14 +830,22 @@ export function inSandboxScript(
             if (bytes > left) {
                 reduced = true;
                 // what it is: a kind the measure does not know, or a value past what is left of the budget (C-3)
-                value = unsupported.kind ? '[unsupported value: ' + unsupported.kind + ']' : '[' + kindOf(value) + ': past the log line\'s byte budget (' + LOG_MAX_BYTES + ')]';
-                left -= (value as string).length * 2 + 8;
+                const placeholder = unsupported.kind ? '[unsupported value: ' + unsupported.kind + ']' : '[' + kindOf(value) + ': past the log line\'s byte budget (' + LOG_MAX_BYTES + ')]';
+                const cost = placeholder.length * 2 + 8;
+                if (cost > left) {
+                    const text = tailOf(count - i);
+                    out[out.length] = text;
+                    tail = text.length * 2 + 8;
+                    break;
+                }
+                value = placeholder;
+                left -= cost;
             } else {
                 left -= bytes;
             }
             out[out.length] = value;
         }
-        return { line: out, bytes: LOG_MAX_BYTES - left + 16, cut: reduced };
+        return { line: out, bytes: LOG_MAX_BYTES - TAIL_BYTES - left + tail + 16, cut: reduced };
     };
 
     // The per-second budgets of the lines (the sliding windows above, with the host's constants).

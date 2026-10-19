@@ -84,8 +84,8 @@ Round 5 (S63) found the recurring classes behind the findings ([research 18](res
 its fixes are made as slices of those classes (S64), followed by S65–S68. S65 is done: the element runs on one lifecycle
 reducer, and its model-based suite found LM-1 (S71) and LM-2, both fixed by construction.
 The owner's decision on the 2 s operation limit, the repeated-overrun rule, is S72. S73 closes the M-3 burst behind a slow server that PR #47's CI found.
-S61 is done: research 17's properties, the structural checks and the budgets table run in CI; it found two lows, left
-for the owner.
+S61 is done: research 17's properties, the structural checks and the budgets table run in CI; the two lows they found
+are fixed.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1588,15 +1588,20 @@ our own logic. fast-check is a dev dependency; the four new unit files take abou
    resolves every constant to its value, checks every test named exists, and fails on a surface of the egress table that
    relays, budgets or caps and is no channel's.
 
-**Found, for the owner** (reported, not fixed; each test pins the current behaviour and fails once it is fixed):
-- **The violation reports' strings are posted uncut (class E-cpu, low).** The bootstrap and the view post a report's
-  `directive`, `blockedURI` and `sourceFile` as the browser gave them: a URL the guest chose crosses whole, and is cut
-  to 2048 characters only once the host page has deserialized it, at most `VIOLATION_EVENT_LIMIT` times an environment.
-  The scan lists them as its only open rows.
-- **A relay placeholder can pass what is left of a line's budget (class P, low).** The relay charges the placeholder it
-  writes for an argument past the budget without checking that it fits, so with less than its own size left, the line
-  crosses past `LOG_MAX_BYTES` as the host measures it: the host drops the placeholder, and warns once that the guest's
-  line was too large, which the relay is documented never to send.
+**Found, and fixed** (the owner's request, 2026-10-19, after the report):
+- **The violation reports' strings were posted uncut (class E-cpu, low).** The bootstrap and the view posted a report's
+  `directive`, `blockedURI` and `sourceFile` as the browser gave them, and the host cut them to 2048 characters only once
+  it had deserialized them. Measured (`test/e2e/violation-strings.spec.ts`): a 100 000-character https URL crossed whole
+  on all three engines (cooperative mode, the worker in Chromium and Firefox, the view everywhere); every engine reports
+  a `data:` or `blob:` URL by its scheme alone. Now both cut at `VIOLATION_MAX_STRING` before posting, with one helper
+  each (`cutAt` in the bootstrap, `cutText` in the view), each field read once; the host still cuts on receipt. The
+  scan has no open row, and fails on one.
+- **A relay placeholder could pass what was left of a line's budget (class P, low).** The relay charged the placeholder
+  it wrote for an argument past the budget without checking that it fit, so with less than its size left the line
+  crossed past `LOG_MAX_BYTES` as the host measures it, and the host dropped the placeholder and warned wrongly. Now
+  room for one tail is kept back from the start, a placeholder must fit what is left besides it, and when it does not
+  the line ends with the tail, which says how many arguments it dropped. The fast-check property, with the
+  counterexample, is the test: the host drops nothing of any line the relay posts.
 
 ### S62 · Review round 4: the worker's only way out, values read once, the view's URL budget, build completion after load — ✅ **done**
 

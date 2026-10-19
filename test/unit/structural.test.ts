@@ -9,6 +9,8 @@ import { bootstrapListeners } from '@src/lib/egress';
 import { createBroker, type RpcSend } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_MAX_ARGS, LOG_MAX_BYTES, LOG_MAX_STRING, toLogDetail } from '@src/lib/sandbox-log';
+import { toViolationDetail, VIOLATION_MAX_STRING } from '@src/lib/violation';
+import { VIEW_OPTIONS } from '@src/lib/in-sandbox-view';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 
 /**
@@ -94,15 +96,14 @@ describe('the RPC frame: a branded type only the builders mint (class P; review 
  *   cut            a string the guest chose, cut to a fixed length before it is posted
  *   checked        a string the guest chose, refused past a fixed length before anything is posted
  *   measured       a snapshot, measured whole against a byte budget before it is posted, its strings cut first
- *   open           a string the guest can choose, posted as it is: bounded only on receipt (a finding, reported)
  */
 const FRAME_FIELDS: readonly (readonly [type: string, field: string, expression: string, bound: string])[] = [
     // in-sandbox-script.ts, inSandboxScript: the guest's bootstrap, on the logic port (or the announcement)
     ['SANDBOX_PORT', 'type', "'SANDBOX_PORT'", 'constant'],
     ['VIOLATION', 'type', "'VIOLATION'", 'constant'],
-    ['VIOLATION', 'directive', 'read.effectiveDirective || read.violatedDirective', 'open: the browser\'s directive name; the host takes it only if it matches /^[a-z][a-z-]{0,63}$/ (violation.ts)'],
-    ['VIOLATION', 'blockedURI', 'read.blockedURI', 'open: the browser\'s report of a URL the guest chose, posted whole; the host cuts it to 2048 characters on receipt (violation.ts), at most VIOLATION_EVENT_LIMIT per environment'],
-    ['VIOLATION', 'sourceFile', 'read.sourceFile', 'open: as blockedURI'],
+    ['VIOLATION', 'directive', 'cutAt(read.effectiveDirective || read.violatedDirective, VIOLATION_MAX_STRING)', 'cut: at VIOLATION_MAX_STRING (2048), the browser\'s directive name; the host takes it only if it matches /^[a-z][a-z-]{0,63}$/ (violation.ts)'],
+    ['VIOLATION', 'blockedURI', 'cutAt(read.blockedURI, VIOLATION_MAX_STRING)', 'cut: at VIOLATION_MAX_STRING (2048), the browser\'s report of a URL the guest chose; cut again on receipt (violation.ts), at most VIOLATION_EVENT_LIMIT per environment'],
+    ['VIOLATION', 'sourceFile', 'cutAt(read.sourceFile, VIOLATION_MAX_STRING)', 'cut: as blockedURI'],
     ['VIOLATION', 'lineNumber', 'read.lineNumber', 'not a string: the browser\'s number (the host keeps a positive integer only)'],
     ['VIOLATION', 'columnNumber', 'read.columnNumber', 'not a string: as lineNumber'],
     ['RESIZE', 'type', "'RESIZE'", 'constant'],
@@ -122,9 +123,9 @@ const FRAME_FIELDS: readonly (readonly [type: string, field: string, expression:
     ['SANDBOX_PORT', 'refused', 'refused', 'constant: one of worker, trusted-types, failed'],
     ['INIT_PORT', 'type', "'INIT_PORT'", 'constant'],
     // in-sandbox-view.ts, inSandboxView: the strict view, to the host page (view port) or the worker (render port)
-    ['VIOLATION', 'directive', 'directive', 'open: the view\'s report, the browser\'s directive name; checked on receipt as above'],
-    ['VIOLATION', 'blockedURI', 'blockedURI', 'open: a URL of the guest\'s markup or CSS, which the view\'s caps bound (VIEW_RENDER_MAX_LENGTH, VIEW_MAX_CHARACTERS), posted whole; cut to 2048 on receipt, at most VIOLATION_EVENT_LIMIT per directive'],
-    ['VIOLATION', 'sourceFile', 'sourceFile', 'open: as blockedURI'],
+    ['VIOLATION', 'directive', 'name', 'cut: at options.violationMaxString (VIOLATION_MAX_STRING), the browser\'s directive name; checked on receipt as above'],
+    ['VIOLATION', 'blockedURI', 'cutText(blockedURI, options.violationMaxString)', 'cut: at options.violationMaxString (VIOLATION_MAX_STRING), a URL of the guest\'s markup or CSS; cut again on receipt, at most VIOLATION_EVENT_LIMIT per directive'],
+    ['VIOLATION', 'sourceFile', 'cutText(sourceFile, options.violationMaxString)', 'cut: as blockedURI'],
     ['VIOLATION', 'lineNumber', 'lineNumber', 'not a string: the browser\'s number'],
     ['VIOLATION', 'columnNumber', 'columnNumber', 'not a string: the browser\'s number'],
     ['VIEW_EVENT', 'type', "'VIEW_EVENT'", 'constant'],
@@ -145,7 +146,7 @@ const FRAME_FIELDS: readonly (readonly [type: string, field: string, expression:
     ['VIEW_READY', 'stillStyleRefused', 'true', 'not a string'],
     ['GUEST_TEXT_DROPPED', 'type', "'GUEST_TEXT_DROPPED'", 'constant'],
     ['(type)', 'type', 'type', 'constant: GUEST_ERROR or GUEST_UNCAUGHT'],
-    ['(type)', 'message', 'text.slice(0, options.guestText.maxLength)', 'cut: to guestText.maxLength (2048), at most LOG_EVENTS_PER_SECOND a second'],
+    ['(type)', 'message', 'cutText(text, options.guestText.maxLength)', 'cut: to guestText.maxLength (2048), at most LOG_EVENTS_PER_SECOND a second'],
     ['WORKER_REFUSED', 'type', "'WORKER_REFUSED'", 'constant'],
     ['INIT_WORKER', 'type', "'INIT_WORKER'", 'constant'],
     // in-sandbox-view.ts, inStrictWorker: the strict prelude, in the guest's worker, to the view (render port)
@@ -247,18 +248,19 @@ describe('every string a frame carries out of a guest realm or the view is cut, 
         expect([...found].filter(entry => !listed.has(entry)), 'a frame field the table does not list').toEqual([]);
         expect([...listed].filter(entry => !found.has(entry)), 'a row no frame has').toEqual([]);
         for (const [type, field, , bound] of FRAME_FIELDS) {
-            expect(bound, `${type}.${field}`).toMatch(/^(not a string|constant|cut|checked|measured|open)\b/);
+            // no other kind: a string posted as it is, bounded only on receipt, fails here (backlog S61.3: the violation
+            // reports' strings were such rows until they were cut at the source)
+            expect(bound, `${type}.${field}`).toMatch(/^(not a string|constant|cut|checked|measured)\b/);
         }
     });
 
-    it('the open rows are exactly the violation reports\' strings: posted whole, cut by the host on receipt only', () => {
-        // A finding of this scan (backlog S61.3), reported to the owner and not fixed here: the bootstrap and the view
-        // post a violation's directive, blockedURI and sourceFile as the browser reported them, so a URL of the guest's
-        // choosing crosses whole and is cut to 2048 characters only once the host page has deserialized it (violation.ts),
-        // at most VIOLATION_EVENT_LIMIT times per environment (per directive for the view). When it is fixed, these rows
-        // become `cut`, and this test with them.
-        const open = FRAME_FIELDS.filter(([, , , bound]) => bound.startsWith('open')).map(([type, field]) => `${type}.${field}`);
-        expect(open).toEqual(['VIOLATION.directive', 'VIOLATION.blockedURI', 'VIOLATION.sourceFile', 'VIOLATION.directive', 'VIOLATION.blockedURI', 'VIOLATION.sourceFile']);
+    it('the bootstrap and the view cut a violation report\'s strings at the length the host keeps', () => {
+        const bootstrap = read('src/lib/in-sandbox-script.ts');
+        expect(Number(bootstrap.match(/const VIOLATION_MAX_STRING = (\d+);/)![1])).toBe(VIOLATION_MAX_STRING);
+        expect(VIEW_OPTIONS.violationMaxString).toBe(VIOLATION_MAX_STRING);
+        // and the host cuts them again on receipt, as defence in depth
+        const detail = toViolationDetail({ directive: 'img-src', blockedURI: 'x'.repeat(5000), sourceFile: 'y'.repeat(5000) })!;
+        expect([detail.blockedURI.length, detail.sourceFile!.length]).toEqual([VIOLATION_MAX_STRING, VIOLATION_MAX_STRING]);
     });
 });
 
@@ -344,18 +346,16 @@ describe("the console relay (in-sandbox-script.ts) against the measure and the h
     }
 
     // What a guest logs: anything clone takes, and what it refuses or the measure does not know (errors, functions,
-    // symbols), long strings, and buffers near the line's budget.
+    // symbols), long strings, buffers of any size, and buffers that leave only a few bytes of the line's budget, where a
+    // placeholder must still fit (the counterexample below).
     const argument = fc.oneof(
         { weight: 4, arbitrary: cloneable },
         { weight: 1, arbitrary: fc.integer({ min: 0, max: 3 * LOG_MAX_STRING }).map(n => 'x'.repeat(n)) },
         { weight: 1, arbitrary: fc.integer({ min: 0, max: 2 * LOG_MAX_BYTES }).map(n => new Uint8Array(n)) },
+        { weight: 1, arbitrary: fc.integer({ min: 0, max: 600 }).map(n => new Uint8Array(LOG_MAX_BYTES - 16 - n)) },
         { weight: 1, arbitrary: fc.constantFrom<unknown>(new Error('e'), new TypeError('t'), () => 1, Symbol('s'), { nested: new RangeError('r') }) },
     );
     const sizeOf = createSizeOf();
-
-    // A placeholder the relay writes for an argument past what is left of the line's budget (or of a kind the measure
-    // does not know): the one form of argument the relay does not measure against what is left.
-    const isPlaceholder = (value: unknown) => typeof value === 'string' && /^\[(unsupported value: .*|.*: past the log line's byte budget \(\d+\))\]$/.test(value);
     // The host's reading of a line (toLogDetail's rule): the index of each argument it drops past LOG_MAX_BYTES.
     const hostDrops = (args: unknown[]) => {
         const dropped: number[] = [];
@@ -368,42 +368,45 @@ describe("the console relay (in-sandbox-script.ts) against the measure and the h
         return dropped;
     };
 
-    it('what the relay posts: at most LOG_MAX_ARGS, strings cut, and a line the host takes whole but for the relay\'s own placeholders', () => {
+    // Class P (backlog S61.3): the relay's placeholders are part of its budget by construction, so the line it posts never
+    // exceeds LOG_MAX_BYTES as the host measures it, whatever is logged. The first example is the counterexample this test
+    // found: with 50 bytes of the budget left, the relay wrote a placeholder of 118 bytes, and the host dropped it and
+    // warned that the guest's line was too large.
+    it('for any arguments, the line the relay posts is within LOG_MAX_BYTES as the host measures it: the host drops nothing', () => {
         fc.assert(fc.property(fc.array(argument, { maxLength: LOG_MAX_ARGS + 6 }), (args) => {
             const { log, lines } = relay();
             log(args);
             const posted = lines();
             if (posted.length !== 1) return false;
             const line = posted[0]!;
-            if (line.args.length > LOG_MAX_ARGS) return false;
+            if (line.args.length > LOG_MAX_ARGS || line.args.length > args.length) return false;
             if (line.args.some((value: unknown) => typeof value === 'string' && value.length > LOG_MAX_STRING)) return false;
-            // what the relay measured and kept fits the budget as the host measures it
-            let kept = 0;
-            for (const value of line.args) if (!isPlaceholder(value)) kept += sizeOf(value, Infinity);
-            if (kept > LOG_MAX_BYTES) return false;
-            // the host's reading of the same frame (toLogDetail, and its rule above) drops nothing but a placeholder
+            let bytes = 0;
+            for (const value of line.args) bytes += sizeOf(value, Infinity);
+            if (bytes > LOG_MAX_BYTES) return false;
             let dropped = false;
             const detail = toLogDetail(line, 'guest', () => { dropped = true; });
-            const drops = hostDrops(line.args);
-            if (dropped !== drops.length > 0 || detail.args.length !== line.args.length) return false;
-            return drops.every(i => isPlaceholder(line.args[i]));
-        }), { numRuns: 150, examples: [[[new Uint8Array(LOG_MAX_BYTES - 16 - 50), new Uint8Array(1000)]]] });
+            return !dropped && hostDrops(line.args).length === 0 && detail.args.length === line.args.length;
+        }), {
+            numRuns: 150,
+            examples: [
+                [[new Uint8Array(LOG_MAX_BYTES - 16 - 50), new Uint8Array(1000)]],
+                [[new Uint8Array(LOG_MAX_BYTES - 16 - 50), new Uint8Array(1000), new Error('e'), 'x', 1]],
+                [Array.from({ length: LOG_MAX_ARGS }, () => new Uint8Array(LOG_MAX_BYTES / 32))],
+            ],
+        });
     });
 
-    it('a finding of the differential test: a placeholder written past what is left makes the host drop it, and warn', () => {
-        // Reported to the owner, not fixed here (backlog S61.3; class P, the two ends of one budget measure different
-        // things). The relay charges a placeholder's own characters to what is left of LOG_MAX_BYTES (safeArgs), and does
-        // not check that they fit: with 50 bytes left, a placeholder of 55 characters (118 bytes) takes `left` below 0,
-        // and the line crosses past LOG_MAX_BYTES as the host measures it. The host then replaces the placeholder with
-        // its own, and warns once on the host page's console that the guest's line was larger than the budget, which
-        // host.ts says the relay never sends. When it is fixed, this test fails, and goes.
+    it('when even a placeholder does not fit, the line ends with one tail that says how many arguments it dropped', () => {
         const { log, lines } = relay();
-        log([new Uint8Array(LOG_MAX_BYTES - 16 - 50), new Uint8Array(1000)]);
+        log([new Uint8Array(LOG_MAX_BYTES - 16 - 200), new Uint8Array(1000), 'lost', 7]);
         const line = lines()[0]!;
-        expect(isPlaceholder(line.args[1])).toBe(true);
-        expect(hostDrops(line.args)).toEqual([1]);
-        let dropped = false;
-        toLogDetail(line, 'guest', () => { dropped = true; });
-        expect(dropped).toBe(true);
+        expect(line.args).toHaveLength(2);
+        expect(line.args[1]).toBe(`[Sandbox] 3 more argument(s) past the log line's byte budget (${LOG_MAX_BYTES})`);
+        expect(hostDrops(line.args)).toEqual([]);
+        // with room for it, an argument past the budget is still named by its placeholder
+        const roomy = relay();
+        roomy.log([new Uint8Array(LOG_MAX_BYTES / 2), new Uint8Array(LOG_MAX_BYTES), 'kept']);
+        expect(roomy.lines()[0]!.args.slice(1)).toEqual([`[Uint8Array: past the log line's byte budget (${LOG_MAX_BYTES})]`, 'kept']);
     });
 });
