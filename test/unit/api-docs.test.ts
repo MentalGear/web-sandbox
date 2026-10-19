@@ -251,7 +251,8 @@ describe('docs/API.md lists the public surface', () => {
         const source = read('src/host.ts');
         const reasons = section('### `terminated` reasons');
         const constants = [...source.matchAll(/^const \w+_REASON = '([^']+)';/gm)].map(match => match[1]!);
-        const literals = [...source.matchAll(/this\._terminate\(['`]([^'`]+)['`]\)/g)].map(match => match[1]!);
+        // a reason written at the termination itself (the lifecycle executor's input, S65), not as a constant
+        const literals = [...source.matchAll(/t: '(?:terminate|buildFailed)', reason: ['`]([^'`]+)['`]/g)].map(match => match[1]!);
         expect(constants.length).toBeGreaterThan(3);
         for (const reason of [...constants, ...literals]) {
             const fixedPart = reason.split('${')[0]!.replace(/\s*"?$/, '');

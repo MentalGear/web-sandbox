@@ -137,6 +137,31 @@ describe("the reducer's properties on fuzzed inputs", () => {
         expect(checked).toBeGreaterThan(10_000);
     });
 
+    // S65 step 2, PR B: host.ts steps the terminations only, and its executor applies only their effects (the others are
+    // `notYet` there, until PRs C and D). On every sampled state, what those inputs give, nested steps and tasks included,
+    // stays inside what host.ts applies; the source scan below checks that host.ts steps no other input.
+    it('the inputs host.ts steps give only the effects its executor applies, on every sampled state', () => {
+        const states = sampled.size > 0 ? [...sampled.values()] : [INITIAL_LIFECYCLE];
+        let checked = 0;
+        for (const base of states) {
+            for (const state of [base, { ...base, dispatching: [...base.dispatching, 'bye'] }]) {
+                const pending: LcInput[] = inputsFor(state).filter(input => HOST_STEPS.has(input.t));
+                while (pending.length > 0) {
+                    const input = pending.pop()!;
+                    for (const effect of reduce(state, input).effects) {
+                        checked++;
+                        if (!HOST_EFFECTS.has(effect.k)) expect.fail(`${input.t} gave ${effect.k}\nstate ${JSON.stringify(state)}`);
+                        if (effect.k === 'step' || effect.k === 'task') {
+                            if (!HOST_STEPS.has(effect.input.t)) expect.fail(`${input.t} stepped ${effect.input.t}`);
+                            pending.push(effect.input);
+                        }
+                    }
+                }
+            }
+        }
+        expect(checked).toBeGreaterThan(1000);
+    });
+
     it('connect, with a build that throws: no synchronous dispatch; the termination comes in a task', () => {
         const host = new RecordingHost();
         host.buildThrows = true;
@@ -368,7 +393,7 @@ describe("the reducer describes today's host.ts", () => {
         expect(constant('SECOND_ANNOUNCEMENT_REASON')).toBe(LIFECYCLE_REASONS.secondAnnouncement);
         expect(constant('LOAD_TIMEOUT_REASON')).toBe(LIFECYCLE_REASONS.loadTimeout);
         expect(constant('STARTUP_BLOCKED_REASON')).toBe(LIFECYCLE_REASONS.startupBlocked);
-        expect(source).toContain(`this._terminate('${LIFECYCLE_REASONS.frameMissing}')`);
+        expect(constant('FRAME_MISSING_REASON')).toBe(LIFECYCLE_REASONS.frameMissing);
         expect(constant('DEFAULT_TERMINATE_REASON')).toBe(DEFAULT_TERMINATE_REASON);
     });
 
@@ -381,7 +406,7 @@ describe("the reducer describes today's host.ts", () => {
         expect(output.guarded).toBe(true);
     });
 
-    it("a refused build counts two teardowns, as host.ts's initialize() and _terminateBuild() do", () => {
+    it("a refused build counts two teardowns, as host.ts's initialize() (_endEnvironment, then its `buildFailed` step) does", () => {
         const output = reduce(INITIAL_LIFECYCLE, { t: 'connect', ctx: { ...STRICT, blocked: 'refused' } });
         expect(output.state.gen).toBe(2);
         expect(output.effects.filter(effect => effect.k === 'teardown')).toHaveLength(2);
@@ -416,7 +441,7 @@ describe("the reducer describes today's host.ts", () => {
         expect(isStale(host.lc, { t: 'loadDeadline', gen: host.lc.gen - 2 })).toBe(true);
     });
 
-    it("and if the outer build then throws, its failure ends the nested build (host.ts's _terminateBuild is guarded by the state only)", () => {
+    it("and if the outer build then throws, its failure ends the nested build (host.ts's `buildFailed` carries no generation, as the code before it had none)", () => {
         const host = new RecordingHost();
         host.onBuild = () => host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE });
         host.buildThrows = true;
@@ -476,5 +501,81 @@ describe("the reducer describes today's host.ts", () => {
         host.step({ t: 'setConfig', same: false });
         expect(host.lc.lastInputs).toBeNull();
         expect(reduce(host.lc, { t: 'setConfig', same: true }).effects).toEqual([{ k: 'applyConfig' }]);
+    });
+});
+
+// ---- class L in host.ts, by its source (S65 step 2, PR B) -----------------------------------------------------------
+
+// What host.ts steps since PR B (the terminations, and the executor's own steps around a 'terminated'), and the effects
+// its executor applies (src/host.ts, lifecycleHostOf; every other effect is `notYet` there until PRs C and D).
+const HOST_STEPS = new Set<LcInput['t']>(['terminate', 'buildFailed', 'buildTerminationDue', 'dispatchStarted', 'dispatchEnded']);
+const HOST_EFFECTS = new Set<Effect['k']>(['teardown', 'warn', 'dispatch', 'notice', 'step', 'task']);
+
+describe('class L in host.ts, by its source (S65 step 2, PR B)', () => {
+    // Comments say what the code did before; they are not code.
+    const code = (file: string) => readFileSync(path.join(ROOT, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
+    const host = code('src/host.ts');
+    const lifecycle = code('src/lib/lifecycle.ts');
+    // The body of a method (`private name(`, up to its closing brace) or of a module-level function or const.
+    const bodyOf = (text: string, head: string, close = '\n}\n') => {
+        const start = text.indexOf(head);
+        expect(start, head).toBeGreaterThanOrEqual(0);
+        return [start, text.indexOf(close, start)] as const;
+    };
+    const method = (name: string) => bodyOf(host, `    private ${name}(`, '\n    }\n');
+    const inside = (index: number, [start, end]: readonly [number, number]) => index > start && index < end;
+    // A comparison that involves a generation: `gen`, `.gen`, or the environment of a call (`_issuedIn`).
+    const GEN_COMPARISON = /\b(?:gen|_issuedIn)\s*[!=]==|[!=]==\s*[\w.]*\bgen\b/g;
+
+    it("'terminated' is made in one place: the executor's dispatch (lifecycleHostOf), between its dispatchStarted and dispatchEnded steps", () => {
+        const sites = [...host.matchAll(/elementEvent\('terminated'/g)].map(match => match.index!);
+        expect(sites).toHaveLength(1);
+        const adapter = bodyOf(host, 'function lifecycleHostOf(');
+        expect(inside(sites[0]!, adapter)).toBe(true);
+        expect(host.slice(adapter[0], adapter[1])).toMatch(/dispatchTerminated: \(reason\) => \{\s*element\.dispatchEvent\(elementEvent\('terminated'/);
+        // and lifecycle.ts's executor calls it only from its dispatchTerminated, inside the two steps
+        const [start, end] = bodyOf(lifecycle, 'function dispatchTerminated(');
+        const calls = [...lifecycle.matchAll(/host\.dispatchTerminated\(/g)].map(match => match.index!);
+        expect(calls).toHaveLength(1);
+        expect(calls[0]! > start && calls[0]! < end).toBe(true);
+        expect(lifecycle.slice(start, end)).toMatch(/dispatchStarted[\s\S]*try[\s\S]*host\.dispatchTerminated[\s\S]*finally[\s\S]*dispatchEnded/);
+        // no other file of src/ makes the event (src/lib/element-events.ts declares it)
+        for (const file of ['src/lib/lifecycle.ts', 'src/lib/element-events.ts']) expect(code(file)).not.toMatch(/elementEvent\('terminated'/);
+    });
+
+    it('the generation is compared only in reduce and the executor, and, for a call, in _postRpc (the environment _issue records)', () => {
+        const inHost = [...host.matchAll(GEN_COMPARISON)].map(match => match.index!);
+        expect(inHost).toHaveLength(1);
+        expect(inside(inHost[0]!, method('_postRpc'))).toBe(true);
+        expect(host.slice(...method('_issue'))).toContain('this._issuedIn = this._lc.gen;');
+        // lifecycle.ts: isStale and buildTerminationDue (reduce's), and tornDownSince (the executor's one comparison)
+        const owners = [bodyOf(lifecycle, 'export function isStale('), bodyOf(lifecycle, 'function buildTerminationDue('), bodyOf(lifecycle, 'const tornDownSince = ', ';\n')];
+        const inLifecycle = [...lifecycle.matchAll(GEN_COMPARISON)].map(match => match.index!);
+        expect(inLifecycle.length).toBeGreaterThanOrEqual(3);
+        for (const index of inLifecycle) expect(owners.some(owner => inside(index, owner)), lifecycle.slice(index - 60, index + 20)).toBe(true);
+        // and the executor's comparison is the one runEffects and runNotices use
+        expect([...lifecycle.matchAll(/tornDownSince\(host, stampGen\)/g)]).toHaveLength(2);
+    });
+
+    it('every termination the element starts carries its generation; only terminate() and a build failure carry none', () => {
+        const terminations = [...host.matchAll(/step\(this, \{ t: 'terminate', ([^\n]*)\}\)/g)];
+        expect(terminations.length).toBeGreaterThanOrEqual(12);
+        const without = terminations.filter(match => !/\bgen\b/.test(match[1]!)).map(match => match.index!);
+        expect(without).toHaveLength(1);
+        expect(inside(without[0]!, bodyOf(host, '    terminate(reason', '\n    }\n'))).toBe(true);
+        // every other termination goes through the reducer: no `_terminate`, `_terminateBuild` or token is left
+        expect(host).not.toMatch(/_terminate\(|_terminateBuild|_dispatchBuildTermination|_dispatchTerminated\(|_pendingTermination|_terminationDispatched|_notifyThenAct|_generation\b/);
+        expect([...host.matchAll(/t: 'buildFailed'/g)]).toHaveLength(2); // initialize(): a refusal, a build that threw
+    });
+
+    it('host.ts steps only the terminations (and the executor, its own steps); `_lc` is written by the executor and, until PRs C and D, two methods', () => {
+        const stepped = new Set([...host.matchAll(/step\(this, \{ t: '(\w+)'/g)].map(match => match[1]!));
+        expect([...stepped].sort()).toEqual(['buildFailed', 'terminate']);
+        // the executor's own: the 'terminated' a build defers (a task), and the steps around a dispatch (lifecycle.ts)
+        for (const t of stepped) expect(HOST_STEPS.has(t as LcInput['t'])).toBe(true);
+        const writes = [...host.matchAll(/\._lc = |\blc = next/g)].map(match => match.index!);
+        const writers = [bodyOf(host, 'function lifecycleHostOf('), method('_enterState'), method('_endEnvironment')];
+        expect(writes).toHaveLength(3);
+        for (const index of writes) expect(writers.some(writer => inside(index, writer)), host.slice(index - 40, index + 40)).toBe(true);
     });
 });

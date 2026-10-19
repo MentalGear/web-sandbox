@@ -1644,7 +1644,7 @@ The owner's decisions, 2026-10-18:
 Residual, for the owner: the 2 s operation limit ends a 250,000-character textarea `set()` in WebKit. **Decided**
 (owner, 2026-10-19): the sandbox ends only after repeated overruns (S72).
 
-### S65 · One lifecycle reducer, with the model-based suite (S61.2) — 🟡 step 2 in progress (PR A of 4 done)
+### S65 · One lifecycle reducer, with the model-based suite (S61.2) — 🟡 step 2 in progress (PRs A and B of 4 done)
 
 Every transition becomes a pure function of state and event. Effects and event dispatch run only after the state
 settles, and `ready` is the only point where queued work flushes. It is tested by the permanent fast-check `commands`
@@ -1663,7 +1663,19 @@ suite built from [the lifecycle model](research/17_formal_methods/lifecycle-mode
      host page's own Trusted Types default policy (a `reset()` inside `createIframe`) starts a second load deadline,
      and the first is never stopped, so 5 s later it ends whatever environment stands. Only the embedder's own code
      can reach it. The reducer's `loadDeadline{gen}` input drops the stale deadline; it takes effect in PR C.
-   - ⏸️ PR B: the terminations through the reducer.
+   - ✅ **PR B: the terminations through the reducer.** `host.ts` keeps the lifecycle state in the reducer's `LcState`
+     (`_lc`: `state`, the generation, the pending build termination, the reasons being dispatched, `within`) and steps
+     every termination through one module-level executor, `step`, applied through `LIFECYCLE` (CB7): `terminate()`,
+     a build's refusal or failure (`buildFailed`) and its deferred `terminated`, and each termination the element starts
+     itself, which carries the generation it was armed in and is dropped once stale (the watchdogs, the load deadline,
+     the second announcement, the uncaught budget, `VIEW_OVERRUN`, the frame-integrity checks, the execution timeout,
+     the host page's refusals, the entry failure). `_notifyThenAct` became the executor's notices (`terminate{notices}`,
+     and `runNotices` for `fileswritten`). `terminated` is made in one place, and the generation is compared only in
+     the reducer, the executor and `_postRpc`, checked by a source scan (`test/unit/lifecycle-reducer.test.ts`). The
+     reasons are unchanged. Side effect on **LM-2**: the stray deadline no longer ends a later environment; it still ends
+     the re-entered build's own environment if that one stands 5 s later, `ready` or not (the reducer's `loadDeadline`
+     also asks for `loading`; that half stays PR C's). The builds, the DOM callbacks and `ready` still write `_lc` in `_endEnvironment`
+     and `_enterState`.
    - ⏸️ PR C: the builds and the DOM callbacks (fixes LM-2, with an e2e that reproduces it first).
    - ⏸️ PR D: the completion of a build and the `ready` gate; a source scan that `state` and the lifecycle events
      change only in the executor.

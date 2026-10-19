@@ -2,11 +2,17 @@
  * The lifecycle of `<web-sandbox>` as one pure reducer (backlog S65 step 2; research 18, class L, design 3), and the
  * executor that applies its effects. Internal: src/index.ts does not export it.
  *
- * PR A of S65 step 2: this module describes exactly what src/host.ts does today, and host.ts does not use it yet. The
- * later PRs move host.ts onto it one path at a time (B: the terminations; C: the builds and the DOM callbacks; D: the
- * completion of a build and the `ready` gate). Until then it is checked against the lifecycle reference model
- * (test/model/lifecycle-model.ts) by test/model/reducer-runner.ts, which runs `reduce` and `runEffects` against a fake
- * host on thousands of generated sequences (test/unit/lifecycle-reducer.test.ts), and on each class-L finding's trace.
+ * PR A of S65 step 2 wrote this module to describe exactly what src/host.ts did, and the later PRs move host.ts onto it
+ * one path at a time (B: the terminations; C: the builds and the DOM callbacks; D: the completion of a build and the
+ * `ready` gate). It is checked against the lifecycle reference model (test/model/lifecycle-model.ts) by
+ * test/model/reducer-runner.ts, which runs `reduce` and `runEffects` against a fake host on thousands of generated
+ * sequences (test/unit/lifecycle-reducer.test.ts), and on each class-L finding's trace.
+ *
+ * Since PR B, host.ts keeps the lifecycle state in this module's `LcState` (the element's `_lc`), and every termination
+ * is an input stepped through this executor (host.ts, the module-level `step`): terminate(), a build's failure and its
+ * deferred 'terminated' (`buildFailed`, `buildTerminationDue`), and each termination the element starts itself, with the
+ * generation it was armed in (`terminate{gen}`). The builds, the DOM callbacks and `ready` still write `_lc` in host.ts
+ * (`_endEnvironment`, `_enterState`) until PRs C and D; the inputs they will step are not stepped yet.
  *
  * Class L's invariant (research 18): each transition is reachable by one path, guarded by one predicate; events are
  * dispatched only after the state has settled, never from inside the embedder's own call; queued work is released only
@@ -134,8 +140,10 @@ export type LcInput =
     | { t: 'buildTerminationDue'; gen: number }
     // A termination. Without `gen`: terminate() (its reason already defaulted, review round 2, L-7), or a build failure
     // the executor caught. With `gen`: one the element starts (the watchdog, the view's watchdog, workerExecutionTimeout,
-    // the uncaught budget, VIEW_OVERRUN, an entry failure, a host-page refusal), whatever decides it (the host decides,
-    // for instance, which VIEW_OVERRUN ends the sandbox); with `notices`, the lines dispatched before it, one by one.
+    // the uncaught budget, VIEW_OVERRUN, an entry failure, a host-page refusal, a second announcement, the frame-integrity
+    // checks at the wrapper's load, and, until PR D moves the build's progress here, the load deadline), whatever decides
+    // it (the host decides, for instance, which VIEW_OVERRUN ends the sandbox); with `notices`, the lines dispatched before
+    // it, one by one.
     | { t: 'terminate'; reason: string; gen?: number; notices?: readonly Notice[] }
     // The load deadline (CB3): LOAD_TIMEOUT_MS of loading.
     | { t: 'loadDeadline'; gen: number }
@@ -399,10 +407,15 @@ export function reduce(state: LcState, input: LcInput): LcOutput {
             // deadline and overwrites `_loadDeadline`, so the nested build's deadline is never stopped and ends whatever
             // environment stands LOAD_TIMEOUT_MS later. Here the leaked deadline would carry its generation and be dropped
             // (`loadDeadline` is stamped); the second start is kept, as today. Listed in the PR for PR C.
+            // Since PR B, host.ts's deadline steps `terminate{gen}` with the generation it was started in, so the leaked
+            // one no longer ends a later environment. It still ends the nested build's own environment, `ready` or not, if
+            // that one still stands: both deadlines were started in it (the outer one after the nested build returned),
+            // and `terminate` asks the generation only, where `loadDeadline` also asks for `loading`. That half is PR C's.
             return state.state === 'loading' ? { state, effects: [{ k: 'startLoadDeadline' }] } : unchanged(state);
         case 'buildFailed':
-            // Today's code: `_terminateBuild` is guarded by the state only, not by the generation the S65 plan gives it
+            // Today's code: `_terminateBuild` was guarded by the state only, not by the generation the S65 plan gives it
             // (`buildFailed{gen}`). After a re-entered build (above) the outer build's failure ends the nested build.
+            // PR B kept that: host.ts's initialize() steps this input with no generation; PR C decides it with LM-2.
             return terminateBuild(state, input.reason);
         case 'buildTerminationDue':
             return buildTerminationDue(state);
@@ -474,6 +487,13 @@ export function step(host: LifecycleHost, input: LcInput): void {
 
 const isEmbedderFacing = (effect: Effect) => effect.k === 'dispatch' || effect.k === 'notice' || effect.k === 'step';
 
+// The executor's one comparison of generations (review B5; round 4's L-2): whether the environment an output, or a host
+// path's announcement, was made for was torn down since, by a listener of what was just dispatched. `reduce` drops a
+// stale input (isStale); this stops what is left of a run once its environment is gone. host.ts compares generations
+// nowhere else, apart from a call's own environment (`_issue`, `_postRpc`; review round 3, L-2), and
+// test/unit/lifecycle-reducer.test.ts scans for it.
+const tornDownSince = (host: { readonly lc: LcState }, stampGen: number): boolean => host.lc.gen !== stampGen;
+
 /**
  * Applies one output's effects in order. `stampGen` is the generation the output was computed at: before each dispatch,
  * notice or nested step the executor compares it with the state's, and stops once a listener tore the environment down
@@ -483,7 +503,7 @@ const isEmbedderFacing = (effect: Effect) => effect.k === 'dispatch' || effect.k
  */
 export function runEffects(host: LifecycleHost, effects: readonly Effect[], stampGen: number, guarded = false): void {
     for (const effect of effects) {
-        if (isEmbedderFacing(effect) && host.lc.gen !== stampGen) return;
+        if (isEmbedderFacing(effect) && tornDownSince(host, stampGen)) return;
         if (!guarded || isEmbedderFacing(effect)) {
             runEffect(host, effect);
             continue;
@@ -495,6 +515,23 @@ export function runEffects(host: LifecycleHost, effects: readonly Effect[], stam
             return;
         }
     }
+}
+
+/**
+ * The same rule for a host path that is not a transition of the lifecycle (host.ts, `_handleGuestWrite`: 'fileswritten',
+ * then the guest's acknowledgement): each notice dispatches one event, the next one runs only if no listener tore the
+ * environment down meanwhile, and `act` runs only then too (review B5: an action after a listener's reset() or
+ * terminate() would undo it). This was host.ts's `_notifyThenAct`; its terminations are `terminate{gen, notices}` now.
+ * True if `act` ran.
+ */
+export function runNotices(host: { readonly lc: LcState }, notices: readonly (() => void)[], act: () => void): boolean {
+    const stampGen = host.lc.gen;
+    for (const notice of notices) {
+        notice();
+        if (tornDownSince(host, stampGen)) return false;
+    }
+    act();
+    return true;
 }
 
 function runEffect(host: LifecycleHost, effect: Effect): void {

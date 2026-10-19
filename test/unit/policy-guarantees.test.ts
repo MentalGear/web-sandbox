@@ -338,7 +338,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         const el = await mount();
         const reasons = terminations(el);
         el._completeBuild = () => { throw new Error('could not hand over the port'); };
-        el._onFrameLoad();
+        el._onFrameLoad(el._lc.gen); // the load of the standing environment
         expect([el.state, wrapperOf(el), reasons]).toEqual(['terminated', null, ['the environment could not be built (Error)']]);
     });
 });

@@ -137,9 +137,10 @@ describe('B4: only the current environment\'s ports are heard', () => {
 });
 
 describe('B5: a listener that resets or terminates the sandbox is never undone', () => {
-    // Every host path that dispatches an event and then acts on the environment, each forced here. They all go
-    // through one helper (_notifyThenAct); the source check below fails when a path is added without it, or
-    // without a row here.
+    // Every host path that dispatches an event and then acts on the environment, each forced here. A termination that
+    // says something first is one step of the lifecycle executor with its lines as `notices` (src/lib/lifecycle.ts; S65
+    // step 2, PR B: this was _notifyThenAct), and the one other such path uses the executor's runNotices; the source
+    // check below fails when a path is added without a row here.
     const PATHS: { name: string; reason: string; start: () => Promise<{ el: any; force: () => void; done: () => void }> }[] = [
         {
             name: 'the execution timeout (worker mode)',
@@ -201,54 +202,68 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
         });
     });
 
-    it('the source: _generation is compared only inside _notifyThenAct (and, for a call, _issue and _postRpc), and every call of _notifyThenAct is a row of PATHS', () => {
-        const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/host.ts'), 'utf8');
-        const bodyOf = (name: string) => {
-            const start = source.indexOf(`private ${name}(`);
-            return [start, source.indexOf('\n    }\n', start)] as const;
-        };
-        const reads = [...source.matchAll(/this\._generation(?!\+\+)/g)].map(match => match.index!);
-        // `const generation = this._generation` and the comparison after each notice; the environment a host call is made
-        // in, and the one check that its frame is sent there (review round 3, L-2); and the environment a frame's load
-        // belongs to, asked again in the microtask that completes the build (review round 4, L-1)
-        const READERS: [string, number][] = [['_notifyThenAct', 2], ['_issue', 1], ['_postRpc', 1], ['_frameLoadHandler', 2]];
-        expect(reads).toHaveLength(6);
-        for (const [name, count] of READERS) {
-            const [start, end] = bodyOf(name);
-            expect(reads.filter(index => index > start && index < end), name).toHaveLength(count);
+    // The generation is compared only by the reducer and its executor (and, for a call, _postRpc): the source scan of
+    // class L is in test/unit/lifecycle-reducer.test.ts ("class L in host.ts, by its source").
+    const source = () => readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/host.ts'), 'utf8');
+    // The method each `notices` list is in, and the list itself (up to its closing bracket at the same depth).
+    const noticeLists = (text: string) => [...text.matchAll(/notices: \[/g)].map(match => {
+        let depth = 0;
+        let end = match.index! + match[0].length - 1;
+        for (; end < text.length; end++) {
+            if (text[end] === '[' || text[end] === '(' || text[end] === '{') depth++;
+            if (text[end] === ']' || text[end] === ')' || text[end] === '}') depth--;
+            if (depth === 0) break;
         }
+        const method = [...text.slice(0, match.index!).matchAll(/\n    private (\w+)\(/g)].at(-1)![1]!;
+        return { method, list: text.slice(match.index! + match[0].length, end) };
+    });
+
+    it('the source: every termination that says something first is a row of PATHS, and runNotices serves the one other path', () => {
+        const text = source();
+        expect(text).not.toContain('_notifyThenAct(');
+        // the execution timeout; the host page's refusals (the view's TRUSTED_TYPES_REFUSED and WORKER_REFUSED, worker
+        // mode's announced refusal) through one method; the entry failure
+        expect(noticeLists(text).map(({ method }) => method)).toEqual(['_onExecutionTimeout', '_refusedByHostPage', '_onViewMessage']);
+        expect(noticeLists(text)).toHaveLength(PATHS.length);
         // Paths whose action is not a termination are forced where their feature is tested: the guest-write announcement
         // ('fileswritten', then the acknowledgement; test/unit/guest-writes.test.ts, "review B5").
         const OTHER_PATHS = ['_handleGuestWrite'];
-        for (const name of OTHER_PATHS) expect(source.slice(source.indexOf(`private ${name}(`)).indexOf('this._notifyThenAct(')).toBeLessThan(2000);
-        expect([...source.matchAll(/this\._notifyThenAct\(/g)]).toHaveLength(PATHS.length + OTHER_PATHS.length);
+        for (const name of OTHER_PATHS) expect(text.slice(text.indexOf(`private ${name}(`)).indexOf('runNotices(')).toBeLessThan(2000);
+        expect([...text.matchAll(/\brunNotices\(/g)]).toHaveLength(OTHER_PATHS.length);
     });
 
     // Review round 4, L-2: an entry failure dispatched its host line and its guest line from one callback, and the
     // generation was compared only before the action, so a listener of the first that reset or removed the element
-    // still got the second. Each notice is one dispatch now, and _notifyThenAct compares after each.
-    it('the source: every notice given to _notifyThenAct dispatches exactly one event', () => {
-        const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/host.ts'), 'utf8');
-        const calls = [...source.matchAll(/this\._notifyThenAct\(\[/g)];
-        expect(calls.length).toBe([...source.matchAll(/this\._notifyThenAct\(/g)].length); // always a list of notices
+    // still got the second. A notice is data now (lifecycle.ts, Notice), one event each by the executor, which compares
+    // after each; runNotices' notices are functions, each of which must dispatch one event.
+    it('the source: every notice is one line, and every notice given to runNotices dispatches exactly one event', () => {
+        const text = source();
         let notices = 0;
-        for (const call of calls) {
-            // the list, up to its closing bracket at the same depth
-            let depth = 0;
-            let end = call.index! + call[0].length - 1;
-            for (; end < source.length; end++) {
-                if (source[end] === '[' || source[end] === '(' || source[end] === '{') depth++;
-                if (source[end] === ']' || source[end] === ')' || source[end] === '}') depth--;
-                if (depth === 0) break;
-            }
-            const list = source.slice(call.index! + call[0].length, end);
-            for (const notice of list.split(/,\s*(?=\(\) =>)/)) {
+        for (const { list } of noticeLists(text)) {
+            for (const notice of list.split(/,\s*(?=hostNotice\(|\{ level:)/)) {
                 notices++;
-                const dispatches = [...notice.matchAll(/this\.(?:_dispatch\w*|dispatchEvent)\(/g)].length;
-                expect(dispatches, notice.trim()).toBe(1);
+                expect(notice.trim(), notice).toMatch(/^(hostNotice\(.*\)|\{ level: 'error', text: \w+, source: 'guest' \})$/s);
             }
         }
-        expect(notices).toBe(PATHS.length + 2); // the entry failure's two, the others' one each
+        expect(notices).toBe(PATHS.length + 1); // the entry failure's two, the others' one each
+        for (const call of text.matchAll(/runNotices\(lifecycleHost\(this\), \[(.*?)\], /g)) {
+            for (const notice of call[1]!.split(/,\s*(?=\(\) =>)/)) {
+                expect([...notice.matchAll(/this\.(?:_dispatch\w*|dispatchEvent)\(/g)], notice.trim()).toHaveLength(1);
+            }
+        }
+    });
+
+    it("an entry failure's two lines are two events, the guest's labelled 'guest', then the termination", async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount({ mode: 'strict' });
+        const { port1: view } = new MessageChannel();
+        el._viewPort = view;
+        const heard: string[] = [];
+        el.addEventListener('sandbox-log', (e: CustomEvent) => heard.push(`${e.detail.source}: ${e.detail.args[0]}`));
+        el.addEventListener('terminated', (e: CustomEvent) => heard.push(`terminated: ${e.detail.reason}`));
+        el._onViewMessage(view, { type: 'GUEST_ERROR', message: 'SyntaxError: x' });
+        expect(heard).toEqual(['host: [Sandbox] the guest entry failed to start', 'guest: Uncaught SyntaxError: x', 'terminated: the guest entry failed to start']);
+        view.close();
     });
 });
 
