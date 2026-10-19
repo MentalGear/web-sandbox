@@ -1800,6 +1800,13 @@ Measured (2026-10-19, headless Playwright on the shared 4-core VM; Chromium, Fir
 - `review-round-2.spec.ts` (M-3), a 250,000-character textarea `set()` four times a second: the sandbox stays `ready`
   on all three engines (WebKit's first `set()` ended it before).
 
+### S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
+
+Once S65, S69, the rest of S61 and S60 are merged: an independent adversarial review board of the whole repository. The
+board clears after **two consecutive passes with no finding of high severity or above** (a stricter severity floor than
+the review rounds' medium, as the owner set it). Findings are fixed as before: by class, each naming its class and
+extending its chokepoint and structural test (CONTRIBUTING.md, "Fixing a finding"), after the owner has seen them.
+
 ### S73 · CSS-borne loads charged before they start — ✅ **done** (2026-10-19)
 
 Classes E-net and P ([research 18](research/18_finding_classes/README.md)): a load the policy admits is egress, and
