@@ -2018,6 +2018,11 @@ The owner adopted all of the report's recommendations:
 - **C. Public names.** `StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, `WebSandboxEventMap`
   and `RpcLibraryCode` are exported as types. `ALLOWED_CAPABILITIES` is marked internal. `ElementBase` is hidden from the
   declaration files.
+- **C, continued (owner, 2026-10-19).** `SandboxConfigOptions`, the base the three mode configs extend (the options
+  every mode takes), is exported too, so the API report has no forgotten export.
+- **The budgets table's cost column (owner, 2026-10-19, following B).** The column rendered from `CHANNEL_BUDGETS`
+  states bounds only (a share, a cap, a constant). The measured figures move to a handwritten note under the table,
+  dated and naming the engines. Done in step 2b.
 - **D.** The public `FetchRecord` becomes a union keyed by `outcome`, in step 6.
 - **E.** A threat-model document is written new, in the current-docs layer.
 
