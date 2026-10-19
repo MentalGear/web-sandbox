@@ -51,7 +51,7 @@ conditional "continue".
 | Review round 2 2026-10-15 | 🟡 not clean (the count stays 0): 2 high and 8 medium findings in our code from three defensive reviews (lifecycle model, change audit, documented limits measured), all fixed (S55): intrinsics captured before guest code (C-1), the byte measure on a cloned snapshot with an allow-list (C-3), worker mode `ready` only with a running worker, the host page's Trusted Types reason, a DOM-free import with a build-time view hash, one build predicate, long timers; every documented limit held at its edge on all three engines; round 3 held by the owner (S56); [report](security/REVIEW-ROUND-2-2026-10-15.md) |
 | Review round 3 2026-10-18 | 🟡 not clean (the count stays 0): 2 high and 6 medium findings in our code from the same three reviews, all fixed (S57): whole RPC frames and a guest call budget (`callLimits`), the view's time budget charges only measured rendering, `allowAnimations` (default `true`; `false` removes animations and transitions from the view) and `allowAutoplay` (default `false`); where the view runs per engine measured ([research 16](research/16_view_isolation/README.md)); round 4 held by the owner (S58); [report](security/REVIEW-ROUND-3-2026-10-18.md) |
 | Review round 4 2026-10-18 | 🟡 not clean (the count stays 0): no high finding for the first time, 5 medium in our code, all fixed (S62): the worker's own `postMessage` removed, values read once, the still-style rewrite bounded, build completion after a frame's load, the view's URL policy and budget (`VIEW_MAX_URLS`, `VIEW_URLS_PER_SECOND`); the default call rate 1000 per second; round 5 next (S63); [report](security/REVIEW-ROUND-4-2026-10-18.md) |
-| Review round 5 2026-10-18 | 🟡 not clean (the count stays 0): 1 high and 6 medium in our code, all in code earlier per-instance fixes added; [research 18](research/18_finding_classes/README.md) found the recurring classes; fixes as class slices (S64, done), then a lifecycle reducer (S65), a relay-worker probe (S66, done: build it, S69), one config schema (S67) and the view's cost bound (S68); [report](security/REVIEW-ROUND-5-2026-10-19.md) |
+| Review round 5 2026-10-18 | 🟡 not clean (the count stays 0): 1 high and 6 medium in our code, all in code earlier per-instance fixes added; [research 18](research/18_finding_classes/README.md) found the recurring classes; fixes as class slices (S64, done), then a lifecycle reducer (S65), a relay-worker probe (S66, done: build it, S69, then deferred under the availability rule), one config schema (S67) and the view's cost bound (S68); [report](security/REVIEW-ROUND-5-2026-10-19.md) |
 
 *Updated after the fixes for [issue #6](https://github.com/MentalGear/web-sandbox/issues/6): milestone
 M1 plus S1, S2, S9 and the new S10–S12 are done; S14 was added and done on 2026-10-13. On 2026-10-13
@@ -1700,9 +1700,15 @@ as a nested worker, on Chromium (headless shell and full), Firefox and WebKit:
 - **Caveats.** The relay's own thread and memory need a byte cap that ends the guest. WebKit under COEP refuses the
   view's worker, so the relay is never reached there, as today.
 
-### S69 · Build the relay worker — ⏸️ after S65
+### S69 · Build the relay worker — 💤 **deferred** (owner, 2026-10-19: availability findings are documented)
 
-Following research 19's plan:
+The relay closes the worker side of class E-cpu: it moves the cost of the guest's floods off the host page. Those
+floods are already bounded: the worker's own `postMessage()` is gone (round 4, M-1), and the uncaught budget ends the
+sandbox past its rate (`src/lib/egress.ts`). Under the owner's rule for availability findings (CONTRIBUTING.md,
+"Availability findings"), what remains is documented, and the relay is kept as a design to build if the bound is ever
+found not to hold.
+
+Research 19's plan:
 1. A stringified relay that mints and revokes the guest's URL.
 2. One typed frame protocol from guest to relay, charged to the existing budgets.
 3. A byte cap per engine after which the relay ends the guest.
@@ -1802,10 +1808,12 @@ Measured (2026-10-19, headless Playwright on the shared 4-core VM; Chromium, Fir
 
 ### S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
 
-Once S65, S69, the rest of S61 and S60 are merged: an independent adversarial review board of the whole repository. The
+Once S65, the rest of S61 and S60 are merged: an independent adversarial review board of the whole repository. The
 board clears after **two consecutive passes with no finding of high severity or above** (a stricter severity floor than
 the review rounds' medium, as the owner set it). Findings are fixed as before: by class, each naming its class and
 extending its chokepoint and structural test (CONTRIBUTING.md, "Fixing a finding"), after the owner has seen them.
+A finding whose only effect is a bounded cost to the host page that the embedder can end is at most medium, and is
+documented rather than mitigated (CONTRIBUTING.md, "Availability findings").
 
 ### S73 · CSS-borne loads charged before they start — ✅ **done** (2026-10-19)
 
