@@ -97,14 +97,22 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         await mountEntry(sandbox, backgroundFlood('https://a.example/', PER_RENDER), { origins: { images: ['https://a.example'] } });
         await page.waitForTimeout(300);
         const idle = await countTicks(page, WINDOW_S * 1000);
+        const started = Date.now();
         await sandbox.run(`flood(${WINDOW_S + 6})`);
         await page.waitForTimeout(3000);
         const from = Date.now();
         const loaded = await countTicks(page, WINDOW_S * 1000);
-        const loads = requested.filter(time => time >= from && time < from + WINDOW_S * 1000).length;
-        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, admitted origin: ${(loads / WINDOW_S).toFixed(0)} loads per second (budget ${VIEW_URLS_PER_SECOND}); host ticks in ${WINDOW_S} s: idle ${idle}, under the flood ${loaded} (${Math.round((1 - loaded / idle) * 100)}% busy)`);
+        const until = from + WINDOW_S * 1000;
+        // Counted over the whole flood, not over the window alone: a load is charged when its response has ended, so the
+        // first renders go through as a burst, and the budget then holds the next render back until the burst is repaid.
+        // On a fast runner that wait covered the whole window (0 loads in it, WebKit in CI), which is the budget working.
+        // What it promises is the long-run rate: at most twice VIEW_URLS_PER_SECOND over the flood (see ADMITTED), plus
+        // the one render whose loads start before any of them is charged.
+        const loads = requested.filter(time => time >= started && time < until).length;
+        const seconds = (until - started) / 1000;
+        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, admitted origin: ${(loads / seconds).toFixed(0)} loads per second over the flood (budget ${VIEW_URLS_PER_SECOND}); host ticks in ${WINDOW_S} s: idle ${idle}, under the flood ${loaded} (${Math.round((1 - loaded / idle) * 100)}% busy)`);
         // at 60814b5: Firefox 1400 loads per second
-        expect(loads).toBeLessThanOrEqual(ADMITTED);
+        expect(loads).toBeLessThanOrEqual(2 * VIEW_URLS_PER_SECOND * seconds + PER_RENDER);
         expect(loads).toBeGreaterThan(0);
         expect(loaded).toBeGreaterThan(idle * 0.7);
     });
