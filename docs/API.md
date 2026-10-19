@@ -538,7 +538,7 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 | :--- | :--- | :--- |
 | `method` | `string` | Upper case; `''` when the guest sent no valid method. |
 | `url` | `string` | Without fragment, whole: a request's URL is at most 8192 characters, as written and as parsed (a longer one is refused). The guest's string, cut to 8192 characters, when it is not a URL. |
-| `outcome` | `'ok' \| 'refused' \| 'failed' \| 'aborted'` | `ok`: a response was handed over (any HTTP status). `refused`: no request was made (the bridge's rules, or the browser's `Request` refused it). `failed`: the browser's `fetch` rejected or no whole response was handed over; not proof that a request left the page, since `fetch` also rejects before sending (the host page's own `connect-src`, mixed content, local-network blocking). `aborted`: the environment was torn down meanwhile. |
+| `outcome` | `'ok' \| 'refused' \| 'failed' \| 'aborted'` | `ok`: a response was handed over (any HTTP status). `refused`: no request was made (the bridge's rules, or the browser's `Request` refused it). `failed`: the browser's `fetch` rejected or no whole response was handed over; not proof that a request left the page, since `fetch` also rejects before sending (the host page's own `connect-src`, mixed content, local-network blocking). `aborted`: the environment was torn down before the request settled, whatever it settled on (`status` and `bytes` as measured; `code` is `FETCH_FAILED`). |
 | `status` | `number?` | The HTTP status, when a response arrived. |
 | `code` | `FetchErrorCode?` | Why it was refused, failed or aborted. |
 | `reason` | `string?` | For a refusal of an origin that is not listed, what the host knows beyond the guest's text: the host page's own origin, or a loopback, private or link-local host. The guest is told the same for every unlisted origin. |
@@ -547,7 +547,8 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 
 A record belongs to the environment that made the request, and is dispatched when the request settles: an `aborted`
 record of an environment that `reset()`, `load()` or `setConfig()` tore down can arrive after that call, while the next
-build is loading.
+build is loading. After an environment's teardown its records are `aborted`, whatever the request settled on (a response
+already read, an error, a refusal), and they can arrive after the call that tore it down.
 
 ### `terminated` reasons
 
