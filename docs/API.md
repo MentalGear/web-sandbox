@@ -79,7 +79,8 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 **`setConfig(config: SandboxConfig): void`** replaces the configuration and rebuilds the environment
 (see [Lifecycle](#lifecycle)). `SandboxConfig` is a union keyed by `mode` (`StrictSandboxConfig`,
-`CooperativeSandboxConfig`, `WorkerSandboxConfig`): strict mode's `origins` has no `scripts`, and
+`CooperativeSandboxConfig`, `WorkerSandboxConfig`, each extending `SandboxConfigOptions`, the options every mode
+takes): strict mode's `origins` has no `scripts`, and
 a config without `mode` is a strict config (strict mode is the default).
 
 - Each call is applied **over the defaults, not over the previous configuration**: an option left out returns
@@ -1273,7 +1274,7 @@ Values:
 `document.createElement('web-sandbox')` is typed as a `WebSandbox` (`HTMLElementTagNameMap`), and its
 `addEventListener` types each event's `detail`.
 
-Types: `SandboxConfig`, `StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, `SandboxState`,
+Types: `SandboxConfig`, `SandboxConfigOptions`, `StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, `SandboxState`,
 `WebSandboxEventMap`, `CallLimits`, `RpcError`, `RpcErrorCode`, `RpcLibraryCode`, `SandboxLog`, `SandboxLogLevel`,
 `SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,
 `FileInfo`, `FileError`, `FileErrorCode`, `SandboxFiles`, `GuestWrite`, `SandboxOrigins`, `StrictSandboxOrigins`,

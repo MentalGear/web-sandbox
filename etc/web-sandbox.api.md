@@ -16,8 +16,6 @@ export interface CallLimits {
     maxPerSecond?: number;
 }
 
-// Warning: (ae-forgotten-export) The symbol "SandboxConfigOptions" needs to be exported by the entry point index.d.ts
-//
 // @public
 export interface CooperativeSandboxConfig extends SandboxConfigOptions {
     allowAnimations?: never;
@@ -146,6 +144,23 @@ export type SandboxCapability = SafeCapability | (typeof UNSAFE_SANDBOX_FLAGS)[n
 
 // @public
 export type SandboxConfig = StrictSandboxConfig | CooperativeSandboxConfig | WorkerSandboxConfig;
+
+// @public
+export interface SandboxConfigOptions {
+    allowAnimations?: boolean;
+    allowAutoplay?: boolean;
+    autoResize?: boolean;
+    callLimits?: CallLimits;
+    capabilities?: SafeCapability[];
+    entry?: string;
+    fetchBridge?: FetchBridgeConfig;
+    guestWrites?: boolean;
+    html?: string;
+    scriptUnsafe?: boolean;
+    unsafeCapabilities?: UnsafeCapability[];
+    watchdogTimeout?: number;
+    workerExecutionTimeout?: number;
+}
 
 // @public
 export class SandboxDevTools {
