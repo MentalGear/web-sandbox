@@ -1,11 +1,13 @@
 import { test, expect, type SandboxDriver } from './fixture';
 import { inView, waitInView } from './strict-view';
-import type { Page } from '@playwright/test';
+import { busyShare, describeShare, lag, startLag, viewBound } from './host-share';
+import { VIEW_MAX_OPERATION_MS } from '@src/lib/in-sandbox-view';
 
 /**
  * The strict view's budget (review round 1, R1-1 and R1-2; ADR-005 amendment 2026-10-15). The view runs on the host
  * page's thread in Firefox and WebKit, and in Chromium depending on its process model, so what it renders is host work.
- * Bounded now by construction, and measured from the host page (ticks of a 10 ms interval, idle against loaded):
+ * Bounded now by construction, and measured from the host page (its busy share against its own idle baseline,
+ * ./host-share.ts):
  *   - the characters the view holds, text, comments and attributes alike (its body's serialization), counted over the
  *     document a render would leave, like elements (VIEW_MAX_CHARACTERS);
  *   - the characters the view applies per second (VIEW_RENDER_CHARACTERS_PER_SECOND): a render past it waits, and the
@@ -14,12 +16,6 @@ import type { Page } from '@playwright/test';
  *     stalled its host about 20 s).
  * Each test failed at 5ede7ba.
  */
-
-const countTicks = (page: Page, ms = 2500) => page.evaluate((duration) => new Promise<number>(resolve => {
-    let count = 0;
-    const timer = setInterval(() => count++, 10);
-    setTimeout(() => { clearInterval(timer); resolve(count); }, duration);
-}), ms);
 
 async function mountEntry(sandbox: SandboxDriver, source: string) {
     await sandbox.registerFiles({ 'main.js': source });
@@ -42,13 +38,12 @@ test('R1-1: renders of 261 000 characters of text into 200 targets every 20 ms l
             }, 20);
         };`);
     await page.waitForTimeout(300);
-    const idle = await countTicks(page);
-    await sandbox.run('flood()');
-    const loaded = await countTicks(page);
+    // within the 3 s flood: the best of 2 windows of 1.25 s after 300 ms
+    const share = await busyShare(page, () => sandbox.run('flood()'), { windows: 2, ms: 1250 }, 300);
     await sandbox.waitForLog('R11 flood done', 20000);
     const held = await inView<number>(page, browserName, 'document.body.innerHTML.length');
-    console.log(`MEASURED ${browserName} R1-1 host ticks in 2.5 s: idle ${idle}, during the render flood ${loaded}; view characters ${held}`);
-    expect(loaded).toBeGreaterThan(idle * 0.5);
+    console.log(`MEASURED ${browserName} R1-1 during the render flood: ${describeShare(share)}; view characters ${held}`);
+    expect(share.busy).toBeLessThanOrEqual(viewBound(false)); // docs/API.md (a): 20%, plus the measure's 10 points
     expect(held).toBeLessThanOrEqual(4 * 262144);
     // renders past the budget were refused, acknowledged, and said in the guest's log: the queued renders keep being
     // applied after the flood, at the view's rates (characters, and its time per second: review round 2, M-3), so the
@@ -59,15 +54,20 @@ test('R1-1: renders of 261 000 characters of text into 200 targets every 20 ms l
 test('R1-2: 43 000 <wbr> elements (within the element budget) leave the host page responsive (Firefox stalled about 20 s)', async ({ sandbox, page, browserName }) => {
     test.setTimeout(60000);
     await mountEntry(sandbox, `globalThis.wbr = () => { sandboxView.render('<p id="w">' + 'x<wbr>'.repeat(43000) + '</p>'); console.log('R12 rendered'); };`);
-    const idle = await countTicks(page, 2000);
+    // one operation, so not a share: its stall, against the bound docs/API.md states for one operation, (b)
+    // (VIEW_MAX_OPERATION_MS; a second past it within VIEW_OVERRUN_WINDOW_MS ends the sandbox). A share over one window
+    // after it measured the machine: 61% on a machine at load average 18, against 1% idle
+    await startLag(page);
     const started = Date.now();
     await sandbox.run('wbr()');
-    const loaded = await countTicks(page, 2000);
     // from the render to its layout: Firefox laid out 43 000 <wbr> in about 23 s at 5ede7ba
     await waitInView(page, browserName, `!!document.getElementById('w') && document.getElementById('w').getBoundingClientRect().height > 0`, 40000);
     const shown = Date.now() - started;
-    console.log(`MEASURED ${browserName} R1-2 host ticks in 2 s: idle ${idle}, after rendering 43 000 <wbr> ${loaded}; shown after ${shown} ms`);
-    expect(loaded).toBeGreaterThan(idle * 0.5);
+    await page.waitForTimeout(500);
+    const stall = await lag(page);
+    console.log(`MEASURED ${browserName} R1-2 after rendering 43 000 <wbr>: the host page's longest stall ${stall} ms; shown after ${shown} ms`);
+    expect(stall).toBeLessThan(VIEW_MAX_OPERATION_MS);
+    expect(await sandbox.state()).toBe('ready');
     expect(shown).toBeLessThan(5000);
     expect(await inView<number>(page, browserName, `document.getElementsByTagName('wbr').length`)).toBe(0);
     expect(await inView<number>(page, browserName, `document.getElementById('w').textContent.length`)).toBe(43000); // unwrapped: the text stays
@@ -111,8 +111,8 @@ test.describe('C-2: a view hidden for 5 s, with a render applied meanwhile, appl
 // Review round 3, M-5: the time budget left one frame's length per flush uncharged (it charged the wait to the next
 // frame past 16.7 ms), so under a flood of operations whose rendering takes long the view took 22–25% of the host page's
 // thread against its 20% budget. It now charges the rendering it measured, in full. Re-rendering 37 449 empty elements
-// without pause, as in review-round-2.spec.ts (M-3): the host page keeps at least 70% of its idle ticks (the budget is
-// 20%; the margin is for the measure, a 10 ms interval on a shared machine).
+// without pause, as in review-round-2.spec.ts (M-3): the host page's busy share stays within the budget, 20%, plus the
+// measure's margin, 10 points (a 10 ms interval on a shared machine; docs/API.md).
 test('M-5: under a flood of re-renders the view takes about its budget of the host page, not more', async ({ sandbox, page, browserName }) => {
     test.setTimeout(90000);
     await mountEntry(sandbox, `
@@ -126,12 +126,8 @@ test('M-5: under a flood of re-renders the view takes about its budget of the ho
             }, 5);
         };`);
     await page.waitForTimeout(300);
-    const idle = await countTicks(page, 8000);
-    await sandbox.run('flood()');
-    await page.waitForTimeout(2000);
-    const loaded = await countTicks(page, 8000);
+    const share = await busyShare(page, () => sandbox.run('flood()'), undefined, 2000);
     await sandbox.waitForLog('M5 flood done', 30000);
-    const busy = Math.round((1 - loaded / idle) * 100);
-    console.log(`MEASURED ${browserName} M-5 host ticks in 8 s: idle ${idle}, under the flood ${loaded} (the view took ${busy}% of the host page's idle ticks)`);
-    expect(loaded).toBeGreaterThan(idle * 0.7);
+    console.log(`MEASURED ${browserName} M-5 under the flood: ${describeShare(share)}`);
+    expect(share.busy).toBeLessThanOrEqual(viewBound(false));
 });

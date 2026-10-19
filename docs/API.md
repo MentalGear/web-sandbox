@@ -1069,7 +1069,9 @@ channels, with the other channels of guest activity, are in [Budgets](#budgets).
 Measured on headless Playwright 1.58.1 (Chromium's headless shell, Firefox, WebKit) on a shared 4-core VM, 2026-10-19,
 unless a row names another source. The shapes are what the statement rests on; the absolute numbers are that machine's.
 Busy share is `1 − ticks / idle ticks` of a 10 ms interval on the host page, the idle baseline the best of 3 windows on
-the same page right before, the loaded figure the best of 2 windows once the flood is under way.
+the same page right before, the loaded figure the best of 2 windows once the flood is under way (the table below). The
+suite asserts with each loaded window between two such baselines, taken with the flood paused, against their mean, so
+that the machine's other load is the same in the baseline as in the window.
 
 **Where it applies.** The bound is on the thread the view runs on ([research 16](research/16_view_isolation/README.md)):
 

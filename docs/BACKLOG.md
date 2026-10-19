@@ -1845,9 +1845,7 @@ the new measure (Chromium / Firefox / WebKit, busy share of the best window):
   18/16/13%, loopback 35/21/21%;
 - with two busy loops on top (load average 7.5–9.5): 19/18/14%, 31/20/17% and 24/19/14%.
 
-All pass. The base measure failed under the same load. Other host-tick tests still use one window per side
-(`review-round-1.spec.ts` R3-3, `review-round-2.spec.ts`, `review-round-4.spec.ts` M-1 and M-6, `review-round-5.spec.ts`,
-`view-budget.spec.ts`). They have not failed so far, and each can move to `host-share.ts` the same way.
+All pass. The base measure failed under the same load. Every other host-tick measure moved to `host-share.ts` in T9.
 
 ### S68 · State the view's cost bound — ✅ **done** (phase 5)
 
@@ -2082,7 +2080,7 @@ cores, and to one core:
   with the reasoning beside it. No assertion changed.
 
 Validation: `bun run typecheck` clean and `bun run test:unit` 1712 passed (54 files), idle and with the two loops (load
-average 8.1); both tests passed both times.
+average 8.1); both tests passed both times. Five more tests of this class, and two wall-clock bounds, were found and fixed in T9.
 
 ### T8 · An e2e run could test another checkout's code — ✅ **done**
 
@@ -2110,6 +2108,116 @@ engine instead of 695). The obvious ignore, `'.claude/**'`, matches every file o
   checkout under another one's `.claude/` still finds its own 695 tests per engine.
 
 How to run e2e locally: CONTRIBUTING.md, "End-to-end tests".
+
+### T9 · Every host measure through one module, and no bound that measures the machine — ✅ **done**
+
+**Found** (class: a test that measures the machine, not the code; T7's, in every spec with a meter or a bound of its
+own). Twelve specs and two research probes counted the host page's ticks, the gaps between them or a busy share with
+their own copies of the meter, most with one window on each side. A scan of the base commit (`cacc0bf`) finds 118 such
+lines in 14 files, outside research 19's in-page meters. The same class showed in four more failures on a loaded machine
+(the coordinator's full CI run at `6da64e6`, load average 7–9; all pass in GitHub CI):
+- `view-round-5` M-3 "observing the loads costs nothing": one window each side (260 ticks against 284);
+- `review-round-4` M-2, an admitted origin: one 8 s window each side (T7's measure; the T7 measure covers it);
+- `view-bound` (a), the set loop on WebKit: 30.1% against 30%. The best-of-N method itself was still load-sensitive:
+  its one idle baseline is taken before the windows, and the machine's other load varies between them;
+- `watchdog` render-then-loop on WebKit: a stall of 1926 ms against a fixed 1500 ms per engine, for one apply that cost
+  460–1034 ms on a page of its own on that machine then.
+
+Three more failed in a long run and passed at load average 2 (also the coordinator's): Firefox's C-2 (one sample per
+configuration), and WebKit's errors of 16 Mi characters in `review-round-4` M-1's class and `review-round-5` N-1. S75
+measured the M-1 case failing in 5 of 10 runs at the base on the loaded VM. Measured here: N-1's strict case read 17% at
+load average 17 and 1–3% at load average 2, with the same code.
+
+The stall bounds of `strict-render-flood`, ST2, `auto-resize` and research 15 had the same fixed form. C-2 compared
+two single samples, which failed on Firefox at load average 9 (700 ms against 512 ms). Five unit tests on vitest's
+default 5 s timeout took 2.4–9.0 s at load average 14 (T6's class, found by giving every default-timeout test 1.6 s).
+Two unit tests bounded their own wall-clock time ("in well under a second").
+
+**Done.**
+- `test/e2e/host-share.ts` is the one measure:
+  - ticks of a 10 ms interval (with the longest gap, the host page's frames, or a guest call to start with) and the
+    best of N windows;
+  - the busy share against the page's own idle baseline (`busyShare`, `idleBaseline`, `loadedShare`, `busyOf`);
+  - `interleavedShare` for a flood that can pause: each loaded window lies between two idle baselines taken with the
+    flood paused, and is compared with their mean. `pausableFlood` and `floodControl` make a guest flood pausable.
+    `view-bound` (a), `review-round-4` M-2, M-1 and M-1's class, and `review-round-5` N-1's ten floods use it;
+  - the documented bound as the suite asserts it (`viewBound`: (a) for the flood's kind plus the 10-point margin, which
+    docs/API.md states);
+  - the stall meter (`startLag`, `lag`, `stalls`);
+  - stall bounds calibrated in the same run. `oneApplyStall` takes three times the most of the calibrations of one
+    apply (`operationCost`, before and after), plus the machine's own longest gap then, plus 100 ms. `quietStall` is
+    the machine's own longest gap right before, for a stall the code should not cause.
+- Converted: `review-round-1.spec.ts` (R3-3), `review-round-2.spec.ts` (M-3), `review-round-4.spec.ts` (M-1 and its
+  class, C-2, M-6), `review-round-5.spec.ts` (N-1), `view-budget.spec.ts` (R1-1, R1-2, M-5), `view-round-5.spec.ts`
+  (M-3, M-2, M-4), `view-switches.spec.ts`, `auto-resize.spec.ts`, `watchdog.spec.ts`, `strict-render-flood.spec.ts`,
+  `broad-strict.spec.ts` (ST2), `view-bound.spec.ts` ((a) interleaved, (b) and the distinct-URL windows), research 15
+  (P7) and research 16. C-2 takes the least of 3 interleaved samples per configuration.
+- On the loaded side, best of N holds only while the flood lasts over every window. Each spec's windows sit inside its
+  flood, and are whole periods where its cost comes in periods. A spec that measures one operation (R1-2) bounds its
+  stall instead: a share over the one window after it measures the machine.
+- Unit: the five slow tests have explicit budgets, each with its work and measured cost beside it. These are
+  `files.test.ts` (2), `review-round-2.test.ts` C-4, `csp-generator.test.ts` (3000 configs) and `view-css-loads.test.ts`
+  (the property). The two wall-clock bounds (`view-css-loads.test.ts`, `css-references.test.ts`) are now linearity
+  ratios measured in the same run: the best of 3 runs at 1/8 and at full size, under 24 (linear 8, quadratic 64), as
+  `in-sandbox-view.test.ts` already did.
+- `view-round-5.test.ts` M-4 left the view's own timers pending when the file ended. On a loaded machine one fired
+  after jsdom's teardown ("document is not defined"), an unhandled error that failed a run whose 1809 tests passed. Its
+  helper now tracks the view's timers and frames and clears them at the end.
+- The structural test: `test/unit/host-share.test.ts` (`test/unit/host-share-scan.ts`) scans every `.ts`, `.mjs`, `.js`
+  and `.html` file under `test/e2e` and `docs/research`. Outside `host-share.ts`, it fails on any of these:
+  - a 10 ms interval, or a timer that re-arms every 10 ms;
+  - a gap read off the clock;
+  - a share or a limit taken against idle ticks;
+  - the old helpers' names, or a calibration of a spec's own;
+  - a stall bounded by a fixed number or by a table per engine;
+  - a pausable flood measured against one baseline.
+
+  It also scans every unit test for an upper bound in ms on a difference of `performance.now()` or `Date.now()`
+  (in the `expect()`, or through a name given to the difference), outside a reviewed allowlist with a reason per entry
+  (empty). A lower bound, a wait that must last, is not one. It catches a verbatim sample of each old shape,
+  including all four failures above, and every file of the base commit. A base copy of `view-budget.spec.ts` dropped
+  into `test/e2e` failed it with 12 hits. Research 19's `host.html` and `harness.ts` are the one listed exception: they
+  measure from inside the page and the relay worker, also with no Playwright attached. The test checks that the
+  exception still holds a meter.
+
+**Limits**, old and new (busy share = 1 − loaded / idle ticks; "kept" where docs/API.md states no number for it):
+
+| Spec, test | Before | Now | Why |
+| :--- | :--- | :--- | :--- |
+| `review-round-1` R3-3, a 3 s log flood | ≤ 20% | ≤ 10% | API.md: "a flood never reaches the host page's thread": nothing past the measure's margin |
+| `review-round-2` M-3, both floods | ≤ 50% | ≤ 30% | (a): 20% plus the 10-point margin |
+| `view-budget` R1-1 | ≤ 50% | ≤ 30% | (a) |
+| `view-budget` M-5 | < 30% | ≤ 30% | (a), the same number |
+| `view-round-5` M-2, operations of about 1.1 s | < 30% | ≤ 30% | (a), the same number |
+| `view-round-5` M-3, CSS backgrounds, admitted origin | < 30% | ≤ 50% | (a) for a view that loads: 40% plus 10 points |
+| `view-round-5` M-3, CSS backgrounds, refused source | < 30% | ≤ 50% | the same (refusals are charged as loads) |
+| `view-switches`, `allowAnimations: false` (both tests) | < 15% | ≤ 10% | API.md: `false` "brings every vector back to idle" |
+| `view-budget` R1-2, one render of 43 000 `<wbr>` | < 50% busy over one 2 s window | longest stall < `VIEW_MAX_OPERATION_MS` (2000 ms), sandbox still ready | one operation: (b) bounds its time, not a share. The one window after it read 61% at load average 18 (1% idle) |
+| `view-round-5` M-3, an idle view that loaded | < 5% | < 5% (kept) | no number stated |
+| `review-round-4` M-1 and its class (4 tests) | < 10% | < 10% (kept), against interleaved baselines | no number stated |
+| `review-round-4` M-6 (2) | < 30% | < 30% (kept) | no number stated (the call budgets do not touch the view) |
+| `review-round-5` N-1 (10 floods; within the budget, 2) | < 10%; < 15% | kept; the 10 floods against interleaved baselines | API.md lists Firefox's 4–7% as measured, outside the bound |
+| `review-round-4` M-2 (T7) | 30% | 40%, against interleaved baselines (settled for one period of loads) | (a) for a view that loads, without the margin (T7). With T7's one baseline, Chromium's loopback flood read 41.4% once at load average 5–10 |
+| `view-bound` (a), every flood | the bound plus 10 points, against one baseline | the same, against interleaved baselines | the method, not the number |
+| `watchdog` render-then-loop: stall; round trips | < 600 / 600 / 1500 ms (Chromium / Firefox / WebKit); that + 500 | < `oneApplyStall` (3 × the most of 5 calibrations + the machine's own gap + 100 ms); that + 500 | "one render in flight bounds the stall to one apply" |
+| `strict-render-flood`, both floods: stall; round trips | < 600 / 600 / 1500 ms; < 1500 / 1500 / 2500 ms | < `oneApplyStall`; that + 1000 ms | the same claim |
+| research 15 P7, 1 MiB and 64 KiB acked floods (and WebKit's burst) | < 1500 (Chromium, shared), 1000 (Firefox), 3000 (WebKit); 64 KiB < 150 | < `oneApplyStall` of each render | the same claim |
+| research 15 P7, out of process; after removing a flooding frame | < 150; < 250 ms | < `quietStall` + 150; + 250 | the code should add no stall: what it adds over the machine's own |
+| `watchdog` endless loop at the entry, ST2 fan-out, `auto-resize` oscillation | < 500 ms | < `quietStall` + 500 ms | the same |
+| `review-round-4` C-2 | one sample each: false all:unset < 2 × false plain + 300 ms | the same, the least of 3 interleaved samples each | the method, not the number |
+| unit: `view-css-loads` "linear in the text", `css-references` "runs in linear time" | < 1000 ms; < 3000 ms | 8 times the size takes < 24 times as long, best of 3 | the claim is linearity |
+
+The view-switches positive control (`true` > 30% busy) and research 15's lower bounds (the view shares the host's
+thread) are unchanged. `view-budget` R1-2's `VIEW_MAX_OPERATION_MS` is a documented bound, and view-bound (b) counts
+stalls against it.
+
+**Validation** (2026-10-19, 4-core VM shared with other agents; each e2e batch started only below a 1-minute load of 6):
+- `bun run typecheck` clean. `bun run test:unit`: 1838 of 1838 passed, both idle and under two busy loops of the run's
+  own.
+- Every converted test, on its own engine, with no load of the run's own: Chromium 60 of 60, Firefox 59 and one
+  calibration skip (view-round-5's repeated-overrun test found no operation of 0.7–1.4 s), WebKit 60 of 60.
+- Under two busy loops, bursts of at most 3 minutes: Chromium 10 groups of 13 (54 tests), all passing. The rest was
+  trimmed, since the method held.
 
 ### B1 · Promise-based RPC in both directions — ✅ **done**
 

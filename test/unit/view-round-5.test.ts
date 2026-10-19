@@ -380,7 +380,9 @@ describe('L-2 and N-7 (docs and class P): with allowAnimations false, what happe
 describe('M-4 (class P): one view loads at most VIEW_MAX_DISTINCT_URLS distinct URLs', () => {
     // The view in jsdom (which loads nothing), with a limit of 4 and every rate high enough not to hold a render back.
     const originalWorker = (globalThis as any).Worker;
+    let stopTimers = () => {};
     afterEach(() => {
+        stopTimers();
         (globalThis as any).Worker = originalWorker;
         delete (globalThis as any).__sandboxViewRuns;
         document.body.replaceChildren();
@@ -394,6 +396,31 @@ describe('M-4 (class P): one view loads at most VIEW_MAX_DISTINCT_URLS distinct 
             postMessage(_message: unknown, transfer: MessagePort[]) { this.transfer = transfer; }
         };
         const options: ViewOptions = { ...VIEW_OPTIONS, maxDistinctUrls: 4, rates: { characters: 1e9, time: 1e9, urls: 1e9 } };
+        // The view's own timers (its 100 ms fallback after a frame, its gap meter), tracked until close() clears them: one
+        // still pending when the file ends fired after jsdom's teardown on a loaded machine ("document is not defined",
+        // an unhandled error that fails the run; backlog T9). The view calls the global timers, so these stand in for them
+        // until close().
+        const timers = new Set<ReturnType<typeof setTimeout>>();
+        const frames = new Set<number>();
+        const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame };
+        (globalThis as any).setTimeout = (callback: () => void, ms?: number) => {
+            const id = real.setTimeout(() => { timers.delete(id); callback(); }, ms);
+            timers.add(id);
+            return id;
+        };
+        (globalThis as any).clearTimeout = (id: ReturnType<typeof setTimeout>) => { timers.delete(id); real.clearTimeout(id); };
+        (globalThis as any).requestAnimationFrame = (callback: FrameRequestCallback) => {
+            const id = real.requestAnimationFrame((time) => { frames.delete(id); callback(time); });
+            frames.add(id);
+            return id;
+        };
+        (globalThis as any).cancelAnimationFrame = (id: number) => { frames.delete(id); real.cancelAnimationFrame(id); };
+        stopTimers = () => {
+            for (const id of timers) real.clearTimeout(id);
+            for (const id of frames) real.cancelAnimationFrame(id);
+            Object.assign(globalThis, real);
+            stopTimers = () => {};
+        };
         new Function(viewBootstrapSource(options))();
         const logic = new MessageChannel(), view = new MessageChannel();
         const html = '<div id="a"></div><div id="b"></div>';
@@ -408,7 +435,13 @@ describe('M-4 (class P): one view loads at most VIEW_MAX_DISTINCT_URLS distinct 
             for (let i = 0; i < 400 && acks.length === before; i++) await new Promise(resolve => setTimeout(resolve, 5));
             return acks[acks.length - 1]?.refused ?? [];
         };
-        return { send, close: () => { render.close(); view.port2.close(); logic.port2.close(); } };
+        return {
+            send,
+            close: () => {
+                render.close(); view.port2.close(); logic.port2.close();
+                stopTimers();
+            },
+        };
     }
     const images = (...names: string[]) => names.map(name => `<img src="https://a.example/${name}.png">`).join('');
 

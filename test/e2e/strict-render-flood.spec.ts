@@ -1,5 +1,6 @@
 import { test, expect } from './fixture';
 import { inView, waitInView } from './strict-view';
+import { lag, oneApplyStall, startLag } from './host-share';
 
 /**
  * Strict mode's render flow control (ADR-005, amendment A4; research 15 P7). Firefox and WebKit run the
@@ -9,7 +10,8 @@ import { inView, waitInView } from './strict-view';
  *      applies — deterministic: 10 000 synchronous calls are applied as exactly two renders, the first
  *      and the last;
  *   2. under a sustained flood of maximal renders (256 Ki characters, as fast as the flow control allows)
- *      the host's largest stall is one apply, and the worker still answers calls: bounded per engine.
+ *      the host's largest stall is one apply, and the worker still answers calls: bounded by one apply as it costs
+ *      in the same run (test/e2e/host-share.ts, oneApplyStall).
  * Measured (this machine, Playwright 1.58 builds), host lag max / call round trip max under a 3 s flood:
  *   Chromium ≤ 10 ms / ≤ 15 ms when it ran the view out of process; Firefox 50–95 ms / 70–150 ms;
  *   WebKit 110–470 ms / 130–390 ms. Chromium may also keep the view in the host page's process (broad review
@@ -46,12 +48,11 @@ const FLOODS: Record<string, string> = {
     'one word': `'<p>' + 'x'.repeat(262144 - 40) + '</p>'`,
     markup: `'<p>The quick brown fox jumps over the lazy dog, again and again.</p>'.repeat(3700)`,
 };
-// generous bounds per engine (a loaded CI machine), several times the measured values above
-const BOUNDS: Record<string, { lag: number; roundTrip: number }> = {
-    chromium: { lag: 600, roundTrip: 1500 }, // as Firefox: the view can share the host's thread here too
-    firefox: { lag: 600, roundTrip: 1500 },
-    webkit: { lag: 1500, roundTrip: 2500 },
-};
+// The bound is one apply as it costs here and now (./host-share.ts, oneApplyStall: three times the most of the
+// calibrations taken before and after the flood, the machine's own gap, and a margin), not a number per engine (they
+// were 600 ms, and 1500 ms for WebKit): a loaded machine raises the stall and its calibration together. A call waits for
+// at most that and its own trip.
+const ROUND_TRIP_MARGIN = 1000;
 
 for (const [name, expression] of Object.entries(FLOODS)) {
     test(`a 3 s flood of maximal renders (${name}): the host's largest stall is one apply, calls keep being answered, the last render wins`, async ({ sandbox, page, browserName }) => {
@@ -70,12 +71,11 @@ for (const [name, expression] of Object.entries(FLOODS)) {
                 };
                 tick();
             }));` });
+        // the html the view applies: the flood's, with the marker of its number (the longest of them)
+        const html = (new Function(`return ${expression}`)() as string) + '<i id="last-99999"></i>';
+        const before = await oneApplyStall(page, html);
         expect(await sandbox.mount({ mode: 'strict', entry: 'flood.js' })).toBe('ready');
-        await page.evaluate(() => {
-            const w = window as any;
-            w.lag = { max: 0, last: performance.now() };
-            w.lagTimer = setInterval(() => { const now = performance.now(); w.lag.max = Math.max(w.lag.max, now - w.lag.last - 10); w.lag.last = now; }, 10);
-        });
+        await startLag(page);
         const flood = page.evaluate(() => (document.querySelector('web-sandbox') as any).call('flood', 3000));
         const roundTrips: number[] = [];
         const started = Date.now();
@@ -87,10 +87,12 @@ for (const [name, expression] of Object.entries(FLOODS)) {
         }
         const rendered = await flood as number;
         await waitInView(page, browserName, `!!document.getElementById('last-${rendered - 1}')`, 8000); // the last render wins
-        const lag = await page.evaluate(() => Math.round((window as any).lag.max));
-        console.log(`MEASURED ${browserName} flood ${name} ${JSON.stringify({ rendered, lag, roundTripMax: Math.max(...roundTrips) })}`);
+        const stall = await lag(page);
+        const after = await oneApplyStall(page, html, 2);
+        const bound = Math.max(before.bound, after.bound);
+        console.log(`MEASURED ${browserName} flood ${name} ${JSON.stringify({ rendered, lag: stall, roundTripMax: Math.max(...roundTrips), applyCosts: [...before.costs, ...after.costs], bound })}`);
         expect(rendered).toBeGreaterThan(10);
-        expect(lag).toBeLessThan(BOUNDS[browserName]!.lag);
-        expect(Math.max(...roundTrips)).toBeLessThan(BOUNDS[browserName]!.roundTrip);
+        expect(stall).toBeLessThan(bound);
+        expect(Math.max(...roundTrips)).toBeLessThan(bound + ROUND_TRIP_MARGIN);
     });
 }

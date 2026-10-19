@@ -271,7 +271,10 @@ describe('S73: cssLoadBound counts every token that can load, as the CSS tokeniz
         expect(tokenizerCount('\\\\75 rl(a) url\\28 a)')).toBe(0);
     });
 
-    it('property: on random text, the count is never below the tokens that load, as the tokenizer reads them', () => {
+    // An explicit budget for fixed work (backlog T6's class): 4000 random texts, each counted three times and tokenized
+    // once; the runs are what the property needs, so the work stays. 1.9 s alone at load average 3, 9.0 s in a full run
+    // at load average 14, past vitest's 5 s. 60 s, about 30 times the idle cost.
+    it('property: on random text, the count is never below the tokens that load, as the tokenizer reads them', { timeout: 60000 }, () => {
         const { random, pick, word } = generator(29);
         const PIECES = ['u', 'r', 'l', 'U', 'R', 'L', 'i', 'm', 'a', 'g', 'e', 's', 't', 'c', 'o', 'f', 'd', 'p', 'x', '-', '_', '(', ')',
             '\\', '\\', '"', "'", '/', '*', '/*', '*/', '@', '#', '.', '+', '5', '7', '2', ' ', '\n', '\r', '\r\n', '\f', '\t', ';', ':', '{', '}',
@@ -291,11 +294,24 @@ describe('S73: cssLoadBound counts every token that can load, as the CSS tokeniz
         expect(loads).toBeGreaterThan(1000); // the texts did hold tokens that load
     });
 
-    it('linear in the text: 1 MiB of CSS that loads counts in well under a second', () => {
-        const css = 'a{background:url(https://a.example/x.png),image-set("y.png" 1x)}/* u\\72 l( */'.repeat(13000);
-        const started = performance.now();
-        expect(count(css)).toBe(3 * 13000);
-        expect(performance.now() - started).toBeLessThan(1000);
+    // Linear, as a ratio measured in the same run (backlog T9's class: "under a second" measured the machine): 8 times the
+    // text takes at most 3 times 8 as long, the best of 3 runs of each size against noise. A count quadratic in the text
+    // takes about 64 times as long.
+    it('linear in the text: 8 times the CSS that loads (1 MiB) takes about 8 times as long to count, not 64', { timeout: 60000 }, () => {
+        const css = (n: number) => 'a{background:url(https://a.example/x.png),image-set("y.png" 1x)}/* u\\72 l( */'.repeat(n);
+        const best = (n: number) => {
+            const text = css(n);
+            let fastest = Infinity;
+            for (let run = 0; run < 3; run++) {
+                const started = performance.now();
+                expect(count(text)).toBe(3 * n);
+                fastest = Math.min(fastest, performance.now() - started);
+            }
+            return fastest;
+        };
+        const small = best(13000 / 8);
+        const large = best(13000);
+        expect(large / small, `best of 3: ${small.toFixed(1)} ms for 1/8 MiB, ${large.toFixed(1)} ms for 1 MiB`).toBeLessThan(24);
     });
 });
 

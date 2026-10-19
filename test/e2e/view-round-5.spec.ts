@@ -2,6 +2,7 @@ import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { inView, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 import { cssLoadBound, RENDER_RULES, sanitizeRender, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
+import { busyOf, busyShare, describeShare, idleBaseline, lag, loadedShare, operationCost, startLag, viewBound } from './host-share';
 
 /**
  * Review round 5, the strict view's findings where the browser decides, on Chromium, Firefox and WebKit: loads that only
@@ -11,12 +12,7 @@ import { cssLoadBound, RENDER_RULES, sanitizeRender, VIEW_MAX_DISTINCT_URLS, VIE
  * test/unit/view-round-5.test.ts.
  */
 
-// Ticks of a 10 ms interval on the host page over `ms`: what the host page's thread had left.
-const countTicks = (page: Page, ms: number) => page.evaluate((duration) => new Promise<number>(resolve => {
-    let count = 0;
-    const timer = setInterval(() => count++, 10);
-    setTimeout(() => { clearInterval(timer); resolve(count); }, duration);
-}), ms);
+// What the host page's thread had left: its busy share against its own idle baseline (./host-share.ts).
 
 async function mountEntry(sandbox: SandboxDriver, source: string, config: Record<string, unknown> = {}) {
     await sandbox.registerFiles({ 'main.js': source });
@@ -92,6 +88,8 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
     // the bound above, which is of loads: WebKit reports some refusals twice, and each report past the credit is charged
     // only once it is made (measured at 1.8 times the rate at most, Firefox, before S73).
     const ADMITTED = 2 * VIEW_URLS_PER_SECOND * WINDOW_S;
+    // the host page's share over the same WINDOW_S: the best of 2 windows of half of it
+    const WINDOWS = { windows: 2, ms: (WINDOW_S * 1000) / 2 };
 
     test(`CSS backgrounds to an admitted origin: at most VIEW_URLS_PER_SECOND loads per second, and the host page keeps about its share`, async ({ sandbox, page, browserName }) => {
         test.setTimeout(90000);
@@ -99,23 +97,23 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         await page.route(A_EXAMPLE, route => { requested.push(Date.now()); return route.fulfill({ body: PNG, contentType: 'image/png' }); });
         await mountEntry(sandbox, backgroundFlood('https://a.example/', PER_RENDER), { origins: { images: ['https://a.example'] } });
         await page.waitForTimeout(300);
-        const idle = await countTicks(page, WINDOW_S * 1000);
+        const idle = await idleBaseline(page);
         const started = Date.now();
         await sandbox.run(`flood(${WINDOW_S + 6})`);
         await page.waitForTimeout(3000);
         const from = Date.now();
-        const loaded = await countTicks(page, WINDOW_S * 1000);
+        const share = await loadedShare(page, idle, WINDOWS);
         const until = from + WINDOW_S * 1000;
         // Counted over the whole flood, from the first render: a render's loads are charged when it is applied, so the
         // budget holds the next one back until they are repaid. On a fast runner that wait can cover the whole window
         // (0 loads in it, WebKit in CI), which is the budget working; the host-share check below is over the window.
         const loads = requested.filter(time => time >= started && time < until).length;
         const seconds = (until - started) / 1000;
-        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, admitted origin: ${loads} loads over the ${seconds.toFixed(1)} s flood, ${(loads / seconds).toFixed(0)} per second (budget ${VIEW_URLS_PER_SECOND}, bound ${bound(seconds).toFixed(0)}); host ticks in ${WINDOW_S} s: idle ${idle}, under the flood ${loaded} (${Math.round((1 - loaded / idle) * 100)}% busy)`);
+        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, admitted origin: ${loads} loads over the ${seconds.toFixed(1)} s flood, ${(loads / seconds).toFixed(0)} per second (budget ${VIEW_URLS_PER_SECOND}, bound ${bound(seconds).toFixed(0)}); ${describeShare(share)}`);
         // at 60814b5: Firefox 1400 loads per second; before S73, 5000 over an 11.1 s flood (PR #47 CI, Firefox)
         expect(loads).toBeLessThanOrEqual(bound(seconds));
         expect(loads).toBeGreaterThan(0);
-        expect(loaded).toBeGreaterThan(idle * 0.7);
+        expect(share.busy).toBeLessThanOrEqual(viewBound(true)); // docs/API.md (a) for a view that loads: 40%, plus 10 points
     });
 
     test(`CSS backgrounds from a refused source: at most VIEW_URLS_PER_SECOND refusals per second, and the host page keeps about its share`, async ({ sandbox, page, browserName }) => {
@@ -125,17 +123,17 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         // the refusals the view's document saw, counted in the view, from outside
         await inView(page, browserName, `(window.__refusals = [], addEventListener('securitypolicyviolation', () => window.__refusals.push(performance.now() + performance.timeOrigin)), true)`);
         await page.waitForTimeout(300);
-        const idle = await countTicks(page, WINDOW_S * 1000);
+        const idle = await idleBaseline(page);
         await sandbox.run(`flood(${WINDOW_S + 6})`);
         await page.waitForTimeout(3000);
         const from = Date.now();
-        const loaded = await countTicks(page, WINDOW_S * 1000);
+        const share = await loadedShare(page, idle, WINDOWS);
         const times = await inView<number[]>(page, browserName, `window.__refusals`) as number[];
         const refusals = times.filter(time => time >= from && time < from + WINDOW_S * 1000).length;
-        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, refused source: ${(refusals / WINDOW_S).toFixed(0)} refusals per second (budget ${VIEW_URLS_PER_SECOND}); host ticks in ${WINDOW_S} s: idle ${idle}, under the flood ${loaded} (${Math.round((1 - loaded / idle) * 100)}% busy)`);
+        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, refused source: ${(refusals / WINDOW_S).toFixed(0)} refusals per second (budget ${VIEW_URLS_PER_SECOND}); ${describeShare(share)}`);
         expect(refusals).toBeLessThanOrEqual(ADMITTED);
         expect(refusals).toBeGreaterThan(0);
-        expect(loaded).toBeGreaterThan(idle * 0.7);
+        expect(share.busy).toBeLessThanOrEqual(viewBound(true)); // refusals are charged as loads: 40%, plus 10 points
     });
 
     test('S73: behind a slow server (every response 1 s late) the burst is the same bound: it no longer grows with the latency', async ({ sandbox, page, browserName }) => {
@@ -249,12 +247,13 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
     test('observing the loads costs nothing while the view loads nothing', async ({ sandbox, page, browserName }) => {
         test.setTimeout(60000);
         await page.route(A_EXAMPLE, route => route.fulfill({ body: PNG, contentType: 'image/png' }));
-        const before = await countTicks(page, 3000); // no sandbox
+        const before = await idleBaseline(page); // no sandbox
         await mountEntry(sandbox, `sandboxView.render('<img src="https://a.example/1.png"><i style="background:url(https://a.example/2.png)">x</i>');`, { origins: { images: ['https://a.example'] } });
         await page.waitForTimeout(1000);
-        const idle = await countTicks(page, 3000);
-        console.log(`MEASURED ${browserName} M-3 idle: host ticks in 3 s without a sandbox ${before}, with an idle view that loaded ${idle}`);
-        expect(idle).toBeGreaterThan(before * 0.95);
+        const idle = await idleBaseline(page);
+        const busy = busyOf(idle.count, idle.ms, before);
+        console.log(`MEASURED ${browserName} M-3 idle: host ticks per ${before.ms} ms without a sandbox ${before.count}, with an idle view that loaded ${idle.count} (${Math.round(busy * 100)}% busy)`);
+        expect(busy).toBeLessThan(0.05); // no documented share ("costs nothing"): the spec's own 5% stands
     });
 });
 
@@ -350,28 +349,7 @@ test.describe("M-1 (class P, the library's own mitigation): the still stylesheet
 });
 
 
-// What applying `html` costs on this engine and machine, measured as the view measures one operation (the replacement,
-// its layout forced, and the rendering update after it), in a page of its own: the calibration of the operations below,
-// so that what they assert holds relative to what an operation costs here, not on the machine they were written on.
-const operationCost = async (page: Page, html: string) => {
-    const other = await page.context().newPage();
-    try {
-        await other.setContent('<!DOCTYPE html><html><head></head><body><div id="a"></div></body></html>');
-        return await other.evaluate(async (markup) => {
-            const a = document.getElementById('a')!;
-            const start = performance.now();
-            a.innerHTML = markup;
-            document.elementFromPoint(0, 0);
-            const flushed = performance.now() - start;
-            await new Promise(resolve => requestAnimationFrame(() => resolve(0)));
-            const frame = performance.now();
-            await new Promise(resolve => setTimeout(resolve, 0));
-            return Math.round(flushed + performance.now() - frame);
-        }, html);
-    } finally {
-        await other.close();
-    }
-};
+// What applying `html` costs here, the calibration of the operations below: operationCost() (./host-share.ts).
 
 // An operation whose cost grows with `n` on every engine, faster than `n`: elements matched by a guest rule whose :has()
 // looks at all their later siblings (measured, 16 000 of them: Chromium 1.6 s, WebKit 2.2 s, Firefox 2.9 s). Round 5's
@@ -453,14 +431,12 @@ test.describe('M-2 (class P): the view charges every operation in full; the seco
                 step();
             };`);
         await page.waitForTimeout(300);
-        const idle = await countTicks(page, 8000);
-        await sandbox.run('flood(40)');
-        await page.waitForTimeout(2000);
-        const loaded = await countTicks(page, 30000);
-        const busy = Math.round((1 - loaded / (idle * 30 / 8)) * 100);
-        console.log(`MEASURED ${browserName} M-2 operations of ${cost} ms one after the other: host ticks idle ${idle} in 8 s, ${loaded} in 30 s under them (${busy}% busy)`);
+        // windows of 15 s: each holds two or more of the flood's periods (an operation of about 1.1 s, then the budget's
+        // wait of about 5 times that), so each reads the long-run share
+        const share = await busyShare(page, () => sandbox.run('flood(40)'), { windows: 2, ms: 15000 }, 2000);
+        console.log(`MEASURED ${browserName} M-2 operations of ${cost} ms one after the other: ${describeShare(share)}`);
         expect(await sandbox.state()).toBe('ready');
-        expect(loaded).toBeGreaterThan(idle * (30 / 8) * 0.7);
+        expect(share.busy).toBeLessThanOrEqual(viewBound(false)); // docs/API.md (a): 20%, plus 10 points
     });
 });
 
@@ -485,17 +461,12 @@ test.describe('M-4 (class P): one view loads at most VIEW_MAX_DISTINCT_URLS dist
                 step();
             };`, { origins: { images: ['https://a.example'] } });
         // the host page's longest stall while the flood runs (at 60814b5 WebKit's grew past seconds as the count did)
-        await page.evaluate(() => {
-            (window as any).__longest = 0;
-            let last = performance.now();
-            const tick = () => { const now = performance.now(); (window as any).__longest = Math.max((window as any).__longest, now - last); last = now; setTimeout(tick, 10); };
-            tick();
-        });
+        await startLag(page);
         await sandbox.run('flood()');
         const line = await sandbox.waitForLog(`[Sandbox] sandboxView.render: the view refused a render: the view would load more than ${VIEW_MAX_DISTINCT_URLS} distinct URLs in this environment; nothing of it was applied.`, 150000);
         expect(line).toBeTruthy();
         await page.waitForTimeout(1000);
-        const longest = Math.round(await page.evaluate(() => (window as any).__longest));
+        const longest = await lag(page);
         console.log(`MEASURED ${browserName} M-4: ${requested.size} distinct URLs requested before the refusal; the host page's longest stall ${longest} ms`);
         expect(requested.size).toBe(VIEW_MAX_DISTINCT_URLS); // every render up to the limit applied, none past it
         expect(await inView<number>(page, browserName, `document.querySelectorAll('#a img').length`)).toBe(1000); // the last render applied

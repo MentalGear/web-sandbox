@@ -3,7 +3,7 @@ import { waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_MAX_URLS, VIEW_OVERRUN_WINDOW_MS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
-import { best, busyShare, IDLE_MS, IDLE_WINDOWS, LOAD_SHARE, LOADED_MS, MARGIN, SOAK, ticks, TIME_SHARE, WARMUP_MS } from './host-share';
+import { busyOf, idleBaseline, interleavedShare, IDLE_MS, LOAD_SHARE, LOADED_MS, MARGIN, operationCost, SOAK, stalls, startLag, ticks, TIME_SHARE, WARMUP_MS } from './host-share';
 
 /**
  * The view's cost bound, executable (backlog S68; docs/API.md, "The view's cost to the host page"). On every engine the
@@ -16,7 +16,8 @@ import { best, busyShare, IDLE_MS, IDLE_WINDOWS, LOAD_SHARE, LOADED_MS, MARGIN, 
  *       VIEW_OVERRUN_WINDOW_MS ends the sandbox, and no operation follows it (backlog S72, class P).
  *
  * Measured as the other availability tests are: ticks of a 10 ms interval on the host page, against the page's own idle
- * baseline, the best of N windows on both sides (./host-share.ts, which also holds the bound's terms and the margin).
+ * baseline, the best of N windows on both sides, each loaded window between two baselines taken with the flood paused
+ * (./host-share.ts, interleavedShare; it also holds the bound's terms and the margin).
  *
  * What the doc lists as outside the bound (allowAnimations: true, relayout after decodes and font swaps, the documented
  * single-operation stalls, memory, :hover restyles, Firefox's cost of unhandled rejections) is not asserted here.
@@ -40,8 +41,9 @@ const ADMITTED = { origins: { images: ['https://a.example'] } };
  */
 const flood = (setup: string, step: string) => `
     ${setup}
+    let n = 0; // across pauses: a resumed flood's URLs stay new
     globalThis.flood = () => {
-        let n = 0;
+        globalThis.stop = false;
         const next = () => { if (globalThis.stop) return; (${step})(n++); setTimeout(next, 5); };
         next();
     };`;
@@ -110,7 +112,8 @@ test.describe("(a) the long-run bound: under each canonical flood the host page'
             await page.route(A_EXAMPLE, route => route.fulfill({ body: PNG, contentType: 'image/png' }));
             await mountEntry(sandbox, scenario.source, scenario.config);
             await page.waitForTimeout(300);
-            const { idle, loaded, busy, meanBusy } = await busyShare(page, () => sandbox.run('flood()'));
+            // each loaded window between two idle baselines, the flood paused for them (./host-share.ts)
+            const { idle, loaded, busy, meanBusy } = await interleavedShare(page, { resume: () => sandbox.run('flood()'), pause: () => sandbox.run('globalThis.stop = true') });
             const bound = TIME_SHARE + (scenario.loads ? LOAD_SHARE : 0);
             console.log(`MEASURED ${browserName} view-bound (a) ${scenario.name}: idle ${idle.count} ticks per ${IDLE_MS} ms (longest gap ${idle.longest} ms), loaded ${loaded.count} per ${LOADED_MS} ms (longest gap ${loaded.longest} ms): ${Math.round(busy * 100)}% busy (mean of the windows ${Math.round(meanBusy * 100)}%); bound ${Math.round(bound * 100)}% + ${Math.round(MARGIN * 100)} points`);
             await sandbox.run('globalThis.stop = true');
@@ -140,7 +143,7 @@ test.describe("(a) the long-run bound: under each canonical flood the host page'
                 step();
             };`, ADMITTED);
         await page.waitForTimeout(300);
-        const idle = await best(page, IDLE_WINDOWS, IDLE_MS);
+        const idle = await idleBaseline(page);
         await sandbox.run('flood()');
         await page.waitForTimeout(WARMUP_MS);
         // the windows span the flood up to the cap: (cap / per render) renders, `every` ms apart
@@ -150,11 +153,11 @@ test.describe("(a) the long-run bound: under each canonical flood the host page'
         const shares: number[] = [];
         for (let i = 0; i < windows; i++) {
             const window = await ticks(page, 2 * every);
-            shares.push(Math.round((1 - window.count / (idle.count * (2 * every) / IDLE_MS)) * 100));
+            shares.push(Math.round(busyOf(window.count, 2 * every, idle) * 100));
             if (window.count > loaded.count) loaded = { ...window, mean: 0 };
         }
         const line = await sandbox.waitForLog(`[Sandbox] sandboxView.render: the view refused a render: the view would load more than ${VIEW_MAX_DISTINCT_URLS} distinct URLs in this environment; nothing of it was applied.`, 90000);
-        const busy = 1 - loaded.count / (idle.count * (2 * every) / IDLE_MS);
+        const busy = busyOf(loaded.count, 2 * every, idle);
         console.log(`MEASURED ${browserName} view-bound (a) distinct URLs to the cap: idle ${idle.count} ticks per ${IDLE_MS} ms; windows of ${2 * every} ms busy ${shares.join('%, ')}% (best ${Math.round(busy * 100)}%, its longest gap ${loaded.longest} ms); ${requested.size} distinct URLs requested; bound ${Math.round((TIME_SHARE + LOAD_SHARE) * 100)}% + ${Math.round(MARGIN * 100)} points`);
         expect(line).toBeTruthy();
         expect(requested.size).toBe(VIEW_MAX_DISTINCT_URLS);
@@ -162,27 +165,7 @@ test.describe("(a) the long-run bound: under each canonical flood the host page'
     });
 });
 
-// One operation's own cost, measured on a page of its own: the markup set, its layout forced and its rendering update
-// waited for (as the view's meter measures an operation).
-const operationCost = async (page: Page, html: string) => {
-    const other = await page.context().newPage();
-    try {
-        await other.setContent('<!DOCTYPE html><html><head></head><body><div id="a"></div></body></html>');
-        return await other.evaluate(async (markup) => {
-            const a = document.getElementById('a')!;
-            const start = performance.now();
-            a.innerHTML = markup;
-            document.elementFromPoint(0, 0);
-            const flushed = performance.now() - start;
-            await new Promise(resolve => requestAnimationFrame(() => resolve(0)));
-            const frame = performance.now();
-            await new Promise(resolve => setTimeout(resolve, 0));
-            return Math.round(flushed + performance.now() - frame);
-        }, html);
-    } finally {
-        await other.close();
-    }
-};
+// One operation's own cost, measured on a page of its own: operationCost() (./host-share.ts).
 
 // An operation whose cost grows faster than its size on every engine: elements matched by a rule whose :has() looks at
 // all their later siblings (test/e2e/view-round-5.spec.ts, M-2).
@@ -215,12 +198,9 @@ test.describe('(b) the single-operation bound: the repeated-overrun rule (class 
         await page.exposeFunction('__terminated', (reason: string) => reasons.push(reason));
         await page.evaluate(() => {
             document.querySelector('web-sandbox')!.addEventListener('terminated', (e: any) => (window as any).__terminated(e.detail.reason));
-            // every stall of the host page's thread past 500 ms, from a 10 ms timer: where it ended, and how long it was
-            (window as any).__stalls = [];
-            let last = performance.now();
-            const tick = () => { const now = performance.now(); if (now - last > 500) (window as any).__stalls.push({ end: Math.round(now), ms: Math.round(now - last) }); last = now; setTimeout(tick, 10); };
-            tick();
         });
+        // every stall of the host page's thread past 500 ms: where it ended, and how long it was (./host-share.ts)
+        await startLag(page, { recordOver: 500 });
         // three operations, each past the limit: the first is an overrun, said once, and the sandbox stands
         await sandbox.run('go()');
         await sandbox.waitForLog(FIRST_OVERRUN_LINE, 3 * cost + 30000);
@@ -230,14 +210,14 @@ test.describe('(b) the single-operation bound: the repeated-overrun rule (class 
         await sandbox.run('again()');
         await expect.poll(() => sandbox.state(), { timeout: 8 * cost + 60000 }).toBe('terminated');
         await page.waitForTimeout(Math.max(3000, 2 * cost));
-        const stalls = await page.evaluate(() => (window as any).__stalls as { end: number; ms: number }[]);
-        console.log(`MEASURED ${browserName} view-bound (b): the host page's stalls past 500 ms: ${stalls.map(stall => `${stall.ms} ms ending at ${stall.end}`).join(', ')} (the operation ${cost} ms on a page of its own)`);
+        const stalled = await stalls(page);
+        console.log(`MEASURED ${browserName} view-bound (b): the host page's stalls past 500 ms: ${stalled.map(stall => `${stall.ms} ms ending at ${stall.end}`).join(', ')} (the operation ${cost} ms on a page of its own)`);
         expect(reasons).toEqual([OVERRUN_REASON]);
         expect((await sandbox.logs()).filter(line => line === FIRST_OVERRUN_LINE)).toHaveLength(1);
         // two operations' stalls at most, not three: what one operation costs before the view can observe it is the
         // bound's second term, the debt holds the second back for at least LEAST_DEBT_MS, and the sandbox ends before
         // the third
-        const long = stalls.filter(stall => stall.ms > VIEW_MAX_OPERATION_MS / 2);
+        const long = stalled.filter(stall => stall.ms > VIEW_MAX_OPERATION_MS / 2);
         expect(long.length).toBeLessThanOrEqual(2);
         if (long.length === 2) expect(long[1]!.end - long[1]!.ms - long[0]!.end).toBeGreaterThan(0.9 * LEAST_DEBT_MS);
     });
@@ -259,10 +239,10 @@ test.describe('(d) outside the bound, measured only', () => {
         await mountEntry(sandbox, `sandboxView.render('<div id="a"></div><div id="b"></div>'); sandboxView.render(${TEXT}.repeat(15000), 'b');
             globalThis.flood = () => { let h = ''; for (let i = 0; i < 1000; i++) h += '<img src="https://a.example/i' + i + '.png">'; sandboxView.render(h, 'a'); };`, ADMITTED);
         await waitInView(page, browserName, `document.querySelectorAll('#b p').length === 15000`, 30000);
-        const idle = await best(page, IDLE_WINDOWS, IDLE_MS);
+        const idle = await idleBaseline(page);
         await sandbox.run('flood()');
         const loaded = await ticks(page, 3000);
-        console.log(`MEASURED ${browserName} view-bound (d) image decodes: idle ${idle.count} ticks per ${IDLE_MS} ms; the 3 s after the render ${loaded.count} ticks (${Math.round((1 - loaded.count / (idle.count * 3000 / IDLE_MS)) * 100)}% busy), longest gap ${loaded.longest} ms`);
+        console.log(`MEASURED ${browserName} view-bound (d) image decodes: idle ${idle.count} ticks per ${IDLE_MS} ms; the 3 s after the render ${loaded.count} ticks (${Math.round(busyOf(loaded.count, 3000, idle) * 100)}% busy), longest gap ${loaded.longest} ms`);
     });
 
     test('relayout after a font swap: one @font-face (font-display: swap) over 15 000 paragraphs, arriving after 1.5 s', async ({ sandbox, page, browserName }) => {
@@ -273,10 +253,10 @@ test.describe('(d) outside the bound, measured only', () => {
             globalThis.flood = () => sandboxView.render('<style>@font-face{font-family:g;src:url(https://a.example/f.ttf);font-display:swap}p{font-family:g,serif}</style>' + ${TEXT}.repeat(15000), 'b');`,
             { origins: { fonts: ['https://a.example'] } });
         await page.waitForTimeout(500);
-        const idle = await best(page, IDLE_WINDOWS, IDLE_MS);
+        const idle = await idleBaseline(page);
         await sandbox.run('flood()');
         await waitInView(page, browserName, `document.querySelectorAll('#b p').length === 15000`, 30000); // the render itself, measured by the meter
         const loaded = await ticks(page, 3000);
-        console.log(`MEASURED ${browserName} view-bound (d) font swap: idle ${idle.count} ticks per ${IDLE_MS} ms; the 3 s around the font's arrival ${loaded.count} ticks (${Math.round((1 - loaded.count / (idle.count * 3000 / IDLE_MS)) * 100)}% busy), longest gap ${loaded.longest} ms`);
+        console.log(`MEASURED ${browserName} view-bound (d) font swap: idle ${idle.count} ticks per ${IDLE_MS} ms; the 3 s around the font's arrival ${loaded.count} ticks (${Math.round(busyOf(loaded.count, 3000, idle) * 100)}% busy), longest gap ${loaded.longest} ms`);
     });
 });

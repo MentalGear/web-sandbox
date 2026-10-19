@@ -328,7 +328,9 @@ describe('C-4: a view operation costs what it changes, not the size of the whole
         document.body.replaceChildren();
     });
 
-    it('set({ value }) and text() on a view of ~1 M characters serialize a bounded amount each, not the whole body', async () => {
+    // An explicit budget for fixed work (backlog T6's class): a view of about 1 M characters built in jsdom, then 20
+    // operations on it. 2.1 s in a full idle run: vitest's 5 s was 2.4 times that. 15 times the idle cost.
+    it('set({ value }) and text() on a view of ~1 M characters serialize a bounded amount each, not the whole body', { timeout: 30000 }, async () => {
         // the real platform for the view (jsdom's), not the stand-ins above
         for (const name of Object.keys(PLATFORM)) (globalThis as any)[name] = originals[name];
         (globalThis as any).addEventListener = originalAddEventListener;

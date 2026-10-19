@@ -35,6 +35,10 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
   port is taken, the run stops with "Port … is already in use" rather than testing another checkout's code. Free the port
   or set `WEB_SANDBOX_E2E_PORT`. A reused server serves `dist/` as it was built when it started: rebuild
   (`bun run build:lib`) before running `package.spec.ts` against it.
+- **What the host page has left.** A spec that measures the host page's ticks, a busy share or its longest stall uses
+  `test/e2e/host-share.ts` (the best of N windows against the page's own idle baseline, the documented bounds, the
+  stall meter), never a meter of its own: `test/unit/host-share.test.ts` fails on one (backlog T9). One window on each
+  side measures the machine's load as the code's (T7).
 - **Discovery.** Specs are found under the checkout's own `test/e2e/` and `docs/research/`; anything under the
   checkout's own `.claude/` (nested worktrees, scratch copies) is ignored, by a pattern anchored at the checkout's root,
   so a checkout that itself lives under another one's `.claude/worktrees/` still finds its specs.

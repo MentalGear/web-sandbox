@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type SandboxDriver } from '../../../test/e2e/fixture';
 import { inView, waitInView } from '../../../test/e2e/strict-view';
+import { busyOf, ticks as hostTicks } from '../../../test/e2e/host-share';
 
 /**
  * Research 16: what the view's time budget costs to measure (README.md, "What measuring the budget costs"). On demand
@@ -61,16 +62,11 @@ async function rewriteView(page: Page, stub: boolean) {
     });
 }
 
-/** Host ticks of a 10 ms interval and host animation frames over WINDOW_MS. */
-const sample = (page: Page) => page.evaluate((duration) => new Promise<{ ticks: number; frames: number }>(resolve => {
-    let ticks = 0;
-    let frames = 0;
-    let running = true;
-    const timer = setInterval(() => ticks++, 10);
-    const frame = () => { if (!running) return; frames++; requestAnimationFrame(frame); };
-    requestAnimationFrame(frame);
-    setTimeout(() => { running = false; clearInterval(timer); resolve({ ticks, frames }); }, duration);
-}), WINDOW_MS);
+/** Host ticks of a 10 ms interval and host animation frames over WINDOW_MS (test/e2e/host-share.ts). */
+const sample = async (page: Page) => {
+    const window = await hostTicks(page, WINDOW_MS, { frames: true });
+    return { ticks: window.count, frames: window.frames };
+};
 
 type Spent = { frameCallbacks: number; layout: number; charge: number; meter: number; flushes: number; requests: number };
 const viewSpent = async (page: Page, browserName: string): Promise<Spent | null> => {
@@ -88,7 +84,8 @@ async function measure(sandbox: SandboxDriver, page: Page, browserName: string, 
     const result = {
         engine: browserName,
         scenario: label,
-        busyPercent: Math.max(0, Math.round((1 - ticks / (WINDOW_MS / 10)) * 100)),
+        // against the ideal, WINDOW_MS / 10 ticks: the page without a sandbox is each engine's floor (see above)
+        busyPercent: Math.max(0, Math.round(busyOf(ticks, WINDOW_MS, { count: WINDOW_MS / 10, ms: WINDOW_MS }) * 100)),
         fps: Math.round((frames / WINDOW_MS) * 1000),
         viewFrameRequestsPerSecond: before && after ? Math.round((delta('requests') / WINDOW_MS) * 1000) : null,
         flushesPerSecond: Math.round((flushes / WINDOW_MS) * 1000),
