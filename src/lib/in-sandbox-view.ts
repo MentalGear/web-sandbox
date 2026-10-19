@@ -72,7 +72,8 @@ export const VIEW_RENDER_CHARACTERS_PER_SECOND = 4 * VIEW_RENDER_MAX_LENGTH;
  * nothing is dropped. Every operation is charged all it took, measured, however long (review round 5, M-2), so the
  * budget bounds the view's long-run share of the thread at this rate: one that took 1.5 s holds the next one back for
  * 1.5 s × 1000 / VIEW_APPLY_MS_PER_SECOND (7.5 s), less what the budget held. See the view's flush (inSandboxView) for
- * why time, and not only characters, is budgeted, and VIEW_MAX_OPERATION_MS for what bounds one operation.
+ * why time, and not only characters, is budgeted, and VIEW_MAX_OPERATION_MS for what bounds one operation. The bound these
+ * budgets make up, and what is outside it, is stated once: docs/API.md, "The view's cost to the host page" (backlog S68).
  */
 export const VIEW_APPLY_MS_PER_SECOND = 200;
 

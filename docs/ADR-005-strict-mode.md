@@ -222,6 +222,8 @@ configuration, fetch bridge, auto-sizing), `strict-render-flood.spec.ts` (A4),
   (Playwright 1.58 builds, 256 Ki characters per render, flood as fast as allowed): host lag ≤ 10 ms in Chromium,
   50–150 ms in Firefox, 90–470 ms in WebKit; 45 000 elements in one render 0.2–0.3 s on all three. The watchdog
   does not count host stalls against the guest; the bound on termination is the budget plus one apply.
+  Stated as one bound since 2026-10-19, which supersedes the figures here and in the amendments below: [API.md, "The
+  view's cost to the host page"](API.md#the-views-cost-to-the-host-page) ([amendment 2026-10-19](#amendment-2026-10-19-the-views-cost-bound-stated-once)).
 - **CSS exfiltration** within the policy (style-based probing of the view's own content, requests to allowed
   origins); the policy governs it.
 - **Worker reports** are per engine: WebKit raises no violations in workers, Firefox raises the worker's
@@ -688,3 +690,23 @@ elements while the user's pointer moves (one operation's cost, driven by the use
 Tests: `test/e2e/view-switches.spec.ts` (every vector, the host's ticks with 5 000 animated elements and 300 animated
 form-control parts, the host page's `style-src`, autoplay), `test/e2e/view-budget.spec.ts` (C-2 hidden and off-screen,
 M-5), `test/unit/view-switches.test.ts`, `test/unit/review-round-3.test.ts` (C-2 and M-5), `test/unit/api-docs.test.ts`.
+
+## Amendment (2026-10-19): the view's cost bound, stated once
+
+**When**: backlog S68, after review round 5 and [research 18](research/18_finding_classes/README.md) (about 31% of the
+medium-or-higher findings of rounds 1–5 come from the view sharing the host page's thread, which no library design
+removes: research 16).
+
+**Decision**: the view's cost to the thread it runs on is one statement, in
+[API.md, "The view's cost to the host page"](API.md#the-views-cost-to-the-host-page), per engine and process placement:
+(a) the long-run bound, `VIEW_APPLY_MS_PER_SECOND` of the view's own time plus the browser's work on at most
+`VIEW_URLS_PER_SECOND` loads; (b) one operation at most `VIEW_MAX_OPERATION_MS` before the sandbox ends, plus that
+operation's own cost, which is not interruptible; (c) the rates and caps that bound what the meter cannot see; and (d) a
+closed list of what is outside it, each item with its measured magnitude. The residuals of
+[Consequences](#consequences) and the amendments above (2026-10-15 "host-page availability", 2026-10-17, 2026-10-18)
+record how each part came to be; where their figures differ from the statement, the statement holds. README's limits
+link it instead of restating it. A cost of the view outside both the bound and its list is a finding.
+
+Tests: `test/e2e/view-bound.spec.ts` (the canonical floods against (a), and (b), on every engine;
+`WEB_SANDBOX_SOAK=1` for longer windows and the (d) measurements), `test/unit/view-bound.test.ts` (every constant the
+statement names exists and has its value).
