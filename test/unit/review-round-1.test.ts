@@ -253,7 +253,7 @@ describe('R3-3: one byte budget per RPC message, and per channel in flight', () 
         const method = vi.fn(() => new Promise(() => {})); // never settles: its arguments stay held
         b.expose('m', method);
         const answers: any[] = [];
-        const reply = (frame: unknown) => answers.push(frame);
+        const reply = (frame: unknown) => void answers.push(frame);
         b.handleMessage({ type: 'RPC_REQ', id: 1, method: 'm', args: [new Uint8Array(RPC_MAX_BYTES)] }, reply);
         for (let id = 2; id <= 4; id++) b.handleMessage({ type: 'RPC_REQ', id, method: 'm', args: [new Uint8Array(30 * MiB)] }, reply);
         await Promise.resolve();
@@ -266,7 +266,7 @@ describe('R3-3: one byte budget per RPC message, and per channel in flight', () 
         const { b } = broker();
         b.expose('big', () => new Uint8Array(RPC_MAX_BYTES));
         const answers: any[] = [];
-        b.handleMessage({ type: 'RPC_REQ', id: 1, method: 'big', args: [] }, (frame) => answers.push(frame));
+        b.handleMessage({ type: 'RPC_REQ', id: 1, method: 'big', args: [] }, (frame) => void answers.push(frame));
         await vi.waitFor(() => expect(answers).toHaveLength(1));
         expect(answers[0]).toMatchObject({ ok: false, code: 'RESULT_NOT_TRANSFERABLE' });
 

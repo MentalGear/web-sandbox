@@ -291,7 +291,7 @@ describe('C-3: the byte measure is an allow-list over what is actually posted', 
         const broker = createBroker(() => {}, { sizeOf: createSizeOf(), timeoutMs: 0 });
         let reads = 0;
         broker.expose('twoFaced', () => ({ get x() { reads++; return reads === 1 ? 'small' : 'x'.repeat(RPC_MAX_BYTES); } }));
-        broker.handleMessage({ type: 'RPC_REQ', id: 1, method: 'twoFaced', args: [] }, (frame) => answers.push(structuredClone(frame)));
+        broker.handleMessage({ type: 'RPC_REQ', id: 1, method: 'twoFaced', args: [] }, (frame) => void answers.push(structuredClone(frame)));
         await vi.waitFor(() => expect(answers).toHaveLength(1));
         expect(createSizeOf()(answers[0], Infinity)).toBeLessThanOrEqual(RPC_MAX_BYTES + 1024);
         expect(reads).toBe(1);
@@ -299,7 +299,7 @@ describe('C-3: the byte measure is an allow-list over what is actually posted', 
 
     it('the receiving side re-measures with the same allow-list: a response holding a large Error is refused, not resolved', async () => {
         const sent: any[] = [];
-        const broker = createBroker((frame) => sent.push(frame), { sizeOf: createSizeOf(), timeoutMs: 0 });
+        const broker = createBroker((frame) => void sent.push(frame), { sizeOf: createSizeOf(), timeoutMs: 0 });
         const pending = broker.call('m');
         broker.handleMessage({ type: 'RPC_RES', id: sent[0].id, ok: true, value: new Error('x'.repeat(RPC_MAX_BYTES)) });
         await expect(pending).rejects.toMatchObject({ code: 'RESULT_NOT_TRANSFERABLE' });

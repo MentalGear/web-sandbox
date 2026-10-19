@@ -79,10 +79,10 @@ export type RpcMethod = (...args: any[]) => unknown;
 // ArrayBuffers of a result's snapshot, which no one else holds (sendResult).
 // A send that returns a string did not post the frame: the environment the call was made for is gone (review round 3,
 // L-2: the host's send, when a getter in the arguments ended it while they were copied). The call is refused at once
-// with TERMINATED and that text, so no call is ever left pending on a transport that will not answer it. Any other
-// return value means the frame was posted (or queued for its environment's port).
+// with TERMINATED and that text, so no call is ever left pending on a transport that will not answer it. Nothing
+// returned means the frame was posted (or queued for its environment's port): the type says both.
 // It takes an RpcFrame only, so inside createBroker nothing but a builder's frame can be posted (backlog S61.3).
-export type RpcSend = (frame: RpcFrame, transfer?: Transferable[]) => unknown;
+export type RpcSend = (frame: RpcFrame, transfer?: Transferable[]) => string | void;
 
 declare const rpcFrameBrand: unique symbol;
 /**
@@ -724,7 +724,7 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
             }, timeoutMs) : null;
             // Record the pending promise BEFORE sending, so a response can never arrive first.
             set(pending, id, { resolve, reject, disarm, reserved: isReservedName(method) });
-            let unsent: unknown;
+            let unsent: string | void;
             try {
                 unsent = send(frame);
             } catch (error) {
