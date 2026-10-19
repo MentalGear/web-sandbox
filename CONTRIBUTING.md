@@ -75,7 +75,9 @@ mitigated further**, when both hold:
 - the embedder can end it: `terminate()`, or removing the element, gives the host page back.
 
 Such a finding is at most medium. Its fix is a measured bound in docs/API.md, "The view's cost to the host page" (or
-the section of the surface it concerns), with what the embedder can do about it. The view shares the host page's thread
+the section of the surface it concerns), with what the embedder can do about it, and the figure in the cost column of
+its channel in the [budgets table](docs/API.md#budgets) (`CHANNEL_BUDGETS` in `src/lib/egress.ts`, which the table is
+generated from and a unit test keeps in step). The view shares the host page's thread
 on Firefox, WebKit and Android, so no budget of the library's removes that cost: past a stated bound, chasing it gives
 diminishing returns.
 

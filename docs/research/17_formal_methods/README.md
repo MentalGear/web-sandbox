@@ -82,7 +82,13 @@ The options considered:
 
 ## Running the files
 
-Nothing here runs in CI.
+**Now in CI (backlog S61).** The rate limiter's properties run as `test/unit/rate-limit.prop.test.ts`, against the real
+`rate-limit.ts` and the guest's copy of the rule lifted from the built bootstrap; the weight rule they found is fixed
+(one rule, `isWeight`, on both sides), and P3 and P5b now pass. The view budget's long-run bound runs as
+`test/unit/view-budget.prop.test.ts`, against the real `viewBudget`. The files here are the record of the proof of
+concept as it ran; the two in CI are the ones kept in step with the code.
+
+Nothing in this folder runs in CI.
 - **The property tests:** with fast-check installed (`bun add -d fast-check`), run
   `bun test docs/research/17_formal_methods/rate-limit.prop.test.ts`, and
   `MAXOP=200 bun test docs/research/17_formal_methods/view-budget.prop.test.ts` for the budget simulation.

@@ -1278,6 +1278,8 @@ export interface ViewOptions {
     /** VIEW_MAX_DISTINCT_URLS */
     maxDistinctUrls: number;
     violationLimit: number;
+    /** VIOLATION_MAX_STRING: the longest string of a violation report the view posts. */
+    violationMaxString: number;
     events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
     /** The Trusted Types policy name the view creates where the host page enforces them (trusted-types.ts). */
     trustedTypesPolicy: string;
@@ -1330,6 +1332,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     let renderPort: MessagePort | null = null;
     let initialised = false;
     const outbox: unknown[] = [];
+    // The one cut of the strings the view posts that the guest can choose (a violation report's, a guest error text): a
+    // string longer than `most` is cut to it; anything else is returned as it is, for the receiver to validate.
+    const cutText = (value: unknown, most: number): unknown => (typeof value === 'string' && value.length > most ? value.slice(0, most) : value);
     const toHost = (frame: unknown) => {
         if (viewPort) viewPort.postMessage(frame);
         else if (outbox.length < options.violationLimit) outbox.push(frame);
@@ -1344,23 +1349,31 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // The renderer's own refusals go through the same counts (review round 4, M-2): a URL the view's policy refuses is
     // dropped before insertion, so the browser never processes it, and reported here as the browser reported it (its
     // directive, and the URL without credentials or fragment), within the same per-directive cap.
+    // Its strings are cut before they are posted (backlog S61.3; class E-cpu, "cut before posting"), at
+    // options.violationMaxString, the length the host keeps (violation.ts, which cuts them again on receipt): a refused
+    // URL of the guest's markup or CSS is the guest's to choose, up to what one render holds, and every engine reports an
+    // https URL whole, so a render of one 100 000-character image URL crossed whole to the host page (measured:
+    // test/e2e/violation-strings.spec.ts). The bucket is the cut directive's, so it is bounded as well.
     const violationCounts = new Map<string, number>();
-    const reportViolation = (directive: string, blockedURI: unknown, sourceFile?: unknown, lineNumber?: unknown, columnNumber?: unknown) => {
-        const bucket = violationCounts.has(directive) || violationCounts.size < 32 ? directive : '';
+    const reportViolation = (directive: unknown, blockedURI: unknown, sourceFile?: unknown, lineNumber?: unknown, columnNumber?: unknown) => {
+        const name = String(cutText(directive, options.violationMaxString));
+        const bucket = violationCounts.has(name) || violationCounts.size < 32 ? name : '';
         const count = violationCounts.get(bucket) || 0;
         if (count >= options.violationLimit) return;
         violationCounts.set(bucket, count + 1);
-        toHost({ type: 'VIOLATION', directive, blockedURI, sourceFile, lineNumber, columnNumber });
+        toHost({ type: 'VIOLATION', directive: name, blockedURI: cutText(blockedURI, options.violationMaxString), sourceFile: cutText(sourceFile, options.violationMaxString), lineNumber, columnNumber });
     };
     // Each one is charged to the load budget too (review round 5, M-3; VIEW_URLS_PER_SECOND): what the browser did to
     // refuse a load, whatever named it (CSS too), unless it is a URL a render kept, which was charged when it was
     // rendered (the renderer expected the browser to admit it). WebKit reports some refusals twice: each report is
     // work, and each is charged. Like a load the platform reports (observeLoads), it takes from the credit of the CSS
     // the view prepaid first (backlog S73; viewBudget), and is charged once that is spent.
+    // Each field is read once (the view runs no guest code, so its getters are the platform's).
     addEventListener('securitypolicyviolation', (event: any) => {
         if (!event.isTrusted) return;
-        if (!renderedLoads.has(String(event.blockedURI))) budget.observed(1, performance.now());
-        reportViolation(event.effectiveDirective || event.violatedDirective, event.blockedURI, event.sourceFile, event.lineNumber, event.columnNumber);
+        const blockedURI = event.blockedURI;
+        if (!renderedLoads.has(String(blockedURI))) budget.observed(1, performance.now());
+        reportViolation(event.effectiveDirective || event.violatedDirective, blockedURI, event.sourceFile, event.lineNumber, event.columnNumber);
     }, true);
 
     // No navigation from rendered markup (G4, A5): the default of every click or auxclick on or inside a link
@@ -2409,7 +2422,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 textTimes[textsHead] = now;
                 textsHead = (textsHead + 1) % limit;
             }
-            viewPort!.postMessage({ type, message: text.slice(0, options.guestText.maxLength) });
+            viewPort!.postMessage({ type, message: cutText(text, options.guestText.maxLength) });
         };
 
         let sourceUrl: string | null = null;
@@ -2896,6 +2909,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     overrunWindow: VIEW_OVERRUN_WINDOW_MS,
     maxDistinctUrls: VIEW_MAX_DISTINCT_URLS,
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
+    violationMaxString: 2048, // VIOLATION_MAX_STRING (violation.ts); a test keeps them equal
     events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,
     writeTypes: VIEW_WRITE_TYPES,
