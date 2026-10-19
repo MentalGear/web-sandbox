@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
-import { inSandboxView, sanitizeRender, VIEW_OPTIONS } from '@src/lib/in-sandbox-view';
+import { inSandboxView, sanitizeRender, VIEW_MAX_OPERATION_MS, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
 import { defineWebSandbox } from '@src/host';
 import { createBroker } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
@@ -504,7 +504,7 @@ describe('C-4: the strict view bounds the guest error texts it relays before pos
             transfer: MessagePort[] = [];
             postMessage(_message: unknown, transfer: MessagePort[]) { this.transfer = transfer; }
         };
-        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(VIEW_OPTIONS)});`)();
+        new Function(viewBootstrapSource(VIEW_OPTIONS))();
         const logic = new MessageChannel(), view = new MessageChannel();
         const toHost: any[] = [];
         view.port2.onmessage = (event) => toHost.push(event.data);
@@ -681,7 +681,7 @@ describe("C-2 and M-5: the view's time budget charges only the rendering it meas
             transfer: MessagePort[] = [];
             postMessage(_message: unknown, transfer: MessagePort[]) { this.transfer = transfer; }
         };
-        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(VIEW_OPTIONS)});`)();
+        new Function(viewBootstrapSource(VIEW_OPTIONS))();
         const logic = new MessageChannel(), view = new MessageChannel();
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<p id="a">0</p>', allowAnimations: true }, source: window, ports: [logic.port1, view.port1] }));
         const render = workers[0]!.transfer[1]!;
@@ -695,7 +695,9 @@ describe("C-2 and M-5: the view's time budget charges only the rendering it meas
             return until(() => acks.length > before, 30000);
         };
         const shown = () => document.getElementById('a')?.textContent;
-        return { send, text, shown, close: () => { render.close(); view.port2.close(); logic.port2.close(); } };
+        const fromView: string[] = []; // the types of what the view posts to the host
+        view.port2.onmessage = (event) => fromView.push(event.data?.type);
+        return { send, text, shown, fromView, close: () => { render.close(); view.port2.close(); logic.port2.close(); } };
     }
 
     // The view shows again: frames run every 16 ms of real time, and the clock follows.
@@ -732,24 +734,84 @@ describe("C-2 and M-5: the view's time budget charges only the rendering it meas
         close();
     });
 
-    it("a rendering update that took 20 s holds the next operation back for one second of the view's time, repaid in 5 s (the debt is capped)", { timeout: 60000 }, async () => {
-        const { send, text, shown, close } = startView();
+    // Review round 5, M-2: the debt was floored at one second (VIEW_APPLY_MAX_DEBT_MS), so an operation of 7.5 s was
+    // charged 1.2 s and ran again every 12.5 s. Each is charged in full now, and one past VIEW_MAX_OPERATION_MS ends the
+    // sandbox. (At 60814b5, the 1.5 s update held the next one back 5 s, and 20 s did too.)
+    it("a rendering update that took 1.5 s holds the next operation back for all of it: 1.3 s of debt, repaid at 200 ms per second (6.5 s)", { timeout: 60000 }, async () => {
+        const { send, text, shown, fromView, close } = startView();
         await tasks();
         frame();
         await tasks();
         expect(await text('1')).toBe(true);
         frame(); // the frame that renders it
-        clock.now += 20000; // its rendering update took 20 s (uncapped, the next operation would wait 100 s)
+        clock.now += 1500; // its rendering update took 1.5 s (with the floor, the next operation waited 5 s)
         await tasks();
         const stop = runFrames();
         const started = Date.now();
         send('2');
-        const ok = await until(() => shown() === '2', 9000);
+        const ok = await until(() => shown() === '2', 15000);
         const waited = Date.now() - started;
         stop();
         expect(ok).toBe(true);
-        expect(waited, 'VIEW_APPLY_MAX_DEBT_MS at VIEW_APPLY_MS_PER_SECOND, and a frame').toBeGreaterThan(4000);
-        expect(waited).toBeLessThan(6500);
+        expect(waited, '1.5 s less the 200 ms the budget held, at VIEW_APPLY_MS_PER_SECOND').toBeGreaterThan(6000);
+        expect(fromView).not.toContain('VIEW_OVERRUN');
+        close();
+    });
+
+    it(`a rendering update past VIEW_MAX_OPERATION_MS (${VIEW_MAX_OPERATION_MS} ms) ends the view: VIEW_OVERRUN on its port, once, and nothing more is applied`, { timeout: 60000 }, async () => {
+        const { send, text, shown, fromView, close } = startView();
+        await tasks();
+        frame();
+        await tasks();
+        expect(await text('1')).toBe(true);
+        frame();
+        clock.now += VIEW_MAX_OPERATION_MS + 1; // its rendering update took just past the limit
+        await tasks();
+        expect(fromView.filter(type => type === 'VIEW_OVERRUN')).toHaveLength(1);
+        const stop = runFrames();
+        send('2');
+        await until(() => shown() === '2', 1500);
+        stop();
+        expect(shown()).toBe('1');
+        expect(fromView.filter(type => type === 'VIEW_OVERRUN')).toHaveLength(1);
+        close();
+    });
+
+    it('at the limit, and hidden for 30 s between flushes: no VIEW_OVERRUN (time in which no frame ran is no operation)', { timeout: 60000 }, async () => {
+        const { text, fromView, close } = startView();
+        await tasks();
+        frame();
+        await tasks();
+        expect(await text('1')).toBe(true);
+        frame();
+        clock.now += VIEW_MAX_OPERATION_MS; // exactly the limit: allowed
+        await tasks();
+        clock.now += 30000; // hidden: no frame
+        expect(await text('2')).toBe(true); // flushed by the timer, measured by the next frame
+        clock.now += 30000;
+        frame();
+        clock.now += 5;
+        await tasks();
+        expect(fromView).not.toContain('VIEW_OVERRUN');
+        close();
+    });
+
+    it('a page hidden between the frame and the measure: the measure is dropped, neither charged nor counted', { timeout: 60000 }, async () => {
+        const { send, text, shown, fromView, close } = startView();
+        await tasks();
+        frame();
+        await tasks();
+        expect(await text('1')).toBe(true);
+        frame(); // the measure starts here
+        clock.now += 60000; // the page was hidden and its timers throttled before the measure's task ran
+        document.dispatchEvent(new Event('visibilitychange', { bubbles: true }));
+        await tasks();
+        expect(fromView).not.toContain('VIEW_OVERRUN');
+        const stop = runFrames();
+        send('2');
+        const ok = await until(() => shown() === '2', 1500); // nothing was charged: applied at once
+        stop();
+        expect(ok).toBe(true);
         close();
     });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { inSandboxView, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_STILL_STYLE, type RenderSwitches } from '@src/lib/in-sandbox-view';
+import { inSandboxView, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_STILL_STYLE, viewBootstrapSource, type RenderSwitches } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
 
@@ -80,17 +80,16 @@ describe('the renderer', () => {
 });
 
 describe('the still stylesheet (VIEW_STILL_STYLE)', () => {
-    it('one anonymous layer: no animation and no transition, !important, on every element and each pseudo-element in a rule of its own', () => {
-        expect(VIEW_STILL_STYLE.startsWith('@layer{')).toBe(true);
-        expect(VIEW_STILL_STYLE.endsWith('}}')).toBe(true);
-        const rules = VIEW_STILL_STYLE.slice('@layer{'.length, -1).split('}').filter(Boolean);
+    it('one anonymous layer: no animation and no transition, !important, on every element; the view adds a rule of its own per pseudo-element its engine supports', () => {
         const declarations = 'animation:none!important;transition:none!important';
-        expect(rules.map(rule => rule.slice(rule.indexOf('{') + 1))).toEqual(rules.map(() => declarations));
-        const selectors = rules.map(rule => rule.slice(0, rule.indexOf('{')));
-        expect(selectors).toEqual(['*', ...VIEW_STILL_PSEUDO_ELEMENTS.map(name => `*::${name}`)]);
-        for (const selector of selectors) expect(selector, 'one selector per rule').not.toMatch(/,/);
-        for (const name of ['before', 'after', 'marker', 'placeholder', 'selection', 'backdrop', 'file-selector-button', '-webkit-slider-thumb', '-moz-range-thumb']) {
+        expect(VIEW_STILL_STYLE).toBe(`@layer{*{${declarations}}}`); // constant, so its hash is (review round 5, M-1: the rules per engine are added through the CSSOM)
+        expect(VIEW_OPTIONS.still).toEqual({ pseudoElements: VIEW_STILL_PSEUDO_ELEMENTS, declarations });
+        for (const name of ['before', 'after', 'marker', 'placeholder', 'backdrop', 'file-selector-button', '-webkit-slider-thumb', '-moz-range-thumb']) {
             expect(VIEW_STILL_PSEUDO_ELEMENTS as readonly string[]).toContain(name);
+        }
+        // no animation applies to these, and ::first-letter and ::first-line cost Firefox 22 s for one large replacement
+        for (const name of ['first-letter', 'first-line', 'selection', 'target-text', 'spelling-error', 'grammar-error', 'search-text', '-moz-selection']) {
+            expect(VIEW_STILL_PSEUDO_ELEMENTS as readonly string[]).not.toContain(name);
         }
         expect(VIEW_OPTIONS.stillStyle).toBe(VIEW_STILL_STYLE);
     });
@@ -109,7 +108,7 @@ describe('the view bootstrap: the switches from INIT_VIEW', () => {
             onerror: unknown = null;
             postMessage() {}
         };
-        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(VIEW_OPTIONS)});`)();
+        new Function(viewBootstrapSource(VIEW_OPTIONS))();
         const logic = new MessageChannel(), view = new MessageChannel();
         const toHost: any[] = [];
         view.port2.onmessage = (event) => toHost.push(event.data);

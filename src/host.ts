@@ -26,7 +26,7 @@ import { createFetchBridge, fetchRefusal, FETCH_METHOD, toFetchPolicy, type Fetc
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
  * The element's configuration, passed to setConfig(): every option left out takes its default
@@ -338,6 +338,8 @@ const DEFAULT_TERMINATE_REASON = 'terminated by the host';
 const WATCHDOG_REASON = 'the guest stopped responding (watchdog)';
 const ENTRY_FAILED_REASON = 'the guest entry failed to start';
 const VIEW_LOST_REASON = 'the sandbox view stopped responding';
+// VIEW_MAX_OPERATION_MS, in words (a unit test keeps them equal)
+const VIEW_OVERRUN_REASON = 'the view spent more than 2000 ms on one operation';
 const EXECUTION_TIMEOUT_REASON = 'the executed code ran longer than workerExecutionTimeout';
 const CONFIG_REFUSED_REASON = 'the configuration could not be used';
 const BUILD_FAILED_REASON = 'the environment could not be built';
@@ -1358,6 +1360,12 @@ export class WebSandbox extends ElementBase {
             this._viewWatchdog?.handlePong(data.n);
             return;
         }
+        if (data?.type === 'VIEW_OVERRUN') {
+            // One operation of the view, a flush and the rendering that showed it, took longer than VIEW_MAX_OPERATION_MS
+            // (review round 5, M-2; in-sandbox-view.ts): the view has stopped applying operations.
+            this._terminate(VIEW_OVERRUN_REASON);
+            return;
+        }
         if (data?.type === 'VIEW_WRITTEN') {
             // the view holds a guest write (R4-4): the guest may now be told its write stands
             const pending = typeof data.id === 'number' ? this._viewWrites.get(data.id) : undefined;
@@ -2044,7 +2052,7 @@ export class WebSandbox extends ElementBase {
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (broad review ST4)
-        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
+        const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };
         const prelude = '(function (g) {'
             + `(${assertEntryScoped.toString()})(g);`
             + workerGlobalsStatement('g')

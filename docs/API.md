@@ -235,11 +235,13 @@ animations and transitions too). The budget bounds what the view does when the g
 rendered, runs without the view doing anything. Set `false` to remove animations and transitions from the view: every
 element shows its end state, and the bound holds again. With `false` the view puts a stylesheet of its own before
 anything the guest renders, one anonymous cascade layer that sets `animation` and `transition` to `none !important` on
-every element and pseudo-element, and the renderer removes every animation and transition declaration that holds
+every element and, once the guest's CSS names it (or uses an escape or `@import`), on each pseudo-element the browser
+supports that an animation applies to (not `::first-letter`, `::first-line`, the highlight pseudo-elements or scrollbar
+parts, on which no animation runs), and the renderer removes every animation and transition declaration that holds
 anything but a CSS-wide keyword from `style` attributes (an inline `!important` would beat any layer). A `style`
-attribute whose text names no animation or transition (no `anim`, `trans` or backslash in it) is left exactly as
-written; one that does, and declares more properties than it has characters (`all` beside an animation), is removed
-whole. Nothing the guest declares overrides it: its own
+attribute whose text contains neither `animation` nor `transition` (in any case) nor a backslash is left exactly as
+written. One that does, and also has a backslash or declares `all` (outside comments and strings), is removed whole;
+any other loses only its animation and transition declarations. Nothing the guest declares overrides it: its own
 `!important`, its own layers, `@starting-style`, `@property`, scroll-driven animations, registered stylesheets and
 their `@import`s. Your page's `style-src` must allow that stylesheet (`'unsafe-inline'`, or its hash: see
 [Host page policy](#host-page-policy)); where it does not, the view removes the guest's stylesheets instead
@@ -532,6 +534,7 @@ build is loading.
 | `the host page's Trusted Types policy does not allow the policy name 'web-sandbox' (trusted-types; see docs/API.md#host-page-policy)` | The host page enforces Trusted Types and its `trusted-types` directive does not name `web-sandbox`, also when the host page's own default policy takes the element's strings (the view and worker mode's frame need the policy themselves). |
 | `the guest entry "…" is not a registered JavaScript file` | Strict mode: `entry` names no registered JavaScript file. |
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
+| `the view spent more than 2000 ms on one operation` | Strict mode: one operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it; see [`sandboxView`](#sandboxview). |
 | `unknown mode …` | `mode` is not `strict`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`. |
 | `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned, an `origins` that is not an object, or a kind of it that is not a list. |
 | `the environment could not be built (…)` | Building the frame failed. |
@@ -554,7 +557,7 @@ name.
 | `idle` | Not in the document (constructed, or removed): no frame. |
 | `loading` | A frame was built; waiting for the guest to check in (without `allow-scripts`, and in strict mode, for the frame to load); at most `LOAD_TIMEOUT_MS` (host time), then `terminated`. |
 | `ready` | The guest can be reached; `ready` was dispatched. In cooperative mode the guest document may still be loading. |
-| `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`), an integrity check or a failed build; `terminated` was dispatched. |
+| `terminated` | Torn down by `terminate()`, a budget (watchdog, `workerExecutionTimeout`, the view's longest operation), an integrity check or a failed build; `terminated` was dispatched. |
 
 There is no `running` state: nothing reports that guest code is running or that it stopped.
 
@@ -562,7 +565,7 @@ There is no `running` state: nothing reports that guest code is running or that 
 | :--- | :--- | :--- |
 | any | inserted into the document; `setConfig()`, `load()` or `reset()` while in it | `loading`, then `ready`, or `terminated` if the build is refused or fails: one `terminated` per attempt, except for an attempt made from a `terminated` listener that ends with the very reason being dispatched (the same refusal again), which ends `terminated` without another event |
 | any | removed from the document | `idle`, no event |
-| any but `terminated` | `terminate()`, watchdog, `workerExecutionTimeout`, integrity check | `terminated` |
+| any but `terminated` | `terminate()`, watchdog, `workerExecutionTimeout`, the view's longest operation, integrity check | `terminated` |
 
 Every rebuild and teardown rejects pending calls with `TERMINATED`, aborts in-flight `sandboxFetch()` requests,
 and resets the per-environment caps (log rate, violations). Listeners run synchronously; a listener that calls
@@ -790,10 +793,13 @@ ones it needs (form controls, tables, lists, media, links; SVG geometry and pres
 Never an event handler. `src`, `srcset` and `poster` keep a registered file's path, a relative URL (which loads
 nothing), or an `https:` or `http:` URL of an origin [`origins`](#origins) lists for that load (`images` for `img`,
 `srcset` and `poster`, `media` for `audio`, `video`, their `source` and `track`), never `data:` or `javascript:`. A URL
-the view's policy would refuse is dropped before insertion, so the browser never loads or refuses it, and the view
-reports it as the browser would have: a `violation` with the directive and the URL (without credentials or fragment),
-within the same cap. CSS is not rewritten: a URL a stylesheet or a `style` attribute names (`url()`, `image-set()`)
-is left to the browser, which refuses and reports a refused one. SVG `fill`, `stroke`, `clip-path` and `mask`
+the view's policy might refuse is dropped before insertion, so the browser never loads or refuses it: an `https:` or
+`http:` URL is kept only when its scheme, host and port are exactly those of a listed origin, or, for an image, when it
+is an `http:` URL whose `https:` form is (the policy upgrades an image's `http:` URL on every engine; not on a loopback
+host, which Chromium does not upgrade). So write URLs in the form you list them. A dropped `https:` or `http:` URL is
+reported as a `violation` with the directive and the URL (without credentials or fragment), within the same cap; a URL
+of any other scheme is dropped without a report (no engine would request it). CSS is not rewritten: a URL a stylesheet
+or a `style` attribute names (`url()`, `image-set()`) is left to the browser, which refuses and reports a refused one. SVG `fill`, `stroke`, `clip-path` and `mask`
 reference only `url(#id)`. Link clicks and form submissions navigate nowhere.
 
 Not available in strict mode: `use`, markers, SVG filters, SVG `image`, `foreignObject` and animation; `canvas`,
@@ -804,20 +810,33 @@ SVG cover most of it.
 
 Text is kept, each run of adjacent text joined into one node; comments are dropped. The view holds
 at most 50000 elements, nested at most 256 deep below its body, and at most 1048576 characters (its body's
-serialization: text, attributes and markup alike), and at most 1000 URL-bearing attributes (`src`, `srcset`, `poster`
-and a link's `href`, whatever they name), counted over the document a render would leave (what is outside the target stays): a render past
-any of them is dropped as a whole, the next one still applies, and the guest's log says
+serialization: text, attributes and markup alike), and at most 1000 URL-bearing attributes (`src`, `srcset`, `poster`,
+and `<link>`'s `href`, whatever they name), counted over the document a render would leave (what is outside the target
+stays): a render past any of them is dropped as a whole, the next one still applies, and the guest's log says
 `[Sandbox] sandboxView.render: the view refused a render: …`. The view parses at most 1048576 characters of markup
-per second, renders it refused included, takes at most 200 URL-bearing attributes per second (what the browser does
-with a URL once it is rendered, loading and decoding it, is no work of the view's, so its time budget cannot see it),
-and spends on average at most 200 ms of its own time per second on them, measured
-(their layout and the rendering update that shows them included; never time in which the view, hidden or off-screen,
-rendered nothing): an operation past either waits, and so does the worker's next one (one in flight), so a flood of
-renders is slowed, not dropped. One operation's own cost is not bounded by them (one textarea of 250 000 characters
-took WebKit 1.3–1.7 s); what follows it waits for the budget, at most 5 s (the budget owes at most one second of the
-view's time). The time budget bounds the long-run share, not each second: since it may owe up to one second, a single
-second can hold more (simulated: up to 553 ms with operations of at most 200 ms), and an operation longer than that is
-charged only up to it ([research 17](research/17_formal_methods/README.md)). CSS animations and transitions, once rendered, are outside this budget: see
+per second, renders it refused included. It makes at most 200 loads per second: every URL-bearing attribute a render keeps,
+charged when it is rendered, and every other load its document's resource timing reports (a CSS background, a font, a
+stylesheet, whatever named it: `url()`, `image-set()`, `@import`) or its policy refused, charged when the browser
+reports it, which is once a response has ended (a slow server lets the renders made meanwhile through first: Firefox
+made 1.8 times the rate under the tests' slow route). What the browser does with a URL once it is rendered, loading
+and decoding it, is no work of the view's, so its time budget cannot see it. Over its whole life one view loads at most
+10000 distinct URLs (each stays in the engine's caches while the view lives; WebKit's host page stalled 1.2 s near
+8 000 and 8.8 s near 43 000): a render whose URL attributes would take it past that is refused (`[Sandbox]
+sandboxView.render: the view refused a render: the view would load more than 10000
+distinct URLs in this environment; nothing of it was applied.`), and so is, once it is reached, a render carrying CSS
+that can name a URL (a `<style>`, a stylesheet `<link>`, a `style` attribute with `url(`, `image-set(`, `@import` or a
+backslash); a stylesheet already in the view still loads what it names. `reset()` starts a new view. The view spends on
+average at most 200 ms of its own time per second on operations, measured (their layout and the rendering update that
+shows them included; never time in which the view, hidden or off-screen, rendered nothing). An operation past any of
+these waits, and so does the worker's next one (one in flight), so a flood of renders is slowed, not dropped. Each
+operation is charged all it took, so the budget bounds the view's long-run share of the thread: an operation of 1.5 s
+holds the next back for about 6.5 s. It does not bound each second: the budget holds one second's worth, so a single
+second can hold more (simulated: up to 553 ms with operations of at most 200 ms;
+[research 17](research/17_formal_methods/README.md)). One operation's own cost is bounded by time alone: one that takes
+longer than 2000 ms ends the sandbox (`the view spent more than 2000 ms on one operation`): in WebKit the first
+`set()` of a 250 000-character textarea value does (its value and first paint), and slower machines reach it sooner. Where the view shares your
+page's thread, a task of your page's that runs while the view measures its rendering update is counted in it. CSS
+animations and transitions, once rendered, are outside this budget: see
 [`allowAnimations`](#allowanimations-and-allowautoplay).
 
 Registered files are named by path in `src`, `href` and `poster`. The view shows only files that never open as a
@@ -933,9 +952,10 @@ in strict mode.
 | Strict: characters in the view (its body's serialization) | 1048576 | — |
 | Strict: characters of markup the view parses per second | 1048576 | — |
 | Strict: time the view spends applying operations per second, their layout and rendering included (ms) | 200 | — |
-| Strict: most time the view's time budget may owe (ms) | 1000 | — |
-| Strict: URL-bearing attributes in the view (`src`, `srcset`, `poster`, `href`) | 1000 | — |
-| Strict: URL-bearing attributes the view takes per second | 200 | — |
+| Strict: longest operation of the view, its layout and rendering included (ms; longer ends the sandbox) | 2000 | — |
+| Strict: URL-bearing attributes in the view (`src`, `srcset`, `poster`, `<link>`'s `href`) | 1000 | — |
+| Strict: loads of the view per second (URL-bearing attributes rendered, and every other load or refused load the browser reports) | 200 | — |
+| Strict: distinct URLs one view loads, over its life | 10000 | — |
 | Strict: nesting depth below the view's body | 256 | — |
 | Strict: characters of one event detail, all strings together | 262144 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
@@ -967,7 +987,7 @@ policy must allow:
 | :--- | :--- | :--- | :--- |
 | `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; `'unsafe-eval'` for `execute()` | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
 | `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
-| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; with `allowAnimations: false`, also the view's animation stylesheet's hash `'sha256-/5RpApu78aTdhG04IX6feIc7KP+1UuVtUKyPG2hoG9k='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
+| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; with `allowAnimations: false`, also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
 | `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` | the same | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
 | Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox`, which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |

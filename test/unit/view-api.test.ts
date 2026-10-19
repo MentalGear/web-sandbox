@@ -162,7 +162,7 @@ describe('R4-5: the view applies text and set: text is assigned, never parsed; v
 
     // The bootstrap in this document with a fake Worker; `maxCharacters` replaces the view's character budget.
     const startView = async (html: string, maxCharacters?: number) => {
-        const { inSandboxView, sanitizeRender, VIEW_OPTIONS } = await import('@src/lib/in-sandbox-view');
+        const { VIEW_OPTIONS, viewBootstrapSource } = await import('@src/lib/in-sandbox-view');
         const { inSandboxFiles } = await import('@src/lib/in-sandbox-files');
         focused = true;
         vi.spyOn(Document.prototype, 'hasFocus').mockImplementation(() => focused);
@@ -172,7 +172,7 @@ describe('R4-5: the view applies text and set: text is assigned, never parsed; v
             postMessage(_message: unknown, transfer: MessagePort[]) { workers.push(transfer); }
         };
         const options = maxCharacters ? { ...VIEW_OPTIONS, render: { ...VIEW_OPTIONS.render, maxCharacters } } : VIEW_OPTIONS;
-        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${JSON.stringify(options)});`)();
+        new Function(viewBootstrapSource(options))();
         const logic = new MessageChannel(), view = new MessageChannel();
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html }, source: window, ports: [logic.port1, view.port1] }));
         const render = workers[0]![1]!;

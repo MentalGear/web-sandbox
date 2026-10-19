@@ -73,9 +73,12 @@ text stays constant) and hands the worker the logic and render ports.
 - **G4 — egress is the policy, and nothing navigates.** The worker inherits the view policy exactly
   (`connect-src` governs it), and requests only through the four globals of its allowlist that the policy governs on
   every engine (amendment below); the view's loads are governed by `img-src`, `style-src`, `font-src`, `media-src`,
-  and a URL in rendered markup that the view policy refuses is dropped by the renderer before the browser sees it
-  (reported as the browser would have), while the ones it keeps are bounded in number and per second
-  (`VIEW_MAX_URLS`, `VIEW_URLS_PER_SECOND`).
+  and a URL in rendered markup is kept only where every engine's policy check admits it (its exact origin is listed,
+  or it is an image's `http:` URL whose `https:` upgrade is, off a loopback host), else dropped by the renderer before
+  the browser sees it and, an `http(s)` one, reported as a violation; the ones it keeps are bounded in number
+  (`VIEW_MAX_URLS`), and every load, as the renderer kept it or as the browser reports it (resource timing, CSS-borne
+  loads included, and violations), per second (`VIEW_URLS_PER_SECOND`) and in distinct URLs over the view's life
+  (`VIEW_MAX_DISTINCT_URLS`). The renderer's prediction may only err toward refusing, and no bound depends on it.
   No WebRTC is reachable. The view cancels the default of every click on or inside a link (HTML and SVG `a`,
   `area`, anything with an `href`, including fragment links, which resolve against the inherited `about:blank`
   base and so are navigations) and of every submit; `form-action 'none'` and the wrapper's `frame-src 'none'`
@@ -625,14 +628,24 @@ indeterminate `<progress>` up to +4.
   and the time budget does not bound them: a guest can keep the host page 80–98% busy for as long as they run.** `false`
   removes them, and the bound holds again:
   - a stylesheet of the library's (`VIEW_STILL_STYLE`) becomes the view head's first element at `INIT_VIEW`, before
-    anything is rendered: one ANONYMOUS `@layer` with `animation:none!important;transition:none!important` on `*` and,
-    in a rule of its own each, every pseudo-element the engines animate on the elements the renderer keeps (a selector
-    list with one unknown pseudo-element drops the whole rule). A layered `!important` beats every later layer's and
-    every unlayered one; the layer is first because renders reach only the body; it is anonymous so no guest rule can
-    join it;
+    anything is rendered: one ANONYMOUS `@layer` with `animation:none!important;transition:none!important` on `*`. Its
+    text is constant (so is its hash); the view appends to the layer, through the CSSOM, a rule of its own for each
+    pseudo-element of `VIEW_STILL_PSEUDO_ELEMENTS` this engine supports (`CSS.supports('selector(…)')`, or, for a
+    `::-webkit-` name, its parser keeping the rule), once guest CSS it is about to apply names it (an escape or an
+    `@import` names them all). Every rule costs style work for every element (Chromium: about one more style resolution
+    per element each, `::scroll-button(*)` 2.5–8 times a whole replacement), and only a guest stylesheet can give a
+    pseudo-element an animation, so a guest pays for the pseudo-elements it names, in its own time budget.
+    `::first-letter` and `::first-line` (only typographic properties apply; with them Firefox took 22–30 s to replace
+    37 449 elements), the highlight pseudo-elements (only colours and decorations apply), `::column` and the scrollbar
+    parts (no animation ran on them, measured) are not listed. A large replacement costs at most twice what it costs
+    with animations on (`test/e2e/view-round-5.spec.ts`, "M-1": 0.8–1.4 times measured). A layered `!important` beats every
+    later layer's and every unlayered one; the layer is first because renders reach only the body; it is anonymous so
+    no guest rule can join it;
   - the renderer takes every `animation*` and `transition*` declaration, prefixed ones included, out of every kept
     `style` attribute, read through the element's own CSSOM declaration and written back as its serialization: an
-    inline `!important` beats any layer (without this, the host stayed 90–95% busy);
+    inline `!important` beats any layer (without this, the host stayed 90–95% busy). Which attributes are read is
+    decided by their text alone: one without `animation`, `transition` or a backslash stays as written, and one with a
+    backslash or a declaration of `all` goes whole;
   - the view checks that the sheet is in force (a probe element's inline transition and animation must compute to
     none). A host page whose `style-src` refuses it (neither `'unsafe-inline'` nor its constant hash, API.md "Host page
     policy") gets a view that drops the guest's `<style>` and stylesheet `<link>` elements instead, and one warning
@@ -647,11 +660,13 @@ indeterminate `<progress>` up to +4.
   (`elementFromPoint`, which WebKit cannot answer without laying out a textarea's text, unlike `offsetHeight`), and the
   rendering update after it, measured as the time from the end of a frame callback to the first task after it: the
   frame the flush ran in, or the next frame for a flush the timer ran. At most one measurement is outstanding, nothing
-  is requested without a flush, and no wall time is charged in which no frame ran. The debt is capped at one second of
-  the view's time (`VIEW_APPLY_MAX_DEBT_MS`, repaid in 5 s). So the budget is a long-run average, not a bound on each
-  second: a single second can hold more (simulated: 398–553 ms with operations of at most 200 ms), and an operation longer
-  than the debt cap is charged only up to it (repeated 20-second operations reached an 82% share)
-  ([research 17](research/17_formal_methods/README.md)). This replaces the frame callback per flush that charged its
+  is requested without a flush, and no wall time is charged in which no frame ran (a measure across which the
+  document's visibility changed is dropped). Every operation is charged all it took, so the budget is a long-run
+  average of `VIEW_APPLY_MS_PER_SECOND`, not a bound on each second: a single second can hold more (simulated: 398–553
+  ms with operations of at most 200 ms; [research 17](research/17_formal_methods/README.md)). One operation, a flush
+  and the rendering measured after it, is bounded by `VIEW_MAX_OPERATION_MS` (2 s): past it the view stops and the
+  sandbox ends (`the view spent more than 2000 ms on one operation`). A debt cap of one second, which this replaces,
+  charged an operation of 7.5 s 1.2 s, and it ran again every 12.5 s (53% busy). This replaces the frame callback per flush that charged its
   own age past one frame: hidden 5 s with one render applied meanwhile, the next render waited 18.3 s (C-2, Chromium,
   Firefox `display:none`, WebKit off-screen); and a frame per flush went uncharged, so a flood took 22–25% (M-5). Now:
   the next render applies within 70 ms, and the flood takes 15–23% of the host page's ticks.
