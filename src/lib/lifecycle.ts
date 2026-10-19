@@ -87,21 +87,16 @@ declare const generationBrand: unique symbol;
  */
 export type Generation = number & { readonly [generationBrand]: true };
 
-export interface LcState {
-    readonly state: SandboxState;
+/** What every state holds, whatever it is. */
+export interface LcCommon {
     // Counts environments: every teardown increments it (host.ts, `_generation`). The only clock the reducer compares.
     readonly gen: Generation;
-    // A build's 'terminated' waiting for its task (round 1's R3-2), with the generation it belongs to. host.ts holds a
-    // token object instead; the two are the same rule, since every teardown both clears the token and increments the
-    // generation, and nothing else replaces the token.
-    readonly pending: { readonly reason: string; readonly gen: Generation } | null;
     // The 'terminated' reasons being dispatched, innermost last (host.ts, `_terminationDispatched`, saved and restored
     // around each dispatch: the same stack, kept as one value and the call stack).
     readonly dispatching: readonly string[];
     // The 'terminated' being dispatched when the last build started, or null (round 2's L-4; host.ts's `_buildWithin`
     // until S65's PR B). Kept across teardowns: only the next build replaces it.
     readonly within: string | null;
-    readonly build: BuildProgress | null;
     // What a build reads changed this many times: setConfig(), load(), the files (host.ts's `_buildInputs` until PR C).
     readonly inputs: number;
     // `inputs` when the last usable setConfig() argument was stored, or null after a refusal (the copy itself is the
@@ -111,6 +106,28 @@ export interface LcState {
     // is refused with it while it is set.
     readonly refused: string | null;
 }
+
+// A build's 'terminated' waiting for its task (round 1's R3-2), with the generation it belongs to. host.ts holds a
+// token object instead; the two are the same rule, since every teardown both clears the token and increments the
+// generation, and nothing else replaces the token.
+export interface PendingTermination {
+    readonly reason: string;
+    readonly gen: Generation;
+}
+
+/**
+ * The lifecycle's state, by `state`: a build stands (`build`) exactly while it is `loading` or `ready`, and no refusal
+ * stands then (a refused build is `terminated` at once); a build's 'terminated' waits for its task only in `terminated`.
+ */
+export type LcState =
+    | (LcCommon & { readonly state: 'idle'; readonly build: null; readonly pending: null })
+    | (LcCommon & { readonly state: 'loading' | 'ready'; readonly build: BuildProgress; readonly pending: null; readonly refused: null })
+    | (LcCommon & { readonly state: 'terminated'; readonly build: null; readonly pending: PendingTermination | null });
+
+/** A state in which a build stands. */
+export type StandingState = Extract<LcState, { readonly state: 'loading' | 'ready' }>;
+
+const standing = (state: LcState): state is StandingState => state.state === 'loading' || state.state === 'ready';
 
 export const INITIAL_LIFECYCLE: LcState = Object.freeze({
     state: 'idle',
@@ -304,8 +321,8 @@ const top = (stack: readonly string[]): string | null => (stack.length > 0 ? sta
 
 // The generation-and-pending half of host.ts's `_teardown`: a new environment count, and a build's 'terminated' still
 // to come is no longer the sandbox's state (R3-2). The resource half is the `teardown` effect.
-function tornDown(state: LcState): LcState {
-    return { ...state, gen: (state.gen + 1) as Generation, pending: null, build: null };
+function tornDown(state: LcCommon): LcCommon {
+    return { gen: (state.gen + 1) as Generation, dispatching: state.dispatching, within: state.within, inputs: state.inputs, lastInputs: state.lastInputs, refused: state.refused };
 }
 
 // host.ts, `_terminate`: every termination that is not a build's. Already terminated means nothing to do, which is what
@@ -314,7 +331,7 @@ function tornDown(state: LcState): LcState {
 function terminateNow(state: LcState, reason: string): LcOutput {
     if (state.state === 'terminated') return unchanged(state);
     return {
-        state: { ...tornDown(state), state: 'terminated' },
+        state: { ...tornDown(state), state: 'terminated', build: null, pending: null },
         effects: [{ k: 'warn', text: `[Sandbox] terminated: ${reason}` }, { k: 'teardown' }, { k: 'dispatch', event: 'terminated', reason }],
     };
 }
@@ -332,8 +349,14 @@ function terminateNow(state: LcState, reason: string): LcOutput {
 // model counts once, and the oracle compares only whether it changed.
 function terminateBuild(state: LcState, reason: string): LcOutput {
     if (state.state === 'terminated') return unchanged(state);
+    return endBuild(state, reason);
+}
+
+// The termination of a build that is not terminated: one that stands, or the one `initialize` is making (torn down,
+// and refused before it is `loading`).
+function endBuild(state: LcCommon, reason: string): LcOutput {
     const repeated = state.within === reason;
-    const next = { ...tornDown(state), state: 'terminated' as const };
+    const next = { ...tornDown(state), state: 'terminated' as const, build: null, pending: null };
     const effects: Effect[] = [];
     if (!repeated) effects.push({ k: 'warn', text: `[Sandbox] terminated: ${reason}` });
     effects.push({ k: 'teardown' });
@@ -344,7 +367,7 @@ function terminateBuild(state: LcState, reason: string): LcOutput {
 
 // The element left (or never reached) a document it can build in (host.ts's `stop` until PR C). No event.
 function stop(state: LcState): LcOutput {
-    return { state: { ...tornDown(state), state: 'idle' }, effects: [{ k: 'teardown' }, { k: 'discardWrites' }] };
+    return { state: { ...tornDown(state), state: 'idle', build: null, pending: null }, effects: [{ k: 'teardown' }, { k: 'discardWrites' }] };
 }
 
 // The one place a build starts (connection, reset(), load(), setConfig(); host.ts's `initialize` until PR C), then the
@@ -353,19 +376,19 @@ function stop(state: LcState): LcOutput {
 // not build (round 2's L-1: one predicate, asked by every build), it stops instead and stays idle. Otherwise 'loading'
 // first: every attempt that fails is one termination with its own reason, also from 'terminated' (reset() of a refused
 // config says again why it cannot start).
-function initialize(state: LcState, ctx: BuildContext): LcOutput {
+function initialize(state: LcCommon, ctx: BuildContext): LcOutput {
     const within = top(state.dispatching);
-    const torn: LcState = { ...tornDown(state), within };
+    const torn: LcCommon = { ...tornDown(state), within };
     const effects: Effect[] = [{ k: 'teardown' }, { k: 'discardWrites' }];
-    if (!ctx.buildsHere) return { state: { ...torn, state: 'idle' }, effects };
+    if (!ctx.buildsHere) return { state: { ...torn, state: 'idle', build: null, pending: null }, effects };
     const refusal = state.refused ?? ctx.blocked;
     if (refusal !== null) {
-        const refused = terminateBuild({ ...torn, state: 'loading' }, refusal);
+        const refused = endBuild(torn, refusal);
         return { state: refused.state, effects: [...effects, ...refused.effects] };
     }
     const build: BuildProgress = { strict: ctx.strict, announces: ctx.announces, frameLoaded: false, accepted: false, announcer: null };
     effects.push({ k: 'build' });
-    return { state: { ...torn, state: 'loading', build }, effects };
+    return { state: { ...torn, state: 'loading', build, pending: null, refused: null }, effects };
 }
 
 // The transition to `ready` (host.ts's `_enterReady` until PR D), in every mode, and the one place what waited for it is released
@@ -375,7 +398,7 @@ function initialize(state: LcState, ctx: BuildContext): LcOutput {
 // host.ts set `state` last, just before the dispatch, until PR D; here it is 'ready' before the first effect, as every
 // state is. Nothing the flush or the watchdogs run reads it (the host's own code, no embedder code), so the difference is
 // not observable; test/unit/lifecycle-reducer.test.ts pins the order.
-function enterReady(state: LcState, before: readonly Effect[] = NOTHING): LcOutput {
+function enterReady(state: StandingState, before: readonly Effect[] = NOTHING): LcOutput {
     return {
         state: { ...state, state: 'ready' },
         effects: [...before, { k: 'stopLoadDeadline' }, { k: 'flush' }, { k: 'startWatchdogs' }, { k: 'startAutoResize' }, { k: 'dispatch', event: 'ready' }],
@@ -385,7 +408,7 @@ function enterReady(state: LcState, before: readonly Effect[] = NOTHING): LcOutp
 
 // Cooperative and worker mode (host.ts's `_finishBuild` until PR D) complete at the guest's check-in, with its port, or, where the
 // guest runs no bootstrap, at the wrapper's load, with none. Not loading any more: the port is closed, nothing else.
-function finishBuild(state: LcState, port: unknown): LcOutput {
+function finishBuild(state: StandingState, port: unknown): LcOutput {
     if (state.state !== 'loading') return { state, effects: port === null ? NOTHING : [{ k: 'closePort', port }] };
     return enterReady(state, [{ k: 'openChannel', port }]);
 }
@@ -396,11 +419,11 @@ function finishBuild(state: LcState, port: unknown): LcOutput {
 // view its ports and completes at VIEW_READY, never on this load alone (R3-1: it also fires for a view whose bootstrap
 // the host page refused); a guest with no bootstrap completes now.
 function frameLoad(state: LcState, input: Extract<LcInput, { t: 'frameLoad' }>): LcOutput {
+    if (!input.stillOurs || !standing(state)) return unchanged(state);
     const build = state.build;
-    if (!input.stillOurs || build === null) return unchanged(state);
     const guarded = (output: LcOutput): LcOutput => ({ ...output, guarded: true });
     if (build.frameLoaded) return guarded(terminateNow(state, reasonText('secondLoad')));
-    const loaded: LcState = { ...state, build: { ...build, frameLoaded: true } };
+    const loaded: StandingState = { ...state, build: { ...build, frameLoaded: true } };
     if (build.announcer !== null) return guarded(input.guest === build.announcer ? unchanged(loaded) : terminateNow(loaded, reasonText('secondLoad')));
     if (input.guest === null) return guarded(terminateNow(loaded, reasonText('frameMissing')));
     if (build.announces) return guarded(unchanged(loaded));
@@ -413,13 +436,13 @@ function frameLoad(state: LcState, input: Extract<LcInput, { t: 'frameLoad' }>):
 // reloads or rewrites itself announces again, and a forgery can only end its own environment (PD8). Worker mode's
 // refusal is the frame's one announcement: one host line, then the termination with its reason (review round 2, C-5).
 function announced(state: LcState, input: Extract<LcInput, { t: 'announced' }>): LcOutput {
+    if (!standing(state) || state.build.accepted || !state.build.announces || !input.valid) return terminateNow(state, reasonText('secondAnnouncement'));
     const build = state.build;
-    if (build === null || build.accepted || !build.announces || !input.valid) return terminateNow(state, reasonText('secondAnnouncement'));
     if (input.refusal !== null) {
-        const accepted: LcState = { ...state, build: { ...build, accepted: true } };
+        const accepted: StandingState = { ...state, build: { ...build, accepted: true } };
         return refusedByHostPage(accepted, input.refusal);
     }
-    const checkedIn: LcState = { ...state, build: { ...build, accepted: true, announcer: input.source } };
+    const checkedIn: StandingState = { ...state, build: { ...build, accepted: true, announcer: input.source } };
     return { ...finishBuild(checkedIn, input.port), guarded: true };
 }
 
@@ -448,16 +471,17 @@ function terminate(state: LcState, input: Extract<LcInput, { t: 'terminate' }>):
 // bounds `loading` only, of the build it was started for (LM-2): the input carries that build's generation, and it acts
 // only while that build is `loading`; `_enterReady` stops it as well, but the bound does not rest on a timer stopped.
 function loadDeadline(state: LcState): LcOutput {
+    if (state.state !== 'loading') return unchanged(state);
     const build = state.build;
-    if (state.state !== 'loading' || build === null) return unchanged(state);
     const scripted = build.strict || build.announces;
     return terminateNow(state, build.frameLoaded && scripted ? reasonText('startupBlocked') : reasonText('loadTimeout'));
 }
 
 // host.ts, `_dispatchBuildTermination`: only if nothing tore the environment down since it was armed.
 function buildTerminationDue(state: LcState): LcOutput {
+    if (state.state !== 'terminated') return unchanged(state);
     const pending = state.pending;
-    if (pending === null || pending.gen !== state.gen || state.state !== 'terminated') return unchanged(state);
+    if (pending === null || pending.gen !== state.gen) return unchanged(state);
     return { state: { ...state, pending: null }, effects: [{ k: 'dispatch', event: 'terminated', reason: pending.reason }] };
 }
 
@@ -472,7 +496,7 @@ function setConfig(state: LcState, same: boolean): LcOutput {
 }
 
 function configured(state: LcState, input: Extract<LcInput, { t: 'configured' }>): LcOutput {
-    const stored: LcState = { ...state, refused: input.refusal, lastInputs: input.refusal === null ? state.inputs : null };
+    const stored: LcCommon = { ...state, refused: input.refusal, lastInputs: input.refusal === null ? state.inputs : null };
     return initialize(stored, input.ctx);
 }
 

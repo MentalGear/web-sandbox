@@ -12,6 +12,16 @@ import { forTheReducer, runReducerSequence } from '../model/reducer-runner';
  */
 
 const RUNS = Number(process.env.WEB_SANDBOX_TRANSITION_RUNS ?? 1000);
+
+/** What LcState's union says by its type, checked on the values: null where the shape is right, else what is wrong. */
+function wrongShape(value: LcState): string | null {
+    const state: { state: string; build: unknown; pending: unknown; refused: unknown } = value; // as data: the type already says it
+    const standing = state.state === 'loading' || state.state === 'ready';
+    if (standing !== (state.build !== null)) return `${state.state} with build ${JSON.stringify(state.build)}`;
+    if (state.pending !== null && state.state !== 'terminated') return `${state.state} with a pending termination`;
+    if (standing && state.refused !== null) return `${state.state} with a refusal`;
+    return null;
+}
 const exploration = exploreLifecycle();
 
 describe('the transitions listed from the declaration (lifecycleTransitions)', () => {
@@ -23,7 +33,9 @@ describe('the transitions listed from the declaration (lifecycleTransitions)', (
             expect(witness.state.state, transitionKey(transition)).toBe(transition.from);
             expect(witness.input.t).toBe(transition.input);
             expect(isStale(witness.state, witness.input) || !admits(witness.state, witness.input), transitionKey(transition)).toBe(false);
-            expect(reduce(witness.state, witness.input).state.state, transitionKey(transition)).toBe(transition.to);
+            const next = reduce(witness.state, witness.input).state;
+            expect(next.state, transitionKey(transition)).toBe(transition.to);
+            expect([wrongShape(witness.state), wrongShape(next)], transitionKey(transition)).toEqual([null, null]);
         }
         expect(lifecycleTransitions()).toEqual(exploration.transitions);
     });
@@ -51,6 +63,7 @@ describe('the transitions listed from the declaration (lifecycleTransitions)', (
         const made = new Set<string>();
         const unlisted: string[] = [];
         const onStep = (before: LcState, input: LcInput, output: LcOutput) => {
+            expect(wrongShape(output.state), input.t).toBeNull();
             if (isStale(before, input)) return;
             expect(admits(before, input), `${input.t} in ${before.state}`).toBe(true);
             const key = transitionKey({ from: before.state, input: input.t, to: output.state.state });

@@ -448,7 +448,9 @@ describe("the reducer describes today's host.ts", () => {
         expect(host.lc.state).toBe('loading');
         // and a deadline acts only for its own build, while it is loading
         expect(isStale(host.lc, { t: 'loadDeadline', gen: (host.lc.gen - 1) as Generation })).toBe(true);
-        expect(reduce({ ...host.lc, state: 'ready' }, { t: 'loadDeadline', gen: host.lc.gen }).effects).toEqual([]);
+        const loading = host.lc;
+        if (loading.state !== 'loading') throw new Error('not loading');
+        expect(reduce({ ...loading, state: 'ready' }, { t: 'loadDeadline', gen: host.lc.gen }).effects).toEqual([]);
     });
 
     it('LM-2: if the outer build then throws, its failure is stale: the nested build stands, nothing is dispatched', () => {
