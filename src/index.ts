@@ -7,6 +7,7 @@ export type {
     CallLimits,
     CooperativeSandboxConfig,
     SandboxConfig,
+    SandboxConfigOptions,
     SandboxState,
     StrictSandboxConfig,
     WebSandboxEventMap,

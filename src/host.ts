@@ -200,7 +200,7 @@ export interface SandboxConfigOptions {
      * The per-second budget of the calls the guest makes (every mode): `maxPerSecond` calls and `maxBytesPerSecond`
      * bytes of them in any one-second window, per environment. The guest's bridge refuses a call past it with BUSY,
      * and the element answers BUSY to one that arrives anyway. A field left out takes its default; one that is not a
-     * finite number >= 1 takes its default with one warning. There is no "off".
+     * finite number of at least 1 takes its default with one warning. There is no "off".
      */
     callLimits?: CallLimits;
 }
