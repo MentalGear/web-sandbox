@@ -69,6 +69,7 @@
  * initiated) and its own registry (methods it exposed). ids only need to be unique within the
  * caller's own pending map — the responder merely echoes them back — so a per-side counter is enough.
  */
+import type { Complete, Holds } from './utils';
 
 // A method the other side may call. Args and the return value cross via structured clone.
 export type RpcMethod = (...args: any[]) => unknown;
@@ -129,6 +130,13 @@ export type RpcErrorCode =
     | 'UNKNOWN_METHOD' | 'HANDLER_ERROR' | 'RESULT_NOT_TRANSFERABLE' | 'BUSY';
 
 /**
+ * Every RpcErrorCode, as a value (S76): what docs/API.md's Calls table lists. The public type stays written out, as
+ * the API report has it; Complete keeps the two equal.
+ */
+export const RPC_ERROR_CODES = ['TIMEOUT', 'TERMINATED', 'ARGS_NOT_TRANSFERABLE', 'SEND_FAILED', 'INVALID_CALL', 'UNKNOWN_METHOD', 'HANDLER_ERROR', 'RESULT_NOT_TRANSFERABLE', 'BUSY'] as const satisfies readonly RpcErrorCode[];
+type RpcErrorCodesComplete = Holds<Complete<RpcErrorCode, typeof RPC_ERROR_CODES>>;
+
+/**
  * Most inbound calls a broker runs at once per channel (review B7): a further request is answered at once with
  * BUSY and its method is not called. Bounds the work and memory the other side can hold open on this side
  * with calls to a method that is slow or never settles. Mirrored inside createBroker (a test keeps them equal).
@@ -162,6 +170,13 @@ export const RPC_MAX_INBOUND_BYTES = 67108864;
 export type RpcLibraryCode =
     | 'FETCH_NOT_ALLOWED' | 'FETCH_BUSY' | 'FETCH_REDIRECT' | 'FETCH_TOO_LARGE' | 'FETCH_TIMEOUT' | 'FETCH_FAILED'
     | 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEEDED' | 'FILES_NOT_ALLOWED' | 'FILES_BUSY';
+
+/** Every RpcLibraryCode, as a value: createBroker's LIBRARY_CODES mirrors it, typed by it. */
+export const RPC_LIBRARY_CODES = [
+    'FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED',
+    'INVALID_PATH', 'INVALID_FILE', 'FILES_QUOTA_EXCEEDED', 'FILES_NOT_ALLOWED', 'FILES_BUSY',
+] as const satisfies readonly RpcLibraryCode[];
+type RpcLibraryCodesComplete = Holds<Complete<RpcLibraryCode, typeof RPC_LIBRARY_CODES>>;
 
 /** Every library-reserved method name starts with this prefix; expose() never registers one. */
 export const RESERVED_METHOD_PREFIX = 'sandbox:';
@@ -339,8 +354,9 @@ export function createBroker(send: RpcSend, options: BrokerOptions = {}): Broker
         BUSY: 'BUSY',
     };
 
-    // The library codes (RpcLibraryCode), closed: what a reserved method may report. Read by index only.
-    const LIBRARY_CODES: readonly RpcLibraryCode[] = [
+    // The library codes (RpcLibraryCode), closed: what a reserved method may report. Read by index only. The mirror of
+    // RPC_LIBRARY_CODES, declared here to survive stringification, and typed by it: the two compile only while equal.
+    const LIBRARY_CODES: typeof RPC_LIBRARY_CODES = [
         'FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED',
         'INVALID_PATH', 'INVALID_FILE', 'FILES_QUOTA_EXCEEDED', 'FILES_NOT_ALLOWED', 'FILES_BUSY',
     ];

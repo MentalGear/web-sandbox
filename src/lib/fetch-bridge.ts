@@ -30,6 +30,7 @@
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
 import type { RpcLibraryCode } from './rpc';
+import type { Complete, Holds } from './utils';
 import { parseOrigin, type Origin, type OriginRules } from './origin';
 import { shown } from './csp/origins';
 import { setLongTimeout } from './long-timer';
@@ -48,7 +49,11 @@ export const FETCH_METHOD = 'sandbox:fetch';
  */
 export type FetchErrorCode = Extract<RpcLibraryCode, `FETCH_${string}`>;
 
-export const FETCH_ERROR_CODES: readonly FetchErrorCode[] = ['FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED'];
+const FETCH_CODES = ['FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED'] as const satisfies readonly FetchErrorCode[];
+type FetchErrorCodesComplete = Holds<Complete<FetchErrorCode, typeof FETCH_CODES>>;
+
+// Typed as the public API has it; the list it is made from is complete by construction.
+export const FETCH_ERROR_CODES: readonly FetchErrorCode[] = FETCH_CODES;
 
 /** What an embedder configures as `fetchBridge`. Only `allow` is required. */
 export interface FetchBridgeConfig {

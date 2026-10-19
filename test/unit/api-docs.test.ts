@@ -6,14 +6,15 @@ import * as publicApi from '@src/index';
 import { WebSandbox, VIEW_LIVENESS_TIMEOUT_MS } from '@src/host';
 import { createBroker } from '@src/lib/rpc';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
-import { MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES } from '@src/lib/files';
+import { FILE_ERROR_CODES, MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES } from '@src/lib/files';
 import { toFetchPolicy } from '@src/lib/fetch-bridge';
 import { INERT_TYPES } from '@src/lib/guest-writes';
 import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { cooperativePolicy, KIND_DIRECTIVES, strictViewPolicy } from '@src/lib/csp/csp-generator';
 import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_OVERRUN_WINDOW_MS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_MAX_URLS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 import { LOG_BYTES_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
-import { RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
+import { RPC_ERROR_CODES, RPC_LIBRARY_CODES, RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
+import type { Complete, Holds } from '@src/lib/utils';
 import { WORKER_GLOBALS } from '@src/lib/worker-globals';
 import { UNCAUGHT_CHARACTERS_PER_SECOND, UNCAUGHT_PER_SECOND } from '@src/lib/egress';
 import { ELEMENT_EVENTS } from '@src/lib/element-events';
@@ -81,14 +82,6 @@ function interfaceKeys(file: string, name: string): string[] {
     const keys: string[] = [];
     for (const match of body.matchAll(/^ {4}(\w+)\??:/gm)) keys.push(match[1]!);
     return keys;
-}
-
-/** The members of a string-literal union type, read from its source. */
-function unionMembers(file: string, name: string): string[] {
-    const source = read(file);
-    const declaration = source.match(new RegExp(`export type ${name} =([^;]+);`));
-    if (!declaration) throw new Error(`${file} has no union ${name}`);
-    return [...declaration[1]!.matchAll(/'([A-Z_]+)'/g)].map(match => match[1]!);
 }
 
 describe('docs/API.md lists the public surface', () => {
@@ -263,7 +256,7 @@ describe('docs/API.md lists the public surface', () => {
     it('every call code, with who sets it', () => {
         const table = section('### Calls');
         const source = read('src/lib/rpc.ts');
-        const codes = unionMembers('src/lib/rpc.ts', 'RpcErrorCode');
+        const codes: readonly string[] = RPC_ERROR_CODES;
         // local: what localRefusal() mints; reported: what the clamp of a response lets through (refusalFromResponse),
         // and HANDLER_ERROR, its fallback
         const notLocal = source.match(/Exclude<RpcErrorCode, ([^>]+)>/)![1]!.match(/'[A-Z_]+'/g)!.map(code => code.slice(1, -1));
@@ -276,9 +269,19 @@ describe('docs/API.md lists the public surface', () => {
         }
     });
 
+    it('the code lists are complete by construction: a list that misses a member of its union does not compile', () => {
+        // @ts-expect-error a list without 'B' (`bun run typecheck` fails if this line type-checks)
+        type Missing = Holds<Complete<'A' | 'B', readonly ['A']>>;
+        type Whole = Holds<Complete<'A' | 'B', readonly ['B', 'A']>>;
+        const checked: [Missing?, Whole?] = [];
+        expect(checked).toEqual([]);
+        // the library codes are the fetch codes and the file codes, and nothing else
+        expect(sorted(RPC_LIBRARY_CODES)).toEqual(sorted([...publicApi.FETCH_ERROR_CODES, ...FILE_ERROR_CODES]));
+    });
+
     it('every fetch code and every files code', () => {
         expect(sorted(rowKeys(section('### `sandboxFetch()`')))).toEqual(sorted(publicApi.FETCH_ERROR_CODES));
-        const fileCodes = [...unionMembers('src/lib/files.ts', 'FileErrorCode'), read('src/lib/in-sandbox-files.ts').match(/const notFound = \(\) => coded\('[^']*', '([A-Z_]+)'\)/)![1]!];
+        const fileCodes = [...FILE_ERROR_CODES, read('src/lib/in-sandbox-files.ts').match(/const notFound = \(\) => coded\('[^']*', '([A-Z_]+)'\)/)![1]!];
         expect(sorted(rowKeys(section('### Files')))).toEqual(sorted(fileCodes));
     });
 
