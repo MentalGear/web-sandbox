@@ -48,7 +48,12 @@ export function inSandboxScript(
     // Worker mode: the platform's postMessage of the worker, which the globals allowlist took before deleting it
     // (worker-globals.ts, review round 4, M-1), for the one WORKER_STARTED below. Nothing else in the worker holds it.
     postToFrameFn?: ((message: unknown) => void) | null,
-): { attach(port: MessagePort): void; writeFiles: ((request: unknown) => Promise<unknown>) | null; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void } {
+): {
+    attach(port: MessagePort): void;
+    writeFiles: ((request: unknown) => Promise<unknown>) | null;
+    log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void;
+    readEvent(event: unknown, kind: 'error' | 'rejection' | 'violation'): Record<string, unknown>;
+} {
     // The announcement (broad review 2026-10-14, CB1), the first statement, before anything else in the guest
     // document can run: in cooperative mode the bootstrap makes the channel itself, keeps port1 in this closure and
     // posts port2 to the host page (parent.parent: the guest's parent is the wrapper). The host takes exactly one
@@ -175,12 +180,76 @@ export function inSandboxScript(
         readyStateOf = getOwn(proto, 'readyState')?.get; // on Document.prototype in every engine
     }
     const sizeOf = createSizeOfFn ? createSizeOfFn() : null;
+    // The one reader of guest values (class G, review round 5, N-6; readEvent and readOptions below): Reflect.get, and the
+    // platform's getters of the events the bootstrap reads, from each interface's prototype chain, by "Interface.field".
+    // Guest code that later puts its own getter on ErrorEvent.prototype (or any prototype on the way) changes nothing the
+    // bootstrap reads. Null where an engine has no such interface: then the field is read once through Reflect.get.
+    const getProperty = Reflect.get;
+    const EVENT_READS = [
+        'ErrorEvent', 'message', 'ErrorEvent', 'error',
+        'PromiseRejectionEvent', 'reason',
+        'SecurityPolicyViolationEvent', 'effectiveDirective', 'SecurityPolicyViolationEvent', 'violatedDirective',
+        'SecurityPolicyViolationEvent', 'blockedURI', 'SecurityPolicyViolationEvent', 'sourceFile',
+        'SecurityPolicyViolationEvent', 'lineNumber', 'SecurityPolicyViolationEvent', 'columnNumber',
+    ];
+    const eventGetters: Record<string, ((this: unknown) => unknown) | null> = setPrototype({}, null);
+    for (let i = 0; i + 1 < EVENT_READS.length; i += 2) {
+        const found = g[EVENT_READS[i]!];
+        let getter: ((this: unknown) => unknown) | null = null;
+        for (let proto = typeof found === 'function' ? found.prototype : null; proto && !getter; proto = protoOf(proto)) getter = getOwn(proto, EVENT_READS[i + 1]!)?.get ?? null;
+        defineOwn(eventGetters, EVENT_READS[i] + '.' + EVENT_READS[i + 1], { value: getter, enumerable: true });
+    }
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
     // Lists of our own: an index written to them never reaches an inherited setter, and they are read by index only.
     const list = <T>(): T[] => setPrototype([], null);
     const append = (target: unknown[], value: unknown) => defineOwn(target, target.length, { value, writable: true, enumerable: true, configurable: true });
     const publish = (name: string, value: unknown) => defineOwn(g, name, { value, writable: true, enumerable: true, configurable: true });
+
+    // ---- One reader of guest values (class G; review round 5, N-6, and the reader N-2's fix shares). An object the guest
+    // hands the library (an option object, an event, a thrown value) can answer each read differently, through a getter or
+    // a Proxy: sandboxFetch read `init.method` once to test it and again to use it, so it tested one value and sent
+    // another. Every guest-supplied option object and event is read here, each listed field once, into a snapshot of our
+    // own (no prototype, so no inherited getter), and the code after works on the snapshot only. An event's fields are
+    // read through the platform's getters captured above; an option object's through the captured Reflect.get. A field
+    // whose read throws is undefined. test/unit/read-once.test.ts scans that no function reads a property of a guest value
+    // twice.
+    const snapshotOf = (): Record<string, unknown> => setPrototype({}, null);
+    const keep = (snapshot: Record<string, unknown>, field: string, value: unknown) => defineOwn(snapshot, field, { value, enumerable: true });
+    const readOptions = (value: unknown, fields: readonly string[]): Record<string, unknown> => {
+        const snapshot = snapshotOf();
+        const readable = value !== null && (typeof value === 'object' || typeof value === 'function');
+        for (let i = 0; i < fields.length; i++) {
+            let read: unknown;
+            try {
+                read = readable ? apply(getProperty, undefined, [value, fields[i]!]) : undefined;
+            } catch {
+                read = undefined;
+            }
+            keep(snapshot, fields[i]!, read);
+        }
+        return snapshot;
+    };
+    const EVENT_KINDS: Record<string, readonly string[]> = setPrototype({
+        error: ['ErrorEvent', 'message', 'error'],
+        rejection: ['PromiseRejectionEvent', 'reason'],
+        violation: ['SecurityPolicyViolationEvent', 'effectiveDirective', 'violatedDirective', 'blockedURI', 'sourceFile', 'lineNumber', 'columnNumber'],
+    }, null);
+    const readEvent = (event: unknown, kind: 'error' | 'rejection' | 'violation'): Record<string, unknown> => {
+        const fields = EVENT_KINDS[kind]!;
+        const snapshot = snapshotOf();
+        for (let i = 1; i < fields.length; i++) {
+            const getter = eventGetters[fields[0] + '.' + fields[i]];
+            let read: unknown;
+            try {
+                read = getter ? apply(getter, event, []) : apply(getProperty, undefined, [event, fields[i]!]);
+            } catch {
+                read = undefined; // not an event of that interface (a guest's own), or no such field
+            }
+            keep(snapshot, fields[i]!, read);
+        }
+        return snapshot;
+    };
 
     // The port does not exist until INIT_PORT, but guest content scripts parse BEFORE that and may
     // call bridge.expose()/bridge.call() straight away. So the bridge is created now with a send that
@@ -269,20 +338,22 @@ export function inSandboxScript(
     // through the broker, so it can never collide with an exposed method name. Reports raised before
     // INIT_PORT wait in the outbox like bridge frames. Synthetic events (isTrusted false) are not reports.
     // At most VIOLATION_LIMIT per environment (the host caps at the same number, VIOLATION_EVENT_LIMIT,
-    // and is the authoritative bound); declared here because this function is stringified.
+    // and is the authoritative bound); declared here because this function is stringified. Its fields are read once
+    // each, through the platform's getters (readEvent), so a getter the guest put on the prototype answers nothing here.
     const VIOLATION_LIMIT = 100;
     let violationsSent = 0;
     if (typeof addGlobalListener === 'function') {
         apply(addGlobalListener, g, ['securitypolicyviolation', (event: any) => {
             if (!event.isTrusted || violationsSent >= VIOLATION_LIMIT) return;
             violationsSent++;
+            const read = readEvent(event, 'violation');
             send({
                 type: 'VIOLATION',
-                directive: event.effectiveDirective || event.violatedDirective,
-                blockedURI: event.blockedURI,
-                sourceFile: event.sourceFile,
-                lineNumber: event.lineNumber,
-                columnNumber: event.columnNumber,
+                directive: read.effectiveDirective || read.violatedDirective,
+                blockedURI: read.blockedURI,
+                sourceFile: read.sourceFile,
+                lineNumber: read.lineNumber,
+                columnNumber: read.columnNumber,
             });
         }, true]);
     }
@@ -391,6 +462,7 @@ export function inSandboxScript(
         takeBusyRefusal: (refuse) => { refuseHeld = refuse; },
     }) : null;
     const handleBridgeMessage = bridge ? bridge.handleMessage : null;
+    const bridgeCall = bridge ? bridge.callWithTimeout : null; // read once: sandboxFetch and guest writes call it (below)
     if (bridge) publish('bridge', bridge);
 
     // The host-mediated fetch bridge (backlog B5, src/lib/fetch-bridge.ts, ADR-006), opt-in, both modes. A
@@ -403,8 +475,9 @@ export function inSandboxScript(
     // FETCH_NOT_ALLOWED ("the fetch bridge is off"), as docs/API.md says, where the global used to be missing and a
     // call threw a ReferenceError. One path either way: the host decides.
     if (bridge) {
-        const callWithTimeout = bridge.callWithTimeout;
-        const callTimeoutMs = (features?.fetchBridge ? features.fetchBridge.timeoutMs : 10000) + 5000;
+        const callWithTimeout = bridgeCall!;
+        const fetchBridgeFeature = features?.fetchBridge;
+        const callTimeoutMs = (fetchBridgeFeature ? fetchBridgeFeature.timeoutMs : 10000) + 5000;
         const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
         const isNullBody = (status: unknown) => {
             for (let i = 0; i < NULL_BODY_STATUSES.length; i++) if (NULL_BODY_STATUSES[i] === status) return true;
@@ -438,15 +511,19 @@ export function inSandboxScript(
             if (bytes) return bytes;
             throw construct(TypeErrorConstructor, ['sandboxFetch: the body must be a string, an ArrayBuffer or a typed array']);
         };
-        publish('sandboxFetch', (input: unknown, init?: any) => {
+        // init's three fields, each read once (readOptions; review round 5, N-6: `method` was read to test it and again to
+        // send it, so a getter answered 'GET' to the test and anything at all to the send).
+        const FETCH_INIT = ['method', 'headers', 'body'];
+        publish('sandboxFetch', (input: unknown, init?: unknown) => {
             let request;
             try {
-                const options = init || {};
+                const options = readOptions(init, FETCH_INIT);
+                const method = options.method;
                 const headers: [string, string][] = list();
                 if (HeadersConstructor && headersForEach) {
                     apply(headersForEach, construct(HeadersConstructor, [options.headers]), [(value: string, name: string) => append(headers, [name, value])]);
                 }
-                request = { url: StringConstructor(input), method: options.method === undefined ? 'GET' : StringConstructor(options.method), headers, body: toBody(options.body) };
+                request = { url: StringConstructor(input), method: method === undefined ? 'GET' : StringConstructor(method), headers, body: toBody(options.body) };
             } catch (error) {
                 return apply(rejected, PromiseConstructor, [error]);
             }
@@ -473,7 +550,7 @@ export function inSandboxScript(
     // The host answers at once (it decides synchronously), so the broker's default 30 s timeout is only a backstop.
     let writeFiles: ((request: unknown) => Promise<unknown>) | null = null;
     if (bridge && features?.guestWrites === true) {
-        const callWithTimeout = bridge.callWithTimeout;
+        const callWithTimeout = bridgeCall!;
         writeFiles = (request: unknown) => callWithTimeout(30000, 'sandbox:write', request);
     }
 
@@ -869,8 +946,9 @@ export function inSandboxScript(
                 if (event.isTrusted !== true) return;
                 let text = '';
                 try {
-                    const error = event.error; // each read once (C-1)
-                    const message = event.message;
+                    const read = readEvent(event, 'error'); // each field once, through the platform's getters (C-1, N-6)
+                    const error = read.error;
+                    const message = read.message;
                     text = error !== null && error !== undefined ? errorText(error) : textOf(message);
                     if (!text) text = textOf(message) || 'an error';
                 } catch {
@@ -883,7 +961,7 @@ export function inSandboxScript(
         apply(addGlobalListener, g, ['unhandledrejection', (event: any) => {
             let text = '';
             try {
-                text = errorText(event.reason);
+                text = errorText(readEvent(event, 'rejection').reason);
             } catch {
                 text = 'a rejection';
             }
@@ -1010,11 +1088,13 @@ export function inSandboxScript(
             // broker, so it is not a callable method: it can never collide with a name the guest exposes,
             // and guest code cannot unexpose or replace it. Answering at all is the signal — a blocked
             // event loop cannot run this handler.
-            if (data?.type === 'PING') {
-                if (typeof data.n === 'number') post({ type: 'PONG', n: data.n });
+            const type = data?.type; // the host's frame, read once like any value (class G)
+            if (type === 'PING') {
+                const n = data.n;
+                if (typeof n === 'number') post({ type: 'PONG', n });
                 return;
             }
-            const runsGuestCode = data?.type === 'EXECUTE' || data?.type === 'RPC_REQ';
+            const runsGuestCode = type === 'EXECUTE' || type === 'RPC_REQ';
             if (runsGuestCode && (nextHeld < held.length || !gateOpen())) {
                 hold(data);
                 return;
@@ -1054,7 +1134,7 @@ export function inSandboxScript(
     // Cooperative mode: the bootstrap's own end of the channel it announced, attached now, before any guest code runs.
     if (announced) {
         attach(announced.port1);
-        return { attach, writeFiles, log };
+        return { attach, writeFiles, log, readEvent };
     }
 
     // Worker mode: the one INIT_PORT (review B1), the port1 the frame made (worker-bootstrap.ts): a trusted message with
@@ -1088,5 +1168,5 @@ export function inSandboxScript(
         }
     };
     if (!features?.externalPort && typeof addGlobalListener === 'function') apply(addGlobalListener, g, ['message', onInit, true]);
-    return { attach, writeFiles, log };
+    return { attach, writeFiles, log, readEvent };
 }

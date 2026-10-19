@@ -358,3 +358,22 @@ describe('5:N-4 and 5:L-4 (class D): one diff of the guest-write state', () => {
     });
 });
 
+// ---- 5:N-6 (class G): sandboxFetch reads its init once ---------------------------------------------------------------
+
+describe('5:N-6 (class G): a guest value is read once, at the boundary', () => {
+    it('sandboxFetch reads init.method, headers and body once each, and sends what it read', async () => {
+        const { sent, close } = attachedStrictComms({ calls: 1000, bytes: 67108864 });
+        const reads: Record<string, number> = { method: 0, headers: 0, body: 0 };
+        const init = {
+            get method() { reads.method!++; return reads.method === 1 ? 'GET' : { toString: () => 'x'.repeat(1 << 20) }; },
+            get headers() { reads.headers!++; return { accept: 'text/plain' }; },
+            get body() { reads.body!++; return undefined; },
+        };
+        void (globalThis as any).sandboxFetch('https://api.example/x', init).catch(() => {});
+        await settle();
+        close();
+        expect(reads).toEqual({ method: 1, headers: 1, body: 1 });
+        const request = sent.find(frame => frame.type === 'RPC_REQ')!.args[0];
+        expect(request.method).toBe('GET');
+    });
+});

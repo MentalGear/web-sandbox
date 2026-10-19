@@ -37,7 +37,16 @@ class FakeMessageChannel {
         FakeMessageChannel.next = null;
     }
 }
-const PLATFORM = { MessagePort: ClonePort, MessageEvent: FakeMessageEvent, Event: FakeEvent, MessageChannel: FakeMessageChannel };
+class FakeErrorEvent extends FakeEvent {
+    constructor(private readonly init: Record<string, unknown>, readonly isTrusted = true) { super(); }
+    get message() { return this.init.message; }
+    get error() { return this.init.error; }
+}
+class FakeRejectionEvent extends FakeEvent {
+    constructor(private readonly init: Record<string, unknown>, readonly isTrusted = true) { super(); }
+    get reason() { return this.init.reason; }
+}
+const PLATFORM = { MessagePort: ClonePort, MessageEvent: FakeMessageEvent, Event: FakeEvent, MessageChannel: FakeMessageChannel, ErrorEvent: FakeErrorEvent, PromiseRejectionEvent: FakeRejectionEvent };
 const originals: Record<string, unknown> = {};
 const originalAddEventListener = globalThis.addEventListener;
 let listeners: Record<string, (event: unknown) => void> = {};
@@ -106,7 +115,9 @@ describe('R4-1: the console relay never throws; what clone refuses crosses as it
 });
 
 describe('R4-2, R4-6, R4-7: uncaught errors and rejections are log lines; errors and the other console methods relay', () => {
-    const trusted = (fields: Record<string, unknown>) => ({ isTrusted: true, ...fields });
+    // Events as the platform makes them: their fields are getters of the interface's prototype, which the bootstrap
+    // captures before guest code and reads through (review round 5, N-6), and isTrusted an own property.
+    const trusted = (fields: Record<string, unknown>, isTrusted = true) => ('reason' in fields ? new FakeRejectionEvent(fields, isTrusted) : new FakeErrorEvent(fields, isTrusted));
 
     it('cooperative (and worker) mode: an uncaught error is one "Uncaught …" line, whatever the engine puts first; a muted one says what the browser gave; a synthetic one is not relayed', () => {
         const { lines } = cooperativeComms();
@@ -114,7 +125,7 @@ describe('R4-2, R4-6, R4-7: uncaught errors and rejections are log lines; errors
         listeners['error']!(trusted({ error: new Error('firefox'), message: 'Error: firefox' }));
         listeners['error']!(trusted({ error: null, message: 'Script error.' }));
         listeners['error']!(trusted({ error: 'a string', message: 'Uncaught a string' }));
-        listeners['error']!({ isTrusted: false, error: new Error('forged'), message: 'forged' }); // engines report errors trusted: a forged one is not relayed
+        listeners['error']!(trusted({ error: new Error('forged'), message: 'forged' }, false)); // engines report errors trusted: a forged one is not relayed
         expect(lines().map(line => [line.level, line.args[0]])).toEqual([
             ['error', 'Uncaught TypeError: chromium'],
             ['error', 'Uncaught Error: firefox'],

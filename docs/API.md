@@ -766,7 +766,7 @@ with `TIMEOUT`, and the change is listed all the same). A listener's `reset()` d
 
 `sandboxFetch(url: string, init?: { method?, headers?, body? }): Promise<Response>` — asks the host to make the
 request under the [`fetchBridge`](#fetchbridge) rules; without `fetchBridge` every request rejects with
-`FETCH_NOT_ALLOWED`. Only `method`, `headers` and `body` are read from `init`;
+`FETCH_NOT_ALLOWED`. Only `method`, `headers` and `body` are read from `init`, each once;
 the body is a string, an `ArrayBuffer` or a typed array. Resolves with a whole `Response` (no streaming, no
 `AbortSignal`); rejects with a [`FetchErrorCode`](#sandboxfetch-fetcherrorcode). `fetch` itself is untouched;
 assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](ADR-006-fetch-bridge.md)
