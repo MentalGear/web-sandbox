@@ -81,7 +81,7 @@ S57; round 4 is held by the owner (S58), the Lean evaluation (S59) found no case
 later (S61), and the clean-up with independent reviews follows when the rounds end (S60). Review round 4
 (S58, [report](security/REVIEW-ROUND-4-2026-10-18.md)) added and closed S62; round 5 is next (S63).
 Round 5 (S63) found the recurring classes behind the findings ([research 18](research/18_finding_classes/README.md));
-its fixes are made as slices of those classes (S64), followed by S65–S68.
+its fixes are made as slices of those classes (S64), followed by S65–S68. S65's model-based suite found LM-1 (S71, for the owner).
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1642,11 +1642,23 @@ The owner's decisions, 2026-10-18:
 
 Residual, for the owner: the 2 s operation limit ends a 250,000-character textarea `set()` in WebKit.
 
-### S65 · One lifecycle reducer, with the model-based suite (S61.2) — ⏸️ phase 2
+### S65 · One lifecycle reducer, with the model-based suite (S61.2) — 🟡 step 1 of 2 done
 
 Every transition becomes a pure function of state and event. Effects and event dispatch run only after the state
 settles, and `ready` is the only point where queued work flushes. It is tested by the permanent fast-check `commands`
 suite built from [the lifecycle model](research/17_formal_methods/lifecycle-model.md).
+
+1. ✅ **The model-based suite.** The reference model is a module (`test/model/`), with its generator and runner, unit
+   tests (`test/unit/lifecycle-model.test.ts`) and an e2e on every engine (`test/e2e/lifecycle-model.spec.ts`), which
+   also keeps round 4's L-1 loop as a property. Its first finding is LM-1 (S71).
+2. ⏸️ **The reducer**, tested by that suite.
+
+### S71 · For the owner: LM-1, a `fetch` record after its environment's teardown — ⏸️ **decide**
+
+A `fetch` listener that tears the environment down can still receive an `ok` record of that environment, where API.md
+says only an `aborted` record of a torn-down environment arrives then. A focused test in `lifecycle-model.spec.ts`
+fails on all three engines and is marked `test.fail()` until the owner decides: report such a record `aborted`, or
+document that a record already settled is dispatched as it is.
 
 ### S66 · Probe a trusted relay worker — ✅ **done**: build it, with per-engine caveats (S69)
 
