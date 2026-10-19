@@ -27,6 +27,7 @@ import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permis
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { admitGuestCall, callBudgetOf, DEFAULT_CALL_BUDGET, type CallBudget } from "./lib/config-schema";
+import { elementEvent } from "./lib/element-events";
 import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
@@ -91,11 +92,11 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions {
 /** The element's events and what each one carries (docs/API.md#events; review round 1, R4-12). */
 export interface WebSandboxEventMap extends HTMLElementEventMap {
     ready: CustomEvent<null>;
-    terminated: CustomEvent<{ reason: string }>;
+    terminated: CustomEvent<{ readonly reason: string }>;
     'sandbox-log': CustomEvent<SandboxLog>;
     violation: CustomEvent<SandboxViolation>;
     fetch: CustomEvent<FetchRecord>;
-    fileschanged: CustomEvent<{ paths: string[] }>;
+    fileschanged: CustomEvent<{ readonly paths: readonly string[] }>;
     fileswritten: CustomEvent<{ readonly paths: readonly string[] }>;
 }
 
@@ -790,7 +791,7 @@ export class WebSandbox extends ElementBase {
     private _dispatchFilesChanged(paths: string[]) {
         if (paths.length === 0) return;
         this._buildInputs++;
-        this.dispatchEvent(new CustomEvent('fileschanged', { detail: { paths } }));
+        this.dispatchEvent(elementEvent('fileschanged', { paths }));
     }
 
     // One overlay per environment (C5), made with the build like the fetch bridge, and the reserved method bound to
@@ -867,7 +868,7 @@ export class WebSandbox extends ElementBase {
     // One guest change the host recorded: dispatched on the element and bubbling, like the other events a guest
     // causes. At most GUEST_WRITES_PER_SECOND per environment (guest-writes.ts).
     private _dispatchFilesWritten(path: string) {
-        this.dispatchEvent(new CustomEvent('fileswritten', { detail: Object.freeze({ paths: Object.freeze([path]) }), bubbles: true }));
+        this.dispatchEvent(elementEvent('fileswritten', { paths: [path] }));
     }
 
     // Options that were removed, dropped from the config with one warning per instance each, so an old config keeps
@@ -1406,7 +1407,7 @@ export class WebSandbox extends ElementBase {
     // Every detail is normalised and labelled with where it came from (sandbox-log.ts, review B3), here, from the
     // raw line and its source: no caller can hand this a detail of its own making.
     private _dispatchLog(line: unknown, source: 'guest' | 'host') {
-        this.dispatchEvent(new CustomEvent('sandbox-log', { detail: toLogDetail(line, source, () => this._warnLogBytes()), bubbles: true }));
+        this.dispatchEvent(elementEvent('sandbox-log', toLogDetail(line, source, () => this._warnLogBytes())));
     }
 
     // A line past LOG_MAX_BYTES arrived (the guest's relay never sends one): its arguments past the budget were dropped.
@@ -1479,7 +1480,7 @@ export class WebSandbox extends ElementBase {
             console.warn(`[Sandbox] the guest reported more than ${VIOLATION_EVENT_LIMIT} CSP violations${where}; further ones are not dispatched until the next reset(), load() or setConfig().`);
             return;
         }
-        this.dispatchEvent(new CustomEvent('violation', { detail, bubbles: true }));
+        this.dispatchEvent(elementEvent('violation', detail));
     }
 
     // Arms the liveness watchdog for the port just handed over, if the config asks for one (see
@@ -1557,7 +1558,7 @@ export class WebSandbox extends ElementBase {
     // Every request through the bridge, once, when it settled: dispatched on the element and bubbling, like
     // 'violation'. The record is built by the host from validated fields (fetch-bridge.ts).
     private _dispatchFetch(record: FetchRecord) {
-        this.dispatchEvent(new CustomEvent('fetch', { detail: record, bubbles: true }));
+        this.dispatchEvent(elementEvent('fetch', record));
     }
 
     // What setConfig() did not take of `callLimits`: once per element and message, as the same config is set again and again.
@@ -1578,7 +1579,7 @@ export class WebSandbox extends ElementBase {
     // own (`dispatch: 'task'`, _terminateBuild).
     private _enterState(next: SandboxState, reason?: string, dispatch: 'now' | 'task' | 'none' = 'now') {
         this._state = next;
-        if (next === 'ready') this.dispatchEvent(new CustomEvent('ready'));
+        if (next === 'ready') this.dispatchEvent(elementEvent('ready'));
         if (next !== 'terminated' || dispatch === 'none') return;
         if (dispatch === 'now') {
             this._dispatchTerminated(reason ?? '');
@@ -1715,7 +1716,7 @@ export class WebSandbox extends ElementBase {
         const outer = this._terminationDispatched;
         this._terminationDispatched = reason;
         try {
-            this.dispatchEvent(new CustomEvent('terminated', { detail: { reason } }));
+            this.dispatchEvent(elementEvent('terminated', { reason }));
         } finally {
             this._terminationDispatched = outer;
         }

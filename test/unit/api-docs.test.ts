@@ -15,6 +15,7 @@ import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MAX_DEBT_MS, VIEW_
 import { LOG_BYTES_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
 import { WORKER_GLOBALS } from '@src/lib/worker-globals';
+import { ELEMENT_EVENTS } from '@src/lib/element-events';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 
@@ -216,7 +217,8 @@ describe('docs/API.md lists the public surface', () => {
     });
 
     it('every event the element dispatches, and no other', () => {
-        const dispatched = [...read('src/host.ts').matchAll(/new CustomEvent\('([\w-]+)'/g)].map(match => match[1]!);
+        // the one table of the element's events (element-events.ts), each dispatched by host.ts (test/unit/element-events.test.ts)
+        const dispatched = Object.keys(ELEMENT_EVENTS);
         expect(sorted(rowKeys(section('## Events', true)))).toEqual(sorted(dispatched));
     });
 

@@ -218,3 +218,34 @@ describe('5:L-2 (class C): callLimits.maxBytesPerSecond smaller than one call', 
     });
 });
 
+// ---- 5:L-3 (class D/L): every detail is frozen, deeply ---------------------------------------------------------------
+
+describe('5:L-3 (class D/L): the first listener cannot rewrite a detail for the listeners after it', () => {
+    it('terminated: { reason } is frozen; a listener that rewrites it changes nothing for the next', () => {
+        const { el } = element();
+        const seen: unknown[] = [];
+        el.addEventListener('terminated', (e: CustomEvent) => { Reflect.set(e.detail, 'reason', 'rewritten'); });
+        el.addEventListener('terminated', (e: CustomEvent) => { seen.push(e.detail.reason, Object.isFrozen(e.detail)); });
+        el.terminate('the reason');
+        expect(seen).toEqual(['the reason', true]);
+    });
+
+    it('fileschanged: { paths } and its array are frozen', () => {
+        const { el } = element();
+        const seen: unknown[] = [];
+        el.addEventListener('fileschanged', (e: CustomEvent) => { Reflect.set(e.detail.paths, 0, 'rewritten'); });
+        el.addEventListener('fileschanged', (e: CustomEvent) => { seen.push([...e.detail.paths], Object.isFrozen(e.detail), Object.isFrozen(e.detail.paths)); });
+        el.registerFiles({ 'a.txt': 'x' });
+        expect(seen).toEqual([['a.txt'], true, true]);
+    });
+
+    it("sandbox-log: the objects and arrays of the guest's arguments are frozen too", () => {
+        const { el } = element();
+        const seen: unknown[] = [];
+        el.addEventListener('sandbox-log', (e: CustomEvent) => { Reflect.set(e.detail.args[0].nested, 'list', 'rewritten'); });
+        el.addEventListener('sandbox-log', (e: CustomEvent) => { seen.push(e.detail.args[0].nested.list, Object.isFrozen(e.detail.args[0]), Object.isFrozen(e.detail.args[0].nested.list)); });
+        el._dispatchLog({ level: 'log', args: [{ nested: { list: [1, 2] } }] }, 'guest');
+        expect(seen).toEqual([[1, 2], true, true]);
+    });
+});
+

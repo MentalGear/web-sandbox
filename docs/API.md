@@ -442,8 +442,10 @@ All events are `CustomEvent`s dispatched on the element. None is `composed`.
 | `fileswritten` | `{ paths: string[] }` | yes | The element recorded a guest write or removal (`guestWrites`); one path per event, at most `GUEST_WRITES_PER_SECOND` per environment. |
 
 The bubbling events reach a listener on `window` for every sandbox on the page; `event.target` says which one.
-Every `detail` is frozen. Fields that come from the guest are validated and clamped, but they remain the
-guest's data: read them, don't merge them into your objects. The element's own startup message, the guest frame's
+Every `detail` is frozen, deeply: every object and array in it, a guest's log arguments included, so a listener cannot
+change what a later listener reads. What cannot be frozen stays as it is: the bytes of a typed array or an `ArrayBuffer`,
+the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and clamped, but they
+remain the guest's data: read them, don't merge them into your objects. The element's own startup message, the guest frame's
 port announcement (`{ type: 'SANDBOX_PORT' }` from the guest frame's window), is taken by a capture listener the
 element adds to your window at each build; a `message` listener of yours added before it, in the capture phase, sees
 it first. Act on a message only by `event.source` (above), never by its shape.
