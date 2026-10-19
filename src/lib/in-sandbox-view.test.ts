@@ -3,7 +3,7 @@ import { assertEntryScoped, INERT_HREF, inSandboxView, inStrictWorker, RENDER_AT
 import { REFERENCES } from './markup-references';
 
 import { inSandboxFiles } from './in-sandbox-files';
-import { VIOLATION_EVENT_LIMIT } from './violation';
+import { VIOLATION_EVENT_LIMIT, VIOLATION_MAX_STRING } from './violation';
 import { mimeTypeFor } from './files';
 
 // the renderer with every switch on (RenderSwitches): the tests that do not test a switch keep what the switches govern
@@ -196,6 +196,7 @@ describe('the view bootstrap', () => {
 
     it('its options literal: the renderer rules and the violation cap the host uses', () => {
         expect(VIEW_OPTIONS.violationLimit).toBe(VIOLATION_EVENT_LIMIT);
+        expect(VIEW_OPTIONS.violationMaxString).toBe(VIOLATION_MAX_STRING); // the cut of its reports' strings (backlog S61.3)
         expect(VIEW_OPTIONS.render).toBe(RENDER_RULES);
         expect(viewBootstrapText()).toContain(JSON.stringify(RENDER_REMOVED_ELEMENTS));
     });

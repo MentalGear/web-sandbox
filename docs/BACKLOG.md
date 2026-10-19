@@ -84,6 +84,8 @@ Round 5 (S63) found the recurring classes behind the findings ([research 18](res
 its fixes are made as slices of those classes (S64), followed by S65–S68. S65 is done: the element runs on one lifecycle
 reducer, and its model-based suite found LM-1 (S71) and LM-2, both fixed by construction.
 The owner's decision on the 2 s operation limit, the repeated-overrun rule, is S72. S73 closes the M-3 burst behind a slow server that PR #47's CI found.
+S61 is done: research 17's properties, the structural checks and the budgets table run in CI; the two lows they found
+are fixed.
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1554,25 +1556,52 @@ Once the review rounds end: a proper clean-up of the repository and the docs:
 The independent adversarial reviews by sub-agents of other model families (Sonnet and Haiku) are folded into the
 final review board (S74, owner, 2026-10-19), which reviews the cleaned-up repository and docs.
 
-### S61 · Property, model-based and structural tests (from research 17) — ⏸️ **later** (owner)
+### S61 · Property, model-based and structural tests (from research 17) — ✅ **done** (2026-10-19)
 
 The tests [research 17](research/17_formal_methods/README.md) found would have caught most of rounds 1–3's findings in
-our own logic. Estimated about two weeks of work; about 20–60 s more unit CI, plus a nightly job.
-1. **Property tests** (fast-check as a dev dependency):
-   - the sliding-window limiter, porting research 17's properties, and refusing a weight that is not a finite number ≥ 0;
-   - the guest's copy of the rule against the host's (a differential test);
-   - the view's time-budget arithmetic moved into a pure function and tested.
-2. **A permanent model-based lifecycle suite** (`fc.commands`), from reviewer L's reference model (rounds 2 and 3; not in
-   the repo today):
-   - re-entrant listeners, argument getters and a worker that fails to start;
-   - round 2's "What held" invariants;
-   - about 200 sequences per unit run, thousands nightly, and a Playwright subset per engine.
-3. **Structural checks:**
-   - a branded `RpcFrame` type and a source scan that only the builders make frames and that every string the guest sends is cut;
-   - the size measure against the real `structuredClone` (`fc.anything()`);
-   - a differential test of the console relay against the measure.
-4. **A budgets table** in the docs: every channel against its count, byte and time bound, and the test for each, so that
-   a bound is written down before a review has to find it missing.
+our own logic. fast-check is a dev dependency; the four new unit files take about 2 s of test time (3.4 s run alone).
+1. ✅ **Property tests:**
+   - `test/unit/rate-limit.prop.test.ts`: research 17's limiter properties against the real `rate-limit.ts`, with its two
+     preconditions (time never goes back; the delay never shrinks) kept as their known counterexamples;
+   - **the weight rule (class C):** a weight that is not a finite number ≥ 0 is refused by both sides with one rule,
+     `isWeight` in `rate-limit.ts`, spelled out in the guest's copy (a test compares the texts). The host admitted NaN,
+     which the guest refused, and both admitted negative weights; latent, since every caller passes a count or a measure;
+   - the guest's copy of the rule, lifted out of the built bootstrap, against the host's: a permanent differential
+     property over any weight, for `admit`, `fits` and the call budget's fits-then-spend;
+   - `viewBudget` was already pure (S72, S73) and its pieces tested on fixed and seeded cases; `test/unit/view-budget.prop.test.ts`
+     adds API.md's long-run bound (a) as fast-check properties: the time share over a run and over any stretch, and the
+     loads charged over any stretch, for operations of any cost, overruns included. Under mutation they find round 5's
+     M-2 (the debt floored at 1 s).
+2. ✅ **The model-based lifecycle suite:** S65.
+3. ✅ **Structural checks** (`test/unit/structural.test.ts`). The frame builders and their literal scan existed (round 3,
+   `test/unit/review-round-3.test.ts`); added:
+   - a branded `RpcFrame` (`rpc.ts`): `RpcSend` takes only it, the builders are the only cast to it, and a scan keeps
+     that cast there;
+   - a scan of every frame literal of every function the library stringifies into a realm (and a check that the list of
+     those functions is complete), against one table of each field and what bounds it: cut, checked, measured, constant;
+   - the size measure against the real `structuredClone` (fast-check's `anything()`, every kind clone takes): finite,
+     equal at both ends, at least what V8's serializer writes, an early stop that changes nothing, and its buffers;
+   - the console relay against the measure and against the host's reading of a line (`toLogDetail`).
+4. ✅ **A budgets table:** [API.md, Budgets](API.md#budgets), generated from `CHANNEL_BUDGETS` next to the egress
+   table (`src/lib/egress.ts`; S64), with a cost column where CONTRIBUTING's availability rule puts documented host-page
+   costs, the view's linking its own section (S68). `test/unit/budgets.test.ts` keeps the table and the code in step,
+   resolves every constant to its value, checks every test named exists, and fails on a surface of the egress table that
+   relays, budgets or caps and is no channel's.
+
+**Found, and fixed** (the owner's request, 2026-10-19, after the report):
+- **The violation reports' strings were posted uncut (class E-cpu, low).** The bootstrap and the view posted a report's
+  `directive`, `blockedURI` and `sourceFile` as the browser gave them, and the host cut them to 2048 characters only once
+  it had deserialized them. Measured (`test/e2e/violation-strings.spec.ts`): a 100 000-character https URL crossed whole
+  on all three engines (cooperative mode, the worker in Chromium and Firefox, the view everywhere); every engine reports
+  a `data:` or `blob:` URL by its scheme alone. Now both cut at `VIOLATION_MAX_STRING` before posting, with one helper
+  each (`cutAt` in the bootstrap, `cutText` in the view), each field read once; the host still cuts on receipt. The
+  scan has no open row, and fails on one.
+- **A relay placeholder could pass what was left of a line's budget (class P, low).** The relay charged the placeholder
+  it wrote for an argument past the budget without checking that it fit, so with less than its size left the line
+  crossed past `LOG_MAX_BYTES` as the host measures it, and the host dropped the placeholder and warned wrongly. Now
+  room for one tail is kept back from the start, a placeholder must fit what is left besides it, and when it does not
+  the line ends with the tail, which says how many arguments it dropped. The fast-check property, with the
+  counterexample, is the test: the host drops nothing of any line the relay posts.
 
 ### S62 · Review round 4: the worker's only way out, values read once, the view's URL budget, build completion after load — ✅ **done**
 
