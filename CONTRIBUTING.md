@@ -102,6 +102,9 @@ stand beside the bound as an example, with its date and engine; it is never gene
   `bun run api:update` accepts a change, which the PR then shows.
 - `test/unit/doc-links.test.ts`: every relative link and anchor in the Markdown files, and every ID in the registry's
   forms cited in `src/`, `test/` and the docs, resolves.
+- `test/unit/history-ratchet.test.ts`: per file of `src/` and `test/`, the comment lines that tell history and the bare
+  finding IDs, counted against `test/unit/history-ratchet.baseline.json`. A count may only fall; when one does, the
+  test prints how to lower the baseline.
 
 ## Style
 
