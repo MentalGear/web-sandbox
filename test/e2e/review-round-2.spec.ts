@@ -1,5 +1,5 @@
 import { test, expect, type MountConfig } from './fixture';
-import type { Page } from '@playwright/test';
+import { busyShare, describeShare, viewBound } from './host-share';
 
 /**
  * Review round 2 (reviewer C): the findings where the browser decides, on Chromium, Firefox and WebKit. Each test failed
@@ -81,13 +81,10 @@ test.describe('C-3: what a call answers is measured as it is posted, by an allow
 });
 
 // Review round 2, M-3: what the view's operations cost the host page's thread, which the view shares in WebKit and Firefox
-// (and in Chromium depending on its process model), measured from the host page as ticks of a 10 ms interval, idle
-// against loaded, as in view-budget.spec.ts. Each flood stays within every budget the view counts in characters.
-const countTicks = (page: Page, ms = 2500) => page.evaluate((duration) => new Promise<number>(resolve => {
-    let count = 0;
-    const timer = setInterval(() => count++, 10);
-    setTimeout(() => { clearInterval(timer); resolve(count); }, duration);
-}), ms);
+// (and in Chromium depending on its process model), measured from the host page as its busy share against its own idle
+// baseline (./host-share.ts), and bounded by the view's time budget as the suite asserts it (docs/API.md, "The view's
+// cost to the host page", (a): 20%, plus the measure's 10 points). Each flood stays within every budget the view counts
+// in characters.
 
 const VIEW_FLOODS: [string, string][] = [
     ['re-rendering 37 449 empty elements without pause', `
@@ -114,27 +111,24 @@ const VIEW_FLOODS: [string, string][] = [
 
 test.describe("M-3: the view's work is budgeted by the time it takes, not only by its characters", () => {
     for (const [name, entry] of VIEW_FLOODS) {
-        test(`${name}: the host page keeps at least half its ticks`, async ({ sandbox, page, browserName }) => {
+        test(`${name}: the host page keeps all but the view's share of its ticks`, async ({ sandbox, page, browserName }) => {
             test.setTimeout(90000);
             await sandbox.registerFiles({ 'main.js': entry });
             expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', scriptUnsafe: true })).toBe('ready');
             await page.evaluate(() => document.querySelector('web-sandbox')!.addEventListener('terminated', (e: any) => { (window as any).__lastTerminated = e.detail.reason; }));
             await page.waitForTimeout(300);
-            const idle = await countTicks(page, 8000);
-            await sandbox.run('flood()');
             // sustained, not the first operation: one operation's own cost (one textarea's paint, 1.3–1.7 s in WebKit) is
-            // not something a rate can bound; what follows it is
-            await page.waitForTimeout(2000);
-            const loaded = await countTicks(page, 8000);
+            // not something a rate can bound; what follows it is (a warm-up of 2 s)
+            const share = await busyShare(page, () => sandbox.run('flood()'), undefined, 2000);
             // The second operation past VIEW_MAX_OPERATION_MS within VIEW_OVERRUN_WINDOW_MS ends the sandbox (review round
             // 5, M-2; backlog S72): in WebKit the first set() of the textarea, its value and its first paint, takes longer
             // than 2 s, an overrun the sandbox survives; a later set() past it ends the sandbox with that reason. The
             // host page keeps its ticks either way.
             await expect.poll(async () => (await sandbox.logs()).includes('M3 flood done') || (await sandbox.state()) === 'terminated', { timeout: 30000 }).toBe(true);
             const state = await sandbox.state();
-            console.log(`MEASURED ${browserName} M-3 ${name}: host ticks in 8 s idle ${idle}, loaded ${loaded}; the sandbox ${state}`);
+            console.log(`MEASURED ${browserName} M-3 ${name}: ${describeShare(share)}; the sandbox ${state}`);
             if (state === 'terminated') expect(await page.evaluate(() => (window as any).__lastTerminated)).toBe('the view spent more than 2000 ms on one operation twice within 5 minutes');
-            expect(loaded).toBeGreaterThan(idle * 0.5);
+            expect(share.busy).toBeLessThanOrEqual(viewBound(false));
         });
     }
 });

@@ -1,6 +1,7 @@
 import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inView, waitInView } from './strict-view';
+import { lag, quietStall, startLag } from './host-share';
 import { VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS } from '@src/lib/in-sandbox-view';
 import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
 
@@ -224,13 +225,7 @@ test.describe('ST1: nothing the strict view shows opens in a new tab as a docume
 
 // ---- ST2: no fan-out, and a bounded document ---------------------------------------------------------------------
 
-const START_LAG = () => {
-    const w = window as any;
-    clearInterval(w.lagTimer);
-    w.lag = { max: 0, last: performance.now() };
-    w.lagTimer = setInterval(() => { const now = performance.now(); w.lag.max = Math.max(w.lag.max, now - w.lag.last - 10); w.lag.last = now; }, 10);
-};
-const LAG = () => Math.round((window as any).lag.max);
+// The host page's longest stall: ./host-share.ts (startLag, lag).
 
 const repeat = (s: string, n: number) => s.repeat(n);
 // 10 × 10 × 10 × 10 × 10 instances from about 1 KB (measured before the fix: 5.8–6.5 s of host stall on all three engines)
@@ -252,15 +247,17 @@ test.describe('ST2: one render cannot stall the host by fan-out, and the view ho
         test(`a ${markup.length}-character render that instances its content 10^5 times (${name}) does nothing: nothing instancing is left, and the host's longest stall stays under 500 ms`, async ({ sandbox, page, browserName }) => {
             test.setTimeout(120000);
             expect(await sandbox.mount(strict())).toBe('ready');
-            await page.evaluate(START_LAG);
+            const quiet = await quietStall(page); // the machine's own stall now (./host-share.ts)
+            await startLag(page);
             await render(sandbox, browserName, markup, 'done', null, 90000);
             await page.waitForTimeout(1000);
-            const lag = await page.evaluate(LAG);
-            console.log(`MEASURED ${browserName} ST2 ${name} lag ${lag} ms`);
+            const stall = await lag(page);
+            console.log(`MEASURED ${browserName} ST2 ${name} lag ${stall} ms (the machine's own ${quiet} ms)`);
             expect(await inView(page, browserName, `document.querySelectorAll('#fan use, #fan marker, #fan symbol').length`)).toBe(0);
-            // a 1.5 KB render costs a few milliseconds once nothing instances; 500 ms is far above that on every engine,
-            // and far below the measured stall before the fix (5.8–6.5 s for <use>, 1.1–2.9 s for markers)
-            expect(lag).toBeLessThan(500);
+            // a 1.5 KB render costs a few milliseconds once nothing instances; 500 ms over the machine's own stall is far
+            // above that on every engine, and far below the measured stall before the fix (5.8–6.5 s for <use>, 1.1–2.9 s
+            // for markers)
+            expect(stall).toBeLessThan(quiet + 500);
         });
     }
 
@@ -268,10 +265,10 @@ test.describe('ST2: one render cannot stall the host by fan-out, and the view ho
         test.setTimeout(90000);
         expect(await sandbox.mount(strict({ html: '<div id="a"></div><div id="b"></div><div id="c"></div>' }))).toBe('ready');
         await waitInView(page, browserName, `!!document.getElementById('c')`);
-        await page.evaluate(START_LAG);
+        await startLag(page);
         await render(sandbox, browserName, repeat('<p>', 45000), 'a-done', 'a', 30000); // 45 001 elements: applies
-        const lag = await page.evaluate(LAG);
-        console.log(`MEASURED ${browserName} ST2 45000-element render lag ${lag} ms`);
+        const stall = await lag(page);
+        console.log(`MEASURED ${browserName} ST2 45000-element render lag ${stall} ms`);
         expect(await inView(page, browserName, `document.body.getElementsByTagName('*').length`)).toBe(45004);
         await sandbox.clearLogs();
         // 10 001 more into b: the document would hold 55 005: refused, b unchanged, and the next render still applies

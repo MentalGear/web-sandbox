@@ -275,7 +275,7 @@ const WORKER_FRAME_REFUSALS: Readonly<Record<string, string>> = Object.freeze(Ob
 // object shared 24 levels deep blocked setConfig() for 2.4 s). A pair already compared, or being compared, adds nothing:
 // were it different, the comparison already in progress or done answers so. At most SAME_DATA_MAX_PAIRS pairs are
 // compared; past that, and past a depth of 64, the configs count as different, which only costs a rebuild.
-const SAME_DATA_MAX_PAIRS = 10000;
+export const SAME_DATA_MAX_PAIRS = 10000;
 function sameData(a: unknown, b: unknown): boolean {
     const compared = new Map<object, Set<object>>();
     const pending: [unknown, unknown, number][] = [[a, b, 0]];

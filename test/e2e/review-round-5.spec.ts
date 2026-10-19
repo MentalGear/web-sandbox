@@ -2,6 +2,7 @@ import { deflateSync } from 'node:zlib';
 import { test, expect, type SandboxDriver } from './fixture';
 import { waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
+import { busyShare, describeShare, floodControl, interleavedShare, pausableFlood } from './host-share';
 
 /**
  * Review round 5: the findings where the browser decides, on Chromium, Firefox and WebKit. Each names its class
@@ -13,12 +14,10 @@ import type { Page } from '@playwright/test';
  *   N-4  a removal of a file the host unregistered after the build left the view showing it (D)
  */
 
-// Ticks of a 10 ms interval on the host page over `ms`: what the host page's thread had left.
-const countTicks = (page: Page, ms: number) => page.evaluate((duration) => new Promise<number>(resolve => {
-    let count = 0;
-    const timer = setInterval(() => count++, 10);
-    setTimeout(() => { clearInterval(timer); resolve(count); }, duration);
-}), ms);
+// What the host page's thread had left: its busy share against its own idle baseline (./host-share.ts). The floods
+// last 5 s of running, so the loaded side is the best of 2 windows of 2 s, each after a warm-up of 500 ms, within the
+// flood; where the flood can pause, each window lies between two idle baselines (interleavedShare).
+const WITHIN_FLOOD = { windows: 2, ms: 2000 };
 
 async function mountMode(sandbox: SandboxDriver, mode: 'worker' | 'strict') {
     if (mode === 'worker') {
@@ -38,22 +37,23 @@ const terminations = (page: Page) => page.evaluate(() => [...(window as any).ter
 
 const UNCAUGHT_REASON = /uncaught errors or unhandled rejections/;
 
-// A function that runs its argument on every timer tick for 5 s, then stops: long enough to measure, short enough that
-// a flood the sandbox does not end cannot run the test's browser out of memory (Firefox's console kept about 7 GB in 25 s
-// at 60814b5, past this machine's memory limit).
-const FOR_5_SECONDS = `((tick) => { const end = performance.now() + 5000; const timer = setInterval(() => { if (performance.now() > end) clearInterval(timer); else tick(); }, 0); })`;
+// A flood that runs its tick on every timer turn for 5 s of running in all, then stops: long enough to measure, short
+// enough that a flood the sandbox does not end cannot run the test's browser out of memory (Firefox's console kept about
+// 7 GB in 25 s, past this machine's memory limit). Pausable, so that each loaded window lies between two idle
+// baselines (./host-share.ts, interleavedShare): the WITHIN_FLOOD windows and their warm-ups are its 5 s.
+const FOR_5_SECONDS = (setup: string, tick: string) => pausableFlood(setup, tick, 5000);
 
 test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the host page a bounded share, or end the sandbox', () => {
     // The reviewers' flood: a rejection of 16 Mi characters per timer tick. Firefox reports each to the host page's
     // thread whether or not it is cancelled (measured: 99% busy at 60814b5, and with the guest cancelling every one);
     // past the budget the sandbox ends.
     const FLOODS: Record<string, string> = {
-        'rejections of 16 Mi characters': `const big = 'x'.repeat(2 ** 24); ${FOR_5_SECONDS}(() => { Promise.reject(new Error(big)); });`,
-        'small rejections, 100 per tick': `${FOR_5_SECONDS}(() => { for (let i = 0; i < 100; i++) Promise.reject(new Error('x')); });`,
-        'small rejections handled a tick later (rejectionhandled), 100 per tick': `${FOR_5_SECONDS}(() => { for (let i = 0; i < 100; i++) { const p = Promise.reject(new Error('x')); setTimeout(() => p.catch(() => {}), 0); } });`,
+        'rejections of 16 Mi characters': FOR_5_SECONDS(`const big = 'x'.repeat(2 ** 24);`, `() => { Promise.reject(new Error(big)); }`),
+        'small rejections, 100 per tick': FOR_5_SECONDS('', `() => { for (let i = 0; i < 100; i++) Promise.reject(new Error('x')); }`),
+        'small rejections handled a tick later (rejectionhandled), 100 per tick': FOR_5_SECONDS('', `() => { for (let i = 0; i < 100; i++) { const p = Promise.reject(new Error('x')); setTimeout(() => p.catch(() => {}), 0); } }`),
         // errors, which the worker cancels once relayed (review round 4, M-1), count against the same budget
-        'uncaught errors of 16 Mi characters': `const big = 'x'.repeat(2 ** 24); ${FOR_5_SECONDS}(() => { reportError(new Error(big)); });`,
-        'small uncaught errors, 100 per tick': `${FOR_5_SECONDS}(() => { for (let i = 0; i < 100; i++) reportError(new Error('x')); });`,
+        'uncaught errors of 16 Mi characters': FOR_5_SECONDS(`const big = 'x'.repeat(2 ** 24);`, `() => { reportError(new Error(big)); }`),
+        'small uncaught errors, 100 per tick': FOR_5_SECONDS('', `() => { for (let i = 0; i < 100; i++) reportError(new Error('x')); }`),
     };
     for (const mode of ['worker', 'strict'] as const) {
         for (const [name, flood] of Object.entries(FLOODS)) {
@@ -62,14 +62,13 @@ test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the ho
                 await mountMode(sandbox, mode);
                 await recordTerminations(page);
                 await page.waitForTimeout(300);
-                const idle = await countTicks(page, 3000);
-                await sandbox.run(flood);
-                await page.waitForTimeout(500);
-                const loaded = await countTicks(page, 4000);
+                const share = await interleavedShare(page, floodControl(sandbox, flood), WITHIN_FLOOD, 500);
                 const reasons = await terminations(page);
-                console.log(`MEASURED ${browserName} N-1 ${mode} mode, ${name}: host ticks idle ${idle} in 3 s, under the flood ${loaded} in 4 s (${Math.round((1 - loaded / (idle * 4 / 3)) * 100)}% busy), state ${await sandbox.state()}, ${JSON.stringify(reasons)}`);
+                console.log(`MEASURED ${browserName} N-1 ${mode} mode, ${name}: ${describeShare(share)}, state ${await sandbox.state()}, ${JSON.stringify(reasons)}`);
                 const ended = reasons.length === 1 && UNCAUGHT_REASON.test(reasons[0]!);
-                expect(ended || loaded > idle * 4 / 3 * 0.9, 'near idle, or ended with the reason').toBe(true);
+                // no documented share (docs/API.md lists Firefox's cost within the budget, 4–7%, as outside the view's
+                // bound): the spec's own 10% stands
+                expect(ended || share.busy < 0.1, 'near idle, or ended with the reason').toBe(true);
                 // a flood this fast is past the budget: the sandbox ends, and says why. Except WebKit's uncaught errors of
                 // 16 Mi characters: WebKit mutes a worker's errors ("Script error.", no error object), so their characters are
                 // not there to count, and it raises fewer than the count budget (its host page stayed idle: measured 2-5%)
@@ -87,24 +86,21 @@ test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the ho
             await mountMode(sandbox, mode);
             await recordTerminations(page);
             await page.waitForTimeout(300);
-            const idle = await countTicks(page, 3000);
             await sandbox.clearLogs();
-            await sandbox.run(`const text = 'y'.repeat(2048); let n = 0; const start = performance.now(); const t = setInterval(() => {
+            const share = await busyShare(page, () => sandbox.run(`const text = 'y'.repeat(2048); let n = 0; const start = performance.now(); const t = setInterval(() => {
                 const due = Math.min(1500, Math.floor((performance.now() - start) * 300 / 1000));
                 while (n < due) { n++; const p = Promise.reject(new Error(text)); setTimeout(() => p.catch(() => {}), 0); }
                 if (n >= 1500) clearInterval(t);
-            }, 5);`);
-            await page.waitForTimeout(500);
-            const loaded = await countTicks(page, 4000);
+            }, 5);`), WITHIN_FLOOD, 500);
             const relayedLines = async () => (await sandbox.logs()).filter(line => line.startsWith('Uncaught (in promise) Error: yyy')).length;
             for (let wait = 0; wait < 40 && await relayedLines() < 1500; wait++) await page.waitForTimeout(100);
             const relayed = await relayedLines();
-            console.log(`MEASURED ${browserName} N-1 ${mode} mode within the budget: host ticks idle ${idle} in 3 s, under the rejections ${loaded} in 4 s (${Math.round((1 - loaded / (idle * 4 / 3)) * 100)}% busy), ${relayed} relayed`);
+            console.log(`MEASURED ${browserName} N-1 ${mode} mode within the budget: ${describeShare(share)}, ${relayed} relayed`);
             expect(await terminations(page)).toEqual([]);
             expect(await sandbox.state()).toBe('ready');
             // a rejection whose catch runs before the browser's notification is never unhandled: nearly all of them are
             expect(relayed).toBeGreaterThan(1400);
-            expect(loaded).toBeGreaterThan(idle * 4 / 3 * 0.85);
+            expect(share.busy).toBeLessThan(0.15); // no documented share (Firefox's 4–7% is listed as measured): the spec's own 15% stands
         });
     }
 });

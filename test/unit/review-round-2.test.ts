@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { join } from 'node:path';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { inStrictWorker, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
-import { defineWebSandbox } from '@src/host';
+import { defineWebSandbox, SAME_DATA_MAX_PAIRS } from '@src/host';
 import { createBroker, RPC_MAX_BYTES } from '@src/lib/rpc';
 import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, LOG_MAX_STRING } from '@src/lib/sandbox-log';
@@ -321,7 +321,9 @@ describe('C-4: a view operation costs what it changes, not the size of the whole
         document.body.replaceChildren();
     });
 
-    it('set({ value }) and text() on a view of ~1 M characters serialize a bounded amount each, not the whole body', async () => {
+    // An explicit budget for fixed work (backlog T6's class): a view of about 1 M characters built in jsdom, then 20
+    // operations on it. 2.1 s in a full idle run: vitest's default 5 s is 2.4 times that. 15 times the idle cost.
+    it('set({ value }) and text() on a view of ~1 M characters serialize a bounded amount each, not the whole body', { timeout: 30000 }, async () => {
         // the real platform for the view (jsdom's), not the stand-ins above
         for (const name of Object.keys(PLATFORM)) (globalThis as any)[name] = originals[name];
         (globalThis as any).addEventListener = originalAddEventListener;
@@ -391,19 +393,29 @@ describe("C-7: setConfig()'s equal-config check is linear in the config, shared 
         el.remove();
     });
 
+    // Sized from the cap (T6): a config of `wide` objects is compared in wide + 3 pairs (the config, its capabilities,
+    // `data`, then one per object). The comparison stops at the cap, but each setConfig() structured-clones the whole
+    // config, so objects far past the cap only cost time (the clone of 200 000 takes about 640 ms), which a loaded machine
+    // turns into vitest's 5 s. Both sides of the cap: the control, just within it, rebuilds nothing, so the rebuild past
+    // it is the cap's doing (0.2–0.5 s in full runs, idle or loaded).
     it('past the comparison cap the configs count as different: the sandbox rebuilds (the safe answer)', () => {
         defineWebSandbox();
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = document.createElement('web-sandbox') as any;
-        document.body.appendChild(el);
-        const wide: Record<string, unknown> = {};
-        for (let i = 0; i < 200000; i++) wide['k' + i] = { i };
-        const config = { mode: 'cooperative', capabilities: ['allow-scripts'], data: wide };
-        el.setConfig(config);
-        const frame = el.shadowRoot.querySelector('iframe');
-        el.setConfig(config);
-        expect(el.shadowRoot.querySelector('iframe')).not.toBe(frame);
-        el.remove();
+        const setTwice = (wide: number) => {
+            const el = document.createElement('web-sandbox') as any;
+            document.body.appendChild(el);
+            const data: Record<string, unknown> = {};
+            for (let i = 0; i < wide; i++) data['k' + i] = { i };
+            const config = { mode: 'cooperative', capabilities: ['allow-scripts'], data };
+            el.setConfig(config);
+            const frame = el.shadowRoot.querySelector('iframe');
+            el.setConfig(config);
+            const rebuilt = el.shadowRoot.querySelector('iframe') !== frame;
+            el.remove();
+            return rebuilt;
+        };
+        expect(setTwice(SAME_DATA_MAX_PAIRS - 3)).toBe(false); // the control: SAME_DATA_MAX_PAIRS pairs, all compared
+        expect(setTwice(2 * SAME_DATA_MAX_PAIRS)).toBe(true);
     });
 });
 

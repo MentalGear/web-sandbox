@@ -123,9 +123,17 @@ describe('5:L-1 (class L): a call made while loading that settles before `ready`
         expect(posted(build.port).at(-1)).toBe('call after ready');
     });
 
-    it('a model of the rule, over random schedules in every mode: a frame leaves only at `ready` or after, and only for a call still pending then', async () => {
-        for (const mode of ['cooperative', 'worker', 'strict'] as const) {
-            for (let seed = 1; seed <= 40; seed++) {
+    // An explicit budget for a fixed amount of work (backlog T6): SEEDS schedules per mode, each one element built in
+    // jsdom (about four fifths of the cost) and 101 steps of the fake clock. Nothing grows from one schedule to the
+    // next: measured, about 100 ms for the first (jsdom warming up), then 6–34 ms each to the last. It is all CPU: 1.4–1.7 s
+    // alone, 1.5 s in a full idle run on 4 cores, 3.3–4.6 s in full runs with two busy loops on the machine (load
+    // average 8). Vitest's default 5 s is 3 times the idle cost, which a loaded machine passes. The budget is 250 ms
+    // per schedule, about 20 times the idle cost.
+    const SEEDS = 40;
+    const MODES = ['cooperative', 'worker', 'strict'] as const;
+    it('a model of the rule, over random schedules in every mode: a frame leaves only at `ready` or after, and only for a call still pending then', { timeout: MODES.length * SEEDS * 250 }, async () => {
+        for (const mode of MODES) {
+            for (let seed = 1; seed <= SEEDS; seed++) {
                 vi.useFakeTimers(); // before the element: its broker takes the timers it finds when it is made
                 const next = random(seed * 7919 + mode.length);
                 const { el } = element();

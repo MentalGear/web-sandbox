@@ -454,7 +454,7 @@ test.describe('3. module resolution between blob: modules', () => {
 // ---- 4: blob: URLs stay in the realm that created them ----------------------------------------
 
 test.describe('4. blob: URLs do not cross realms', () => {
-    // Host-created URLs: blob:http://localhost:4444/<uuid>
+    // Host-created URLs: blob:<ORIGIN>/<uuid>
     const hostBlobs = () => {
         const mk = (s: string, t: string) => URL.createObjectURL(new Blob([s], { type: t }));
         return {

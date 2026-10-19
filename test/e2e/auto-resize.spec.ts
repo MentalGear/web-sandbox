@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect, type SandboxDriver } from './fixture';
+import { quietStall, ticks } from './host-share';
 
 /**
  * Content auto-sizing (backlog B6): with `autoResize: true` the element's height follows the guest's content
@@ -156,6 +157,7 @@ test('forged reports every frame cost at most one write per frame and 30 per sec
 });
 
 test('a guest whose height oscillates every frame does not starve the host', async ({ sandbox, page }) => {
+    const quiet = await quietStall(page); // the machine's own stall now, before the guest (./host-share.ts)
     // Each observer callback flips the content between two heights, so every rendering update reports a new one.
     expect(await sandbox.mount({ autoResize: true, html: `<div id="box"></div><script>
         let tall = false;
@@ -165,26 +167,15 @@ test('a guest whose height oscillates every frame does not starve the host', asy
     await expect.poll(() => inlineHeight(page)).not.toBe('');
     await recordWrites(page);
 
-    // The host's own work during two seconds of oscillation: frames, and the longest gap between timer ticks.
-    const host = await page.evaluate(() => new Promise<{ frames: number; longestGap: number }>(resolve => {
-        let frames = 0;
-        let last = performance.now();
-        let longestGap = 0;
-        const tick = () => { frames++; requestAnimationFrame(tick); };
-        requestAnimationFrame(tick);
-        const timer = setInterval(() => {
-            const now = performance.now();
-            longestGap = Math.max(longestGap, now - last);
-            last = now;
-        }, 10);
-        setTimeout(() => { clearInterval(timer); resolve({ frames, longestGap }); }, 2000);
-    }));
+    // The host's own work during two seconds of oscillation: frames, and the longest gap between timer ticks (./host-share.ts).
+    const meter = await ticks(page, 2000, { frames: true });
+    const host = { frames: meter.frames, longestGap: meter.longest };
     const written = await writes(page);
 
     expect(written.length, 'the guest really oscillated').toBeGreaterThan(10);
     expect(written.length).toBeLessThanOrEqual(2 * MAX_UPDATES_PER_SECOND + 1);
     expect(host.frames, 'host frames in 2 s').toBeGreaterThan(20);
-    expect(host.longestGap, 'longest gap between host timer ticks (ms)').toBeLessThan(500);
+    expect(host.longestGap, `longest gap between host timer ticks (ms), the machine's own ${quiet}`).toBeLessThan(quiet + 500);
 });
 
 test('reset() keeps the height until the new guest reports; turning autoResize off gives the height back to CSS', async ({ sandbox, page }) => {
