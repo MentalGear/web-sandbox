@@ -283,10 +283,10 @@ export const CONFIG_SCHEMA = {
         default: DEFAULT_CALL_BUDGET, documented: `${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes / 1048576} MiB per second`, modes: ALL_MODES,
         read: ({ given, warn }) => callBudgetOf(given, warn),
     },
-    // configured the removed Service-Worker hub (ADR-004)
-    virtualFilesUrl: { removed: '[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).' },
     // the raw policy, replaced by `origins` (ADR-007): ignored, never adapted, so it fails closed (no origin)
     connectionsAllowed: { removed: '[Sandbox] connectionsAllowed was removed; use origins. It was ignored: the guest policy admits only the exact origins listed in `origins` (see docs/API.md#origins).' },
+    // configured the removed Service-Worker hub (ADR-004)
+    virtualFilesUrl: { removed: '[Sandbox] "virtualFilesUrl" is no longer supported and was ignored: register files with registerFiles() and read them in the guest through sandboxFiles (see docs/ADR-004).' },
     origins: {
         default: NO_ORIGINS, documented: 'none', modes: ALL_MODES,
         // parsed for the mode the build will have, the default included, so strict mode drops `scripts` whether the
