@@ -23,7 +23,9 @@
  * URL: no Referer) and the response must pass CORS for that origin.
  *
  * Every request is reported once, when it settles, as a FetchRecord (the host's 'fetch' event): refused
- * attempts included. Fields that come from the guest are validated or clamped before they are reported.
+ * attempts included. Fields that come from the guest are validated or clamped before they are reported. Once the
+ * environment is torn down (abortAll), every record its bridge still makes is 'aborted', whatever the request settled on
+ * (createFetchBridge, record).
  *
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
@@ -93,7 +95,8 @@ export interface FetchRecord {
      * failed    fetch() was called and no response was handed over (code says why). Not proof that a request
      *           left the page: the browser's fetch rejects some requests before sending them (the host page's
      *           own connect-src, mixed content, local-network blocking), and a page cannot tell those apart
-     * aborted   the sandbox was reset, terminated or removed while the request was in flight
+     * aborted   the sandbox was reset, terminated or removed before the request settled: every record made after the
+     *           bridge's abortAll(), whatever the request settled on (status and bytes as measured)
      */
     outcome: 'ok' | 'refused' | 'failed' | 'aborted';
     /** The HTTP status, when a response arrived. */
@@ -434,7 +437,10 @@ export interface FetchBridgeOptions {
 export interface FetchBridge {
     /** Handles one sandboxFetch() request from the guest: resolves with the whole response or rejects with a library code. */
     handle(request: unknown): Promise<FetchResult>;
-    /** Aborts every request in flight (teardown): each is reported as 'aborted'. Later requests are refused. */
+    /**
+     * Ends the bridge with its environment (teardown): aborts every request in flight, and from then on every record the
+     * bridge makes is 'aborted' and every request is refused, whatever path it settles on.
+     */
     abortAll(): void;
 }
 
@@ -446,19 +452,51 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
     const inFlight = new Set<AbortController>();
     let closed = false;
 
-    const record = (base: { method: string; url: string; started: number }, outcome: FetchRecord['outcome'], details: Partial<FetchRecord>) => {
-        onRecord(Object.freeze({ method: base.method, url: base.url, outcome, bytes: 0, durationMs: Math.max(0, now() - base.started), ...details }));
+    // The one place a record is made, and the one place its outcome is final (finding LM-1, class L: an environment's
+    // events reaching listeners after its teardown). Each path below proposes the outcome it settled on; once abortAll()
+    // has run, the record is 'aborted' instead, with code FETCH_FAILED, whatever was proposed. Status and bytes stay as
+    // measured; a refusal's `reason` goes (it explains a refusal, and this is not one any more).
+    //
+    // Why here and not on each path: the paths used to decide on their own, and only the catch looked at the teardown
+    // (the controller's abort reason). A request whose body was already read when a listener of another request's record
+    // tore the environment down settled on the success path and recorded 'ok', dispatched after the teardown that the
+    // listener's reset() or terminate() had made; so did a redirect refusal, a 'failed' record and a request refused after
+    // close. docs/API.md promises that after its teardown an environment's records are 'aborted': with the decision made
+    // here, from the bridge's lifetime and not from how the request ended, that holds for every path, present and future,
+    // because no path picks the final outcome any more. `closed` is read after the clock, as the last thing before the
+    // record is handed over, so a teardown up to that instant is seen (the unit test tears down from inside that clock
+    // read: test/unit/fetch-bridge-lifecycle.test.ts). Nothing can run between this and onRecord.
+    //
+    // Returns the outcome recorded: when it is 'aborted', the guest's call rejects with the teardown refusal
+    // (tornDown) instead of handing over a body or another refusal. Its environment is gone, so the answer could only
+    // reach a closed port anyway (host.ts, _onGuestMessage), and the guest is told the same thing on every path.
+    const record = (base: { method: string; url: string; started: number }, proposed: FetchRecord['outcome'], details: Partial<FetchRecord>): FetchRecord['outcome'] => {
+        const durationMs = Math.max(0, now() - base.started);
+        if (closed) {
+            const { reason: _explained, ...measured } = details;
+            onRecord(Object.freeze({ method: base.method, url: base.url, bytes: 0, durationMs, ...measured, outcome: 'aborted', code: 'FETCH_FAILED' }));
+            return 'aborted';
+        }
+        onRecord(Object.freeze({ method: base.method, url: base.url, outcome: proposed, bytes: 0, durationMs, ...details }));
+        return proposed;
     };
+    const tornDown = () => fetchRefusal('FETCH_FAILED', 'the sandbox was torn down');
 
     const handle = async (request: unknown): Promise<FetchResult> => {
         const source = request && typeof request === 'object' ? request as Record<string, unknown> : {};
         const base = { method: reportedMethod(source.method ?? 'GET'), url: reportedUrl(source.url), started: now() };
 
         const refuse = (error: FetchRefusal): never => {
-            record(base, 'refused', error.reason === undefined ? { code: error.code } : { code: error.code, reason: error.reason });
-            throw error;
+            const outcome = record(base, 'refused', error.reason === undefined ? { code: error.code } : { code: error.code, reason: error.reason });
+            throw outcome === 'aborted' ? tornDown() : error;
         };
-        if (closed) refuse(fetchRefusal('FETCH_FAILED', 'the sandbox was torn down'));
+        // A request that reaches a closed bridge: no request is made, and record() reports it 'aborted', not 'refused'.
+        // It was sent by the torn-down environment, which alone holds this bridge (host.ts, _exposeFetch binds the reserved
+        // method to its own environment's bridge), before its teardown, and it settles after it: what API.md calls
+        // 'aborted' ("the environment was torn down meanwhile"), and API.md promises that only 'aborted' records of a
+        // torn-down environment arrive after its teardown. 'refused' would break that promise for the one request that
+        // was already on its way.
+        if (closed) refuse(tornDown());
         const valid = validateRequest(request, policy, hostOrigin);
         if (valid instanceof Error) return refuse(valid);
         if (inFlight.size >= policy.maxConcurrent) refuse(fetchRefusal('FETCH_BUSY', `${policy.maxConcurrent} requests are already in flight`));
@@ -493,6 +531,7 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
         const timer = setLongTimeout(() => controller.abort(TIMEOUT), policy.timeoutMs);
         let bytes = 0;
         let status: number | undefined;
+        let result: FetchResult;
         try {
             // The init goes to fetch() again, whole. Not the Request alone: measured in WebKit, an abort that reaches
             // the fetch only through the Request's own (following) signal no longer stops a response whose headers
@@ -509,8 +548,7 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
             const body = await readBody(response, policy.maxBytes, (total) => { bytes = total; });
             const headers: [string, string][] = [];
             response.headers.forEach((value, name) => headers.push([name, value]));
-            record(base, 'ok', { status, bytes });
-            return {
+            result = {
                 url: valid.url.href,
                 status,
                 statusText: response.statusText,
@@ -518,22 +556,22 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
                 body: NULL_BODY_STATUSES.includes(status) ? new Uint8Array(0) : body,
             };
         } catch (error) {
+            // A teardown's abort lands here too, as whatever the fetch or the read threw: record() makes it 'aborted'
+            // (abortAll closes the bridge before it aborts), so no branch here needs to recognise it.
             const reason = controller.signal.aborted ? controller.signal.reason : null;
-            if (reason === TEARDOWN) {
-                record(base, 'aborted', { status, bytes, code: 'FETCH_FAILED' });
-                throw fetchRefusal('FETCH_FAILED', 'the sandbox was torn down');
-            }
             const refusal = reason === TIMEOUT ? fetchRefusal('FETCH_TIMEOUT', `no whole response within ${policy.timeoutMs} ms`)
                 : error instanceof Error && FETCH_ERROR_CODES.includes((error as any).code) ? error as Error & { code: FetchErrorCode }
                 : fetchRefusal('FETCH_FAILED', 'the request failed (network error or CORS)');
             // whatever failed, nothing of this request may stay open upstream
             if (!controller.signal.aborted) controller.abort('done');
-            record(base, 'failed', { status, bytes, code: refusal.code });
-            throw refusal;
+            throw record(base, 'failed', { status, bytes, code: refusal.code }) === 'aborted' ? tornDown() : refusal;
         } finally {
             timer.cancel();
             inFlight.delete(controller);
         }
+        // Recorded outside the try, so that the teardown refusal thrown here is not taken for a failure of the request.
+        if (record(base, 'ok', { status, bytes }) === 'aborted') throw tornDown();
+        return result;
     };
 
     const abortAll = () => {

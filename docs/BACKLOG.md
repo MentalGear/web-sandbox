@@ -81,7 +81,7 @@ S57; round 4 is held by the owner (S58), the Lean evaluation (S59) found no case
 later (S61), and the clean-up with independent reviews follows when the rounds end (S60). Review round 4
 (S58, [report](security/REVIEW-ROUND-4-2026-10-18.md)) added and closed S62; round 5 is next (S63).
 Round 5 (S63) found the recurring classes behind the findings ([research 18](research/18_finding_classes/README.md));
-its fixes are made as slices of those classes (S64), followed by S65–S68. S65's model-based suite found LM-1 (S71, for the owner).
+its fixes are made as slices of those classes (S64), followed by S65–S68. S65's model-based suite found LM-1, fixed by construction (S71).
 Rows re-checked against the items below on 2026-10-10. Items marked ✅ below keep their original text as a record of what was wrong.*
 
 ---
@@ -1653,12 +1653,22 @@ suite built from [the lifecycle model](research/17_formal_methods/lifecycle-mode
    also keeps round 4's L-1 loop as a property. Its first finding is LM-1 (S71).
 2. ⏸️ **The reducer**, tested by that suite.
 
-### S71 · For the owner: LM-1, a `fetch` record after its environment's teardown — ⏸️ **decide**
+### S71 · LM-1, a `fetch` record after its environment's teardown — ✅ **done** (2026-10-19): `aborted`, by construction
 
-A `fetch` listener that tears the environment down can still receive an `ok` record of that environment, where API.md
-says only an `aborted` record of a torn-down environment arrives then. A focused test in `lifecycle-model.spec.ts`
-fails on all three engines and is marked `test.fail()` until the owner decides: report such a record `aborted`, or
-document that a record already settled is dispatched as it is.
+A `fetch` listener that tore the environment down could still receive an `ok` record of that environment, where API.md
+says only an `aborted` record of a torn-down environment arrives then. The owner decided: such a record is `aborted`.
+What changed (class L):
+- **One chokepoint.** `createFetchBridge`'s `record()` decides the outcome from the bridge's lifetime: once `abortAll()`
+  has run, every record is `aborted` with `FETCH_FAILED`, whatever path it settled on (ok, an error status, a redirect, a
+  failure, a timeout, over `maxBytes`, a refusal), its `status` and `bytes` as measured. No path picks the final outcome
+  any more, and the guest is told the sandbox was torn down instead of getting a body.
+- **A request refused after close** is `aborted` too, not `refused`: it was sent by the torn-down environment and settles
+  after its teardown.
+- **Tests.** `test/unit/fetch-bridge-lifecycle.test.ts` enumerates every settle path from one list, each with the
+  teardown at its last possible point (before the fix, 10 of its 11 paths recorded another outcome); the focused e2e test in `lifecycle-model.spec.ts` no
+  longer carries `test.fail()` and passes on Chromium, Firefox and WebKit.
+- **Docs.** API.md (FetchRecord) states the rule; [the lifecycle model](research/17_formal_methods/lifecycle-model.md)
+  records LM-1 as fixed.
 
 ### S66 · Probe a trusted relay worker — ✅ **done**: build it, with per-engine caveats (S69)
 
