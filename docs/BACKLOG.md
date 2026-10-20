@@ -290,7 +290,8 @@ The owner adopted all of the report's recommendations:
   states bounds only (a share, a cap, a constant). The measured figures move to a handwritten note under the table,
   dated and naming the engines. Done in step 2b.
 - **D.** The public `FetchRecord` becomes a union keyed by `outcome`, in step 6.
-- **E.** A threat-model document is written new, in the current-docs layer.
+- **E.** A threat-model document is written new, in the current-docs layer. Done: [THREAT-MODEL.md](THREAT-MODEL.md),
+  in current-state wording.
 
 ### <a id="s74"></a>S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
 

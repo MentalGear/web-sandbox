@@ -569,7 +569,9 @@ existing solution is argued in [`docs/ADR-001-continue-or-adopt.md`](docs/ADR-00
 
 ## Security Mitigations
 
-The sandbox implements several layers of defense:
+What the sandbox defends, against whom, and what it leaves to the embedder and the browser, property by property with
+the code and the test behind each: [the threat model](docs/THREAT-MODEL.md). The sandbox implements several layers of
+defense:
 1.  **Opaque Origin**: Runs in `about:srcdoc`, creating a unique null origin that isolates storage.
 2.  **Strict CSP, from a typed config**: One fixed template per mode, every directive emitted (`'none'` when it admits nothing), so no browser falls back to `default-src`. The embedder adds only exact origins, per kind of load (`origins`), parsed by the same origin parser as `fetchBridge.allow`; everything else is dropped with a warning, so no value can add a directive or a source expression: no `'self'` (browsers disagree on what it matches for the guest's opaque origin; WebKit admitted any https origin), no `data:`, no wildcard or scheme. Frames that load a URL are refused (`frame-src 'none'`; frames the guest makes from markup, `srcdoc` or `about:blank`, still exist in cooperative mode and are realms of their own: see the [limits](#cooperative-mode-limits) below); `base-uri`, `form-action`, `object-src` and `manifest-src` are `'none'`; `'unsafe-eval'` comes only from `scriptUnsafe`. ([ADR-007](docs/ADR-007-typed-origins.md))
 3.  **CSP First**: The CSP `<meta>` is prepended before any user markup, so it is always the first element of the parsed `<head>`; user content cannot precede or swallow it.
