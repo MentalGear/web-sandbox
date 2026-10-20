@@ -168,10 +168,10 @@ test.describe("(a) the long-run bound: under each canonical flood the host page'
 // One operation's own cost, on a page of its own: operationCost() (./host-share.ts).
 
 // An operation whose cost grows faster than its size on every engine: elements matched by a rule whose :has() looks at
-// all their later siblings (test/e2e/view-round-5.spec.ts, M-2).
+// all their later siblings (test/e2e/strict-view-budget.spec.ts, M-2).
 const heavy = (n: number) => `<style>i:has(~ b){color:red}</style><div>${'<i>x</i>'.repeat(n)}<b>y</b></div>`;
 
-// The words of the repeated-overrun rule (backlog S72), as host.ts has them (test/unit/view-round-5.test.ts keeps them
+// The words of the repeated-overrun rule (backlog S72), as host.ts has them (test/unit/strict-view-budget.test.ts keeps them
 // equal to the constants).
 const MINUTES = VIEW_OVERRUN_WINDOW_MS / 60000;
 const OVERRUN_REASON = `the view spent more than ${VIEW_MAX_OPERATION_MS} ms on one operation twice within ${MINUTES} minutes`;

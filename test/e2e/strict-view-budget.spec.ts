@@ -9,7 +9,7 @@ import { busyOf, busyShare, describeShare, idleBaseline, lag, loadedShare, opera
  * the platform sees (M-3), the view's time budget and its one operation (M-2), the cost of the still stylesheet (M-1),
  * the renderer's prediction of the policy (N-3) and the prelude's error listener (N-2). Each test failed at 60814b5 (the
  * measurements say so where they are the evidence). The library's own logic is unit-tested in
- * test/unit/view-round-5.test.ts.
+ * test/unit/strict-view-budget.test.ts.
  */
 
 // What the host page's thread had left: its busy share against its own idle baseline (./host-share.ts).

@@ -87,7 +87,7 @@ test.describe('3. a report is a guest claim', () => {
         expect(await sandbox.mount()).toBe('ready');
         // Before review B2, guest code took the port by patching MessagePort.prototype.postMessage and posted
         // VIOLATION frames of its own. The bootstrap now calls only primitives captured before guest code ran, so
-        // that yields nothing (asserted at length in review-channels.spec.ts). The bootstrap reads a violation event
+        // that yields nothing (asserted at length in channel-isolation.spec.ts). The bootstrap reads a violation event
         // through the platform's getters, captured before guest code ran (readEvent, review round 5, N-6), so getters
         // guest code puts on SecurityPolicyViolationEvent.prototype change nothing it reports. (The host validates and
         // clamps every report all the same: violation.ts.)
@@ -143,7 +143,7 @@ test.describe('3. a report is a guest claim', () => {
 // Worker reports are per engine, a documented limit (ADR-005, "Worker reports"; API.md, `violation`): WebKit raises
 // no securitypolicyviolation event in a worker at all, so violation reporting from workers cannot be tested on WebKit,
 // and these tests assert that absence there. The evidence that a worker's load was refused is its outcome (below) and,
-// for egress, the recorder (test/e2e/verification.spec.ts, V1), on every engine.
+// for egress, the recorder (test/e2e/worker-globals-and-termination.spec.ts, V1), on every engine.
 test.describe('4. worker mode', () => {
     test('reports what the engine raises in the worker: measured per engine (WebKit raises none in workers: a documented limit, asserted as such)', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ mode: 'worker' })).toBe('ready');

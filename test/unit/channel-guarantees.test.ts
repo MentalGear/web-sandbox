@@ -11,7 +11,7 @@ import { checkIn } from './check-in';
 /**
  * Adversarial review 2026-10, channels and lifecycle (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md), host side:
  * B3 log lines, B4 frames from a port that is no longer current, B5 a listener's reset() or terminate() is never
- * undone, B6 fetch header values. The in-browser halves are in test/e2e/review-channels.spec.ts.
+ * undone, B6 fetch header values. The in-browser halves are in test/e2e/channel-isolation.spec.ts.
  */
 
 async function mount(config?: Record<string, unknown>) {

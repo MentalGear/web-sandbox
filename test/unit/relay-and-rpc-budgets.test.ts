@@ -94,7 +94,7 @@ function cooperativeComms(console = silentConsole()) {
 describe('R4-1: the console relay never throws; what clone refuses crosses as its kind', () => {
     for (const [mode, start] of [['strict', strictComms], ['cooperative', cooperativeComms]] as const) {
         // DOM nodes, Events and Responses are the browser's to refuse (jsdom's clone as plain objects): e2e,
-        // review-round-1.spec.ts, on all three engines
+        // relay-and-rpc-budgets.spec.ts, on all three engines
         it(`${mode}: functions, Symbols, Proxies, WeakMaps, Promises and objects holding them`, () => {
             const { console, lines } = start();
             const values: unknown[] = [() => 1, Symbol('s'), new Proxy({}, {}), new WeakMap(), Promise.resolve(1), { f() {} }, 'kept', 7];

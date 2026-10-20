@@ -117,7 +117,7 @@ embedder also allows direct connections.
 
 Guaranteed, each with a test (`src/lib/fetch-bridge.test.ts`, `src/lib/origin.test.ts`, `src/lib/rpc.test.ts`,
 `src/lib/in-sandbox-script.test.ts`, `test/unit/host.test.ts`, `test/unit/channel-guarantees.test.ts`,
-`test/unit/broad-review.test.ts`, `test/unit/focused-review.test.ts`, and `test/e2e/fetch-bridge.spec.ts` on Chromium,
+`test/unit/fetch-and-csp-guarantees.test.ts`, `test/unit/rate-limits-and-config.test.ts`, and `test/e2e/fetch-bridge.spec.ts` on Chromium,
 Firefox and WebKit against the recorder's two listeners outside the browser and an echo on the harness origin):
 
 - an allowlisted origin is reached and the request logged; any other is refused before a request leaves, and nothing reaches

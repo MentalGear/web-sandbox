@@ -20,7 +20,7 @@ const TYPEOF_SCANNED = await stringifiedFor('typeofRead');
 
 /**
  * Review round 4: each finding where the library's own logic decides, reproduced here first against the code it names
- * (each test failed at c7672bb). The findings where the browser decides are in test/e2e/review-round-4.spec.ts.
+ * (each test failed at c7672bb). The findings where the browser decides are in test/e2e/worker-port-and-view-cost.spec.ts.
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');

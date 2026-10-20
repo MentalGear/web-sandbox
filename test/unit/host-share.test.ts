@@ -46,13 +46,13 @@ const SCALING_ALLOWED: Record<string, string> = {};
 
 // The meters this scan replaced, verbatim: one of each shape, so the scan is shown to catch them.
 const OLD_METERS: Record<string, string> = {
-    'review-round-4.spec.ts countTicks': `const countTicks = (page: Page, ms: number) => page.evaluate((duration) => new Promise<number>(resolve => {
+    'worker-port-and-view-cost.spec.ts countTicks': `const countTicks = (page: Page, ms: number) => page.evaluate((duration) => new Promise<number>(resolve => {
     let count = 0;
     const timer = setInterval(() => count++, 10);
     setTimeout(() => { clearInterval(timer); resolve(count); }, duration);
 }), ms);`,
-    'review-round-1.spec.ts, its limit': `expect(ticks).toBeGreaterThan(idle * 0.8);`,
-    'review-round-4.spec.ts M-6, a meter spread over lines': `const gaps = await page.evaluate(() => new Promise<{ ticks: number; longest: number }>(resolve => {
+    'relay-and-rpc-budgets.spec.ts, its limit': `expect(ticks).toBeGreaterThan(idle * 0.8);`,
+    'worker-port-and-view-cost.spec.ts M-6, a meter spread over lines': `const gaps = await page.evaluate(() => new Promise<{ ticks: number; longest: number }>(resolve => {
                 let ticks = 0;
                 let last = performance.now();
                 let longest = 0;
@@ -73,10 +73,10 @@ const OLD_METERS: Record<string, string> = {
     'view-bound.spec.ts (b), a self-arming timer': `const tick = () => { const now = performance.now(); if (now - last > 500) (window as any).__stalls.push(Math.round(now - last)); last = now; setTimeout(tick, 10); };`,
     'view-budget.spec.ts M-5, its share': `const busy = Math.round((1 - loaded / idle) * 100);`,
     'research 16, a share against the ideal': `busyPercent: Math.max(0, Math.round((1 - ticks / (WINDOW_MS / 10)) * 100)),`,
-    'view-round-5.spec.ts, a limit over another window': `expect(loaded).toBeGreaterThan(idle * (30 / 8) * 0.7);`,
+    'strict-view-budget.spec.ts, a limit over another window': `expect(loaded).toBeGreaterThan(idle * (30 / 8) * 0.7);`,
     // the four that failed on a loaded machine (T9), each in its old shape
-    'view-round-5.spec.ts M-3, "observing the loads costs nothing": one window on each side': `expect(idle).toBeGreaterThan(before * 0.95);`,
-    'review-round-4.spec.ts M-2, an admitted origin (before T7)': `expect(loaded).toBeGreaterThan(idle * 0.7);`,
+    'strict-view-budget.spec.ts M-3, "observing the loads costs nothing": one window on each side': `expect(idle).toBeGreaterThan(before * 0.95);`,
+    'worker-port-and-view-cost.spec.ts M-2, an admitted origin (before T7)': `expect(loaded).toBeGreaterThan(idle * 0.7);`,
     'view-bound.spec.ts (a) at T7: a pausable flood against one baseline': `const flood = (setup: string, step: string) => \`
     globalThis.flood = () => { let n = 0; const next = () => { if (globalThis.stop) return; (\${step})(n++); setTimeout(next, 5); }; next(); };\`;
 const { idle, loaded, busy, meanBusy } = await busyShare(page, () => sandbox.run('flood()'));`,
@@ -84,7 +84,7 @@ const { idle, loaded, busy, meanBusy } = await busyShare(page, () => sandbox.run
     expect(stall).toBeLessThan(bound);`,
     'strict-render-flood.spec.ts, a table of stall bounds': `const BOUNDS: Record<string, { lag: number; roundTrip: number }> = {
     chromium: { lag: 600, roundTrip: 1500 },`,
-    'broad-strict.spec.ts ST2, a stall against a number': `expect(lag).toBeLessThan(500);`,
+    'strict-renderer.spec.ts ST2, a stall against a number': `expect(lag).toBeLessThan(500);`,
     'view-bound.spec.ts, a calibration of its own': `const operationCost = async (page: Page, html: string) => {`,
 };
 

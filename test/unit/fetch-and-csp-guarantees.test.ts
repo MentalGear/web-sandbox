@@ -13,8 +13,8 @@ const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets
 
 /**
  * Broad review 2026-10-14 (docs/archive/reviews/BROAD-REVIEW-2026-10-14.md), host and library side: the guarantees that
- * library logic decides. The browser halves are in test/e2e/broad-review.spec.ts; the bootstrap's in
- * src/lib/in-sandbox-script.test.ts and test/unit/broad-review-bootstrap.test.ts.
+ * library logic decides. The browser halves are in test/e2e/guest-realm-hardening.spec.ts; the bootstrap's in
+ * src/lib/in-sandbox-script.test.ts and test/unit/guest-realm-hardening.test.ts.
  */
 
 async function mount(config?: Record<string, unknown>) {

@@ -179,8 +179,8 @@ from the worker to the view; the host is not on the path.
 The mechanism and its reasoning live in the comments of [`src/lib/rpc.ts`](../src/lib/rpc.ts) and
 [`src/host.ts`](../src/host.ts). The proof is [`src/lib/rpc.test.ts`](../src/lib/rpc.test.ts) (unit),
 [`test/e2e/broker.spec.ts`](../test/e2e/broker.spec.ts) (end to end, in cooperative, worker and strict mode),
-[`test/e2e/review-channels.spec.ts`](../test/e2e/review-channels.spec.ts) (the channel, on every engine),
-[`test/e2e/broad-review.spec.ts`](../test/e2e/broad-review.spec.ts) (the announcement),
+[`test/e2e/channel-isolation.spec.ts`](../test/e2e/channel-isolation.spec.ts) (the channel, on every engine),
+[`test/e2e/guest-realm-hardening.spec.ts`](../test/e2e/guest-realm-hardening.spec.ts) (the announcement),
 [`test/e2e/ready.spec.ts`](../test/e2e/ready.spec.ts) (the check-in), and for strict mode
 [`test/e2e/strict.spec.ts`](../test/e2e/strict.spec.ts) and `strict-render-flood.spec.ts`.
 

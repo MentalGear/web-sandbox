@@ -7,7 +7,7 @@ import { scalingRatio, type ScalingSize } from './scaling';
  * Backlog S73 (class E-net and P; review round 5, M-3, after PR #47 CI, M-3 burst behind a slow server): every load the
  * view's CSS can make is charged before the browser can start it. The CSS an operation applies is counted
  * (cssLoadBound) and prepaid to the load budget with the operation; the loads the platform reports later take from that
- * credit first (viewBudget). The engines' side is in test/e2e/view-round-5.spec.ts ("S73").
+ * credit first (viewBudget). The engines' side is in test/e2e/strict-view-budget.spec.ts ("S73").
  */
 
 const R = VIEW_URLS_PER_SECOND;

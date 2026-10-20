@@ -15,7 +15,7 @@ import { checkIn } from './check-in';
  * (each test failed at 60814b5). Each names its class (docs/research/18_finding_classes/README.md). The structural tests
  * that keep each class closed are with its single list or chokepoint: test/unit/egress.test.ts (E-cpu),
  * test/unit/config-schema.test.ts (C), test/unit/element-events.test.ts (D/L), test/unit/read-once.test.ts (G). The
- * findings where the browser decides are in test/e2e/review-round-5.spec.ts.
+ * findings where the browser decides are in test/e2e/error-cost-and-queued-calls.spec.ts.
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');

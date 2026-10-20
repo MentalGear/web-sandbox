@@ -4,7 +4,7 @@ import { VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_OPERATION_MS, VIEW_MAX_URLS, VIEW_OP
 
 /**
  * docs/API.md, "The view's cost to the host page", (a) the long-run bound, as a fast-check property of the real budget
- * arithmetic (viewBudget; backlog S61.1, research 17's view-budget simulation made a test). test/unit/view-round-5.test.ts
+ * arithmetic (viewBudget; backlog S61.1, research 17's view-budget simulation made a test). test/unit/strict-view-budget.test.ts
  * and test/unit/view-css-loads.test.ts check each piece of it on fixed and seeded cases (the full charge, the refill, the
  * repeated-overrun rule, the load credit); this states the bound itself over any sequence the view can be given, and is
  * the arithmetic (a) rests on. What the meter measures, and what the browser does on top of it, are the e2e suite's

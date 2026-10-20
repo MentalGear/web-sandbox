@@ -168,7 +168,7 @@ to 19, missed its pings with nothing busy (WebKit seed 225 at 500 sequences, bef
   guest), `workerExecutionTimeout` (a timeout and a busy `execute()`), the strict entry's failure (a throwing entry), the
   load deadline (`LOAD_TIMEOUT_MS` of loading). The uncaught budget, `VIEW_MAX_OPERATION_MS` and
   `VIEW_MAX_DISTINCT_URLS` are not approached by the generator, so their terminations are divergences here; their edges
-  have their own specs (`review-round-5.spec.ts`, `view-round-5.spec.ts`). The view's first overrun (backlog S72) is
+  have their own specs (`error-cost-and-queued-calls.spec.ts`, `strict-view-budget.spec.ts`). The view's first overrun (backlog S72) is
   a host line the model allows in any standing strict environment: the meter measures wall time, which a loaded
   machine can push past `VIEW_MAX_OPERATION_MS` with the generator's small views, and the line changes no state; the
   second overrun's termination stays a divergence.

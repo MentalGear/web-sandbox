@@ -13,9 +13,9 @@ import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 
 /**
  * Review round 3: each finding where the library's own logic decides, reproduced here first against the code it names
- * (each test failed at 16c545b). The findings where the browser decides are in test/e2e/review-round-3.spec.ts. The
+ * (each test failed at 16c545b). The findings where the browser decides are in test/e2e/log-errors-and-call-limits.spec.ts. The
  * bootstrap runs against stand-in ports whose postMessage structured-clones the frame, as a browser's does (as in
- * review-round-2.test.ts).
+ * bootstrap-capture-and-measure.test.ts).
  */
 
 class FakeEvent {

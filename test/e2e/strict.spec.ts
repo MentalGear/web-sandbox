@@ -104,7 +104,7 @@ test.describe('G1 rendered markup', () => {
             shadowRoots: Array.from(document.querySelectorAll('*')).filter(e => e.shadowRoot).length,
             kept: ['img-handler', 'jslink', 'allowed'].filter(id => document.getElementById(id)),
             // the renderer is an allowlist (broad review 2026-10-14): no handler attribute reaches the view at all; the
-            // policy's script-src-attr 'none' stands behind it (review-policy.spec.ts, A1)
+            // policy's script-src-attr 'none' stands behind it (policy-injection.spec.ts, A1)
             handlers: Array.from(document.body.querySelectorAll('*')).filter(e => e.getAttributeNames().some(n => n.toLowerCase().startsWith('on'))).length,
             url: location.href,
         })`);
@@ -344,7 +344,7 @@ test.describe('the entry', () => {
     // execute()) from the start, so they reach the view's Worker object with their text. The view used to read the end of
     // the entry from VIEW_STARTED, on another channel, and took such an error that reached it first for the entry's own:
     // "the guest entry failed to start" for an entry that had run to its end (WebKit before S75: the microtask of compiled
-    // code 8 runs in 8, the timer 5 in 8, and review-round-1.spec.ts's execute() 2–3 in 100–200 under load). It reads it now from the
+    // code 8 runs in 8, the timer 5 in 8, and relay-and-rpc-budgets.spec.ts's execute() 2–3 in 100–200 under load). It reads it now from the
     // marker error that ends the entry, in the order of the Worker object's errors.
     for (const [label, source] of [
         ['a microtask', `queueMicrotask(() => { throw new Error('late one'); });`],

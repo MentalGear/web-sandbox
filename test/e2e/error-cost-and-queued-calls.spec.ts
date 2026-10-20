@@ -7,7 +7,7 @@ import { busyShare, describeShare, floodControl, interleavedShare, pausableFlood
 /**
  * Review round 5: the findings where the browser decides, on Chromium, Firefox and WebKit. Each names its class
  * (docs/research/18_finding_classes/README.md), and each test failed at 60814b5 (the measurements say so where they are
- * the evidence). The library's own logic is unit-tested in test/unit/review-round-5.test.ts; the egress table's
+ * the evidence). The library's own logic is unit-tested in test/unit/call-settling-and-read-once.test.ts; the egress table's
  * enumeration of every engine's surfaces is test/e2e/egress.spec.ts.
  *   N-1  unhandled rejections in a loop kept Firefox's host page 99% busy (E-cpu)
  *   L-1  a call made while loading that timed out before `ready` still ran (L)

@@ -226,7 +226,7 @@ test.describe('L1: a guest cannot outlive terminate() or reset()', () => {
 
 // ---- L2: a forged announcement to the top window is never accepted -------------------------------------------------
 
-test.describe('L2: an announcement posted to top by a frame the guest creates is never accepted (the guest frame\'s own forgery ends its environment: broad-review.spec.ts, PD8)', () => {
+test.describe('L2: an announcement posted to top by a frame the guest creates is never accepted (the guest frame\'s own forgery ends its environment: guest-realm-hardening.spec.ts, PD8)', () => {
     test('a frame the guest creates posts SANDBOX_PORT with a port to top: the host does not take it, the bridge stays the guest\'s, the forged port hears nothing', async ({ sandbox, page }) => {
         expect(await sandbox.mount({ html: '<p>guest</p>', watchdogTimeout: 2000 })).toBe('ready');
         await page.evaluate(() => {

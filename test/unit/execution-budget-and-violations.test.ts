@@ -6,7 +6,7 @@ import { checkIn } from './check-in';
  * Follow-up audit 2026-10-14 (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md, "Follow-up"), host side: the execution
  * budget (backlog B8; since the focused review 2026-10-14, F2: a free event loop at each deadline) and the rule for work handed to a sandbox with no environment (backlog B8), the one place a log detail
  * is made (B3), and the per-directive violation counts of the strict view (C4). The in-browser halves are in
- * test/e2e/worker-timeout.spec.ts and test/e2e/review-strict.spec.ts.
+ * test/e2e/worker-timeout.spec.ts and test/e2e/strict-entry-scope-and-links.spec.ts.
  */
 
 async function mount(config?: Record<string, unknown>, connect = true) {

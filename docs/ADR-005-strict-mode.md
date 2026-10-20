@@ -467,10 +467,10 @@ Each guarantee is asserted on all three engines: `test/e2e/strict.spec.ts` (the 
 `javascript:` link, frames at any depth and namespace, the hashed copy, meta refresh, base, links, noscript, templates —
 asserted absent; G4 navigation; G2 worker; the entry; A5; files and A8; configuration, fetch bridge, auto-sizing),
 `strict-render-flood.spec.ts` (A4), `webrtc.spec.ts`, `watchdog.spec.ts`, `host-url.spec.ts`, `violations.spec.ts`
-(section 5), `strict-events.spec.ts`, `broad-strict.spec.ts` (the allowlist corpus and its positive control, the opened URLs,
-the fan-out with host lag and the budgets), `verification.spec.ts` (every worker global on the list, every network API of
+(section 5), `strict-events.spec.ts`, `strict-renderer.spec.ts` (the allowlist corpus and its positive control, the opened URLs,
+the fan-out with host lag and the budgets), `worker-globals-and-termination.spec.ts` (every worker global on the list, every network API of
 every engine aimed at a blocked listener), `view-switches.spec.ts` (every vector, the host's ticks with 5 000 animated
-elements, the host page's `style-src`, autoplay), `view-budget.spec.ts`, `view-bound.spec.ts`, `owner-decisions.spec.ts`,
+elements, the host page's `style-src`, autoplay), `view-budget.spec.ts`, `view-bound.spec.ts`, `allow-forms-and-view-writes.spec.ts`,
 `strict-default.spec.ts`, `host-policy.spec.ts`, and the strict cases of `broker`, `lifecycle` and `events.spec.ts`; unit
 tests in `src/lib/in-sandbox-view.test.ts`, `src/lib/worker-globals.test.ts`, `src/lib/csp/script-hash.test.ts`,
 `src/lib/csp/csp-generator.test.ts`, `test/unit/strict.test.ts`, `test/unit/strict-default.test.ts`,

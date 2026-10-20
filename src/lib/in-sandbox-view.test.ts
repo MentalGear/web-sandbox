@@ -510,7 +510,7 @@ describe('the view bootstrap: budgets (broad review ST2, ST3)', () => {
     // Starts the bootstrap in this document with a fake Worker; returns the worker's end of the render port. `maxElements`
     // replaces the element budget in the bootstrap's literal: the budget test counts the same way at 500 elements as at
     // VIEW_MAX_ELEMENTS (50 000), which costs 1.6 s of jsdom DOM work idle and can time out under load. The shipped
-    // literal holds VIEW_MAX_ELEMENTS (asserted below), and the e2e budget tests (broad-strict.spec.ts, BR:ST2) render
+    // literal holds VIEW_MAX_ELEMENTS (asserted below), and the e2e budget tests (strict-renderer.spec.ts, BR:ST2) render
     // the real 50 000 in every engine.
     const startView = (maxElements = VIEW_MAX_ELEMENTS) => {
         const workers: { transfer: MessagePort[] }[] = [];

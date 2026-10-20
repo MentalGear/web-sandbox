@@ -13,7 +13,7 @@ import { prng } from './policy-helpers';
 
 /**
  * Focused review 2026-10-14 (docs/archive/reviews/FOCUSED-REVIEW-2026-10-14.md), host and library side: the guarantees
- * that only library logic decides. The browser halves are in test/e2e/focused-review.spec.ts.
+ * that only library logic decides. The browser halves are in test/e2e/inert-files-and-smil.spec.ts.
  */
 
 async function mount(config?: Record<string, unknown>) {

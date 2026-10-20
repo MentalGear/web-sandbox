@@ -19,7 +19,7 @@ import { REALMS, scanned, STRINGIFIED } from '@src/lib/realms';
  * Structural checks (backlog S61.3; research 18): the chokepoints that closed a class, each kept closed by a test that
  * enumerates its domain mechanically rather than by the cases a review found.
  *   - The RPC frame (class P; review round 3, C-1): a branded type that only the three builders mint, and a source scan
- *     that no other code casts to it (test/unit/review-round-3.test.ts keeps every 'RPC_REQ' and 'RPC_RES' literal of
+ *     that no other code casts to it (test/unit/rpc-bounds-and-call-limits.test.ts keeps every 'RPC_REQ' and 'RPC_RES' literal of
  *     src/ in those builders, and every post of the broker on one of their frames).
  *   - The frame table and the realms registry (S76; src/lib/frames.ts, src/lib/realms.ts) against the code: every
  *     frame literal of src/ is a row, every row is posted and read, and the registry names every stringified function.

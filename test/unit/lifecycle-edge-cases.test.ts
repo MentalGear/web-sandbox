@@ -9,7 +9,7 @@ import { checkIn } from './check-in';
 
 /**
  * Review round 2, reviewer L (model-based lifecycle testing): each finding reproduced here first, against the element
- * in jsdom. The engine-specific ones (L-1 and L-5 in a real iframe's document) are in test/e2e/review-round-2.spec.ts.
+ * in jsdom. The engine-specific ones (L-1 and L-5 in a real iframe's document) are in test/e2e/foreign-document-and-view-time.spec.ts.
  */
 
 afterEach(() => {

@@ -8,7 +8,7 @@ import { vi } from 'vitest';
 
 /**
  * Review round 5, the strict view's findings (unit): the library's own logic where no browser decides. Each test failed
- * at 60814b5. The engines' side is in test/e2e/view-round-5.spec.ts.
+ * at 60814b5. The engines' side is in test/e2e/strict-view-budget.spec.ts.
  */
 
 // jsdom makes no trusted event of its own (dispatchEvent() makes every event untrusted), so the listener is called

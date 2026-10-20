@@ -10,7 +10,7 @@ import { STILL_PROPERTIES, STILL_PROPERTY_PATTERN, VIEW_MAX_URLS, VIEW_STILL_PSE
  * what the style rewrite of `allowAnimations: false` costs (C-2), which parts of the media and form controls can animate
  * (C-7, Chromium), and what the browser does after a render with the URLs it holds (M-2). Each test failed at c7672bb
  * (the measurements say so where they are the evidence). The library's own logic is unit-tested in
- * test/unit/review-round-4.test.ts.
+ * test/unit/worker-port-and-listeners.test.ts.
  */
 
 // What the host page's thread has left is measured by ./host-share.ts: ticks of a 10 ms interval, the busy share against

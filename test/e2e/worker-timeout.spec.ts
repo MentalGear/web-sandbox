@@ -6,7 +6,7 @@ import { fromPreset } from './presets';
  * the guest's event loop must be free (focused review F2: the host pings, only a free loop answers), and a loop still
  * busy then ends the sandbox with a 'terminated' event, like the watchdog. Evidence: the element's state and
  * events, and the guest's own globals (an environment that was rebuilt has lost them). The evasions (a scheduled
- * loop, a replaced Function) are in focused-review.spec.ts.
+ * loop, a replaced Function) are in inert-files-and-smil.spec.ts.
  */
 
 const preset = fromPreset('worker-timeout');

@@ -2366,7 +2366,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         // Revoking earlier (once the Worker object exists) is not possible: in WebKit the worker's
         // script has not been read yet, and every blob: URL it then minted is unreadable (sandboxFiles fails
         // with NotReadableError). Revoked at this point, Blob reads, fetches of the worker's own URLs, sandboxFiles and
-        // execute() keep working on all three engines (test/e2e/review-strict.spec.ts).
+        // execute() keep working on all three engines (test/e2e/strict-entry-scope-and-links.spec.ts).
         //
         // One thing is different, in WebKit only: inside the worker, an uncaught error thrown later by code from the
         // revoked script is muted ("Script error.", no error object), since WebKit cannot resolve the

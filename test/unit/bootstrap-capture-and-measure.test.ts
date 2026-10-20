@@ -15,7 +15,7 @@ const CAPTURED = await stringifiedFor('capture');
 
 /**
  * Review round 2 (reviewer C): each finding reproduced here first, against the code it names. The bootstrap runs against
- * stand-in ports whose postMessage structured-clones the frame, as a browser's does (as in review-round-1.test.ts).
+ * stand-in ports whose postMessage structured-clones the frame, as a browser's does (as in relay-and-rpc-budgets.test.ts).
  */
 
 class FakeEvent {

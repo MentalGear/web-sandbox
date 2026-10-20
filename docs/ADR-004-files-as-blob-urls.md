@@ -107,7 +107,7 @@ file only when the file's type is admitted for the kind of load the referencing 
   refuse it in `importScripts()`): that is the running code's decision, not a reference the library resolves.
 
 Tests: `src/lib/load-kinds.test.ts` (every kind × every type, for the table, markup, stylesheets and the renderer),
-`test/unit/focused-review.test.ts`, `test/e2e/focused-review.spec.ts`.
+`test/unit/rate-limits-and-config.test.ts`, `test/e2e/inert-files-and-smil.spec.ts`.
 
 ## Markup references
 
@@ -601,8 +601,8 @@ Tests: `test/e2e/strict.spec.ts` ("files"), on all three engines: an image and a
 view-minted URLs and the stylesheet's own `url()` resolves; the view lists no JavaScript file; the worker lists and reads
 every file; a worker-minted `blob:` URL, also obfuscated, is removed; the policy has `blob:` for images and styles and
 never in `script-src`. Unit: `src/lib/in-sandbox-view.test.ts` (resolution, link rules, `blob:` filtering),
-`src/lib/csp/csp-generator.test.ts`, `test/unit/strict.test.ts`, `test/unit/owner-decisions.test.ts` (the type set, the
-host-to-view transfer and its wait, minting, replacement and revocation, the policy), `test/e2e/owner-decisions.spec.ts`
+`src/lib/csp/csp-generator.test.ts`, `test/unit/strict.test.ts`, `test/unit/allow-forms-and-view-writes.test.ts` (the type set, the
+host-to-view transfer and its wait, minting, replacement and revocation, the policy), `test/e2e/allow-forms-and-view-writes.spec.ts`
 (three engines: an `OffscreenCanvas` PNG by its natural size read from outside, replace and remove, SVG, HTML and
 JavaScript writes that do not resolve beside a PNG that does, the recorder silent but for its control) and
 `test/e2e/guest-writes.spec.ts`.

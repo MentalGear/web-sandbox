@@ -7,7 +7,7 @@ import { inStrictWorker, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-s
  * of the entry from VIEW_STARTED, on the render port, a second channel, on the prediction that an error which reaches it
  * before VIEW_STARTED can only be the entry's. WebKit refutes it: it mutes the errors of code compiled from a string
  * (execute(), Function, eval) in the worker from the start, so they reach the Worker object, and one raised after the
- * entry ran reached the view before VIEW_STARTED did (PR #47's CI: review-round-1.spec.ts, "strict mode: a later uncaught
+ * entry ran reached the view before VIEW_STARTED did (PR #47's CI: relay-and-rpc-budgets.spec.ts, "strict mode: a later uncaught
  * error …", WebKit; an entry's queueMicrotask of such code: always). Now the line after the entry raises the build's
  * marker error, and the view reads the end of the entry from the order of the Worker object's errors alone.
  *
