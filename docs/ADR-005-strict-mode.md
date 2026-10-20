@@ -35,16 +35,26 @@ host page
       └─ worker  new Worker(blob:) spawned by the view: comms, sandboxFiles, the strict prelude, the entry
 ```
 
-Three ports per environment, all `MessageChannel`s:
+Three ports per environment, all `MessageChannel`s. Each frame type is declared once, with its route, its fields and
+what bounds each, in `src/lib/frames.ts` (`FRAMES`); [ARCHITECTURE.md](../ARCHITECTURE.md#channels-and-frames) lists them
+all, with the realms named as there (`strict-worker` is the guest's worker). `VIOLATION` is labelled by the port it arrives
+on, and the render port is the view's and the worker's alone
+([ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-13-strict-mode-renders-bypass-the-host)).
 
+<!-- describes: adr005:ports sig:3633 -->
+<!-- generated:begin adr005-ports -->
 | Port | Ends | Carries |
 | :--- | :--- | :--- |
-| logic | host ↔ worker | RPC (`call`/`expose`), `LOG`, `PING`/`PONG`, `VIOLATION` (labelled `logic`), `EXECUTE` — as in worker mode |
-| view | host ↔ view | `VIOLATION` (labelled `view`), `RESIZE`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `VIEW_PING`/`VIEW_PONG`, `VIEW_WRITE`/`VIEW_WRITTEN` |
-| render | view ↔ worker | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_TEXT`, `VIEW_SET`, `VIEW_ACK`, `VIEW_LISTEN`, `VIEW_EVENT` — the host is not on this path ([ADR-002 amendment](ADR-002-host-guest-broker.md#amendment-2026-10-13-strict-mode-renders-bypass-the-host)) |
+| logic | host ↔ strict-worker | `EXECUTE`, `PING`, `PONG`, `RPC_REQ`, `RPC_RES`, `LOG`, `VIOLATION`, `UNCAUGHT_PAST_BUDGET` |
+| view | host ↔ view | `VIOLATION`, `RESIZE`, `VIEW_READY`, `VIEW_PING`, `VIEW_PONG`, `VIEW_WRITE`, `VIEW_WRITTEN`, `VIEW_FIRST_OVERRUN`, `VIEW_OVERRUN`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `GUEST_TEXT_DROPPED`, `TRUSTED_TYPES_REFUSED`, `WORKER_REFUSED` |
+| render | view ↔ strict-worker (the host is not on this path) | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_TEXT`, `VIEW_SET`, `VIEW_LISTEN`, `VIEW_ACK`, `VIEW_EVENT` |
+<!-- generated:end -->
 
-On the wrapper's one `load`, the host posts `INIT_VIEW { workerSource, viewFiles, html, autoResize }` to the
-view with the logic and view ports. The bootstrap accepts exactly one `INIT_VIEW`, from `parent.parent`, in a
+<!-- generated:begin adr005-init-view -->
+On the wrapper's one `load`, the host posts `INIT_VIEW { workerSource, entryDone, viewFiles, html, autoResize, allowAnimations, allowAutoplay, origins }` to the view with the logic and view ports.
+<!-- generated:end -->
+
+The bootstrap accepts exactly one `INIT_VIEW`, from `parent.parent`, in a
 capture listener that stops it there; it creates the render port, spawns the worker from a `blob:` URL
 (`worker-src blob:`; worker scripts are checked against `worker-src`, not the script hashes, so the hashed
 text stays constant) and hands the worker the logic and render ports.

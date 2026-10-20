@@ -2,9 +2,13 @@
 
 ## Reference
 
+- [**ARCHITECTURE.md**](../ARCHITECTURE.md) — how the library is put together, on one page: the modes and realms, the
+  channels and frames, the lifecycle reducer and its state diagram, the budgets and the module map, with the tables
+  generated from the code.
 - [**API.md**](API.md) — the public surface: the element, every configuration option, methods, events,
-  lifecycle, refusal codes, the globals guest code gets in each mode, and the limits. Checked against the
-  source by `test/unit/api-docs.test.ts`.
+  lifecycle, refusal codes, the globals guest code gets in each mode, and the limits. Its configuration, limits,
+  reasons, host lines, policies and budgets are generated from the code; the rest is checked against it by
+  `test/unit/api-docs.test.ts`.
 
 ## Decisions
 

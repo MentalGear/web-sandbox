@@ -142,7 +142,8 @@ stand beside the bound as an example, with its date and engine; it is never gene
 
 The facts the docs state are rendered from the values the code declares, by the generator in `tools/docgen/`: its
 engine knows nothing of this repository, and the extractors in `tools/docgen/extractors/` read the registries
-(`LIMITS`, `CONFIG_SCHEMA`, `FRAMES`, `LC_INPUTS` and the rest).
+(`LIMITS`, `CONFIG_SCHEMA`, `FRAMES`, `LC_INPUTS` and the rest). [ARCHITECTURE.md](ARCHITECTURE.md), the tables of
+docs/API.md and the port table of ADR-005 are built this way.
 
 - **Regions.** The lines between `<!-- generated:begin NAME -->` and `<!-- generated:end -->` (each marker on a line of
   its own, in any Markdown file) are rewritten from the extractor called NAME by `bun run docs:gen`. Text outside a
