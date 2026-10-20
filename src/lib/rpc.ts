@@ -1,6 +1,6 @@
 /**
  * β — a typed, bidirectional RPC broker that rides the MessageChannel already connecting
- * host and guest (backlog B1). It adds a request/response + method-registry layer on top of
+ * host and guest (BL:B1). It adds a request/response + method-registry layer on top of
  * the existing INIT_PORT / EXECUTE / LOG protocol without touching any of those frames.
  *
  * SELF-CONTAINED BY DESIGN. `createBroker` is used two ways:

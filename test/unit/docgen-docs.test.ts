@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { indexItems } from '../../tools/docgen/engine';
 import { plugin } from '../../tools/docgen/docs';
+import { ID_CITATION } from '../../docs/ids';
 import { headerSentence, moduleFiles } from '../../tools/docgen/extractors/modules';
 import { run } from '../../tools/docgen/run';
 
@@ -63,5 +64,14 @@ describe('the generated docs', () => {
         expect(headerSentence('import { a } from "./a";\nimport {\n    b,\n} from "./b";\n\n/** Builds b. Second. */\nexport const y = 1;')).toBe('Builds b');
         expect(headerSentence('// Small helpers: one.\n// More.\nexport const z = 1;')).toBe('Small helpers: one');
         expect(headerSentence('export const w = 1;')).toBeUndefined();
+    });
+
+    it('a registry ID in a header sentence, in any of its forms, never reaches the module map (one source of the ID syntax: docs/ids.ts)', () => {
+        const role = (text: string) => headerSentence(`/**\n * ${text}\n */\nexport const x = 1;`);
+        expect(role('The broker (BL:B1) for calls, as R5:M-2 and AR:C3 found. More.')).toBe('The broker for calls, as and found');
+        const section = `ADR-005${'#ports'}`; // an anchored ADR form; built, so that doc-links does not resolve it as a citation
+        expect(role(`The cap (${section}, LM-2): what it holds. More.`)).toBe('The cap: what it holds');
+        expect(role('Caps the table (backlog B1) and the view (S76, review round 4). More.')).toBe('Caps the table and the view');
+        for (const file of moduleFiles()) expect(headerSentence(read(file))?.match(ID_CITATION) ?? [], file).toEqual([]);
     });
 });
