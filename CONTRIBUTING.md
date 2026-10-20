@@ -76,7 +76,7 @@ test that enumerates the domain:
 A new mitigation (a stylesheet, a rewrite, a listener) is a new cost: measure it on every engine, as the code it guards
 is measured.
 
-### Availability findings (owner's rule, 2026-10-19)
+### Availability findings (owner, 2026-10-20)
 
 A finding whose only effect is that the guest slows the host page (CPU share, stalls, memory) is **documented, not
 mitigated further**, when both hold:
@@ -93,8 +93,10 @@ on Firefox, WebKit and Android, so no budget of the library's removes that cost:
 diminishing returns.
 
 These are **not** availability findings, and are fixed as any other:
-1. a host page frozen beyond the embedder's reach: it cannot regain control, or the stall has no bound but the
-   browser's (high);
+1. a host page that can never regain control, or a stall bounded by nothing the library states (no cap, no limit,
+   only the browser's) (high). A single-operation stall whose cost is bounded by the documented caps, and which the
+   repeated-overrun rule ends at its second occurrence (`VIEW_OVERRUN_WINDOW_MS`), is a documented availability cost
+   (at most medium), not this;
 2. the library's own limits ending a healthy sandbox (a correctness bug);
 3. a flood that breaks a security property: a budget that fails open, a check skipped under pressure, state left
    inconsistent, anything that moves data or crosses the policy.
@@ -127,6 +129,14 @@ A finding ID alone (`M-2`) names rows in several reports, so it resolves to none
 gets an entry in the registry and an anchor on each finding; once it is closed, it moves to `docs/archive/reviews/`, its
 registry entry changes with it, and no citation does.
 
+**TSDoc on the public API.** Every export of `src/index.ts`, every member of its classes and interfaces, every parameter
+(`@param name - …`) and every returned value (`@returns`) has its TSDoc, and the docs state what holds now: behaviour,
+units, defaults (`@defaultValue`), bounds, what refuses or throws (`@throws`) and which event fires. The summary is one
+or two sentences; the rest goes under `@remarks`. Related exports are linked with `{@link Name}` (the members of
+`WebSandbox` are written as code, since the class and its interface share a name); a registry ID may be cited where the
+reader needs the background. `test/unit/tsdoc-coverage.test.ts` fails on a gap, and docs/API.md's reference parts are
+rendered from this text ([below](#generated-docs-and-their-markers)).
+
 **Values first, types derived.** What a doc renders or a test compares exists once, as a runtime value
 (`CONFIG_SCHEMA`, `CHANNEL_BUDGETS`, the egress table), and its types are derived from it (`as const`, `typeof`,
 `satisfies`). No doc, comment or test keeps its own hand-written copy of such a list.
@@ -135,8 +145,10 @@ registry entry changes with it, and no citation does.
 stand beside the bound as an example, with its date and engine; it is never generated, and no test pins it.
 
 **The guards**, in the unit run and CI:
-- `bun run api:check`: the public API against its reviewed report, [etc/web-sandbox.api.md](etc/web-sandbox.api.md);
-  `bun run api:update` accepts a change, which the PR then shows.
+- `bun run api:check`: the public API against its reviewed report, [etc/web-sandbox.api.md](etc/web-sandbox.api.md),
+  and the checked-in doc model [etc/web-sandbox.api.json](etc/web-sandbox.api.json) (the declarations with their TSDoc,
+  which the generated reference reads) against what the build writes; `bun run api:update` accepts a change, which the PR
+  then shows.
 - `bun run docs:check`: every generated region equals what the code renders, and no handwritten section is stale
   ([below](#generated-docs-and-their-markers)).
 - `test/unit/doc-links.test.ts`: every relative link and anchor in the Markdown files, and every ID in the registry's
@@ -156,9 +168,18 @@ docs/API.md and the port table of ADR-005 are built this way.
   its own, in any Markdown file) are rewritten from the extractor called NAME by `bun run docs:gen`. Text outside a
   region is never touched. Do not edit a region: change the value in the code (or the extractor's own words, for the
   Configuration table's prose, `tools/docgen/extractors/config-docs.ts`), and run `bun run docs:gen`.
+- **The public API's reference** (docs/API.md's registration, the element's property and methods, the events and their
+  details, the `fetchBridge` and `callLimits` tables and the lists of exports) is rendered from the TSDoc of the exports,
+  by `tools/docgen/extractors/api.ts`, from api-extractor's doc model: [etc/web-sandbox.api.json](etc/web-sandbox.api.json),
+  checked in so that `docs:check` needs no build. After you change a declaration or its TSDoc, run `bun run api:update`
+  (it also accepts the API report's change, which the PR shows), then `bun run docs:gen`. Write the TSDoc as the page
+  should say it: a citation of a finding or an item goes in parentheses by itself (the page leaves it out), an ADR
+  becomes a link, and `docs/API.md#slug` a link within the page. A new method is placed in the page's order in
+  `METHOD_ORDER`, and a new event needs its row in `ELEMENT_EVENTS`, with "Bubbles." or "Does not bubble." in its doc.
 - **Markers.** A handwritten section that describes code starts with `<!-- describes: ID, ID sig:HASH -->`. The hash is
   taken from the described items' semantic signatures: names, types, values and transitions, never formatting or
-  wording.
+  wording. An export of the public API is the item `api:Name` (`api:WebSandbox.setConfig` for a member); a container's
+  signature has its members', so a section about the element goes stale when a method is added.
 - **When a marker fails.** `bun run docs:check` (CI runs it) names the section and the items that changed. Read the
   section against the change; fix any sentence that is now wrong; then run `bun run docs:gen --accept`, which writes the
   new hashes, and commit them with the section. Accepting without reading defeats the marker, whose only job is to

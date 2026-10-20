@@ -14,7 +14,21 @@ import { defineData } from "../utils";
  * Host-side only, never stringified into a guest.
  */
 
-/** The guest policy's origins (`origins`): the exact origins the guest may load each kind from. Default: none. */
+/**
+ * The `origins` option: the exact origins the guest may load each kind of resource from, one list per kind. It adds
+ * origins to six directives of the guest's policy and can change nothing else.
+ *
+ * @remarks
+ * An entry is one exact origin, `https://host[:port]`; in `connect` also `wss://host[:port]`; plain `http://` only for
+ * `localhost` and `127.0.0.1`. Case is folded and a default port is dropped. Anything else is dropped with one warning
+ * per entry (other schemes, `*`, `'self'` and other keywords, paths, credentials, an IPv6 literal, a non-ASCII or
+ * percent-encoded host), and a key that is not a kind is dropped too. Dropping only narrows: a kind with no origin left
+ * admits none. An `origins` that is not an object, or a kind that is not a list, cannot be read and refuses the whole
+ * config. Registered files add `blob:` to the directive of each kind of load their type is for, whatever is listed
+ * here. See ADR-007.
+ *
+ * @defaultValue none
+ */
 export interface SandboxOrigins {
     /** fetch(), XMLHttpRequest, WebSocket (wss: too), EventSource, sendBeacon: connect-src. */
     connect?: readonly string[];
@@ -30,7 +44,11 @@ export interface SandboxOrigins {
     scripts?: readonly string[];
 }
 
-/** `origins` in strict mode: no `scripts`, since the view runs only the library's bootstrap (ADR-005). */
+/**
+ * {@link SandboxOrigins} in strict mode: no `scripts`, since the view runs only the library's bootstrap (ADR-005). A
+ * `scripts` list is a type error here and is dropped with a warning at run time. Use it to type an `origins` value whose
+ * mode is chosen at run time.
+ */
 export type StrictSandboxOrigins = Omit<SandboxOrigins, 'scripts'> & { readonly scripts?: never };
 
 /** A kind of load `origins` takes origins for. */

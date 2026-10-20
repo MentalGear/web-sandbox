@@ -2,7 +2,8 @@
 
 The complete public surface of `web-sandbox`: the element, its configuration, methods and events, and the
 globals the guest gets in each mode. For an overview start with the [README](../README.md); for why each part
-is built the way it is, follow the links to the decision records (ADRs).
+is built the way it is, follow the links to the decision records (ADRs); for what the sandbox defends and what it
+leaves to you, read the [threat model](THREAT-MODEL.md).
 
 - [Registering the element](#registering-the-element)
 - [The element](#the-element)
@@ -23,6 +24,7 @@ is built the way it is, follow the links to the decision records (ADRs).
 
 ## Registering the element
 
+<!-- describes: api:defineWebSandbox sig:8e1b -->
 ```ts
 import { defineWebSandbox } from 'web-sandbox';
 
@@ -30,24 +32,37 @@ defineWebSandbox();                  // <web-sandbox>
 defineWebSandbox('my-sandbox');      // or a tag name of your own (instead, not as well)
 ```
 
-**`defineWebSandbox(tagName = 'web-sandbox'): typeof WebSandbox`** registers the `WebSandbox` class as a custom
-element and returns it. Importing the package registers nothing, so you pick the name.
+<!-- generated:begin api-define -->
+```ts
+function defineWebSandbox(tagName?: string): typeof WebSandbox
+```
 
-- Calling it again with the same name does nothing.
-- It throws an `Error` if that name is already defined by another element.
-- The class can be registered under one name only: a second, different name throws the browser's
-  `NotSupportedError`.
+Registers `WebSandbox` as a custom element under `tagName` and returns the class. Importing the package
+registers nothing, so you pick the name. Calling it again with the same name does nothing.
+
+**Parameters**
+
+- `tagName`: The tag name; `'web-sandbox'` when left out. The class can be registered under one name only.
+
+**Returns:** The `WebSandbox` class.
+
+**Throws:** An `Error` if the name is already defined by another element; the browser's `NotSupportedError` for a second,
+different name of this class, and its `SyntaxError` for a name that is not a valid custom element name.
+<!-- generated:end -->
 
 ---
 
 ## The element
 
+<!-- describes: api:WebSandbox sig:bfdf -->
 The element has no observed attributes; everything is set through [`setConfig()`](#setconfigconfig) and the
 other methods. It has one property:
 
+<!-- generated:begin api-element -->
 | Property | Type | Description |
 | :--- | :--- | :--- |
-| `state` | `SandboxState` (read-only) | `'idle'`, `'loading'`, `'ready'` or `'terminated'`; see [Lifecycle](#lifecycle). |
+| `state` | `'idle' \| 'loading' \| 'ready' \| 'terminated'` (read-only) | Where the element is in its lifecycle (`SandboxState`). It already has the new value when `ready` or `terminated` is dispatched. |
+<!-- generated:end -->
 
 The frame lives in an open shadow root and fills the element (`width: 100%; height: 100%`). The element is a block
 (`:host { display: block }`, a constructed stylesheet your page's `style-src` does not govern; your own CSS for the
@@ -77,30 +92,13 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 ## Configuration
 
-<!-- describes: options, capabilities sig:108352c8 -->
-**`setConfig(config: SandboxConfig): void`** replaces the configuration and rebuilds the environment
-(see [Lifecycle](#lifecycle)). `SandboxConfig` is a union keyed by `mode` (`StrictSandboxConfig`,
-`CooperativeSandboxConfig`, `WorkerSandboxConfig`, each extending `SandboxConfigOptions`, the options every mode
-takes): strict mode's `origins` has no `scripts`, and
-a config without `mode` is a strict config (strict mode is the default).
+<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig sig:108352c838da91d012d1923da001 -->
+[`setConfig(config)`](#setconfigconfig) takes a `SandboxConfig`, a union keyed by `mode` (`StrictSandboxConfig`,
+`CooperativeSandboxConfig`, `WorkerSandboxConfig`, each extending `SandboxConfigOptions`, the options every mode takes):
+strict mode's `origins` has no `scripts`, and a config without `mode` is a strict config (strict mode is the default).
+How a call is applied (over the defaults, copied, validated, and what a config that cannot be used does) is under
+[`setConfig()`](#setconfigconfig) below.
 
-- Each call is applied **over the defaults, not over the previous configuration**: an option left out returns
-  to its default. That includes `html`, so a `setConfig()` after `load(html)` starts with an empty document
-  unless it passes `html` again.
-- The argument is copied (structured clone) before anything reads it: changing your objects or arrays afterwards
-  changes nothing, not even at the next `reset()`.
-- Values are validated before they are applied; what cannot be used is dropped with one `console.warn` per
-  element and message, never applied half-way: an entry that is not allowed, a list option that is not a list, `html`
-  that is not a string.
-- The configuration the environment already stands on, set again, changes nothing: no rebuild and no event, so read
-  `state` rather than wait for `ready` (anything a build reads
-  that changed since, `load()` or the files, rebuilds as usual).
-- A config that cannot be used at all (not an object, not cloneable: a `Proxy`, a function value; an `origins` that
-  is not an object, or a kind of it that is not a list) applies nothing, and the sandbox terminates with the reason
-  `the configuration could not be used (…)`, as for an unknown mode, until a usable config is set; the previous
-  config stays. A build that fails terminates with `the environment could not be built (…)`. `setConfig()` never
-  throws. `state` is `terminated` when it returns; the `terminated` event of a refused build comes in a task, like
-  `ready`, and not at all if another build started meanwhile.
 - `SandboxConfig` narrows each mode: `entry`, `allowAnimations` and `allowAutoplay` only in strict mode, `workerExecutionTimeout` not in cooperative mode,
   `html` and `autoResize` not in worker mode, `unsafeCapabilities` not in strict mode. A config from JSON is held to
   the same rules at run time: an option outside its modes (the Modes column) is ignored and takes its default, with one
@@ -135,7 +133,7 @@ a config without `mode` is a strict config (strict mode is the default).
 
 ### `origins`
 
-<!-- describes: origins, csp:cooperative, csp:strict sig:d2625d10c742 -->
+<!-- describes: origins, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d2625d10c742493659f5 -->
 The guest's policy is one fixed template per mode. `origins` adds exact origins to six of its directives, one list per
 kind of load, and can change nothing else:
 
@@ -198,24 +196,28 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upg
 
 ### `fetchBridge`
 
-| Field | Type | Default | Bounds | What it does |
-| :--- | :--- | :--- | :--- | :--- |
-| `allow` | `string[]` | (required) | — | Exact origins the guest may reach: scheme, host, optional port (`https://api.example`, `http://localhost:8080`). An entry with a path, query, fragment, credentials or `*` is dropped with a warning; so is a value that is not a list. An empty list refuses everything. Listing the host page's own origin or a loopback, private or link-local host works, with one warning each. |
-| `maxBytes` | `number` | `1048576` (1 MiB) | at most `33554432` (32 MiB) | Most bytes of one response body, and of one request body. |
-| `timeoutMs` | `number` | `10000` | at most `120000` | Most time for one request, body included. |
-| `methods` | `string[]` | `GET`, `HEAD`, `POST` | from `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` | Methods the guest may use. Replaces the default list. |
-| `headers` | `string[]` | none | names only | Request headers the guest may set beyond `accept`, `accept-language`, `content-language`, `content-type`. `Authorization` only this way; `Cookie`, `Host`, `Origin`, `Referer`, `Sec-*`, `Proxy-*` and other forbidden names never. |
-| `maxConcurrent` | `number` | `4` | at most `16` | Most requests in flight at once. |
+<!-- generated:begin api-fetch-bridge -->
+The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. Only `allow` is required.
 
-A number that is not finite or is below 1 takes the default; one above the bound takes the bound.
+Every request the host makes is pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`),
+`cache: 'no-store'` and CORS for the host page's origin. The host page's own origin and loopback, private and
+link-local hosts are refused unless listed. A listed public name that resolves to a private address cannot be detected
+from a page. A number that is not finite or is below 1 takes its default, and one above its bound takes the bound.
+See [ADR-006](ADR-006-fetch-bridge.md).
 
-What every request is pinned to: no credentials (`credentials: 'omit'`), no `Referer`, no redirects (refused
-with `FETCH_REDIRECT`), `cache: 'no-store'`, CORS for the host page's origin. The host page's own origin and
-loopback, private and link-local hosts are refused unless listed. A listed public name that resolves to a
-private address cannot be detected from a page.
+| Field | Type | Default | What it does |
+| :--- | :--- | :--- | :--- |
+| `allow` | `string[]` | (required) | The exact origins the guest may reach: scheme, host and optional port, like `https://api.example` or `http://localhost:8080`. An entry with a path, query, fragment, credentials or `*` is dropped with a warning, and so is a value that is not a list. An empty list refuses everything. Listing the host page's own origin or a loopback, private or link-local host works, with one warning each. |
+| `maxBytes` | `number` | `1048576` (1 MiB) | Most bytes of one response body, and of one request body. At most `33554432` (32 MiB). |
+| `timeoutMs` | `number` | `10000` | Most ms for one request, response body included. At most `120000`. |
+| `methods` | `string[]` | `['GET', 'HEAD', 'POST']` | The methods the guest may use, from `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE`. Replaces the default list. |
+| `headers` | `string[]` | none | Header names the guest may set beyond `accept`, `accept-language`, `content-language` and `content-type`. `Authorization` only this way; `Cookie`, `Host`, `Origin`, `Referer`, `Sec-*`, `Proxy-*` and other forbidden names never. |
+| `maxConcurrent` | `number` | `4` | Most requests in flight at once; a request past it is refused with `FETCH_BUSY`. At most `16`. |
+<!-- generated:end -->
 
 ### `callLimits`
 
+<!-- describes: api:CallLimits sig:2e9a -->
 The per-second budget of the calls the guest makes (`bridge.call()`, and `sandboxFetch()` and guest writes, which are
 calls too), per environment, in every mode: in any one-second window (a sliding window), at most `maxPerSecond` calls
 and `maxBytesPerSecond` bytes of them, each call's whole message measured as [`call()`](#callmethod-args) measures it.
@@ -223,10 +225,12 @@ The guest's `bridge` refuses a call past it with `BUSY` before sending it, and t
 arrives anyway (a guest's calls delivered late, while your page was busy, can arrive closer together than it sent
 them). Your own calls to the guest are not counted.
 
+<!-- generated:begin api-call-limits -->
 | Field | Type | Default | What it does |
 | :--- | :--- | :--- | :--- |
-| `maxPerSecond` | `number` | `1000` | Most calls in any one second. |
-| `maxBytesPerSecond` | `number` | `67108864` (64 MiB) | Most bytes of calls in any one second. |
+| `maxPerSecond` | `number` | `1000` | Most calls in any one-second window (a sliding window). |
+| `maxBytesPerSecond` | `number` | `67108864` (64 MiB) | Most bytes of calls in any one-second window, each call's whole message measured as `call()` measures it. A value below `RPC_MAX_BYTES` (33 MiB) also caps one call: a heavier call is refused with `ARGS_NOT_TRANSFERABLE`, with one warning at `setConfig()`. |
+<!-- generated:end -->
 
 A field left out, or `callLimits` left out, takes the default. A value that is not a finite number `>= 1` (`Infinity`,
 `0`, `0.5`, a negative number, `NaN`, a string, `null`) takes the default with one warning, and a `callLimits` that is not
@@ -291,196 +295,356 @@ APNG, WebP: WebKit +22 points for 2 000); indeterminate `<progress>` (up to +4 p
 Every method can be called in any state. Methods that build an environment do so only while the element is in
 the document; otherwise they take effect when it is inserted.
 
+<!-- generated:begin api-methods -->
 ### `setConfig(config)`
 
-`setConfig(config: SandboxConfig): void` — see [Configuration](#configuration). Rebuilds now.
+```ts
+setConfig(config: SandboxConfig): void
+```
+
+Replaces the configuration and rebuilds the environment now (while the element is in the document).
+
+- The configuration is applied over the defaults, not over the previous one: an option left out returns to its
+ default, `html` included, so a `setConfig()` after `load()` starts with an empty document unless
+ it passes `html` again.
+- The argument is copied (structured clone) before anything reads it; changing your objects afterwards changes
+ nothing, not even at the next `reset()`.
+- Values that cannot be used (an entry that is not allowed, a list option that is not a list, an `html` that is not
+ a string) are dropped with one `console.warn` per element and message, and never applied half-way.
+- The configuration the environment already stands on, set again, changes nothing: no rebuild and no event, so read
+ `state` rather than wait for `ready`. Anything a build reads that changed since (`load()`, the files) rebuilds as
+ usual.
+- A config that cannot be used at all (not an object, not cloneable such as a `Proxy` or a function value, an
+ `origins` that is not an object or has a kind that is not a list) applies nothing and the previous config stays: the
+ sandbox terminates, and stays terminated until a usable config is set. A build that fails terminates it too.
+- It never throws. `state` is `'terminated'` when it returns after a refusal; the `terminated` event of a refused
+ build comes in a task of its own, like `ready`, and not at all if another build started meanwhile.
+
+**Parameters**
+
+- `config`: The new configuration; see `SandboxConfig`.
 
 ### `load(html)`
 
-`load(html: string): void` — sets `html`, keeps the rest of the configuration, and rebuilds now. In worker mode
-the markup is ignored but the environment is still rebuilt.
+```ts
+load(html: string): void
+```
+
+Sets `html` (the guest document, or the initial view in strict mode), keeps the rest of the configuration and
+rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still
+rebuilds.
+
+**Parameters**
+
+- `html`: The markup, as for the `html` option of `SandboxConfigOptions`.
 
 ### `reset()`
 
-`reset(): void` — rebuilds now from any state, `terminated` included: a fresh frame, a fresh opaque origin, the
-current configuration and a new snapshot of the files. Guest-exposed methods are gone, host-exposed ones stay,
-pending calls reject with `TERMINATED`. Wait for `ready` before relying on the new environment.
+```ts
+reset(): void
+```
+
+Rebuilds the environment now, from any state (terminated included): a fresh frame with a fresh opaque origin, the
+current configuration and a new snapshot of the files. Methods the guest exposed are gone, methods exposed with
+`expose()` stay, and pending calls reject with `TERMINATED`. Wait for `ready` before relying on the
+new environment. Outside the document it builds nothing until the element is inserted.
 
 ### `terminate(reason?)`
 
-`terminate(reason: string = 'terminated by the host'): void` — removes the frame now, sets `state` to
-`terminated` and fires `terminated` with `{ reason }` (a reason that is not a string, or is empty or blank, uses the
-default). Pending calls
-reject with `TERMINATED`; later calls reject at once. Calling it while terminated does nothing. The sandbox stays
-terminated until `reset()`, `load()` or `setConfig()`.
+```ts
+terminate(reason?: string): void
+```
+
+Removes the frame now, sets `state` to `'terminated'` and dispatches `terminated` with `{ reason }`. Pending calls
+reject with `TERMINATED` and later calls are refused at once. The sandbox stays terminated until
+`reset()`, `load()` or `setConfig()` builds a new environment.
+
+Calling it while terminated does nothing, so `terminated` fires once per termination. The reason is also written to
+the console as a warning.
+
+**Parameters**
+
+- `reason`: Why, as the `terminated` event reports it; `'terminated by the host'` when left out. A value that
+is not a string, or is empty or only white space, is replaced by that default.
 
 ### `execute(code)`
 
-`execute(code: string): void` — runs `code` in the guest's global scope as the body of a function (the guest
-document in cooperative mode, the worker in strict and worker mode), compiled with the `Function` the bootstrap captured
-before any guest code ran. Nothing reaches the host: no return value, no report that it returned.
+```ts
+execute(code: string): void
+```
+
+Runs `code` in the guest's global scope as the body of a function: in the guest document in cooperative mode, in
+the worker in worker and strict mode. It is compiled with the `Function` the bootstrap captured before any guest
+code ran. Nothing reaches the host: no return value and no report that it returned.
 
 - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
-- While `idle` (not in the document) or `terminated` there is no environment: it warns and does nothing, as
-  `call()` rejects then.
-- While `loading` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the guest
-  document is parsed (see [the startup gate](#ready-and-the-startup-gate)), in order with calls.
+- While the element is `'idle'` (not in the document) or `'terminated'` there is no environment: it warns and does
+ nothing, where `call()` rejects.
+- While `'loading'` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the
+ guest document is parsed (see [Ready and the startup gate](#ready-and-the-startup-gate)), in order with calls.
 - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
 - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
-  **the guest's event loop is free at the deadline.** The element pings the guest there; the bootstrap answers from
-  a handler guest code cannot reach, and only a free event loop can run it. No answer within
-  `EXECUTION_TIMEOUT_GRACE_MS` (counted so that a stall of the host page never counts) terminates the sandbox.
-  - Code that is still running at the deadline, or that returned but left work running then (a loop in a
-    `setTimeout`), is terminated. Code that ran to its end and left the loop free stays ready, whatever it scheduled
-    for later.
-  - Several calls each have their own deadline, and every deadline checks the one event loop: a loop started by
-    any code ends the sandbox at the first deadline it blocks.
-  - A loop that starts after the last deadline is not bounded by it: `watchdogTimeout` checks the event loop
-    continuously and covers that case.
+ the guest's event loop is free at the deadline. The element pings the guest there; the bootstrap answers from a
+ handler guest code cannot reach, and only a free event loop can run it. No answer within
+ `EXECUTION_TIMEOUT_GRACE_MS` terminates the sandbox.
+- Code that is still running at the deadline, or that returned but left work running then (a loop in a
+ `setTimeout`), is terminated. Code that ran to its end and left the loop free stays ready, whatever it scheduled
+ for later.
+- Several calls each have their own deadline, and every deadline checks the one event loop: a loop started by any
+ code ends the sandbox at the first deadline it blocks.
+- A loop that starts after the last deadline is not bounded by it: `watchdogTimeout` checks the event loop
+ continuously and covers that case.
+
+**Parameters**
+
+- `code`: The function body to run.
 
 ### `expose(name, fn)`
 
-`expose(name: string, fn: (...args: any[]) => unknown): void` — publishes a host method the guest calls with
-`bridge.call(name, ...args)`. The guest receives `fn`'s return value (awaited if it is a promise); a throw or
-rejection reaches the guest as `HANDLER_ERROR` with the error's message, verbatim up to 65536 characters (a longer one
-is cut, and ends `[… cut at 65536 characters]`): throw errors whose message you would show the guest, or wrap the
-handler.
+```ts
+expose(name: string, fn: (...args: any[]) => unknown): void
+```
 
-- Methods belong to the element: they survive `reset()`, `load()`, `setConfig()` and `terminate()`.
-- Exposing a name again replaces its handler. A name that is not a string or is longer than 256 characters, or a
-  handler that is not a function, throws a `TypeError`.
-- Names starting with `sandbox:` are reserved for the library: refused with a warning.
-- Treat arguments as untrusted data from the guest: validate them, and copy objects with spread rather than
-  `Object.assign` or a `for…in` loop (an own `__proto__` key survives the copy, and `for…in` visits it).
+Publishes a host method the guest calls with `bridge.call(name, ...args)`. The guest receives the handler's return
+value (awaited if it is a promise). A throw or rejection reaches the guest as `HANDLER_ERROR` with the error's
+message, verbatim up to 65536 characters (a longer one is cut, and ends `[… cut at 65536 characters]`): throw errors
+whose message you would show the guest, or wrap the handler.
+
+Methods belong to the element: they survive `reset()`, `load()`,
+`setConfig()` and `terminate()`. Exposing a name again replaces its handler. Names that
+start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
+validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
+survives the copy).
+
+**Parameters**
+
+- `name`: The method name, a string of at most 256 characters.
+- `fn`: The handler; its arguments come from the guest by structured clone.
+
+**Throws:** A `TypeError` if `name` is not a string or is longer than 256 characters, or `fn` is not a function.
 
 ### `call(method, ...args)`
 
-`call<T = unknown>(method: string, ...args: unknown[]): Promise<T>` — calls a method the guest exposed with
-`bridge.expose()` and resolves with its result. Works without `scriptUnsafe`: it never evaluates code.
+```ts
+call<T = unknown>(method: string, ...args: unknown[]): Promise<T>
+```
 
-- Arguments and results are copied by structured clone (no functions, DOM nodes or symbols), at most
-  `RPC_MAX_BYTES` (33 MiB) per message, measured on both sides on the copy that is sent: past it a call is refused
-  before anything is sent (`ARGS_NOT_TRANSFERABLE`) and a result is answered `RESULT_NOT_TRANSFERABLE`. The measure
-  knows primitives, plain objects and arrays, `Map`, `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and
-  `DataView`, `Blob` and `File`, and `String`, `Number`, `Boolean` and `BigInt` objects; any other value (an `Error`,
-  an `ImageData` or another platform object, a `SharedArrayBuffer`) is refused the same way, with a message that names
-  it (`RPC arguments hold an unsupported value: Error`) rather than the budget. Send what you need of it instead: an
-  error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole message is measured, the
-  method name included: a name is at most 256 characters (`INVALID_CALL`).
-- Default timeout: 30 s. The element's timers and its copy of the arguments use the `setTimeout` and `structuredClone`
-  it took when it was constructed: fake timers installed after that (a test's) do not control a call's timeout.
-- Calls made while `loading` are queued and sent when the build becomes `ready`, in every mode (strict mode included,
-  whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue and never
-  runs. In cooperative mode a call reaches the guest's method once the guest
-  document is parsed (see [the startup gate](#ready-and-the-startup-gate)). Calls made while `idle` (not in the
-  document) or `terminated` reject at once with `TERMINATED`, as `execute()` does nothing then.
-- Rejects with an `RpcError` (an `Error` with a `code`); see [Refusal codes](#refusal-codes).
+Calls a method the guest exposed with `bridge.expose()` and resolves with its result. It works without
+`scriptUnsafe`: it never evaluates code.
+
+- Arguments and results are copied by structured clone, at most `RPC_MAX_BYTES` (33 MiB) per message, counted on
+ both sides on the copy that is sent: past it a call is refused before anything is sent (`ARGS_NOT_TRANSFERABLE`)
+ and a result is answered `RESULT_NOT_TRANSFERABLE`. The measure knows primitives, plain objects and arrays, `Map`,
+ `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and `DataView`, `Blob` and `File`, and `String`, `Number`,
+ `Boolean` and `BigInt` objects. Any other value (an `Error`, an `ImageData` or another platform object, a
+ `SharedArrayBuffer`) is refused the same way, with a message that names the value rather than the budget; send what
+ you need of it instead: an error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole
+ message is counted, the method name included, and a name is at most 256 characters (`INVALID_CALL`).
+- The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and
+ `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a
+ call's timeout.
+- Calls made while `'loading'` are queued and sent when the build becomes `ready`, in every mode (strict mode
+ included, whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue
+ and never runs. In cooperative mode a call reaches the guest's method once the guest document is parsed (see
+ [Ready and the startup gate](#ready-and-the-startup-gate)).
+- Calls made while `'idle'` (not in the document) or `'terminated'` reject at once with `TERMINATED`, as
+ `execute()` does nothing then; so do pending ones when the environment goes away.
+
+**Type parameters**
+
+- `T`: The type of the result, which the caller asserts: the guest's value is not checked against it.
+
+**Parameters**
+
+- `method`: The name the guest exposed.
+- `...args`: The arguments, copied by structured clone.
+
+**Returns:** The guest method's return value (awaited if it is a promise).
+
+**Throws:** Never synchronously: the promise rejects with an `RpcError`, an `Error` whose `code` is an
+`RpcErrorCode`. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and
+their message is the guest's text.
 
 ### `callWithTimeout(timeoutMs, method, ...args)`
 
-`callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T>` — like
-`call()` with a timeout for this one call; `0` (or any value that is not `> 0`) disables it, and so does `Infinity`.
-Every other timeout is waited out in full, however long (`watchdogTimeout` and `workerExecutionTimeout` too).
+```ts
+callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T>
+```
+
+Like `call()`, with a timeout of your own for this one call. Every other timeout is waited out in
+full, however long: `watchdogTimeout` and `workerExecutionTimeout` do not shorten it.
+
+**Type parameters**
+
+- `T`: The type of the result, which the caller asserts.
+
+**Parameters**
+
+- `timeoutMs`: The timeout in ms. `0`, any value that is not above 0, and `Infinity` disable it.
+- `method`: The name the guest exposed.
+- `...args`: The arguments, copied by structured clone.
+
+**Returns:** The guest method's return value (awaited if it is a promise).
+
+**Throws:** Never synchronously: the promise rejects as `call()`'s does.
 
 ### `registerFiles(files)`
 
-`registerFiles(files: Record<string, FileEntry>): void` — adds or replaces files in the element's store.
-`FileEntry` is a `string` (stored as UTF-8), a `Uint8Array` (copied), or `{ content, type }` to set the MIME
-type instead of deriving it from the extension.
+```ts
+registerFiles(files: Record<string, FileEntry>): void
+```
 
-- The whole batch is validated first. A refusal throws an `Error` with a `code` (`INVALID_PATH`,
-  `INVALID_FILE`, `FILES_QUOTA_EXCEEDED`) and changes nothing.
-- Fires `fileschanged` when something changed (re-registering identical content changes nothing).
-- The guest sees the files from the next build on (`reset()`, `load()`, `setConfig()`); a running guest never
-  changes. Files survive every rebuild and `terminate()`.
-- **Paths** are relative (`src/main.js`): segments of letters, digits and `._~!$&'()*+,;=@-`, separated by
-  single slashes, at most 256 characters, no `.` or `..` segment. They are checked, never normalised.
-- **Types** come from the extension (`.js`/`.mjs` `text/javascript`, `.css` `text/css`, `.json`
-  `application/json`, `.svg` `image/svg+xml`, `.png`, `.woff2`, `.mp4`, …); unknown extensions are
-  `application/octet-stream`.
-- **A reference names a file only for the kind of load its type is for**: `<script src>`, `modulepreload`,
-  `preload as=script` and module imports only JavaScript types; a stylesheet `<link>`, `preload as=style` and
-  `@import` only `text/css`; `img`, `srcset`, `poster`, icon links and CSS `url()` only `image/*`; `url()` in
-  `@font-face` and `preload as=font` only `font/*`; `audio`, `video` and `source` only `audio/*` and `video/*`;
-  `track` only `text/vtt`. A reference to a file of another type stays as written and fails closed, with one
-  warning. This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a
-  script. Code that passes `sandboxFiles.url()` to a script element or `importScripts()` itself decides what it
-  loads (Chromium runs such a file whatever its type; Firefox and WebKit refuse it in `importScripts()`).
-- How the guest names files (markup, module imports, stylesheets) is described in the README's
-  [Files](../README.md#files) section; why: [ADR-004](ADR-004-files-as-blob-urls.md).
+Adds or replaces files in the element's store. The guest sees them from the next environment build on
+(`reset()`, `load()` or `setConfig()`), never in a guest already
+running. Files survive every rebuild and `terminate()`.
+
+- The whole batch is validated first. It fires `fileschanged` when something changed; registering identical content
+ again changes nothing.
+- A path is relative (`src/main.js`): segments of letters, digits and the characters of `._~!$&'()*+,;=@-`,
+ separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised.
+- A file's type comes from its extension (`.js` and `.mjs` `text/javascript`, `.css` `text/css`, `.json`
+ `application/json`, `.svg` `image/svg+xml`, `.png`, `.woff2`, `.mp4` and the like); an unknown extension is
+ `application/octet-stream`.
+- A reference names a file only for the kind of load its type is for: `<script src>`, `modulepreload`,
+ `preload as=script` and module imports only JavaScript types; a stylesheet `<link>`, `preload as=style` and
+ `@import` only `text/css`; `img`, `srcset`, `poster`, icon links and CSS `url()` only `image/*`; `url()` in
+ `@font-face` and `preload as=font` only `font/*`; `audio`, `video` and `source` only `audio/*` and `video/*`;
+ `track` only `text/vtt`. A reference to a file of another type stays as written and fails closed, with one
+ warning. This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a
+ script. Code that passes `sandboxFiles.url()` to a script element or `importScripts()` itself decides what it
+ loads (Chromium runs such a file whatever its type; Firefox and WebKit refuse it in `importScripts()`).
+- How the guest names files (markup, module imports, stylesheets) is described in the README's Files section; why:
+ [ADR-004](ADR-004-files-as-blob-urls.md).
+
+**Parameters**
+
+- `files`: The files by path. An entry is a `string` (stored as UTF-8), a `Uint8Array` (copied), or
+`{ content, type }` to set the MIME type instead of deriving it from the extension.
+
+**Throws:** A `FileError` with `code` `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED`. The whole batch is
+validated first, so a refusal changes nothing.
 
 ### `unregisterFiles(paths?)`
 
-`unregisterFiles(paths?: string[]): void` — removes the given paths, or every file when called without
-arguments. Unregistered paths are ignored; an invalid path throws `INVALID_PATH` and removes nothing. Fires
-`fileschanged` when something was removed. Takes effect at the next build.
+```ts
+unregisterFiles(paths?: string[]): void
+```
+
+Removes files from the store. Like `registerFiles()`, it takes effect at the next environment
+build. Fires `fileschanged` when something was removed.
+
+**Parameters**
+
+- `paths`: The paths to remove; every file when left out. A path that is not registered is ignored.
+
+**Throws:** A `FileError` with `code` `INVALID_PATH` for an invalid path (or `paths` that is not an array); nothing
+is removed then.
 
 ### `listFiles()`
 
-`listFiles(): FileInfo[]` — the registered files, sorted by path, as `{ path, type, size }` (`size` in bytes,
-as registered).
+```ts
+listFiles(): FileInfo[]
+```
+
+The registered files, sorted by path.
+
+**Returns:** One `FileInfo` per file: its path, its MIME type and its size in bytes as registered.
 
 ### `listGuestWrites()`
 
-`listGuestWrites(): GuestWrite[]` — the guest's pending changes, sorted by path: `{ path, change: 'write', type,
-size, content }` (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`.
-Empty without [`guestWrites`](#configuration). See [Guest writes](#guest-writes).
+```ts
+listGuestWrites(): GuestWrite[]
+```
+
+The guest's pending writes and removals (see `guestWrites` and [Guest writes](#guest-writes)), sorted by path. They belong
+to the current environment and survive its termination; the next build and the element's removal discard them.
+
+**Returns:** One `GuestWrite` per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`
+(`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
+`guestWrites` is off.
 
 ### `commitGuestWrites(paths, options?)`
 
-`commitGuestWrites(paths: string[], options?: { code?: boolean }): void` — applies the pending changes at `paths`
-to the files, as one `registerFiles()` / `unregisterFiles()` would, and removes them from the pending list.
+```ts
+commitGuestWrites(paths: string[], options?: { code?: boolean; }): void
+```
 
-- `paths` is required: there is no "commit everything". A path with no pending change is skipped.
-- A write whose type is not inert is refused with `FILES_NOT_ALLOWED` unless `options.code === true`. Inert:
-  `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/avif`, `image/x-icon`, `image/bmp`, `font/woff`,
-  `font/woff2`, `font/ttf`, `font/otf`, `audio/mpeg`, `audio/wav`, `audio/ogg`, `audio/mp4`, `audio/flac`,
-  `video/mp4`, `video/webm`, `video/ogg`, `text/plain`, `application/json`, `text/css`. Everything else (JavaScript,
-  HTML, SVG, XML, WebAssembly, unknown types, any other type the guest set) can run or be parsed as code. The
-  type checked is the one the file will be loaded as, never just its name.
-- All checks come first, as for `registerFiles()`, including the quota with what module and stylesheet rewrites
-  add, against the files as they are now: a refusal throws `INVALID_PATH`, `FILES_NOT_ALLOWED` or
-  `FILES_QUOTA_EXCEEDED` and changes neither the files nor the pending list.
-- Fires `fileschanged` when the files changed. The guest sees committed files from the next build on.
-- A committed file loads only as what its type is for (see [`registerFiles()`](#registerfilesfiles)): an inert
-  file never runs as a script. Committed `text/css` is inert but still CSS: markup of the next build that links it
-  is styled by it.
+Applies the guest's pending changes at `paths` to the files, atomically, as one `registerFiles()` or
+`unregisterFiles()` would, and removes them from the pending list. The guest sees committed files
+from the next build on. Fires `fileschanged` when the files changed.
+
+- A write whose type is not inert is refused with `FILES_NOT_ALLOWED` unless `options.code` is `true`. Inert types
+ are the images, fonts, audio and video a browser only decodes, plain text, JSON and CSS (the exact list is in
+ `INERT_TYPES`, src/lib/guest-writes.ts). JavaScript, HTML, SVG, XML, WebAssembly, unknown types and any other type
+ the guest set can run or be parsed as code. The type checked is the one the file will be loaded as, never just its
+ name.
+- All checks come first, the quota included (with what module and stylesheet rewrites add, against the files as they
+ are now), so a refusal changes neither the files nor the pending list.
+- A committed file loads only as what its type is for (see `registerFiles()`): an inert file never runs as a script.
+ Committed `text/css` is inert but still CSS: markup of the next build that links it is styled by it.
+
+**Parameters**
+
+- `paths`: The paths to commit; required, since there is no "commit everything". A path with no pending change
+is skipped.
+- `options`: `code: true` allows the writes whose type is not inert.
+
+**Throws:** A `FileError` with `code` `INVALID_PATH`, `FILES_NOT_ALLOWED` or `FILES_QUOTA_EXCEEDED`.
+
+The inert types, exactly: `application/json`, `audio/flac`, `audio/mp4`, `audio/mpeg`, `audio/ogg`, `audio/wav`, `font/otf`, `font/ttf`, `font/woff`, `font/woff2`, `image/avif`, `image/bmp`, `image/gif`, `image/jpeg`, `image/png`, `image/webp`, `image/x-icon`, `text/css`, `text/plain`, `video/mp4`, `video/ogg`, `video/webm`.
+<!-- generated:end -->
+
+### Custom element reactions
+
+The browser calls these when the element is inserted, removed or moved; you do not.
+
+<!-- generated:begin api-reactions -->
+- `connectedCallback()`: Custom element reaction: the browser calls it when the element is inserted into a document. It builds an environment from the current configuration (see `state`) where the element may build one; nothing is dispatched synchronously.
+- `disconnectedCallback()`: Custom element reaction: the browser calls it when the element is removed from a document. The environment ends and pending calls reject with `TERMINATED`. This is not a termination: no `terminated` event is dispatched, and inserting the element again builds a fresh environment.
+- `adoptedCallback()`: Custom element reaction: the browser calls it when the element is moved into another document (`adoptNode()`, or appending it to an iframe's document). Its environment ends as for a removal and it stays `'idle'` there, with one warning; moved back, it builds again.
+<!-- generated:end -->
 
 ---
 
 ## Events
 
-<!-- describes: events sig:b3e5 -->
-All events are `CustomEvent`s dispatched on the element. None is `composed`. `WebSandboxEventMap` types each one.
+<!-- describes: events, api:WebSandboxEventMap sig:b3e559d4 -->
+<!-- generated:begin api-events -->
+The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.
+
+Every event is a `CustomEvent` dispatched on the element and none is `composed`. The bubbling ones reach a listener on
+`window` for every sandbox on the page; `event.target` says which. The `detail` is frozen, deeply: every object and
+array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
+`ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
+clamped, but remain the guest's data: read them, do not merge them into your objects.
 
 | Event | `detail` | Bubbles | When |
 | :--- | :--- | :--- | :--- |
-| `ready` | none | no | The guest checked in: its startup script announced itself (strict mode: the view's bootstrap, on its port), and `state` is now `ready` (see [the startup gate](#ready-and-the-startup-gate)). Once per environment. In cooperative mode its document may still be loading. (Without `allow-scripts` no guest script runs: `ready` comes with the frame's load, and calls time out.) |
-| `terminated` | `{ reason: string }` | no | The sandbox was terminated: `state` is `terminated`. Once per termination; a refused build's in a task of its own. |
-| `sandbox-log` | `SandboxLog` | yes | A log line from the guest or from the element. |
-| `violation` | `SandboxViolation` | yes | The guest policy refused a load. |
-| `fetch` | `FetchRecord` | yes | With `fetchBridge`: a `sandboxFetch()` request settled (including refusals). Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
-| `fileschanged` | `{ paths: string[] }` | no | `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; synchronous. |
-| `fileswritten` | `{ paths: string[] }` | yes | A guest write or removal changed what [`listGuestWrites()`](#listguestwrites) shows at a path (`guestWrites`); one path per event, at most `GUEST_WRITES_PER_SECOND` per environment. |
+| `ready` | none | no | The guest checked in and `state` is now `'ready'`. Once per environment. In cooperative mode the guest document may still be loading (see [Ready and the startup gate](#ready-and-the-startup-gate)). Without `allow-scripts` no guest script runs: `ready` comes with the frame's load, and calls time out. |
+| `terminated` | `{ reason: string }` | no | The sandbox was terminated: `state` is `'terminated'` and `detail.reason` says why. Once per termination, for a call to `terminate()`, a budget or liveness check that ended the guest, a failed frame check, or a configuration or build that was refused (that one in a task of its own, and not at all if another build started meanwhile). Removing the element ends its environment without this event. Branch on `state` and the event, not on the reason's text. |
+| `sandbox-log` | `SandboxLog` | yes | A log line from the guest's console or written by the element; see `SandboxLog`. Guest lines are limited to `LOG_EVENTS_PER_SECOND` per environment per second. |
+| `violation` | `SandboxViolation` | yes | The guest's policy refused a load; see `SandboxViolation`. At most `VIOLATION_EVENT_LIMIT` per environment. A report is a claim by the guest, not a host fact. |
+| `fetch` | `FetchRecord` | yes | A `sandboxFetch()` request settled, refusals included; see `FetchRecord`. Dispatched only with `fetchBridge` configured. Without it `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
+| `fileschanged` | `{ paths: string[] }` | no | `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; `detail.paths` lists the paths that changed. Dispatched synchronously, once per call that changed something. |
+| `fileswritten` | `{ paths: string[] }` | yes | The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths` holds that one path. At most `GUEST_WRITES_PER_SECOND` per environment per second. |
+<!-- generated:end -->
 
-The bubbling events reach a listener on `window` for every sandbox on the page; `event.target` says which one.
-Every `detail` is frozen, deeply: every object and array in it, a guest's log arguments included, so a listener cannot
-change what a later listener reads. What cannot be frozen stays as it is: the bytes of a typed array or an `ArrayBuffer`,
-the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and clamped, but they
-remain the guest's data: read them, don't merge them into your objects. The element's own startup message, the guest frame's
-port announcement (`{ type: 'SANDBOX_PORT' }` from the guest frame's window), is taken by a capture listener the
-element adds to your window at each build; a `message` listener of yours added before it, in the capture phase, sees
-it first. Act on a message only by `event.source` (above), never by its shape.
+The element's own startup message, the guest frame's port announcement (`{ type: 'SANDBOX_PORT' }` from the guest
+frame's window), is taken by a capture listener the element adds to your window at each build; a `message` listener of
+yours added before it, in the capture phase, sees it first. Act on a message only by `event.source` (above), never by
+its shape.
 
 ### `sandbox-log` — `SandboxLog`
 
-<!-- describes: limit:LOG_EVENTS_PER_SECOND, limit:LOG_MAX_ARGS, limit:LOG_MAX_STRING, limit:LOG_MAX_BYTES, limit:LOG_BYTES_PER_SECOND, limit:UNCAUGHT_PER_SECOND, limit:UNCAUGHT_CHARACTERS_PER_SECOND, limit:VIEW_OPTIONS.guestText.maxLength, host-lines sig:c106f537ef2bcb8905a960883dc76370543a -->
+<!-- describes: limit:LOG_EVENTS_PER_SECOND, limit:LOG_MAX_ARGS, limit:LOG_MAX_STRING, limit:LOG_MAX_BYTES, limit:LOG_BYTES_PER_SECOND, limit:UNCAUGHT_PER_SECOND, limit:UNCAUGHT_CHARACTERS_PER_SECOND, limit:VIEW_OPTIONS.guestText.maxLength, host-lines, api:SandboxLog, api:SandboxLogLevel sig:c106f537ef2bcb8905a960883dc76370543a7ff2bb70 -->
+<!-- generated:begin api-sandbox-log -->
 | Field | Type | Meaning |
 | :--- | :--- | :--- |
 | `type` | `'LOG'` | Always `'LOG'`. |
-| `level` | `'log' \| 'info' \| 'warn' \| 'error'` | Anything else reads as `'log'`. |
-| `args` | `readonly unknown[]` | What was logged, structured-cloned; at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING`, all of them together at most `LOG_MAX_BYTES` (1 MiB); an argument past it is a string saying so. |
-| `source` | `'guest' \| 'host'` | Set by the element from where the line came from, never from the line. |
+| `level` | `'log' \| 'info' \| 'warn' \| 'error'` | How serious the line is. A level the guest sends that is not one of `SandboxLogLevel` reads as `'log'`. |
+| `args` | `readonly unknown[]` | What was logged, structured-cloned: at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING` characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced by a string that says so. |
+| `source` | `'guest' \| 'host'` | `'host'` for a line the element wrote itself, `'guest'` for a line that came from the guest's port, whatever it claims. Set by the element, never read from the line. |
+<!-- generated:end -->
 
 Lines with `source: 'guest'`, from one relay in every mode: the guest's `console` (`log`, `info`, `warn`, `error`;
 `debug`, `dir`, `dirxml`, `table`, `group` and `groupCollapsed` as `log`; `trace` as `log` after `console.trace()`; a
@@ -541,38 +705,84 @@ together than the guest sent them.
 
 ### `violation` — `SandboxViolation`
 
+<!-- generated:begin api-violation -->
+The `detail` of a `violation` event: the guest's policy refused a load. Guest-supplied: validated and clamped, but not
+trusted.
+
+A report is evidence that the guest attempted something the policy refused, never a host fact: guest code can suppress
+its own reports, a frame the guest creates reports to itself, and worker reports depend on the engine (WebKit raises
+none in workers). At most `VIOLATION_EVENT_LIMIT` events per environment; in strict mode per `source`, and for the
+view per directive, so refused loads of one kind never hide a report of another. See [ADR-005](ADR-005-strict-mode.md).
+
 | Field | Type | Meaning |
 | :--- | :--- | :--- |
-| `directive` | `string` | The effective directive, e.g. `'connect-src'`. |
-| `blockedURI` | `string` | What was refused: a URL (possibly reduced to its origin; every engine reports a `data:` or `blob:` URL by its scheme alone), or `'inline'`, `'eval'`, …; at most 2048 characters, cut before it leaves the guest's realm or the view. |
-| `sourceFile` | `string?` | Where the refused code ran, when the browser says; at most 2048 characters. |
-| `lineNumber` | `number?` | Positive integer, when given. |
-| `columnNumber` | `number?` | Positive integer, when given. |
-| `source` | `'view' \| 'logic'?` | Strict mode only, set by the element: `'view'` for the view document's reports (complete and unforgeable up to the cap), `'logic'` for the worker's. |
-
-At most `VIOLATION_EVENT_LIMIT` per environment; in strict mode per source, and for the view per directive, so
-refused loads of one kind never hide a report of another. Outside the view, a report is
-evidence that the guest tried something; guest code can suppress its own reports, so no event proves nothing.
-A frame the guest creates reports to itself, and worker reports depend on the engine (WebKit raises none in
-workers). [ADR-005](ADR-005-strict-mode.md)
+| `directive` | `string` | The effective directive that refused the load, e.g. `'connect-src'` or `'img-src'`. |
+| `blockedURI` | `string` | What was refused: a URL (possibly reduced to its origin by the browser; a `data:` or `blob:` URL is reported by its scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters. |
+| `sourceFile` | `string?` | Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like). At most 2048 characters. |
+| `lineNumber` | `number?` | The line of the refused code, a positive integer, when the browser gives one. |
+| `columnNumber` | `number?` | The column of the refused code, a positive integer, when the browser gives one. |
+| `source` | `'view' \| 'logic'?` | Strict mode only ([ADR-005](ADR-005-strict-mode.md)): which document's report this is, set by the element from the port it arrived on, never read from the report. `'view'` is the view document, which runs no guest code, so its reports are the library's own and complete up to the cap. `'logic'` is the worker, whose reports guest code can forge or suppress like any cooperative-mode report, and which depend on the engine (WebKit raises none in workers; Firefox raises the worker's `importScripts()` refusals in the view, so those arrive as `'view'`). |
+<!-- generated:end -->
 
 ### `fetch` — `FetchRecord`
 
-| Field | Type | Meaning |
-| :--- | :--- | :--- |
-| `method` | `string` | Upper case; `''` when the guest sent no valid method. |
-| `url` | `string` | Without fragment, whole: a request's URL is at most 8192 characters, as written and as parsed (a longer one is refused). The guest's string, cut to 8192 characters, when it is not a URL. |
-| `outcome` | `'ok' \| 'refused' \| 'failed' \| 'aborted'` | `ok`: a response was handed over (any HTTP status). `refused`: no request was made (the bridge's rules, or the browser's `Request` refused it). `failed`: the browser's `fetch` rejected or no whole response was handed over; not proof that a request left the page, since `fetch` also rejects before sending (the host page's own `connect-src`, mixed content, local-network blocking). `aborted`: the environment was torn down before the request settled, whatever it settled on (`status` and `bytes` as measured; `code` is `FETCH_FAILED`). |
-| `status` | `number?` | The HTTP status, when a response arrived. |
-| `code` | `FetchErrorCode?` | Why it was refused, failed or aborted. |
-| `reason` | `string?` | For a refusal of an origin that is not listed, what the host knows beyond the guest's text: the host page's own origin, or a loopback, private or link-local host. The guest is told the same for every unlisted origin. |
-| `bytes` | `number` | Response body bytes read. |
-| `durationMs` | `number` | From the request to its settlement. |
+<!-- generated:begin api-fetch-record -->
+The `detail` of a `fetch` event: one request through the bridge, reported once when it settled. A union keyed by
+`outcome`; each member has exactly the fields its outcome has, and the fields it lacks are typed `never`, so reading
+one is allowed and gives `undefined`.
 
-A record belongs to the environment that made the request, and is dispatched when the request settles: an `aborted`
-record of an environment that `reset()`, `load()` or `setConfig()` tore down can arrive after that call, while the next
-build is loading. After an environment's teardown its records are `aborted`, whatever the request settled on (a response
-already read, an error, a refusal), and they can arrive after the call that tore it down.
+- `'ok'`: a response was handed to the guest, whatever its HTTP status. Has `status`; has no `code`.
+- `'refused'`: no request was made; the bridge's rules, or the browser's `Request`, refused it. `code` says why
+ (`FETCH_NOT_ALLOWED`, `FETCH_BUSY` or `FETCH_TOO_LARGE` for a request body). `bytes` is `0`. `reason` is present for
+ a refusal of an origin that is not listed: what the host knows beyond the text the guest gets (the host page's own
+ origin, or a loopback, private or link-local host).
+- `'failed'`: `fetch()` was called and no whole response was handed over; `code` says why (`FETCH_REDIRECT`,
+ `FETCH_TOO_LARGE` for a response body, `FETCH_TIMEOUT` or `FETCH_FAILED`). `status` is present once a response's
+ status was read (not for a redirect, which is refused first). It is not proof that a request left the page: the browser's `fetch` also rejects some requests before
+ sending them (the host page's own `connect-src`, mixed content, local-network blocking).
+- `'aborted'`: the environment was torn down (by `reset()`, `load()`, `setConfig()`, `terminate()` or removal) before
+ the record was made, whatever the request had settled on. `code` is `FETCH_FAILED`; `status` and `bytes` are as
+ measured.
+
+A record belongs to the environment that made the request and is dispatched when the request settles, so an `'aborted'`
+record of a torn-down environment can arrive after the call that tore it down, while the next build is loading; after
+a teardown an environment's records are all `'aborted'`. Fields that come from the guest are validated or clamped
+first. `method` is upper case (`''` when the guest sent no valid one). `url` is the whole URL without its fragment, at
+most 8192 characters (a longer one is refused and reported cut), or the guest's string cut to that when it is not a
+URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement.
+
+```ts
+type FetchRecord = {
+    method: string;
+    url: string;
+    durationMs: number;
+} & ({
+    outcome: 'ok';
+    status: number;
+    bytes: number;
+    code?: never;
+    reason?: never;
+} | {
+    outcome: 'refused';
+    code: FetchErrorCode;
+    reason?: string;
+    bytes: 0;
+    status?: never;
+} | {
+    outcome: 'failed';
+    code: FetchErrorCode;
+    status?: number;
+    bytes: number;
+    reason?: never;
+} | {
+    outcome: 'aborted';
+    code: 'FETCH_FAILED';
+    status?: number;
+    bytes: number;
+    reason?: never;
+})
+```
+<!-- generated:end -->
 
 ### `terminated` reasons
 
@@ -607,7 +817,7 @@ name.
 
 ## Lifecycle
 
-<!-- describes: lifecycle:states, lifecycle:transitions sig:204e4b6e -->
+<!-- describes: lifecycle:states, lifecycle:transitions, api:SandboxState sig:204e4b6ea4b8 -->
 | State | Meaning |
 | :--- | :--- |
 | `idle` | Not in the document (constructed, or removed): no frame. |
@@ -666,7 +876,7 @@ Every refusal is a plain `Error` with an own string `code`. Branch on the code, 
 
 ### Calls: `RpcErrorCode`
 
-<!-- describes: codes:rpc sig:7d56 -->
+<!-- describes: codes:rpc, api:RpcErrorCode, api:RpcError sig:7d56768c657b -->
 From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.callWithTimeout()`.
 
 | Code | Set by | Meaning | Retry? |
@@ -691,7 +901,7 @@ confirms `TERMINATED` from the element's own state. [ADR-002](ADR-002-host-guest
 
 ### `sandboxFetch()`: `FetchErrorCode`
 
-<!-- describes: codes:fetch sig:7e10 -->
+<!-- describes: codes:fetch, api:FetchErrorCode sig:7e100e79 -->
 Set only by the host (`FETCH_ERROR_CODES`):
 
 | Code | Meaning | Retry? |
@@ -708,7 +918,7 @@ HTTP error statuses resolve, as with `fetch`. `sandboxFetch()` can also reject w
 
 ### Files: `FileErrorCode` and `NOT_FOUND`
 
-<!-- describes: codes:files sig:43e6 -->
+<!-- describes: codes:files, api:FileErrorCode, api:FileError sig:43e68c1b813b -->
 | Code | Where | Meaning |
 | :--- | :--- | :--- |
 | `INVALID_PATH` | `registerFiles()`, `unregisterFiles()`, `commitGuestWrites()`, guest `write()` / `remove()` | A path is not valid, or a list of paths is not an array. |
@@ -770,6 +980,7 @@ Usable at once: calls and exposes made before the channel is connected are buffe
 
 ### `sandboxFiles`
 
+<!-- describes: api:SandboxFiles sig:30aa -->
 | Member | Signature | Description |
 | :--- | :--- | :--- |
 | `list` | `() => string[]` | The registered paths, sorted. |
@@ -785,6 +996,7 @@ return what you registered. [ADR-004](ADR-004-files-as-blob-urls.md)
 
 ### Guest writes
 
+<!-- describes: api:GuestWrite sig:cce0 -->
 With `guestWrites: true`, `sandboxFiles.write()` and `remove()` change the guest's own view once the element
 has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` (the guest
 gets no URL for anything it wrote). The element checks each request as `registerFiles()` would (path, entry, type, the
@@ -1255,6 +1467,7 @@ page with one loop where it shares its thread ([Modes](#modes)).
 
 ## Host page policy
 
+<!-- describes: api:viewScriptHash sig:ce76 -->
 The sandbox's frames are `srcdoc` documents, and a `srcdoc` document inherits the policies of the page that made it:
 a copy of its Content-Security-Policy list, its Trusted Types requirement and its Cross-Origin-Embedder-Policy. Every
 policy in the list must allow a load, so your page's policy narrows the sandbox's, never widens it. What your page's
@@ -1297,24 +1510,72 @@ policy must allow:
 
 Values:
 
+<!-- generated:begin api-exports-values -->
 | Export | What it is |
 | :--- | :--- |
-| `defineWebSandbox` | Registers the element; see [above](#registering-the-element). |
-| `WebSandbox` | The element class. |
-| `SandboxDevTools` | `new SandboxDevTools(element)`, then `activate()`, `deactivate()` or `toggle()`: prints the element's `sandbox-log` lines to the host console. |
-| `viewScriptHash` | `viewScriptHash(): string`: the strict view bootstrap's hash source, `'sha256-…'`, for your page's policy; see [Host page policy](#host-page-policy). |
-| `SAFE_CAPABILITIES`, `UNSAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS`, `UNSAFE_PERMISSIONS` | The capability lists accepted by `capabilities` and `unsafeCapabilities`. |
-| `FETCH_ERROR_CODES` | Every `FetchErrorCode`. |
-| `MAX_INBOUND_IN_FLIGHT`, `LOG_EVENTS_PER_SECOND`, `LOG_MAX_ARGS`, `LOG_MAX_STRING`, `VIOLATION_EVENT_LIMIT`, `AUTO_RESIZE_MAX_HEIGHT`, `AUTO_RESIZE_MAX_UPDATES_PER_SECOND`, `VIEW_RENDER_MAX_LENGTH`, `VIEW_LIVENESS_TIMEOUT_MS`, `LOAD_TIMEOUT_MS`, `EXECUTION_TIMEOUT_GRACE_MS`, `GUEST_WRITES_PER_SECOND`, `GUEST_WRITE_BYTES_PER_SECOND` | See [Limits](#limits). |
+| `defineWebSandbox` | Registers `WebSandbox` as a custom element under `tagName` and returns the class. |
+| `viewScriptHash` | The CSP hash source of strict mode's view bootstrap for this release of the package, to allow in the host page's own Content-Security-Policy. |
+| `SandboxDevTools` | Logs one sandbox's `sandbox-log` lines to the host page's console, safely: the values go after a fixed first argument, so a guest string is never read as a console format string. |
+| `WebSandbox` | The `<web-sandbox>` custom element: one sandboxed environment for untrusted web content, rebuilt by `setConfig()`, `load()` and `reset()`. |
+| `AUTO_RESIZE_MAX_HEIGHT` | The tallest height, in CSS pixels, a guest can give the element; larger reports are clamped to it. |
+| `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` | At most this many height changes per second (and never more than one per animation frame). |
+| `EXECUTION_TIMEOUT_GRACE_MS` | How long, in ms, the guest's event loop may still be busy at an `execute()` deadline (`workerExecutionTimeout`): the element pings the guest there, and a guest that has not answered within this time ends the sandbox. |
+| `FETCH_ERROR_CODES` | Every `FetchErrorCode`, as a value. |
+| `GUEST_WRITE_BYTES_PER_SECOND` | Most bytes of written content recorded per environment in any one-second window (`guestWrites`); later writes are refused with `FILES_BUSY`. |
+| `GUEST_WRITES_PER_SECOND` | Most guest write and remove requests handled per environment in any one-second window (`guestWrites`); later ones are refused with `FILES_BUSY`. |
+| `LOAD_TIMEOUT_MS` | How long, in ms, a build may stay `loading` before the sandbox terminates; the reason names the host page's policy when the frame loaded and its startup script never checked in. |
+| `LOG_EVENTS_PER_SECOND` | Most guest lines dispatched as `sandbox-log` per environment in any one-second window (a sliding window). |
+| `LOG_MAX_ARGS` | Most arguments one `SandboxLog` line keeps; later ones are dropped. |
+| `LOG_MAX_STRING` | Longest string argument of a `SandboxLog` line, in UTF-16 code units; a longer one is cut. |
+| `MAX_INBOUND_IN_FLIGHT` | Most calls from the other side that run at once on one channel: a further request is answered `BUSY` at once and its method is not called. |
+| `SAFE_CAPABILITIES` | The values the `capabilities` option accepts: sandbox flags that keep the guest inside the frame. |
+| `UNSAFE_CAPABILITIES` | The values the `unsafeCapabilities` option accepts: each reaches outside the frame and warns once when enabled. |
+| `UNSAFE_PERMISSIONS` | The Permissions Policy features among `UNSAFE_CAPABILITIES`, granted through the frames' `allow` attribute. |
+| `UNSAFE_SANDBOX_FLAGS` | The sandbox flags among `UNSAFE_CAPABILITIES`: each reaches outside the frame and needs an explicit opt-in. |
+| `VIEW_LIVENESS_TIMEOUT_MS` | How long, in ms, strict mode's view may go without answering before the sandbox terminates ([ADR-005](ADR-005-strict-mode.md)). |
+| `VIEW_RENDER_MAX_LENGTH` | The most characters (UTF-16 code units, 256 Ki) one strict-mode view operation may carry: the `html` of `sandboxView.render()`, the string of `text()` and the value of `set()`. |
+| `VIOLATION_EVENT_LIMIT` | Most `violation` events one environment can produce; later reports are dropped, with one warning. |
+<!-- generated:end -->
 
 `document.createElement('web-sandbox')` is typed as a `WebSandbox` (`HTMLElementTagNameMap`), and its
 `addEventListener` types each event's `detail`.
 
-Types: `SandboxConfig`, `SandboxConfigOptions`, `StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, `SandboxState`,
-`WebSandboxEventMap`, `CallLimits`, `RpcError`, `RpcErrorCode`, `RpcLibraryCode`, `SandboxLog`, `SandboxLogLevel`,
-`SandboxViolation`, `FetchBridgeConfig`, `FetchErrorCode`, `FetchRecord`, `FileContent`, `FileEntry`,
-`FileInfo`, `FileError`, `FileErrorCode`, `SandboxFiles`, `GuestWrite`, `SandboxOrigins`, `StrictSandboxOrigins`,
-`SafeCapability`, `UnsafeCapability`, `UnsafePermission`, `SandboxCapability`.
+Types:
+
+<!-- generated:begin api-exports-types -->
+| Type | What it is |
+| :--- | :--- |
+| `CallLimits` | The per-second budget of the calls the guest makes (`SandboxConfigOptions.callLimits`). |
+| `CooperativeSandboxConfig` | The configuration of cooperative mode, for content that cooperates: guest code runs in the guest document, within the documented limits of the mode (README, "Cooperative-mode limits"). |
+| `FetchBridgeConfig` | The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. |
+| `FetchErrorCode` | Why `sandboxFetch()` rejected: the rejection's `code`, and the `code` of a `FetchRecord`. |
+| `FetchRecord` | The `detail` of a `fetch` event: one request through the bridge, reported once when it settled. |
+| `FileContent` | A file's content for `registerFiles()`: a string is stored as UTF-8, a `Uint8Array` is copied. |
+| `FileEntry` | One `registerFiles()` entry: the content, typed by its path's extension, or `{ content, type }` with an explicit MIME type. |
+| `FileError` | The shape of every refusal of the file methods: a plain `Error` with an own `code`. |
+| `FileErrorCode` | Why a change to the files was refused: the `code` of a `FileError`. |
+| `FileInfo` | One registered file, as `listFiles()` reports it. |
+| `GuestWrite` | One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size` and a copy of the written bytes in `content`) or a removal. |
+| `RpcError` | The shape of every rejection of `call()` and `callWithTimeout()`: a plain `Error` with an own `code`. |
+| `RpcErrorCode` | Why a call was refused: the `code` of an `RpcError`. |
+| `RpcLibraryCode` | The codes a library method (a `sandbox:` name) reports, from one closed set disjoint from `RpcErrorCode`: the fetch bridge's `FetchErrorCode` values and the guest writes' `FileErrorCode` values. |
+| `SafeCapability` | A member of `SAFE_CAPABILITIES`: an entry of the `capabilities` option. |
+| `SandboxCapability` | A value that may end up in a frame's `sandbox` attribute: a `SafeCapability` or a member of `UNSAFE_SANDBOX_FLAGS`. |
+| `SandboxConfig` | The configuration `setConfig()` takes: a union keyed by `mode`. |
+| `SandboxConfigOptions` | The options every mode takes, and the ones a mode's config narrows (`StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`). |
+| `SandboxFiles` | The guest's view of the registered files: the global `sandboxFiles`, present in every environment (empty when no file is registered). |
+| `SandboxLog` | The `detail` of a `sandbox-log` event: one log line, frozen. |
+| `SandboxLogLevel` | The level of a `SandboxLog` line. |
+| `SandboxOrigins` | The `origins` option: the exact origins the guest may load each kind of resource from, one list per kind. |
+| `SandboxState` | Where the element is in its lifecycle; read it from `state`. |
+| `SandboxViolation` | The `detail` of a `violation` event: the guest's policy refused a load. |
+| `StrictSandboxConfig` | The configuration of strict mode ([ADR-005](ADR-005-strict-mode.md)), the default: guest code runs only in a worker that a view document spawns, and the worker draws into the view with `sandboxView.render()`. |
+| `StrictSandboxOrigins` | `SandboxOrigins` in strict mode: no `scripts`, since the view runs only the library's bootstrap ([ADR-005](ADR-005-strict-mode.md)). |
+| `UnsafeCapability` | A member of `UNSAFE_CAPABILITIES`: an entry of the `unsafeCapabilities` option. |
+| `UnsafePermission` | A member of `UNSAFE_PERMISSIONS`: a capability granted through the frames' `allow` attribute, not a sandbox flag. |
+| `WebSandboxEventMap` | The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`. |
+| `WorkerSandboxConfig` | The configuration of worker mode: guest code runs in a worker inside the frame. |
+<!-- generated:end -->
 
 The playground's scenarios (`src/lib/presets.ts`) are not part of the package: each preset is a `code` payload
 with the `rules` (a config every mode can run) and optional `files` it runs with, shared with the regression

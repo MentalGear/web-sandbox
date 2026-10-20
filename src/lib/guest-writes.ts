@@ -46,10 +46,16 @@ import { createRateLimiter } from './rate-limit';
 /** The reserved broker method the guest's sandboxFiles.write() and remove() call (rpc.ts, reserved names). */
 export const WRITE_METHOD = 'sandbox:write';
 
-/** Most write and remove requests handled per environment in any one-second window; later ones are FILES_BUSY. */
+/**
+ * Most guest write and remove requests handled per environment in any one-second window (`guestWrites`); later ones are
+ * refused with `FILES_BUSY`. It also bounds the `fileswritten` events.
+ */
 export const GUEST_WRITES_PER_SECOND = 100;
 
-/** Most bytes of written content recorded per environment in any one-second window; later writes are FILES_BUSY. */
+/**
+ * Most bytes of written content recorded per environment in any one-second window (`guestWrites`); later writes are
+ * refused with `FILES_BUSY`. It equals the whole file quota, 8 MiB.
+ */
 export const GUEST_WRITE_BYTES_PER_SECOND = MAX_TOTAL_BYTES;
 
 /**
@@ -67,7 +73,11 @@ export const INERT_TYPES: ReadonlySet<string> = new Set([
     'text/plain', 'application/json', 'text/css',
 ]);
 
-/** One pending change, as listGuestWrites() reports it: fresh objects, `content` a copy of the written bytes. */
+/**
+ * One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size`
+ * and a copy of the written bytes in `content`) or a removal. Each call reports fresh objects. A change reaches the
+ * files only through `commitGuestWrites()`.
+ */
 export type GuestWrite =
     | { path: string; change: 'write'; type: string; size: number; content: Uint8Array }
     | { path: string; change: 'remove' };

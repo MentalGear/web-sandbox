@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createFetchBridge, FETCH_ERROR_CODES, FETCH_ORIGIN_RULES, isPrivateHost, toFetchPolicy, validateRequest, type FetchPolicy, type FetchRecord } from './fetch-bridge';
+import { createFetchBridge, FETCH_ERROR_CODES, FETCH_ORIGIN_RULES, FETCH_OUTCOMES, isPrivateHost, toFetchPolicy, validateRequest, type FetchPolicy, type FetchRecord } from './fetch-bridge';
 
 const HOST = 'https://host.example';
 const policy = (overrides: Record<string, unknown> = {}): FetchPolicy => toFetchPolicy({ allow: ['https://api.example'], ...overrides }, () => {})!;
@@ -218,5 +218,42 @@ describe('createFetchBridge (backlog B5)', () => {
 
     it('the codes are the closed set the broker forwards', () => {
         expect(FETCH_ERROR_CODES).toEqual(['FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH_TOO_LARGE', 'FETCH_TIMEOUT', 'FETCH_FAILED']);
+    });
+});
+
+describe('FetchRecord, a union keyed by outcome (S76, decision D)', () => {
+    /** A consumer narrowing on `outcome`: each case reads only the fields its outcome has, and a new outcome fails to compile. */
+    const describeRecord = (record: FetchRecord): string => {
+        switch (record.outcome) {
+            case 'ok': return `${record.status} ${record.bytes}`;
+            case 'refused': return `${record.code} ${record.reason ?? 'no reason'}`;
+            case 'failed': return `${record.code} ${record.status ?? 'no response'}`;
+            case 'aborted': return `${record.code satisfies 'FETCH_FAILED'}`;
+            default: return record satisfies never;
+        }
+    };
+
+    it('the outcomes are the list, and the record of each path narrows on it', async () => {
+        expect(FETCH_OUTCOMES).toEqual(['ok', 'refused', 'failed', 'aborted']);
+        const records: FetchRecord[] = [];
+        const bridge = createFetchBridge({ policy: policy(), hostOrigin: HOST, onRecord: (r) => records.push(r), fetchImpl: (async () => new Response('hello', { status: 201 })) as any });
+        await bridge.handle({ url: 'https://api.example/ok' });
+        await bridge.handle({ url: 'https://other.example/x' }).catch(() => {});
+        expect(records.map(describeRecord)).toEqual(['201 5', "FETCH_NOT_ALLOWED no reason"]);
+        // the fields an outcome lacks are absent, not undefined
+        expect(Object.keys(records[0]!).sort()).toEqual(['bytes', 'durationMs', 'method', 'outcome', 'status', 'url']);
+        expect(Object.keys(records[1]!).sort()).toEqual(['bytes', 'code', 'durationMs', 'method', 'outcome', 'url']);
+    });
+
+    it('a field an outcome lacks is a type error, and reading it is allowed', () => {
+        // @ts-expect-error an ok record has no code
+        const withCode: FetchRecord = { method: 'GET', url: 'https://api.example/', durationMs: 1, outcome: 'ok', status: 200, bytes: 0, code: 'FETCH_FAILED' };
+        // @ts-expect-error a refused record has no status
+        const withStatus: FetchRecord = { method: 'GET', url: 'https://api.example/', durationMs: 1, outcome: 'refused', code: 'FETCH_BUSY', bytes: 0, status: 200 };
+        // @ts-expect-error an aborted record's code is FETCH_FAILED
+        const otherCode: FetchRecord = { method: 'GET', url: 'https://api.example/', durationMs: 1, outcome: 'aborted', code: 'FETCH_TIMEOUT', bytes: 0 };
+        // every member declares every optional field, so a consumer of the plain union reads them without narrowing
+        const seen: (number | string | undefined)[] = [withCode.status, withStatus.reason, otherCode.status];
+        expect(seen).toHaveLength(3);
     });
 });

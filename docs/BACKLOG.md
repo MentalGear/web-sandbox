@@ -20,7 +20,7 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S69](#s69) | 💤 deferred | Build the relay worker; availability findings are documented (owner, 2026-10-19) |
 | [S70](#s70) | ⏸️ decide | For the owner: three edges the schema found |
 | [S74](#s74) | ⏸️ after every phase | The final independent adversarial review board |
-| [S76](#s76) | ⏸️ in progress | Self-explaining code and generated docs: steps 0 to 4 done; code comments and the public API follow |
+| [S76](#s76) | ⏸️ in progress | Self-explaining code and generated docs: steps 0 to 6 done; the owner reviews the outcome |
 | [D1](#bl-d1) | 🟡 ready except the licence | An installable package; waits for H5's `LICENSE` |
 | [H5](#bl-h5) | 🟡 partly done | Missing repo basics: the `LICENSE` is the owner's choice |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
@@ -249,6 +249,8 @@ state.
 
 **Step 4 done (2026-10-20).** Each of the seven [ADRs](README.md#decisions) states its decision as it stands: the context, the decision and its reasoning, the alternatives and the consequences, with the current status in its header. The amendment trails and the first texts they replaced are in [`docs/archive/adr/`](archive/README.md#adrs), one file per ADR, verbatim, and each ADR links its file in its last line. Where an ADR disagreed with the code, the code won (the sizes and counts, the lifecycle reducer, the policy template, the config types).
 
+**Step 6 done (2026-10-20).** Every export of `src/index.ts`, every member of its classes and interfaces, every parameter and every returned value has its TSDoc: behaviour, units, defaults, bounds, what refuses or throws, which event fires. `test/unit/tsdoc-coverage.test.ts` fails on a gap, reading api-extractor's doc model, which is checked in as [`etc/web-sandbox.api.json`](../etc/web-sandbox.api.json) beside the API report (`bun run api:update` writes both; `api:check` fails when either is stale), so the docs generator needs no build. API.md's reference parts are regions rendered from that TSDoc by `tools/docgen/extractors/api.ts`: the registration, the element's property and methods, the events with their details, the `fetchBridge` and `callLimits` option types, and the lists of exports. The guide parts stay handwritten, and a section that describes an export carries an `api:` marker. Decision D: `FetchRecord` is a union keyed by `outcome`, written out in its type alias so that the public surface gains no name; `FETCH_OUTCOMES` is the runtime list, and `record()` builds each member in an exhaustive switch.
+
 **Step 0 done (2026-10-19), and the owner's decisions on it.** The measurement report has the counts. In short:
 - 60% TSDoc coverage of the public surface;
 - no exhaustive `never` check;
@@ -290,7 +292,8 @@ The owner adopted all of the report's recommendations:
   states bounds only (a share, a cap, a constant). The measured figures move to a handwritten note under the table,
   dated and naming the engines. Done in step 2b.
 - **D.** The public `FetchRecord` becomes a union keyed by `outcome`, in step 6.
-- **E.** A threat-model document is written new, in the current-docs layer.
+- **E.** A threat-model document is written new, in the current-docs layer. Done: [THREAT-MODEL.md](THREAT-MODEL.md),
+  in current-state wording.
 
 ### <a id="s74"></a>S74 · A final independent adversarial review board — ⏸️ **after every phase is done** (owner, 2026-10-19)
 

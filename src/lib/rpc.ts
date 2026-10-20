@@ -102,29 +102,27 @@ export type RpcFrame = (
 ) & { readonly [rpcFrameBrand]: true };
 
 /**
- * Why a call was refused. The set is closed and the strings are wire protocol (pinned by a test).
+ * Why a call was refused: the `code` of an {@link RpcError}. The set is closed and the strings are wire protocol.
+ *
  * Set only by the side whose call is refused:
- *   TIMEOUT                 the per-call timer fired before an answer arrived (the only code worth retrying)
- *   TERMINATED              the transport went away: the sandbox was reset or terminated (retry only
- *                           after the next 'ready')
- *   ARGS_NOT_TRANSFERABLE   the arguments cannot be structured-cloned, measure past RPC_MAX_BYTES or hold a kind the
- *                           measure does not know; nothing was sent. Also reported by the other side for a request
- *                           that arrives so (its own broker never sends one); nothing ran there. A guest's call whose
- *                           frame is heavier than its per-second byte budget (callLimits.maxBytesPerSecond) is refused
- *                           so too, by both ends: no wait would let it through (R5:L-2)
- *   SEND_FAILED             the transport threw while sending; nothing was left pending
- *   INVALID_CALL            the method name is not a string, or is longer than 256 characters; nothing was sent
- * Reported by the other side (the message is its text; any other reported value reads as HANDLER_ERROR):
- *   UNKNOWN_METHOD          no method of that name is exposed there
- *   HANDLER_ERROR           the handler threw or rejected
- *   RESULT_NOT_TRANSFERABLE the handler's return value cannot be structured-cloned, or an answer arrived past
- *                           RPC_MAX_BYTES
- *   BUSY                    the other side already has MAX_INBOUND_IN_FLIGHT of your calls (or RPC_MAX_INBOUND_BYTES
- *                           of their arguments) in flight on this channel; nothing ran (retryable once earlier calls
- *                           settle). The guest's own calls are also
- *                           refused BUSY past the per-second budget of the calls a guest makes (R3:M-2),
- *                           by the host on receipt and, before anything is sent, by the guest's broker itself: the
- *                           one reported code a broker also mints, for the other side's budget, applied early
+ * - `TIMEOUT`: the per-call timer fired before an answer arrived. The only code worth retrying.
+ * - `TERMINATED`: the transport went away because the sandbox was reset or terminated. Retry only after the next `ready`.
+ * - `ARGS_NOT_TRANSFERABLE`: the arguments cannot be structured-cloned, measure past `RPC_MAX_BYTES` or hold a kind the
+ *   measure does not know; nothing was sent. Also reported by the other side for a request that arrives so; nothing ran
+ *   there. A guest's call heavier than its per-second byte budget (`callLimits.maxBytesPerSecond`) is refused so too,
+ *   by both ends, since no wait would let it through (R5:L-2).
+ * - `SEND_FAILED`: the transport threw while sending; nothing was left pending.
+ * - `INVALID_CALL`: the method name is not a string, or is longer than 256 characters; nothing was sent.
+ *
+ * Reported by the other side (the message is its text; any other reported value reads as `HANDLER_ERROR`):
+ * - `UNKNOWN_METHOD`: no method of that name is exposed there.
+ * - `HANDLER_ERROR`: the handler threw or rejected.
+ * - `RESULT_NOT_TRANSFERABLE`: the handler's return value cannot be structured-cloned, or an answer arrived past
+ *   `RPC_MAX_BYTES`.
+ * - `BUSY`: the other side already has {@link MAX_INBOUND_IN_FLIGHT} of your calls (or `RPC_MAX_INBOUND_BYTES` of their
+ *   arguments) in flight on this channel, and nothing ran; retry once earlier calls settle. The guest's calls are also
+ *   refused `BUSY` past the per-second budget of `callLimits` (R3:M-2), by the host on receipt and, before anything is
+ *   sent, by the guest's own `bridge`.
  */
 export type RpcErrorCode =
     | 'TIMEOUT' | 'TERMINATED' | 'ARGS_NOT_TRANSFERABLE' | 'SEND_FAILED' | 'INVALID_CALL'
@@ -138,9 +136,10 @@ export const RPC_ERROR_CODES = ['TIMEOUT', 'TERMINATED', 'ARGS_NOT_TRANSFERABLE'
 type RpcErrorCodesComplete = Holds<Complete<RpcErrorCode, typeof RPC_ERROR_CODES>>;
 
 /**
- * Most inbound calls a broker runs at once per channel (AR:B7): a further request is answered at once with
- * BUSY and its method is not called. Bounds the work and memory the other side can hold open on this side
- * with calls to a method that is slow or never settles. Mirrored inside createBroker (a test keeps them equal).
+ * Most calls from the other side that run at once on one channel (AR:B7): a further request is answered `BUSY` at once
+ * and its method is not called. It bounds the work and memory the other side can hold open with calls to a method that
+ * is slow or never settles. The host and the guest each apply it to the other's calls. Mirrored inside createBroker (a
+ * test keeps them equal).
  */
 export const MAX_INBOUND_IN_FLIGHT = 256;
 
@@ -162,11 +161,10 @@ export const RPC_MAX_BYTES = 34603008;
 export const RPC_MAX_INBOUND_BYTES = 67108864;
 
 /**
- * Codes a library-reserved method (a `sandbox:` name) reports, from one closed set, disjoint from
- * RpcErrorCode: the fetch bridge's FETCH_* (BL:B5, src/lib/fetch-bridge.ts) and the guest writes' file
- * codes (BL:C5, src/lib/guest-writes.ts; the same FileErrorCode strings registerFiles() throws, files.ts).
- * The strings are wire protocol (pinned by a test). Only the guest's calls to reserved methods can be refused
- * with them. NOT_FOUND is not one: the guest mints it from the host's answer (in-sandbox-files.ts).
+ * The codes a library method (a `sandbox:` name) reports, from one closed set disjoint from {@link RpcErrorCode}: the
+ * fetch bridge's {@link FetchErrorCode} values (BL:B5) and the guest writes' {@link FileErrorCode} values (BL:C5). The
+ * strings are wire protocol. Only the guest's calls to library methods (`sandboxFetch()`, `sandboxFiles.write()` and
+ * `remove()`) can be refused with them. `NOT_FOUND` is not one: the guest mints it from the host's answer.
  */
 export type RpcLibraryCode =
     | 'FETCH_NOT_ALLOWED' | 'FETCH_BUSY' | 'FETCH_REDIRECT' | 'FETCH_TOO_LARGE' | 'FETCH_TIMEOUT' | 'FETCH_FAILED'
@@ -182,8 +180,12 @@ type RpcLibraryCodesComplete = Holds<Complete<RpcLibraryCode, typeof RPC_LIBRARY
 /** Every library-reserved method name starts with this prefix; expose() never registers one. */
 export const RESERVED_METHOD_PREFIX = 'sandbox:';
 
-/** The shape of every rejection from call()/callWithTimeout(): a plain Error with an own `code`. */
+/**
+ * The shape of every rejection of `call()` and `callWithTimeout()`: a plain `Error` with an
+ * own `code`. Branch on the code, never on the message.
+ */
 export interface RpcError extends Error {
+    /** Why the call was refused. */
     code: RpcErrorCode;
 }
 

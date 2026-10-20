@@ -4,7 +4,8 @@ How `web-sandbox` is put together, on one page. It is the map; the [API referenc
 decision records say why each part is built the way it is: [ADR-002](docs/ADR-002-host-guest-broker.md) (the broker),
 [ADR-003](docs/ADR-003-lifecycle-and-liveness.md) (lifecycle and liveness), [ADR-004](docs/ADR-004-files-as-blob-urls.md)
 (files), [ADR-005](docs/ADR-005-strict-mode.md) (strict mode), [ADR-006](docs/ADR-006-fetch-bridge.md) (the fetch bridge)
-and [ADR-007](docs/ADR-007-typed-origins.md) (typed origins).
+and [ADR-007](docs/ADR-007-typed-origins.md) (typed origins). What the design defends, and what it leaves to the
+embedder and the browser, is the [threat model](docs/THREAT-MODEL.md).
 
 The tables below are generated from the values the code declares (`bun run docs:gen`), so they cannot drift from it.
 Each section of prose says which declarations it describes; when one changes, `bun run docs:check` fails until the
@@ -256,7 +257,7 @@ Each file of `src/` with the role its header comment gives.
 | Module | Role |
 | :--- | :--- |
 | `src/csp-directives.ts` | The capabilities (sandbox flags and Permissions Policy features) an embedder can grant the guest |
-| `src/devtools.ts` | Simple DevTools for WebSandbox: logs the element's events to the host console safely |
+| `src/devtools.ts` | Logs one sandbox's `sandbox-log` lines to the host page's console, safely |
 | `src/host.ts` | The `<web-sandbox>` custom element |
 | `src/index.ts` | Public entry point of the package |
 | `src/lib/auto-resize.ts` | Content auto-sizing, host side |

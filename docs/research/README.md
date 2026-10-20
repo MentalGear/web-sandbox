@@ -33,7 +33,7 @@ closed by construction rather than by a fix.
 | [01](01_csp_bypass/README.md) | Nested iframe with a manipulated CSP | Closed by construction — no `inner-frame.html`; a nested `srcdoc` frame inherits the sandbox policy (asserted by the spec) |
 | [02](02_sw_tampering/README.md) | Unregistering the Service Worker | Closed by construction — an opaque origin cannot register one |
 | [03](03_storage_sharing/README.md) | Data leaking between instances via `localStorage` | Closed by construction — an opaque origin has no storage |
-| [04](04_websocket_bypass/README.md) | WebSockets bypass request logging | **Open** — observability gap, backlog B5 |
+| [04](04_websocket_bypass/README.md) | WebSockets bypass request logging | Bridge requests are logged — `fetch` events, `BL:B5`. **Remains:** a direct `WebSocket` or `fetch` to an origin in `origins.connect` is governed by the policy but not logged ([threat model](../THREAT-MODEL.md)) |
 | [05](05_outer_frame_tampering/README.md) | Reaching the outer frame's DOM | Closed by construction — no `allow-same-origin`; guarded by the deny-list test (backlog T2) |
 | [06](06_protocol_handlers/README.md) | `registerProtocolHandler` | Secure — browser refuses it in a sandboxed frame |
 | [07](07_data_uri_navigation/README.md) | Top-level navigation to a `data:` URI | Secure — no `allow-top-navigation` |
