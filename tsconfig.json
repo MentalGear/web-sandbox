@@ -31,6 +31,6 @@
     },
     // "allowSyntheticDefaultImports": true,
   },
-  "include": ["src/**/*", "playground/**/*", "test/**/*", "docs/research/**/*.spec.ts", "*.ts"]
+  "include": ["src/**/*", "playground/**/*", "test/**/*", "tools/**/*", "docs/research/**/*.spec.ts", "*.ts"]
   }
 
