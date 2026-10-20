@@ -76,9 +76,14 @@ const sorted = (values: Iterable<string>) => [...new Set(values)].sort();
 // The code spans of `text`, outside fenced code blocks (whose ``` fences would pair up with other backticks).
 const spans = (text: string) => new Set([...text.replace(/^```[\s\S]*?^```/gm, '').matchAll(/`([^`\n]+)`/g)].map(match => match[1]!));
 
-/** The top-level member names of an exported interface, read from its source. */
+/**
+ * The top-level member names of an exported interface, read from its source; of an exported object type or a union of
+ * them (FetchRecord), every name any member has.
+ */
 function interfaceKeys(file: string, name: string): string[] {
     const source = read(file);
+    const alias = source.indexOf(`export type ${name} = `);
+    if (alias >= 0) return [...new Set([...source.slice(alias, source.indexOf('\n);', alias)).matchAll(/(?:^|[{;])\s*(\w+)\??:/gm)].map(match => match[1]!))];
     const start = source.search(new RegExp(`export interface ${name}(?: extends \\w+)? \\{`));
     if (start < 0) throw new Error(`${file} has no interface ${name}`);
     const body = source.slice(start, source.indexOf('\n}', start));

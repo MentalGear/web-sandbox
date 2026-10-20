@@ -359,9 +359,10 @@ const items = await response.json();
     (URL, origin, method, header or body), `FETCH_BUSY`, `FETCH_REDIRECT`, `FETCH_TOO_LARGE`,
     `FETCH_TIMEOUT`, `FETCH_FAILED` (network error, CORS, or teardown). `FETCH_BUSY`, `FETCH_TIMEOUT` and
     `FETCH_FAILED` may succeed if retried. HTTP error statuses resolve, as with `fetch`.
-*   **Every request is logged** as a `fetch` event on the element (it bubbles): `{ method, url, outcome,
-    status?, code?, bytes, durationMs }`, `outcome` being `ok`, `refused` (no request made), `failed` or
-    `aborted`. Fields that come from the guest are validated or clamped first (type `FetchRecord`).
+*   **Every request is logged** as a `fetch` event on the element (it bubbles): `{ method, url, outcome, bytes,
+    durationMs, … }`, `outcome` being `ok` (with `status`), `refused` (no request made; with `code`),
+    `failed` (with `code`, and `status` when a response arrived) or `aborted`. Each outcome has its own fields:
+    `FetchRecord` is a union keyed by `outcome`. Fields that come from the guest are validated or clamped first.
 *   **CORS applies for the host page's origin**, since the host makes the request: the target sees your
     page's origin in `Origin` (never its URL) and must allow it, or `*`.
 *   `sandboxFetch` is a separate global; `fetch` itself is untouched (assign `globalThis.fetch = sandboxFetch`

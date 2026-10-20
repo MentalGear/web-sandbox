@@ -24,7 +24,7 @@ describe('TSDoc coverage of the public API', () => {
         const names = new Set(items.filter(item => !item.path.includes('.')).map(item => item.name));
         for (const name of ['WebSandbox', 'defineWebSandbox', 'SandboxConfig', 'FetchRecord', 'WebSandboxEventMap', 'SAFE_CAPABILITIES']) expect(names.has(name), name).toBe(true);
         expect(exported).toContain('WebSandboxEventMap');
-        expect(items.length).toBeGreaterThan(150);
+        expect(items.length).toBeGreaterThan(100);
     });
 
     it('every export and every member has a summary', () => {

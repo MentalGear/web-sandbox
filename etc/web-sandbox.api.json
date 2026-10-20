@@ -839,239 +839,48 @@
           }
         },
         {
-          "kind": "Interface",
-          "canonicalReference": "web-sandbox!FetchRecord:interface",
-          "docComment": "/**\n * The detail of a 'fetch' event: one request through the bridge, reported once when it settled.\n */\n",
+          "kind": "TypeAlias",
+          "canonicalReference": "web-sandbox!FetchRecord:type",
+          "docComment": "/**\n * The `detail` of a `fetch` event: one request through the bridge, reported once when it settled. A union keyed by\n * `outcome`; each member has exactly the fields its outcome has, and the fields it lacks are typed `never`, so reading\n * one is allowed and gives `undefined`.\n *\n * - `'ok'`: a response was handed to the guest, whatever its HTTP status. Has `status`; has no `code`.\n * - `'refused'`: no request was made; the bridge's rules, or the browser's `Request`, refused it. `code` says why\n *  (`FETCH_NOT_ALLOWED`, `FETCH_BUSY` or `FETCH_TOO_LARGE` for a request body). `bytes` is `0`. `reason` is present for\n *  a refusal of an origin that is not listed: what the host knows beyond the text the guest gets (the host page's own\n *  origin, or a loopback, private or link-local host).\n * - `'failed'`: `fetch()` was called and no whole response was handed over; `code` says why (`FETCH_REDIRECT`,\n *  `FETCH_TOO_LARGE` for a response body, `FETCH_TIMEOUT` or `FETCH_FAILED`). `status` is present once a response's\n *  status was read (not for a redirect, which is refused first). It is not proof that a request left the page: the browser's `fetch` also rejects some requests before\n *  sending them (the host page's own `connect-src`, mixed content, local-network blocking).\n * - `'aborted'`: the environment was torn down (by `reset()`, `load()`, `setConfig()`, `terminate()` or removal) before\n *  the record was made, whatever the request had settled on. `code` is `FETCH_FAILED`; `status` and `bytes` are as\n *  measured.\n *\n * @remarks\n *\n * A record belongs to the environment that made the request and is dispatched when the request settles, so an `'aborted'`\n * record of a torn-down environment can arrive after the call that tore it down, while the next build is loading; after\n * a teardown an environment's records are all `'aborted'`. Fields that come from the guest are validated or clamped\n * first. `method` is upper case (`''` when the guest sent no valid one). `url` is the whole URL without its fragment, at\n * most 8192 characters (a longer one is refused and reported cut), or the guest's string cut to that when it is not a\n * URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
-              "text": "export interface FetchRecord "
+              "text": "export type FetchRecord = "
+            },
+            {
+              "kind": "Content",
+              "text": "{\n    method: string;\n    url: string;\n    durationMs: number;\n} & ({\n    outcome: 'ok';\n    status: number;\n    bytes: number;\n    code?: never;\n    reason?: never;\n} | {\n    outcome: 'refused';\n    code: "
+            },
+            {
+              "kind": "Reference",
+              "text": "FetchErrorCode",
+              "canonicalReference": "web-sandbox!FetchErrorCode:type"
+            },
+            {
+              "kind": "Content",
+              "text": ";\n    reason?: string;\n    bytes: 0;\n    status?: never;\n} | {\n    outcome: 'failed';\n    code: "
+            },
+            {
+              "kind": "Reference",
+              "text": "FetchErrorCode",
+              "canonicalReference": "web-sandbox!FetchErrorCode:type"
+            },
+            {
+              "kind": "Content",
+              "text": ";\n    status?: number;\n    bytes: number;\n    reason?: never;\n} | {\n    outcome: 'aborted';\n    code: 'FETCH_FAILED';\n    status?: number;\n    bytes: number;\n    reason?: never;\n})"
+            },
+            {
+              "kind": "Content",
+              "text": ";"
             }
           ],
           "fileUrlPath": "dist/lib/fetch-bridge.d.ts",
           "releaseTag": "Public",
           "name": "FetchRecord",
-          "preserveMemberOrder": false,
-          "members": [
-            {
-              "kind": "PropertySignature",
-              "canonicalReference": "web-sandbox!FetchRecord#bytes:member",
-              "docComment": "/**\n * Response body bytes read.\n */\n",
-              "excerptTokens": [
-                {
-                  "kind": "Content",
-                  "text": "bytes: "
-                },
-                {
-                  "kind": "Content",
-                  "text": "number"
-                },
-                {
-                  "kind": "Content",
-                  "text": ";"
-                }
-              ],
-              "isReadonly": false,
-              "isOptional": false,
-              "releaseTag": "Public",
-              "name": "bytes",
-              "propertyTypeTokenRange": {
-                "startIndex": 1,
-                "endIndex": 2
-              }
-            },
-            {
-              "kind": "PropertySignature",
-              "canonicalReference": "web-sandbox!FetchRecord#code:member",
-              "docComment": "/**\n * Why the request was refused, failed or aborted; absent when outcome is 'ok'.\n */\n",
-              "excerptTokens": [
-                {
-                  "kind": "Content",
-                  "text": "code?: "
-                },
-                {
-                  "kind": "Reference",
-                  "text": "FetchErrorCode",
-                  "canonicalReference": "web-sandbox!FetchErrorCode:type"
-                },
-                {
-                  "kind": "Content",
-                  "text": ";"
-                }
-              ],
-              "isReadonly": false,
-              "isOptional": true,
-              "releaseTag": "Public",
-              "name": "code",
-              "propertyTypeTokenRange": {
-                "startIndex": 1,
-                "endIndex": 2
-              }
-            },
-            {
-              "kind": "PropertySignature",
-              "canonicalReference": "web-sandbox!FetchRecord#durationMs:member",
-              "docComment": "/**\n * Time from the request to its settlement, in ms.\n */\n",
-              "excerptTokens": [
-                {
-                  "kind": "Content",
-                  "text": "durationMs: "
-                },
-                {
-                  "kind": "Content",
-                  "text": "number"
-                },
-                {
-                  "kind": "Content",
-                  "text": ";"
-                }
-              ],
-              "isReadonly": false,
-              "isOptional": false,
-              "releaseTag": "Public",
-              "name": "durationMs",
-              "propertyTypeTokenRange": {
-                "startIndex": 1,
-                "endIndex": 2
-              }
-            },
-            {
-              "kind": "PropertySignature",
-              "canonicalReference": "web-sandbox!FetchRecord#method:member",
-              "docComment": "/**\n * The method, upper case ('' when the guest sent no valid one).\n */\n",
-              "excerptTokens": [
-                {
-                  "kind": "Content",
-                  "text": "method: "
-                },
-                {
-                  "kind": "Content",
-                  "text": "string"
-                },
-                {
-                  "kind": "Content",
-                  "text": ";"
-                }
-              ],
-              "isReadonly": false,
-              "isOptional": false,
-              "releaseTag": "Public",
-              "name": "method",
-              "propertyTypeTokenRange": {
-                "startIndex": 1,
-                "endIndex": 2
-              }
-            },
-            {
-              "kind": "PropertySignature",
-              "canonicalReference": "web-sandbox!FetchRecord#outcome:member",
-              "docComment": "/**\n * ok a response was handed to the guest (any HTTP status)\n * refused no request was made: the bridge's policy or the Request constructor refused it (code says why)\n * failed fetch() was called and no response was handed over (code says why). Not proof that a request\n *  left the page: the browser's fetch rejects some requests before sending them (the host page's\n *  own connect-src, mixed content, local-network blocking), and a page cannot tell those apart\n * aborted the sandbox was reset, terminated or removed before the request settled: every record made after the\n *  bridge's abortAll(), whatever the request settled on (status and bytes as measured)\n */\n",
-              "excerptTokens": [
-                {
-                  "kind": "Content",
-                  "text": "outcome: "
-                },
-                {
-                  "kind": "Content",
-                  "text": "'ok' | 'refused' | 'failed' | 'aborted'"
-                },
-                {
-                  "kind": "Content",
-                  "text": ";"
-                }
-              ],
-              "isReadonly": false,
-              "isOptional": false,
-              "releaseTag": "Public",
-              "name": "outcome",
-              "propertyTypeTokenRange": {
-                "startIndex": 1,
-                "endIndex": 2
-              }
-            },
-            {
-              "kind": "PropertySignature",
-              "canonicalReference": "web-sandbox!FetchRecord#reason:member",
-              "docComment": "/**\n * For a refusal whose text to the guest is deliberately the same for every unlisted origin: what the host knows\n * beyond it (the host page's own origin; a loopback, private or link-local host). Never sent to the guest.\n */\n",
-              "excerptTokens": [
-                {
-                  "kind": "Content",
-                  "text": "reason?: "
-                },
-                {
-                  "kind": "Content",
-                  "text": "string"
-                },
-                {
-                  "kind": "Content",
-                  "text": ";"
-                }
-              ],
-              "isReadonly": false,
-              "isOptional": true,
-              "releaseTag": "Public",
-              "name": "reason",
-              "propertyTypeTokenRange": {
-                "startIndex": 1,
-                "endIndex": 2
-              }
-            },
-            {
-              "kind": "PropertySignature",
-              "canonicalReference": "web-sandbox!FetchRecord#status:member",
-              "docComment": "/**\n * The HTTP status, when a response arrived.\n */\n",
-              "excerptTokens": [
-                {
-                  "kind": "Content",
-                  "text": "status?: "
-                },
-                {
-                  "kind": "Content",
-                  "text": "number"
-                },
-                {
-                  "kind": "Content",
-                  "text": ";"
-                }
-              ],
-              "isReadonly": false,
-              "isOptional": true,
-              "releaseTag": "Public",
-              "name": "status",
-              "propertyTypeTokenRange": {
-                "startIndex": 1,
-                "endIndex": 2
-              }
-            },
-            {
-              "kind": "PropertySignature",
-              "canonicalReference": "web-sandbox!FetchRecord#url:member",
-              "docComment": "/**\n * The URL without its fragment, or the guest's string when it is not a URL; at most MAX_URL (8192) characters.\n */\n",
-              "excerptTokens": [
-                {
-                  "kind": "Content",
-                  "text": "url: "
-                },
-                {
-                  "kind": "Content",
-                  "text": "string"
-                },
-                {
-                  "kind": "Content",
-                  "text": ";"
-                }
-              ],
-              "isReadonly": false,
-              "isOptional": false,
-              "releaseTag": "Public",
-              "name": "url",
-              "propertyTypeTokenRange": {
-                "startIndex": 1,
-                "endIndex": 2
-              }
-            }
-          ],
-          "extendsTokenRanges": []
+          "typeTokenRange": {
+            "startIndex": 1,
+            "endIndex": 6
+          }
         },
         {
           "kind": "TypeAlias",
@@ -5010,7 +4819,7 @@
                 {
                   "kind": "Reference",
                   "text": "FetchRecord",
-                  "canonicalReference": "web-sandbox!FetchRecord:interface"
+                  "canonicalReference": "web-sandbox!FetchRecord:type"
                 },
                 {
                   "kind": "Content",

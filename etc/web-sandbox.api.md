@@ -49,16 +49,35 @@ export interface FetchBridgeConfig {
 export type FetchErrorCode = Extract<RpcLibraryCode, `FETCH_${string}`>;
 
 // @public
-export interface FetchRecord {
-    bytes: number;
-    code?: FetchErrorCode;
-    durationMs: number;
+export type FetchRecord = {
     method: string;
-    outcome: 'ok' | 'refused' | 'failed' | 'aborted';
-    reason?: string;
-    status?: number;
     url: string;
-}
+    durationMs: number;
+} & ({
+    outcome: 'ok';
+    status: number;
+    bytes: number;
+    code?: never;
+    reason?: never;
+} | {
+    outcome: 'refused';
+    code: FetchErrorCode;
+    reason?: string;
+    bytes: 0;
+    status?: never;
+} | {
+    outcome: 'failed';
+    code: FetchErrorCode;
+    status?: number;
+    bytes: number;
+    reason?: never;
+} | {
+    outcome: 'aborted';
+    code: 'FETCH_FAILED';
+    status?: number;
+    bytes: number;
+    reason?: never;
+});
 
 // @public
 export type FileContent = string | Uint8Array;

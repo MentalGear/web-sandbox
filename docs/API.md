@@ -558,15 +558,18 @@ workers). [ADR-005](ADR-005-strict-mode.md)
 
 ### `fetch` — `FetchRecord`
 
+`FetchRecord` is a union keyed by `outcome`: each member has exactly the fields its outcome has, and the fields it lacks are
+typed `never`, so `switch (detail.outcome)` narrows it in TypeScript and the plain union can still be read field by field.
+
 | Field | Type | Meaning |
 | :--- | :--- | :--- |
 | `method` | `string` | Upper case; `''` when the guest sent no valid method. |
 | `url` | `string` | Without fragment, whole: a request's URL is at most 8192 characters, as written and as parsed (a longer one is refused). The guest's string, cut to 8192 characters, when it is not a URL. |
 | `outcome` | `'ok' \| 'refused' \| 'failed' \| 'aborted'` | `ok`: a response was handed over (any HTTP status). `refused`: no request was made (the bridge's rules, or the browser's `Request` refused it). `failed`: the browser's `fetch` rejected or no whole response was handed over; not proof that a request left the page, since `fetch` also rejects before sending (the host page's own `connect-src`, mixed content, local-network blocking). `aborted`: the environment was torn down before the request settled, whatever it settled on (`status` and `bytes` as measured; `code` is `FETCH_FAILED`). |
-| `status` | `number?` | The HTTP status, when a response arrived. |
-| `code` | `FetchErrorCode?` | Why it was refused, failed or aborted. |
-| `reason` | `string?` | For a refusal of an origin that is not listed, what the host knows beyond the guest's text: the host page's own origin, or a loopback, private or link-local host. The guest is told the same for every unlisted origin. |
-| `bytes` | `number` | Response body bytes read. |
+| `status` | `number?` | The HTTP status. `ok`: always. `failed` and `aborted`: when the response's status was read (not for a redirect, which is refused first). `refused`: never. |
+| `code` | `FetchErrorCode?` | Why it was refused or failed. `ok`: never. `aborted`: always `FETCH_FAILED`. |
+| `reason` | `string?` | `refused` only, for an origin that is not listed: what the host knows beyond the guest's text, the host page's own origin, or a loopback, private or link-local host. The guest is told the same for every unlisted origin. |
+| `bytes` | `number` | Response body bytes read; always `0` for `refused`. |
 | `durationMs` | `number` | From the request to its settlement. |
 
 A record belongs to the environment that made the request, and is dispatched when the request settles: an `aborted`
