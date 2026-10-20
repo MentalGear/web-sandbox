@@ -37,7 +37,7 @@ export const VIEW_RENDER_MAX_LENGTH = 262144;
 export const VIEW_TARGET_MAX_LENGTH = 1024;
 
 /**
- * The most elements the view's body may hold, and how deep they may nest below it (broad review 2026-10-14, ST2).
+ * The most elements the view's body may hold, and how deep they may nest below it (BR:ST2).
  * A render that would leave the body with more, counted over the resulting document (the elements outside the target
  * stay, the target's own are replaced), or nest deeper, counting the target's own depth, is refused before anything is
  * inserted: dropped, and still acknowledged, so the next render applies. Renders accumulate across targets, so a
@@ -49,16 +49,16 @@ export const VIEW_MAX_DEPTH = 256;
 
 /**
  * The most characters the view's body may hold, counted like its elements over the document a render would leave
- * (review round 1, R1-1): the length of the body's serialization, so text, comments, attributes and markup alike. Text
- * was outside every budget before: renders of 261 Ki characters of text into 200 targets every 20 ms kept the host
- * page busy 95–100% on all three engines, and the document grew without bound (50 000 targets × 256 Ki characters).
+ * (R1:R1-1): the length of the body's serialization, so text, comments, attributes and markup alike. Text would
+ * otherwise escape every other budget: renders of 261 Ki characters of text into 200 targets every 20 ms keep the host
+ * page busy 95–100% on all three engines, and the document grows without bound (50 000 targets × 256 Ki characters).
  * A render past it is refused before anything is inserted, and acknowledged, like one past VIEW_MAX_ELEMENTS.
  */
 export const VIEW_MAX_CHARACTERS = 4 * VIEW_RENDER_MAX_LENGTH;
 
 /**
- * The most characters of markup the view parses per second, renders refused included (review round 1, R1-1): flow
- * control alone (one render in flight) let a worker keep the host busy with renders that each fit every budget. A
+ * The most characters of markup the view parses per second, renders refused included (R1:R1-1): flow
+ * control alone (one render in flight) lets a worker keep the host busy with renders that each fit every budget. A
  * render past it waits until the budget has refilled, and the worker's next render waits for that one's VIEW_ACK, so
  * nothing is dropped: renders are slowed to this rate. At least VIEW_RENDER_MAX_LENGTH, so every render is applied.
  */
@@ -66,9 +66,9 @@ export const VIEW_RENDER_CHARACTERS_PER_SECOND = 4 * VIEW_RENDER_MAX_LENGTH;
 
 /**
  * The most milliseconds of its own time the view spends applying operations per second, their layout and rendering
- * included (review round 2, M-3): a fifth of one thread, which it shares with the host page in WebKit and Firefox (and in
+ * included (R2:M-3): a fifth of one thread, which it shares with the host page in WebKit and Firefox (and in
  * Chromium depending on its process model). An operation past it waits, like one past VIEW_RENDER_CHARACTERS_PER_SECOND;
- * nothing is dropped. Every operation is charged all it took, measured, however long (review round 5, M-2), so the
+ * nothing is dropped. Every operation is charged all it took, measured, however long (R5:M-2), so the
  * budget bounds the view's long-run share of the thread at this rate: one that took 1.5 s holds the next one back for
  * 1.5 s × 1000 / VIEW_APPLY_MS_PER_SECOND (7.5 s), less what the budget held. See the view's flush (inSandboxView) for
  * why time, and not only characters, is budgeted, and VIEW_MAX_OPERATION_MS for what bounds one operation. The bound these
@@ -78,11 +78,11 @@ export const VIEW_APPLY_MS_PER_SECOND = 200;
 
 /**
  * The most milliseconds one operation of the view may take before it counts as an overrun: a flush and the rendering
- * update that shows it, measured as the time budget measures them (review round 5, M-2). An overrun is charged in full,
+ * update that shows it, measured as the time budget measures them (R5:M-2). An overrun is charged in full,
  * like every operation, and the view goes on; the second overrun within VIEW_OVERRUN_WINDOW_MS ends the sandbox ("the
  * view spent more than 2000 ms on one operation twice within 5 minutes"; viewBudget decides). No rate can bound one
- * operation's own cost (ADR-005), and a time budget that charged only part of it let an operation of 7.5 s (Chromium's
- * layout of 30 000 restyled elements) run again every few seconds, 53% of the thread, while a budget that charges all of
+ * operation's own cost (ADR-005), and a time budget that charged only part of it would let an operation of 7.5 s
+ * (Chromium's layout of 30 000 restyled elements) run again every few seconds, 53% of the thread, while a budget that charges all of
  * it holds the view back five times as long as the operation took. So the budget charges all of it, and this bounds how
  * often it may charge that much. Two seconds: an order of magnitude above what the view's budgets admit per render on
  * every engine measured (a render of VIEW_MAX_ELEMENTS elements takes 0.2–0.3 s). Time in which no frame ran (a hidden or
@@ -91,18 +91,18 @@ export const VIEW_APPLY_MS_PER_SECOND = 200;
 export const VIEW_MAX_OPERATION_MS = 2000;
 
 /**
- * The window of the repeated-overrun rule (backlog S72, the owner's decision of 2026-10-19; class P, a budget that counts
+ * The window of the repeated-overrun rule (S72, the owner's decision; class P, a budget that counts
  * a proxy): an overrun (an operation past VIEW_MAX_OPERATION_MS) ends the sandbox only when another overrun came at most
  * this long before it; the window runs from the first of the two. Not a public name (src/index.ts does not export it).
  *
  * Why not the first overrun. The meter measures wall time on a thread the view shares with the host page, the machine's
  * other processes, and the host page's own tasks (the gap meter, inSandboxView): a stand-in for the view's own cost, which
  * the meter cannot see apart from what else ran. Under load the stand-in passes the limit for operations that are
- * healthy: a large initial view on a loaded CI runner ended sandboxes now and then (review round 4, R4-2; round 5, L-1,
- * WebKit), and WebKit's first set() of a 250 000-character textarea always took more than 2 s. One overrun says little
+ * healthy: a large initial view on a loaded CI runner can pass it (S72), and WebKit's first set() of a
+ * 250 000-character textarea always takes more than 2 s. One overrun says little
  * about the guest; two within minutes, each after a debt of at least 9 s repaid, say that its operations are that slow.
  * What it costs the host page: at most one stall past 2 s per window beyond the first, each still bounded only by the
- * caps on what the document holds, and the long-run share (VIEW_APPLY_MS_PER_SECOND) as before, since every overrun is
+ * caps on what the document holds, and the long-run share (VIEW_APPLY_MS_PER_SECOND) is unchanged, since every overrun is
  * charged in full. Five minutes: long against the 9–10 s of debt an overrun leaves (so a guest whose operations are all
  * slow meets the second within seconds of repaying), short against a session (so a load spike now and another one an
  * hour later are two first overruns, not a second).
@@ -110,8 +110,8 @@ export const VIEW_MAX_OPERATION_MS = 2000;
 export const VIEW_OVERRUN_WINDOW_MS = 300000;
 
 /**
- * The most URL-bearing attributes the view's body may hold (review round 4, M-2): RENDER_URL_ATTRIBUTES on the elements
- * the renderer keeps, after it dropped every URL the view's policy would refuse. Counted like VIEW_MAX_ELEMENTS, over the
+ * The most URL-bearing attributes the view's body may hold (R4:M-2): RENDER_URL_ATTRIBUTES on the elements
+ * the renderer keeps, after it has dropped every URL the view's policy would refuse. Counted like VIEW_MAX_ELEMENTS, over the
  * document a render would leave; a render past it is refused before anything is inserted, and acknowledged.
  *
  * Why URLs have a budget of their own. What the browser does with a URL after the render (fetching, decoding, laying the
@@ -119,19 +119,19 @@ export const VIEW_OVERRUN_WINDOW_MS = 300000;
  * outside the view's time budget, which charges only what the view itself does: 6500 <img> per render, re-rendered as
  * fast as the view acknowledged, kept the host page 21–45% busy for a refused source (Chromium 31%, Firefox 45%, WebKit
  * 21%, against 19%, 14% and 10% without a source), and the reviewers measured up to 67% for an admitted origin (WebKit
- * stalled 7.5 s on one render). Refused URLs are now dropped by the renderer: the browser does nothing with them. For the
+ * stalled 7.5 s on one render). The renderer drops refused URLs, so the browser does nothing with them. For the
  * ones it keeps, measured from a loopback server: one render of 4000 new images cost the host page about 1 ms each
  * (Chromium 52%, Firefox 46% busy over the 8 s after it). So the cap bounds what one render can make the browser do (about
  * a second of the host page's thread), and VIEW_URLS_PER_SECOND bounds the long-run share at about the view's 20%: renders
  * of 1000 new images, as fast as the view acknowledged them, kept the host page 14% (Chromium), 19% (Firefox) and 5%
  * (WebKit, which upgrades the loopback's http: and fails it) busy, and 12%, 9% and 8% served by the test itself
- * (test/e2e/review-round-4.spec.ts, "M-2"; research 16's note).
+ * (the R4:M-2 e2e test; research 16's note).
  */
 export const VIEW_MAX_URLS = 1000;
 
 /**
- * The most loads the view's document makes per second, refused ones included (review round 4, M-2; round 5, M-3; backlog
- * S73: class P, a budget that counts a proxy, and E-net). Every load is charged before the browser can start it: every
+ * The most loads the view's document makes per second, refused ones included (R4:M-2, R5:M-3, S73: class P, a budget
+ * that counts a proxy, and E-net). Every load is charged before the browser can start it: every
  * URL-bearing attribute a render keeps (a cached, relative or failing one too: what it costs the browser is not known
  * then), and an upper bound of what the CSS an operation applies can load (cssLoadBound: its url(), image-set(),
  * image(), cross-fade() and src() tokens, and a second's worth per @import and stylesheet link), both when the operation
@@ -139,7 +139,7 @@ export const VIEW_MAX_URLS = 1000;
  * (the document's resource timing: a CSS background, a font, an @import, whatever named it; and every violation of its
  * policy the view observes) takes from the credit first, and is charged when none is left; the credit holds at most a
  * second's worth (viewBudget). So the charge does not depend on the renderer's model of what loads: CSS-borne loads,
- * which the renderer never parses, kept Firefox issuing 1400 requests per second (7 times this budget) at 60814b5. An
+ * which the renderer never parses, would let Firefox issue 1400 requests per second (7 times this budget). An
  * operation past it is applied, and the next one waits until the budget has refilled, like
  * VIEW_RENDER_CHARACTERS_PER_SECOND, however far past it the charges took it. See VIEW_MAX_URLS.
  *
@@ -159,17 +159,16 @@ export const VIEW_MAX_URLS = 1000;
  *     resolution changes, a linked or imported sheet past its allowance. Each such load is charged when it is
  *     reported, as before, so it is bounded only by that CSS's text: VIEW_MAX_CHARACTERS for the view's own, the
  *     registered files, an admitted origin's sheets.
- * Before (PR #47 CI, M-3 burst behind a slow server), a CSS-borne load was charged only when its response had ended,
- * so every render the view applied before the first charge arrived got through: the first burst grew with the
- * server's latency times the render rate (Firefox, CI: 5000 loads over an 11.1 s flood, past the then-documented twice
- * this rate). A load the browser defers past that rendering update (an image with loading=lazy until it is scrolled
- * to, media until it plays) was charged when it was rendered, and starts later: at most what the body holds of them
- * (VIEW_MAX_URLS).
+ * The prepayment is what holds behind a slow server (R5:M-3, S73): a CSS-borne load charged only when its response had
+ * ended would let every render the view applied before the first charge arrived get through, so the first burst would
+ * grow with the server's latency times the render rate. A load the browser defers past that rendering update (an image
+ * with loading=lazy until it is scrolled to, media until it plays) is charged when it is rendered, and starts later: at
+ * most what the body holds of them (VIEW_MAX_URLS).
  */
 export const VIEW_URLS_PER_SECOND = 200;
 
 /**
- * The most distinct URLs one view may load, over its whole life (review round 5, M-4: class P, a per-second rate standing
+ * The most distinct URLs one view may load, over its whole life (R5:M-4: class P, a per-second rate standing
  * in for a cumulative cost). Each distinct URL a document loads stays in the engine's caches while the document lives,
  * and the URL budget bounds only the rate: renders of 1000 new images, as fast as VIEW_URLS_PER_SECOND let them, made
  * WebKit's host page stall for longer and longer as the count grew (measured: 1.2 s near 8 000, 2.4 s near 18 000,
@@ -181,13 +180,13 @@ export const VIEW_MAX_DISTINCT_URLS = 10000;
 
 /**
  * The pseudo-elements the view's still stylesheet may stop animations and transitions on, besides the elements themselves
- * (VIEW_STILL_STYLE; review round 4, C-7; round 5, M-1): every pseudo-element a guest's stylesheet can give an
+ * (VIEW_STILL_STYLE; R4:C-7, R5:M-1): every pseudo-element a guest's stylesheet can give an
  * `animation` or a `transition` on the elements the renderer keeps, standard and engine-prefixed (the parts of form
  * controls and media controls the engines style with pseudo-elements). `*` reaches no pseudo-element, so each is named.
  * The view gives a name a rule of its own only where the engine supports it, and only once guest CSS it applies names
  * it (inSandboxView, `stillNamed`): every rule costs style work for every element of the view. A pseudo-element an
  * engine ships later is outside this list until it is added; the inline-style half of the switch does not depend on it.
- * Left out, as no animation applies to them (round 5, M-1):
+ * Left out, as no animation applies to them (R5:M-1):
  *   - ::first-letter and ::first-line: only typographic properties apply; with their rules, replacing 37 449 elements
  *     took Firefox 22–30 s instead of 0.1–0.5 s, on the host page's thread;
  *   - the highlight pseudo-elements (::selection, ::target-text, ::spelling-error, ::grammar-error, ::search-text,
@@ -235,9 +234,9 @@ export const VIEW_STILL_DECLARATIONS = 'animation:none!important;transition:none
  * view, and, by the rules the view adds to its layer at its start, on any pseudo-element of VIEW_STILL_PSEUDO_ELEMENTS
  * the engine supports. Elements show their end state.
  *
- * Why it holds against anything a guest's stylesheet says, measured on Chromium, Firefox and WebKit against unlayered
+ * Why it holds against anything a guest's stylesheet says (checked on Chromium, Firefox and WebKit against unlayered
  * `!important`, the guest's own anonymous and named layers, `::before`, `@starting-style`, hover transitions and
- * scroll-driven animation (`animation-timeline`):
+ * scroll-driven animation (`animation-timeline`)):
  *   - an `!important` declaration in a cascade layer beats every `!important` in a later layer and every unlayered one
  *     (css-cascade-5), so the layer must be the first one: the view inserts this sheet as its head's first element before
  *     anything is rendered (renders reach only the body, so every guest sheet, and every sheet it `@import`s, comes after
@@ -254,7 +253,7 @@ export const VIEW_STILL_DECLARATIONS = 'animation:none!important;transition:none
 export const VIEW_STILL_STYLE = `@layer{*{${VIEW_STILL_DECLARATIONS}}}`;
 
 /**
- * The properties `allowAnimations: false` takes out of style attributes (review round 4, C-2): the animation and
+ * The properties `allowAnimations: false` takes out of style attributes (R4:C-2): the animation and
  * transition longhands, prefixed ones included. The view lists the engine's own once, from a computed style (every
  * property whose name matches STILL_PROPERTY_PATTERN), and adds these: the longhands of `animation`, `transition` and
  * the scroll-driven and triggered animations every engine ships or has shipped, and the shorthands themselves. A
@@ -278,8 +277,8 @@ export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'
 
 /**
  * Limits of one event's detail: every string, the ids of the target and its ancestors, the form fields, and all its
- * strings together (broad review ST3: each bound alone let 1000 fields of 64 Ki characters through). A detail that was
- * cut by any of them says so: `truncated: true`.
+ * strings together (BR:ST3: each bound alone would let 1000 fields of 64 Ki characters through). A detail cut by any of
+ * them says so: `truncated: true`.
  */
 export const VIEW_EVENT_LIMITS = { maxString: 65536, maxIds: 32, maxFields: 1000, maxTotal: VIEW_RENDER_MAX_LENGTH } as const;
 
@@ -287,7 +286,7 @@ export const VIEW_EVENT_LIMITS = { maxString: 65536, maxIds: 32, maxFields: 1000
 export const ENTRY_DONE_PREFIX = '__sandboxEntryRan_';
 
 /**
- * The marker's name for one build (broad review ST4). The line after the entry calls it; the prelude defines it on the
+ * The marker's name for one build (BR:ST4). The line after the entry calls it; the prelude defines it on the
  * global object. An entry that closes its own function scope could declare a top-level `let` or `const` of the marker's
  * name, which the trailer's call would then resolve to; with a name drawn at build time, after the entry's text was
  * fixed, it cannot name it.
@@ -300,10 +299,10 @@ export function entryDoneName(): string {
 }
 
 /**
- * The only file types the view mints a URL for (broad review ST1). A user can open whatever a rendered element
+ * The only file types the view mints a URL for (BR:ST1). A user can open whatever a rendered element
  * shows in a new tab ("open image in new tab", "open video in new tab"): a browser-initiated navigation the view
  * cannot cancel, to a top-level document outside the sandbox and its policy. A registered SVG shown as an image
- * opened there as an SVG document and ran its script (Chromium, Firefox), and so would any type an engine renders as
+ * opens there as an SVG document and runs its script (Chromium, Firefox), and so would any type an engine renders as
  * a document: HTML, XML, and every `+xml` type, which cooperative mode's prefixes (`image/`, `audio/`, `video/`,
  * `font/`) admit. So strict mode lists, per kind of load the view makes, the types that are never a document; a
  * file of any other type gets no URL in the view, wherever it is named (markup, a stylesheet's url()), and its
@@ -322,7 +321,7 @@ export const VIEW_FILE_TYPES = [
 export const RASTER_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif'] as const;
 
 /**
- * The only types the view mints a URL for from a guest write (review round 1, R4-4, the owner's decision): the files
+ * The only types the view mints a URL for from a guest write (R1:R4-4, the owner's decision): the files
  * the view shows (VIEW_FILE_TYPES) that are raster images. A plugin can show an image it made (a chart drawn on an
  * OffscreenCanvas) without a rebuild. The host sends the view the bytes of every write it recorded whose store type is
  * one of these, and the view, the chokepoint, mints a URL only for them (inSandboxView, `showWrite`): the guest never
@@ -344,9 +343,9 @@ export const VIEW_LOAD_KINDS: Readonly<Record<string, KindRule>> = Object.fromEn
     .map(kind => [kind, { key: LOAD_KINDS[kind].key, types: VIEW_FILE_TYPES.filter(type => admits(kind, type)), prefixes: [] }]));
 
 /**
- * The renderer is an allowlist (broad review 2026-10-14): an element or attribute it does not list is gone before
- * insertion. A list of what to remove had to know every mechanism a document has (F1, SMIL, and ST2, SVG <use>, came
- * from what such a list left open); this one has to know only what a guest's UI needs.
+ * The renderer is an allowlist: an element or attribute it does not list is gone before
+ * insertion. A list of what to remove would have to know every mechanism a document has (SMIL's animate attributes,
+ * FR:F1, and SVG <use>, BR:ST2, came from what such a list left open); this one has to know only what a guest's UI needs.
  *
  *   HTML    the elements below; any other HTML element is UNWRAPPED (its children take its place and are checked in
  *           turn), except RENDER_REMOVED_ELEMENTS, which go with everything inside them: nested browsing contexts,
@@ -357,17 +356,17 @@ export const VIEW_LOAD_KINDS: Readonly<Record<string, KindRule>> = Object.fromEn
  *           no script can define it in the view.
  *   SVG     shapes, text, structure, gradients, clip paths, masks and patterns. Any other SVG element is REMOVED with its
  *           content: nothing in an unknown SVG element renders anyway, and the ones left out instance or load content
- *           (use, marker, image, feImage, foreignObject), animate attributes (F1), or cost what their parameters say
+ *           (use, marker, image, feImage, foreignObject), animate attributes (FR:F1), or cost what their parameters say
  *           rather than what the markup weighs (filter primitives: one feMorphology of 150 characters stalled WebKit's
  *           host thread for 6 s, measured). use and marker instance referenced content per reference and nest: 1–1.5 KB
- *           of either stalled the host page for 3–17 s on all three engines (ST2).
+ *           of either stalls the host page for 3–17 s on all three engines (BR:ST2).
  *   MathML  the MathML Core presentation elements; others are removed with their content (annotation-xml can hold
  *           HTML).
  *
- * Not listed for what their layout costs (review round 1, R1-2; measured from render to layout, one render within every
- * budget): wbr, whose line breaking Firefox does in super-linear time (43 000 in one paragraph stalled its host page
+ * Not listed for what their layout costs (R1:R1-2; costs taken from render to layout, one render within every
+ * budget): wbr, whose line breaking Firefox does in super-linear time (43 000 in one paragraph stall its host page
  * 23 s), and ruby with rt and rp (10 000 rubies: WebKit 10.7 s, Chromium 1.4 s). They are unwrapped, so their text
- * stays. Every other listed element measured linear (br, span, bdi, bdo, nested inline formatting 200 deep, tables of
+ * stays. Every other listed element is linear (br, span, bdi, bdo, nested inline formatting 200 deep, tables of
  * 25 000 cells, inline blocks: under 0.4 s per render on all three engines, br 1.4 s in Firefox for 43 000 lines).
  * Text itself is not bounded by layout cost: one paragraph of 240 000 characters alternating left-to-right and
  * right-to-left took tens of seconds in Chromium and WebKit, engine and machine dependent (ADR-005: host-page availability
@@ -487,12 +486,12 @@ export const RENDER_URL_ATTRIBUTES = [
 ] as const;
 
 /**
- * The value of every hyperlink href in the strict view (backlog S24, option B): the guest's URL is discarded before
+ * The value of every hyperlink href in the strict view (S24, option B): the guest's URL is discarded before
  * insertion, so a user's own browser actions on a rendered link ("copy link address", "open in new tab", hover,
  * dragging it) can carry nothing of the guest's. The view already cancels clicks, auxclicks and Enter (G4), and the
  * worker never had the URL (events carry ids), so routing is unchanged.
  *
- * Why 'about:blank#', measured on Chromium, Firefox and WebKit against '#', '' , 'about:blank', 'about:invalid',
+ * Why 'about:blank#', checked on Chromium, Firefox and WebKit against '#', '' , 'about:blank', 'about:invalid',
  * 'javascript:void(0)' and 'data:,': it is absolute, so it means the same in every document whatever its base
  * ('#' resolves to the same 'about:blank#' only because the view inherits an about:blank base; '' fails to resolve
  * only because that base has an opaque path, and then behaves differently per engine: no drag in Chromium, an empty
@@ -551,8 +550,8 @@ export interface RenderRules {
 }
 
 /**
- * What one render's renderer is given besides the rules and the switches, and what it reports back (review round 4,
- * C-2 and M-2). The view makes one per render (inSandboxView).
+ * What one render's renderer is given besides the rules and the switches, and what it reports back (R4:C-2, R4:M-2).
+ * The view makes one per render (inSandboxView).
  */
 export interface RenderContext {
     /** The local name of the element the fragment goes into: the parent of its top-level nodes (a <source>'s loader). */
@@ -600,9 +599,9 @@ export const RENDER_RULES: RenderRules = {
     // derived, not copied: the table markup-references.ts resolves in cooperative mode. Scripts never survive
     // the renderer, so <script src> names nothing here.
     references: REFERENCES.filter(([element]) => element !== 'script'),
-    // the view's kinds, derived from the one table (load-kinds.ts, focused review W1; broad review ST1)
+    // the view's kinds, derived from the one table (load-kinds.ts; FR:W1, BR:ST1)
     kinds: VIEW_LOAD_KINDS,
-    // derived from load-kinds.ts's LINK_REL_KINDS (broad review I1): a kept <link> has only these rel tokens
+    // derived from load-kinds.ts's LINK_REL_KINDS (BR:I1): a kept <link> has only these rel tokens
     linkRelKinds: Object.fromEntries(LINK_RELATIONS.map(rel => [rel, LINK_REL_KINDS[rel]!])),
     linkRelations: LINK_RELATIONS,
     anchorRelations: ['noopener', 'noreferrer', 'nofollow'],
@@ -619,7 +618,7 @@ export const RENDER_RULES: RenderRules = {
 };
 
 /**
- * The renderer (A1, A8; broad review 2026-10-14: an allowlist), run by the view on a freshly parsed template fragment
+ * The renderer (A1, A8; an allowlist, see RENDER_ELEMENTS), run by the view on a freshly parsed template fragment
  * BEFORE any of it is inserted. Stringified into the view bootstrap; self-contained. It never clones or imports a node
  * (A2): it moves the fragment's own nodes when it unwraps an element, and the caller moves the fragment into the
  * document, which never runs or even prepares a script (research 15, P6) — and there are none left anyway.
@@ -638,7 +637,7 @@ export const RENDER_RULES: RenderRules = {
  *   6. every attribute outside rules.attributes goes; so does any attribute whose value contains "blob:" (after
  *      removing the tabs and newlines the URL parser ignores) unless it is a file-reference attribute holding exactly
  *      a URL the view minted (A8), a URL attribute (rules.urls) whose URL is not http(s), minted or relative, or is an
- *      http(s) URL the view's policy refuses for the load the element makes (context.origins; review round 4, M-2), and
+ *      http(s) URL the view's policy refuses for the load the element makes (context.origins; R4:M-2), and
  *      an SVG paint or clip reference that is not a fragment; referrerpolicy becomes no-referrer, and is set on
  *      rules.referrerElements; rel on <a>/<area> keeps only rules.anchorRelations (A1);
  *   7. per `switches` (RenderSwitches): autoplay goes; a style attribute loses its animations and transitions; <style>
@@ -647,7 +646,7 @@ export const RENDER_RULES: RenderRules = {
  * throws, like the element budget, a RangeError 'VIEW_MAX_URLS'. Each URL it dropped as refused is reported
  * (context.refused) with the directive that refuses it, for the view to report as the browser would have.
  * Text is kept, each run of adjacent text joined into one node; comments and processing instructions are dropped. The
- * walk is linear in the fragment's size on every engine (review round 1, R1-2; see the walk below).
+ * walk is linear in the fragment's size on every engine (R1:R1-2; see the walk below).
  * Kept elements are counted against `room` (what is left of VIEW_MAX_ELEMENTS and VIEW_MAX_DEPTH once the elements
  * outside the target and the target's own depth are accounted for): past either it throws, before anything was
  * inserted, a RangeError whose message names the limit (VIEW_MAX_ELEMENTS or VIEW_MAX_DEPTH). Returns the number of
@@ -734,7 +733,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         }
         return false;
     };
-    // Whether every engine's policy check admits an http(s) URL for a load of `kind` (review round 4, M-2; round 5, N-3:
+    // Whether every engine's policy check admits an http(s) URL for a load of `kind` (R4:M-2, R5:N-3:
     // class B, a browser decision re-derived). This is a prediction of the browser's CSP source matching, and it is
     // one-sided by construction: it keeps a URL only where every engine is known to admit it, and drops everything else,
     // so where it is wrong it drops a URL some engine would have loaded (a functional loss: write URLs in the exact form
@@ -745,8 +744,8 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     //   - it is an image's http: URL whose upgrade is such an https: origin, on a host that is not a loopback one: the
     //     policy's upgrade-insecure-requests turns an image's http: URL into https: (port 80 into 443) before the check in
     //     every engine (measured), but Chromium's not for a loopback host. For other kinds of load Chromium and WebKit
-    //     do not (they refused an http: media URL of an https: origin), so none is kept.
-    // The forms CSP itself would also match are not relied on: an http: source matching an https: URL failed for a
+    //     do not (they refuse an http: media URL of an https: origin), so none is kept.
+    // The forms CSP itself would also match are not relied on: an http: source matching an https: URL fails for a
     // loopback host in Chromium. Anything dropped is reported by the view, as a violation of the kind's directive.
     // A URL that does not parse loads nothing and is kept, as a relative one is.
     const ruleOf = (kind: string): KindRule | null => (call(own, rules.kinds, [kind]) ? rules.kinds[kind]! : null);
@@ -758,10 +757,10 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         const rule = ruleOf(kind);
         return rule && call(own, rules.directives, [rule.key]) ? rules.directives[rule.key]! : 'default-src';
     };
-    // The URL a refusal names, as every engine measured reports it (without credentials or fragment), or null when the
+    // The URL a refusal names, as every engine reports it (without credentials or fragment), or null when the
     // policy admits it (or it does not parse).
-    // Hosts an engine may take as potentially trustworthy, which Chromium does not upgrade (it refused the http: image of
-    // a listed https://localhost or https://127.0.0.1, measured): no upgrade is assumed for them.
+    // Hosts an engine may take as potentially trustworthy, which Chromium does not upgrade (it refuses the http: image of
+    // a listed https://localhost or https://127.0.0.1): no upgrade is assumed for them.
     const LOOPBACK = /^(localhost|.*\.localhost|127\.\d+\.\d+\.\d+|\[::1\])$/;
     const refusedUrl = (value: string, kind: string): string | null => {
         let url: URL;
@@ -844,16 +843,16 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         if (namespace === SVG) return svgAttributes[attribute] === true || (element === 'a' && svgLinkAttributes[attribute] === true);
         return namespace === MATHML && mathAttributes[attribute] === true;
     };
-    // A kept style attribute without animations and transitions (switches.animations false; review round 4, C-2; round
-    // 5, L-2 and N-7). What happens to an attribute depends on its text alone, never on how an engine stores it:
+    // A kept style attribute without animations and transitions (switches.animations false; R4:C-2, R5:L-2, R5:N-7).
+    // What happens to an attribute depends on its text alone, never on how an engine stores it:
     //   1. The text decides whether there is anything to read. A declaration names its property with an identifier,
     //      matched ASCII case-insensitively and spelled with literal letters or CSS escapes, and every property that sets
     //      an animation or transition longhand has "animation" or "transition" in its name (shorthands, aliases and
-    //      prefixes alike: checked against each engine's whole property list, test/e2e/review-round-4.spec.ts), but
+    //      prefixes alike: checked against each engine's whole property list in the R4:C-2 e2e test), but
     //      `all`, which takes nothing but a CSS-wide keyword (a var() in it resolves to one, or the declaration is
     //      invalid). So a text without "animation", "transition" (in any case) or a backslash declares no animation, and
     //      stays as the guest wrote it: nothing is read, nothing is serialized. "transform", "transparent" or
-    //      "text-transform" alone never take the slower path (they did when the test was "anim" or "trans").
+    //      "text-transform" alone never take the slower path (a test for "anim" or "trans" would send them there).
     //   2. A text that does, and has a backslash (an escape the engine's parser would read as any name), or declares
     //      `all` (the word as a property name: after the start, a `;`, whitespace or a comment, before an optional
     //      whitespace and a colon; comments are skipped), goes whole. `all` expands into hundreds of longhands in Firefox
@@ -870,17 +869,18 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     //      cleaned, or is stopped by the still stylesheet), or a rollback to sheets the still stylesheet stops.
     //   4. When something was removed, the attribute becomes the declaration's serialization, so what the view applies
     //      is exactly what was read here (the attribute goes when nothing is left); else it stays as written.
-    // The CSSOM is no CSP sink. Before, every property of every declaration was listed and the attribute written back
-    // from the declaration, so `all:unset` cost hundreds of reads and a serialization of hundreds of properties per
-    // element: one render of 262 000 characters of `<i style="all:unset"></i>` stalled WebKit 10.3 s and Firefox 2.7 s
-    // (0.35 s and 0.27 s with animations on), and was then refused for the characters its expansion took.
+    // The CSSOM is no CSP sink. Only the animation properties are read, because listing every property of every
+    // declaration and writing the attribute back from it would make `all:unset` cost hundreds of reads and a
+    // serialization of hundreds of properties per element (R4:C-2): one render of 262 000 characters of
+    // `<i style="all:unset"></i>` would stall WebKit 10.3 s and Firefox 2.7 s (0.35 s and 0.27 s with animations on), and
+    // then be refused for the characters its expansion takes.
     // An element whose namespace has no `style` (jsdom's MathML, an engine without MathMLElement) loses an attribute it
     // would have to read: fail closed.
     const MAY_ANIMATE = /animation|transition|\\/i;
     const ALL_PROPERTY = /(^|[^a-z0-9_-])all[\t\n\f\r ]*:/i;
     // The text without its comments and strings, each a space, in one pass: a comment runs to its "*/" or the end of
     // the text, a string to its closing quote, a newline or the end (no escape is left to read: a text with a backslash
-    // went before this). So neither a comment nor a quote can hide `all` from ALL_PROPERTY, nor show it one.
+    // goes before this). So neither a comment nor a quote can hide `all` from ALL_PROPERTY, nor show it one.
     const outsideCommentsAndStrings = (text: string) => {
         const parts = list<string>();
         let from = 0;
@@ -1021,20 +1021,20 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         return true;
     };
 
-    // The walk (review round 1, R1-2: linear by construction): each parent's children are taken out from the front
+    // The walk (R1:R1-2: linear by construction): each parent's children are taken out from the front
     // (`drain`: removing a first child costs the same at any size in every engine), decided in document order, and the
-    // kept ones appended back at the end. Removing children one by one from the middle, as the walk did, costs time in
+    // kept ones appended back at the end. Removing children one by one from the middle costs time in
     // the number of siblings in Chromium and WebKit (measured: 38 000 removals among 86 000 siblings, Chromium 13 s,
     // WebKit over 3 s, on the host page's thread where the view shares it). A kept element is appended and its own
     // children walked next, one level deeper; an unwrapped element's children are walked in its place, at its depth,
     // into the same parent; a removed element is dropped with its subtree. Text between them is joined into one node
     // (the first of the run, its data set once): unwrapping or removing elements leaves runs of adjacent text, which
-    // WebKit lays out in super-linear time (43 000 one-letter nodes stalled its host page). Comments and processing
+    // WebKit lays out in super-linear time (43 000 one-letter nodes stall its host page). Comments and processing
     // instructions are dropped: nothing in a view needs them. `depth` is an element's depth below the fragment.
     const nodeTypeOf = getter(N, 'nodeType');
     const dataOf = getter(CharacterData.prototype, 'data');
     const setData = Object.getOwnPropertyDescriptor(CharacterData.prototype, 'data')!.set!;
-    const list = <T>(): T[] => Object.setPrototypeOf([], null); // read by index and length only (review C3)
+    const list = <T>(): T[] => Object.setPrototypeOf([], null); // read by index and length only (AR:C3)
     const joinList = Array.prototype.join;
     const drain = (parent: Node): Node[] => {
         const out = list<Node>();
@@ -1095,7 +1095,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
 }
 
 /**
- * An upper bound of the loads `css` can make (backlog S73; review round 5, M-3; class E-net and P): the view charges it
+ * An upper bound of the loads `css` can make (S73, R5:M-3; class E-net and P): the view charges it
  * to the load budget when it applies the CSS, before the browser can start any of them (inSandboxView, `cssLoadsOf`).
  * Every CSS load is named by a function token whose name is `url` (a url token too: `url(` unquoted), `image-set`,
  * `-webkit-image-set`, `image`, `cross-fade` or `src`, or by an `@import`; each counts 1, and each `@import` counts
@@ -1122,7 +1122,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
  *     escape's whitespace that is a newline, a bad url's quote) hides what follows, which errs toward counting less: not
  *     worth what it saves.
  * One native match of each pattern: linear in the text, and small next to the parse that every render does anyway
- * (test/e2e/view-round-5.spec.ts, "S73"). Stringified into the view bootstrap; self-contained.
+ * (the S73 e2e test). Stringified into the view bootstrap; self-contained.
  */
 export function cssLoadBound(css: string, perSheet: number): number {
     // One code point of a name (lower case), in each way it can be written, either case (the pattern is /i).
@@ -1168,12 +1168,11 @@ export interface ViewOperationLimits {
 export type ViewVerdict = 'within' | 'uncounted' | 'overrun' | 'second-overrun';
 
 /**
- * The view's budgets, as arithmetic and nothing else (review round 1, R1-1; round 2, M-3; round 4, M-2; round 5, M-2 and
- * M-3; backlog S72): one token bucket per measure of ViewRates, each holding at most one second's worth, refilled at its
+ * The view's budgets, as arithmetic and nothing else (R1:R1-1, R2:M-3, R4:M-2, R5:M-2, R5:M-3, S72): one token bucket per measure of ViewRates, each holding at most one second's worth, refilled at its
  * rate as time passes (`now`, ms, given by the caller: the view passes performance.now()). The view charges each bucket
  * what it measured or observed, in full, never capped: an operation of 1.5 s leaves the time budget 1.3 s in debt, which
- * it repays in 6.5 s, so the time budget bounds the view's long-run share of the thread at `time` per second (review round
- * 5, M-2: the debt was floored at 1 s, and operations of 7.5 s ran every 12.5 s). One operation's own cost is bounded by
+ * it repays in 6.5 s, so the time budget bounds the view's long-run share of the thread at `time` per second (R5:M-2: a
+ * debt floored at 1 s would let operations of 7.5 s run every 12.5 s). One operation's own cost is bounded by
  * the repeated-overrun rule instead (`measured`, below).
  *   charge(kind, amount, now)             takes `amount` from that bucket;
  *   prepay(loads, now)                    takes `loads` from the load bucket, before they can start, and keeps them as
@@ -1184,7 +1183,7 @@ export type ViewVerdict = 'within' | 'uncounted' | 'overrun' | 'second-overrun';
  *   owes(now)                             whether the time or the load budget is in debt: an operation waits until neither is;
  *   wait(characters, now)                 the ms until neither owes and the characters budget covers `characters`.
  *
- * The repeated-overrun rule (backlog S72, the owner's decision of 2026-10-19; class P, a budget that counts a proxy). `ms`
+ * The repeated-overrun rule (S72, the owner's decision; class P, a budget that counts a proxy). `ms`
  * is what this measure took (a flush, or the rendering update after one); `operation` the whole operation it belongs to,
  * as measured so far (the flush, plus its rendering update), or 0 when the caller has judged that operation already; and
  * `shown` false when the measure spans time in which the document was hidden. The verdict:
@@ -1199,13 +1198,13 @@ export type ViewVerdict = 'within' | 'uncounted' | 'overrun' | 'second-overrun';
  * time of the last overrun alone: any two earlier ones that did not end the sandbox were more than a window apart. Why a
  * second overrun and not the first: VIEW_OVERRUN_WINDOW_MS.
  *
- * The load budget's credit (backlog S73; review round 5, M-3; class E-net and P). The view prepays the loads of the CSS
+ * The load budget's credit (S73, R5:M-3; class E-net and P). The view prepays the loads of the CSS
  * an operation applies (cssLoadBound), and the platform reports each of them again once its response has ended
  * (observeLoads): the credit makes that report take from what was prepaid instead of charging the load twice. It is
  * capped at one second's worth (`urls`), so an operation whose count was far above what it loaded (url( in comments,
  * an @import's allowance) cannot store up a burst of uncharged loads for later: past the cap the prepayment is
  * forfeited, and its loads, when they come, are charged like any other. A load the credit does not cover is charged
- * when it is reported, as before. So every load is charged at least once, and none twice while the credit lasts.
+ * when it is reported. So every load is charged at least once, and none twice while the credit lasts.
  * Stringified into the view bootstrap; self-contained.
  */
 export function viewBudget(rates: ViewRates, start: number, limits: ViewOperationLimits) {
@@ -1341,18 +1340,18 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
     // The view document's own CSP violations (G6): complete and unforgeable, since no guest code runs in this
     // document and the host labels whatever arrives on the view port as source 'view'. Capped per directive
-    // (VIOLATION_EVENT_LIMIT each; the host keeps the same buckets, review C4): the view's reports include
-    // refusals of the guest's own rendered markup, so one shared cap let a guest that rendered 100 refused
+    // (VIOLATION_EVENT_LIMIT each; the host keeps the same buckets, AR:C4): the view's reports include
+    // refusals of the guest's own rendered markup, so one shared cap would let a guest that rendered 100 refused
     // images hide a later script-src-attr report. The directive is the browser's, so the buckets are the
     // browser's directive names; past 32 distinct names everything shares one more bucket.
-    // The renderer's own refusals go through the same counts (review round 4, M-2): a URL the view's policy refuses is
-    // dropped before insertion, so the browser never processes it, and reported here as the browser reported it (its
+    // The renderer's own refusals go through the same counts (R4:M-2): a URL the view's policy refuses is
+    // dropped before insertion, so the browser never processes it, and reported here as the browser would report it (its
     // directive, and the URL without credentials or fragment), within the same per-directive cap.
-    // Its strings are cut before they are posted (backlog S61.3; class E-cpu, "cut before posting"), at
+    // Its strings are cut before they are posted (S61; class E-cpu, "cut before posting"), at
     // options.violationMaxString, the length the host keeps (violation.ts, which cuts them again on receipt): a refused
     // URL of the guest's markup or CSS is the guest's to choose, up to what one render holds, and every engine reports an
-    // https URL whole, so a render of one 100 000-character image URL crossed whole to the host page (measured:
-    // test/e2e/violation-strings.spec.ts). The bucket is the cut directive's, so it is bounded as well.
+    // https URL whole, so a render of one 100 000-character image URL would cross whole to the host page
+    // (test/e2e/violation-strings.spec.ts). The bucket is the cut directive's, so it is bounded as well.
     const violationCounts = new Map<string, number>();
     const reportViolation = (directive: unknown, blockedURI: unknown, sourceFile?: unknown, lineNumber?: unknown, columnNumber?: unknown) => {
         const name = String(cutText(directive, options.violationMaxString));
@@ -1362,11 +1361,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         violationCounts.set(bucket, count + 1);
         toHost({ type: 'VIOLATION', directive: name, blockedURI: cutText(blockedURI, options.violationMaxString), sourceFile: cutText(sourceFile, options.violationMaxString), lineNumber, columnNumber });
     };
-    // Each one is charged to the load budget too (review round 5, M-3; VIEW_URLS_PER_SECOND): what the browser did to
+    // Each one is charged to the load budget too (R5:M-3; VIEW_URLS_PER_SECOND): what the browser did to
     // refuse a load, whatever named it (CSS too), unless it is a URL a render kept, which was charged when it was
     // rendered (the renderer expected the browser to admit it). WebKit reports some refusals twice: each report is
     // work, and each is charged. Like a load the platform reports (observeLoads), it takes from the credit of the CSS
-    // the view prepaid first (backlog S73; viewBudget), and is charged once that is spent.
+    // the view prepaid first (S73; viewBudget), and is charged once that is spent.
     // Each field is read once (the view runs no guest code, so its getters are the platform's).
     addEventListener('securitypolicyviolation', (event: any) => {
         if (!event.isTrusted) return;
@@ -1401,7 +1400,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // trusted ones (no guest code runs here, but the rule is stated, not assumed), capture-delegated on the
     // window. The detail describes the target and its ancestors' ids, the key, the form's fields — never a
     // URL: no href, src or action is read. Every string is clamped, and all of them together share one budget
-    // (broad review ST3): a detail that was cut anywhere carries `truncated: true`. Link and submit defaults are
+    // (BR:ST3): a detail cut anywhere carries `truncated: true`. Link and submit defaults are
     // cancelled above whether or not anyone listens.
     let subscribed: string[] = [];
     const forward = (event: any) => {
@@ -1467,7 +1466,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     for (let i = 0; i < options.events.types.length; i++) addEventListener(options.events.types[i]!, forward, true);
 
-    // The view's two sinks under a host page's Trusted Types (review round 1, R3-1): the view inherits the host page's
+    // The view's two sinks under a host page's Trusted Types (R1:R3-1): the view inherits the host page's
     // `require-trusted-types-for 'script'`, which makes the template's innerHTML and the Worker constructor throw a
     // TypeError for a string. Each is tried with the string first; only when that throws a TypeError and the view has
     // Trusted Types is the operation repeated through the one policy of the view's own, created once, named like the
@@ -1510,8 +1509,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
     let viewFiles = new Map<string, { url: string; type: string }>();
     let minted = new Set<string>();
-    // The guest's writes as the host recorded them (R4-4): path → the URL this view minted from the host's bytes, or null
-    // where the path names nothing any more (a removal, or a write of a type the view does not mint for). A path the
+    // The guest's writes as the host recorded them (R1:R4-4): path → the URL this view minted from the host's bytes, or null
+    // where the path names nothing (a removal, or a write of a type the view does not mint for). A path the
     // guest changed resolves as the guest's own sandboxFiles lists it, so a registered file it replaced or removed is
     // gone from here too. Only VIEW_WRITE_TYPES are minted, whatever the message says: this is the chokepoint.
     const written = new Map<string, { url: string; type: string } | null>();
@@ -1521,8 +1520,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (typeof path !== 'string') return;
         const previous = written.get(path);
         if (previous) {
-            // A later write or a removal replaces the URL: the old one is revoked and no longer the view's, so rendered
-            // markup can no longer name it (A8); an image that already shows it keeps what it decoded.
+            // A later write or a removal replaces the URL: the old one is revoked, so it is not the view's, and
+            // rendered markup cannot name it (A8); an image that already shows it keeps what it decoded.
             minted.delete(previous.url);
             URL.revokeObjectURL(previous.url);
         }
@@ -1535,11 +1534,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         minted.add(url);
     };
 
-    // What the body holds, kept as running counts (review round 2, C-4): its serialization's length (VIEW_MAX_CHARACTERS)
-    // and its elements (VIEW_MAX_ELEMENTS). Every operation used to serialize the whole body (and a render counted all its
-    // elements) to check the budget, so a guest that filled the view once and then sent 2-character set() operations
-    // made the view do ~1 M characters of work per operation, charged 2 (Firefox's host page fell from 233 to 67 ticks
-    // per second). Now an operation measures only what it changes: the target's old content, its new content, a value
+    // What the body holds, kept as running counts (R2:C-4): its serialization's length (VIEW_MAX_CHARACTERS)
+    // and its elements (VIEW_MAX_ELEMENTS). Serializing the whole body (and counting all its elements) on every
+    // operation to check the budget would make a guest that filled the view once and then sent 2-character set()
+    // operations cost the view ~1 M characters of work per operation, charged 2 (Firefox's host page fell from 233 to 67
+    // ticks per second). So an operation measures only what it changes: the target's old content, its new content, a value
     // attribute; the body's totals are updated from those. Each operation is also charged that work (`work`, on top of
     // its own text): what the view serializes, the guest pays for, at VIEW_RENDER_CHARACTERS_PER_SECOND. A piece of
     // content is serialized as old content once, when it is replaced, and it was charged when it was rendered.
@@ -1550,7 +1549,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // operation's own records are taken from the observer as soon as it is done, so only foreign ones ever reach it.
     let bodyCharacters: number | null = null;
     let bodyElements: number | null = null;
-    let bodyUrls: number | null = null; // the body's URL-bearing attributes (VIEW_MAX_URLS; review round 4, M-2)
+    let bodyUrls: number | null = null; // the body's URL-bearing attributes (VIEW_MAX_URLS; R4:M-2)
     let work = 0; // characters serialized by the current flush, charged to the budget with it
     let urlWork = 0; // URL-bearing attributes the current flush kept, charged to the load budget with it
     let cssWork = 0; // the loads the CSS the current flush applied can make (cssLoadsOf), prepaid with it
@@ -1592,7 +1591,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         return { characters: bodyCharacters, elements: bodyElements, urls: bodyUrls };
     };
     // After an operation on `target`: its own records (the target's children, its value attribute) are dropped, and
-    // any other record means the counts no longer hold. Without an observer the counts are never trusted.
+    // any other record means the counts do not hold. Without an observer the counts are never trusted.
     const settle = (target: Element) => {
         if (!observer || !takeRecords || !recordTarget || !recordType || !recordAttribute) {
             forget();
@@ -1613,7 +1612,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // What the renderer keeps besides its rules (RenderSwitches): set once, at INIT_VIEW, before anything is rendered.
     // Until then the safe side of each.
     let switches: RenderSwitches = { animations: false, autoplay: false, stylesheets: true };
-    // The origins the view's policy admits per kind of load (INIT_VIEW, from `origins`; review round 4, M-2), as lists of
+    // The origins the view's policy admits per kind of load (INIT_VIEW, from `origins`; R4:M-2), as lists of
     // strings, and nothing until then: the renderer drops an http(s) URL outside them.
     let viewOrigins: Record<string, string[]> = Object.create(null);
     const originsOf = (given: unknown) => {
@@ -1626,7 +1625,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         }
         return out;
     };
-    // The engine's animation and transition longhands, found once (review round 4, C-2): every property a computed style
+    // The engine's animation and transition longhands, found once (R4:C-2): every property a computed style
     // lists whose name matches the rules' pattern, and the known ones (RenderRules.still), so `allowAnimations: false`
     // reads only these of each style attribute. A declaration holds longhands under their own names, whatever the
     // attribute wrote (a shorthand, an alias, a prefix, an escape), so these are the only names to read.
@@ -1657,18 +1656,18 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // to none. The sheet is an inline style, so a host page whose style-src has neither 'unsafe-inline' nor its hash
     // refuses it (a srcdoc document inherits the host page's policy); false then.
     //
-    // Its rules for pseudo-elements (review round 5, M-1; VIEW_STILL_PSEUDO_ELEMENTS) are appended to its anonymous layer
+    // Its rules for pseudo-elements (R5:M-1; VIEW_STILL_PSEUDO_ELEMENTS) are appended to its anonymous layer
     // through the CSSOM, one per name, and only for what can need one. Every such rule costs style work for every element
     // of the view, whatever the elements carry (Chromium: one more style resolution per element for most names, and for
-    // ::scroll-button(*) 2.5–8 times a whole replacement, growing faster than the elements), so the library's own sheet
-    // made every render of every guest two to eight times as expensive. A rule is needed only where an animation could
+    // ::scroll-button(*) 2.5–8 times a whole replacement, growing faster than the elements), so a rule for every name
+    // in the library's own sheet would make every render of every guest two to eight times as expensive. A rule is needed only where an animation could
     // reach the pseudo-element, and only a guest stylesheet can give a pseudo-element anything (a style attribute cannot
     // name one, and the user agent's own sheet animates none). So:
     //   - a name gets a rule only where the engine supports it (CSS.supports('selector(*::name)')): a name the engine does
     //     not know matches nothing, and its rule would cost all the same; but a ::-webkit- name gets one wherever the
     //     engine's parser keeps it (every engine keeps any): Chromium matches the parts of its controls by name, and
     //     denies two of them in CSS.supports (-webkit-media-controls-volume-control-container and its hover background,
-    //     found by review-round-4.spec.ts's enumeration of its parts);
+    //     found by enumerating its parts in the R4:C-7 e2e test);
     //   - and only once guest CSS that the view is about to apply names it (stillNamed): the text of every registered
     //     stylesheet at INIT_VIEW, of every <style> a render keeps (HTML or SVG) before it is inserted, and of every
     //     text() into a <style> before it is set. A name that appears anywhere in the text, comments and strings
@@ -1754,10 +1753,10 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         return held;
     };
 
-    // The distinct URLs this view has loaded or holds (review round 5, M-4; VIEW_MAX_DISTINCT_URLS), without their
+    // The distinct URLs this view has loaded or holds (R5:M-4; VIEW_MAX_DISTINCT_URLS), without their
     // fragment: every one the document's resource timing reported (loadsObserved, below), and every http(s) URL a render
     // kept in a URL attribute. Each distinct URL a document loads stays in the engine's caches for the document's life:
-    // past a few tens of thousands WebKit's host page stalled for 13–28 s while its memory grew without bound, though
+    // past a few tens of thousands WebKit's host page stalls for 13–28 s while its memory grows without bound, though
     // the URL budget held the rate. A render whose URL attributes would take the count past the limit is refused before
     // anything is inserted (VIEW_MAX_DISTINCT_URLS); one that carries CSS (a <style>, a stylesheet <link>, a style
     // attribute that can name a URL) is refused once the count has reached it, since what CSS loads is known only once
@@ -1791,13 +1790,12 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (distinctLoads.size >= options.maxDistinctUrls && cssMayLoad(fragment)) throw new RangeError('VIEW_MAX_DISTINCT_URLS');
         return fresh;
     };
-    // The loads the CSS an operation applies can make, at most (backlog S73, after PR #47 CI, M-3 burst behind a slow
-    // server; class E-net and P), prepaid to the load budget with the operation (viewBudget's `prepay`), as its URL
-    // attributes are charged: before the browser can start any of them, which it does when it styles what was inserted.
-    // Before, a CSS-borne load was charged only when the platform reported it (observeLoads), once its response had
-    // ended: behind a slow server every render the view applied before the first charge arrived got through, so the
-    // first burst was bounded by the server's latency times the view's render rate, not by the budget (Firefox, CI: 5000
-    // loads over an 11.1 s flood whose bound, then twice the rate, was 4936).
+    // The loads the CSS an operation applies can make, at most (S73, R5:M-3; class E-net and P), prepaid to the load
+    // budget with the operation (viewBudget's `prepay`), as its URL attributes are charged: before the browser can start
+    // any of them, which it does when it styles what was inserted. A CSS-borne load charged only when the platform
+    // reports it (observeLoads), once its response has ended, would let every render the view applied behind a slow
+    // server before the first charge arrived get through, so the first burst would be bounded by the server's latency
+    // times the view's render rate, not by the budget.
     // What an operation can add CSS with, and so what is counted (cssLoadBound):
     //   - a render: every style attribute the renderer kept (HTML, SVG and MathML), as written, which it reads as it
     //     walks them (RenderContext.css: no second walk of the fragment), the text of every <style> in the fragment
@@ -1838,20 +1836,20 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         for (let i = 0; i < linksLength; i++) if (STYLESHEET_LINK.test(relOf(call(NodeList.prototype.item, links, [i]) as Element) || '')) bound += perSheet;
         return bound;
     };
-    // Every load the view's document makes, as the platform reports it (review round 5, M-3: class P and E-net): its
+    // Every load the view's document makes, as the platform reports it (R5:M-3: class P and E-net): its
     // resource timing, which every engine keeps per document and reports for every fetch the document made, whatever
     // named the URL (markup, a stylesheet's url() or image-set(), @import, a style attribute, a font), once its response
     // ended (Chromium and Firefox report failed loads too, WebKit does not). A load the policy refused makes a
     // violation, which the listener above charges (Chromium reports an entry too: such a load is reported twice). Each
     // URL is counted among the distinct ones (VIEW_MAX_DISTINCT_URLS), and each entry but that of a URL a render kept
     // (whose URL attribute was charged when it was rendered) goes to the load budget (VIEW_URLS_PER_SECOND): it takes
-    // from the credit of the CSS the view prepaid first (cssLoadsOf; backlog S73), and is charged once that is spent.
+    // from the credit of the CSS the view prepaid first (cssLoadsOf; S73), and is charged once that is spent.
     // So every load is charged at least once whether or not the renderer's model of what loads is right: what it kept
     // is charged when it is rendered (a relative URL, or one that fails in WebKit, too), what CSS it applied can load
     // is prepaid then, and what neither covered (a stylesheet's loads past its allowance, a rule of one already in the
     // view) or what it wrongly expected to be refused is charged when the platform reports it. A report arrives once
-    // the response has ended, so only the prepayment holds a render back before its loads start: before it, behind a
-    // slow server, the renders made meanwhile went through (PR #47 CI, M-3 burst behind a slow server). The renderer's
+    // the response has ended, so only the prepayment holds a render back before its loads start: a report alone would
+    // let the renders made meanwhile behind a slow server go through (R5:M-3, S73). The renderer's
     // drop of the URLs the policy would refuse saves the browser that work, and is no part of the bound. The observer
     // runs only when there are entries: nothing per frame, nothing while the view loads nothing. The document's own
     // buffer is emptied as entries arrive (nothing here reads it), so it holds none of them.
@@ -1881,7 +1879,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
     // template.innerHTML parses into an inert fragment (no script runs, nothing loads); the renderer cleans
     // it; replaceChildren MOVES its nodes into the document (A2) — never a clone or an import. The renderer gets the
-    // room the view's budget leaves (broad review ST2): the body's elements outside the target stay, the target's own
+    // room the view's budget leaves (BR:ST2): the body's elements outside the target stay, the target's own
     // are replaced, and the target's depth below the body counts; past it the renderer throws before insertion.
     const apply = (html: string, into: string | null) => {
         const body = call(bodyOf, document, []);
@@ -1899,9 +1897,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const room = { elements: options.render.maxElements - (before.elements - ownElements), depth: options.render.maxDepth - depth, urls: options.render.maxUrls - (before.urls - ownUrls) };
         const kept = sanitize(template.content, fileOf, isMinted, options.render, switches, room, context);
         const fresh = newLoads(context.loads, template.content);
-        // The characters the body would hold (R1-1): its serialization outside the target, plus the cleaned fragment's
+        // The characters the body would hold (R1:R1-1): its serialization outside the target, plus the cleaned fragment's
         // (what the target's serialization becomes: the same nodes, moved; never more, and less only inside a raw-text
-        // element, whose text is not escaped). Measured on the browser's own serializer, after the renderer, so
+        // element, whose text is not escaped). Counted on the browser's own serializer, after the renderer, so
         // attributes it dropped and elements it unwrapped never count. Once inserted, the target is measured again, so
         // the count is what the body serializes to, exactly.
         if (before.characters - ownCharacters + innerLength(template) > options.render.maxCharacters) throw new RangeError('VIEW_MAX_CHARACTERS');
@@ -1920,10 +1918,10 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         bodyUrls = before.urls - ownUrls + context.urls;
     };
 
-    // sandboxView.text() and set() (review round 1, R4-5). The element is found as a render's target is, by id inside
+    // sandboxView.text() and set() (R1:R4-5). The element is found as a render's target is, by id inside
     // the body (never the body itself, never the bootstrap's own head), and an id that names nothing is dropped, like a
     // render to a missing target. What either leaves in the body is counted against the view's characters as the
-    // browser serializes it, over the document it would leave (R1-1), before anything changes.
+    // browser serializes it, over the document it would leave (R1:R1-1), before anything changes.
     const elementInBody = (id: string): Element | null => {
         const body = call(bodyOf, document, []);
         const target = call(D.getElementById, document, [id]);
@@ -2024,14 +2022,14 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
     // At most one flush per animation frame (a timer stands in where frames are throttled), the latest render or text
     // per target; one VIEW_ACK per flush releases the worker's next operation (A4). And at most
-    // VIEW_RENDER_CHARACTERS_PER_SECOND characters per second (R1-1), a token bucket charged with each operation's
+    // VIEW_RENDER_CHARACTERS_PER_SECOND characters per second (R1:R1-1), a token bucket charged with each operation's
     // characters (a render's markup, a text, a value) when it is applied, refused or not, and with the characters it
-    // serialized (C-4): a flush that the budget does not cover yet waits until it does.
+    // serialized (R2:C-4): a flush that the budget does not cover yet waits until it does.
     //
-    // And at most VIEW_APPLY_MS_PER_SECOND ms of the view's own time per second (review round 2, M-3), a second token
+    // And at most VIEW_APPLY_MS_PER_SECOND ms of the view's own time per second (R2:M-3), a second token
     // bucket charged with what the view's work took, measured. Characters are a proxy of the work and the time is the
     // work: within every character budget, re-rendering 37 449 empty elements without pause, or setting a 250 000-character
-    // textarea value four times a second (WebKit), kept the host page's thread 80–95% busy, where the view shares it. A
+    // textarea value four times a second (WebKit), keeps the host page's thread 80–95% busy, where the view shares it. A
     // time budget bounds the whole class, whatever makes an operation slow (elements, layout, a control's editor), on the
     // machine it runs on. The rate is a share of one thread: what is left is the host page's. Two measures are charged:
     //   - the flush itself: its operations and the layout they cause, timed. Layout is forced at the end of the flush
@@ -2042,18 +2040,18 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     //     textarea's text (measured: 0–1 ms against 1.6–2 s for elementFromPoint);
     //   - the rendering update that shows them (style and paint), measured by the gap meter below.
     // Whether a flush may run is checked when it is about to run, so a charge that arrived after it was scheduled still
-    // holds it back. Each is charged in full, however long it took (review round 5, M-2; viewBudget): the debt was floored
-    // at one second of the view's time, so an operation of 7.5 s (Chromium's layout of 30 000 restyled elements) was
-    // charged 1.2 s and ran again every 12.5 s, 53% of the thread, against a budget documented as a long-run share. One
+    // holds it back. Each is charged in full, however long it took (R5:M-2; viewBudget): a debt floored at one second
+    // of the view's time would let an operation of 7.5 s (Chromium's layout of 30 000 restyled elements) be charged
+    // 1.2 s and run again every 12.5 s, 53% of the thread, against a budget documented as a long-run share. One
     // operation's own cost is not something a rate can bound (ADR-005); the repeated-overrun rule bounds how often it
-    // may be large instead (backlog S72; `judge`, below): an operation, a flush and the rendering update measured after
+    // may be large instead (S72; `judge`, below): an operation, a flush and the rendering update measured after
     // it, that took longer than VIEW_MAX_OPERATION_MS is an overrun, charged in full like any other (one of 9 s holds the
     // view back 45 s), and the second overrun within VIEW_OVERRUN_WINDOW_MS ends the sandbox. So past the first, at most
     // one operation per window costs the thread more than VIEW_MAX_OPERATION_MS, and the long-run share is the rate's.
     //
-    // The gap meter (review round 3, C-2 and M-5). The rendering update that shows a flush runs after the animation-frame
+    // The gap meter (R3:C-2, R3:M-5). The rendering update that shows a flush runs after the animation-frame
     // callbacks of the frame that follows it, and the first task after that frame's callbacks runs only once the update
-    // is done: the time from the end of a callback to that task is the update, measured on the machine the view runs on,
+    // is done: the time from the end of a callback to that task is the update, taken on the machine the view runs on,
     // and charged in full. A flush that ran inside a frame callback (the usual case: `schedule` runs it there) is
     // rendered by that very frame, so the measure starts as the flush ends; one that ran from the timer (frames
     // throttled) asks for the next frame, and the measure starts at the end of its callback. The task is a zero-delay
@@ -2063,11 +2061,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // requested without a flush, and nothing runs per frame while guest animations play (research 16 measured both).
     // The meter never charges time in which no frame ran: a hidden or off-screen view runs no frame in most engines, so
     // its one pending request runs once the view shows again, and measures that frame. A measure across which the
-    // document's visibility changed is dropped, neither charged nor counted towards an operation (review round 5, M-2):
+    // document's visibility changed is dropped, neither charged nor counted towards an operation (R5:M-2):
     // a page hidden between the frame and the task throttles the task (Chromium runs a background page's timers once a
-    // second), so the measure would hold time in which nothing rendered. Before, every flush queued a frame callback that
-    // charged the wall time from the flush to it, past one frame's length: a view hidden for 5 s, with one render applied
-    // meanwhile, made the next render wait 18.3 s (C-2); and one frame's length went uncharged per flush (M-5). Where the
+    // second), so the measure would hold time in which nothing rendered. Charging the wall time from the flush to a
+    // frame callback, past one frame's length, would make a view hidden for 5 s, with one render applied meanwhile,
+    // make the next render wait 18.3 s (R3:C-2), and would leave one frame's length uncharged per flush (R3:M-5). Where the
     // view shares the host page's renderer (an in-process frame), the update measured is the whole frame's, and a task of
     // the host page's that the event loop runs before the meter's task is in it too: both are charged to the view and
     // count towards its operation, which slows the guest, and makes it an overrun only past VIEW_MAX_OPERATION_MS: one
@@ -2075,7 +2073,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: { value?: string; checked?: boolean; focus?: boolean } | null };
     let pending: Job[] = [];
     let scheduled = false;
-    // What a measure's verdict does (viewBudget, the repeated-overrun rule; backlog S72, class P). An overrun that is not
+    // What a measure's verdict does (viewBudget, the repeated-overrun rule; S72, class P). An overrun that is not
     // the second in its window: the view goes on, its debt holding the next operation back, and says so on its port
     // (VIEW_FIRST_OVERRUN), for the host's one warning per environment (host.ts). The frame needs no budget of its own: one
     // overrun leaves at least 9 s of debt, so at most one is posted per 9 s. The second within the window: the view says
@@ -2150,16 +2148,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // After operations that started at `started`: what they serialized and the time they took, layout included, are
     // charged, the operation checked against its limit, and its rendering measured next.
     const settleOperations = (started: number, inFrame: boolean) => {
-        budget.charge('characters', work, performance.now()); // what the operations serialized (C-4)
+        budget.charge('characters', work, performance.now()); // what the operations serialized (R2:C-4)
         work = 0;
-        budget.charge('urls', urlWork, performance.now()); // the URL-bearing attributes they kept (M-2)
+        budget.charge('urls', urlWork, performance.now()); // the URL-bearing attributes they kept (R4:M-2)
         urlWork = 0;
         budget.prepay(cssWork, performance.now()); // what the CSS they applied can load (S73), before layout starts it
         cssWork = 0;
         layout();
         const now = performance.now();
         const spent = now - started;
-        // what the flush took (M-3), judged as soon as it is known: a flush past the limit is an overrun whether or not
+        // what the flush took (R2:M-3), judged as soon as it is known: a flush past the limit is an overrun whether or not
         // its rendering is ever measured (a document hidden right after it)
         judge(budget.measured(spent, spent, now, true));
         measureRendering(inFrame, spent); // and what showing it takes
@@ -2300,24 +2298,24 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         viewPort.onmessage = (message: MessageEvent) => {
             const m = message.data;
             if (m && m.type === 'VIEW_PING' && typeof m.n === 'number') viewPort!.postMessage({ type: 'VIEW_PONG', n: m.n });
-            // A guest write the host recorded (R4-4), answered once shown: the host tells the guest its write stands only
+            // A guest write the host recorded (R1:R4-4), answered once shown: the host tells the guest its write stands only
             // then, so a render after `await sandboxFiles.write()` finds the URL here.
             if (m && m.type === 'VIEW_WRITE' && typeof m.id === 'number') {
                 showWrite(m.path, m.mime, m.bytes);
                 viewPort!.postMessage({ type: 'VIEW_WRITTEN', id: m.id });
             }
         };
-        // The Trusted Types probe (review round 2, C-6), before the check-in: where this document requires Trusted Types
+        // The Trusted Types probe (R2:C-6), before the check-in: where this document requires Trusted Types
         // (assigning a string to a sink throws a TypeError), the policy is created now, and a host page whose
         // trusted-types directive does not name it is told so, on this port, with the reason the element gives for it.
         // The host page may never have needed the policy itself (its own default policy took the element's strings, and
-        // a default policy is the host page's object, not this document's), so only this side can find out. Before,
-        // the refusal surfaced later as "the guest entry failed to start", after 'ready'.
+        // a default policy is the host page's object, not this document's), so only this side can find out. Without the
+        // probe the refusal would surface later as "the guest entry failed to start", after 'ready'.
         if (!trustedTypesReady()) {
             viewPort.postMessage({ type: 'TRUSTED_TYPES_REFUSED' });
             return;
         }
-        // The check-in (review round 1, R3-1): the first frame on the view port, which only this bootstrap holds. The
+        // The check-in (R1:R3-1): the first frame on the view port, which only this bootstrap holds. The
         // host is 'ready' on it, never on the frame's load alone, which fires also when this script did not run.
         // It carries the view's size: a host page whose style-src refuses the wrapper's style leaves it 150 px high,
         // which only this side can see (frame-documents.ts, WRAPPER_STYLE); the host warns.
@@ -2335,7 +2333,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         outbox.length = 0;
 
         // The view's own blob: URLs for the registered files it may show (no JavaScript among them): with the ones it
-        // mints for raster-image guest writes (showWrite, R4-4), the only blob: URLs the renderer keeps (A8).
+        // mints for raster-image guest writes (showWrite, R1:R4-4), the only blob: URLs the renderer keeps (A8).
         const entries = Array.isArray(data.viewFiles) ? data.viewFiles : [];
         const files = installFiles(entries);
         // the registered stylesheets a render can link or import: the still rules their text names (stillNamed)
@@ -2357,53 +2355,54 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             minted.add(url);
         }
 
-        // The worker's source URL is revoked on the first message the worker sends on the render port (review C1,
-        // follow-up audit 2026-10-14). Only the worker prelude can post there, and it first does so (VIEW_STARTED)
+        // The worker's source URL is revoked on the first message the worker sends on the render port (AR:C1).
+        // Only the worker prelude can post there, and it first does so (VIEW_STARTED)
         // when it takes INIT_WORKER, which a worker handles only after its whole script (prelude, entry, marker)
         // has run: the source has been read and evaluated by then, and the entry's own errors have been raised.
-        // From then on the URL resolves nowhere, so the view can no longer load or fetch the worker's source: the
+        // From then on the URL resolves nowhere, so the view cannot load or fetch the worker's source: the
         // only blob: URLs left that rendered markup could name are the worker's copies of registered files and the
         // view's own, and the narrowed A8 guarantee, "the view renders no blob: content but registered files and
-        // raster-image guest writes, decoded only" (R4-4 added the writes), holds by construction.
-        // Revoking earlier (once the Worker object exists) was rejected in the review: in WebKit the worker's
-        // script had not been read yet, and every blob: URL it then minted was unreadable (sandboxFiles failed
-        // with NotReadableError). Measured at this point on all three engines: Blob reads, fetches of the
-        // worker's own URLs, sandboxFiles and execute() keep working (test/e2e/review-strict.spec.ts, "C1").
+        // raster-image guest writes, decoded only" (R1:R4-4 adds the writes), holds by construction.
+        // Revoking earlier (once the Worker object exists) is not possible: in WebKit the worker's
+        // script has not been read yet, and every blob: URL it then minted is unreadable (sandboxFiles fails
+        // with NotReadableError). Revoked at this point, Blob reads, fetches of the worker's own URLs, sandboxFiles and
+        // execute() keep working on all three engines (test/e2e/review-strict.spec.ts).
         //
-        // One thing does change, in WebKit only: inside the worker, an uncaught error thrown later by code from the
-        // revoked script is muted ("Script error.", no error object), since WebKit can no longer resolve the
+        // One thing is different, in WebKit only: inside the worker, an uncaught error thrown later by code from the
+        // revoked script is muted ("Script error.", no error object), since WebKit cannot resolve the
         // script's URL to its origin; here, on the Worker object, the same error keeps its text. So the prelude
         // logs every later error it can describe itself and leaves a muted one to this document, which logs it
         // (GUEST_UNCAUGHT). WebKit mutes there the errors of code compiled from a string too (Function, eval:
         // execute() runs code so), and those from the first moment, before any revocation (measured).
         //
         // Which errors are the entry's own (they end the sandbox: GUEST_ERROR) is read from the order of one channel,
-        // the Worker object's error events, which arrive in the order they were raised (backlog S75, class B). The
+        // the Worker object's error events, which arrive in the order they were raised (S75, class B). The
         // line after the entry, once the entry ran to its end, raises the build's marker error (inStrictWorker), and
         // the prelude leaves it to reach this document: every error before it is the entry's, every error after it is
-        // later. Before S75 the end of the entry was read from VIEW_STARTED, on the render port, a second channel, on
-        // the prediction that an error which reaches this document before it can only be the entry's (a muted one
-        // needed the revocation, which follows VIEW_STARTED). WebKit refutes it: a muted error of code compiled from a
-        // string reached the Worker object before VIEW_STARTED reached the render port, on a loaded machine
-        // (execute()'s `setTimeout(() => { throw … })`, 2–3 runs in 100–200) and always (an entry's queueMicrotask of
-        // such code, 8 in 8), and the sandbox ended with "the guest entry failed to start" although the entry had run
-        // to its end.
+        // later. The end of the entry is not read from VIEW_STARTED, on the render port, a second channel: that would
+        // predict that an error which reaches this document before it can only be the entry's (a muted one
+        // needs the revocation, which follows VIEW_STARTED), and WebKit refutes the prediction: a muted error of code
+        // compiled from a string reaches the Worker object before VIEW_STARTED reaches the render port, on a loaded
+        // machine (execute()'s `setTimeout(() => { throw … })`, 2–3 runs in 100–200) and always (an entry's
+        // queueMicrotask of such code, 8 in 8), and the sandbox would end with "the guest entry failed to start"
+        // although the entry had run to its end.
         // A guest that throws the marker's text itself (it can read the marker's name, as it could always call the
-        // marker early: ST4) only spares its own entry the end it would have had; it can make no later error end
+        // marker early: BR:ST4) only spares its own entry the end it would have had; it can make no later error end
         // the sandbox, since an error it raises after the marker is later whatever its text.
-        // The guest's error texts this document relays (review round 3, C-4): GUEST_ERROR, the entry's own error, and
+        // The guest's error texts this document relays (R3:C-4): GUEST_ERROR, the entry's own error, and
         // GUEST_UNCAUGHT, a later one the worker could not describe itself (above). Both are the guest's words, and every
         // one of them leaves through here, bounded before it is posted, as the console relay bounds every other guest
         // line in the guest before posting it (in-sandbox-script.ts): cut to guestText.maxLength characters, and at most
         // guestText.perSecond in any one-second window (the host's window for guest lines), past which they are dropped
-        // here. Before, the text crossed whole and the host cut it after receiving it: an error thrown with a message of
-        // hundreds of millions of characters stalled the host page 0.6–1.4 s, and a worker throwing in a loop posted
+        // here. Crossing whole, to be cut by the host after receiving it, would let an error thrown with a message of
+        // hundreds of millions of characters stall the host page 0.6–1.4 s, and a worker throwing in a loop post
         // without bound. Not through the worker's relay, the same chokepoint otherwise: the entry's error can mean the
         // worker never ran (it did not parse), and GUEST_UNCAUGHT exists for the errors the worker cannot describe.
         // The window keeps the times of the last `perSecond` texts in a ring: the oldest of them is at `textsHead`.
-        // The first text dropped is said, once (review round 4, M-5): GUEST_TEXT_DROPPED, which the host turns into one
+        // The first text dropped is said, once (R4:M-5): GUEST_TEXT_DROPPED, which the host turns into one
         // warn line, as the console relay says its own drops. WebKit raises every later uncaught error of the worker here
-        // (its script's URL is revoked, above), so a guest that threw in a loop lost lines there without a word.
+        // (its script's URL is revoked, above), so without the line a guest that throws in a loop would lose lines there
+        // without a word.
         const textTimes: number[] = [];
         let textsHead = 0;
         let textDropped = false;
@@ -2458,7 +2457,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         // script did not run: either it was not loaded
         // at all (all three engines, for a host page's worker-src without blob:; WebKit under the host page's
         // Cross-Origin-Embedder-Policy) or it did not parse (Firefox gives a syntax error no message). A probe worker
-        // of one statement tells which (R3-1): if it cannot run either, the policy refuses blob: workers and nothing of
+        // of one statement tells which (R1:R3-1): if it cannot run either, the policy refuses blob: workers and nothing of
         // the guest's ran; if it runs, the entry did not parse. Only on that path, so a build pays nothing for it.
         const probe = (decide: (refused: boolean) => void) => {
             let probeWorker: Worker | null = null;
@@ -2482,7 +2481,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             const text = error.message;
             // The marker, looked for only until it came, and only where the engines put it (`Uncaught Error: <name>`,
             // `Error: <name>`): a later error of 16 Mi characters is not searched (an error flood is the guest's, and this
-            // runs on the thread the view shares with the host page; review round 4's M-1 measures it on WebKit).
+            // runs on the thread the view shares with the host page; R4:M-1 measures it on WebKit).
             if (!entryRan && entryDone !== '' && typeof text === 'string' && text.slice(0, entryDone.length + 64).indexOf(entryDone) !== -1) {
                 entryRan = true; // the marker: the entry ran to its end; not a guest error, so not logged
                 error.preventDefault();
@@ -2509,7 +2508,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         observeLoads();
         const initial = data.html;
         if (typeof initial === 'string' && initial !== '') {
-            budget.charge('characters', initial.length, performance.now()); // the initial view is charged like any render (R1-1)
+            budget.charge('characters', initial.length, performance.now()); // the initial view is charged like any render (R1:R1-1)
             work = 0;
             const started = performance.now();
             try {
@@ -2544,10 +2543,10 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * (the port itself is never handed to a handler).
  */
 export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; maxUrls: number; maxDistinctUrls: number; entryDoneName: string; eventTypes: readonly string[] }) {
-    // ---- The captured list (review C3; review round 2, C-1): sandboxView's methods, the render port's listener and the
+    // ---- The captured list (AR:C3, R2:C-1): sandboxView's methods, the render port's listener and the
     // error listener run after the entry, so everything they use is taken here, and nothing below reads a global or a
-    // prototype guest code can replace (a unit test scans the text). The prelude's own lists have no prototype (review
-    // C3): an index written to them never reaches an inherited setter, so guest code that defines one on Array.prototype
+    // prototype guest code can replace (a unit test scans the text). The prelude's own lists have no prototype
+    // (AR:C3): an index written to them never reaches an inherited setter, so guest code that defines one on Array.prototype
     // (or puts a Proxy in its chain) sees none of the render queue, the handlers or the subscribed types. They are only
     // ever read by index and length.
     const g = globalThis as any;
@@ -2564,8 +2563,8 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     const portsOf = getOwn(MessageEvent.prototype, 'ports')!.get!;
     const stopImmediate = Event.prototype.stopImmediatePropagation;
     const cancel = Event.prototype.preventDefault;
-    // The error event's own fields, read through the getters of ErrorEvent.prototype as they are now (review round 5,
-    // N-2; class G): guest code can replace the prototype's accessors, so the listener below never reads them through
+    // The error event's own fields, read through the getters of ErrorEvent.prototype as they are at the capture point
+    // (R5:N-2; class G): guest code can replace the prototype's accessors, so the listener below never reads them through
     // the event. A captured getter returns what the browser stored in the event, and runs no guest code.
     const errorEventError = getOwn(ErrorEvent.prototype, 'error')!.get!;
     const errorEventMessage = getOwn(ErrorEvent.prototype, 'message')!.get!;
@@ -2589,11 +2588,11 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
     const list = <T>(): T[] => setPrototype([], null);
-    // "Uncaught …" once (review round 1, R4-7): Chromium's ErrorEvent message already starts with it.
+    // "Uncaught …" once (R1:R4-7): Chromium's ErrorEvent message already starts with it.
     const uncaught = (text: string) => (apply(startsWith, text, ['Uncaught ']) ? text : 'Uncaught ' + text);
 
-    // A name that stays after its deletion is a failure, not something to carry on with (review C2): a top-level
-    // declaration of the entry could once make a global non-configurable before this ran.
+    // A name that stays after its deletion is a failure, not something to carry on with (AR:C2): a top-level
+    // declaration of the entry could make a global non-configurable before this runs.
     const remove = (owner: any, name: string) => {
         if (owner && name in owner) deleteOwn(owner, name);
         if (owner && name in owner) throw new ErrorConstructor('[Sandbox] the strict worker could not remove ' + name);
@@ -2605,9 +2604,9 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     // ---- render flow control: sandboxView.render, text and set ----
     // One queue of operations for the view, one in flight at a time (A4): the next is posted only after the view's
     // VIEW_ACK. render and text replace an element's content, so they share one slot per target and the latest wins:
-    // a queued one of the same slot is taken out, and the new one goes to the end (review round 2, C-9: replacing the
-    // queued one in place moved it before what was queued after it, so [render A into x, set y, render B into x] applied
-    // the set after B). A set is merged only into a set of the same id queued right before it. So the operations that
+    // a queued one of the same slot is taken out, and the new one goes to the end (R2:C-9: replacing the
+    // queued one in place would put the new one ahead of what was queued after it, so [render A into x, set y, render B
+    // into x] would apply the set after B). A set is merged only into a set of the same id queued right before it. So the operations that
     // are applied keep the order they were made in.
     type Operation = { slot: string; kind: 'render' | 'text' | 'set'; message: Record<string, unknown> };
     let renderPort: MessagePort | null = null;
@@ -2628,7 +2627,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
             queue.length = kept;
         } else if (queue.length > 0 && queue[queue.length - 1]!.slot === operation.slot) {
             const merged = queue[queue.length - 1]!.message;
-            const keys = keysOf(operation.message); // indexed, never iterated: guest code can replace the array iterator (C3)
+            const keys = keysOf(operation.message); // indexed, never iterated: guest code can replace the array iterator (AR:C3)
             for (let i = 0; i < keys.length; i++) merged[keys[i]!] = operation.message[keys[i]!];
             return;
         }
@@ -2644,7 +2643,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         enqueue({ slot: target === null ? 'content' : 'content#' + target, kind: 'render', message: { type: 'VIEW_RENDER', html, into: target } });
     };
     // The text of the element with that id, as one text node: the view assigns it, so nothing in it is parsed, and the
-    // guest escapes nothing (review round 1, R4-5). Bounded like a render: VIEW_RENDER_MAX_LENGTH, and the view's
+    // guest escapes nothing (R1:R4-5). Bounded like a render: VIEW_RENDER_MAX_LENGTH, and the view's
     // character budget and rate.
     const text = (id: unknown, value: unknown) => {
         if (!isId(id)) throw new TypeErrorConstructor('sandboxView.text: id must be an element id');
@@ -2652,12 +2651,12 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         if (value.length > options.maxRender) throw new RangeErrorConstructor('sandboxView.text: text is longer than ' + options.maxRender + ' characters');
         enqueue({ slot: 'content#' + id, kind: 'text', message: { type: 'VIEW_TEXT', into: id, text: value } });
     };
-    // A form control's value or checked state, or focus (R4-5). Each own enumerable field of `fields` is read once,
+    // A form control's value or checked state, or focus (R1:R4-5). Each own enumerable field of `fields` is read once,
     // and only these three are allowed, each of its one type; what is posted is a fresh object of those primitives.
     const set = (id: unknown, fields: unknown) => {
         if (!isId(id)) throw new TypeErrorConstructor('sandboxView.set: id must be an element id');
         if (fields === null || typeof fields !== 'object' || isArray(fields)) throw new TypeErrorConstructor('sandboxView.set: the second argument must be an object: { value?, checked?, focus? }');
-        const message: Record<string, unknown> = setPrototype({ type: 'VIEW_SET', id }, null); // no inherited setter for a key (C3)
+        const message: Record<string, unknown> = setPrototype({ type: 'VIEW_SET', id }, null); // no inherited setter for a key (AR:C3)
         let any = false;
         const keys = keysOf(fields);
         for (let i = 0; i < keys.length; i++) {
@@ -2749,8 +2748,8 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         const data = apply(dataOf, event, []);
         if (!data || typeof data !== 'object') return;
         if (data.type === 'VIEW_ACK') {
-            // what the view refused of the one operation in flight (an operation past the view's budget, broad review
-            // ST2; focus without the user's focus, R4-5): said here, to the guest's own log
+            // what the view refused of the one operation in flight (an operation past the view's budget, BR:ST2;
+            // focus without the user's focus, R1:R4-5): said here, to the guest's own log
             const refused = data.refused;
             const kind = inFlight ? inFlight.kind : 'render';
             for (let i = 0; refused && i < refused.length; i++) {
@@ -2791,7 +2790,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         renderPort = ports[1];
         apply(addListener, renderPort, ['message', onRenderMessage]);
         apply(startPort, renderPort, []);
-        // Always the first frame on the render port: the view revokes the worker's source URL on it (review C1).
+        // Always the first frame on the render port: the view revokes the worker's source URL on it (AR:C1).
         // Before attach(), so it precedes everything. Which errors were the entry's is not said here: the marker
         // error says it in the order of the errors themselves (the entry failure, below).
         apply(post, renderPort, [{ type: 'VIEW_STARTED' }]);
@@ -2805,15 +2804,15 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     // reaches the Worker object in the view, which reports GUEST_ERROR, and the host ends the sandbox. The marker
     // ends the entry with an error of its own, the build's marker error (its message is the marker's name, which the
     // view is given in INIT_VIEW), and leaves it alone too: on the Worker object, whose errors arrive in the order they
-    // were raised, it is the line between the entry's errors and the later ones (backlog S75, class B; the view's
+    // were raised, it is the line between the entry's errors and the later ones (S75, class B; the view's
     // comment on the worker's errors says why not VIEW_STARTED). It is stopped here, so no listener of the guest's sees
     // it. If the entry threw, the marker never runs: every error then is the entry's, and ends the sandbox.
     // Every later uncaught error is cancelled here and logged, so it never ends the sandbox, except one the browser
-    // muted here: in WebKit, once the view has revoked the worker's source URL (review C1), an error thrown by code
+    // muted here: in WebKit, once the view has revoked the worker's source URL (AR:C1), an error thrown by code
     // from that script reads "Script error." in the worker, while the Worker object in the view still gets its text;
     // and so, from the start, does one thrown by code compiled from a string (Function, eval: execute()). Such an
     // error is left to the view, which logs it.
-    // The event's fields are read only through the getters captured above (review round 5, N-2): the event's own
+    // The event's fields are read only through the getters captured above (R5:N-2): the event's own
     // accessors are the guest's to replace, and a replaced one could make any error look muted, so that it reached the
     // view uncancelled, or throw, so that the listener stopped before it cancelled (Firefox then ended the sandbox as
     // if the entry had failed). The captured getters cannot be replaced, cannot throw for a trusted ErrorEvent, and the
@@ -2868,7 +2867,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
 }
 
 /**
- * The first thing the strict worker runs (review C2). Stringified; self-contained.
+ * The first thing the strict worker runs (AR:C2). Stringified; self-contained.
  *
  * The worker's source is one classic script: the prelude, then the entry. The host evaluates the entry in its
  * own function scope, so its top-level declarations are local and cannot touch the globals the prelude
@@ -2882,8 +2881,8 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
  * name a declaration could have replaced. This catches escaped functions only. A top-level let, const or class is in
  * its temporal dead zone while the prelude runs, so one that shadows a global the prelude reads fails it with a
  * ReferenceError, which ends the sandbox the same way; once the entry ran, such a binding would shadow the global
- * marker the line after the entry calls, which is why the marker's name is drawn per build (entryDoneName, broad
- * review ST4): the entry's text, fixed before the build, cannot name it.
+ * marker the line after the entry calls, which is why the marker's name is drawn per build (entryDoneName, BR:ST4):
+ * the entry's text, fixed before the build, cannot name it.
  */
 export function assertEntryScoped(g: object) {
     const O = ({}).constructor as ObjectConstructor;
@@ -2928,13 +2927,13 @@ export function viewBootstrapSource(options: ViewOptions): string {
 }
 
 /**
- * The view bootstrap as one string literal, in the published bundle (review round 2, C-8): scripts/build-lib.ts builds
+ * The view bootstrap as one string literal, in the published bundle (R2:C-8): scripts/build-lib.ts builds
  * the text below once, from the sources, and bundles it in as this constant. The text that is hashed is then a value of
  * the package, not the text of its functions as wherever the bundle runs prints them: a consumer's bundler or minifier
  * rewrites functions and leaves a string's value alone, so the hash an embedder computes in a build step (Node or Bun,
- * importing the package) is the one the browser computes for the script the element injects. When it was the functions'
- * Function.prototype.toString(), the same source gave one hash plain and another minified, and a host page that listed
- * the build-time hash ended with "the sandbox's startup script did not run". Undefined where the sources run unbundled
+ * importing the package) is the one the browser computes for the script the element injects. Hashing the functions'
+ * Function.prototype.toString() would give one hash plain and another minified, and a host page that listed
+ * the build-time hash would end with "the sandbox's startup script did not run". Undefined where the sources run unbundled
  * (the dev server, the unit tests): there the text is built from the functions, as it always matches the page serving it.
  */
 declare const __WEB_SANDBOX_VIEW_BOOTSTRAP__: string | undefined;
@@ -2958,7 +2957,7 @@ export function viewBootstrapHash(): string {
 }
 
 /**
- * The strict view bootstrap's CSP hash source, `'sha256-…'`, for this release of the package (review round 1, R4-5): the
+ * The strict view bootstrap's CSP hash source, `'sha256-…'`, for this release of the package (R1:R4-5): the
  * very value the element puts in the view's script-src, so an embedder can allow it in the host page's own
  * Content-Security-Policy, which the view inherits (docs/API.md, "Host page policy"). The bootstrap is a string literal
  * of the bundle (above), so the hash is the same in a build step (importing the package needs no DOM) and in the browser,
