@@ -276,8 +276,10 @@ export const UNCAUGHT_BUDGET = Object.freeze({ count: UNCAUGHT_PER_SECOND, chara
  * the surface of some channel here. So a bound is written down before a review has to find it missing: a dimension a
  * channel has no bound in says why in its cell, and a new surface that relays is a missing channel, which the test sees.
  *
- * The cost column is where a documented host-page cost lives (CONTRIBUTING, availability findings): a cost measured
- * within the bounds, or "not measured". The view's is stated in full in its own section of API.md, which its rows link.
+ * The cost column states the bound on the cost to the host page, and only the bound: a share, a cap or a constant, with
+ * the constant's value where there is one (CONTRIBUTING, availability findings). Measured figures are never in a cell:
+ * they stand in a dated note under the table, naming the engines. The view's bound is stated in full in its own section
+ * of API.md, which its rows link.
  * In a cell, `{NAME}` is a constant, rendered with its value, and `{NAME.field}` a field of one.
  */
 export interface ChannelBudget {
@@ -288,12 +290,12 @@ export interface ChannelBudget {
     readonly count: string;
     readonly bytes: string;
     readonly time: string;
-    /** What it is measured to cost the host page within its bounds, or that nothing is measured. */
+    /** The bound on what it costs the host page: a share, a cap or a constant, or that the columns above are the bound. */
     readonly cost: string;
     readonly test: string;
 }
 
-const VIEW_COST = "the view's: [The view's cost to the host page](#the-views-cost-to-the-host-page)";
+const VIEW_COST = "see [The view's cost to the host page](#the-views-cost-to-the-host-page)";
 
 export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
     { channel: 'Guest log lines, to `sandbox-log`: the console relay, and the uncaught errors and rejections it relays',
@@ -301,56 +303,56 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         count: '{LOG_EVENTS_PER_SECOND} lines in any second, counted by the guest and again by the host; {LOG_MAX_ARGS} arguments a line',
         bytes: '{LOG_MAX_BYTES} a line, measured by both ends, placeholders included; {LOG_BYTES_PER_SECOND} a second, by the guest; a string argument cut at {LOG_MAX_STRING} characters',
         time: 'none of its own: one event a line',
-        cost: 'not measured within the budgets',
+        cost: 'none beyond the count and the bytes',
         test: 'test/unit/review-round-1.test.ts (R3-3); test/unit/structural.test.ts' },
     { channel: "Uncaught errors and unhandled rejections of the guest's worker, which the browser reports (worker and strict mode)",
         surfaces: [['worker', 'error'], ['worker', 'unhandledrejection'], ['worker', 'rejectionhandled']],
         count: '{UNCAUGHT_PER_SECOND} in any second, rejections handled later included; past it the sandbox ends',
         bytes: '{UNCAUGHT_CHARACTERS_PER_SECOND} characters of their names and messages in any second; past it the sandbox ends',
         time: 'none of its own: the count and the characters',
-        cost: "Firefox, which reports each on the host page's thread, cancelled or not: 1000 cancelled a second idle, 1000 handled a tick later 4–7% busy, 1 Mi characters a second 6%; one rejection of 16 Mi characters about 0.5 s, after which the sandbox ends",
+        cost: "Firefox reports each on the host page's thread, cancelled or not: bounded by the count and the characters, and past them the sandbox ends; one report is not bounded, since the browser makes it before the sandbox can end",
         test: 'test/e2e/review-round-5.spec.ts (N-1); test/unit/egress.test.ts' },
     { channel: "Calls the guest makes (`bridge.call`), to the embedder's methods",
         surfaces: [['port', 'message']],
         count: '`callLimits.maxPerSecond` in any second, by default {GUEST_CALLS_PER_SECOND}, counted by the guest and again by the host; {MAX_INBOUND_IN_FLIGHT} running at once',
         bytes: '{RPC_MAX_BYTES} a call, its whole frame measured by both ends; `callLimits.maxBytesPerSecond` a second, by default {GUEST_CALL_BYTES_PER_SECOND}; {RPC_MAX_INBOUND_BYTES} of arguments running at once; a method name of at most {MAX_NAME_LENGTH} characters',
         time: "none of its own: the embedder's methods run as long as they take",
-        cost: 'not measured within the budgets',
+        cost: 'none beyond the count and the bytes',
         test: 'test/unit/review-round-3.test.ts (M-2, C-1); test/unit/config-schema.test.ts; test/unit/rate-limit.prop.test.ts' },
     { channel: "Answers to the host's calls (`bridge.expose`)",
         surfaces: [['port', 'message']],
         count: "one a call the host made: the host's pending calls",
         bytes: '{RPC_MAX_BYTES} an answer, measured by both ends; an error text cut at {MAX_TEXT_LENGTH} characters by both ends',
         time: "the host's call timeout (`callWithTimeout`; by default {DEFAULT_TIMEOUT_MS} ms)",
-        cost: 'not measured',
+        cost: "none beyond the host's pending calls and the bytes",
         test: 'test/unit/review-round-3.test.ts (C-1); test/unit/structural.test.ts' },
     { channel: 'Guest writes (`sandboxFiles.write`, `remove`)',
         surfaces: [['port', 'message']],
         count: '{GUEST_WRITES_PER_SECOND} requests in any second, and each as a call; what is kept, at most {MAX_FILES} files with the registered ones',
         bytes: '{GUEST_WRITE_BYTES_PER_SECOND} in any second; what is kept, at most {MAX_TOTAL_BYTES} with the registered files',
         time: 'none of its own: the count and the bytes',
-        cost: 'not measured',
+        cost: 'none beyond the count and the bytes',
         test: 'test/unit/guest-writes.test.ts; test/e2e/guest-writes.spec.ts' },
     { channel: "`sandboxFetch()`: the host page's fetch, on the guest's behalf",
         surfaces: [['port', 'message']],
         count: '`fetchBridge.maxConcurrent` at once, at most {MAX_MAX_CONCURRENT}; and each as a call',
         bytes: '`fetchBridge.maxBytes` a response, at most {MAX_MAX_BYTES}',
         time: '`fetchBridge.timeoutMs` a request, at most {MAX_TIMEOUT_MS} ms',
-        cost: 'not measured',
+        cost: "none beyond the count, the bytes and the time: each request is the host page's own fetch",
         test: 'src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts' },
     { channel: 'CSP violation reports, to `violation`',
         surfaces: [['port', 'message'], ['worker', 'securitypolicyviolation'], ['cooperative', 'securitypolicyviolation'], ['view', 'securitypolicyviolation']],
         count: '{VIOLATION_EVENT_LIMIT} events an environment (strict mode: per source, and per directive for the view)',
         bytes: 'each string cut at {VIOLATION_MAX_STRING} characters before it is posted, by the bootstrap and by the view, and again by the host on receipt',
         time: 'none of its own: the count',
-        cost: 'not measured',
+        cost: 'none beyond the count',
         test: 'src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts' },
     { channel: "Content heights (`autoResize`), to the frame's height",
         surfaces: [['port', 'message']],
         count: '{AUTO_RESIZE_MAX_UPDATES_PER_SECOND} a second, and one a frame',
         bytes: 'a number, at most {AUTO_RESIZE_MAX_HEIGHT} px',
         time: "none of its own: one relayout of the host page's frame a change",
-        cost: 'not measured',
+        cost: "a cap: {AUTO_RESIZE_MAX_UPDATES_PER_SECOND} relayouts of the host page's frame a second",
         test: 'src/lib/auto-resize.test.ts; test/e2e/auto-resize.spec.ts' },
     { channel: "Liveness answers (PONG, VIEW_PONG), to the host's probes",
         surfaces: [['port', 'message']],
@@ -364,21 +366,21 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         count: '{LOG_EVENTS_PER_SECOND} a second, counted in the view',
         bytes: 'each cut at {VIEW_OPTIONS.guestText.maxLength} characters in the view, before it is posted',
         time: 'none of its own: one line each',
-        cost: 'not measured',
+        cost: 'none beyond the count and the bytes',
         test: 'test/unit/review-round-3.test.ts (C-4); test/e2e/review-round-4.spec.ts (M-5)' },
     { channel: "Strict: the view's operations (`sandboxView.render`, `text`, `set`)",
         surfaces: [['view', 'rendering']],
         count: 'one at a time; the body holds at most {VIEW_MAX_ELEMENTS} elements, {VIEW_MAX_DEPTH} deep',
         bytes: '{VIEW_RENDER_MAX_LENGTH} characters an operation; {VIEW_RENDER_CHARACTERS_PER_SECOND} a second; {VIEW_MAX_CHARACTERS} in the body',
         time: '{VIEW_APPLY_MS_PER_SECOND} ms a second on average, each operation charged in full; the second operation past {VIEW_MAX_OPERATION_MS} ms within {VIEW_OVERRUN_WINDOW_MS} ms ends the sandbox',
-        cost: VIEW_COST,
+        cost: `a share: at most {VIEW_APPLY_MS_PER_SECOND} ms of each second, averaged; ${VIEW_COST}`,
         test: 'test/e2e/view-bound.spec.ts; test/e2e/view-budget.spec.ts; test/unit/view-budget.prop.test.ts' },
     { channel: "Strict: the view's loads (URL attributes, CSS, and what the browser reports)",
         surfaces: [['view', 'resource loads']],
         count: "{VIEW_URLS_PER_SECOND} a second, each charged before it can start; {VIEW_MAX_URLS} URL attributes in the body; {VIEW_MAX_DISTINCT_URLS} distinct URLs over the view's life",
         bytes: "what the policy's origins serve: no budget of the library's",
         time: 'none of its own: the rate',
-        cost: VIEW_COST,
+        cost: `a rate: at most {VIEW_URLS_PER_SECOND} loads a second; ${VIEW_COST}`,
         test: 'test/e2e/review-round-4.spec.ts (M-2); test/e2e/view-round-5.spec.ts; test/unit/view-css-loads.test.ts; test/unit/view-budget.prop.test.ts' },
     { channel: "Strict: the view's events, to the guest's `sandboxView.on` handlers",
         surfaces: [['view', 'click'], ['view', 'submit'], ['view', 'input'], ['view', 'change'], ['view', 'keydown']],
@@ -392,7 +394,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         count: "a first overrun's at most once per 9 s of its debt, and one host line an environment; the second ends the sandbox",
         bytes: 'none: no field',
         time: 'none of its own: the count',
-        cost: VIEW_COST,
+        cost: `a stall past {VIEW_MAX_OPERATION_MS} ms at most once per {VIEW_OVERRUN_WINDOW_MS} ms beyond the first; ${VIEW_COST}`,
         test: 'test/unit/view-round-5.test.ts (the repeated-overrun rule); test/e2e/view-bound.spec.ts' },
     { channel: "Cooperative: the guest's own document",
         surfaces: [['cooperative', 'every other event of the guest document']],
@@ -412,7 +414,7 @@ export function budgetsTable(values: Readonly<Record<string, number>>): string {
         if (!(name in values)) throw new Error(`budgetsTable: no value for ${name}`);
         return `\`${name}\` (${values[name]})`;
     }).replace(/\|/g, '\\|');
-    const lines = ['| Channel | Count | Bytes | Time | Cost to the host page | Test |', '| :--- | :--- | :--- | :--- | :--- | :--- |'];
+    const lines = ['| Channel | Count | Bytes | Time | Bound on the cost to the host page | Test |', '| :--- | :--- | :--- | :--- | :--- | :--- |'];
     for (const row of CHANNEL_BUDGETS) lines.push(`| ${[row.channel, row.count, row.bytes, row.time, row.cost, row.test].map(cell).join(' | ')} |`);
     return lines.join('\n');
 }

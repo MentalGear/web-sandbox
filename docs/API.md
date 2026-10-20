@@ -77,6 +77,7 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 ## Configuration
 
+<!-- describes: options, capabilities sig:108352c8 -->
 **`setConfig(config: SandboxConfig): void`** replaces the configuration and rebuilds the environment
 (see [Lifecycle](#lifecycle)). `SandboxConfig` is a union keyed by `mode` (`StrictSandboxConfig`,
 `CooperativeSandboxConfig`, `WorkerSandboxConfig`, each extending `SandboxConfigOptions`, the options every mode
@@ -112,26 +113,29 @@ a config without `mode` is a strict config (strict mode is the default).
   `RPC_MAX_BYTES` caps calls, which it says once. `watchdogTimeout` and `workerExecutionTimeout` are independent: either
   may be the shorter.
 
+<!-- generated:begin configuration -->
 | Option | Type | Default | Modes | What it does |
 | :--- | :--- | :--- | :--- | :--- |
 | `mode` | `'strict' \| 'cooperative' \| 'worker'` | `'strict'` | — | Where guest code runs; see [Modes](#modes). Any other value starts no environment: the sandbox terminates with the reason `unknown mode …` until a valid mode is configured. `'iframe'` was renamed `'cooperative'`: refused the same way, and the reason says so. |
 | `html` | `string` | `''` | strict, cooperative | The initial view (strict mode) or the guest document (cooperative mode). In strict mode its `<script>` elements and `on…` handler attributes never run, and markup that holds any warns once per element: ``strict mode (the default) runs no script in `html`; …``. Empty means `<div id="root"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml). |
-| `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-scripts`, `allow-pointer-lock`, `allow-orientation-lock`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms` (listing either there changes nothing). |
-| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-forms`, `allow-popups`, `allow-modals`, `allow-downloads`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). |
+| `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-orientation-lock`, `allow-pointer-lock`, `allow-scripts`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms` (listing either there changes nothing). |
+| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-downloads`, `allow-forms`, `allow-modals`, `allow-popups`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). |
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
 | `origins` | `SandboxOrigins` | none | all (strict: no `scripts`) | The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. See [below](#origins). |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in strict and worker mode on every browser, and in cooperative mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
-| `workerExecutionTimeout` | `number` (ms) | `0` (off) | worker, strict | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
+| `workerExecutionTimeout` | `number` (ms) | `0` (off) | strict, worker | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
 | `autoResize` | `boolean` | `false` | strict, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Opens [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md) |
 | `callLimits` | `CallLimits` | 1000 calls and 64 MiB per second | all | The per-second budget of the calls the guest makes, per environment; see [below](#calllimits). |
 | `allowAnimations` | `boolean` | `true` | strict | Whether CSS animations and transitions run in the view. **While `true`, they run on your page's main thread wherever the browser runs the view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation), and the view's time budget does not bound them: a guest can keep your page 80–98% busy.** `false` removes them (elements show their end state). Left out or `true` keeps them; any other value turns them off, with one warning when it is not a boolean. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
 | `allowAutoplay` | `boolean` | `false` | strict | Whether `<video autoplay>` and `<audio autoplay>` in the view start on their own; while `false` the `autoplay` attribute is removed and media plays only when the user starts it. With `true`, playing media costs your page's main thread where the view shares it (measured up to +6 points for 20 looping videos), outside the time budget. Only a literal `true` enables it: left out or `false` keeps it off, and so does any other value, with one warning when it is not a boolean. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
 | `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
+<!-- generated:end -->
 
 ### `origins`
 
+<!-- describes: origins, csp:cooperative, csp:strict sig:d2625d10c742 -->
 The guest's policy is one fixed template per mode. `origins` adds exact origins to six of its directives, one list per
 kind of load, and can change nothing else:
 
@@ -171,20 +175,24 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 Every directive is always emitted (`'none'` when it admits nothing), so no browser falls back to `default-src`. With no
 origins and no files, cooperative and worker mode get:
 
+<!-- generated:begin csp-cooperative -->
 ```
 default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none';
 media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none';
 form-action 'none'; manifest-src 'none'; upgrade-insecure-requests
 ```
+<!-- generated:end -->
 
 `'unsafe-inline'` in `script-src` admits inline scripts: the library's bootstrap is one, and it always runs. Strict
 mode's view (its worker inherits it), where `<bootstrap>` is the hash of the library's one view script:
 
+<!-- generated:begin csp-strict -->
 ```
 default-src 'none'; script-src 'sha256-<bootstrap>'; script-src-attr 'none'; style-src 'unsafe-inline';
 img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none';
 object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests
 ```
+<!-- generated:end -->
 
 [ADR-007](ADR-007-typed-origins.md)
 
@@ -442,6 +450,7 @@ to the files, as one `registerFiles()` / `unregisterFiles()` would, and removes 
 
 ## Events
 
+<!-- describes: events sig:b3e5 -->
 All events are `CustomEvent`s dispatched on the element. None is `composed`. `WebSandboxEventMap` types each one.
 
 | Event | `detail` | Bubbles | When |
@@ -465,6 +474,7 @@ it first. Act on a message only by `event.source` (above), never by its shape.
 
 ### `sandbox-log` — `SandboxLog`
 
+<!-- describes: limit:LOG_EVENTS_PER_SECOND, limit:LOG_MAX_ARGS, limit:LOG_MAX_STRING, limit:LOG_MAX_BYTES, limit:LOG_BYTES_PER_SECOND, limit:UNCAUGHT_PER_SECOND, limit:UNCAUGHT_CHARACTERS_PER_SECOND, limit:VIEW_OPTIONS.guestText.maxLength, host-lines sig:c106f537ef2bcb8905a960883dc76370543a -->
 | Field | Type | Meaning |
 | :--- | :--- | :--- |
 | `type` | `'LOG'` | Always `'LOG'`. |
@@ -501,8 +511,7 @@ entry's top level runs before the worker has its port) are kept, at most 1000 an
 arrive in order once it is, counted in that second's window; past either cap, one `warn` line says how many were
 dropped and for which cap. In strict mode the view relays the later uncaught errors that only it can describe (WebKit
 raises them there) within the same `LOG_EVENTS_PER_SECOND` window; the first one it drops sends one `warn` line, also
-not counted: `[Sandbox] the guest raised more than 1000 uncaught errors in one second that only the view could
-describe; errors past that are dropped in the view.`
+not counted (the last line of the table below).
 
 In worker and strict mode an uncaught error or an unhandled rejection is cancelled once it is relayed, so the browser
 does not report it as well. Firefox reports a worker's unhandled rejections to your page's thread all the same, so in
@@ -512,15 +521,23 @@ window, the sandbox ends: `the guest raised more uncaught errors or unhandled re
 budget allows`. One error or rejection is not bounded by it: the browser reports it before the sandbox can end, so one
 with a message of hundreds of millions of characters costs your page's thread that one report.
 
-Lines with `source: 'host'` (never rate-limited): `Execution Timeout` (`workerExecutionTimeout`);
-`[Sandbox] the guest entry failed to start` (strict mode; the entry's error text follows as a guest line,
-`Uncaught …`, at most 2048 characters); `[Sandbox] …` when the host page's policy refused a frame of the library's,
-with the reason the sandbox then ends with in place of `…` (see [`terminated` reasons](#terminated-reasons)); and one `warn` line per environment when the element first drops guest lines
-past `LOG_EVENTS_PER_SECOND` (lines delivered late, while your page was busy, can arrive closer together than the guest
-sent them): `[Sandbox] the guest logged more than 1000 lines in one second; lines past that rate are not dispatched as
-'sandbox-log' events.`; and, in strict mode, one `warn` line per environment at the view's first overrun (an operation
-past 2000 ms that did not end the sandbox; see [`sandboxView`](#sandboxview-strict-mode)): `[Sandbox] the view spent more than
-2000 ms on one operation; a second such operation within 5 minutes ends the sandbox.`
+The element's own lines are never rate-limited. The table gives each one with its level and when it is dispatched;
+`…` stands for text that varies. A line with `source: 'guest'` is written in the relay's name and counted as the relay's
+own, so it always arrives. The entry's error text that follows an entry failure is a guest line, `Uncaught …`, at most
+2048 characters. A `[Sandbox] …` line carries, in place of `…`, the reason the sandbox then ends with (see
+[`terminated` reasons](#terminated-reasons)). Lines delivered late, while your page was busy, can arrive closer
+together than the guest sent them.
+
+<!-- generated:begin host-lines -->
+| Line | Level | Source | When |
+| :--- | :--- | :--- | :--- |
+| `Execution Timeout` | error | host | workerExecutionTimeout: the event loop was still busy past an execute()'s deadline; the termination follows |
+| `[Sandbox] the guest entry failed to start` | error | host | strict mode: the entry failed to start; the entry's own error text follows as a guest line, then the termination |
+| `[Sandbox] …` | error | host | the host page's policy refused a frame of the library's: … is the termination's reason, which follows |
+| `[Sandbox] the guest logged more than 1000 lines in one second; lines past that rate are not dispatched as 'sandbox-log' events.` | warn | host | once per environment, when the element first drops guest lines past LOG_EVENTS_PER_SECOND |
+| `[Sandbox] the view spent more than 2000 ms on one operation; a second such operation within 5 minutes ends the sandbox.` | warn | host | strict mode, once per environment: the view's first overrun (VIEW_FIRST_OVERRUN) |
+| `[Sandbox] the guest raised more than 1000 uncaught errors in one second that only the view could describe; errors past that are dropped in the view.` | warn | guest | strict mode, once per environment: the view dropped a guest error text past its window (GUEST_TEXT_DROPPED) |
+<!-- generated:end -->
 
 ### `violation` — `SandboxViolation`
 
@@ -559,6 +576,7 @@ already read, an error, a refusal), and they can arrive after the call that tore
 
 ### `terminated` reasons
 
+<!-- generated:begin termination-reasons -->
 | Reason | Cause |
 | :--- | :--- |
 | `terminated by the host` | `terminate()` without a reason, or with an empty one (or with your own text instead). |
@@ -579,6 +597,7 @@ already read, an error, a refusal), and they can arrive after the call that tore
 | `the sandbox did not finish loading` | The build was still `loading` after `LOAD_TIMEOUT_MS` of host time and its frame had not loaded (without `allow-scripts`: subresources included). |
 | `the guest frame is missing` | The library's frame has no guest frame. |
 | `the guest raised more uncaught errors or unhandled rejections in one second than their budget allows` | Worker and strict mode: past the budget of uncaught errors and rejections (see [`sandbox-log`](#sandbox-log--sandboxlog) and [Limits](#limits)). |
+<!-- generated:end -->
 
 Branch on `state` and the event, not on these texts. A reason never carries the text of an error the element
 caught (that can quote your config, or be the guest's words): only a fixed text and, in parentheses, the error's
@@ -588,6 +607,7 @@ name.
 
 ## Lifecycle
 
+<!-- describes: lifecycle:states, lifecycle:transitions sig:204e4b6e -->
 | State | Meaning |
 | :--- | :--- |
 | `idle` | Not in the document (constructed, or removed): no frame. |
@@ -646,6 +666,7 @@ Every refusal is a plain `Error` with an own string `code`. Branch on the code, 
 
 ### Calls: `RpcErrorCode`
 
+<!-- describes: codes:rpc sig:7d56 -->
 From `call()`, `callWithTimeout()` and, in the guest, `bridge.call()` / `bridge.callWithTimeout()`.
 
 | Code | Set by | Meaning | Retry? |
@@ -670,6 +691,7 @@ confirms `TERMINATED` from the element's own state. [ADR-002](ADR-002-host-guest
 
 ### `sandboxFetch()`: `FetchErrorCode`
 
+<!-- describes: codes:fetch sig:7e10 -->
 Set only by the host (`FETCH_ERROR_CODES`):
 
 | Code | Meaning | Retry? |
@@ -686,6 +708,7 @@ HTTP error statuses resolve, as with `fetch`. `sandboxFetch()` can also reject w
 
 ### Files: `FileErrorCode` and `NOT_FOUND`
 
+<!-- describes: codes:files sig:43e6 -->
 | Code | Where | Meaning |
 | :--- | :--- | :--- |
 | `INVALID_PATH` | `registerFiles()`, `unregisterFiles()`, `commitGuestWrites()`, guest `write()` / `remove()` | A path is not valid, or a list of paths is not an array. |
@@ -702,6 +725,7 @@ In the guest, the codes other than `NOT_FOUND` come from the element through the
 
 ## Guest globals
 
+<!-- describes: worker-globals sig:389e -->
 What guest code can use, by mode. Everything here is installed by the library's bootstrap before any guest code
 runs; in cooperative mode that needs `allow-scripts` (the policy always admits it).
 
@@ -804,6 +828,7 @@ assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](
 
 ### `sandboxView` (strict mode)
 
+<!-- describes: limit:VIEW_MAX_ELEMENTS, limit:VIEW_MAX_DEPTH, limit:VIEW_MAX_CHARACTERS, limit:VIEW_RENDER_CHARACTERS_PER_SECOND, limit:VIEW_EVENT_LIMITS.maxString, limit:VIEW_EVENT_LIMITS.maxIds, limit:VIEW_EVENT_LIMITS.maxFields, limit:VIEW_EVENT_LIMITS.maxTotal sig:7329ee0cf6ced5b39f62b689f003b322 -->
 | Member | Signature | Description |
 | :--- | :--- | :--- |
 | `render` | `(html: string, into?: string \| null) => void` | Replaces the view's body, or the children of the element with id `into`. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). The latest render per target wins; one operation is in flight at a time. |
@@ -974,6 +999,7 @@ in strict mode.
 
 ## Limits
 
+<!-- generated:begin limits -->
 | Limit | Value | Exported constant |
 | :--- | :--- | :--- |
 | Inbound calls running at once, per side and environment | 256 | `MAX_INBOUND_IN_FLIGHT` |
@@ -1023,6 +1049,7 @@ in strict mode.
 | Fetch: characters of a URL, as written and as parsed | 8192 | — |
 | Guest writes: requests per second, per environment | 100 | `GUEST_WRITES_PER_SECOND` |
 | Guest writes: bytes per second, per environment | 8388608 (8 MiB) | `GUEST_WRITE_BYTES_PER_SECOND` |
+<!-- generated:end -->
 
 The same limits by channel of guest activity, each with the test that checks it: [Budgets](#budgets).
 
@@ -1031,33 +1058,42 @@ The same limits by channel of guest activity, each with the test that checks it:
 ## Budgets
 
 Every channel through which guest activity makes the host page, the view or the network do work, with its bounds in
-count, bytes and time, the constant behind each, what it is measured to cost the host page within them, and the test
-that checks it. A channel with no bound in one of the three says why in that cell. The table is `CHANNEL_BUDGETS` of
-`src/lib/egress.ts` rendered with the code's values (`test/unit/budgets.test.ts` keeps them equal), next to the egress
+count, bytes and time, the constant behind each, the bound on what it costs the host page, and the test that checks it.
+A channel with no bound in one of the three says why in that cell. The table is `CHANNEL_BUDGETS` of
+`src/lib/egress.ts` rendered with the code's values (`test/unit/budgets.test.ts` keeps the rest equal), next to the egress
 table of every surface those channels cross: a surface that relays, budgets or caps and is no channel's fails that test.
 
 It is also where a documented cost to the host page lives: a finding whose only effect is that the guest slows the host
-page, within a stated bound the embedder can end, is fixed by a measured figure in the cost column (or, for the strict
-view, in [The view's cost to the host page](#the-views-cost-to-the-host-page)). "Not measured" means no figure has been
-taken within the bounds; the bounds hold all the same.
+page, within a stated bound the embedder can end, is fixed by that bound in the cost column (for the strict view, by
+[The view's cost to the host page](#the-views-cost-to-the-host-page)). The cost column states bounds only: a share, a cap
+or a constant. Measured figures stand in the note under the table, with their date and engines.
 
-| Channel | Count | Bytes | Time | Cost to the host page | Test |
+<!-- generated:begin budgets -->
+| Channel | Count | Bytes | Time | Bound on the cost to the host page | Test |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| Guest log lines, to `sandbox-log`: the console relay, and the uncaught errors and rejections it relays | `LOG_EVENTS_PER_SECOND` (1000) lines in any second, counted by the guest and again by the host; `LOG_MAX_ARGS` (64) arguments a line | `LOG_MAX_BYTES` (1048576) a line, measured by both ends, placeholders included; `LOG_BYTES_PER_SECOND` (4194304) a second, by the guest; a string argument cut at `LOG_MAX_STRING` (65536) characters | none of its own: one event a line | not measured within the budgets | test/unit/review-round-1.test.ts (R3-3); test/unit/structural.test.ts |
-| Uncaught errors and unhandled rejections of the guest's worker, which the browser reports (worker and strict mode) | `UNCAUGHT_PER_SECOND` (1000) in any second, rejections handled later included; past it the sandbox ends | `UNCAUGHT_CHARACTERS_PER_SECOND` (1048576) characters of their names and messages in any second; past it the sandbox ends | none of its own: the count and the characters | Firefox, which reports each on the host page's thread, cancelled or not: 1000 cancelled a second idle, 1000 handled a tick later 4–7% busy, 1 Mi characters a second 6%; one rejection of 16 Mi characters about 0.5 s, after which the sandbox ends | test/e2e/review-round-5.spec.ts (N-1); test/unit/egress.test.ts |
-| Calls the guest makes (`bridge.call`), to the embedder's methods | `callLimits.maxPerSecond` in any second, by default `GUEST_CALLS_PER_SECOND` (1000), counted by the guest and again by the host; `MAX_INBOUND_IN_FLIGHT` (256) running at once | `RPC_MAX_BYTES` (34603008) a call, its whole frame measured by both ends; `callLimits.maxBytesPerSecond` a second, by default `GUEST_CALL_BYTES_PER_SECOND` (67108864); `RPC_MAX_INBOUND_BYTES` (67108864) of arguments running at once; a method name of at most `MAX_NAME_LENGTH` (256) characters | none of its own: the embedder's methods run as long as they take | not measured within the budgets | test/unit/review-round-3.test.ts (M-2, C-1); test/unit/config-schema.test.ts; test/unit/rate-limit.prop.test.ts |
-| Answers to the host's calls (`bridge.expose`) | one a call the host made: the host's pending calls | `RPC_MAX_BYTES` (34603008) an answer, measured by both ends; an error text cut at `MAX_TEXT_LENGTH` (65536) characters by both ends | the host's call timeout (`callWithTimeout`; by default `DEFAULT_TIMEOUT_MS` (30000) ms) | not measured | test/unit/review-round-3.test.ts (C-1); test/unit/structural.test.ts |
-| Guest writes (`sandboxFiles.write`, `remove`) | `GUEST_WRITES_PER_SECOND` (100) requests in any second, and each as a call; what is kept, at most `MAX_FILES` (1000) files with the registered ones | `GUEST_WRITE_BYTES_PER_SECOND` (8388608) in any second; what is kept, at most `MAX_TOTAL_BYTES` (8388608) with the registered files | none of its own: the count and the bytes | not measured | test/unit/guest-writes.test.ts; test/e2e/guest-writes.spec.ts |
-| `sandboxFetch()`: the host page's fetch, on the guest's behalf | `fetchBridge.maxConcurrent` at once, at most `MAX_MAX_CONCURRENT` (16); and each as a call | `fetchBridge.maxBytes` a response, at most `MAX_MAX_BYTES` (33554432) | `fetchBridge.timeoutMs` a request, at most `MAX_TIMEOUT_MS` (120000) ms | not measured | src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts |
-| CSP violation reports, to `violation` | `VIOLATION_EVENT_LIMIT` (100) events an environment (strict mode: per source, and per directive for the view) | each string cut at `VIOLATION_MAX_STRING` (2048) characters before it is posted, by the bootstrap and by the view, and again by the host on receipt | none of its own: the count | not measured | src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts |
-| Content heights (`autoResize`), to the frame's height | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) a second, and one a frame | a number, at most `AUTO_RESIZE_MAX_HEIGHT` (100000) px | none of its own: one relayout of the host page's frame a change | not measured | src/lib/auto-resize.test.ts; test/e2e/auto-resize.spec.ts |
+| Guest log lines, to `sandbox-log`: the console relay, and the uncaught errors and rejections it relays | `LOG_EVENTS_PER_SECOND` (1000) lines in any second, counted by the guest and again by the host; `LOG_MAX_ARGS` (64) arguments a line | `LOG_MAX_BYTES` (1048576) a line, measured by both ends, placeholders included; `LOG_BYTES_PER_SECOND` (4194304) a second, by the guest; a string argument cut at `LOG_MAX_STRING` (65536) characters | none of its own: one event a line | none beyond the count and the bytes | test/unit/review-round-1.test.ts (R3-3); test/unit/structural.test.ts |
+| Uncaught errors and unhandled rejections of the guest's worker, which the browser reports (worker and strict mode) | `UNCAUGHT_PER_SECOND` (1000) in any second, rejections handled later included; past it the sandbox ends | `UNCAUGHT_CHARACTERS_PER_SECOND` (1048576) characters of their names and messages in any second; past it the sandbox ends | none of its own: the count and the characters | Firefox reports each on the host page's thread, cancelled or not: bounded by the count and the characters, and past them the sandbox ends; one report is not bounded, since the browser makes it before the sandbox can end | test/e2e/review-round-5.spec.ts (N-1); test/unit/egress.test.ts |
+| Calls the guest makes (`bridge.call`), to the embedder's methods | `callLimits.maxPerSecond` in any second, by default `GUEST_CALLS_PER_SECOND` (1000), counted by the guest and again by the host; `MAX_INBOUND_IN_FLIGHT` (256) running at once | `RPC_MAX_BYTES` (34603008) a call, its whole frame measured by both ends; `callLimits.maxBytesPerSecond` a second, by default `GUEST_CALL_BYTES_PER_SECOND` (67108864); `RPC_MAX_INBOUND_BYTES` (67108864) of arguments running at once; a method name of at most `MAX_NAME_LENGTH` (256) characters | none of its own: the embedder's methods run as long as they take | none beyond the count and the bytes | test/unit/review-round-3.test.ts (M-2, C-1); test/unit/config-schema.test.ts; test/unit/rate-limit.prop.test.ts |
+| Answers to the host's calls (`bridge.expose`) | one a call the host made: the host's pending calls | `RPC_MAX_BYTES` (34603008) an answer, measured by both ends; an error text cut at `MAX_TEXT_LENGTH` (65536) characters by both ends | the host's call timeout (`callWithTimeout`; by default `DEFAULT_TIMEOUT_MS` (30000) ms) | none beyond the host's pending calls and the bytes | test/unit/review-round-3.test.ts (C-1); test/unit/structural.test.ts |
+| Guest writes (`sandboxFiles.write`, `remove`) | `GUEST_WRITES_PER_SECOND` (100) requests in any second, and each as a call; what is kept, at most `MAX_FILES` (1000) files with the registered ones | `GUEST_WRITE_BYTES_PER_SECOND` (8388608) in any second; what is kept, at most `MAX_TOTAL_BYTES` (8388608) with the registered files | none of its own: the count and the bytes | none beyond the count and the bytes | test/unit/guest-writes.test.ts; test/e2e/guest-writes.spec.ts |
+| `sandboxFetch()`: the host page's fetch, on the guest's behalf | `fetchBridge.maxConcurrent` at once, at most `MAX_MAX_CONCURRENT` (16); and each as a call | `fetchBridge.maxBytes` a response, at most `MAX_MAX_BYTES` (33554432) | `fetchBridge.timeoutMs` a request, at most `MAX_TIMEOUT_MS` (120000) ms | none beyond the count, the bytes and the time: each request is the host page's own fetch | src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts |
+| CSP violation reports, to `violation` | `VIOLATION_EVENT_LIMIT` (100) events an environment (strict mode: per source, and per directive for the view) | each string cut at `VIOLATION_MAX_STRING` (2048) characters before it is posted, by the bootstrap and by the view, and again by the host on receipt | none of its own: the count | none beyond the count | src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts |
+| Content heights (`autoResize`), to the frame's height | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) a second, and one a frame | a number, at most `AUTO_RESIZE_MAX_HEIGHT` (100000) px | none of its own: one relayout of the host page's frame a change | a cap: `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) relayouts of the host page's frame a second | src/lib/auto-resize.test.ts; test/e2e/auto-resize.spec.ts |
 | Liveness answers (PONG, VIEW_PONG), to the host's probes | one a probe of the host's | a number | `VIEW_LIVENESS_TIMEOUT_MS` (5000) ms for the view to answer; `EXECUTION_TIMEOUT_GRACE_MS` (1000) ms past a deadline for the worker (`workerExecutionTimeout`) | none: the library's own | src/lib/watchdog.test.ts; test/e2e/watchdog.spec.ts |
-| Strict: the guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT), to `sandbox-log` | `LOG_EVENTS_PER_SECOND` (1000) a second, counted in the view | each cut at `VIEW_OPTIONS.guestText.maxLength` (2048) characters in the view, before it is posted | none of its own: one line each | not measured | test/unit/review-round-3.test.ts (C-4); test/e2e/review-round-4.spec.ts (M-5) |
-| Strict: the view's operations (`sandboxView.render`, `text`, `set`) | one at a time; the body holds at most `VIEW_MAX_ELEMENTS` (50000) elements, `VIEW_MAX_DEPTH` (256) deep | `VIEW_RENDER_MAX_LENGTH` (262144) characters an operation; `VIEW_RENDER_CHARACTERS_PER_SECOND` (1048576) a second; `VIEW_MAX_CHARACTERS` (1048576) in the body | `VIEW_APPLY_MS_PER_SECOND` (200) ms a second on average, each operation charged in full; the second operation past `VIEW_MAX_OPERATION_MS` (2000) ms within `VIEW_OVERRUN_WINDOW_MS` (300000) ms ends the sandbox | the view's: [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/view-bound.spec.ts; test/e2e/view-budget.spec.ts; test/unit/view-budget.prop.test.ts |
-| Strict: the view's loads (URL attributes, CSS, and what the browser reports) | `VIEW_URLS_PER_SECOND` (200) a second, each charged before it can start; `VIEW_MAX_URLS` (1000) URL attributes in the body; `VIEW_MAX_DISTINCT_URLS` (10000) distinct URLs over the view's life | what the policy's origins serve: no budget of the library's | none of its own: the rate | the view's: [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/review-round-4.spec.ts (M-2); test/e2e/view-round-5.spec.ts; test/unit/view-css-loads.test.ts; test/unit/view-budget.prop.test.ts |
+| Strict: the guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT), to `sandbox-log` | `LOG_EVENTS_PER_SECOND` (1000) a second, counted in the view | each cut at `VIEW_OPTIONS.guestText.maxLength` (2048) characters in the view, before it is posted | none of its own: one line each | none beyond the count and the bytes | test/unit/review-round-3.test.ts (C-4); test/e2e/review-round-4.spec.ts (M-5) |
+| Strict: the view's operations (`sandboxView.render`, `text`, `set`) | one at a time; the body holds at most `VIEW_MAX_ELEMENTS` (50000) elements, `VIEW_MAX_DEPTH` (256) deep | `VIEW_RENDER_MAX_LENGTH` (262144) characters an operation; `VIEW_RENDER_CHARACTERS_PER_SECOND` (1048576) a second; `VIEW_MAX_CHARACTERS` (1048576) in the body | `VIEW_APPLY_MS_PER_SECOND` (200) ms a second on average, each operation charged in full; the second operation past `VIEW_MAX_OPERATION_MS` (2000) ms within `VIEW_OVERRUN_WINDOW_MS` (300000) ms ends the sandbox | a share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/view-bound.spec.ts; test/e2e/view-budget.spec.ts; test/unit/view-budget.prop.test.ts |
+| Strict: the view's loads (URL attributes, CSS, and what the browser reports) | `VIEW_URLS_PER_SECOND` (200) a second, each charged before it can start; `VIEW_MAX_URLS` (1000) URL attributes in the body; `VIEW_MAX_DISTINCT_URLS` (10000) distinct URLs over the view's life | what the policy's origins serve: no budget of the library's | none of its own: the rate | a rate: at most `VIEW_URLS_PER_SECOND` (200) loads a second; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/review-round-4.spec.ts (M-2); test/e2e/view-round-5.spec.ts; test/unit/view-css-loads.test.ts; test/unit/view-budget.prop.test.ts |
 | Strict: the view's events, to the guest's `sandboxView.on` handlers | as the user raises them, of the types a handler listens to; `VIEW_EVENT_LIMITS.maxIds` (32) ids and `VIEW_EVENT_LIMITS.maxFields` (1000) form fields a detail | each string cut at `VIEW_EVENT_LIMITS.maxString` (65536) characters, all of one detail at `VIEW_EVENT_LIMITS.maxTotal` (262144) | none of its own: the user's input | none beyond the user's own input | test/e2e/strict-events.spec.ts |
-| Strict: the view's overrun notices (VIEW_FIRST_OVERRUN, VIEW_OVERRUN), to `sandbox-log` and `terminated` | a first overrun's at most once per 9 s of its debt, and one host line an environment; the second ends the sandbox | none: no field | none of its own: the count | the view's: [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/unit/view-round-5.test.ts (the repeated-overrun rule); test/e2e/view-bound.spec.ts |
+| Strict: the view's overrun notices (VIEW_FIRST_OVERRUN, VIEW_OVERRUN), to `sandbox-log` and `terminated` | a first overrun's at most once per 9 s of its debt, and one host line an environment; the second ends the sandbox | none: no field | none of its own: the count | a stall past `VIEW_MAX_OPERATION_MS` (2000) ms at most once per `VIEW_OVERRUN_WINDOW_MS` (300000) ms beyond the first; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/unit/view-round-5.test.ts (the repeated-overrun rule); test/e2e/view-bound.spec.ts |
 | Cooperative: the guest's own document | none: the guest runs on the host page's thread wherever the engine puts its frame there | none | none: one loop can freeze the host page ([Modes](#modes)) | unbounded: a cooperative-mode limit | README (cooperative-mode limits) |
+<!-- generated:end -->
+
+<!-- describes: budgets sig:6681 -->
+**Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
+shared 4-core VM, 2026-10-19 ([R5:N-1](security/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
+of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;
+1 Mi characters a second, 6% busy. One rejection of 16 Mi characters took about 0.5 s, after which the sandbox ended. The
+strict view's figures are in [its own section](#the-views-cost-to-the-host-page).
 
 ---
 

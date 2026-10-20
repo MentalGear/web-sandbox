@@ -11,6 +11,7 @@ WEB_SANDBOX_MODEL_RUNS=2000 bun run test:e2e test/e2e/lifecycle-model.spec.ts  #
 bun run test:probes  # the strict-mode design probes (research 15) ADR-005 rests on, on their own server
 bun run build:lib    # dist/: bundled ESM + type declarations
 bun run api:check    # the public API against its reviewed report, etc/web-sandbox.api.md; api:update accepts a change
+bun run docs:check   # the generated regions and the sections' markers against the code; docs:gen rewrites the regions
 ./scripts/smoke-package.sh   # bun pm pack, install into a scratch project, type-check and bundle
 ```
 
@@ -81,9 +82,10 @@ mitigated further**, when both hold:
 
 Such a finding is at most medium. Its fix is a bound in docs/API.md (with measured examples, as "Measured figures" below
 says), "The view's cost to the host page" (or
-the section of the surface it concerns), with what the embedder can do about it, and the figure in the cost column of
-its channel in the [budgets table](docs/API.md#budgets) (`CHANNEL_BUDGETS` in `src/lib/egress.ts`, which the table is
-generated from and a unit test keeps in step). The view shares the host page's thread
+the section of the surface it concerns), with what the embedder can do about it, and the bound in the cost column of
+its channel in the [budgets table](docs/API.md#budgets) (a share, a cap or a constant; a measured figure goes in the note
+under the table, dated, with its engines); `CHANNEL_BUDGETS` in `src/lib/egress.ts` is what the table is
+generated from. The view shares the host page's thread
 on Firefox, WebKit and Android, so no budget of the library's removes that cost: past a stated bound, chasing it gives
 diminishing returns.
 
@@ -128,11 +130,32 @@ stand beside the bound as an example, with its date and engine; it is never gene
 **The guards**, in the unit run and CI:
 - `bun run api:check`: the public API against its reviewed report, [etc/web-sandbox.api.md](etc/web-sandbox.api.md);
   `bun run api:update` accepts a change, which the PR then shows.
+- `bun run docs:check`: every generated region equals what the code renders, and no handwritten section is stale
+  ([below](#generated-docs-and-their-markers)).
 - `test/unit/doc-links.test.ts`: every relative link and anchor in the Markdown files, and every ID in the registry's
   forms cited in `src/`, `test/` and the docs, resolves.
 - `test/unit/history-ratchet.test.ts`: per file of `src/` and `test/`, the comment lines that tell history and the bare
   finding IDs, counted against `test/unit/history-ratchet.baseline.json`. A count may only fall; when one does, the
   test prints how to lower the baseline.
+
+## Generated docs and their markers
+
+The facts the docs state are rendered from the values the code declares, by the generator in `tools/docgen/`: its
+engine knows nothing of this repository, and the extractors in `tools/docgen/extractors/` read the registries
+(`LIMITS`, `CONFIG_SCHEMA`, `FRAMES`, `LC_INPUTS` and the rest).
+
+- **Regions.** The lines between `<!-- generated:begin NAME -->` and `<!-- generated:end -->` (each marker on a line of
+  its own, in any Markdown file) are rewritten from the extractor called NAME by `bun run docs:gen`. Text outside a
+  region is never touched. Do not edit a region: change the value in the code (or the extractor's own words, for the
+  Configuration table's prose, `tools/docgen/extractors/config-docs.ts`), and run `bun run docs:gen`.
+- **Markers.** A handwritten section that describes code starts with `<!-- describes: ID, ID sig:HASH -->`. The hash is
+  taken from the described items' semantic signatures: names, types, values and transitions, never formatting or
+  wording.
+- **When a marker fails.** `bun run docs:check` (CI runs it) names the section and the items that changed. Read the
+  section against the change; fix any sentence that is now wrong; then run `bun run docs:gen --accept`, which writes the
+  new hashes, and commit them with the section. Accepting without reading defeats the marker, whose only job is to
+  put the prose a change made stale in front of the reviewer. A new thing to describe is a new item in an extractor, with
+  a signature that changes when its meaning does.
 
 ## Style
 

@@ -9,8 +9,8 @@ import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { FILE_ERROR_CODES, MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES } from '@src/lib/files';
 import { toFetchPolicy } from '@src/lib/fetch-bridge';
 import { INERT_TYPES } from '@src/lib/guest-writes';
-import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
-import { cooperativePolicy, KIND_DIRECTIVES, strictViewPolicy } from '@src/lib/csp/csp-generator';
+import { ORIGIN_KINDS } from '@src/lib/csp/origins';
+import { KIND_DIRECTIVES } from '@src/lib/csp/csp-generator';
 import { RENDER_ELEMENTS, RENDER_REMOVED_ELEMENTS, VIEW_APPLY_MS_PER_SECOND, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_OVERRUN_WINDOW_MS, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_FILE_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS, VIEW_RENDER_CHARACTERS_PER_SECOND, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_MAX_URLS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 import { LOG_BYTES_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { RPC_ERROR_CODES, RPC_LIBRARY_CODES, RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from '@src/lib/rpc';
@@ -21,7 +21,7 @@ import { ELEMENT_EVENTS } from '@src/lib/element-events';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 import { CONFIG_SCHEMA } from '@src/lib/config-schema';
-import { HOST_LINES, reasonCauses, TERMINATION_REASONS, type ReasonId } from '@src/lib/reasons';
+import { TERMINATION_REASONS, type ReasonId } from '@src/lib/reasons';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { LIMITS, type LimitName, type LimitRow } from '@src/lib/limits';
 
@@ -54,6 +54,9 @@ function section(prefix: string, own = false): string {
     }
     return body.join('\n');
 }
+
+/** `text` without its generated regions (tools/docgen): the tables the code renders, which have no interface to be compared with. */
+const withoutRegions = (text: string) => text.replace(/^<!-- generated:begin [\w:.-]+ -->$[\s\S]*?^<!-- generated:end -->$/gm, '');
 
 /** The first cells of the table rows in `text` that are one code span: | `name` | … */
 function rowKeys(text: string): string[] {
@@ -97,19 +100,6 @@ describe('docs/API.md lists the public surface', () => {
         for (const name of Object.keys(publicApi)) expect(names, name).toContain(name);
     });
 
-    it('the Limits table is the limits registry: every row with a label, its value, and its exported constant', () => {
-        const cells = (line: string) => line.split('|').slice(1, -1).map(cell => cell.trim());
-        const rows = section('## Limits').split('\n').filter(line => line.startsWith('| ') && !line.startsWith('| Limit |') && !line.startsWith('| :')).map(cells);
-        const labelled = (Object.keys(LIMITS) as LimitName[]).filter(name => LIMITS[name].label !== null);
-        expect(sorted(rows.map(([label]) => label!))).toEqual(sorted(labelled.map(name => LIMITS[name].label!)));
-        for (const name of labelled) {
-            const limit: LimitRow = LIMITS[name];
-            const [, value, exported] = rows.find(([label]) => label === limit.label)!;
-            expect(value!.split(' ')[0], name).toBe(String(limit.value));
-            expect(exported, name).toBe(limit.exported ? `\`${name}\`` : '—');
-        }
-    });
-
     it('every numeric export of the package is a limit of the registry, with its value, and every exported limit is one', () => {
         const numeric = Object.entries(publicApi).filter(([, value]) => typeof value === 'number');
         expect(numeric.length).toBeGreaterThan(5);
@@ -138,10 +128,11 @@ describe('docs/API.md lists the public surface', () => {
         expect([bounds.maxBytes, bounds.timeoutMs, bounds.maxConcurrent]).toEqual([LIMITS.MAX_MAX_BYTES.value, LIMITS.MAX_TIMEOUT_MS.value, LIMITS.MAX_MAX_CONCURRENT.value]);
     });
 
-    it('every config option, and no other', () => {
-        const options = section('## Configuration', true);
+    it('every config option of the schema is one of the option interfaces, and no other', () => {
+        const documented = (Object.keys(CONFIG_SCHEMA) as (keyof typeof CONFIG_SCHEMA)[]).filter(name => !('removed' in CONFIG_SCHEMA[name]));
         const keys = ['SandboxConfigOptions', 'CooperativeSandboxConfig', 'WorkerSandboxConfig', 'StrictSandboxConfig'].flatMap(name => interfaceKeys('src/host.ts', name));
-        expect(sorted(rowKeys(options))).toEqual(sorted(keys));
+        expect(sorted(documented)).toEqual(sorted(keys));
+        expect(sorted(rowKeys(section('## Configuration', true)))).toEqual(sorted(keys));
     });
 
     it('the default mode, and the strict html warning, as the code has them', () => {
@@ -169,22 +160,10 @@ describe('docs/API.md lists the public surface', () => {
         for (const header of defaults.headers) expect(headers).toContain(`\`${header}\``);
     });
 
-    it('every origins kind with its directive, and the policy of each mode as the generator makes it', () => {
+    it('every origins kind with its directive', () => {
         const text = section('### `origins`');
         expect(sorted(rowKeys(text))).toEqual(sorted(ORIGIN_KINDS));
         for (const kind of ORIGIN_KINDS) expect(row(text, `\`${kind}\``), kind).toContain(`\`${KIND_DIRECTIVES[kind]}\``);
-        const blocks = [...text.matchAll(/^```\n([^`]+?)\n```/gm)].map(match => match[1]!.replace(/\n/g, ' ').replace(/ +/g, ' '));
-        const input = { origins: NO_ORIGINS, fileKinds: new Set<never>(), scriptUnsafe: false };
-        expect(blocks).toContain(cooperativePolicy(input));
-        const hash = `'sha256-${'A'.repeat(43)}='`;
-        expect(blocks).toContain(strictViewPolicy({ ...input, bootstrapHash: hash }).replace(hash, "'sha256-<bootstrap>'"));
-    });
-
-    it('every capability', () => {
-        const options = spans(section('## Configuration', true));
-        for (const capability of [...publicApi.SAFE_CAPABILITIES, ...publicApi.UNSAFE_CAPABILITIES]) {
-            expect(options.has(capability), capability).toBe(true);
-        }
     });
 
     it('every public method of the element, and no other', () => {
@@ -200,6 +179,7 @@ describe('docs/API.md lists the public surface', () => {
         // the one table of the element's events (element-events.ts), each dispatched by host.ts (test/unit/element-events.test.ts)
         const dispatched = Object.keys(ELEMENT_EVENTS);
         expect(sorted(rowKeys(section('## Events', true)))).toEqual(sorted(dispatched));
+        for (const [event, { bubbles }] of Object.entries(ELEMENT_EVENTS)) expect(row(section('## Events', true), `\`${event}\``).split('|')[3]!.trim(), event).toBe(bubbles ? 'yes' : 'no');
     });
 
     it('every field of every event detail', () => {
@@ -209,7 +189,7 @@ describe('docs/API.md lists the public surface', () => {
             ['### `fetch`', 'src/lib/fetch-bridge.ts', 'FetchRecord'],
         ];
         for (const [heading, file, name] of details) {
-            expect(sorted(rowKeys(section(heading))), name).toEqual(sorted(interfaceKeys(file, name)));
+            expect(sorted(rowKeys(withoutRegions(section(heading)))), name).toEqual(sorted(interfaceKeys(file, name)));
         }
         const listFiles = section('### `listFiles()`');
         for (const key of interfaceKeys('src/lib/files.ts', 'FileInfo')) expect(listFiles, key).toMatch(new RegExp(`\\b${key}\\b`));
@@ -219,15 +199,6 @@ describe('docs/API.md lists the public surface', () => {
         const commit = section('### `commitGuestWrites(');
         const listed = [...spans(commit)].filter(span => /^[a-z]+\/[a-z0-9.+-]+$/.test(span));
         expect(sorted(listed)).toEqual(sorted(INERT_TYPES));
-    });
-
-    it('the termination reasons table is the reasons registry, each reason with its cause', () => {
-        const rows = section('### `terminated` reasons').split('\n').filter(line => line.startsWith('| `'))
-            .map(line => line.slice(2, -2).split(' | '));
-        const table = new Map(rows.map(([text, cause]) => [text!.slice(1, -1), cause!]));
-        const ids = Object.keys(TERMINATION_REASONS) as ReasonId[];
-        expect(sorted(table.keys())).toEqual(sorted(ids.map(id => TERMINATION_REASONS[id].text)));
-        for (const id of ids) expect(table.get(TERMINATION_REASONS[id].text), id).toBe(reasonCauses()[id]);
     });
 
     const STRING_KINDS = new Set([SyntaxKind.StringLiteral, SyntaxKind.NoSubstitutionTemplateLiteral, SyntaxKind.TemplateHead, SyntaxKind.TemplateMiddle, SyntaxKind.TemplateTail]);
@@ -246,11 +217,6 @@ describe('docs/API.md lists the public surface', () => {
                 if (fixed.length > 12) expect(strings, `${file}: ${id}`).not.toContain(fixed);
             }
         }
-    });
-
-    it('every line the element dispatches itself, in sandbox-log', () => {
-        const log = section('### `sandbox-log`').replace(/\s+/g, ' ');
-        for (const [id, line] of Object.entries(HOST_LINES)) expect(log, id).toContain(`\`${line.text}\``);
     });
 
     it('every call code, with who sets it', () => {
