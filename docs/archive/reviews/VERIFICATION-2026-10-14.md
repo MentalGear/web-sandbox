@@ -167,7 +167,7 @@ listener's `event.source` check, the playground's, the worker allowlist not appl
 
 1. **`ready` means the guest's startup script checked in** — ✅ done
    ([backlog S46](../backlog/BACKLOG-done.md#s46--ready-is-the-guests-check-in---done); ADR-002 and
-   [ADR-003](../../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-ready-is-the-guests-check-in) amendments).
+   [ADR-003](../adr/ADR-003-history.md#amendment-2026-10-14-ready-is-the-guests-check-in) amendments).
    `ready` waited for the wrapper's load, which waits for the guest's subresources, so `LOAD_TIMEOUT_MS` (CB3) also
    ended a legitimate page with slow images. Measured by a verifier: the bootstrap's announcement arrives after about
    26, 117 and 93 ms (Chromium, Firefox, WebKit) while a 3 s image holds the wrapper's load to about 3.1 s, and a
@@ -176,7 +176,7 @@ listener's `event.source` check, the playground's, the worker allowlist not appl
    document is parsed.
 2. **Strict mode is the default** — ✅ done (2026-10-15;
    [backlog S48](../backlog/BACKLOG-done.md#s48--strict-is-the-default-iframe-is-renamed-cooperative-cooperative-modes-limits-are-frozen---done);
-   [ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen)).
+   [ADR-005 amendment](../adr/ADR-005-history.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen)).
    Every finding of the reviews above that strict mode does not close lives in the document mode. A config without a
    mode now builds the strict view; `'iframe'` was renamed `'cooperative'` (it fails closed, saying so); strict `html`
    that holds a script or an `on…` handler warns once per element; every preset names its mode. Cooperative mode's

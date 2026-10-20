@@ -12,6 +12,8 @@
 
 ## Decisions
 
+Each ADR states its decision as it stands; how it changed is in [the archive](archive/README.md#adrs).
+
 - [**ADR-001 — Continue, or adopt an existing solution?**](ADR-001-continue-or-adopt.md) —
   the build-vs-adopt case, an axis-by-axis comparison of opaque vs unique origins, a
   [field scan of 2026 entrants](ADR-001-continue-or-adopt.md#field-scan--august-2026), and the

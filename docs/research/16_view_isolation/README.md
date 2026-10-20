@@ -4,8 +4,8 @@
 2026-10. Numbers are host-page main-thread busy time unless said otherwise. They are this machine's; the shapes (which
 engine shares the thread, what stays busy) are what the decisions rest on.
 
-Decisions taken from it: [ADR-005, amendment 2026-10-18](../../ADR-005-strict-mode.md#amendment-2026-10-18-where-the-view-runs-allowanimations-allowautoplay-the-rendering-meter)
-(`allowAnimations`, `allowAutoplay`, the rendering meter of the view's time budget).
+Decisions taken from it: [ADR-005, "The switches"](../../ADR-005-strict-mode.md#the-switches-allowanimations-and-allowautoplay)
+(`allowAnimations`, `allowAutoplay`) and [its time budget](../../ADR-005-strict-mode.md#the-views-budgets) (the rendering meter).
 
 ## Where frames run
 

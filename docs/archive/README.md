@@ -25,6 +25,22 @@ The security review reports, newest last. Each finding has an anchor, and a pref
 | [Review round 4](reviews/REVIEW-ROUND-4-2026-10-18.md) | `R4:` | The worker's only way out, values read once, the view's URL budget |
 | [Review round 5](reviews/REVIEW-ROUND-5-2026-10-19.md) | `R5:` | The recurring classes behind the findings |
 
+## ADRs
+
+The [ADRs](../README.md#decisions) state each decision as it stands. What they said before, and how each decision changed
+(the dated amendments, review by review), is kept here, verbatim, one file per ADR. The ADR links its file in its last line.
+An amendment keeps its heading, so a link to `ADR-00N-history.md#amendment-…` leads to it.
+
+| ADR | History | Holds |
+| :--- | :--- | :--- |
+| [ADR-001](../ADR-001-continue-or-adopt.md) | [ADR-001-history.md](adr/ADR-001-history.md) | the original status, the correction of the prior analysis, the first hybrid-strategy table and consequences |
+| [ADR-002](../ADR-002-host-guest-broker.md) | [ADR-002-history.md](adr/ADR-002-history.md) | how the broker came to be built, and eight amendments: refusal codes, reserved methods, strict-mode renders, the channel, the announcement, byte budgets, whole frames |
+| [ADR-003](../ADR-003-lifecycle-and-liveness.md) | [ADR-003-history.md](adr/ADR-003-history.md) | eight amendments: strict-mode bounds, listeners' reset or terminate, one rule per budget, the execution budget, bounded loading, the guest's check-in, the single `ready` flush |
+| [ADR-004](../ADR-004-files-as-blob-urls.md) | [ADR-004-history.md](adr/ADR-004-history.md) | the Service-Worker design it replaced, the original decision and next steps, and the amendments: markup, module graph, CSS, strict mode, guest writes, load kinds, raster-image writes |
+| [ADR-005](../ADR-005-strict-mode.md) | [ADR-005-history.md](adr/ADR-005-history.md) | the original decision, and the amendments by review: the renderer allowlist, the worker's globals, strict as the default, the view's budgets, the switches, the end of the entry |
+| [ADR-006](../ADR-006-fetch-bridge.md) | [ADR-006-history.md](adr/ADR-006-history.md) | four amendments: the platform validates the request, the method bound to its build, one refusal text, one origin parser |
+| [ADR-007](../ADR-007-typed-origins.md) | [ADR-007-history.md](adr/ADR-007-history.md) | the guard-rail pipeline the template replaced, the list of what was deleted, the migration table, the strict-default amendment |
+
 ## Backlog
 
 - [BACKLOG-done.md](backlog/BACKLOG-done.md): every finished item of the backlog (`S`, `T` and the `B`, `C`, `D`, `H`
