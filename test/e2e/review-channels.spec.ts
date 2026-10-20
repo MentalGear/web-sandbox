@@ -3,7 +3,7 @@ import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
 
 /**
- * Adversarial review 2026-10, channels and lifecycle (docs/security/ADVERSARIAL-REVIEW-2026-10.md), in the browser:
+ * Adversarial review 2026-10, channels and lifecycle (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md), in the browser:
  *   B1  another frame on the host page that announces a port to the host window (SANDBOX_PORT, with or without a
  *       port of its own), racing the guest's own announcement, neither captures the bridge nor leaves it dead: the
  *       host hears only the guest frame's window. (Before the broad review's CB1 the race was INIT_PORT posted into the

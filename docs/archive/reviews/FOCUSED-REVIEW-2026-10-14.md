@@ -3,7 +3,7 @@
 **Date**: 2026-10-14 · **Code reviewed**: `main` at `affe25e` (guest writes, C5) · **Result**: 11 findings and one
 hardening — 10 fixed (F4 was latent: the grammar dropped the injected prototype before it mattered), 1 documented
 by design (W5), the hardening done; no residual left open; two limits of W1 stated
-· **Backlog**: [S27–S31](../BACKLOG.md#s27--a-committed-inert-file-could-run-as-a-script-of-the-next-build---done)
+· **Backlog**: [S27–S31](../backlog/BACKLOG-done.md#s27--a-committed-inert-file-could-run-as-a-script-of-the-next-build---done)
 · **Earlier review**: [adversarial review 2026-10](ADVERSARIAL-REVIEW-2026-10.md) · **Next**: [broad review 2026-10-14](BROAD-REVIEW-2026-10-14.md)
 
 ## Scope and method
@@ -16,7 +16,7 @@ follow-up's fixes (strict view, execution budget, config and policy steps). Same
 2. Every candidate was reproduced first as a **failing test** — a unit test where only library logic decides, an
    end-to-end test on Chromium, Firefox and WebKit where browser behaviour decides — run against `affe25e`, then
    fixed at the chokepoint that closes the class, and the test re-run green. End-to-end evidence follows T5
-   ([backlog](../BACKLOG.md)): read from outside the sandbox (a host method the guest's scripts call, recorded on the
+   ([backlog](../../BACKLOG.md)): read from outside the sandbox (a host method the guest's scripts call, recorded on the
    host page; the view's DOM and Chromium's accessibility tree over DevTools; the element's own events), the
    recorder's listeners for network effects, and a positive control beside each negative. Candidates that held keep
    their test as a guarantee test.
@@ -160,7 +160,7 @@ Stated in API.md.
 
 ### F4 · A configured `__proto__` became a prototype in a CSP step
 
-> Since 2026-10-14 the policy steps described here are replaced by typed `origins` and one policy template per mode ([ADR-007](../ADR-007-typed-origins.md)); their guarantees hold by construction there.
+> Since 2026-10-14 the policy steps described here are replaced by typed `origins` and one policy template per mode ([ADR-007](../../ADR-007-typed-origins.md)); their guarantees hold by construction there.
 
 - **Found**: `drop-meta-ignored.ts` wrote `output[name] = values` before the grammar ran, so a JSON `__proto__`
   directive (kept as an own key by the merge and by structured clone) became its output's prototype. Latent: the

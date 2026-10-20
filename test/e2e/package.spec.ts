@@ -74,7 +74,7 @@ test('the built package imports in Node without a DOM, and its viewScriptHash() 
     expect(fromNode).toBe(inPolicy);
 });
 
-// Review A8 (docs/security/ADVERSARIAL-REVIEW-2026-10.md): the default bootstrap is asserted parser-safe when the
+// Review A8 (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md): the default bootstrap is asserted parser-safe when the
 // guest document is built (no "</script", "<script", "<!--" or NUL), and the bundle's function text is what is
 // asserted here. Every variant of the bootstrap is built: cooperative mode with files, the module graph, markup
 // references, the fetch bridge and auto-sizing, and worker mode. A text that failed the assertion would throw in

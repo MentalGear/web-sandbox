@@ -13,7 +13,7 @@ any fix and decided three of them. Backlog: S62. The next round is S63.
 | M | each documented limit measured at its edge on 3 engines, with responsiveness and memory soaks | Opus | yes |
 
 The lifecycle reviewer's reference model and generator are kept for S61 in
-[research 17](../research/17_formal_methods/lifecycle-model.md).
+[research 17](../../research/17_formal_methods/lifecycle-model.md).
 
 ## Findings
 

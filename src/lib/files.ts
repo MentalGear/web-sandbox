@@ -117,7 +117,7 @@ export function isValidPath(path: unknown): path is string {
 }
 
 // Never empty: a blob with an empty type is applied as a stylesheet by every engine
-// (docs/research/blob-delivery-probe.md, section 2), so an unknown file must not get one.
+// (docs/archive/research/blob-delivery-probe.md, section 2), so an unknown file must not get one.
 export const FALLBACK_TYPE = 'application/octet-stream';
 
 const MIME_TYPES: Readonly<Record<string, string>> = {

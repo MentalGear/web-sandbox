@@ -34,44 +34,29 @@
 - [**ADR-007 — Typed origins**](ADR-007-typed-origins.md) — the guest policy is a fixed template per mode and the
   embedder lists exact origins per kind of load (`origins`); why that replaced the raw-CSP `connectionsAllowed` and
   its guard rails, the accepted origin grammar, what became unrepresentable.
-- [research/ARCHITECTURE_COMPARISON.md](research/ARCHITECTURE_COMPARISON.md) — host-level vs
-  iframe-level Service Worker (superseded by ADR-004).
 
 ## Planning
 
-- [**BACKLOG.md**](BACKLOG.md) — all open work, verified against the code: broken foundations,
-  security, API surface, virtual files, packaging, hygiene.
+- [**BACKLOG.md**](BACKLOG.md) — the open work: what is not done, is deferred or waits for the owner, and the
+  limits documented as accepted. Finished items are in the archive.
 
-## Security research
+## Research and CSP
 
-- [**security/ADVERSARIAL-REVIEW-2026-10.md**](security/ADVERSARIAL-REVIEW-2026-10.md) — the adversarial review of
-  2026-10: 21 candidates by area (policy, channels, strict mode), each fixed, asserted or stated as a residual, with
-  the tests that prove it on Chromium, Firefox and WebKit.
-- [**security/FOCUSED-REVIEW-2026-10-14.md**](security/FOCUSED-REVIEW-2026-10-14.md) — two focused rounds after it,
-  on guest writes and the follow-up's fixes: load kinds for file references, the strict view's SVG animation, the
-  execution budget, rate windows and config hygiene, each reproduced as a failing test first.
-- [**security/BROAD-REVIEW-2026-10-14.md**](security/BROAD-REVIEW-2026-10-14.md) — a broad review by four reviewers:
-  the guest announces its own port (no listener in the guest realm carries one), bounded loading, no `data:` workers,
-  guest-realm hardening against platform gaps (keepalive, history, `window.name`), residuals measured per engine, and
-  paste-ready upstream reports for WebKit and Firefox.
-- [**security/VERIFICATION-2026-10-14.md**](security/VERIFICATION-2026-10-14.md) — an independent verification of the three
-  reviews by five verifiers (mutations, black box, claims and CI, decisions): a guest worker keeps only allowlisted
-  globals (Firefox let a worker's `EventSource` and `FontFace` pass the policy), the cooperative-mode limits in one list,
-  test gaps closed, the strict-mode design probes in CI.
-- [**security/REVIEW-ROUND-1-2026-10-15.md**](security/REVIEW-ROUND-1-2026-10-15.md) — fresh review round 1 under the
-  stopping rule (four completed reviewers, four methods): the host page's policy, one console relay with byte budgets,
-  the strict view's character and rate budget, the low findings; not clean, so the count stays 0.
-
-- [research/](research/README.md) — fourteen documented attack vectors with reproductions, design probes
-  (blob delivery, strict mode), plus the CSP and virtual-files architecture analyses.
+- [research/](research/README.md) — fourteen documented attack vectors with reproductions, design probes (strict mode,
+  view isolation, the relay worker), the formal-methods evaluation and the finding classes. The reproductions run with
+  `bun run test:e2e`.
 - [CSP_CONFIG_RATIONALE.md](CSP_CONFIG_RATIONALE.md) — why `'unsafe-inline'`, why not nonces (superseded for
   the policy itself by [ADR-007](ADR-007-typed-origins.md)).
-- [CSP-Content-Security-Policy-settings.md](CSP-Content-Security-Policy-settings.md) — general CSP background
-  (superseded for this library by [ADR-007](ADR-007-typed-origins.md)).
+
+## Archive
+
+- [**archive/**](archive/README.md) — history, not current state: the security review reports (adversarial, broad,
+  focused, verification, review rounds 1 to 5), the done backlog items, and the finished research notes. A finding or a
+  backlog item cited by ID (`R5:M-2`, `S44`) resolves there through [ids.ts](ids.ts).
 
 ## Reading order
 
-To integrate the sandbox, read the [API reference](API.md). To work on it, start with the
-[backlog snapshot](BACKLOG.md#snapshot) for the current state, then
+To integrate the sandbox, read the [API reference](API.md). To work on it, start with
+[ARCHITECTURE.md](../ARCHITECTURE.md) for the current state and the [backlog](BACKLOG.md) for the open work, then
 [ADR-001](ADR-001-continue-or-adopt.md) for why the project exists in the form it does. The
 research index is the primary asset — ADR-001 argues it is the hardest part to replicate.

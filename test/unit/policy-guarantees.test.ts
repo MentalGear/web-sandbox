@@ -7,7 +7,7 @@ import { buildGuestDocument } from '@src/lib/frame-documents';
 import { deepMerge } from '@src/lib/utils';
 
 /**
- * Adversarial review 2026-10, policy and documents (docs/security/ADVERSARIAL-REVIEW-2026-10.md): the guarantees
+ * Adversarial review 2026-10, policy and documents (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md): the guarantees
  * as the element builds them, read back from the documents in its shadow root.
  */
 

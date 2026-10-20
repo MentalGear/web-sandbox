@@ -3,7 +3,7 @@
 The third round under the stopping rule, on `main` at `16c545b` (round 2's fixes, S55). The rule is unchanged (see the
 [round 2 report](REVIEW-ROUND-2-2026-10-15.md#stopping-rule)). The owner reviewed the findings before any fix: part 1
 (`32ee7fd`) holds the fixes approved first, part 2 holds the view's time budget and the two strict-mode switches
-decided after the measurements in [research 16](../research/16_view_isolation/README.md). Backlog: S57.
+decided after the measurements in [research 16](../../research/16_view_isolation/README.md). Backlog: S57.
 
 ## Reviewers
 
@@ -39,7 +39,7 @@ Tests: `test/unit/review-round-3.test.ts`, `test/e2e/review-round-3.spec.ts`, `t
 ## The process model behind the availability findings
 
 Round 3's two medium-or-higher availability findings (M-1, C-2) and the accepted residual (S42) share one cause: the
-view renders on the host page's thread. [Research 16](../research/16_view_isolation/README.md) measured where it runs:
+view renders on the host page's thread. [Research 16](../../research/16_view_isolation/README.md) measured where it runs:
 
 - **Desktop Chromium 127+**: its own process (sandboxed-iframe isolation).
 - **Firefox**: the host's thread. Fission isolates only cross-site frames, and an opaque origin stays with its creator's site.

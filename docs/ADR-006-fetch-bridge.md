@@ -161,7 +161,7 @@ page's own `connect-src`, mixed content, local-network blocking). Proof: `test/u
 
 ## Amendment (2026-10-14): the method is bound to its build
 
-**When**: the focused review of 2026-10-14 ([report](security/FOCUSED-REVIEW-2026-10-14.md), hardening). The reserved `sandbox:fetch` method read
+**When**: the focused review of 2026-10-14 ([report](archive/reviews/FOCUSED-REVIEW-2026-10-14.md), hardening). The reserved `sandbox:fetch` method read
 the element's current bridge when it ran, and the broker runs a method a microtask after the request arrives, so
 correctness relied on no rebuild happening in between. Now every build registers the method again, closed over
 that build's bridge, as `sandbox:write` is over its overlay: a request is always handled by the bridge of the

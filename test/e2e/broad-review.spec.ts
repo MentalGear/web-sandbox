@@ -3,7 +3,7 @@ import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder, wss } from './recorder';
 
 /**
- * Broad review 2026-10-14 (docs/security/BROAD-REVIEW-2026-10-14.md), where browser behaviour decides:
+ * Broad review 2026-10-14 (docs/archive/reviews/BROAD-REVIEW-2026-10-14.md), where browser behaviour decides:
  *   CB1  the guest's port is announced by the bootstrap, never handed into the guest: document.open() before the
  *        wrapper's load leaves no listener of the guest's holding a port of ours;
  *   PD8  a second announcement from the guest's window (it reloaded itself, rewrote its document so a bootstrap ran

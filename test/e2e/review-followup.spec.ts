@@ -1,7 +1,7 @@
 import { test, expect } from './fixture';
 
 /**
- * Follow-up audit 2026-10-14 (docs/security/ADVERSARIAL-REVIEW-2026-10.md, "Follow-up"), in real browsers:
+ * Follow-up audit 2026-10-14 (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md, "Follow-up"), in real browsers:
  *   - every build failure is a termination: a config the build cannot use ends the sandbox with a reason, the
  *     state and the event agree, and a usable config starts it again;
  *   - backlog B8: console.info is relayed like log, warn and error; execute() and call() follow one rule while

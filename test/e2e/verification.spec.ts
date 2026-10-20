@@ -3,7 +3,7 @@ import { useRecorder, wss } from './recorder';
 import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 
 /**
- * Independent verification 2026-10-14 (docs/security/VERIFICATION-2026-10-14.md), where browser behaviour decides:
+ * Independent verification 2026-10-14 (docs/archive/reviews/VERIFICATION-2026-10-14.md), where browser behaviour decides:
  *   V1  a guest worker (worker mode, strict mode) keeps only the allowlisted globals: Firefox sent a worker's
  *       EventSource (and loaded a worker's FontFace) past the policy; every other network API of a worker is gone or
  *       governed. A worker the guest creates in cooperative mode is a realm of its own (residual, measured).

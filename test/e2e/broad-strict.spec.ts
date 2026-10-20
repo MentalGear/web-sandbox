@@ -6,7 +6,7 @@ import { VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS } from '@src/lib/i
 import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
 
 /**
- * Broad review 2026-10-14, strict mode (docs/security/BROAD-REVIEW-2026-10-14.md, reviewer C), where browser
+ * Broad review 2026-10-14, strict mode (docs/archive/reviews/BROAD-REVIEW-2026-10-14.md, reviewer C), where browser
  * behaviour decides:
  *   allowlist  the renderer keeps only allowlisted elements and attributes: what it does not know is gone before
  *              insertion, in every namespace;

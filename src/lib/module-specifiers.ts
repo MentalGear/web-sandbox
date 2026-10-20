@@ -7,7 +7,7 @@ import { parse } from 'es-module-lexer/js';
  * A registered module reaches the guest as a blob: URL, and a relative specifier never resolves
  * inside a blob: module: its base URL is the blob URL, whose path is opaque, so `./x.js`, `../x.js`
  * and `/x.js` throw a TypeError in every engine before any import map is consulted
- * (docs/research/blob-delivery-probe.md, section 3). So the host rewrites them first: each relative
+ * (docs/archive/research/blob-delivery-probe.md, section 3). So the host rewrites them first: each relative
  * specifier is resolved against the file's own virtual URL, `https://vfs.invalid/<path>`, and the
  * guest's one import map (inSandboxImportMap, in-sandbox-files.ts) maps every registered JavaScript
  * file's virtual URL to its blob: URL. Resolution is the URL parser's, so `..` above the root stays at

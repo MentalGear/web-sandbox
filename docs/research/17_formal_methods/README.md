@@ -8,7 +8,7 @@ average, not a per-second bound.
 
 ## How the findings divide
 
-All 48 medium-or-higher findings, from the earlier reviews and review rounds 1–3 (`docs/security/`), were sorted into
+All 48 medium-or-higher findings, from the earlier reviews and review rounds 1–3 (`docs/archive/reviews/`), were sorted into
 three classes:
 - (a) a property of our own logic that a formal model could state;
 - (b) the gap between such a model and the real JavaScript runtime;

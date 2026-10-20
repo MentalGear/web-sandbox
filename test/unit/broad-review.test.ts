@@ -12,7 +12,7 @@ import { isViewFileType, RENDER_RULES, type RenderSwitches, sanitizeRender } fro
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
 
 /**
- * Broad review 2026-10-14 (docs/security/BROAD-REVIEW-2026-10-14.md), host and library side: the guarantees that
+ * Broad review 2026-10-14 (docs/archive/reviews/BROAD-REVIEW-2026-10-14.md), host and library side: the guarantees that
  * library logic decides. The browser halves are in test/e2e/broad-review.spec.ts; the bootstrap's in
  * src/lib/in-sandbox-script.test.ts and test/unit/broad-review-bootstrap.test.ts.
  */

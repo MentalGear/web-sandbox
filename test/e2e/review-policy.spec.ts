@@ -4,7 +4,7 @@ import { useRecorder } from './recorder';
 import { inView, waitInView } from './strict-view';
 
 /**
- * Adversarial review 2026-10, policy (docs/security/ADVERSARIAL-REVIEW-2026-10.md, A1). A configured value or key
+ * Adversarial review 2026-10, policy (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md, A1). A configured value or key
  * cannot add a directive to a guest policy: only exact origins reach it, each in its kind's directive of a fixed
  * template (src/lib/csp/origins.ts, csp-generator.ts, ADR-007). Asserted here where it matters most, in strict mode, whose view
  * relies on script-src-attr 'none' (G1): an injected value that once enabled handler attributes in the view.

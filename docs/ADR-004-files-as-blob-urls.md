@@ -25,7 +25,7 @@ The session id that addressed a sandbox's files was also readable by the guest (
 worker served everything as `text/javascript` with string-only storage (C2). Deleting the Service
 Worker path removed nothing that worked.
 
-The [blob delivery probe](research/blob-delivery-probe.md) measured the replacement before it was
+The [blob delivery probe](archive/research/blob-delivery-probe.md) measured the replacement before it was
 built: what each engine loads from a `blob:` URL, under which directive, with which MIME type, and
 which realms a `blob:` URL resolves in.
 
@@ -684,7 +684,7 @@ rules, `blob:` filtering), `src/lib/csp/file-sources.test.ts` (`exclude`), `test
 
 ## Amendment (2026-10-14): `blob:` goes to the directive that governs the load
 
-**When**: the follow-up audit of the adversarial review ([report](security/ADVERSARIAL-REVIEW-2026-10.md#follow-up-2026-10-14-by-construction-audit)).
+**When**: the follow-up audit of the adversarial review ([report](archive/reviews/ADVERSARIAL-REVIEW-2026-10.md#follow-up-2026-10-14-by-construction-audit)).
 **Why**: decision 5 named `script-src` and `style-src`, but a browser checks `<script src>`, `import()` and
 stylesheets against `script-src-elem` and `style-src-elem` first (CSP Level 3 fallback lists). An embedder who
 configured either got every registered script or stylesheet refused, while the bootstrap check already read
@@ -788,7 +788,7 @@ Chromium, Firefox and WebKit, with evidence read from the host page and the reco
 
 ## Amendment (2026-10-14): a reference names a file only for the kind of load its type is for
 
-**When**: the focused review of 2026-10-14 ([report](security/FOCUSED-REVIEW-2026-10-14.md), W1, W2, W3). **Why**: resolution ignored the load
+**When**: the focused review of 2026-10-14 ([report](archive/reviews/FOCUSED-REVIEW-2026-10-14.md), W1, W2, W3). **Why**: resolution ignored the load
 kind. A guest-written `app.js` committed as `text/plain`, which is inert and needs no `{ code: true }`, became the
 script of the next build's `<script src="app.js">`, and every engine runs a classic `blob:` script whatever its type
 (measured: Chromium and Firefox every inert type, WebKit `text/plain`, JSON, CSS and fonts). The type the store gives
@@ -832,7 +832,7 @@ Tests: `src/lib/load-kinds.test.ts` (every kind × every type, for the table, ma
 
 ## Amendment (2026-10-14): broad review: answers from the build; file sources widen only their kinds
 
-**When**: the broad review of 2026-10-14 ([report](security/BROAD-REVIEW-2026-10-14.md), CB4, PA1).
+**When**: the broad review of 2026-10-14 ([report](archive/reviews/BROAD-REVIEW-2026-10-14.md), CB4, PA1).
 
 - **Guest writes are answered from the build (CB4).** `sandbox:write` answered removals and the write-time quota from
   the live store, so a guest learned of files the host registered after its build (which it never otherwise sees).
@@ -867,7 +867,7 @@ kind admits no origin, and the files registered are what the embedder chose to g
 
 ## Amendment (2026-10-15): the strict view shows raster-image guest writes
 
-**When**: the owner's decision on [review round 1](security/REVIEW-ROUND-1-2026-10-15.md)'s R4-4; backlog S54.
+**When**: the owner's decision on [review round 1](archive/reviews/REVIEW-ROUND-1-2026-10-15.md)'s R4-4; backlog S54.
 **Why**: "No URL for anything written" (the guest-writes amendment above) left a strict plugin no way to show an image it
 made, such as a chart drawn on an `OffscreenCanvas`: it could write the PNG but not name it in a render until the host
 committed it and rebuilt.

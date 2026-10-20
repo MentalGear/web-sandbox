@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_SANDBOX_FLAGS } from '@src/csp-directives';
 
 /**
- * The owner's decisions after review round 1 (docs/security/REVIEW-ROUND-1-2026-10-15.md, "Awaiting the owner"), each
+ * The owner's decisions after review round 1 (docs/archive/reviews/REVIEW-ROUND-1-2026-10-15.md, "Awaiting the owner"), each
  * reproduced here first where library logic decides: R2-2 (`allow-forms` is an unsafe capability in cooperative mode)
  * and R4-4 (the strict view shows raster-image guest writes); R4-5 is test/unit/view-api.test.ts.
  * The browser's side of each is test/e2e/owner-decisions.spec.ts, on all three engines.

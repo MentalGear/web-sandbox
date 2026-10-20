@@ -6,7 +6,7 @@ import { busyShare, describeShare, MARGIN } from './host-share';
 const recorder = useRecorder();
 
 /**
- * Fresh review round 1 (docs/security/REVIEW-ROUND-1-2026-10-15.md): the findings where the browser decides, on
+ * Fresh review round 1 (docs/archive/reviews/REVIEW-ROUND-1-2026-10-15.md): the findings where the browser decides, on
  * Chromium, Firefox and WebKit. Each test failed at 5ede7ba. Evidence: what the host page's sandbox-log listener
  * receives (the harness), and host-page timing measured in the host page.
  */

@@ -7,7 +7,7 @@ import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_BYTES_PER_SECOND, LOG_DROPPED_ARGUMENT, LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_BYTES, LOG_MAX_STRING, toLogDetail } from '@src/lib/sandbox-log';
 
 /**
- * Fresh review round 1 (docs/security/REVIEW-ROUND-1-2026-10-15.md): the findings library logic decides, each
+ * Fresh review round 1 (docs/archive/reviews/REVIEW-ROUND-1-2026-10-15.md): the findings library logic decides, each
  * reproduced here first. The bootstrap runs against stand-in ports whose postMessage structured-clones the frame, as
  * a browser's does, so a frame clone refuses throws DataCloneError here too.
  */

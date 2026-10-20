@@ -4,7 +4,7 @@
 **Result**: 1 new finding, high on Firefox, fixed by construction (V1); 1 functional bug fixed (V2); 1 user-action
 residual measured and documented (V3), with session history (H1) and the WebKit clipboard measured beside it; 9 test
 gaps closed, each with a test that fails under the mutation that had survived; the docs corrected; the strict-mode
-design probes run in CI · **Backlog**: [S43–S45](../BACKLOG.md#s43--a-guest-worker-keeps-only-allowlisted-globals---done)
+design probes run in CI · **Backlog**: [S43–S45](../backlog/BACKLOG-done.md#s43--a-guest-worker-keeps-only-allowlisted-globals---done)
 · **Earlier**: [adversarial review](ADVERSARIAL-REVIEW-2026-10.md), [focused review](FOCUSED-REVIEW-2026-10-14.md),
 [broad review](BROAD-REVIEW-2026-10-14.md)
 
@@ -97,7 +97,7 @@ each negative — fixed at the chokepoint that closes its class, and re-run gree
 
 Each was a mutation that no test failed; each now has a test that fails under it (re-run with the mutation applied).
 
-> Since 2026-10-14 the policy steps described here are replaced by typed `origins` and one policy template per mode ([ADR-007](../ADR-007-typed-origins.md)); their guarantees hold by construction there.
+> Since 2026-10-14 the policy steps described here are replaced by typed `origins` and one policy template per mode ([ADR-007](../../ADR-007-typed-origins.md)); their guarantees hold by construction there.
 
 | Gap | Mutation that survived | Test now | Under the mutation |
 | :--- | :--- | :--- | :--- |
@@ -128,7 +128,7 @@ an interval, a timeout chain, a promise loop and (iframe mode) a nested worker �
 - The adversarial review's "no residual left open" and its "Chromium kept the wrapper out of process every time"
   (the broad review measured both frames in the host page's process), and the comment in `review-strict.spec.ts`.
 - One list of default-mode residuals (since 2026-10-15: the cooperative-mode limits), the same in
-  [README](../../README.md#cooperative-mode-limits), the [backlog](../BACKLOG.md#s44--cooperative-mode-limits-one-frozen-list--documented-limits)
+  [README](../../../README.md#cooperative-mode-limits), the [backlog](../../BACKLOG.md#s44--cooperative-mode-limits-one-frozen-list--documented-limits)
   and the [broad review](BROAD-REVIEW-2026-10-14.md#residuals-with-rationale).
 
 ## Not covered
@@ -166,8 +166,8 @@ listener's `event.source` check, the playground's, the worker allowlist not appl
 ## Decisions after the verification
 
 1. **`ready` means the guest's startup script checked in** — ✅ done
-   ([backlog S46](../BACKLOG.md#s46--ready-is-the-guests-check-in---done); ADR-002 and
-   [ADR-003](../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-ready-is-the-guests-check-in) amendments).
+   ([backlog S46](../backlog/BACKLOG-done.md#s46--ready-is-the-guests-check-in---done); ADR-002 and
+   [ADR-003](../../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-ready-is-the-guests-check-in) amendments).
    `ready` waited for the wrapper's load, which waits for the guest's subresources, so `LOAD_TIMEOUT_MS` (CB3) also
    ended a legitimate page with slow images. Measured by a verifier: the bootstrap's announcement arrives after about
    26, 117 and 93 ms (Chromium, Firefox, WebKit) while a 3 s image holds the wrapper's load to about 3.1 s, and a
@@ -175,8 +175,8 @@ listener's `event.source` check, the playground's, the worker allowlist not appl
    announcement, the deadline bounds only that, and the guest holds the host's calls and `execute()` code until its
    document is parsed.
 2. **Strict mode is the default** — ✅ done (2026-10-15;
-   [backlog S48](../BACKLOG.md#s48--strict-is-the-default-iframe-is-renamed-cooperative-cooperative-modes-limits-are-frozen---done);
-   [ADR-005 amendment](../ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen)).
+   [backlog S48](../backlog/BACKLOG-done.md#s48--strict-is-the-default-iframe-is-renamed-cooperative-cooperative-modes-limits-are-frozen---done);
+   [ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen)).
    Every finding of the reviews above that strict mode does not close lives in the document mode. A config without a
    mode now builds the strict view; `'iframe'` was renamed `'cooperative'` (it fails closed, saying so); strict `html`
    that holds a script or an `on…` handler warns once per element; every preset names its mode. Cooperative mode's

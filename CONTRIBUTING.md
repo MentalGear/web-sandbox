@@ -99,7 +99,10 @@ These are **not** availability findings, and are fixed as any other:
 ## Code and docs: the current state
 
 The code and the docs say what holds now, and why. How it came to be is history: it lives in the review reports, the
-ADRs' amendments and the done backlog items (moving to `docs/archive/`), and in git, which is the final archive.
+ADRs' amendments and the done backlog items (in [docs/archive/](docs/archive/README.md), where a stable ID leads), and
+in git, which is the final archive. Reports and finished items are moved there, never deleted, and the archive is not
+kept in step with the code. The backlog lists open items only: finishing one moves it to the archive and takes its ID
+out of `OPEN_BACKLOG_ITEMS` in the registry.
 
 **A comment** says what the code guarantees and why, briefly, and cites the decision or finding behind it by a stable
 ID. It does not tell the code's story: no commit, date, review round, PR or phase, nothing the code "used to" do or
@@ -118,7 +121,8 @@ the registry [docs/ids.ts](docs/ids.ts):
 | `LM-<n>` | a finding of the lifecycle model (research 17) | `LM-2` |
 
 A finding ID alone (`M-2`) names rows in several reports, so it resolves to none: write the prefixed form. A new report
-gets an entry in the registry and an anchor on each finding.
+gets an entry in the registry and an anchor on each finding; once it is closed, it moves to `docs/archive/reviews/`, its
+registry entry changes with it, and no citation does.
 
 **Values first, types derived.** What a doc renders or a test compares exists once, as a runtime value
 (`CONFIG_SCHEMA`, `CHANNEL_BUDGETS`, the egress table), and its types are derived from it (`as const`, `typeof`,

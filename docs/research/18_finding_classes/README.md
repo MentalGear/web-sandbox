@@ -3,7 +3,7 @@
 **Question (owner, during review round 5).** Do the bugs that keep coming up share a common problem class, and is
 there a better way to close all of them by construction?
 
-**Inputs.** Every report in `docs/security/`:
+**Inputs.** Every report in `docs/archive/reviews/`:
 - the adversarial, focused and broad reviews and the verification;
 - review rounds 1 to 4.
 
