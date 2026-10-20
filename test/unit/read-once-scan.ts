@@ -1,11 +1,12 @@
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 
 /**
- * The read-once scan (class G, research 18; review round 5, N-6): in a function, a property of one value is read at
+ * The read-once scan (class G, research 18; R5:N-6): in a function, a property of one value is read at
  * most once. A value the guest supplies (an option object, an event, a thrown value) can answer each read differently
  * through a getter or a Proxy, so library code that reads `init.method` to check it and again to use it has checked
- * one value and used another. Round 4's scan matched only `typeof x.p … x.p` in one statement; this one counts every
- * read of `x.p` (and `x?.p`) in the function that declares `x`, nested closures included, wherever the reads are.
+ * one value and used another. The scan counts every
+ * read of `x.p` (and `x?.p`) in the function that declares `x`, nested closures included, wherever the reads are, not
+ * only `typeof x.p … x.p` in one statement.
  *
  * What counts as one function's value: its parameters and the `const`, `let` and `var` it declares, outside nested
  * functions that declare the same name again. What counts as a read: `x.p` or `x?.p` where `x` is not itself a

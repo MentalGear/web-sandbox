@@ -7,8 +7,7 @@ import { join } from 'node:path';
 import { vi } from 'vitest';
 
 /**
- * Review round 5, the strict view's findings (unit): the library's own logic where no browser decides. Each test failed
- * at 60814b5. The engines' side is in test/e2e/strict-view-budget.spec.ts.
+ * The strict view's findings of R5 (unit): the library's own logic where no browser decides. The engines' side is in test/e2e/strict-view-budget.spec.ts.
  */
 
 // jsdom makes no trusted event of its own (dispatchEvent() makes every event untrusted), so the listener is called
@@ -102,7 +101,7 @@ describe("M-2 (class P): the view's time budget charges every operation in full"
         for (const cost of [1500, 7500]) {
             const budget = viewBudget(RATES, 0, VIEW_OPTIONS);
             budget.charge('time', cost, 0);
-            expect(budget.held('time', 0)).toBe(RATES.time - cost); // no floor (it was -1000 at 60814b5)
+            expect(budget.held('time', 0)).toBe(RATES.time - cost); // no floor (a floor would hold -1000)
             expect(budget.owes(0)).toBe(true);
             expect(budget.wait(0, 0)).toBe(Math.ceil(((cost - RATES.time) / RATES.time) * 1000));
             const repaid = ((cost - RATES.time) / RATES.time) * 1000;

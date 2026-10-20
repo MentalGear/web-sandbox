@@ -7,7 +7,7 @@ import { buildGuestDocument } from '@src/lib/frame-documents';
 import { deepMerge } from '@src/lib/utils';
 
 /**
- * Adversarial review 2026-10, policy and documents (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md): the guarantees
+ * Policy and documents (AR:A1 to AR:A8): the guarantees
  * as the element builds them, read back from the documents in its shadow root.
  */
 
@@ -106,7 +106,7 @@ describe("A2: the S14 'self' drop cannot be bypassed by punctuation", () => {
     });
 });
 
-// A build's 'terminated' comes in a task of its own (review round 1, R3-2): the state changes at once, the event after.
+// A build's 'terminated' comes in a task of its own (R1:R3-2): the state changes at once, the event after.
 const settled = () => new Promise(resolve => setTimeout(resolve, 0));
 
 describe('A4: an unknown mode fails closed', () => {
@@ -118,7 +118,7 @@ describe('A4: an unknown mode fails closed', () => {
         el.setConfig({ mode });
         expect(el.state).toBe('terminated');
         expect(wrapperOf(el)).toBeNull();
-        expect(reasons).toHaveLength(0); // not inside the call (R3-2)
+        expect(reasons).toHaveLength(0); // not inside the call (R1:R3-2)
         await settled();
         expect(reasons).toHaveLength(1);
         expect(reasons[0]).toMatch(/^unknown mode /);

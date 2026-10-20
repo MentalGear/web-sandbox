@@ -8,7 +8,7 @@ import { LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { createSizeOf } from '@src/lib/structured-size';
 
 /**
- * The element's events (class D/L; review round 5, L-3): one table, one constructor that freezes every detail deeply,
+ * The element's events (class D/L, R5:L-3): one table, one constructor that freezes every detail deeply,
  * and a source scan that no event is made anywhere else.
  */
 

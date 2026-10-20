@@ -11,8 +11,8 @@ import { mimeTypeFor as typeForPath } from '@src/lib/files';
 import { checkIn } from './check-in';
 
 /**
- * Review round 5: each finding where the library's own logic decides, reproduced here first against the code it names
- * (each test failed at 60814b5). Each names its class (docs/research/18_finding_classes/README.md). The structural tests
+ * Findings of R5 where the library's own logic decides, each reproduced here first against the code it names.
+ * Each names its class (docs/research/18_finding_classes/README.md). The structural tests
  * that keep each class closed are with its single list or chokepoint: test/unit/egress.test.ts (E-cpu),
  * test/unit/config-schema.test.ts (C), test/unit/element-events.test.ts (D/L), test/unit/read-once.test.ts (G). The
  * findings where the browser decides are in test/e2e/error-cost-and-queued-calls.spec.ts.
@@ -100,7 +100,7 @@ describe('5:L-1 (class L): a call made while loading that settles before `ready`
         el.setConfig({ mode: 'strict' });
         const build = playBuild(el, 'strict');
         const call = el.callWithTimeout(30, 'm', 'ran');
-        build.load(); // at 60814b5 the queue was flushed here, and the call's frame was on its way to the guest
+        build.load(); // the queue is not flushed here: the call's frame is not on its way to the guest
         expect(posted(build.port)).toEqual([]);
         expect(await new Promise(resolve => setTimeout(() => resolve(outcome(call)), 60))).toEqual({ code: 'TIMEOUT', message: 'RPC timeout after 30ms: m' });
         build.ready();
@@ -172,7 +172,7 @@ describe('5:L-1 (class L): a call made while loading that settles before `ready`
     });
 });
 
-// ---- 5:L-2 = N-5 (class C): a call heavier than the byte budget is refused for good, never BUSY forever --------------
+// ---- R5:L-2 = R5:N-5 (class C): a call heavier than the byte budget is refused for good, never BUSY forever --------------
 
 // Strict mode's comms script (the bootstrap as the worker runs it), attached to a real port; what it posts arrives in `sent`.
 function attachedStrictComms(callBudget: { calls: number; bytes: number }) {
@@ -291,7 +291,7 @@ describe('5:N-4 and 5:L-4 (class D): one diff of the guest-write state', () => {
         expect(answer).toEqual({ path: 'pic.png', change: 'remove' });
         expect(el.listGuestWrites()).toEqual([]);
         expect(heard).toEqual([]);
-        expect(view.shows.get('pic.png')).toBe(false); // at 60814b5 the view was never told, and kept the old blob: URL
+        expect(view.shows.get('pic.png')).toBe(false); // the view is told, and drops the old blob: URL
     });
 
     it('L-4: a withdrawn write (a new path written, then removed) is announced, since the list changed, and listed nowhere; docs/API.md says so', async () => {

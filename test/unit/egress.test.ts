@@ -11,7 +11,7 @@ import { defineWebSandbox } from '@src/host';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 
 /**
- * The egress table (class E-cpu; review round 5, N-1): every row has its bound and its test, and the bootstrap installs
+ * The egress table (class E-cpu, R5:N-1): every row has its bound and its test, and the bootstrap installs
  * exactly the listeners of its rows, doing what each row says. The per-engine enumeration of the surfaces themselves is
  * test/e2e/egress.spec.ts.
  */

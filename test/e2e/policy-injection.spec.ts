@@ -4,11 +4,10 @@ import { useRecorder } from './recorder';
 import { inView, waitInView } from './strict-view';
 
 /**
- * Adversarial review 2026-10, policy (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md, A1). A configured value or key
- * cannot add a directive to a guest policy: only exact origins reach it, each in its kind's directive of a fixed
+ * A configured value or key cannot add a directive to a guest policy (AR:A1): only exact origins reach it, each in its kind's directive of a fixed
  * template (src/lib/csp/origins.ts, csp-generator.ts, ADR-007). Asserted here where it matters most, in strict mode, whose view
- * relies on script-src-attr 'none' (G1): an injected value that once enabled handler attributes in the view.
- * The renderer keeps no handler attribute (an allowlist since the broad review 2026-10-14), so the policy layer is
+ * relies on script-src-attr 'none' (G1): an injected value that enabled handler attributes would defeat it.
+ * The renderer keeps no handler attribute (it is an allowlist, ADR-005), so the policy layer is
  * probed on its own: the handler is set on the rendered image from outside (DevTools), and the document's policy
  * decides whether it compiles, whoever set it.
  * Evidence (T5): the view's policy and DOM read from outside; the handler's would-be request on the recorder,
@@ -55,8 +54,8 @@ test("A1: an injected origins value gives the strict view no handler attributes:
 });
 
 /**
- * Follow-up audit 2026-10-14, the A3 class: registered files must load under the directive that governs their kind of
- * load. Since ADR-007 no config can name a directive (script-src-elem, style-src-elem), so the directive that governs
+ * The A3 class (AR:A3): registered files must load under the directive that governs their kind of
+ * load. No config can name a directive (script-src-elem, style-src-elem; ADR-007), so the directive that governs
  * scripts and stylesheets is always the template's script-src and style-src, and blob: goes there, from the one
  * load-kind table (load-kinds.ts). Evidence (T5): each load's own outcome and the computed style read from outside
  * the guest frame, the host's violation events, the policy read from outside and compared whole.
@@ -91,7 +90,7 @@ test.describe('A3 class: registered files load under the directive of their kind
             'font-src': "'none'",
             'media-src': "'none'",
             'connect-src': 'blob:',
-            'worker-src': 'blob:', // never data: (broad review PD1)
+            'worker-src': 'blob:', // never data: (BR:PD1)
             'frame-src': "'none'",
             'object-src': "'none'",
             'base-uri': "'none'",

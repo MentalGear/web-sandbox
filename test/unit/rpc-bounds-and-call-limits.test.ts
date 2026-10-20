@@ -12,8 +12,8 @@ import { createFetchBridge, toFetchPolicy, type FetchRecord } from '@src/lib/fet
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 
 /**
- * Review round 3: each finding where the library's own logic decides, reproduced here first against the code it names
- * (each test failed at 16c545b). The findings where the browser decides are in test/e2e/log-errors-and-call-limits.spec.ts. The
+ * Findings of R3 where the library's own logic decides, each reproduced here first against the code it names.
+ * The findings where the browser decides are in test/e2e/log-errors-and-call-limits.spec.ts. The
  * bootstrap runs against stand-in ports whose postMessage structured-clones the frame, as a browser's does (as in
  * bootstrap-capture-and-measure.test.ts).
  */
@@ -72,7 +72,7 @@ afterEach(() => {
 });
 
 const SILENT_CONSOLE = new Proxy({}, { get: () => () => {} }) as Console;
-const CALL_BUDGET = { calls: 1000, bytes: 67108864 }; // the defaults (docs/API.md, Limits; review round 4, M-6: 1000 calls)
+const CALL_BUDGET = { calls: 1000, bytes: 67108864 }; // the defaults (docs/API.md, Limits; R4:M-6: 1000 calls)
 
 /** The bootstrap as the host builds it in strict mode (externalPort), attached to a cloning port. */
 function strictComms(console: Console = SILENT_CONSOLE, features: Record<string, unknown> = {}) {
@@ -153,7 +153,7 @@ describe('C-1: every RPC frame is built from bounded parts at the sender, and ch
         broker.expose('m', () => { ran++; });
         broker.handleMessage({ ...request(1, 'm'), padding: 'p'.repeat(18_000_000) });
         await settle();
-        expect([ran, frames[0].code]).toEqual([0, 'ARGS_NOT_TRANSFERABLE']); // review round 4, C-5: never carried, not retryable
+        expect([ran, frames[0].code]).toEqual([0, 'ARGS_NOT_TRANSFERABLE']); // R4:C-5: never carried, not retryable
         const call = broker.call('n');
         broker.handleMessage({ type: 'RPC_RES', id: frames[1].id, ok: true, value: 1, padding: 'p'.repeat(18_000_000) });
         expect(await outcome(call)).toMatchObject({ code: 'RESULT_NOT_TRANSFERABLE' });
@@ -590,7 +590,7 @@ describe("M-2: callLimits, the call budget's option (the owner's name)", () => {
         }
         el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'], callLimits: { maxBytesPerSecond: 1024 } });
         expect(el._callBudget).toEqual({ calls: CALL_BUDGET.calls, bytes: 1024 });
-        // a byte budget below the largest call is kept, and says once which calls it refuses (review round 5, L-2)
+        // a byte budget below the largest call is kept, and says once which calls it refuses (R5:L-2)
         expect(warnings()).toEqual(['[Sandbox] callLimits.maxBytesPerSecond is 1024, below the largest call (34603008 bytes): a call heavier than 1024 bytes is refused with ARGS_NOT_TRANSFERABLE.']);
     });
 
@@ -746,10 +746,9 @@ describe("C-2 and M-5: the view's time budget charges only the rendering it meas
         close();
     });
 
-    // Review round 5, M-2: the debt was floored at one second (VIEW_APPLY_MAX_DEBT_MS), so an operation of 7.5 s was
-    // charged 1.2 s and ran again every 12.5 s. Each is charged in full now, and the second past VIEW_MAX_OPERATION_MS
-    // within VIEW_OVERRUN_WINDOW_MS ends the sandbox (S72). (At 60814b5, the 1.5 s update held the next one back 5 s, and
-    // 20 s did too.)
+    // R5:M-2: the debt has no floor (a floor at one second would charge an operation of 7.5 s as 1.2 s and let it run
+    // again every 12.5 s). Each is charged in full, and the second past VIEW_MAX_OPERATION_MS
+    // within VIEW_OVERRUN_WINDOW_MS ends the sandbox (S72).
     it("a rendering update that took 1.5 s holds the next operation back for all of it: 1.3 s of debt, repaid at 200 ms per second (6.5 s)", { timeout: 60000 }, async () => {
         const { send, text, shown, fromView, close } = startView();
         await tasks();

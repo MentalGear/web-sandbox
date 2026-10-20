@@ -41,7 +41,7 @@ test('the built package runs strict mode: the view bootstrap is admitted by its 
     await page.waitForFunction(() => (window as any).sandboxLogs.includes('rendered'));
     await expect.poll(() => page.evaluate(() => (document.querySelector('packaged-sandbox') as HTMLElement).style.height)).toMatch(/^3[45]\d?px$/);
     expect(violations).toEqual([]);
-    // viewScriptHash() (review round 1, R4-5) is the bundle's own hash: the one in the view's policy, for a host page's policy
+    // viewScriptHash() (R1:R4-5) is the bundle's own hash: the one in the view's policy, for a host page's policy
     const [exported, built] = await page.evaluate(() => {
         const srcdoc = (document.querySelector('packaged-sandbox') as HTMLElement).shadowRoot!.querySelector('iframe')!.srcdoc;
         return [(window as any).viewScriptHash(), `'${/script-src '(sha256-[A-Za-z0-9+/=]+)'/.exec(srcdoc)![1]}'`];
@@ -50,7 +50,7 @@ test('the built package runs strict mode: the view bootstrap is admitted by its 
     expect(exported).toBe(built);
 });
 
-// Review round 2, C-8: an embedder reads the hash for its own policy at build time, in Node or Bun, from the package it
+// R2:C-8: an embedder reads the hash for its own policy at build time, in Node or Bun, from the package it
 // ships (docs/API.md, "Host page policy"). Importing the package there must not need a DOM, and the value must be the one
 // the browser finds in the view's policy: the bootstrap is one literal of the bundle, so nothing about where the bundle
 // runs, or how a consumer's build minifies it, changes the text that is hashed.
@@ -74,7 +74,7 @@ test('the built package imports in Node without a DOM, and its viewScriptHash() 
     expect(fromNode).toBe(inPolicy);
 });
 
-// Review A8 (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md): the default bootstrap is asserted parser-safe when the
+// AR:A8: the default bootstrap is asserted parser-safe when the
 // guest document is built (no "</script", "<script", "<!--" or NUL), and the bundle's function text is what is
 // asserted here. Every variant of the bootstrap is built: cooperative mode with files, the module graph, markup
 // references, the fetch bridge and auto-sizing, and worker mode. A text that failed the assertion would throw in

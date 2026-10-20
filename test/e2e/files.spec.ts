@@ -849,7 +849,7 @@ test.describe('10. CSS references and srcset: stylesheets and inline styles name
     const FONT = { base64: FONT_WOFF2_B64 };
     const SVG = (w: number, h: number) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"></svg>`;
 
-    // Measured per engine (2026-10-13), like the blob delivery probe: a <link> whose sheet has an @import
+    // Measured per engine, like the blob delivery probe: a <link> whose sheet has an @import
     // that names nothing (a relative URL left as written cannot resolve against a blob: base) fires
     // 'error' in Chromium and WebKit and 'load' in Firefox; the sheet's own rules apply in all three. An
     // <img> whose only srcset candidate cannot resolve fires 'error' in Chromium and WebKit and no event

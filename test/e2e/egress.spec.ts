@@ -3,7 +3,7 @@ import { inFrames } from './strict-view';
 import { EGRESS, REPORTED_EVENT_TYPES, type EgressMode, type EgressRealm } from '@src/lib/egress';
 
 /**
- * The egress table, enumerated on every engine (class E-cpu; review round 5, N-1; src/lib/egress.ts): in each realm guest
+ * The egress table, enumerated on every engine (class E-cpu, R5:N-1; src/lib/egress.ts): in each realm guest
  * activity can reach, every event-handler surface the engine has, its `on*` names on the global's prototype chain and on
  * the Worker and MessagePort interfaces, and the event types the platform reports without one, must be a row of the
  * table for that realm and mode. A new event type in a browser release fails here, and is classified, before a review

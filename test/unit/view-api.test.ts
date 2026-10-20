@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 /**
- * R4-5, the owner's decision after review round 1 (docs/archive/reviews/REVIEW-ROUND-1-2026-10-15.md, "Awaiting the owner"):
+ * R1:R4-5, the owner's decision on an open finding:
  * three public names. viewScriptHash() for an embedder's own Content-Security-Policy, and sandboxView.text() and
  * sandboxView.set(), so a strict guest updates text and form controls without hand-escaping markup or re-rendering. The
- * browsers' side is test/e2e/allow-forms-and-view-writes.spec.ts ("R4-5"), on all three engines.
+ * browsers' side is test/e2e/allow-forms-and-view-writes.spec.ts (R1:R4-5), on all three engines.
  */
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');

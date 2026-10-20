@@ -3,10 +3,10 @@ import { repeatedReads } from './read-once-scan';
 import { stringifiedFor } from './stringified';
 
 /**
- * Class G (docs/research/18_finding_classes/README.md; review round 5, N-6): in the code that runs in a guest realm, a
- * property of one value is read at most once per function (test/unit/read-once-scan.ts). Round 4's scan matched only
- * `typeof x.p … x.p` in one statement, and sandboxFetch read `init.method` twice in one expression, to test it and to use
- * it. Guest-supplied objects and events are read once each, by readOptions() and readEvent() (in-sandbox-script.ts).
+ * Class G (docs/research/18_finding_classes/README.md; R5:N-6): in the code that runs in a guest realm, a
+ * property of one value is read at most once per function (test/unit/read-once-scan.ts), not only `typeof x.p … x.p` in
+ * one statement: sandboxFetch must not read `init.method` twice in one expression, to test it and to use it.
+ * Guest-supplied objects and events are read once each, by readOptions() and readEvent() (in-sandbox-script.ts).
  *
  * The scan counts every value; the values below are the library's own (its constants, its records, the host's frames,
  * its lists' lengths), each named with why it may be read again. A guest value is never one of them. Which functions

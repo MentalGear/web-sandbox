@@ -4,15 +4,15 @@ import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
 
 /**
- * Adversarial review 2026-10, strict mode and files (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md):
+ * Strict mode and files (each label below is cited as AR:<label>):
  *   C1  every blob: URL that resolves in the view names a registered file: the worker's own source URL is revoked
- *       once the worker has run its script (follow-up audit 2026-10-14), and the worker keeps working after it in
+ *       once the worker has run its script, and the worker keeps working after it in
  *       every engine; a worker's copy of a JavaScript file is inert as a stylesheet;
  *   C2  the entry runs in its own scope: its top-level declarations cannot replace the globals the prelude
  *       captures and deletes, and an entry that escapes its scope does not start;
  *   C3  the prelude's lists reach no inherited setter: guest code watching every array write sees none of them,
  *       and flow control holds;
- *   C4  the view's violations are counted per directive (follow-up audit 2026-10-14): the guest's own refused loads
+ *   C4  the view's violations are counted per directive: the guest's own refused loads
  *       of one kind cannot hide a report of another;
  *   C5  a rendered link stays a link with one inert href (backlog S24, option B): the user agent's own actions on
  *       it (copy, open in a new tab, drag) carry nothing of the guest's, and clicks are still cancelled and delivered.
@@ -64,11 +64,11 @@ test.describe('C1: the view renders no blob: content but registered files', () =
         const bytes = Buffer.from([0, 1, 2, 250, 255]).toString('base64');
         // lateThrow is code of the revoked script: in WebKit its uncaught errors read "Script error." inside the
         // worker after the revocation, so the view logs them with the text it still has (in-sandbox-view.ts)
-        // files of the view's types (review round 1, R2-4: the worker mints URLs only for those)
+        // files of the view's types (R1:R2-4: the worker mints URLs only for those)
         await sandbox.registerFiles({ 'main.js': 'globalThis.entryRan = true; globalThis.lateThrow = () => setTimeout(() => { throw new Error("entry-late"); }, 0);', 'note.css': 'héllo', 'data.png': { base64: bytes } });
         expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
         const workerUrl: string = await sandbox.inGuest('return location.href');
-        // the evidence that the revocation happened: the view, read from outside, can no longer fetch the source
+        // the evidence that the revocation happened: the view, read from outside, can fetch nothing from the source
         await waitInView(page, browserName, `fetch(${JSON.stringify(workerUrl)}).then(() => false, () => true)`, 8000);
         const r = await sandbox.inGuest(`
             const url = sandboxFiles.url('note.css');
@@ -126,7 +126,7 @@ test.describe('C2: the entry runs in its own scope', () => {
         expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
         await expect.poll(() => sandbox.state(), { timeout: 8000 }).toBe('terminated');
         expect(await sandbox.waitForLog('the guest entry failed to start')).toBe('[Sandbox] the guest entry failed to start');
-        // the entry's own error text is a guest line (focused review F3), never part of the host line or the reason
+        // the entry's own error text is a guest line (FR:F3), never part of the host line or the reason
         expect(await sandbox.waitForLog(/^Uncaught .*the entry declares "Worker" at the top level/)).toBeTruthy();
     });
 });
@@ -194,8 +194,7 @@ test.describe('C5: a rendered link stays a link, but its href is one inert const
         })()`);
         expect(r).toEqual({ attr: INERT_HREF, href: INERT_HREF, area: INERT_HREF, svg: INERT_HREF, xlink: INERT_HREF, marked: false, link: true, anyLink: true, tabIndex: 0, focused: true, htmlAnchor: true });
         // The accessibility tree, through Playwright's role query: in Firefox and WebKit the view is an in-process frame
-        // Playwright always links. Chromium's view may be out of process (it was in the adversarial review's runs; the
-        // broad review's runs measured it in the host page's process, docs/archive/reviews/BROAD-REVIEW-2026-10-14.md, ST2), and
+        // Playwright always links. Chromium's view may be out of process or in the host page's process (BR:ST2), and
         // Playwright links such a frame unreliably (strict-view.ts), so there the role rests on the HTML-AAM facts above
         // (measured with getByRole: 1 there too).
         if (browserName !== 'chromium') {

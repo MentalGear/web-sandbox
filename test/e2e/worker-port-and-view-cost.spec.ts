@@ -5,11 +5,10 @@ import type { Page } from '@playwright/test';
 import { STILL_PROPERTIES, STILL_PROPERTY_PATTERN, VIEW_MAX_URLS, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
 
 /**
- * Review round 4: the findings where the browser decides, on Chromium, Firefox and WebKit: what reaches the host page's
- * thread from a guest worker's own postMessage (M-1), when a frame's load runs inside the embedder's DOM mutation (L-1),
- * what the style rewrite of `allowAnimations: false` costs (C-2), which parts of the media and form controls can animate
- * (C-7, Chromium), and what the browser does after a render with the URLs it holds (M-2). Each test failed at c7672bb
- * (the measurements say so where they are the evidence). The library's own logic is unit-tested in
+ * Findings of R4 where the browser decides, on Chromium, Firefox and WebKit: what reaches the host page's
+ * thread from a guest worker's own postMessage (R4:M-1), when a frame's load runs inside the embedder's DOM mutation (R4:L-1),
+ * what the style rewrite of `allowAnimations: false` costs (R4:C-2), which parts of the media and form controls can animate
+ * (R4:C-7, Chromium), and what the browser does after a render with the URLs it holds (R4:M-2). The library's own logic is unit-tested in
  * test/unit/worker-port-and-listeners.test.ts.
  */
 
@@ -154,13 +153,13 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
                     gaps[key] = Math.min(gaps[key] ?? Infinity, (await ticks(page, 4000, { execute: 'go()' })).longest);
                     const held = await waitInView<number>(page, browserName, `document.querySelectorAll('#a > i').length`, 30000);
                     expect(held, key).toBe(count);
-                    // left as written: nothing of it was read or rewritten (at c7672bb, 'all: unset;' with false)
+                    // left as written: nothing of it was read or rewritten (the case of 'all: unset;' with false)
                     if (name === 'all:unset') expect(await inView<string>(page, browserName, `document.querySelector('#a > i').getAttribute('style')`)).toBe('all:unset');
                 }
             }
         }
         console.log(`MEASURED ${browserName} C-2 longest host stall for one render of ${count} elements, least of ${SAMPLES}: <i style="all:unset"> true ${gaps['all:unset true']} ms, false ${gaps['all:unset false']} ms; plain <i> true ${gaps['plain true']} ms, false ${gaps['plain false']} ms`);
-        // at c7672bb: WebKit 10.3 s and Firefox 2.7 s with false, and the render was then refused
+        // without the limit on the rewrite: WebKit 10.3 s and Firefox 2.7 s with false, and the render was refused
         expect(gaps['all:unset false']!).toBeLessThan(gaps['plain false']! * 2 + 300);
     });
 
@@ -169,10 +168,10 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
         await waitInView(page, browserName, `!!document.getElementById('e')`);
         const styles = await inView<(string | null)[]>(page, browserName, `['a', 'b', 'c', 'd', 'e'].map(id => document.getElementById(id).getAttribute('style'))`);
         expect(styles.slice(0, 3)).toEqual(['all:unset', 'COLOR:red;margin:0', 'color: red;']);
-        // `all` beside an animation: gone whole, on every engine (review round 5, L-2: Chromium kept `all: unset;`, as it
+        // `all` beside an animation: gone whole, on every engine (R5:L-2: Chromium kept `all: unset;`, as it
         // stores `all` as one property)
         expect(styles[3]).toBeNull();
-        // no "animation" or "transition" in it: as written (review round 5, N-7: "trans" in transform and transparent)
+        // no "animation" or "transition" in it: as written (R5:N-7: "trans" in transform and transparent)
         expect(styles[4]).toBe('transform: rotate(1deg); color: transparent');
     });
 
@@ -195,7 +194,7 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
     });
 
     // The renderer reads a style attribute only when its text has "animation", "transition" or a backslash
-    // (in-sandbox-view.ts, stillStyle; review round 5, N-7): every property of this engine that sets an animation or
+    // (in-sandbox-view.ts, stillStyle; R5:N-7): every property of this engine that sets an animation or
     // transition longhand must be named so, `all` aside (it takes CSS-wide keywords only). Every property the engine
     // knows, set to `inherit` on its own.
     test('every property that sets an animation or transition longhand is named with "animation" or "transition", but all', async ({ page }) => {
@@ -246,7 +245,7 @@ test.describe('C-7: every -webkit- part of the media and form controls is in the
         console.log(`MEASURED chromium C-7: ${ids.size} user-agent pseudo ids, ${webkit.length} -webkit- ones`);
         expect(webkit.length).toBeGreaterThan(10);
         expect(webkit.filter(id => !(VIEW_STILL_PSEUDO_ELEMENTS as readonly string[]).includes(id))).toEqual([]);
-        // and the view gives each a rule here (review round 5, M-1): it adds one for a ::-webkit- name wherever the parser
+        // and the view gives each a rule here (R5:M-1): it adds one for a ::-webkit- name wherever the parser
         // keeps it, as CSS.supports() denies parts Chromium has (-webkit-media-controls-volume-control-container)
         const kept = await page.evaluate((names) => names.filter(name => {
             const sheet = new CSSStyleSheet();
@@ -315,8 +314,8 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
         expect((await sandbox.violations()).map(v => [v.directive, v.blockedURI])).toEqual([['img-src', 'https://a.example:8443/3.png']]);
     });
 
-    // A refused source: the reviewers' 6500 <img> per render (21–45% busy at c7672bb). An admitted origin: as many as the
-    // view may hold, VIEW_MAX_URLS per render (the reviewers' 6500 are refused whole now), served by the test, and by the
+    // A refused source: 6500 <img> per render (R4:M-2), 21–45% busy when each was left to the browser to refuse. An
+    // admitted origin: as many as the view may hold, VIEW_MAX_URLS per render (the 6500 are refused whole), served by the test, and by the
     // e2e server itself (loopback http:, which WebKit upgrades to https: and then fails: its numbers are a failed load's).
     //
     // The share is the host page's busy share over its own idle baseline, measured as view-bound.spec.ts measures the
@@ -380,7 +379,7 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
     });
 });
 
-// M-6: the default call budget, 1000 calls per second. Measured on every engine (the finding was Firefox's): a guest that
+// R4:M-6: the default call budget, 1000 calls per second, on every engine (Firefox showed it): a guest that
 // calls a host method paced at the budget, and one that sends the budget's worth at once every second.
 test.describe('M-6: the default call budget leaves the host page its share', () => {
     for (const [name, code] of [

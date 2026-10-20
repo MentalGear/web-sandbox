@@ -2,22 +2,22 @@
  * Runs one generated sequence (test/model/generator.ts) against the lifecycle reducer (src/lib/lifecycle.ts): the real
  * `reduce`, `step` and `runEffects`, against a fake element with a fake clock, task queue and microtask queue, and
  * feeds every observation to the same lifecycle model the e2e runner uses (test/model/lifecycle-model.ts: begin, end,
- * event, eventEnd). test/unit/lifecycle-reducer.test.ts runs thousands of sequences through it; S65 step 2, PR A.
+ * event, eventEnd). test/unit/lifecycle-reducer.test.ts runs thousands of sequences through it (S65).
  *
- * The fake element is the adapter host.ts will become (PRs B–D), reduced to what the lifecycle sees:
+ * The fake element mirrors host.ts's adapter, reduced to what the lifecycle sees:
  * - setConfig() clones the argument and applies it with the real config schema (normaliseConfig), so a refusal, an
  *   unknown mode and a strict entry are decided by the element's own rules; the files are a map of paths;
  * - a build makes a fake frame whose guest checks in after a few ms of fake time (a seeded delay): the strict view's
  *   VIEW_READY after it got its ports at the wrapper's load, the bootstrap's announcement in cooperative and worker
  *   mode, the wrapper's load alone without a bootstrap. One build in 40 has a guest that never checks in, so the load
  *   deadline ends it (as the host page's policy would);
- * - the wrapper's load handler queues a microtask, as host.ts's `_frameLoadHandler` does (review round 4, L-1), and a
+ * - the wrapper's load handler queues a microtask, as host.ts's `_frameLoadHandler` does (R4:L-1), and a
  *   frame also fires its load inside the embedder's appendChild() or remove() of the element, before the element's
  *   lifecycle reactions, as Chromium and WebKit do;
  * - nothing the fake guest or the fake timers deliver is cancelled at a teardown (only the load deadline at `ready`,
  *   which host.ts stops there): announcements, check-ins, loads and deadlines of environments that are gone arrive
  *   with their generation, and the reducer must drop them. That is stronger than the element, whose listeners and
- *   ports go with their environment (review B4).
+ *   ports go with their environment (AR:B4).
  *
  * Listener plans run as nested steps inside the dispatch, as in test/model/runner.ts. What cannot agree without a guest
  * is filtered out (the S65 plan): calls, execute(), commitGuestWrites() and listGuestWrites(), with the guest's logs,
@@ -52,7 +52,7 @@ export interface ReducerRunOptions {
     onStep?: (before: LcState, input: LcInput, output: LcOutput) => void;
     /** A listener of the test's own, after the model's first listener and the plans. */
     listen?: (type: string, detail: unknown, element: FakeElement) => void;
-    /** The adapter before round 4's L-1 fix: the wrapper's load completes the build in the load event itself. */
+    /** The adapter R4:L-1 rules out, for the model to catch: the wrapper's load completes the build in the load event itself. */
     syncFrameLoad?: boolean;
     /** Whether a frame fires its load inside the embedder's appendChild() or remove() (Chromium, WebKit). Default true. */
     loadInsideDomOperations?: boolean;

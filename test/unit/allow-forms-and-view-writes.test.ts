@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_SANDBOX_FLAGS } from '@src/csp-directives';
 
 /**
- * The owner's decisions after review round 1 (docs/archive/reviews/REVIEW-ROUND-1-2026-10-15.md, "Awaiting the owner"), each
- * reproduced here first where library logic decides: R2-2 (`allow-forms` is an unsafe capability in cooperative mode)
- * and R4-4 (the strict view shows raster-image guest writes); R4-5 is test/unit/view-api.test.ts.
+ * The owner's decisions on open findings, each reproduced here first where library logic decides: R1:R2-2 (`allow-forms`
+ * is an unsafe capability in cooperative mode) and R1:R4-4 (the strict view shows raster-image guest writes); R1:R4-5 is
+ * test/unit/view-api.test.ts.
  * The browser's side of each is test/e2e/allow-forms-and-view-writes.spec.ts, on all three engines.
  */
 
@@ -290,7 +290,7 @@ describe('R4-4: the strict view shows raster-image guest writes, minted by the v
             await write('logo.png', 'text/plain', null);
             await renderHtml('<img id="b" src="logo.png"><img id="c" src="' + created[3] + '">');
             expect(revoked).toEqual([created[1], created[2], created[3]]);
-            expect([src('b'), document.getElementById('c')!.hasAttribute('src')]).toEqual(['logo.png', false]); // a revoked URL is no longer the view's (A8)
+            expect([src('b'), document.getElementById('c')!.hasAttribute('src')]).toEqual(['logo.png', false]); // a revoked URL is not the view's (AR:A8)
         });
     });
 });

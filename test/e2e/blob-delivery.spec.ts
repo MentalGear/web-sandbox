@@ -187,7 +187,7 @@ const WORKER_LOADS: Probe[] = [
 
 // Chromium refuses a MODULE worker whose blob: URL was created in an opaque-origin document, under
 // any policy (a bare error event, no CSP violation); a data: module worker and the same blob module
-// worker on a normal origin both start. Firefox and WebKit start it. Measured 2026-10-13.
+// worker on a normal origin both start. Firefox and WebKit start it.
 const moduleWorker = (browserName: string) => (browserName === 'chromium' ? 'error' : 'ok');
 
 test.describe('1. default CSP: guest-created blob: subresources are refused', () => {
@@ -301,7 +301,7 @@ async function runScenario(sandbox: any, body: string, before = ''): Promise<Rec
 }
 
 // Firefox (146) honours only the FIRST import map of a document, and none at all once a module
-// script has been prepared or import() called; Chromium and WebKit merge later maps. Measured 2026-10-13.
+// script has been prepared or import() called; Chromium and WebKit merge later maps.
 const laterMapHonoured = (browserName: string) => browserName !== 'firefox';
 
 test.describe('3. module resolution between blob: modules', () => {
@@ -334,10 +334,10 @@ test.describe('3. module resolution between blob: modules', () => {
     });
 
     // A relative specifier never resolves against the importing blob: URL (its path is opaque), so the
-    // specifier stays as written. Since S15 the guest document's base URL is about:blank, against which
+    // specifier stays as written. The guest document's base URL is about:blank (S15), against which
     // './utils.js' and '/app/utils.js' cannot be resolved either, so those import-map keys stay as written
     // too. Firefox and WebKit then match specifier to key literally (as the import maps spec reads) and
-    // the import succeeds through the guest's own map; Chromium still refuses it. Measured 2026-10-13.
+    // the import succeeds through the guest's own map; Chromium refuses it.
     test('relative specifiers inside a blob: module never resolve against its blob: URL; they match the guest\'s own literal map keys in Firefox and WebKit only', async ({ sandbox, browserName }) => {
         const r = await runScenario(sandbox, `
             const U = mk("export const out = 'u';");
@@ -577,9 +577,9 @@ async function reportedViolations(sandbox: any): Promise<string[]> {
 
 // ---- 5a: no 'self' in the guest policy (backlog S14) ---------------------------------------------
 //
-// Measured 2026-10-13 with the old default script-src 'self' 'unsafe-inline': in this opaque-origin
-// guest, WebKit let 'self' admit ANY https origin (the request left the machine and the script ran),
-// Chromium resolved it to the host page's origin, Firefox matched nothing. So the guest policy never
+// With a script-src of 'self' 'unsafe-inline' in this opaque-origin guest, WebKit lets 'self' admit ANY https
+// origin (the request leaves the machine and the script runs), Chromium resolves it to the host page's origin,
+// Firefox matches nothing. So the guest policy never
 // contains 'self' (ADR-007: it is not an origin): not by default, and dropped with a warning when
 // configured. These tests run identically on every engine.
 

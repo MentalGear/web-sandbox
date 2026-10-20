@@ -295,7 +295,7 @@ test.describe('G2 the worker', () => {
         await render(sandbox, browserName, '<p>honest</p>', 'honest');
         const tried = await sandbox.inGuest('return tryAllPorts()');
         await page.waitForTimeout(800);
-        // the guest saw no port at all: since review B2 the logic port is as far out of reach as the render port
+        // the guest saw no port at all: the logic port is as far out of reach as the render port (AR:B2)
         expect(tried).toBe(0);
         expect(await inView(page, browserName, `!!document.getElementById('bypass')`)).toBe(false);
         await render(sandbox, browserName, '<p>still honest</p>', 'honest-2'); // positive control: the library's path still works
@@ -327,7 +327,7 @@ test.describe('the entry', () => {
             expect(await page.evaluate(() => (window as any).termination)).toBe('the guest entry failed to start');
             expect(await sandbox.state()).toBe('terminated');
             expect(await sandbox.waitForLog('the guest entry failed to start')).toBe('[Sandbox] the guest entry failed to start');
-            expect(await sandbox.waitForLog(/^Uncaught /)).toBeTruthy(); // the error's text, as a guest line (focused review F3)
+            expect(await sandbox.waitForLog(/^Uncaught /)).toBeTruthy(); // the error's text, as a guest line (FR:F3)
         });
     }
 
@@ -340,12 +340,11 @@ test.describe('the entry', () => {
         expect(await sandbox.call('alive')).toBe(true);
     });
 
-    // Backlog S75 (class B). WebKit mutes, inside the worker, the errors of code compiled from a string (Function, eval,
-    // execute()) from the start, so they reach the view's Worker object with their text. The view used to read the end of
-    // the entry from VIEW_STARTED, on another channel, and took such an error that reached it first for the entry's own:
-    // "the guest entry failed to start" for an entry that had run to its end (WebKit before S75: the microtask of compiled
-    // code 8 runs in 8, the timer 5 in 8, and relay-and-rpc-budgets.spec.ts's execute() 2–3 in 100–200 under load). It reads it now from the
-    // marker error that ends the entry, in the order of the Worker object's errors.
+    // S75 (class B). WebKit mutes, inside the worker, the errors of code compiled from a string (Function, eval,
+    // execute()) from the start, so they reach the view's Worker object with their text. The view reads the end of
+    // the entry from the marker error that ends it, in the order of the Worker object's errors, not from VIEW_STARTED on
+    // another channel: such an error that reached the view first would be taken for the entry's own, "the guest entry
+    // failed to start", for an entry that had run to its end.
     for (const [label, source] of [
         ['a microtask', `queueMicrotask(() => { throw new Error('late one'); });`],
         ['a microtask of code compiled from a string', `queueMicrotask(new Function("throw new Error('late one')"));`],
@@ -413,7 +412,7 @@ test('A5: a view that is gone (reloaded, so it never gets its ports back) ends t
 
 // ---- files in the view (A8, ADR-004 amendment) ------------------------------------------------------------
 
-// a 3 × 5 PNG: the view mints URLs only for types that never open as a document (broad review ST1), so no SVG
+// a 3 × 5 PNG: the view mints URLs only for types that never open as a document (BR:ST1), so no SVG
 const PNG_3X5 = { base64: 'iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAYAAACAcVaiAAAAEklEQVR4nGP4z8DwH4YZyOAAAMufHeOcQ//1AAAAAElFTkSuQmCC' };
 
 test.describe('files', () => {
@@ -434,9 +433,9 @@ test.describe('files', () => {
             unregistered: document.getElementById('unregistered').getAttribute('src'),
             viewFiles: sandboxFiles.list(),
         })`);
-        // the view holds only the files it may show: no JavaScript, no JSON (VIEW_FILE_TYPES, broad review ST1)
+        // the view holds only the files it may show: no JavaScript, no JSON (VIEW_FILE_TYPES, BR:ST1)
         expect(r).toEqual({ logo: 'blob:null/', sheet: 'blob:null/', styled: '7px', unregistered: 'img/missing.png', viewFiles: ['css/site.css', 'img/logo.png'] });
-        // the worker reads every file; it mints URLs only for the types the view shows (review round 1, R2-4)
+        // the worker reads every file; it mints URLs only for the types the view shows (R1:R2-4)
         const worker = await sandbox.inGuest(`let js; try { js = sandboxFiles.url('lib.js'); } catch (error) { js = error.code; }
             return { list: sandboxFiles.list(), json: JSON.parse(await sandboxFiles.text('data.json')).answer, js, png: sandboxFiles.url('img/logo.png').slice(0, 10) }`);
         expect(worker).toEqual({ list: ['css/site.css', 'data.json', 'img/logo.png', 'lib.js'], json: 42, js: 'NOT_FOUND', png: 'blob:null/' });
@@ -468,7 +467,7 @@ test.describe('configuration', () => {
         page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
         expect(await sandbox.mount(strict({
             capabilities: ['allow-pointer-lock'],
-            // @ts-expect-error not in strict mode (review round 1, R3-6); a config from JSON can still carry them
+            // @ts-expect-error not in strict mode (R1:R3-6); a config from JSON can still carry them
             unsafeCapabilities: ['allow-popups', 'fullscreen'],
             // @ts-expect-error strict mode has no scripts kind; a config from JSON can still carry one
             origins: { scripts: ['https://cdn.example'] },
@@ -499,7 +498,7 @@ test.describe('configuration', () => {
         await render(sandbox, browserName, '<div style="height: 420px"></div>', 'tall');
         await expect.poll(() => page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).getBoundingClientRect().height), { timeout: 5000 }).toBeGreaterThan(420);
         const before = await page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).style.height);
-        // only the view's reports count; the worker cannot even reach its own (logic) port to post one (review B2)
+        // only the view's reports count; the worker cannot even reach its own (logic) port to post one (AR:B2)
         await sandbox.run(`globalThis.__port = null; const o = MessagePort.prototype.postMessage; MessagePort.prototype.postMessage = function (m, ...r) { globalThis.__port = this; this.postMessage = o; return o.call(this, m, ...r); }; console.log('forge')`);
         await sandbox.waitForLog('forge');
         expect(await sandbox.inGuest('return globalThis.__port')).toBeNull();

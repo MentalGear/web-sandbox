@@ -3,9 +3,9 @@ import { VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT } from '@src/lib/violation'
 import { checkIn } from './check-in';
 
 /**
- * Follow-up audit 2026-10-14 (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md, "Follow-up"), host side: the execution
- * budget (backlog B8; since the focused review 2026-10-14, F2: a free event loop at each deadline) and the rule for work handed to a sandbox with no environment (backlog B8), the one place a log detail
- * is made (B3), and the per-directive violation counts of the strict view (C4). The in-browser halves are in
+ * Host side: the execution budget (BL:B8; FR:F2: a free event loop at each deadline) and the rule for work handed to a
+ * sandbox with no environment (BL:B8), the one place a log detail is made (BL:B3), and the per-directive violation
+ * counts of the strict view (AR:C4). The in-browser halves are in
  * test/e2e/worker-timeout.spec.ts and test/e2e/strict-entry-scope-and-links.spec.ts.
  */
 
@@ -37,7 +37,7 @@ describe('B8, focused review F2: workerExecutionTimeout requires a free event lo
         const { EXECUTION_TIMEOUT_GRACE_MS } = await import('@src/host');
         const el = await mount({ mode, scriptUnsafe: true, workerExecutionTimeout: budget });
         const port = recordingPort();
-        checkIn(el, port); // the build is ready on this port (posting waits for `ready`, review round 5, L-1)
+        checkIn(el, port); // the build is ready on this port (posting waits for `ready`, R5:L-1)
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         const logs: string[] = [];
@@ -155,7 +155,7 @@ describe('B8: execute() and call() follow one rule while there is no environment
         expect(el.state).toBe('loading');
         el.execute('1');
         const pending = el.call('x');
-        expect(el._queue.map((item: any) => ('code' in item ? item.code : item.frame.method))).toEqual(['1', 'x']); // one queue, in order (L-3)
+        expect(el._queue.map((item: any) => ('code' in item ? item.code : item.frame.method))).toEqual(['1', 'x']); // one queue, in order (R5:L-3)
         el.reset();
         await expect(pending).rejects.toMatchObject({ code: 'TERMINATED' });
     });

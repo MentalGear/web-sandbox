@@ -2,8 +2,8 @@ import { test, expect, type MountConfig } from './fixture';
 import { busyShare, describeShare, viewBound } from './host-share';
 
 /**
- * Review round 2 (reviewer C): the findings where the browser decides, on Chromium, Firefox and WebKit. Each test failed
- * at 31b8f0d. The host page's own policy (C-5, C-6) is in host-policy.spec.ts, the package's hash (C-8) in package.spec.ts.
+ * Findings of R2 where the browser decides, on Chromium, Firefox and WebKit. The host page's own policy
+ * (R2:C-5, R2:C-6) is in host-policy.spec.ts, the package's hash (R2:C-8) in package.spec.ts.
  */
 
 const MODES: Record<string, MountConfig> = {
@@ -80,7 +80,7 @@ test.describe('C-3: what a call answers is measured as it is posted, by an allow
     }
 });
 
-// Review round 2, M-3: what the view's operations cost the host page's thread, which the view shares in WebKit and Firefox
+// R2:M-3: what the view's operations cost the host page's thread, which the view shares in WebKit and Firefox
 // (and in Chromium depending on its process model), measured from the host page as its busy share against its own idle
 // baseline (./host-share.ts), and bounded by the view's time budget as the suite asserts it (docs/API.md, "The view's
 // cost to the host page", (a): 20%, plus the measure's 10 points). Each flood stays within every budget the view counts
@@ -120,8 +120,8 @@ test.describe("M-3: the view's work is budgeted by the time it takes, not only b
             // sustained, not the first operation: one operation's own cost (one textarea's paint, 1.3–1.7 s in WebKit) is
             // not something a rate can bound; what follows it is (a warm-up of 2 s)
             const share = await busyShare(page, () => sandbox.run('flood()'), undefined, 2000);
-            // The second operation past VIEW_MAX_OPERATION_MS within VIEW_OVERRUN_WINDOW_MS ends the sandbox (review round
-            // 5, M-2; backlog S72): in WebKit the first set() of the textarea, its value and its first paint, takes longer
+            // The second operation past VIEW_MAX_OPERATION_MS within VIEW_OVERRUN_WINDOW_MS ends the sandbox (R5:M-2,
+            // S72): in WebKit the first set() of the textarea, its value and its first paint, takes longer
             // than 2 s, an overrun the sandbox survives; a later set() past it ends the sandbox with that reason. The
             // host page keeps its ticks either way.
             await expect.poll(async () => (await sandbox.logs()).includes('M3 flood done') || (await sandbox.state()) === 'terminated', { timeout: 30000 }).toBe(true);

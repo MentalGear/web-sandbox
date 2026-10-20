@@ -8,8 +8,8 @@ import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { checkIn } from './check-in';
 
 /**
- * Review round 2, reviewer L (model-based lifecycle testing): each finding reproduced here first, against the element
- * in jsdom. The engine-specific ones (L-1 and L-5 in a real iframe's document) are in test/e2e/foreign-document-and-view-time.spec.ts.
+ * Findings of R2 from model-based lifecycle testing: each reproduced here first, against the element
+ * in jsdom. The engine-specific ones (R2:L-1 and R2:L-5 in a real iframe's document) are in test/e2e/foreign-document-and-view-time.spec.ts.
  */
 
 afterEach(() => {
@@ -144,7 +144,7 @@ describe('L-3: work queued while loading is sent in the order it was issued', ()
         const { port1 } = new MessageChannel();
         const posted: any[] = [];
         port1.postMessage = (frame: unknown) => { posted.push(frame); };
-        checkIn(el, port1); // the build becomes ready: what waited is posted then (review round 5, L-1)
+        checkIn(el, port1); // the build becomes ready: what waited is posted then (R5:L-1)
         expect(posted.map(frame => (frame.type === 'RPC_REQ' ? `call ${frame.method}` : `execute ${frame.code}`))).toEqual(['call get', 'execute v = 1', 'call after']);
         port1.close();
     });

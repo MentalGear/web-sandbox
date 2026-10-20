@@ -4,12 +4,12 @@ import { useRecorder } from './recorder';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 
 /**
- * The owner's decisions after review round 1 (docs/archive/reviews/REVIEW-ROUND-1-2026-10-15.md, "Awaiting the owner"), where
+ * The owner's decisions on the open findings R1:R2-2, R1:R4-4 and R1:R4-5, where
  * the browser decides, on Chromium, Firefox and WebKit. Evidence is read from outside the sandbox: the frames'
  * attributes from the host page, the view's DOM through strict-view.ts (DevTools in Chromium), the recorder's listeners.
- *   R2-2  allow-forms is an unsafe capability in cooperative mode (and test/e2e/relay-and-rpc-budgets.spec.ts, "R2-2")
- *   R4-4  the strict view shows raster-image guest writes, decoded only
- *   R4-5  sandboxView.text() and sandboxView.set() (viewScriptHash(): host-policy.spec.ts and package.spec.ts)
+ *   R1:R2-2  allow-forms is an unsafe capability in cooperative mode (and test/e2e/relay-and-rpc-budgets.spec.ts, R1:R2-2)
+ *   R1:R4-4  the strict view shows raster-image guest writes, decoded only
+ *   R1:R4-5  sandboxView.text() and sandboxView.set() (viewScriptHash(): host-policy.spec.ts and package.spec.ts)
  */
 
 const recorder = useRecorder();
@@ -110,7 +110,7 @@ test.describe('R4-4: the strict view shows the raster images the guest writes, f
         expect(second.size).toBe('7x4');
         expect(second.src).toMatch(/^blob:/);
         expect(second.src).not.toBe(first.src);
-        // A revoked URL is no longer the view's: markup that names it keeps no src (A8); the live one stays (the control).
+        // A revoked URL is not the view's: markup that names it keeps no src (AR:A8); the live one stays (the control).
         // (Whether a revoked URL still loads is the engine's image cache: Firefox serves what it already decoded.)
         const named = async (urls: string[]) => {
             await sandbox.run(`sandboxView.render(${JSON.stringify(urls.map((url, i) => `<img id="u${i}" src="${url}">`).join('') + '<p id="named">n</p>')}, null)`);

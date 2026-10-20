@@ -85,10 +85,9 @@ test.describe('3. a report is a guest claim', () => {
 
     test('guest code cannot reach the port (review B2), nor bend what the bootstrap reads: getters it puts on the event\'s prototype answer nothing, the reports are the browser\'s (review round 5, N-6)', async ({ sandbox }) => {
         expect(await sandbox.mount()).toBe('ready');
-        // Before review B2, guest code took the port by patching MessagePort.prototype.postMessage and posted
-        // VIOLATION frames of its own. The bootstrap now calls only primitives captured before guest code ran, so
-        // that yields nothing (asserted at length in channel-isolation.spec.ts). The bootstrap reads a violation event
-        // through the platform's getters, captured before guest code ran (readEvent, review round 5, N-6), so getters
+        // Guest code cannot take the port by patching MessagePort.prototype.postMessage to post VIOLATION frames of
+        // its own (AR:B2): the bootstrap calls only primitives captured before guest code ran, so that yields nothing (asserted at length in channel-isolation.spec.ts). The bootstrap reads a violation event
+        // through the platform's getters, captured before guest code ran (readEvent, R5:N-6), so getters
         // guest code puts on SecurityPolicyViolationEvent.prototype change nothing it reports. (The host validates and
         // clamps every report all the same: violation.ts.)
         await sandbox.run(`
@@ -183,8 +182,8 @@ test.describe('5. strict mode', () => {
         `);
         expect(outcome).toEqual({ fetched: 'refused', imported: 'refused' });
         await page.waitForTimeout(800);
-        // then a flood of real refusals in the worker, past the cap (the worker cannot post on its port itself
-        // since review B2, so the flood is what the engine raises: none in WebKit)
+        // then a flood of real refusals in the worker, past the cap (the worker cannot post on its port itself,
+        // AR:B2, so the flood is what the engine raises: none in WebKit)
         await sandbox.run(`for (let i = 0; i < 150; i++) fetch('${ATTACKER}/flood-' + i).catch(() => {}); console.log('flooded')`);
         await sandbox.waitForLog('flooded');
         await page.waitForTimeout(800);

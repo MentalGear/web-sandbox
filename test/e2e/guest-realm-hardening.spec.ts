@@ -3,7 +3,7 @@ import { test, expect, type SandboxDriver } from './fixture';
 import { useRecorder, wss } from './recorder';
 
 /**
- * Broad review 2026-10-14 (docs/archive/reviews/BROAD-REVIEW-2026-10-14.md), where browser behaviour decides:
+ * The guest realm's hardening (each label below is cited as BR:<label>), where browser behaviour decides:
  *   CB1  the guest's port is announced by the bootstrap, never handed into the guest: document.open() before the
  *        wrapper's load leaves no listener of the guest's holding a port of ours;
  *   PD8  a second announcement from the guest's window (it reloaded itself, rewrote its document so a bootstrap ran
@@ -340,7 +340,7 @@ test.describe('PD5: focus and the clipboard (residuals, measured)', () => {
         const without = await attempt();
         await page.frameLocator('web-sandbox >>> iframe').frameLocator('iframe').locator('#t').click();
         const withClick = await attempt();
-        // writeText() called in the click's own handler (independent verification 2026-10-14): WebKit's activation does
+        // writeText() called in the click's own handler (BR:PD5): WebKit's activation does
         // not last until the call above, which runs a moment later through execute(); in the handler WebKit writes too
         await sandbox.run(`document.getElementById('t').addEventListener('click', () => navigator.clipboard.writeText('PD5').then(() => console.log('PD5-HANDLER written'), (e) => console.log('PD5-HANDLER ' + e.name)), { once: true });`);
         await page.frameLocator('web-sandbox >>> iframe').frameLocator('iframe').locator('#t').click();

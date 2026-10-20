@@ -4,7 +4,7 @@ import { test, expect } from './fixture';
  * A violation report's strings are cut before they are posted (class E-cpu, "cut before posting"; backlog S61.3's scan,
  * test/unit/structural.test.ts): the bootstrap and the view cut `directive`, `blockedURI` and `sourceFile` at
  * VIOLATION_MAX_STRING (2048), so a URL the guest chose never crosses whole to the host page, which cuts them again on
- * receipt (violation.ts). Measured on every engine: what the report arrives as on the host page's port, raw, before the
+ * receipt (violation.ts). Asserted on every engine: what the report arrives as on the host page's port, raw, before the
  * element reads it, and what the `violation` event says.
  */
 

@@ -5,11 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { createFetchBridge, toFetchPolicy, FETCH_ERROR_CODES, type FetchBridge, type FetchBridgeConfig, type FetchRecord } from '@src/lib/fetch-bridge';
 
 /**
- * Class L (docs/research/18_finding_classes/README.md), finding LM-1: after its environment's teardown, the fetch bridge
- * reports only 'aborted' (docs/API.md, FetchRecord). The model-based lifecycle suite found a `fetch` listener that tore the
- * environment down receiving an 'ok' record of that environment afterwards: the outcome was decided on each settle path,
- * and only the catch looked at the teardown. Now one chokepoint decides it (fetch-bridge.ts, createFetchBridge's record),
- * and this is its structural test.
+ * Class L (docs/research/18_finding_classes/README.md), LM-1: after its environment's teardown, the fetch bridge
+ * reports only 'aborted' (docs/API.md, FetchRecord). A `fetch` listener that tears the environment down must never
+ * receive an 'ok' record of that environment afterwards, which holds because one chokepoint decides the outcome of
+ * every settle path (fetch-bridge.ts, createFetchBridge's record); this is its structural test.
  *
  * Every way a request can settle is one entry of PATHS. Each entry is run twice:
  *   - alone: nothing tears the bridge down, and the record has the outcome the path stands for (so the entry really

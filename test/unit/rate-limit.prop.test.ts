@@ -13,7 +13,7 @@ import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
  * (in-sandbox-script.ts, slidingWindow) as the guest runs it, and checked to decide alike (the differential test).
  *
  * Two of research 17's properties are preconditions, not guarantees: time never goes back (P4), and the guest and the
- * host agree only while the delay between them never shrinks (P2b; round 3's L-4, documented). Each is kept as its
+ * host agree only while the delay between them never shrinks (P2b; R3:L-4, documented). Each is kept as its
  * known counterexample, given to fast-check as an `examples` entry, so the test does not depend on the random search
  * finding it: should one stop failing, the precondition it documents has changed, and the docs with it.
  *

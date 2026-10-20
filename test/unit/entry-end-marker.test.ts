@@ -2,16 +2,16 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { inStrictWorker, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
 
 /**
- * Backlog S75 (class B, a browser decision re-derived): which of the Worker object's errors are the strict entry's own
- * (they end the sandbox, "the guest entry failed to start") and which are later (logged). The view used to read the end
+ * S75 (class B, a browser decision re-derived): which of the Worker object's errors are the strict entry's own
+ * (they end the sandbox, "the guest entry failed to start") and which are later (logged). The view does not read the end
  * of the entry from VIEW_STARTED, on the render port, a second channel, on the prediction that an error which reaches it
- * before VIEW_STARTED can only be the entry's. WebKit refutes it: it mutes the errors of code compiled from a string
+ * before VIEW_STARTED can only be the entry's: WebKit refutes that. It mutes the errors of code compiled from a string
  * (execute(), Function, eval) in the worker from the start, so they reach the Worker object, and one raised after the
- * entry ran reached the view before VIEW_STARTED did (PR #47's CI: relay-and-rpc-budgets.spec.ts, "strict mode: a later uncaught
- * error …", WebKit; an entry's queueMicrotask of such code: always). Now the line after the entry raises the build's
+ * entry ran reaches the view before VIEW_STARTED does (relay-and-rpc-budgets.spec.ts, "strict mode: a later uncaught
+ * error …", WebKit; an entry's queueMicrotask of such code: always). So the line after the entry raises the build's
  * marker error, and the view reads the end of the entry from the order of the Worker object's errors alone.
  *
- * Each case here failed before S75: the view posted GUEST_ERROR for the marker and for every error before VIEW_STARTED.
+ * Each case here fails if the view posts GUEST_ERROR for the marker, or for every error before VIEW_STARTED.
  */
 
 const MARKER = '__sandboxEntryRan_0123456789abcdef0123456789abcdef';

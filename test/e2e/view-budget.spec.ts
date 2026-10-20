@@ -4,9 +4,9 @@ import { busyShare, describeShare, lag, startLag, viewBound } from './host-share
 import { VIEW_MAX_OPERATION_MS } from '@src/lib/in-sandbox-view';
 
 /**
- * The strict view's budget (review round 1, R1-1 and R1-2; ADR-005 amendment 2026-10-15). The view runs on the host
+ * The strict view's budget (R1:R1-1 and R1:R1-2; ADR-005). The view runs on the host
  * page's thread in Firefox and WebKit, and in Chromium depending on its process model, so what it renders is host work.
- * Bounded now by construction, and measured from the host page (its busy share against its own idle baseline,
+ * Bounded by construction, and measured from the host page (its busy share against its own idle baseline,
  * ./host-share.ts):
  *   - the characters the view holds, text, comments and attributes alike (its body's serialization), counted over the
  *     document a render would leave, like elements (VIEW_MAX_CHARACTERS);
@@ -14,7 +14,6 @@ import { VIEW_MAX_OPERATION_MS } from '@src/lib/in-sandbox-view';
  *     worker's next render waits for it (flow control), so a guest cannot keep the host busy with renders that fit;
  *   - no element whose layout cost grows faster than the markup (Firefox's line breaking over <wbr>: 43 000 of them
  *     stalled its host about 20 s).
- * Each test failed at 5ede7ba.
  */
 
 async function mountEntry(sandbox: SandboxDriver, source: string) {
@@ -46,7 +45,7 @@ test('R1-1: renders of 261 000 characters of text into 200 targets every 20 ms l
     expect(share.busy).toBeLessThanOrEqual(viewBound(false)); // docs/API.md (a): 20%, plus the measure's 10 points
     expect(held).toBeLessThanOrEqual(4 * 262144);
     // renders past the budget were refused, acknowledged, and said in the guest's log: the queued renders keep being
-    // applied after the flood, at the view's rates (characters, and its time per second: review round 2, M-3), so the
+    // applied after the flood, at the view's rates (characters, and its time per second: R2:M-3), so the
     // refusal can come after the flood's end (WebKit, whose renders of this text take longest)
     await sandbox.waitForLog('[Sandbox] sandboxView.render: the view refused a render: the view would hold more than 1048576 characters; nothing of it was applied.', 30000);
 });
@@ -60,7 +59,7 @@ test('R1-2: 43 000 <wbr> elements (within the element budget) leave the host pag
     await startLag(page);
     const started = Date.now();
     await sandbox.run('wbr()');
-    // from the render to its layout: Firefox laid out 43 000 <wbr> in about 23 s at 5ede7ba
+    // from the render to its layout (unbounded, Firefox lays out 43 000 <wbr> in about 23 s)
     await waitInView(page, browserName, `!!document.getElementById('w') && document.getElementById('w').getBoundingClientRect().height > 0`, 40000);
     const shown = Date.now() - started;
     await page.waitForTimeout(500);
@@ -73,11 +72,11 @@ test('R1-2: 43 000 <wbr> elements (within the element budget) leave the host pag
     expect(await inView<number>(page, browserName, `document.getElementById('w').textContent.length`)).toBe(43000); // unwrapped: the text stays
 });
 
-// Review round 3, C-2: the time budget charged a view's rendering as the wall time to the next animation frame, from a
-// callback queued per flush. A hidden or off-screen view runs no frame, so every flush meanwhile left a callback that,
-// once the view showed again, charged its whole age: hidden 5 s with one render applied meanwhile, the next render
-// waited 18.3 s at 16c545b (Chromium under display:none and off-screen, Firefox under display:none, WebKit off-screen).
-// The budget now charges only the rendering it measured after a flush (in-sandbox-view.ts, the gap meter).
+// R3:C-2: the time budget charges only the rendering a view measured after a flush (in-sandbox-view.ts, the gap meter),
+// not the wall time to the next animation frame from a callback queued per flush. A hidden or off-screen view runs no
+// frame, so every flush meanwhile would leave a callback that, once the view showed again, charged its whole age: hidden
+// 5 s with one render applied meanwhile, the next render would wait 18.3 s (Chromium under display:none and off-screen,
+// Firefox under display:none, WebKit off-screen).
 const HIDINGS: [string, string, string][] = [
     ['display:none', `el.style.display = 'none'`, `el.style.display = ''`],
     ['off-screen', `el.style.marginTop = '20000px'`, `el.style.marginTop = ''`],
@@ -108,9 +107,9 @@ test.describe('C-2: a view hidden for 5 s, with a render applied meanwhile, appl
     }
 });
 
-// Review round 3, M-5: the time budget left one frame's length per flush uncharged (it charged the wait to the next
-// frame past 16.7 ms), so under a flood of operations whose rendering takes long the view took 22–25% of the host page's
-// thread against its 20% budget. It now charges the rendering it measured, in full. Re-rendering 37 449 empty elements
+// R3:M-5: the time budget charges the rendering it measured, in full, not less one frame's length per flush (the wait
+// to the next frame past 16.7 ms), which let a flood of operations whose rendering takes long take 22–25% of the host
+// page's thread against its 20% budget. Re-rendering 37 449 empty elements
 // without pause, as in R2:M-3's flood: the host page's busy share stays within the budget, 20%, plus the
 // measure's margin, 10 points (a 10 ms interval on a shared machine; docs/API.md).
 test('M-5: under a flood of re-renders the view takes about its budget of the host page, not more', async ({ sandbox, page, browserName }) => {

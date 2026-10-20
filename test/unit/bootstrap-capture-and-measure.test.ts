@@ -14,7 +14,7 @@ import { stringifiedFor } from './stringified';
 const CAPTURED = await stringifiedFor('capture');
 
 /**
- * Review round 2 (reviewer C): each finding reproduced here first, against the code it names. The bootstrap runs against
+ * Findings of R2: each reproduced here first, against the code it names. The bootstrap runs against
  * stand-in ports whose postMessage structured-clones the frame, as a browser's does (as in relay-and-rpc-budgets.test.ts).
  */
 
@@ -73,7 +73,7 @@ function recordingConsole() {
     return { console: console as unknown as Console, calls };
 }
 
-/** The bootstrap in cooperative mode: its own channel's port1, attached at once; the browser's console is still given lines (M-5). */
+/** The bootstrap in cooperative mode: its own channel's port1, attached at once; the browser's console is still given lines (R2:M-5). */
 function cooperativeComms(console: Console) {
     inSandboxScript(false, 'cooperative', console, createBroker, undefined, createSizeOf);
     const port = FakeMessageChannel.last!.port1;
@@ -387,8 +387,8 @@ describe("C-7: setConfig()'s equal-config check is linear in the config, shared 
         const frame = el.shadowRoot.querySelector('iframe');
         const keys = vi.spyOn(Object, 'keys');
         el.setConfig(config);
-        expect(keys.mock.calls.length).toBeLessThan(1000); // one per compared pair: 2^18 before
-        expect(el.shadowRoot.querySelector('iframe')).toBe(frame); // the same config: no rebuild (R3-7 still holds)
+        expect(keys.mock.calls.length).toBeLessThan(1000); // one per compared pair, not 2^18
+        expect(el.shadowRoot.querySelector('iframe')).toBe(frame); // the same config: no rebuild (R1:R3-7)
         keys.mockRestore();
         el.remove();
     });

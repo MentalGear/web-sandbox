@@ -6,8 +6,8 @@ import { useRecorder } from './recorder';
 // control: the last test, the same loads to an allowlisted origin.
 const recorder = useRecorder();
 
-// Worker mode used to spawn the worker from the host document, so it ran under the host's
-// origin and CSP with full network access (backlog S1). It now runs inside the sandbox frame.
+// Worker mode spawns the worker inside the sandbox frame, not from the host document, where it would run under the
+// host's origin and CSP with full network access (S1).
 test.describe('Worker mode isolation', () => {
     test.beforeEach(async ({ sandbox }) => {
         expect(await sandbox.mount({ mode: 'worker' })).toBe('ready');

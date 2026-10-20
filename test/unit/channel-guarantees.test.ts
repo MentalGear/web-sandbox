@@ -9,9 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { checkIn } from './check-in';
 
 /**
- * Adversarial review 2026-10, channels and lifecycle (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md), host side:
- * B3 log lines, B4 frames from a port that is no longer current, B5 a listener's reset() or terminate() is never
- * undone, B6 fetch header values. The in-browser halves are in test/e2e/channel-isolation.spec.ts.
+ * Channels and lifecycle, host side:
+ * AR:B3 log lines, AR:B4 frames from a port that is not current, AR:B5 a listener's reset() or terminate() is never
+ * undone, AR:B6 fetch header values. The in-browser halves are in test/e2e/channel-isolation.spec.ts.
  */
 
 async function mount(config?: Record<string, unknown>) {
@@ -62,7 +62,7 @@ describe('B3: every sandbox-log detail is normalised and labelled', () => {
         el._onGuestMessage(el._port, () => {}, { type: 'LOG', level: 'error', args: ['Execution Timeout'], source: 'host' }, null);
         expect(heard).toEqual([]); // no port in jsdom: nothing is current, nothing is heard (B4)
         const { port1 } = new MessageChannel();
-        checkIn(el, port1); // ready on this port (posting waits for `ready`, review round 5, L-1)
+        checkIn(el, port1); // ready on this port (posting waits for `ready`, R5:L-1)
         el._onGuestMessage(port1, () => {}, { type: 'LOG', level: 'error', args: ['Execution Timeout'], source: 'host' }, null);
         vi.useFakeTimers();
         el.execute('for (;;) {}'); // nobody answers the probe at the deadline here: its budget expires
@@ -80,7 +80,7 @@ describe('B3: every sandbox-log detail is normalised and labelled', () => {
         for (let i = 0; i < LOG_EVENTS_PER_SECOND + 500; i++) el._onGuestMessage(port1, () => {}, { type: 'LOG', level: 'log', args: [i] }, null);
         el._dispatchHostLog('error', 'a line of the host');
         expect(heard.filter(d => d.source === 'guest')).toHaveLength(LOG_EVENTS_PER_SECOND);
-        // the host's own lines: the one notice that guest lines were dropped (review round 3, L-4), and the line above
+        // the host's own lines: the one notice that guest lines were dropped (R3:L-4), and the line above
         expect(heard.filter(d => d.source === 'host').map(d => [d.level, d.args[0]])).toEqual([['warn', expect.stringContaining('lines in one second')], ['error', 'a line of the host']]);
         expect(warn.mock.calls.filter(c => String(c[0]).includes('lines in one second'))).toHaveLength(1);
 
@@ -149,7 +149,7 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
             start: async () => {
                 const el = await mount({ mode: 'worker', scriptUnsafe: true, workerExecutionTimeout: 10 });
                 const { port1 } = new MessageChannel();
-                checkIn(el, port1); // ready on this port (posting waits for `ready`, review round 5, L-1)
+                checkIn(el, port1); // ready on this port (posting waits for `ready`, R5:L-1)
                 vi.useFakeTimers();
                 // the deadline, then a grace without an answer
                 return { el, force: () => { el.execute('for (;;) {}'); vi.advanceTimersByTime(20 + EXECUTION_TIMEOUT_GRACE_MS); }, done: () => port1.close() };
@@ -227,15 +227,15 @@ describe('B5: a listener that resets or terminates the sandbox is never undone',
         expect(noticeLists(text).map(({ method }) => method)).toEqual(['_onExecutionTimeout', '_refusedByHostPage', '_onViewMessage']);
         expect(noticeLists(text)).toHaveLength(PATHS.length);
         // Paths whose action is not a termination are forced where their feature is tested: the guest-write announcement
-        // ('fileswritten', then the acknowledgement; test/unit/guest-writes.test.ts, "review B5").
+        // ('fileswritten', then the acknowledgement; test/unit/guest-writes.test.ts, AR:B5).
         const OTHER_PATHS = ['_handleGuestWrite'];
         for (const name of OTHER_PATHS) expect(text.slice(text.indexOf(`private ${name}(`)).indexOf('runNotices(')).toBeLessThan(2000);
         expect([...text.matchAll(/\brunNotices\(/g)]).toHaveLength(OTHER_PATHS.length);
     });
 
-    // Review round 4, L-2: an entry failure dispatched its host line and its guest line from one callback, and the
-    // generation was compared only before the action, so a listener of the first that reset or removed the element
-    // still got the second. A notice is data now (lifecycle.ts, Notice), one event each by the executor, which compares
+    // R4:L-2: an entry failure dispatches its host line and its guest line as two notices, and the generation is
+    // compared after each, so a listener of the first that resets or removes the element does not get the second. A
+    // notice is data (lifecycle.ts, Notice), one event each by the executor, which compares
     // after each; runNotices' notices are functions, each of which must dispatch one event.
     it('the source: every notice is one line, and every notice given to runNotices dispatches exactly one event', () => {
         const text = source();
@@ -278,8 +278,8 @@ describe('B6: the platform validates a request before the bridge records it (fol
     };
 
     // A header value the Fetch standard refuses (not a ByteString, or NUL, CR or LF inside): refused before any
-    // request, never reported as made. A regex of the bridge's own used to decide this; now the Request
-    // constructor does, so the bridge cannot disagree with the browser.
+    // request, never reported as made. The Request constructor decides this, not a regex of the bridge's own,
+    // so the bridge cannot disagree with the browser.
     it.each(['Ā', '\u{1F600}', 'a b', 'a\rb', 'a\nb', 'a\u0000b'])("%j: the record says 'refused' (FETCH_NOT_ALLOWED), and fetch is never called", async (value) => {
         const { bridge, records, fetchImpl } = bridgeWith();
         await expect(bridge.handle({ url: 'https://api.example/x', headers: [['accept', value]] })).rejects.toMatchObject({ code: 'FETCH_NOT_ALLOWED' });

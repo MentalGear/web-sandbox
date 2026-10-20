@@ -5,8 +5,8 @@ import { inFrames, waitInView } from './strict-view';
 
 /**
  * Backlog S13: WebRTC. ICE gathering sends UDP to STUN/TURN servers that no CSP directive governs
- * (connect-src does not apply; `webrtc 'block'` and Chromium's local-network-access policy changed
- * nothing, measured 2026-10-13). Guarantees, per engine:
+ * (connect-src does not apply; `webrtc 'block'` and Chromium's local-network-access policy change
+ * nothing, as measured). Guarantees, per engine:
  *   1. the guest's own realm has no peer-connection constructor, from its first script on (cooperative mode),
  *      and a worker never has one (worker mode);
  *   2. the guest cannot take it back from another realm: every frame it creates is cross-origin to it;
@@ -19,7 +19,7 @@ import { inFrames, waitInView } from './strict-view';
  *      never runs and no UDP reaches the listener, while the same probe in a frame a cooperative guest creates (the
  *      residual of 3, the positive control) is heard.
  *
- * Firefox (independent verification 2026-10-14): it sends no STUN/TURN traffic to a loopback server by default, so
+ * Firefox: it sends no STUN/TURN traffic to a loopback server by default, so
  * this file runs it with `media.peerconnection.ice.loopback` on (Playwright's firefoxUserPrefs; the other engines
  * ignore it). The pref changes only where ICE may send, not whether a realm has RTCPeerConnection. Where Firefox still
  * sends nothing a listener can hear (a CI runner, measured), the packet assertions are reported as not measurable
@@ -91,8 +91,8 @@ async function nestedProbe(sandbox: SandboxDriver, port: number, heard: () => nu
     return { nested, packets: heard() - before };
 }
 
-// Measured on a GitHub Actions runner (2026-10-14): Firefox there gathered no ICE candidate at all in the host page
-// and its frames' STUN traffic never reached the loopback listener, while it does in this repository's container. Where
+// On a GitHub Actions runner Firefox gathers no ICE candidate at all in the host page
+// and its frames' STUN traffic never reaches the loopback listener, while it does in this repository's container. Where
 // the browser sends nothing a listener can hear, packet silence is not evidence, and the run says so (annotation)
 // instead of passing on silence or failing on the environment. Only Firefox is given this allowance; Chromium and
 // WebKit must be heard.

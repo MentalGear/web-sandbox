@@ -87,7 +87,7 @@ test('SandboxDevTools prints its own sandbox\'s guest logs, not another sandbox\
 
     const printed: string[] = await page.evaluate(() => (window as any).printed);
     expect(printed).toContainEqual(expect.stringMatching(/^group: %c\[Sandbox\] LOG \(guest\)/));
-    // the guest's values follow a fixed first argument, so none is read as a format string (review B3)
+    // the guest's values follow a fixed first argument, so none is read as a format string (AR:B3)
     expect(printed).toContainEqual(expect.stringMatching(/^log: +DEVTOOLS_PROBE$/));
     expect(printed.filter(line => line.includes('OTHER_SANDBOX'))).toEqual([]);
     expect(printed.filter(line => line.includes('AFTER_DEACTIVATE'))).toEqual([]);

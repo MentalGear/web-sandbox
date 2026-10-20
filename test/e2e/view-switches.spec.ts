@@ -22,7 +22,7 @@ const SPIN = '@keyframes spin { from { margin-left: 0 } to { margin-left: 40px }
 
 // Every vector a guest has, in one render: unlayered !important, its own named and anonymous layers, pseudo-elements,
 // inline !important (plain, prefixed, through a custom property), and the inline declarations the renderer reads
-// (review round 4, C-2: an escaped name, upper case, a prefixed transition, var() in a longhand and in a shorthand,
+// (R4:C-2: an escaped name, upper case, a prefixed transition, var() in a longhand and in a shorthand,
 // `all` beside an animation, a keyword after a shorthand, `inherit` from an animated parent), SVG <style> and an SVG
 // style attribute, @starting-style,
 // a scroll-driven animation, a registered custom property, a registered stylesheet and one it @imports.
@@ -129,8 +129,8 @@ test.describe('allowAnimations', () => {
 
     // The parts of form controls are pseudo-elements of the engines' own (::-webkit-slider-thumb, ::-moz-range-thumb,
     // ::file-selector-button), which document.getAnimations() does not list: what they cost is read on the host page.
-    // The positive control reads the effect itself, in the view, with the most direct signal each engine gives (it used to
-    // read the host page's ticks with `true`, a margin that depends on the machine): the animation name the parts compute
+    // The positive control reads the effect itself, in the view, with the most direct signal each engine gives (not the
+    // host page's ticks with `true`, a margin that depends on the machine): the animation name the parts compute
     // to where the engine computes style for them (Chromium: the file button; Firefox: the file button and the range
     // thumb), and where it computes none for them (WebKit), the pixels of the element in six samples 90 ms apart, which
     // change while the parts' colours and widths animate and do not when they cannot.

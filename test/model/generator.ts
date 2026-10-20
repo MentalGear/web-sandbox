@@ -36,13 +36,12 @@ export class Rng {
 const MODES: Mode[] = ['strict', 'cooperative', 'worker'];
 const TIMEOUT_VALUES: Raw[] = [0, -1, 'NaN', 'Infinity', 2 ** 31 + 5, 2 ** 32, 1e12, 5, 20, 60, 150, 400];
 // The watchdog of an ordinary config, in a calm segment: off in every spelling, or on with a budget no responsive guest
-// misses (S65 PR D). The model allows the watchdog's termination only once a guest step blocked the event loop (`busy`,
-// lifecycle-model.ts, autonomousAllowed); scenario 3 below pairs a 150 ms watchdog with such a step. These were 150 and
-// 250 ms, and at a load average of 15 to 19 a strict guest's worker, starved for longer than that, missed its pings with
-// nothing busy: WebKit seed 225 diverged at 500 sequences, at the PR B commit as at PR C's (2 and 1 in 16 runs of its
-// repro). The fix is here, not in the model: a model that accepted a watchdog termination for any short budget would no
-// longer catch a watchdog that fires on a guest that answers (pings on the wrong port, a pong not heard), which is what
-// the rule is for. 4000 and 5000 ms keep the watchdog armed and pinging through the calm segments, at the budget the
+// misses (S65). The model allows the watchdog's termination only once a guest step blocked the event loop (`busy`,
+// lifecycle-model.ts, autonomousAllowed); scenario 3 below pairs a 150 ms watchdog with such a step. A budget of 150 or
+// 250 ms would not do: at a load average of 15 to 19 a strict guest's worker, starved for longer than that, misses its
+// pings with nothing busy, and the model diverges (WebKit seed 225 at 500 sequences). The remedy is here, not in the
+// model: a model that accepted a watchdog termination for any short budget would not catch a watchdog that fires on a guest that
+// answers (pings on the wrong port, a pong not heard), which is what the rule is for. 4000 and 5000 ms keep the watchdog armed and pinging through the calm segments, at the budget the
 // element itself deems safe against scheduling jitter: its always-on view liveness check (VIEW_LIVENESS_TIMEOUT_MS,
 // 5000). The array keeps its length, so every seed draws the same values elsewhere.
 const WATCHDOG_VALUES: (Raw | undefined)[] = [undefined, undefined, 0, -1, 'NaN', 'Infinity', '300', 5000, 4000];
@@ -151,7 +150,7 @@ function genCmd(rng: Rng, mode: Mode, variant: () => number): Cmd {
 /**
  * One sequence: a mode, 0–3 re-entrant listener plans, a prologue (the agent registered, a config, insertion, settle),
  * then 3–6 segments: churn (3–7 operations with no gaps), calm (settle, then guest steps and calls with waits) or a
- * scenario (a call with an argument getter, many calls while loading, the moves of round 4's L-1).
+ * scenario (a call with an argument getter, many calls while loading, the moves of R4:L-1).
  */
 export function generate(seed: number): Sequence {
     const rng = new Rng(seed);
@@ -191,12 +190,12 @@ export function generate(seed: number): Sequence {
             if (scenario === 0) {
                 cmds.push({ op: 'settle' }, { op: 'call', method: 'act', spec: { k: 'mark' }, arg: 'getter', getter: genAction(rng, mode, variant) });
             } else if (scenario === 1) {
-                // calls made while loading, with timeouts around the check-in (review round 5, L-1)
+                // calls made while loading, with timeouts around the check-in (R5:L-1)
                 cmds.push({ op: 'reset' });
                 for (const timeout of [5, 20, 40, 80, 160]) cmds.push({ op: 'call', method: 'act', spec: { k: 'mark' }, timeout });
                 cmds.push({ op: 'settle' }, { op: 'wait', ms: 200 });
             } else if (scenario === 2) {
-                // round 4's L-1: a move or removal soon after a rebuild
+                // R4:L-1: a move or removal soon after a rebuild
                 cmds.push({ op: 'settle' }, { op: 'insert' }, { op: 'wait', ms: rng.int(12, 30) }, rng.pick([{ op: 'insert' }, { op: 'remove' }, { op: 'foreign' }] as Cmd[]), { op: 'insert' });
             } else if (scenario === 3) {
                 // a termination the element starts: the watchdog, workerExecutionTimeout or a failing entry

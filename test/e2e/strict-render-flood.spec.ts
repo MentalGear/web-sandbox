@@ -14,9 +14,9 @@ import { lag, oneApplyStall, startLag } from './host-share';
  *      in the same run (test/e2e/host-share.ts, oneApplyStall).
  * Measured (this machine, Playwright 1.58 builds), host lag max / call round trip max under a 3 s flood:
  *   Chromium ≤ 10 ms / ≤ 15 ms when it ran the view out of process; Firefox 50–95 ms / 70–150 ms;
- *   WebKit 110–470 ms / 130–390 ms. Chromium may also keep the view in the host page's process (broad review
- *   2026-10-14: no iframe target, both frames local): then 45–130 ms / 65–180 ms alone (the same at 12d7924 and
- *   after the allowlist renderer, measured side by side), up to 364 ms lag with a second worker loading the machine. Not bounded here, and stated in ADR-005: what one apply of
+ *   WebKit 110–470 ms / 130–390 ms. Chromium may also keep the view in the host page's process (BR:ST2:
+ *   no iframe target, both frames local): then 45–130 ms / 65–180 ms alone (the same with the allowlist renderer
+ *   and without it), up to 364 ms lag with a second worker loading the machine. Not bounded here, and stated in ADR-005: what one apply of
  *   pathological markup costs (20 000 nested elements: ≈ 0.7 s per apply in Firefox and WebKit).
  * Evidence: applies counted in the view by a MutationObserver installed from outside (DevTools, never
  * the library); host lag from a 10 ms interval in the host page; round trips through call().

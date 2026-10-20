@@ -1,13 +1,13 @@
 /**
- * The lifecycle reference model of `<web-sandbox>` (backlog S61.2, S65), written from README.md and docs/API.md as they
- * stand at 446017a: docs/research/17_formal_methods/lifecycle-model.md describes how review rounds 4 and 5 used it.
+ * The lifecycle reference model of `<web-sandbox>` (backlog S61.2, S65), written from README.md and docs/API.md:
+ * docs/research/17_formal_methods/lifecycle-model.md describes the model and what it found (LM-n).
  *
  * Pure TypeScript, no DOM: the model's state, one transition per operation (its preconditions, the state it leads to and
  * the events it must dispatch synchronously) and the checks on what the element is observed to do afterwards (events
  * from tasks, call settlements, guest-write announcements). test/model/runner.ts drives the real element in a page and
  * feeds every observation here; test/unit/lifecycle-model.test.ts checks the model itself on the round reports' traces.
  *
- * Phase 1's rules (review round 5, S64) that the model holds the element to:
+ * The rules of S64 that the model holds the element to:
  * - `ready` is the only flush point: a call made while `loading` that settles before `ready` (its timeout) never runs;
  * - one "no repeat" rule for every `terminated`: a build started while a `terminated` is dispatched and refused with that
  *   very reason ends `terminated` without another event;
@@ -262,7 +262,7 @@ export class LifecycleModel {
     exposes = 0;
     calls = new Map<number, CallRecord>();
     nextCall = 1;
-    mustNotRun = new Set<string>(); // "[env:N] mark id" lines that must never appear (round 5, L-1)
+    mustNotRun = new Set<string>(); // "[env:N] mark id" lines that must never appear (R5:L-1)
     marksSeen = new Set<string>();
     frames: Frame[] = [];
     coverage = new Set<string>();
@@ -581,7 +581,7 @@ export class LifecycleModel {
         if (cmd.op === 'call') {
             const record = this.calls.get(frame.callId!)!;
             if (frame.getterMustNotRun && frame.getterRan) this.fail('call: a getter in the arguments ran while there was no environment');
-            // a getter that tore the environment down: the call is TERMINATED (review round 3, L-2)
+            // a getter that tore the environment down: the call is TERMINATED (R3:L-2)
             if (record.immediate === null && this.gen !== frame.gen0) record.immediate = 'TERMINATED';
         }
         if (observed.state !== this.state) this.fail(`${what}: state ${observed.state}, the model says ${this.state}`);
@@ -672,8 +672,8 @@ export class LifecycleModel {
                 const match = /[?&]env=(\d+)/.exec(url);
                 // API.md (FetchRecord): after its teardown an environment's records are `aborted`, and they can arrive
                 // after the call that tore it down; any other outcome belongs to the current environment. LM-1 (an `ok`
-                // record of an environment a `fetch` listener had torn down) diverged here; fixed 2026-10-19 in
-                // fetch-bridge.ts, whose one record() makes every record after abortAll() `aborted`.
+                // record of an environment a `fetch` listener has torn down) diverges here: fetch-bridge.ts's one record()
+                // makes every record after abortAll() `aborted`.
                 if (ev.detail?.outcome === 'aborted') return;
                 if (!this.env || !match || Number(match[1]) !== this.env.id) this.fail(`fetch record ${url} (${ev.detail?.outcome}) does not belong to the current environment ${this.env?.id}`);
                 this.coverage.add(`event:fetch|${this.mode}`);

@@ -21,7 +21,7 @@ export const BASELINE_CONFIG: SandboxConfig = {
  * A config for mount(): applied over BASELINE_CONFIG, so one that names no mode is a cooperative config (the baseline's
  * mode), as the specs were written; a strict or worker config names its mode. To apply a config as an embedder would,
  * with the library's defaults (strict mode), call setConfig() itself (strict-default.spec.ts). Deliberately looser than
- * SandboxConfig, which narrows each mode's options (review round 1, R3-6): specs also mount what a mode drops at run
+ * SandboxConfig, which narrows each mode's options (R1:R3-6): specs also mount what a mode drops at run
  * time, to assert that it is dropped.
  */
 export type MountConfig = SandboxConfigOptions & { mode?: 'strict' | 'cooperative' | 'worker'; origins?: SandboxOrigins };
@@ -332,7 +332,7 @@ export const test = base.extend<{ sandbox: SandboxDriver }>({
                 const before = frame();
                 action(sandbox);
                 // setConfig() of the configuration a ready environment stands on builds nothing and dispatches
-                // nothing (review round 1, R3-7): the same frame, still ready, is the answer
+                // nothing (R1:R3-7): the same frame, still ready, is the answer
                 if (before !== null && frame() === before && sandbox.state === 'ready') settle(new Event('ready'));
             });
             (window as any).settleOutcome = (promise: Promise<unknown>) => promise.then(

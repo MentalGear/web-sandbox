@@ -82,7 +82,7 @@ describe('the renderer', () => {
 describe('the still stylesheet (VIEW_STILL_STYLE)', () => {
     it('one anonymous layer: no animation and no transition, !important, on every element; the view adds a rule of its own per pseudo-element its engine supports', () => {
         const declarations = 'animation:none!important;transition:none!important';
-        expect(VIEW_STILL_STYLE).toBe(`@layer{*{${declarations}}}`); // constant, so its hash is (review round 5, M-1: the rules per engine are added through the CSSOM)
+        expect(VIEW_STILL_STYLE).toBe(`@layer{*{${declarations}}}`); // constant, so its hash is (R5:M-1: the rules per engine are added through the CSSOM)
         expect(VIEW_OPTIONS.still).toEqual({ pseudoElements: VIEW_STILL_PSEUDO_ELEMENTS, declarations });
         for (const name of ['before', 'after', 'marker', 'placeholder', 'backdrop', 'file-selector-button', '-webkit-slider-thumb', '-moz-range-thumb']) {
             expect(VIEW_STILL_PSEUDO_ELEMENTS as readonly string[]).toContain(name);

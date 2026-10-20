@@ -4,10 +4,10 @@
 import { defineWebSandbox } from '@src/host';
 import { viewScriptHash } from '@src/index';
 
-// `?tt-default`: the host page has a Trusted Types default policy of its own (review round 2, C-6), which every string
+// `?tt-default`: the host page has a Trusted Types default policy of its own (R2:C-6), which every string
 // the page assigns to a sink passes through; created first, before the element assigns anything.
 // `window.ttDefaultHook`, when a spec sets it, runs once, inside the next sink the policy is asked about: embedder code
-// running in the middle of the element's own build (S65, LM-2: a reset() there re-entered the build).
+// running in the middle of the element's own build (LM-2: a reset() there must not re-enter the build).
 if (new URLSearchParams(location.search).has('tt-default')) {
     const pass = (input: string) => {
         const hook = (window as any).ttDefaultHook;
