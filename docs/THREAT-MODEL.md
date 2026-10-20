@@ -170,13 +170,13 @@ view's document), but no budget counts memory itself. The values are in [Limits]
 
 ## Availability
 
-**The owner's rule** ([CONTRIBUTING](../CONTRIBUTING.md#availability-findings-owners-rule-2026-10-19)): a finding whose
+**The owner's rule** ([CONTRIBUTING](../CONTRIBUTING.md#availability-findings-owner-2026-10-20)): a finding whose
 only effect is that the guest slows the host page is documented, not mitigated further, when the cost is bounded (by
 a documented limit, or by the caps on what the view and the guest can hold) and the embedder can end it (`terminate()`,
 or removing the element). Such a finding is at most medium, and its fix is the bound, stated in API.md and in the cost
-column of its channel in [Budgets](API.md#budgets). Not availability findings, and fixed as any other: a host page frozen
-beyond the embedder's reach, or a stall with no bound but the browser's (high); the library's own limits ending a
-healthy sandbox (a correctness bug); a flood that breaks a security property (a budget that fails open, a check skipped
+column of its channel in [Budgets](API.md#budgets). Not availability findings, and fixed as any other: a host page that
+can never regain control, or a stall bounded by nothing the library states, no cap and no limit, only the browser's
+(high); the library's own limits ending a healthy sandbox (a correctness bug); a flood that breaks a security property (a budget that fails open, a check skipped
 under pressure, inconsistent state, anything that moves data or crosses the policy).
 
 **Where the view runs.** Desktop Chromium (127 and later) runs the strict view in a process of its own; Firefox,
@@ -190,7 +190,7 @@ bound is what is promised.
 | :--- | :--- | :--- |
 | The view's operations and loads, where it shares the host page's thread | The long-run share, the single-operation rule, the rates and caps | [API.md (a) to (c)](API.md#the-views-cost-to-the-host-page) |
 | What runs without the view acting: CSS animations and transitions while `allowAnimations` is `true` (the default), animated images, indeterminate `<progress>`, autoplaying media, `:hover` restyles, relayout after decodes and font swaps | the caps on what the view holds; `allowAnimations: false` removes animations and transitions | [API.md (d)](API.md#d-outside-the-bound) |
-| The documented single-operation stalls (CSS filters, bidirectional text, large selectors, a large textarea's first value) | one stall past `VIEW_MAX_OPERATION_MS` per `VIEW_OVERRUN_WINDOW_MS` beyond the first; the second ends the sandbox. How long one stall lasts is the engine's, bounded only by the caps on the document | [API.md (b) and (d)](API.md#b-the-single-operation-bound) |
+| The documented single-operation stalls (CSS filters, bidirectional text, large selectors, a large textarea's first value): at most medium | Bounded by the caps on the document (what the view can hold); the first stall past `VIEW_MAX_OPERATION_MS` in a `VIEW_OVERRUN_WINDOW_MS` is allowed, the second ends the sandbox. Where the view shares the host page's thread, `terminate()` cannot run during one: the embedder regains control when the stall ends | [API.md (b) and (d)](API.md#b-the-single-operation-bound), [(d) Outside the bound](API.md#d-outside-the-bound) |
 | Firefox's reports of the worker's unhandled rejections, made on the host page's thread whether cancelled or not | `UNCAUGHT_PER_SECOND` and `UNCAUGHT_CHARACTERS_PER_SECOND`, past which the sandbox ends; one report is made before anything can end it | [Budgets](API.md#budgets), `src/lib/egress.ts` |
 | Memory | not bounded; the caps bound what is held, not what it costs | [API.md (d)](API.md#d-outside-the-bound) |
 
@@ -269,8 +269,9 @@ origin opens as that origin's document (`ADR-005#the-renderer`).
 
 ## Reporting and fixing a finding
 
-**Reporting.** The project publishes no disclosure policy of its own yet. Report a suspected vulnerability privately to
-the repository's owner rather than in a public issue, with the mode, the engine and a reproduction.
+**Reporting.** Report a suspected vulnerability privately, through GitHub's private vulnerability reporting, as
+[SECURITY.md](../SECURITY.md) describes; never in a public issue. Include the mode, the engine and its version, and a
+reproduction.
 
 **Classifying.** A finding is classified by the invariant it violates, not its symptom, in the classes of
 [research 18](research/18_finding_classes/README.md): E-net (egress the policy does not govern), E-cpu (host-thread
@@ -290,7 +291,7 @@ test that enumerates its domain:
 | D | the one diff of the guest-write overlay (`src/lib/guest-writes.ts`) | `test/unit/guest-writes.test.ts`; `test/unit/call-settling-and-read-once.test.ts` |
 
 An availability finding is rated under the owner's rule ([Availability](#availability)): at most medium when it
-qualifies, high when the host page is frozen beyond the embedder's reach.
+qualifies, high when the host page can never regain control or the stall is bounded by nothing the library states.
 
 **Fixing.** A fix names its class and extends that class's list or chokepoint and its structural test, never one
 instance only; a new mitigation is a new cost, measured in every engine
