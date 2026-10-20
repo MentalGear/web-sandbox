@@ -5,6 +5,7 @@ import { REFERENCES } from './markup-references';
 import { inSandboxFiles } from './in-sandbox-files';
 import { VIOLATION_EVENT_LIMIT, VIOLATION_MAX_STRING } from './violation';
 import { mimeTypeFor } from './files';
+import { scalingRatio, type ScalingSize } from '../../test/unit/scaling';
 
 // the renderer with every switch on (RenderSwitches): the tests that do not test a switch keep what the switches govern
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
@@ -592,25 +593,20 @@ describe('review round 1: R1-2, the renderer is linear and keeps no element whos
     });
 
     // Scaling, not wall-clock time (R2:C-12: a fixed bound can fail under a loaded full suite): the walk
-    // over 8 times as many siblings takes at most ~8 times as long, the best of 3 runs of each size against noise. A walk
-    // quadratic in the siblings (R1:R1-2) takes ~64 times as long. jsdom; the browsers' own measure: view-budget.spec.ts.
+    // over 8 times as many siblings takes at most ~8 times as long. scalingRatio samples both sizes alternately and keeps
+    // each one's fastest time (test/unit/scaling.ts). A walk quadratic in the siblings (R1:R1-2) takes ~64 times as long.
+    // jsdom; the browsers' own measure: view-budget.spec.ts.
     it('many siblings to drop or unwrap: the walk takes time linear in their number (1 000 against 8 000 of each)', { timeout: 60000 }, () => {
         const markup = (n: number) => '<p>' + 'x<wbr>'.repeat(n) + '<font>y</font>'.repeat(n) + '<script></script>'.repeat(n) + '</p>';
-        const best = (n: number) => {
-            const text = markup(n);
-            let fastest = Infinity;
-            for (let run = 0; run < 3; run++) {
-                const template = document.createElement('template');
-                template.innerHTML = text;
-                const started = performance.now();
-                sanitizeRender(template.content, () => null, () => false, RENDER_RULES, KEEP_ALL);
-                fastest = Math.min(fastest, performance.now() - started);
-                expect(template.content.querySelector('p')!.childNodes).toHaveLength(1);
-            }
-            return fastest;
+        const size = (n: number): ScalingSize<HTMLTemplateElement> => () => {
+            const template = document.createElement('template');
+            template.innerHTML = markup(n);
+            return {
+                run: () => { sanitizeRender(template.content, () => null, () => false, RENDER_RULES, KEEP_ALL); return template; },
+                verify: done => expect(done.content.querySelector('p')!.childNodes).toHaveLength(1),
+            };
         };
-        const small = best(1000);
-        const large = best(8000);
-        expect(large / small, `best of 3: ${small.toFixed(1)} ms for 1 000, ${large.toFixed(1)} ms for 8 000`).toBeLessThan(24); // linear: ~8; quadratic: ~64
+        const result = scalingRatio(size(1000), size(8000), { bound: 24 });
+        expect(result.ratio, result.message).toBeLessThan(24); // linear: ~8; quadratic: ~64
     });
 });
