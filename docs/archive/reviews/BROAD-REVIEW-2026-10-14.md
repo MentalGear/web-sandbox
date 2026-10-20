@@ -23,7 +23,7 @@ A broad round after the focused review, by four reviewers working from the code,
 Then, as in the earlier reviews: every finding was reproduced first as a **failing test** — a unit test where only
 library logic decides, an end-to-end test on Chromium, Firefox and WebKit where browser behaviour decides — run
 against `12d7924`; fixed at the chokepoint that closes the class; and re-run green. End-to-end evidence follows T5
-([backlog](../BACKLOG.md)): read from outside the sandbox (the host's own events, state and window, the host page's
+([backlog](../../BACKLOG.md)): read from outside the sandbox (the host's own events, state and window, the host page's
 URL, the recorder's listeners, which now also count TCP connections), with a positive control beside each negative.
 Where a platform behaviour cannot be closed from the library, the measuring test stays as a per-engine assertion of
 the residual. Before filing the upstream reports, PD1 and PD2 were re-measured on a plain page with a header policy,
@@ -164,7 +164,7 @@ engine) failed there; of the 18 new unit tests that run against `12d7924`, 14 fa
 
 ### PD1 · WebKit ran a `data:` SharedWorker outside the guest policy
 
-> Since 2026-10-14 the policy steps described here are replaced by typed `origins` and one policy template per mode ([ADR-007](../ADR-007-typed-origins.md)); their guarantees hold by construction there.
+> Since 2026-10-14 the policy steps described here are replaced by typed `origins` and one policy template per mode ([ADR-007](../../ADR-007-typed-origins.md)); their guarantees hold by construction there.
 
 - **Found**: with the default `worker-src blob: data:`, a guest's `new SharedWorker('data:…')` in WebKit fetched,
   opened a WebSocket and ran `importScripts` against a listener the policy blocks, with no violation. Re-measured on a
@@ -271,8 +271,8 @@ The three markup presets (`csp-swallow`, `form-action-exfil`, `self-navigation`)
 
 ## Residuals, with rationale
 
-The default-mode residuals, one list (the same in [README](../../README.md#cooperative-mode-limits) and the
-[backlog](../BACKLOG.md#s44--cooperative-mode-limits-one-frozen-list--documented-limits));
+The default-mode residuals, one list (the same in [README](../../../README.md#cooperative-mode-limits) and the
+[backlog](../../BACKLOG.md#s44--cooperative-mode-limits-one-frozen-list--documented-limits));
 the last six rows were added by the [independent verification](VERIFICATION-2026-10-14.md).
 
 | Id | What remains | Why it is not closed in default mode | Asserted by |

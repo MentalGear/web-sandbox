@@ -4,7 +4,7 @@ import { useRecorder } from './recorder';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 
 /**
- * The owner's decisions after review round 1 (docs/security/REVIEW-ROUND-1-2026-10-15.md, "Awaiting the owner"), where
+ * The owner's decisions after review round 1 (docs/archive/reviews/REVIEW-ROUND-1-2026-10-15.md, "Awaiting the owner"), where
  * the browser decides, on Chromium, Firefox and WebKit. Evidence is read from outside the sandbox: the frames'
  * attributes from the host page, the view's DOM through strict-view.ts (DevTools in Chromium), the recorder's listeners.
  *   R2-2  allow-forms is an unsafe capability in cooperative mode (and test/e2e/review-round-1.spec.ts, "R2-2")

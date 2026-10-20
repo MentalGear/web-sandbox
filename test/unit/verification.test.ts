@@ -3,7 +3,7 @@ import { viewBootstrapHash } from '@src/lib/in-sandbox-view';
 import { parseLikeABrowser } from './policy-helpers';
 
 /**
- * Independent verification 2026-10-14 (docs/security/VERIFICATION-2026-10-14.md), host and library side: the gaps
+ * Independent verification 2026-10-14 (docs/archive/reviews/VERIFICATION-2026-10-14.md), host and library side: the gaps
  * where a mutation of the code survived every earlier test, each now a test that fails under that mutation.
  */
 

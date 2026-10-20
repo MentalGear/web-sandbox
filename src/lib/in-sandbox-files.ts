@@ -11,7 +11,7 @@ import type { FileSnapshotEntry } from './files';
  * It receives the host's file snapshot as one inline literal, [[path, type, base64], ...], and turns
  * every entry into a Blob and a blob: URL created in THIS realm, synchronously, so the URLs exist
  * before the parser reaches any guest markup. Only this realm's blob: URLs load here: a URL minted by
- * the host page or by another sandbox is refused by the blob store (docs/research/blob-delivery-probe.md,
+ * the host page or by another sandbox is refused by the blob store (docs/archive/research/blob-delivery-probe.md,
  * section 4). The blobs belong to this document or worker and are freed with it. The host installs
  * it in every environment, with an empty list when no file is registered, so the API always exists.
  *
@@ -380,7 +380,7 @@ export function inSandboxMarkup(files: { url(path: string): string }, parts: (st
  *
  * Registers the document's one import map, before the parser reaches any guest markup and before any
  * module script or import(): Firefox honours only the first import map of a document, and none once a
- * module script was prepared (docs/research/blob-delivery-probe.md, section 3). Every registered
+ * module script was prepared (docs/archive/research/blob-delivery-probe.md, section 3). Every registered
  * JavaScript file's virtual URL, https://vfs.invalid/<path>, maps to this realm's blob: URL for it:
  * the URL url(path) returns and markup references use, so a module named both ways is one entry in the
  * module map and is evaluated once. The host rewrote every relative specifier to such a virtual URL.

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { ADRS, ID_CITATION, PREFIXED_SOURCES, resolveId } from '../../docs/ids';
+import { ADRS, BACKLOG_ARCHIVE_FILE, BACKLOG_FILE, ID_CITATION, idAnchor, OPEN_BACKLOG_ITEMS, PREFIXED_SOURCES, resolveId } from '../../docs/ids';
 import { comments, SyntaxKind, tokenize } from '../../scripts/js-tokens';
 
 /**
@@ -94,16 +94,8 @@ function unresolved(file: string, anchor: string | undefined): string | undefine
 }
 
 // The docs no other doc links to (the root README is the entry point). Listed so that a new one is a decision: link it
-// from where a reader looks for it. Step 3 of S76 (the archive) decides these.
-const UNLINKED = [
-    'docs/README.md',
-    'docs/Sandbox_Architecture_Decision.md',
-    'docs/research/DEVTOOLS_SECURITY.md',
-    'docs/research/LOCAL_FIRST_ARCH.md',
-    'docs/research/VFS_ARCHITECTURE.md',
-    'docs/research/VIRTUAL_FILES_PLAN.md',
-    'docs/research/Virtual-Files-Security-Architecture.md',
-];
+// from where a reader looks for it. Everything under docs/archive/ is linked from docs/archive/README.md.
+const UNLINKED: string[] = [];
 
 describe('the links between the docs', () => {
     const links = MARKDOWN.flatMap(linksOf);
@@ -165,6 +157,15 @@ describe('the stable IDs', () => {
         for (const source of PREFIXED_SOURCES) expect(existsSync(path.join(ROOT, source.file)), source.file).toBe(true);
         const adrs = FILES.filter(file => /^docs\/ADR-\d{3}-[^/]+\.md$/.test(file)).sort();
         expect(Object.values(ADRS).sort()).toEqual(adrs);
+    });
+
+    it('the backlog lists the open items, and the archive holds the done ones: each ID resolves to the file that has its anchor', () => {
+        const anchorOf = (id: string) => idAnchor(id);
+        const itemAnchors = (file: string) => [...read(file).matchAll(/^### <a id="([^"]+)"><\/a>/gm)].map(match => match[1]!);
+        const open = itemAnchors(BACKLOG_FILE).sort(), archived = itemAnchors(BACKLOG_ARCHIVE_FILE);
+        expect(OPEN_BACKLOG_ITEMS.map(anchorOf).sort(), 'OPEN_BACKLOG_ITEMS in docs/ids.ts lists the backlog\'s items').toEqual(open);
+        expect(archived.filter(anchor => open.includes(anchor)), 'an item is in one file only').toEqual([]);
+        expect(archived.length).toBeGreaterThan(80);
     });
 
     it('each source\'s example resolves, and CONTRIBUTING.md states the scheme', () => {

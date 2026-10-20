@@ -140,7 +140,7 @@ noticed only through it; memory and inbound traffic remain unbounded (S6's open 
 
 ## Amendment (2026-10-14): a listener's reset or terminate is never undone
 
-**When**: the adversarial review of 2026-10 ([report](security/ADVERSARIAL-REVIEW-2026-10.md), B5). **Why**: two
+**When**: the adversarial review of 2026-10 ([report](archive/reviews/ADVERSARIAL-REVIEW-2026-10.md), B5). **Why**: two
 host paths dispatched a log line and then acted on the environment: the execution timeout (log, then rebuild)
 and an entry that failed to start (log, then terminate). A `sandbox-log` listener that called `terminate()` had
 it undone by the rebuild; one that called `reset()` had its new environment torn down.
@@ -158,7 +158,7 @@ and fails if the count is compared anywhere else or a path calls the helper with
 ## Amendment (2026-10-14): one rule per budget, build and missing environment
 
 **When**: backlog B8 and the follow-up audit of the adversarial review
-([report](security/ADVERSARIAL-REVIEW-2026-10.md#follow-up-2026-10-14-by-construction-audit)).
+([report](archive/reviews/ADVERSARIAL-REVIEW-2026-10.md#follow-up-2026-10-14-by-construction-audit)).
 
 - **`workerExecutionTimeout` is a budget for code still running, and exceeding it terminates.** (Its mechanism, a
   report from the guest, was replaced by the [next amendment](#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline): a free event loop at the deadline.) Each `execute()`
@@ -191,7 +191,7 @@ termination"), `test/unit/channel-guarantees.test.ts` ("B5"), `test/e2e/worker-t
 
 ## Amendment (2026-10-14): the execution budget is a free event loop at the deadline
 
-**When**: the focused review of 2026-10-14 ([report](security/FOCUSED-REVIEW-2026-10-14.md), F2 and F3). **Why**: the budget above trusted the
+**When**: the focused review of 2026-10-14 ([report](archive/reviews/FOCUSED-REVIEW-2026-10-14.md), F2 and F3). **Why**: the budget above trusted the
 guest's word. Code that returned at once but left a loop scheduled (`setTimeout(() => { for (;;) {} }, 0)`) posted
 `EXECUTED` and stopped its own timer, then looped; guest code that replaced `globalThis.Function` made the
 bootstrap's `new Function(code)` return a function of its choosing, so `EXECUTED` was posted before the embedder's
@@ -230,7 +230,7 @@ Proof: `test/e2e/focused-review.spec.ts` ("F2"), `test/unit/followup-guarantees.
 
 ## Amendment (2026-10-14): loading is bounded; one answer per build; one document
 
-**When**: the broad review of 2026-10-14 ([report](security/BROAD-REVIEW-2026-10-14.md), CB3, CB5, CB7).
+**When**: the broad review of 2026-10-14 ([report](archive/reviews/BROAD-REVIEW-2026-10-14.md), CB3, CB5, CB7).
 
 - **`loading` is bounded (CB3).** A guest that called `document.open()` and never closed the document held Chromium
   and WebKit in `loading` indefinitely (measured past 30 s; Firefox completes the load). Decision: a build that has
@@ -261,7 +261,7 @@ Proof: `test/e2e/broad-review.spec.ts` ("CB3", "CB7"), `test/unit/broad-review.t
 
 ## Amendment (2026-10-14): `ready` is the guest's check-in
 
-**When**: after the independent verification of 2026-10-14 ([report](security/VERIFICATION-2026-10-14.md), decision
+**When**: after the independent verification of 2026-10-14 ([report](archive/reviews/VERIFICATION-2026-10-14.md), decision
 1; backlog S46). **Why**: `ready` waited for the wrapper frame's load, and that load waits for the guest document's
 own subresources, so `LOAD_TIMEOUT_MS` (the CB3 amendment above) bounded the guest's images too: a legitimate page
 whose images took longer than 5 s was terminated. The bound and the subresources were in conflict only because one
@@ -304,7 +304,7 @@ startup gate").
 
 ## Amendment (2026-10-15): review round 1: strict `ready`, refused builds in a task, no rebuild for the same config
 
-**When**: [review round 1](security/REVIEW-ROUND-1-2026-10-15.md) (R3-1, R3-2, R3-7); backlog S50, S53.
+**When**: [review round 1](archive/reviews/REVIEW-ROUND-1-2026-10-15.md) (R3-1, R3-2, R3-7); backlog S50, S53.
 
 - **Strict mode is `ready` on the view's check-in** (`VIEW_READY` on the view port), never on the frame's load alone:
   a view whose bootstrap the host page's policy refused never checks in, and the build ends at `LOAD_TIMEOUT_MS` with a

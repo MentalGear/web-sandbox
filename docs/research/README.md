@@ -13,9 +13,14 @@ For the purposes of this research, a "Breakout" or "Vulnerability" is defined as
 ## Backlog
 
 Open work from this research — and from the rest of the project — is tracked in the
-[backlog](../BACKLOG.md). Every reproduction suite below runs with `bun run test:e2e` against the
+[backlog](../BACKLOG.md); its done items are in the [archive](../archive/backlog/BACKLOG-done.md). Every reproduction suite below runs with `bun run test:e2e` against the
 shared harness in [`test/e2e/fixture.ts`](../../test/e2e/fixture.ts), and in CI on Chromium, Firefox
 and WebKit.
+
+The loose notes (comparisons, the Service-Worker virtual-files designs, early plans) and the design probe of blob-URL
+delivery are history and live in [the archive](../archive/README.md#research). What stays here is current: the
+reproductions 01 to 15 (their specs run in `bun run test:e2e` and the presets name their folders), and the design
+probes and evaluations 16 to 19 that the code and the docs cite.
 
 ## Findings
 
@@ -49,7 +54,7 @@ Measurements taken before building a planned design, each backed by an e2e spec.
 
 | Probe | Question | Result |
 | :--- | :--- | :--- |
-| [Blob-URL file delivery (δ)](blob-delivery-probe.md) | Can guest-created blob: URLs plus an import map replace the virtual-files Service Worker? | Viable with changes: `blob:` in five directives, rewrite relative specifiers, one import map before any module. Also found the `script-src 'self'` egress route fixed by S14. Adopted: [ADR-004](../ADR-004-files-as-blob-urls.md) |
+| [Blob-URL file delivery (δ)](../archive/research/blob-delivery-probe.md) | Can guest-created blob: URLs plus an import map replace the virtual-files Service Worker? | Viable with changes: `blob:` in five directives, rewrite relative specifiers, one import map before any module. Also found the `script-src 'self'` egress route fixed by S14. Adopted: [ADR-004](../ADR-004-files-as-blob-urls.md) |
 | [Strict mode (15)](15_strict_mode/README.md) | Does the strict-mode design hold, measured before building it (P1–P8)? | Holds with nine amendments (A1–A9): no nested frames, move never clone, hash the parsed text, render flow control, a view liveness check, worker hardening. Found S18 (WebKit same-site Referer). Adopted: [ADR-005](../ADR-005-strict-mode.md) |
 | [View isolation (16)](16_view_isolation/README.md) | Where does the strict view run, and what can it cost the host page that its time budget does not see? | On the host page's thread everywhere but desktop Chromium 127+; CSS animations and transitions keep it 75–92% busy, outside the budget. A stylesheet in one anonymous layer plus inline-style stripping brings every vector back to idle (`allowAnimations: false`); a meter-and-actuator design was rejected; the budget's rendering measure became a gap meter. Adopted: [ADR-005](../ADR-005-strict-mode.md) |
 | [Formal methods (17)](17_formal_methods/README.md) | Should the library use machine-checked proofs (Lean)? | No: of 48 medium-or-higher findings, none only a proof would have caught; the 12 a proof could reach are caught as well by property tests, model-based lifecycle tests or a type plus a source scan, at a fraction of the cost. A Lean and a fast-check proof of concept on the rate limiter; the view's time budget restated as a long-run average. Planned: S61 |

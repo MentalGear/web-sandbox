@@ -5,7 +5,7 @@ import { generate, mulberry32, shrink } from '../model/generator';
 /**
  * The lifecycle model itself (test/model/lifecycle-model.ts), on hand-written traces from the round reports: for each
  * finding, the trace of the element's behaviour before its fix is a divergence, and the trace after it is not. Every
- * expectation here is one the element met after its fix (docs/security/REVIEW-ROUND-4-2026-10-18.md, REVIEW-ROUND-5-2026-10-19.md).
+ * expectation here is one the element met after its fix (docs/archive/reviews/REVIEW-ROUND-4-2026-10-18.md, REVIEW-ROUND-5-2026-10-19.md).
  */
 
 const valid = (mode: 'strict' | 'cooperative' | 'worker', extra: Partial<Extract<ConfigDesc, { kind: 'valid' }>> = {}): ConfigDesc => ({

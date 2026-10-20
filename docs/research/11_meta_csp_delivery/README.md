@@ -177,7 +177,7 @@ The isolation model as a whole survived every case, because the opaque origin is
 independent layer that user content cannot remove. That is the correct reading: **the CSP is the
 outer wall and it is breachable; the opaque origin is the keep.** Any document claiming
 "Immutable CSP" should be read against 11.3 — see
-[`COMPETITOR_ANALYSIS_2.md`](../COMPETITOR_ANALYSIS_2.md).
+[`COMPETITOR_ANALYSIS_2.md`](../../archive/research/COMPETITOR_ANALYSIS_2.md).
 
 For the architectural consequence — that a host-served build could deliver the policy as a header
 while *keeping* the opaque origin via the `sandbox` attribute — see

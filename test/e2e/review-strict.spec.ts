@@ -4,7 +4,7 @@ import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
 
 /**
- * Adversarial review 2026-10, strict mode and files (docs/security/ADVERSARIAL-REVIEW-2026-10.md):
+ * Adversarial review 2026-10, strict mode and files (docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md):
  *   C1  every blob: URL that resolves in the view names a registered file: the worker's own source URL is revoked
  *       once the worker has run its script (follow-up audit 2026-10-14), and the worker keeps working after it in
  *       every engine; a worker's copy of a JavaScript file is inert as a stylesheet;
@@ -195,7 +195,7 @@ test.describe('C5: a rendered link stays a link, but its href is one inert const
         expect(r).toEqual({ attr: INERT_HREF, href: INERT_HREF, area: INERT_HREF, svg: INERT_HREF, xlink: INERT_HREF, marked: false, link: true, anyLink: true, tabIndex: 0, focused: true, htmlAnchor: true });
         // The accessibility tree, through Playwright's role query: in Firefox and WebKit the view is an in-process frame
         // Playwright always links. Chromium's view may be out of process (it was in the adversarial review's runs; the
-        // broad review's runs measured it in the host page's process, docs/security/BROAD-REVIEW-2026-10-14.md, ST2), and
+        // broad review's runs measured it in the host page's process, docs/archive/reviews/BROAD-REVIEW-2026-10-14.md, ST2), and
         // Playwright links such a frame unreliably (strict-view.ts), so there the role rests on the HTML-AAM facts above
         // (measured with getByRole: 1 there too).
         if (browserName !== 'chromium') {

@@ -5,7 +5,7 @@ import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import type { SandboxConfig } from '@src/host';
 
 /**
- * Focused review 2026-10-14 (docs/security/FOCUSED-REVIEW-2026-10-14.md), where browser behaviour decides:
+ * Focused review 2026-10-14 (docs/archive/reviews/FOCUSED-REVIEW-2026-10-14.md), where browser behaviour decides:
  *   W1  a guest-written file committed with an inert type (no { code: true }) is never loaded as a script by the
  *       next build's markup: resolution admits a file only for the kind of load its type is for, in every engine,
  *       whatever the engine does with a mistyped classic blob: script;

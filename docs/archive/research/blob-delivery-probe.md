@@ -1,6 +1,6 @@
 # Probe: blob-URL file delivery (δ)
 
-**Date**: 2026-10-13 · **Spec**: [`test/e2e/blob-delivery.spec.ts`](../../test/e2e/blob-delivery.spec.ts)
+**Date**: 2026-10-13 · **Spec**: [`test/e2e/blob-delivery.spec.ts`](../../../test/e2e/blob-delivery.spec.ts)
 · **Engines**: Chromium 141.0.7390.37, Firefox 146.0.1, WebKit 26.0 (Playwright 1.58.1 builds on Linux)
 
 δ replaces the virtual-files Service Worker (backlog C1–C4, S3) with blob: URLs: the host pushes file
@@ -113,7 +113,7 @@ Measured under the δ policy. δ must set every blob's `type` from the file exte
   document cannot replace the guest frame through `location`, `window.open(_self)`, a link click or a
   form; cannot load in a nested frame; and cannot open a new browsing context. In Chromium a navigation
   refused by the wrapper's `frame-src` commits `chrome-error://` in place of the guest, exactly as for an
-  https: target ([research 14](14_self_navigation/README.md)). Firefox and WebKit keep the original
+  https: target ([research 14](../../research/14_self_navigation/README.md)). Firefox and WebKit keep the original
   document.
 - With `blob:` added, the existing security suites pass in all three engines: Chromium 34, Firefox +
   WebKit 65 (3 pre-existing skips). The suites are `security`, `hard-security`, `worker-security` and
@@ -122,7 +122,7 @@ Measured under the δ policy. δ must set every blob's `type` from the file exte
   subresource requests. So the egress assertions rest on refusals and CSP violations as well as
   routes, and the WebKit result below was confirmed against a raw TCP listener.
 
-### Finding: `script-src 'self'` in the opaque-origin guest — fixed by [S14](../BACKLOG.md)
+### Finding: `script-src 'self'` in the opaque-origin guest — fixed by [S14](../../BACKLOG.md)
 
 Measured with the then-shipping config (`script-src 'self' 'unsafe-inline'`, `scriptUnsafe: false`,
 guest markup only):
@@ -164,7 +164,7 @@ grants no reach beyond the guest's own files.
 - **Relative URLs inside blob CSS** (`url(./img.png)`, `@import`) resolve against the blob URL by the
   same rule, so they need rewriting as well. Not asserted.
   *Resolved (2026-10-13)*: rewritten with slots the guest fills in dependency order
-  ([ADR-004, CSS amendment](../ADR-004-files-as-blob-urls.md#amendment-css-references-and-srcset-2026-10-13));
+  ([ADR-004, CSS amendment](../../ADR-004-files-as-blob-urls.md#amendment-css-references-and-srcset-2026-10-13));
   a reference left as written loads nothing and requests nothing (`files.spec.ts` section 10).
 - **Chromium blob module workers** (section 1).
 - **Engine drift.** Firefox is implementing multiple import maps, and the local Chromium (141) is older

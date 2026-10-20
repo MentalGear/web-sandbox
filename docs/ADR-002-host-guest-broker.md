@@ -192,7 +192,7 @@ and the strict cases of `test/e2e/broker.spec.ts`, which runs the whole broker s
 
 ## Amendment (2026-10-14): adversarial review: the channel
 
-**When**: the adversarial review of 2026-10 ([report](security/ADVERSARIAL-REVIEW-2026-10.md), B1–B4, B7).
+**When**: the adversarial review of 2026-10 ([report](archive/reviews/ADVERSARIAL-REVIEW-2026-10.md), B1–B4, B7).
 **Why**: the transport under the broker trusted more than it checked. The bootstrap took the first INIT_PORT
 from anyone; it called the port through prototypes guest code could patch, so guest code could take the port
 (and answer the watchdog from a nested worker while it looped); the host dispatched log frames as they came and
@@ -233,7 +233,7 @@ Proof: `test/e2e/review-channels.spec.ts` (all engines), `src/lib/in-sandbox-scr
 
 ## Amendment (2026-10-14): broad review: the guest announces its port
 
-**When**: the broad review of 2026-10-14 ([report](security/BROAD-REVIEW-2026-10-14.md), CB1, PD8). **Why**: the B1
+**When**: the broad review of 2026-10-14 ([report](archive/reviews/BROAD-REVIEW-2026-10-14.md), CB1, PD8). **Why**: the B1
 fix accepted one INIT_PORT, from the host page, in a capture listener of the guest's window, installed before guest
 code. `document.open()` erases every listener of the window: guest code that called it before the wrapper's load
 (an image held the load open) installed a listener of its own, and the host's INIT_PORT, posted after the load,
@@ -282,7 +282,7 @@ Proof: `test/e2e/ready.spec.ts`, `src/lib/in-sandbox-script.test.ts` ("the start
 
 ## Amendment (2026-10-15): review round 1: byte budgets on every message
 
-**When**: [review round 1](security/REVIEW-ROUND-1-2026-10-15.md) (R3-3, R4-1); backlog S51. **Why**: the frames had
+**When**: [review round 1](archive/reviews/REVIEW-ROUND-1-2026-10-15.md) (R3-3, R4-1); backlog S51. **Why**: the frames had
 counts (`MAX_INBOUND_IN_FLIGHT`, `LOG_MAX_ARGS`) and string caps, but no byte bound: a strict guest's
 `console.log(new Uint8Array(64 MiB))` arrived whole, a flood of lines within the caps cut Firefox's host page to a few
 ticks per second, and 256 calls of 32 MiB each were held on WebKit's host. And the guest's console threw

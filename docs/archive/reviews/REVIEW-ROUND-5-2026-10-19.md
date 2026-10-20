@@ -4,7 +4,7 @@ The fifth round under the stopping rule, on `main` at `60814b5`, after round 4's
 the [round 2 report](REVIEW-ROUND-2-2026-10-15.md#stopping-rule)).
 
 The owner reviewed the findings before any fix. They then asked whether the findings share a class.
-[Research 18](../research/18_finding_classes/README.md) found that the classes which recur are the ones whose earlier
+[Research 18](../../research/18_finding_classes/README.md) found that the classes which recur are the ones whose earlier
 fixes were per instance. The owner adopted every recommendation: each fix below is the first slice of its class's design,
 and every fix names its class (CONTRIBUTING.md, "Fixing a finding"). Backlog: S63 (the round) and S64 (its fixes).
 
@@ -13,7 +13,7 @@ and every fix names its class (CONTRIBUTING.md, "Fixing a finding"). Backlog: S6
 | | Method | Model family | Completed |
 | :--- | :--- | :--- | :--- |
 | C | audit of the code changed since round 4 (`c7672bb..60814b5`) | Sonnet | yes |
-| L | model-based lifecycle testing from [the reference model](../research/17_formal_methods/lifecycle-model.md): 1,050 sequences, 12 sweeps and 6 tight loops per engine; all 216 (operation, state, mode) combinations on each | Opus | yes |
+| L | model-based lifecycle testing from [the reference model](../../research/17_formal_methods/lifecycle-model.md): 1,050 sequences, 12 sweeps and 6 tight loops per engine; all 216 (operation, state, mode) combinations on each | Opus | yes |
 | M | each documented limit at its edge on 3 engines, with soaks | Opus | yes |
 
 The audit's reviewer killed two browser processes of another reviewer by mistake. Both other reviewers discarded the runs
@@ -52,13 +52,13 @@ after the fix. Tests:
   `warn` line per environment, and the second within `VIEW_OVERRUN_WINDOW_MS` (5 minutes) ends the sandbox ("the view
   spent more than 2000 ms on one operation twice within 5 minutes"). What remains: at most one stall past 2 s per
   5 minutes beyond the first, each bounded only by the view's caps
-  ([API.md (b)](../API.md#b-the-single-operation-bound); backlog S72).
+  ([API.md (b)](../../API.md#b-the-single-operation-bound); backlog S72).
 - **Some browser work is outside the time meter.** Relayouts after an image decodes or a font swaps happen outside the
   frame the meter measures; only the load rate bounds them.
 - **Chromium reports a refused load twice**, once as an entry and once as a violation: both take from the CSS's
   prepayment while it lasts (S73), and past it each is charged. That errs toward slowing.
 - **Unhandled rejections in Firefox** cost the host page whatever is done with them. The per-second budget is the
-  bound ([research 19](../research/19_relay_worker/README.md): a relay worker does not change this).
+  bound ([research 19](../../research/19_relay_worker/README.md): a relay worker does not change this).
 
 ## Validation
 

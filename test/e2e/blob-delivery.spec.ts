@@ -4,7 +4,7 @@ import type { OriginKind } from '@src/lib/csp/origins';
 import { useRecorder, wss } from './recorder';
 
 /**
- * Precondition probe for "δ blob-URL files" (docs/research/blob-delivery-probe.md): the host pushes
+ * Precondition probe for "δ blob-URL files" (docs/archive/research/blob-delivery-probe.md): the host pushes
  * file contents over the broker and the guest turns each into a blob: URL created in its OWN realm,
  * plus an import map so module specifiers resolve to those URLs. These specs pin, per engine, what
  * that design relies on:

@@ -253,7 +253,7 @@ configuration, fetch bridge, auto-sizing), `strict-render-flood.spec.ts` (A4),
 
 ## Amendment (2026-10-14): adversarial review
 
-**When**: the adversarial review of 2026-10 ([report](security/ADVERSARIAL-REVIEW-2026-10.md), A1, C1–C5).
+**When**: the adversarial review of 2026-10 ([report](archive/reviews/ADVERSARIAL-REVIEW-2026-10.md), A1, C1–C5).
 
 - **The view policy cannot be widened from a value (A1).** A `;` inside a passed-through value (for example
   `default-src`) used to emit directives ahead of the fixed ones, and the first occurrence of a directive wins:
@@ -295,7 +295,7 @@ Proof: `test/e2e/review-policy.spec.ts`, `test/e2e/review-strict.spec.ts`, the s
 
 ## Amendment (2026-10-14): follow-up audit, C1, C4 and C5 by construction
 
-**When**: the by-construction audit of the review's fixes ([report](security/ADVERSARIAL-REVIEW-2026-10.md#follow-up-2026-10-14-by-construction-audit)).
+**When**: the by-construction audit of the review's fixes ([report](archive/reviews/ADVERSARIAL-REVIEW-2026-10.md#follow-up-2026-10-14-by-construction-audit)).
 
 - **C1: the worker's source URL is revoked once its script ran.** The view revokes it on the first message the
   worker sends on the render port (`VIEW_STARTED`, which the prelude posts when it takes `INIT_WORKER`, so only
@@ -344,7 +344,7 @@ admitting `blob:` there would admit `<script src=blob:>` in the view). Proof: `t
 
 ## Amendment (2026-10-14): focused review, no attribute changes after the renderer
 
-**When**: the focused review of 2026-10-14 ([report](security/FOCUSED-REVIEW-2026-10-14.md), F1). **Why**: the renderer checks attributes once,
+**When**: the focused review of 2026-10-14 ([report](archive/reviews/FOCUSED-REVIEW-2026-10-14.md), F1). **Why**: the renderer checks attributes once,
 before insertion, so its guarantees hold only if no attribute changes afterwards. In the view no script runs and
 CSS cannot set an attribute, but SVG animation (SMIL) can: a `<set>` or `<animate>` inside a rendered link animated
 its `href` back to the guest's URL after the renderer had made it `about:blank#` (getAttribute and `baseVal` kept the
@@ -361,7 +361,7 @@ the load-kind table, ADR-004).
 
 ## Amendment (2026-10-14): broad review, an allowlist renderer and a bounded view
 
-**When**: the broad review of 2026-10-14, reviewer C ([report](security/BROAD-REVIEW-2026-10-14.md), ST1–ST4, I1).
+**When**: the broad review of 2026-10-14, reviewer C ([report](archive/reviews/BROAD-REVIEW-2026-10-14.md), ST1–ST4, I1).
 **Why**: the renderer was a list of what to remove, so every mechanism a document has that the list did not name
 was open: F1 (SMIL) and ST2 (SVG `<use>`) both came from there. And three bounds held per item but not for the whole:
 the files the view shows (ST1), the size of what one render builds (ST2), and the size of one event (ST3).
@@ -416,7 +416,7 @@ directive with a refused audio load, F1's positive control with an HTML image, a
 
 ## Amendment (2026-10-14): independent verification, the worker's globals are an allowlist
 
-**When**: the independent verification of 2026-10-14 ([report](security/VERIFICATION-2026-10-14.md), V1, V2). **Why**: G4
+**When**: the independent verification of 2026-10-14 ([report](archive/reviews/VERIFICATION-2026-10-14.md), V1, V2). **Why**: G4
 said egress is the policy, and it held for every network API the probes had tried; it did not for one they had not.
 In Firefox (146), `new EventSource(url)` from the strict worker reached an origin `connect-src` blocks, and
 `new FontFace(name, 'url(…)')` one `font-src` blocks, with no violation; `fetch`, `XMLHttpRequest`, `WebSocket` and
@@ -468,7 +468,7 @@ time. `data:` is not an origin, so it reaches no image (ST1) and no font or medi
 
 ## Amendment (2026-10-15): strict is the default; cooperative mode's limits are frozen
 
-**When**: after the [independent verification](security/VERIFICATION-2026-10-14.md#decisions-after-the-verification)
+**When**: after the [independent verification](archive/reviews/VERIFICATION-2026-10-14.md#decisions-after-the-verification)
 (decision 2) and typed origins ([ADR-007](ADR-007-typed-origins.md)); backlog S48. **Why**: every review since this
 ADR found its new issues in the mode where guest script runs in a document, and every one was the S6/S13 class: a
 realm the library does not reach, or a platform behaviour no policy governs. Each fix was a guest-realm patch, and the
@@ -521,7 +521,7 @@ config is cooperative), so the attack regressions keep testing that mode.
 
 ## Amendment (2026-10-15): review round 1, the view's check-in, its character budget, host-page availability
 
-**When**: [review round 1](security/REVIEW-ROUND-1-2026-10-15.md) (R1-1, R1-2, R2-1 = R3-1, R1's availability
+**When**: [review round 1](archive/reviews/REVIEW-ROUND-1-2026-10-15.md) (R1-1, R1-2, R2-1 = R3-1, R1's availability
 measurements); backlog S50–S52.
 
 **Decision**:
@@ -559,7 +559,7 @@ Tests: `test/e2e/host-policy.spec.ts` (each host policy on all three engines, wi
 
 ## Amendment (2026-10-15): the owner's decisions after review round 1
 
-**When**: [review round 1](security/REVIEW-ROUND-1-2026-10-15.md), "Awaiting the owner" (R4-4, R4-5, R2-2); backlog S54.
+**When**: [review round 1](archive/reviews/REVIEW-ROUND-1-2026-10-15.md), "Awaiting the owner" (R4-4, R4-5, R2-2); backlog S54.
 
 - **The view shows raster-image guest writes (R4-4)**, from URLs it mints itself out of the bytes the host holds,
   decoded only; the rule is one constant, `VIEW_WRITE_TYPES` = `VIEW_FILE_TYPES` ∩ PNG, JPEG, GIF, WebP, AVIF

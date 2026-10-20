@@ -4,9 +4,9 @@
 
 ## Why this ADR exists
 
-The repository contains three prior-art comparisons — [`COMPARISON.md`](research/COMPARISON.md),
-[`COMPETITOR_ANALYSIS_2.md`](research/COMPETITOR_ANALYSIS_2.md) and
-[`IMPROVEMENTS.md`](research/IMPROVEMENTS.md) — and **none of them asks whether to continue**.
+The repository contains three prior-art comparisons — [`COMPARISON.md`](archive/research/COMPARISON.md),
+[`COMPETITOR_ANALYSIS_2.md`](archive/research/COMPETITOR_ANALYSIS_2.md) and
+[`IMPROVEMENTS.md`](archive/research/IMPROVEMENTS.md) — and **none of them asks whether to continue**.
 Each ends with a verdict in our own favour ("occupies a specific niche", "fills a gap",
 "Best for Local-First… scenarios") without ever stating what would *dis*qualify the project. The
 first version of [`BACKLOG.md`](BACKLOG.md) inherited that assumption: 28 items about what to
@@ -39,7 +39,7 @@ so the channel cannot exist.
 Likewise Service Workers: the unique-origin model *permits* what
 [finding 02](research/02_sw_tampering/README.md) is about and relies on uuid uniqueness to contain
 it. The opaque origin closes it by construction — which is exactly the argument
-[`ARCHITECTURE_COMPARISON.md`](research/ARCHITECTURE_COMPARISON.md) makes internally, and then
+[`ARCHITECTURE_COMPARISON.md`](archive/research/ARCHITECTURE_COMPARISON.md) makes internally, and then
 fails to apply to the competitor.
 
 ### Where they are genuinely stronger — and it is not origin strength
