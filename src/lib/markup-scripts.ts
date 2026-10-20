@@ -1,7 +1,7 @@
 import { parseInert } from './trusted-types';
 
 /**
- * Whether guest markup asks to run script: a `script` element (any namespace) or an event handler attribute (`on…`,
+ * Finds whether guest markup asks to run script: a `script` element (any namespace) or an event handler attribute (`on…`,
  * any case, any namespace), anywhere, template contents included. Strict mode, the default, runs none of it (the
  * renderer drops both, ADR-005), so the element says so once (host.ts, _warnAboutStrictHtml).
  *

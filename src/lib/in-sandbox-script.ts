@@ -1,3 +1,7 @@
+/**
+ * The guest bootstrap of every mode: stringified into the realm, it makes the guest's end of the logic port, relays
+ * console output and installs the bridge.
+ */
 import type { createBroker } from './rpc';
 import type { createSizeOf } from './structured-size';
 import type { FrameType } from './frames';

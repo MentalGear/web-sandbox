@@ -1,3 +1,6 @@
+/**
+ * Filtering of the capabilities an embedder lists: the allowed ones are kept, every other one dropped with a warning.
+ */
 import { UNSAFE_CAPABILITIES } from "../csp-directives";
 import { shown } from "./csp/origins";
 

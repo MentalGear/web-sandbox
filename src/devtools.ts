@@ -1,6 +1,5 @@
 /**
- * Simple DevTools for WebSandbox
- * Logs events to the Host Console safely.
+ * Simple DevTools for WebSandbox: logs the element's events to the host console safely.
  */
 export class SandboxDevTools {
     private _sandbox: HTMLElement;

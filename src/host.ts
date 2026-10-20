@@ -1,3 +1,7 @@
+/**
+ * The `<web-sandbox>` custom element: it builds each mode's frames, holds the host end of every port, and applies the
+ * lifecycle reducer's effects (lifecycle.ts) to the DOM.
+ */
 import type { SafeCapability, UnsafeCapability } from "./csp-directives";
 import { UNSAFE_PERMISSIONS } from "./csp-directives";
 import { cooperativePolicy, fileKinds, strictViewPolicy } from "./lib/csp/csp-generator";

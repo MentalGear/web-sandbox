@@ -1,6 +1,8 @@
 import type { FileSnapshotEntry } from './files';
 
 /**
+ * The guest side of the registered files, `sandboxFiles`, and of the guest writes.
+ *
  * This function is stringified and injected into the sandbox (iframe or worker), after the comms
  * script and before any guest markup. Like inSandboxScript and createBroker it must be self-contained:
  * it closes over nothing from module scope, and uses no syntax the build compiles into module-scope

@@ -8,8 +8,10 @@ import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
 import { KIND_DIRECTIVES } from './csp/csp-generator';
 
 /**
- * Strict mode (backlog S6, S13, S17; ADR-005): guest logic runs only in a worker, and the DOM frame — the
- * "view" — runs exactly one script, the library's own bootstrap, admitted by its SHA-256 hash.
+ * Strict mode's view and worker prelude (ADR-005).
+ *
+ * Guest logic runs only in a worker, and the DOM frame — the "view" — runs exactly one script, the library's own
+ * bootstrap, admitted by its SHA-256 hash.
  *
  *   host page
  *   └─ wrapper  (unchanged: frame-src 'none', inert base, no-referrer; frame-documents.ts)
