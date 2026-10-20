@@ -11,7 +11,7 @@ const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets
 
 /**
  * Parses `html` into an inert fragment the way the view does, and runs the renderer on it. `files`: path → the URL the
- * view minted, typed by extension. `origins`: what the view's policy admits per kind key (review round 4, M-2); none
+ * view minted, typed by extension. `origins`: what the view's policy admits per kind key (R4:M-2); none
  * by default, as without `origins`.
  */
 function sanitize(html: string, files: Record<string, string> = {}, origins: Record<string, string[]> = {}) {
@@ -418,12 +418,11 @@ describe('broad review 2026-10-14: the renderer is an allowlist', () => {
         return found;
     };
 
-    // The cost is CPU in jsdom (measured on a similar corpus: about two thirds parsing the corpora into templates, a
-    // quarter the renderer's walk; 1.5 s on an idle core for the 300 corpora, about 9 000 elements). It failed vitest's
-    // default 5 s timeout on a loaded machine (9 s with other processes on all four cores; independent verification
-    // 2026-10-14): not a hang, a fixed amount of work run slower. So the checks are collected and asserted once
-    // instead of one expect() per attribute (1.8 s → 1.5 s idle), and the test states its own bound, 30 s: twenty
-    // times its idle cost, three times the worst measured under load. The 300 seeded corpora stay, since what they
+    // The cost is CPU in jsdom (about two thirds parsing the corpora into templates, a quarter the renderer's walk;
+    // 1.5 s on an idle core for the 300 corpora, about 9 000 elements). On a loaded machine it passes vitest's default
+    // 5 s timeout (9 s with other processes on all four cores): not a hang, a fixed amount of work run slower. So the
+    // checks are collected and asserted once instead of one expect() per attribute (1.8 s → 1.5 s idle), and the test
+    // states its own bound, 30 s: twenty times its idle cost, three times the worst seen under load. The 300 seeded corpora stay, since what they
     // cover — every listed and unlisted name, three namespaces, depth 3 — is the property.
     it("property: whatever is rendered, every element left is on its namespace's list and every attribute on its list; no handler, no script-capable URL is left (300 random corpora)", () => {
         const found: string[] = [];
@@ -509,9 +508,9 @@ describe('the view bootstrap: budgets (broad review ST2, ST3)', () => {
 
     // Starts the bootstrap in this document with a fake Worker; returns the worker's end of the render port. `maxElements`
     // replaces the element budget in the bootstrap's literal: the budget test counts the same way at 500 elements as at
-    // VIEW_MAX_ELEMENTS (50 000), which cost 1.6 s of jsdom DOM work idle and timed out under load (independent
-    // verification 2026-10-14). The shipped literal holds VIEW_MAX_ELEMENTS (asserted below), and the e2e budget tests
-    // (broad-strict.spec.ts, ST2) render the real 50 000 in every engine.
+    // VIEW_MAX_ELEMENTS (50 000), which costs 1.6 s of jsdom DOM work idle and can time out under load. The shipped
+    // literal holds VIEW_MAX_ELEMENTS (asserted below), and the e2e budget tests (broad-strict.spec.ts, BR:ST2) render
+    // the real 50 000 in every engine.
     const startView = (maxElements = VIEW_MAX_ELEMENTS) => {
         const workers: { transfer: MessagePort[] }[] = [];
         (globalThis as any).Worker = class {
@@ -592,9 +591,9 @@ describe('review round 1: R1-2, the renderer is linear and keeps no element whos
         expect(Array.from(fragment.childNodes).map(n => n.nodeType)).toEqual([3, 1, 3]);
     });
 
-    // Scaling, not wall-clock time (review round 2, C-12: a fixed bound failed once under a loaded full suite): the walk
+    // Scaling, not wall-clock time (R2:C-12: a fixed bound can fail under a loaded full suite): the walk
     // over 8 times as many siblings takes at most ~8 times as long, the best of 3 runs of each size against noise. A walk
-    // quadratic in the siblings (R1-2) takes ~64 times as long. jsdom; the browsers' own measure: view-budget.spec.ts.
+    // quadratic in the siblings (R1:R1-2) takes ~64 times as long. jsdom; the browsers' own measure: view-budget.spec.ts.
     it('many siblings to drop or unwrap: the walk takes time linear in their number (1 000 against 8 000 of each)', { timeout: 60000 }, () => {
         const markup = (n: number) => '<p>' + 'x<wbr>'.repeat(n) + '<font>y</font>'.repeat(n) + '<script></script>'.repeat(n) + '</p>';
         const best = (n: number) => {
