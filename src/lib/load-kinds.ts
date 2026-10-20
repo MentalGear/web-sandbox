@@ -1,15 +1,15 @@
 import type { OriginKind } from "./csp/origins";
 
 /**
- * Which file types each kind of load admits: the one table that both the policy and reference resolution read
- * (focused review 2026-10-14, W1). Host-side; the strict view gets the table as data (RENDER_RULES).
+ * Which file types each kind of load admits: the one table that both the policy and reference resolution read.
+ * Host-side (FR:W1); the strict view gets the table as data (RENDER_RULES).
  *
  * A registered file reaches the guest as a blob: URL typed by the store (files.ts), and the browser decides what a
  * load of it does. For one kind it decides nothing: a classic script. Chromium, Firefox and WebKit run a
- * parser-inserted `<script src="blob:…">` whatever the blob's type (measured: Chromium and Firefox every inert type
- * we tried, WebKit text/plain, JSON, CSS and fonts), so the type does not stop a file from being run. Before this
- * table, resolution ignored the load kind: a guest-written `app.js` committed as text/plain, which needs no
- * `{ code: true }`, became a script slot in the next build's `<script src="app.js">` and ran there.
+ * parser-inserted `<script src="blob:…">` whatever the blob's type (Chromium and Firefox every inert type
+ * we tried, WebKit text/plain, JSON, CSS and fonts), so the type does not stop a file from being run. Without this
+ * table, resolution would ignore the load kind: a guest-written `app.js` committed as text/plain, which needs no
+ * `{ code: true }`, would become a script slot in the next build's `<script src="app.js">` and run there.
  *
  * So the library itself decides, at the one place every reference is resolved: a reference names a file only when
  * the file's type is admitted for the kind of load the referencing element or rule makes. A mismatch is not a

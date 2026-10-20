@@ -6,10 +6,10 @@
  * the caller. Synchronous on purpose: crypto.subtle.digest() returns a promise, and building an
  * environment is synchronous end to end (setConfig(), load(), reset() and the element's lifecycle
  * invariants in ADR-003 rely on that). Hashing the text at run time always matches what this page actually
- * serves. In the published bundle that text is a string literal built with the package (review round 2,
- * C-8: in-sandbox-view.ts, viewBootstrapText), so the hash is also a constant of the package that an
- * embedder can compute in a build step; a hash constant written into the sources was not chosen, as the
- * text it hashes would still differ between the dev server and the bundle.
+ * serves. In the published bundle that text is a string literal built with the package (R2:C-8;
+ * in-sandbox-view.ts, viewBootstrapText), so the hash is also a constant of the package that an
+ * embedder can compute in a build step. A hash constant written into the sources would not do: the
+ * text it hashes differs between the dev server and the bundle.
  *
  * What is hashed (research 15, P2): the browser hashes the script's text AS PARSED, encoded as UTF-8.
  * Non-ASCII, "<", "&" and quotes survive the srcdoc attribute decoding unchanged, but the HTML parser
@@ -94,8 +94,8 @@ export function assertHashableScript(text: string): void {
 
 /**
  * Throws unless `text` can be placed inside an inline <script> element and parsed back as exactly one script
- * (review A8): no "</script" (it would end the element and turn the rest into markup), no "<!--" or "<script"
- * (they move the tokenizer into the escaped states, where a later "</script>" is no longer the end), no NUL
+ * (AR:A8): no "</script" (it would end the element and turn the rest into markup), no "<!--" or "<script"
+ * (they move the tokenizer into the escaped states, where a later "</script>" does not end the element), no NUL
  * (replaced by U+FFFD). Used for the default bootstrap, which is not hashed, so a CR is harmless there; the
  * strict view's bootstrap is held to assertHashableScript, which refuses that too.
  */

@@ -9,7 +9,7 @@ import { isViewFileType, RENDER_RULES, type RenderSwitches, sanitizeRender, VIEW
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
 
 /**
- * Focused review 2026-10-14, W1: one table decides which file types each kind of load may name, and the policy
+ * FR:W1: one table decides which file types each kind of load may name, and the policy
  * (fileKinds), markup and CSS resolution (markup-references.ts, files.ts) and the strict view's renderer
  * all read it. The expectations below are written out independently of the table, so a change to it shows here.
  */
@@ -159,7 +159,7 @@ describe('registered stylesheets: @import names stylesheets, @font-face fonts, e
     });
 });
 
-// The strict view mints only types that never open as a document (broad review ST1), written out independently too.
+// The strict view mints only types that never open as a document (BR:ST1), written out independently too.
 const NOT_A_DOCUMENT = (type: string) => !/(html|xml)/.test(type) && /^(text\/css|text\/vtt|image\/(png|jpeg|gif|webp|avif|apng|bmp|x-icon|vnd\.microsoft\.icon)|font\/(woff2?|ttf|otf|collection|sfnt)|audio\/(mpeg|wav|ogg|mp4|flac|webm|aac)|video\/(mp4|webm|ogg))$/.test(type);
 
 describe('the strict view renderer reads a table derived from the same one', () => {

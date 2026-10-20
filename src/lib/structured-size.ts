@@ -1,14 +1,14 @@
 /**
- * The one measure of the byte budgets on log lines and RPC messages (review round 1, R3-3): how many bytes structured
+ * The one measure of the byte budgets on log lines and RPC messages: how many bytes structured
  * clone copies for a value. Measured where a message is made (the guest's console relay and both brokers) and again
- * where it arrives, so neither side has to trust the other's measure.
+ * where it arrives (R1:R3-3), so neither side has to trust the other's measure.
  *
- * What it measures is a SNAPSHOT (review round 2, C-3): a value that is already the result of a structured clone, as a
+ * What it measures is a SNAPSHOT (R2:C-3): a value that is already the result of a structured clone, as a
  * message is when it arrives, and as every sender makes one first, with a structuredClone captured before any guest
- * code ran; the sender then posts that snapshot, never the live value. Measuring the live value let a getter answer the
- * measure small and the clone large, and the walk read only own enumerable keys, which is not what clone copies for most
+ * code ran; the sender then posts that snapshot, never the live value. Measuring the live value would let a getter answer the
+ * measure small and the clone large, and reading only own enumerable keys is not what clone copies for most
  * types: an Error (its message and stack), a RegExp (its source), a BigInt (its digits) and the platform's objects
- * (an ImageData's pixels, in Firefox measured ~16 bytes) crossed past every budget. A snapshot holds no getter, no
+ * (an ImageData's pixels, in Firefox ~16 bytes by own keys) would cross past every budget. A snapshot holds no getter, no
  * Proxy and no function, so the walk is an allow-list of the types clone produces whose size it knows exactly:
  *   - a string: two bytes per UTF-16 code unit plus 8; a BigInt: its two's-complement bytes plus 8, by its hexadecimal
  *     digits, found without making anything larger than the limit; any other primitive 8;
@@ -22,7 +22,7 @@
  * snapshot), or a value whose reading throws. A sender that wants an error across sends what it needs of it: the console
  * relay sends every Error in a line as { name, message, stack } (in-sandbox-script.ts).
  *
- * Infinity says two things, and a sender's message must not confuse them (review round 3, C-3): a value really past the
+ * Infinity says two things, and a sender's message must not confuse them (R3:C-3): a value really past the
  * limit, or a value the measure does not know, whatever its size. `unsupported`, when given, tells them apart: the walk
  * writes the kind it stopped at into `unsupported.kind` ('Error', 'ImageData', 'SharedArrayBuffer', from the value's
  * Object.prototype.toString tag), and leaves it alone when the limit was what it passed. So "past the byte budget" is
@@ -30,7 +30,7 @@
  *
  * `createSizeOf()` captures everything it uses when it is called, and returns the measure. The bootstrap calls it before
  * any guest code runs (it is stringified into the guest like createBroker, so it closes over nothing), so guest code that
- * replaces Object.keys, Array.isArray, a getter or a prototype method later cannot change what a value measures (C-1: no
+ * replaces Object.keys, Array.isArray, a getter or a prototype method later cannot change what a value measures (R2:C-1: no
  * closure here reads a global or an intrinsic the guest can replace; a unit test scans the text). The walk visits each
  * object once and stops as soon as the estimate passes `limit`: its work is bounded by the limit, whatever the value. It
  * never throws. `buffers`, when given, receives every ArrayBuffer the walk counted, once each: what a sender may transfer
@@ -39,7 +39,7 @@
 export type SizeOf = (value: unknown, limit: number, buffers?: unknown[], unsupported?: { kind: string }) => number;
 
 export function createSizeOf(): SizeOf {
-    // ---- The captured list (review round 2, C-1): everything the measure uses, taken now, before any guest code runs.
+    // ---- The captured list (R2:C-1): everything the measure uses, taken now, before any guest code runs.
     const apply = Reflect.apply;
     const getOwn = Object.getOwnPropertyDescriptor;
     const protoOf = Object.getPrototypeOf;
@@ -116,7 +116,7 @@ export function createSizeOf(): SizeOf {
             return Infinity;
         };
         try {
-            // A list without a prototype (review C3): an index written to it never reaches an inherited setter.
+            // A list without a prototype (AR:C3): an index written to it never reaches an inherited setter.
             const stack: unknown[] = setPrototype([], null);
             stack[0] = value;
             const seen = new SetConstructor();

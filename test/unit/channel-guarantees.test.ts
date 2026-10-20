@@ -139,9 +139,9 @@ describe('B4: only the current environment\'s ports are heard', () => {
 
 describe('B5: a listener that resets or terminates the sandbox is never undone', () => {
     // Every host path that dispatches an event and then acts on the environment, each forced here. A termination that
-    // says something first is one step of the lifecycle executor with its lines as `notices` (src/lib/lifecycle.ts; S65
-    // step 2, PR B: this was _notifyThenAct), and the one other such path uses the executor's runNotices; the source
-    // check below fails when a path is added without a row here.
+    // says something first is one step of the lifecycle executor with its lines as `notices` (`runEffects`,
+    // src/lib/lifecycle.ts), and the one other such path uses the executor's `runNotices`; the source check below fails
+    // when a path is added without a row here.
     const PATHS: { name: string; reason: string; start: () => Promise<{ el: any; force: () => void; done: () => void }> }[] = [
         {
             name: 'the execution timeout (worker mode)',

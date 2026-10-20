@@ -1,12 +1,11 @@
 /**
- * The element's events (class D/L, docs/research/18_finding_classes/README.md; review round 5, L-3): every event the
+ * The element's events (class D/L, docs/research/18_finding_classes/README.md; R5:L-3): every event the
  * element dispatches is made here, by one constructor, from one table of the types and whether each bubbles. The
  * constructor freezes the detail deeply, so the first listener cannot change what a later listener reads: every detail is
  * one state seen by every listener, never a copy one of them rewrote.
  *
- * Before, each dispatch site built its own CustomEvent: `sandbox-log`, `violation`, `fetch` and `fileswritten` froze their
- * detail (the top object, and the log line's argument list), `terminated` and `fileschanged` did not, and a listener could
- * rewrite `reason` for every listener after it, while docs/API.md said "Every detail is frozen". A rule kept at each site
+ * Why one constructor: docs/API.md says "Every detail is frozen", and a detail left unfrozen at one dispatch site would
+ * let a listener rewrite `reason` for every listener after it. A rule kept at each site
  * is a rule some site forgets; test/unit/element-events.test.ts fails on any `new CustomEvent` outside this module and on
  * any dispatch in host.ts that does not use elementEvent().
  *
@@ -14,7 +13,7 @@
  * clones). What cannot be frozen stays as it is: the bytes of a typed array or an ArrayBuffer, the entries of a Map or a
  * Set, a Date's time (docs/API.md, Events). The walk visits each object once, so a cycle ends it, and it is bounded by what
  * a detail can hold: a log line measures at most LOG_MAX_BYTES on receipt, before it is dispatched. What it costs is the
- * one new cost on the host page's thread here, so it was measured (test/unit/element-events.test.ts, V8): the line with the
+ * one new cost on the host page's thread here, so it is measured (test/unit/element-events.test.ts, V8): the line with the
  * most objects a guest can send, about 30 000 empty objects within LOG_MAX_BYTES, freezes in 8–12 ms, half of what the
  * element's own measure of that line on receipt already takes; the guest's relay sends at most 4 MiB of lines a second,
  * so at most four such lines.

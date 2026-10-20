@@ -29,8 +29,8 @@ export const WRAPPER_CSP = "frame-src 'none'";
  * about:blank rather than an https://….invalid URL: a relative URL cannot be resolved against it at
  * all, so relative URLs in guest markup fail closed — no request, not even one that CSP then blocks —
  * where an .invalid base would turn them into real requests that only the policy stops. Absolute URLs
- * (blob: files, workers, allowlisted origins) are unaffected. Measured 2026-10-13 in Chromium, Firefox
- * and WebKit: baseURI and import.meta.url read about:blank, `<img src="x.png">` sends nothing.
+ * (blob: files, workers, allowlisted origins) are unaffected. In Chromium, Firefox
+ * and WebKit baseURI and import.meta.url read about:blank; `<img src="x.png">` sends nothing.
  * Relative references to REGISTERED files are resolved by the host before the guest exists
  * (markup-references.ts); every other relative URL still fails closed here.
  */
@@ -89,7 +89,7 @@ export function buildGuestDocument(parts: GuestDocumentParts): string {
     const securityBlock = [
         `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(parts.csp)}">`,
         // No CSP directive governs <link rel=dns-prefetch> or rel=preconnect: they resolve a host name, or open a
-        // connection, to any origin (broad review 2026-10-14, PD3). This turns DNS prefetching off for the guest
+        // connection, to any origin (BR:PD3). This turns DNS prefetching off for the guest
         // document where an engine honours it (Firefox); what remains is a residual (README), closed by strict mode.
         `<meta http-equiv="x-dns-prefetch-control" content="off">`,
         `<script>${parts.bootstrapScript}</script>`,
@@ -136,7 +136,7 @@ export const WRAPPER_PREFIX = `<!DOCTYPE html><html><head><meta http-equiv="Cont
 
 /**
  * The wrapper's one stylesheet: the guest frame fills the wrapper. A srcdoc document inherits the host page's policy
- * (review round 1, R3-1), so a host page whose style-src has neither 'unsafe-inline' nor this text's hash
+ * (R1:R3-1), so a host page whose style-src has neither 'unsafe-inline' nor this text's hash
  * (WRAPPER_STYLE_HASH, constant: docs/API.md#host-page-policy lists it, a unit test keeps the two equal) refuses it.
  * Without it the frame still fills the width and has no border or margin (attributes, which no style-src governs),
  * but is 150 px high: nothing but CSS sizes a frame's height to a parent of auto height, and a srcdoc document is

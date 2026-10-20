@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
 
 /**
- * The worker globals allowlist (independent verification 2026-10-14, V1), on a stand-in global shaped like a worker's
+ * The worker globals allowlist (VR:V1), on a stand-in global shaped like a worker's
  * (measured: interfaces own, the scope's attributes and operations on its prototypes). The e2e spec
  * (test/e2e/verification.spec.ts) runs it in real workers on Chromium, Firefox and WebKit.
  */

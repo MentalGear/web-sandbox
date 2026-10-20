@@ -1,10 +1,10 @@
 import { WRAPPER_PREFIX } from './frame-documents';
 
 /**
- * The element's HTML sinks on a host page that enforces Trusted Types (review round 1, R3-1). Under the host page's
+ * The element's HTML sinks on a host page that enforces Trusted Types. Under the host page's
  * `require-trusted-types-for 'script'`, Chromium and WebKit throw a TypeError when a string reaches an HTML sink
- * (measured), and the element has two: the wrapper's `srcdoc`, and the inert parse of guest markup it reads before a
- * build (DOMParser: strict mode's script warning, cooperative mode's file references). The build failed with "could not
+ * (measured; R1:R3-1), and the element has two: the wrapper's `srcdoc`, and the inert parse of guest markup it reads before a
+ * build (DOMParser: strict mode's script warning, cooperative mode's file references). Without a policy the build fails with "could not
  * be built (TypeError)". Host-side only.
  *
  * Each sink is tried with the string first, so a page that does not enforce Trusted Types never sees a policy of ours.

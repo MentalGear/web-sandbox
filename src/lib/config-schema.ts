@@ -1,18 +1,17 @@
 /**
- * The config schema (class C, docs/research/18_finding_classes/README.md, design 4; review round 5, L-2 = N-5): where a
+ * The config schema (class C, docs/research/18_finding_classes/README.md, design 4; R5:L-2, R5:N-5): where a
  * field's validity is decided together with the fields it depends on, once, before anything is stored or built. Its
- * first part was `callLimits`; since backlog S67 it is the whole configuration: every option's default, accepted values,
+ * configuration (S67): every option's default, accepted values,
  * clamp, warnings and modes are declared once in CONFIG_SCHEMA, normaliseConfig() is the one reading of a setConfig()
  * argument, and the cross-field invariants are declared once in CONFIG_INVARIANTS. host.ts keeps no validation of its
  * own: it stores what normaliseConfig() returns, says its warnings once per element and message, and refuses what it
  * refuses.
  *
  * Why. A field checked on its own can hold a value every other check accepts and the configuration as a whole cannot
- * use. Round 4 (C-6) refused a `callLimits` budget below 1, which admitted no call and answered every one BUSY forever;
- * round 5 found the same symptom one step up: a byte budget smaller than one call (the smallest call frame measures about
- * 136 bytes) was accepted, and every guest call, sandboxFetch() and guest writes included, was answered BUSY forever,
- * a code that says "retry". The invariant that was violated is about two values at once, the budget and the weight of a
- * call, so it is declared here as one (CALL_INVARIANTS) with the repair the owner chose: a call heavier than the
+ * use. A `callLimits` budget below 1 admits no call (R4:C-6), and a byte budget smaller than one call (the
+ * smallest call frame measures about 136 bytes; R5:N-5) would answer every guest call, sandboxFetch() and guest writes
+ * included, BUSY forever, a code that says "retry". The invariant is about two values at once, the budget and the
+ * weight of a call, so it is declared here as one (CALL_INVARIANTS): a call heavier than the
  * byte budget can never fit an empty window, so it is refused with ARGS_NOT_TRANSFERABLE, which is not retryable, at both
  * ends (admitGuestCall here for the element; the bootstrap's broker applies the same rule to the same literal), and a
  * byte budget below the largest call (RPC_MAX_BYTES) says once which calls it refuses.
@@ -40,11 +39,10 @@ export interface CallBudget {
     bytes: number;
 }
 
-// The defaults of `callLimits` (review round 3, M-2).
-// 1000 calls (review round 4, M-6, the owner's decision): the reviewers measured Firefox's host page 32–37% busy at 4900
-// calls per second, with gaps of 1.8 s in bursts. At 1000, a strict guest calling paced at the budget and one sending
-// a second's worth at once each second left Firefox's host page its idle ticks, longest gap 15–27 ms
-// (test/e2e/review-round-4.spec.ts, "M-6").
+// The defaults of `callLimits` (R3:M-2).
+// 1000 calls (R4:M-6): at 4900 calls per second Firefox's host page was 32–37% busy, with gaps of 1.8 s in bursts. At
+// 1000, a strict guest calling paced at the budget and one sending a second's worth at once each second leave Firefox's
+// host page its idle ticks, longest gap 15–27 ms (the e2e spec of R4:M-6, in test/e2e/).
 export const GUEST_CALLS_PER_SECOND = 1000;
 export const GUEST_CALL_BYTES_PER_SECOND = 67108864;
 
@@ -73,8 +71,8 @@ export const CALL_INVARIANTS: readonly { name: string; holds: (budget: Readonly<
 /**
  * The call budget `callLimits` asks for (from the copy setConfig() took). Each field is a finite number >= 1, else its
  * default: left out, silently; anything else (Infinity, a number below 1, NaN, a string), with a warning. There is no
- * "off": a budget that can be lifted is one a config typo lifts. Nor a budget that admits nothing (review round 4, C-6):
- * below 1, every call was BUSY forever, without a word, since no call weighs less than 1. A byte budget below
+ * "off": a budget that can be lifted is one a config typo lifts. Nor a budget that admits nothing (R4:C-6):
+ * below 1, every call would be BUSY forever, without a word, since no call weighs less than 1. A byte budget below
  * RPC_MAX_BYTES is kept, with one warning: calls heavier than it are refused ARGS_NOT_TRANSFERABLE (heaviestCall). Never
  * throws: a callLimits that is not an object is warned about and gives the defaults.
  */
@@ -122,9 +120,9 @@ export function admitGuestCall(budget: Readonly<CallBudget>, calls: CallWindows,
     return null;
 }
 
-// ---- The whole configuration (backlog S67)
+// ---- The whole configuration (S67)
 
-/** The execution modes. Anything else is refused: the sandbox does not start (review A4). */
+/** The execution modes. Anything else is refused: the sandbox does not start (AR:A4). */
 export const SANDBOX_MODES = ['strict', 'cooperative', 'worker'] as const;
 export type SandboxMode = (typeof SANDBOX_MODES)[number];
 export const isSandboxMode = (mode: unknown): mode is SandboxMode => (SANDBOX_MODES as readonly unknown[]).includes(mode);
@@ -252,7 +250,7 @@ const viewSwitch = (name: ViewSwitch) => ({ given, mode, warn }: OptionInput): b
 export const CONFIG_SCHEMA = {
     mode: {
         default: 'strict', documented: "`'strict'`", modes: ALL_MODES,
-        // any other value is kept, and refused at every build (unknownModeReason), never read as the default (review A4)
+        // any other value is kept, and refused at every build (unknownModeReason), never read as the default (AR:A4)
         read: ({ given }) => (given === undefined ? 'strict' : given),
         notice: ({ mode }) => (isSandboxMode(mode) ? [] : [`[Sandbox] mode ${describeMode(mode)} is not one of ${SANDBOX_MODES.join(', ')}${renamedModeNote(mode)}: the sandbox will not start until setConfig() names one of them.`]),
     },
@@ -269,7 +267,7 @@ export const CONFIG_SCHEMA = {
     },
     html: {
         default: '', documented: "`''`", modes: ['strict', 'cooperative'], ignoredIn: (mode) => mode === 'worker',
-        // a string or nothing (R1-3): anything else is dropped with a warning, never refuses the config
+        // a string or nothing (R1:R1-3): anything else is dropped with a warning, never refuses the config
         read: ({ given, present, warn }) => {
             if (typeof given === 'string') return given;
             if (present) warn(`[Sandbox] "html" must be a string; ${shown(given)} was dropped.`);
@@ -318,7 +316,7 @@ export const CONFIG_SCHEMA = {
     scriptUnsafe: {
         default: false, documented: '`false`', modes: ALL_MODES,
         read: literalTrue,
-        // the guard rail (backlog S4): on in most presets and every e2e spec, so it says once what it costs
+        // the guard rail (S4): on in most presets and every e2e spec, so it says once what it costs
         notice: (_, read) => (read === true ? ["[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content."] : []),
     },
     // not in cooperative mode: the guest document can share the host's thread, so no timer could fire meanwhile
@@ -351,7 +349,7 @@ export interface Normalised {
  * own rule, then the cross-field rules (CONFIG_INVARIANTS), and every warning in order. Pure: it warns into the result,
  * never to the console, and never throws. A config that cannot be used (not an object; an `origins` that is not an
  * object, or a kind of it that is not a list) is a refusal, with the warnings said up to it, and nothing of it is kept
- * (focused review 2026-10-14, F6). Reads own keys only and writes only defined data properties (review A7, F4), so no
+ * (FR:F6). Reads own keys only and writes only defined data properties (AR:A7, FR:F4), so no
  * key of the argument reaches a prototype, and nothing but the schema's options reaches the stored config.
  */
 export function normaliseConfig(copy: unknown, context: NormaliseContext): Normalised {

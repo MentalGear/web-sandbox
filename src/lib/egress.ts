@@ -1,14 +1,13 @@
 /**
- * The egress table (class E-cpu, docs/research/18_finding_classes/README.md, design 1; review round 5, N-1): every
+ * The egress table (class E-cpu, docs/research/18_finding_classes/README.md, design 1; R5:N-1): every
  * platform surface through which guest activity can cause work on the host page's thread, in every realm the library
  * runs in or hears from, each with its handling and its bound. One list, so that a surface nobody thought about is a
  * missing row, which a test sees, rather than a finding.
  *
- * Why a list. Each round from round 3 on found a surface no list named: the view's error texts (3:C-4), the worker's own
- * postMessage and its uncancelled errors (4:M-1), its uncancelled rejections (5:N-1). The fixes were per surface, and the
- * next surface was found the round after. The classes that stopped producing findings were closed the same way as this
- * one: a list of what is allowed, and a test that enumerates the domain (the worker-globals allowlist is this table for
- * network egress). Here:
+ * Why a list. A fix per surface leaves the next surface unnamed: the view's error texts (R3:C-4), the worker's own
+ * postMessage and its uncancelled errors (R4:M-1) and its uncancelled rejections (R5:N-1) were each such a surface. A
+ * class is closed by a list of what is allowed and a test that enumerates the domain (the worker-globals allowlist is
+ * this table for network egress). Here:
  *   - test/e2e/egress.spec.ts enumerates, on every engine, the event-handler surfaces (`on*` names, and the event types
  *     the platform reports without one) of the guest's worker, of worker mode's frame, of the strict view, of the Worker
  *     object and of MessagePort, and fails on any this table does not list for that realm;
@@ -76,13 +75,13 @@ export interface EgressRow {
 /**
  * Most uncaught errors and unhandled rejections, and rejections handled later (`rejectionhandled`), in any one-second
  * window, per environment, in worker and strict mode; past it the sandbox ends (the reason `uncaughtBudget`, reasons.ts).
- * Measured (test/e2e/review-round-5.spec.ts, "N-1"): Firefox reports every unhandled rejection of a worker to the host
- * page's thread, cancelled or not, and a flood of small ones (about 25 000 a second) kept it 99% busy; 1000 cancelled
- * rejections a second left it idle, and 1000 a second each handled a tick later, 4–7% busy. Chromium's cost went with
- * the reports it was not told to skip, which cancelling removes. Past the budget the worker stops itself as well
- * (in-sandbox-script.ts), so the reports end there, not when the element's message gets through a busy host page:
- * with both, every flood of the review-round-5 spec ended the sandbox with the host page 0–3% busy on all three
- * engines, and 300 rejections a second, each handled a tick later, kept it 0–2% busy, the sandbox ready.
+ * Why that bound (R5:N-1, whose e2e spec is in test/e2e/): Firefox reports every unhandled rejection of a worker to
+ * the host page's thread, cancelled or not. A flood of small ones (about 25 000 a second) keeps it 99% busy; 1000
+ * cancelled rejections a second leave it idle, and 1000 a second each handled a tick later, 4–7% busy. Chromium's cost
+ * goes with the reports it is not told to skip, which cancelling removes. Past the budget the worker stops itself as
+ * well (in-sandbox-script.ts), so the reports end there, not when the element's message gets through a busy host page:
+ * with both, a flood ends the sandbox with the host page 0–3% busy on all three engines, and 300 rejections a second,
+ * each handled a tick later, keep it 0–2% busy, the sandbox ready.
  */
 export const UNCAUGHT_PER_SECOND = 1000;
 

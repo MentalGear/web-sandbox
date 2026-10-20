@@ -101,3 +101,24 @@ export function wallClockBounds(source: string): MeterHit[] {
     }
     return hits;
 }
+
+/**
+ * A unit test that measures how its code scales by clock reads of its own (backlog T9's class): a best-of-N that keeps the
+ * fastest of several clock differences (`Math.min(fastest, performance.now() - started)`), or a ceiling on one name
+ * over another (`expect(large / small, ...).toBeLessThan(24)`), which is that ratio. Both measured the machine's load: a loaded stretch
+ * landing on one size's runs inflated the ratio. test/unit/scaling.ts (`scalingRatio`) is the one measure: it alternates
+ * the sizes and keeps sampling while the ratio is over the bound.
+ */
+export function handTimedScaling(source: string): MeterHit[] {
+    const code = withoutComments(source);
+    const lineOf = (at: number) => code.slice(0, at).split('\n').length;
+    const hits: MeterHit[] = [];
+    const shapes: [string, RegExp][] = [
+        ['a fastest of clock differences', /\bMath\.(?:min|max)\([^;]*\b(?:performance|Date)\.now\(\)/g],
+        ['a ceiling on a ratio of two names', /\bexpect\(\s*[\w.]+\s*\/\s*[\w.]+\s*[,)][^;]*?\.toBeLessThan(?:OrEqual)?\(/g],
+    ];
+    for (const [pattern, shape] of shapes) {
+        for (const match of code.matchAll(shape)) hits.push({ pattern, line: lineOf(match.index!), text: code.split('\n')[lineOf(match.index!) - 1]!.trim() });
+    }
+    return hits;
+}

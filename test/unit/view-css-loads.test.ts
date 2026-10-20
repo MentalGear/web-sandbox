@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { cssLoadBound, inSandboxView, sanitizeRender, VIEW_OPTIONS, VIEW_URLS_PER_SECOND, viewBudget, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
+import { scalingRatio, type ScalingSize } from './scaling';
 
 /**
  * Backlog S73 (class E-net and P; review round 5, M-3, after PR #47 CI, M-3 burst behind a slow server): every load the
@@ -295,23 +296,16 @@ describe('S73: cssLoadBound counts every token that can load, as the CSS tokeniz
     });
 
     // Linear, as a ratio measured in the same run (backlog T9's class: "under a second" measured the machine): 8 times the
-    // text takes at most 3 times 8 as long, the best of 3 runs of each size against noise. A count quadratic in the text
-    // takes about 64 times as long.
+    // text takes at most 3 times 8 as long. scalingRatio samples both sizes alternately and keeps each one's fastest time
+    // (test/unit/scaling.ts). A count quadratic in the text takes about 64 times as long.
     it('linear in the text: 8 times the CSS that loads (1 MiB) takes about 8 times as long to count, not 64', { timeout: 60000 }, () => {
         const css = (n: number) => 'a{background:url(https://a.example/x.png),image-set("y.png" 1x)}/* u\\72 l( */'.repeat(n);
-        const best = (n: number) => {
+        const size = (n: number): ScalingSize<number> => () => {
             const text = css(n);
-            let fastest = Infinity;
-            for (let run = 0; run < 3; run++) {
-                const started = performance.now();
-                expect(count(text)).toBe(3 * n);
-                fastest = Math.min(fastest, performance.now() - started);
-            }
-            return fastest;
+            return { run: () => count(text), verify: found => expect(found).toBe(3 * n) };
         };
-        const small = best(13000 / 8);
-        const large = best(13000);
-        expect(large / small, `best of 3: ${small.toFixed(1)} ms for 1/8 MiB, ${large.toFixed(1)} ms for 1 MiB`).toBeLessThan(24);
+        const result = scalingRatio(size(13000 / 8), size(13000), { bound: 24 });
+        expect(result.ratio, result.message).toBeLessThan(24);
     });
 });
 
