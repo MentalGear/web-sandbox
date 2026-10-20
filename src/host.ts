@@ -113,48 +113,68 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions {
  * The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.
  *
  * @remarks
- * Every event is a `CustomEvent` dispatched on the element and none is `composed`. The `detail` is frozen, deeply:
- * the bytes of a typed array, the entries of a `Map` and a `Date`'s time are the only parts that stay changeable.
- * Fields that come from the guest are validated and clamped, but remain the guest's data. Reference: docs/API.md#events.
+ * Every event is a `CustomEvent` dispatched on the element and none is `composed`. The bubbling ones reach a listener on
+ * `window` for every sandbox on the page; `event.target` says which. The `detail` is frozen, deeply: every object and
+ * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
+ * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
+ * clamped, but remain the guest's data: read them, do not merge them into your objects.
  */
 export interface WebSandboxEventMap extends HTMLElementEventMap {
     /**
-     * The guest checked in and `state` is now `'ready'`. Once per environment; `detail` is `null`. Does not bubble.
-     * In cooperative mode the guest document may still be loading. Without `allow-scripts` no guest script runs, and
-     * the event comes with the frame's load.
+     * The guest checked in and `state` is now `'ready'`.
+     *
+     * @remarks
+     * Once per environment. In cooperative mode the guest document may still be loading (see
+     * docs/API.md#ready-and-the-startup-gate). Without `allow-scripts` no guest script runs: `ready` comes with the
+     * frame's load, and calls time out. Does not bubble.
      */
     ready: CustomEvent<null>;
     /**
-     * The sandbox was terminated: `state` is `'terminated'` and `detail.reason` says why. Fired once per termination,
-     * for a call to `terminate()`, a budget or liveness check that ended the guest, a failed frame
-     * check, or a configuration or build that was refused (in a task of its own, and not at all if another build
-     * started meanwhile). Removing the element ends its environment without this event. Does not bubble.
+     * The sandbox was terminated: `state` is `'terminated'` and `detail.reason` says why.
+     *
+     * @remarks
+     * Once per termination, for a call to `terminate()`, a budget or liveness check that ended the guest, a failed frame
+     * check, or a configuration or build that was refused (that one in a task of its own, and not at all if another build
+     * started meanwhile). Removing the element ends its environment without this event. Branch on `state` and the event,
+     * not on the reason's text. Does not bubble.
      */
     terminated: CustomEvent<{ readonly reason: string }>;
     /**
-     * A log line, from the guest's console or written by the element: `detail` is a {@link SandboxLog}. Guest lines are
-     * limited to {@link LOG_EVENTS_PER_SECOND} per environment per second. Bubbles.
+     * A log line from the guest's console or written by the element; see {@link SandboxLog}.
+     *
+     * @remarks
+     * Guest lines are limited to {@link LOG_EVENTS_PER_SECOND} per environment per second. Bubbles.
      */
     'sandbox-log': CustomEvent<SandboxLog>;
     /**
-     * The guest's policy refused a load: `detail` is a {@link SandboxViolation}. At most {@link VIOLATION_EVENT_LIMIT} per
-     * environment. A report is a claim by the guest, not a host fact. Bubbles.
+     * The guest's policy refused a load; see {@link SandboxViolation}.
+     *
+     * @remarks
+     * At most {@link VIOLATION_EVENT_LIMIT} per environment. A report is a claim by the guest, not a host fact. Bubbles.
      */
     violation: CustomEvent<SandboxViolation>;
     /**
-     * A `sandboxFetch()` request settled, refusals included: `detail` is a {@link FetchRecord}. Dispatched only with
-     * `fetchBridge` configured (without it the request rejects with `FETCH_NOT_ALLOWED` and no event is dispatched).
-     * Bubbles.
+     * A `sandboxFetch()` request settled, refusals included; see {@link FetchRecord}.
+     *
+     * @remarks
+     * Dispatched only with `fetchBridge` configured. Without it `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no
+     * event is dispatched. Bubbles.
      */
     fetch: CustomEvent<FetchRecord>;
     /**
-     * `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()`
-     * changed the files, synchronously: `detail.paths` lists the paths that changed. Does not bubble.
+     * `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; `detail.paths` lists the paths
+     * that changed.
+     *
+     * @remarks
+     * Dispatched synchronously, once per call that changed something. Does not bubble.
      */
     fileschanged: CustomEvent<{ readonly paths: readonly string[] }>;
     /**
-     * The guest's write or removal changed what `listGuestWrites()` shows at a path (`guestWrites`):
-     * one path per event in `detail.paths`, at most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles.
+     * The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths`
+     * holds that one path.
+     *
+     * @remarks
+     * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles.
      */
     fileswritten: CustomEvent<{ readonly paths: readonly string[] }>;
 }
@@ -679,8 +699,8 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Where the element is in its lifecycle, read-only: `'idle'`, `'loading'`, `'ready'` or `'terminated'`
-     * ({@link SandboxState}). It already has the new value when `ready` or `terminated` is dispatched.
+     * Where the element is in its lifecycle ({@link SandboxState}). It already has the new value when `ready` or
+     * `terminated` is dispatched.
      */
     get state(): SandboxState {
         return this._lc.state;
@@ -760,11 +780,14 @@ export class WebSandbox extends ElementBase {
      *   nothing, not even at the next `reset()`.
      * - Values that cannot be used (an entry that is not allowed, a list option that is not a list, an `html` that is not
      *   a string) are dropped with one `console.warn` per element and message, and never applied half-way.
-     * - The configuration the environment already stands on, set again, changes nothing: no rebuild and no event.
-     * - A config that cannot be used at all (not an object, not cloneable, an `origins` that is not an object or has a
-     *   kind that is not a list) applies nothing and the previous config stays: the sandbox terminates, and stays terminated
-     *   until a usable config is set. The `terminated` event of a refused
-     *   build comes in a task of its own, like `ready`.
+     * - The configuration the environment already stands on, set again, changes nothing: no rebuild and no event, so read
+     *   `state` rather than wait for `ready`. Anything a build reads that changed since (`load()`, the files) rebuilds as
+     *   usual.
+     * - A config that cannot be used at all (not an object, not cloneable such as a `Proxy` or a function value, an
+     *   `origins` that is not an object or has a kind that is not a list) applies nothing and the previous config stays: the
+     *   sandbox terminates, and stays terminated until a usable config is set. A build that fails terminates it too.
+     * - It never throws. `state` is `'terminated'` when it returns after a refusal; the `terminated` event of a refused
+     *   build comes in a task of its own, like `ready`, and not at all if another build started meanwhile.
      *
      * @param config - The new configuration; see {@link SandboxConfig}.
      */
@@ -843,12 +866,23 @@ export class WebSandbox extends ElementBase {
      * running. Files survive every rebuild and `terminate()`.
      *
      * @remarks
-     * A path is relative (`src/main.js`): segments of letters, digits and `._~!$&'()*+,;=@-` separated by single slashes,
-     * at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised. A file's type comes from its
-     * extension unless the entry gives one; an unknown extension is `application/octet-stream`. A reference in the guest's
-     * markup, stylesheets or modules names a file only for the kind of load its type is for.
-     *
-     * Fires `fileschanged` when something changed; registering identical content again changes nothing.
+     * - The whole batch is validated first. It fires `fileschanged` when something changed; registering identical content
+     *   again changes nothing.
+     * - A path is relative (`src/main.js`): segments of letters, digits and the characters of `._~!$&'()*+,;=@-`,
+     *   separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised.
+     * - A file's type comes from its extension (`.js` and `.mjs` `text/javascript`, `.css` `text/css`, `.json`
+     *   `application/json`, `.svg` `image/svg+xml`, `.png`, `.woff2`, `.mp4` and the like); an unknown extension is
+     *   `application/octet-stream`.
+     * - A reference names a file only for the kind of load its type is for: `<script src>`, `modulepreload`,
+     *   `preload as=script` and module imports only JavaScript types; a stylesheet `<link>`, `preload as=style` and
+     *   `@import` only `text/css`; `img`, `srcset`, `poster`, icon links and CSS `url()` only `image/*`; `url()` in
+     *   `@font-face` and `preload as=font` only `font/*`; `audio`, `video` and `source` only `audio/*` and `video/*`;
+     *   `track` only `text/vtt`. A reference to a file of another type stays as written and fails closed, with one
+     *   warning. This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a
+     *   script. Code that passes `sandboxFiles.url()` to a script element or `importScripts()` itself decides what it
+     *   loads (Chromium runs such a file whatever its type; Firefox and WebKit refuse it in `importScripts()`).
+     * - How the guest names files (markup, module imports, stylesheets) is described in the README's Files section; why:
+     *   ADR-004.
      *
      * @param files - The files by path. An entry is a `string` (stored as UTF-8), a `Uint8Array` (copied), or
      * `{ content, type }` to set the MIME type instead of deriving it from the extension.
@@ -881,11 +915,12 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * The guest's pending writes and removals (see `guestWrites`), sorted by path. They belong to the current
-     * environment and survive its termination; the next build and the element's removal discard them.
+     * The guest's pending writes and removals (see `guestWrites` and docs/API.md#guest-writes), sorted by path. They belong
+     * to the current environment and survive its termination; the next build and the element's removal discard them.
      *
-     * @returns One {@link GuestWrite} per path with a pending change, each a fresh object whose `content` is a copy of
-     * the bytes. Empty while `guestWrites` is off.
+     * @returns One {@link GuestWrite} per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`
+     * (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while
+     * `guestWrites` is off.
      */
     listGuestWrites(): GuestWrite[] {
         return this._guestWrites?.list() ?? [];
@@ -897,11 +932,15 @@ export class WebSandbox extends ElementBase {
      * from the next build on. Fires `fileschanged` when the files changed.
      *
      * @remarks
-     * A write whose type is not inert is refused unless `options.code` is `true`. Inert are the images, fonts, audio and
-     * video types a browser only decodes, `text/plain`, `application/json` and `text/css`; JavaScript, HTML, SVG, XML,
-     * WebAssembly and any type the guest made up can run or be parsed as code. The type checked is the one the file
-     * will be loaded as, never just its name. All checks come first, the quota included, so a refusal changes neither the
-     * files nor the pending list.
+     * - A write whose type is not inert is refused with `FILES_NOT_ALLOWED` unless `options.code` is `true`. Inert types
+     *   are the images, fonts, audio and video a browser only decodes, plain text, JSON and CSS (the exact list is in
+     *   `INERT_TYPES`, src/lib/guest-writes.ts). JavaScript, HTML, SVG, XML, WebAssembly, unknown types and any other type
+     *   the guest set can run or be parsed as code. The type checked is the one the file will be loaded as, never just its
+     *   name.
+     * - All checks come first, the quota included (with what module and stylesheet rewrites add, against the files as they
+     *   are now), so a refusal changes neither the files nor the pending list.
+     * - A committed file loads only as what its type is for (see `registerFiles()`): an inert file never runs as a script.
+     *   Committed `text/css` is inert but still CSS: markup of the next build that links it is styled by it.
      *
      * @param paths - The paths to commit; required, since there is no "commit everything". A path with no pending change
      * is skipped.
@@ -1013,13 +1052,23 @@ export class WebSandbox extends ElementBase {
      * code ran. Nothing reaches the host: no return value and no report that it returned.
      *
      * @remarks
-     * Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing, and so it does while the element is
-     * `'idle'` or `'terminated'` (where `call()` rejects). While `'loading'` the code is queued and sent
-     * when the build becomes `ready`; in cooperative mode it runs once the guest document is parsed. A synchronous throw
-     * becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
-     *
-     * In worker and strict mode each call has its own `workerExecutionTimeout` deadline, at which the guest's event loop
-     * must be free; see {@link SandboxConfigOptions.workerExecutionTimeout}.
+     * - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.
+     * - While the element is `'idle'` (not in the document) or `'terminated'` there is no environment: it warns and does
+     *   nothing, where `call()` rejects.
+     * - While `'loading'` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the
+     *   guest document is parsed (see docs/API.md#ready-and-the-startup-gate), in order with calls.
+     * - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
+     * - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
+     *   the guest's event loop is free at the deadline. The element pings the guest there; the bootstrap answers from a
+     *   handler guest code cannot reach, and only a free event loop can run it. No answer within
+     *   {@link EXECUTION_TIMEOUT_GRACE_MS} terminates the sandbox.
+     * - Code that is still running at the deadline, or that returned but left work running then (a loop in a
+     *   `setTimeout`), is terminated. Code that ran to its end and left the loop free stays ready, whatever it scheduled
+     *   for later.
+     * - Several calls each have their own deadline, and every deadline checks the one event loop: a loop started by any
+     *   code ends the sandbox at the first deadline it blocks.
+     * - A loop that starts after the last deadline is not bounded by it: `watchdogTimeout` checks the event loop
+     *   continuously and covers that case.
      *
      * @param code - The function body to run.
      */
@@ -1057,8 +1106,8 @@ export class WebSandbox extends ElementBase {
     /**
      * Publishes a host method the guest calls with `bridge.call(name, ...args)`. The guest receives the handler's return
      * value (awaited if it is a promise). A throw or rejection reaches the guest as `HANDLER_ERROR` with the error's
-     * message, verbatim up to 65536 characters (a longer one is cut): throw errors whose message you would show the
-     * guest, or wrap the handler.
+     * message, verbatim up to 65536 characters (a longer one is cut, and ends `[… cut at 65536 characters]`): throw errors
+     * whose message you would show the guest, or wrap the handler.
      *
      * @remarks
      * Methods belong to the element: they survive `reset()`, `load()`,
@@ -1091,15 +1140,23 @@ export class WebSandbox extends ElementBase {
      * `scriptUnsafe`: it never evaluates code.
      *
      * @remarks
-     * Arguments and results are copied by structured clone, at most `RPC_MAX_BYTES` (33 MiB) per message, counted on both
-     * sides on the copy that is sent: past it a call is refused before anything is sent (`ARGS_NOT_TRANSFERABLE`) and a
-     * result is answered `RESULT_NOT_TRANSFERABLE`. A value the measure does not know (an `Error`, an `ImageData`, a
-     * `SharedArrayBuffer`) is refused the same way. The whole message is measured, the method name included, and a name
-     * is at most 256 characters (`INVALID_CALL`).
-     *
-     * The call times out after 30 s (`TIMEOUT`). Calls made while `'loading'` are queued and sent when the build becomes
-     * `ready`; in cooperative mode a call reaches the guest's method once the guest document is parsed. Calls made while
-     * `'idle'` or `'terminated'` reject at once with `TERMINATED`, and so do pending ones when the environment goes away.
+     * - Arguments and results are copied by structured clone, at most `RPC_MAX_BYTES` (33 MiB) per message, counted on
+     *   both sides on the copy that is sent: past it a call is refused before anything is sent (`ARGS_NOT_TRANSFERABLE`)
+     *   and a result is answered `RESULT_NOT_TRANSFERABLE`. The measure knows primitives, plain objects and arrays, `Map`,
+     *   `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and `DataView`, `Blob` and `File`, and `String`, `Number`,
+     *   `Boolean` and `BigInt` objects. Any other value (an `Error`, an `ImageData` or another platform object, a
+     *   `SharedArrayBuffer`) is refused the same way, with a message that names the value rather than the budget; send what
+     *   you need of it instead: an error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole
+     *   message is counted, the method name included, and a name is at most 256 characters (`INVALID_CALL`).
+     * - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and
+     *   `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a
+     *   call's timeout.
+     * - Calls made while `'loading'` are queued and sent when the build becomes `ready`, in every mode (strict mode
+     *   included, whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue
+     *   and never runs. In cooperative mode a call reaches the guest's method once the guest document is parsed (see
+     *   docs/API.md#ready-and-the-startup-gate).
+     * - Calls made while `'idle'` (not in the document) or `'terminated'` reject at once with `TERMINATED`, as
+     *   `execute()` does nothing then; so do pending ones when the environment goes away.
      *
      * @typeParam T - The type of the result, which the caller asserts: the guest's value is not checked against it.
      * @param method - The name the guest exposed.

@@ -5,6 +5,7 @@
 import path from 'node:path';
 import type { Plugin } from './engine';
 import { run } from './run';
+import { api } from './extractors/api';
 import { budgets } from './extractors/budgets';
 import { config } from './extractors/config';
 import { csp } from './extractors/csp';
@@ -16,7 +17,7 @@ import { modules } from './extractors/modules';
 import { reasons } from './extractors/reasons';
 import { surface } from './extractors/surface';
 
-export const EXTRACTORS: readonly Extractor[] = [budgets, config, csp, frames, lifecycle, limits, modules, reasons, surface];
+export const EXTRACTORS: readonly Extractor[] = [api, budgets, config, csp, frames, lifecycle, limits, modules, reasons, surface];
 
 export const plugin: Plugin = {
     extractors: {},

@@ -18,9 +18,9 @@ jobs:
       - run: bun run typecheck
       - run: bun run test:unit
       - run: bun run build
-      # the public API against its reviewed report, etc/web-sandbox.api.md (bun run api:update accepts a change)
+      # the public API against its reviewed report, etc/web-sandbox.api.md, and the checked-in doc model etc/web-sandbox.api.json against the build (bun run api:update accepts a change)
       - run: bun run api:check
-      # the generated regions and the markers of the handwritten sections against the code (bun run docs:gen, docs:gen --accept)
+      # the generated regions and the markers of the handwritten sections against the code; the API reference is read from the checked-in doc model, so this needs no build (bun run docs:gen, docs:gen --accept)
       - run: bun run docs:check
       - run: ./scripts/smoke-package.sh
 

@@ -193,8 +193,13 @@ describe('docs/API.md lists the public surface', () => {
             ['### `violation`', 'src/lib/violation.ts', 'SandboxViolation'],
             ['### `fetch`', 'src/lib/fetch-bridge.ts', 'FetchRecord'],
         ];
+        // the host lines are a table of their own, in a region of the sandbox-log section
+        const withoutHostLines = (text: string) => text.replace(/^<!-- generated:begin host-lines -->$[\s\S]*?^<!-- generated:end -->$/gm, '');
         for (const [heading, file, name] of details) {
-            expect(sorted(rowKeys(withoutRegions(section(heading)))), name).toEqual(sorted(interfaceKeys(file, name)));
+            const text = withoutHostLines(section(heading));
+            // FetchRecord is a union: its fields are told by outcome, in prose, each as a code span
+            if (name === 'FetchRecord') for (const key of interfaceKeys(file, name)) expect(spans(text), key).toContain(key);
+            else expect(sorted(rowKeys(text)), name).toEqual(sorted(interfaceKeys(file, name)));
         }
         const listFiles = section('### `listFiles()`');
         for (const key of interfaceKeys('src/lib/files.ts', 'FileInfo')) expect(listFiles, key).toMatch(new RegExp(`\\b${key}\\b`));

@@ -75,7 +75,7 @@ export interface FetchBridgeConfig {
      */
     allow: string[];
     /**
-     * Most bytes of one response body, and of one request body. At most 32 MiB.
+     * Most bytes of one response body, and of one request body. At most `33554432` (32 MiB).
      *
      * @defaultValue `1048576` (1 MiB)
      */

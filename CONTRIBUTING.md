@@ -166,9 +166,18 @@ docs/API.md and the port table of ADR-005 are built this way.
   its own, in any Markdown file) are rewritten from the extractor called NAME by `bun run docs:gen`. Text outside a
   region is never touched. Do not edit a region: change the value in the code (or the extractor's own words, for the
   Configuration table's prose, `tools/docgen/extractors/config-docs.ts`), and run `bun run docs:gen`.
+- **The public API's reference** (docs/API.md's registration, the element's property and methods, the events and their
+  details, the `fetchBridge` and `callLimits` tables and the lists of exports) is rendered from the TSDoc of the exports,
+  by `tools/docgen/extractors/api.ts`, from api-extractor's doc model: [etc/web-sandbox.api.json](etc/web-sandbox.api.json),
+  checked in so that `docs:check` needs no build. After you change a declaration or its TSDoc, run `bun run api:update`
+  (it also accepts the API report's change, which the PR shows), then `bun run docs:gen`. Write the TSDoc as the page
+  should say it: a citation of a finding or an item goes in parentheses by itself (the page leaves it out), an ADR
+  becomes a link, and `docs/API.md#slug` a link within the page. A new method is placed in the page's order in
+  `METHOD_ORDER`, and a new event needs its row in `ELEMENT_EVENTS`, with "Bubbles." or "Does not bubble." in its doc.
 - **Markers.** A handwritten section that describes code starts with `<!-- describes: ID, ID sig:HASH -->`. The hash is
   taken from the described items' semantic signatures: names, types, values and transitions, never formatting or
-  wording.
+  wording. An export of the public API is the item `api:Name` (`api:WebSandbox.setConfig` for a member); a container's
+  signature has its members', so a section about the element goes stale when a method is added.
 - **When a marker fails.** `bun run docs:check` (CI runs it) names the section and the items that changed. Read the
   section against the change; fix any sentence that is now wrong; then run `bun run docs:gen --accept`, which writes the
   new hashes, and commit them with the section. Accepting without reading defeats the marker, whose only job is to

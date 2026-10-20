@@ -2961,14 +2961,14 @@ export function viewBootstrapHash(): string {
 }
 
 /**
- * The CSP hash source of strict mode's view bootstrap for this release of the package (R1:R4-5): the very value the
- * element puts in the view's `script-src`, so an embedder can allow it in the host page's own Content-Security-Policy,
- * which the view inherits (docs/API.md#host-page-policy).
+ * The CSP hash source of strict mode's view bootstrap for this release of the package, to allow in the host page's own
+ * Content-Security-Policy (R1:R4-5).
  *
  * @remarks
- * The bootstrap is a string literal of the bundle, so the hash is the same in a build step (importing the package needs
- * no DOM) and in the browser, however the embedder's app is bundled or minified. It changes only with the package's
- * version.
+ * It is the very value the element puts in the view's `script-src`, and the view inherits the host page's policy
+ * (docs/API.md#host-page-policy). The bootstrap is a string literal of the bundle, so the hash is the same in a build
+ * step (importing the package needs no DOM) and in the browser, however the embedder's app is bundled or minified. It
+ * changes only with the package's version.
  *
  * @returns The hash source, `'sha256-…'`, quotes included.
  */

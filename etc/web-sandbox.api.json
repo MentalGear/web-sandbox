@@ -690,7 +690,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!FetchBridgeConfig#maxBytes:member",
-              "docComment": "/**\n * Most bytes of one response body, and of one request body. At most 32 MiB.\n *\n * @defaultValue `1048576` (1 MiB)\n */\n",
+              "docComment": "/**\n * Most bytes of one response body, and of one request body. At most `33554432` (32 MiB).\n *\n * @defaultValue `1048576` (1 MiB)\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -2500,7 +2500,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxLog#level:member",
-              "docComment": "/**\n * How serious the line is.\n */\n",
+              "docComment": "/**\n * How serious the line is. A level the guest sends that is not one of {@link SandboxLogLevel} reads as `'log'`.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -2940,7 +2940,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxViolation#source:member",
-              "docComment": "/**\n * Strict mode only (ADR-005, A6): which document's report this is, set by the host from the port it arrived\n * on, never read from the frame. 'view': the view document, which runs no guest code, so its reports are\n * the library's own and complete up to the cap. 'logic': the worker, whose reports guest code can forge\n * or suppress like any cooperative-mode report, and which depend on the engine (WebKit raises none in workers;\n * Firefox raises the worker's importScripts refusals in the view, so those arrive as 'view').\n */\n",
+              "docComment": "/**\n * Strict mode only (ADR-005): which document's report this is, set by the element from the port it arrived on, never\n * read from the report. `'view'` is the view document, which runs no guest code, so its reports are the library's own\n * and complete up to the cap. `'logic'` is the worker, whose reports guest code can forge or suppress like any\n * cooperative-mode report, and which depend on the engine (WebKit raises none in workers; Firefox raises the worker's\n * `importScripts()` refusals in the view, so those arrive as `'view'`).\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -3344,7 +3344,7 @@
         {
           "kind": "Function",
           "canonicalReference": "web-sandbox!viewScriptHash:function(1)",
-          "docComment": "/**\n * The CSP hash source of strict mode's view bootstrap for this release of the package (R1:R4-5): the very value the\n * element puts in the view's `script-src`, so an embedder can allow it in the host page's own Content-Security-Policy,\n * which the view inherits (docs/API.md#host-page-policy).\n *\n * @remarks\n *\n * The bootstrap is a string literal of the bundle, so the hash is the same in a build step (importing the package needs\n * no DOM) and in the browser, however the embedder's app is bundled or minified. It changes only with the package's\n * version.\n *\n * @returns The hash source, `'sha256-…'`, quotes included.\n */\n",
+          "docComment": "/**\n * The CSP hash source of strict mode's view bootstrap for this release of the package, to allow in the host page's own\n * Content-Security-Policy (R1:R4-5).\n *\n * @remarks\n *\n * It is the very value the element puts in the view's `script-src`, and the view inherits the host page's policy\n * (docs/API.md#host-page-policy). The bootstrap is a string literal of the bundle, so the hash is the same in a build\n * step (importing the package needs no DOM) and in the browser, however the embedder's app is bundled or minified. It\n * changes only with the package's version.\n *\n * @returns The hash source, `'sha256-…'`, quotes included.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -3470,7 +3470,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#call:member(1)",
-              "docComment": "/**\n * Calls a method the guest exposed with `bridge.expose()` and resolves with its result. It works without\n * `scriptUnsafe`: it never evaluates code.\n *\n * @remarks\n *\n * Arguments and results are copied by structured clone, at most `RPC_MAX_BYTES` (33 MiB) per message, counted on both\n * sides on the copy that is sent: past it a call is refused before anything is sent (`ARGS_NOT_TRANSFERABLE`) and a\n * result is answered `RESULT_NOT_TRANSFERABLE`. A value the measure does not know (an `Error`, an `ImageData`, a\n * `SharedArrayBuffer`) is refused the same way. The whole message is measured, the method name included, and a name\n * is at most 256 characters (`INVALID_CALL`).\n *\n * The call times out after 30 s (`TIMEOUT`). Calls made while `'loading'` are queued and sent when the build becomes\n * `ready`; in cooperative mode a call reaches the guest's method once the guest document is parsed. Calls made while\n * `'idle'` or `'terminated'` reject at once with `TERMINATED`, and so do pending ones when the environment goes away.\n *\n * @param method - The name the guest exposed.\n *\n * @param args - The arguments, copied by structured clone.\n *\n * @typeParam T - The type of the result, which the caller asserts: the guest's value is not checked against it.\n *\n * @returns The guest method's return value (awaited if it is a promise).\n *\n * @throws\n *\n * Never synchronously: the promise rejects with an {@link RpcError}, an `Error` whose `code` is an\n * {@link RpcErrorCode}. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and\n * their message is the guest's text.\n */\n",
+              "docComment": "/**\n * Calls a method the guest exposed with `bridge.expose()` and resolves with its result. It works without\n * `scriptUnsafe`: it never evaluates code.\n *\n * @remarks\n *\n * - Arguments and results are copied by structured clone, at most `RPC_MAX_BYTES` (33 MiB) per message, counted on\n *  both sides on the copy that is sent: past it a call is refused before anything is sent (`ARGS_NOT_TRANSFERABLE`)\n *  and a result is answered `RESULT_NOT_TRANSFERABLE`. The measure knows primitives, plain objects and arrays, `Map`,\n *  `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and `DataView`, `Blob` and `File`, and `String`, `Number`,\n *  `Boolean` and `BigInt` objects. Any other value (an `Error`, an `ImageData` or another platform object, a\n *  `SharedArrayBuffer`) is refused the same way, with a message that names the value rather than the budget; send what\n *  you need of it instead: an error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole\n *  message is counted, the method name included, and a name is at most 256 characters (`INVALID_CALL`).\n * - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and\n *  `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a\n *  call's timeout.\n * - Calls made while `'loading'` are queued and sent when the build becomes `ready`, in every mode (strict mode\n *  included, whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue\n *  and never runs. In cooperative mode a call reaches the guest's method once the guest document is parsed (see\n *  docs/API.md#ready-and-the-startup-gate).\n * - Calls made while `'idle'` (not in the document) or `'terminated'` reject at once with `TERMINATED`, as\n *  `execute()` does nothing then; so do pending ones when the environment goes away.\n *\n * @param method - The name the guest exposed.\n *\n * @param args - The arguments, copied by structured clone.\n *\n * @typeParam T - The type of the result, which the caller asserts: the guest's value is not checked against it.\n *\n * @returns The guest method's return value (awaited if it is a promise).\n *\n * @throws\n *\n * Never synchronously: the promise rejects with an {@link RpcError}, an `Error` whose `code` is an\n * {@link RpcErrorCode}. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and\n * their message is the guest's text.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -3666,7 +3666,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#commitGuestWrites:member(1)",
-              "docComment": "/**\n * Applies the guest's pending changes at `paths` to the files, atomically, as one `registerFiles()` or\n * `unregisterFiles()` would, and removes them from the pending list. The guest sees committed files\n * from the next build on. Fires `fileschanged` when the files changed.\n *\n * @remarks\n *\n * A write whose type is not inert is refused unless `options.code` is `true`. Inert are the images, fonts, audio and\n * video types a browser only decodes, `text/plain`, `application/json` and `text/css`; JavaScript, HTML, SVG, XML,\n * WebAssembly and any type the guest made up can run or be parsed as code. The type checked is the one the file\n * will be loaded as, never just its name. All checks come first, the quota included, so a refusal changes neither the\n * files nor the pending list.\n *\n * @param paths - The paths to commit; required, since there is no \"commit everything\". A path with no pending change\n * is skipped.\n *\n * @param options - `code: true` allows the writes whose type is not inert.\n *\n * @throws\n *\n * A {@link FileError} with `code` `INVALID_PATH`, `FILES_NOT_ALLOWED` or `FILES_QUOTA_EXCEEDED`.\n */\n",
+              "docComment": "/**\n * Applies the guest's pending changes at `paths` to the files, atomically, as one `registerFiles()` or\n * `unregisterFiles()` would, and removes them from the pending list. The guest sees committed files\n * from the next build on. Fires `fileschanged` when the files changed.\n *\n * @remarks\n *\n * - A write whose type is not inert is refused with `FILES_NOT_ALLOWED` unless `options.code` is `true`. Inert types\n *  are the images, fonts, audio and video a browser only decodes, plain text, JSON and CSS (the exact list is in\n *  `INERT_TYPES`, src/lib/guest-writes.ts). JavaScript, HTML, SVG, XML, WebAssembly, unknown types and any other type\n *  the guest set can run or be parsed as code. The type checked is the one the file will be loaded as, never just its\n *  name.\n * - All checks come first, the quota included (with what module and stylesheet rewrites add, against the files as they\n *  are now), so a refusal changes neither the files nor the pending list.\n * - A committed file loads only as what its type is for (see `registerFiles()`): an inert file never runs as a script.\n *  Committed `text/css` is inert but still CSS: markup of the next build that links it is styled by it.\n *\n * @param paths - The paths to commit; required, since there is no \"commit everything\". A path with no pending change\n * is skipped.\n *\n * @param options - `code: true` allows the writes whose type is not inert.\n *\n * @throws\n *\n * A {@link FileError} with `code` `INVALID_PATH`, `FILES_NOT_ALLOWED` or `FILES_QUOTA_EXCEEDED`.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -3792,7 +3792,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#execute:member(1)",
-              "docComment": "/**\n * Runs `code` in the guest's global scope as the body of a function: in the guest document in cooperative mode, in\n * the worker in worker and strict mode. It is compiled with the `Function` the bootstrap captured before any guest\n * code ran. Nothing reaches the host: no return value and no report that it returned.\n *\n * @remarks\n *\n * Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing, and so it does while the element is\n * `'idle'` or `'terminated'` (where `call()` rejects). While `'loading'` the code is queued and sent\n * when the build becomes `ready`; in cooperative mode it runs once the guest document is parsed. A synchronous throw\n * becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).\n *\n * In worker and strict mode each call has its own `workerExecutionTimeout` deadline, at which the guest's event loop\n * must be free; see {@link SandboxConfigOptions.workerExecutionTimeout}.\n *\n * @param code - The function body to run.\n */\n",
+              "docComment": "/**\n * Runs `code` in the guest's global scope as the body of a function: in the guest document in cooperative mode, in\n * the worker in worker and strict mode. It is compiled with the `Function` the bootstrap captured before any guest\n * code ran. Nothing reaches the host: no return value and no report that it returned.\n *\n * @remarks\n *\n * - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.\n * - While the element is `'idle'` (not in the document) or `'terminated'` there is no environment: it warns and does\n *  nothing, where `call()` rejects.\n * - While `'loading'` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the\n *  guest document is parsed (see docs/API.md#ready-and-the-startup-gate), in order with calls.\n * - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).\n * - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:\n *  the guest's event loop is free at the deadline. The element pings the guest there; the bootstrap answers from a\n *  handler guest code cannot reach, and only a free event loop can run it. No answer within\n *  {@link EXECUTION_TIMEOUT_GRACE_MS} terminates the sandbox.\n * - Code that is still running at the deadline, or that returned but left work running then (a loop in a\n *  `setTimeout`), is terminated. Code that ran to its end and left the loop free stays ready, whatever it scheduled\n *  for later.\n * - Several calls each have their own deadline, and every deadline checks the one event loop: a loop started by any\n *  code ends the sandbox at the first deadline it blocks.\n * - A loop that starts after the last deadline is not bounded by it: `watchdogTimeout` checks the event loop\n *  continuously and covers that case.\n *\n * @param code - The function body to run.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -3840,7 +3840,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#expose:member(1)",
-              "docComment": "/**\n * Publishes a host method the guest calls with `bridge.call(name, ...args)`. The guest receives the handler's return\n * value (awaited if it is a promise). A throw or rejection reaches the guest as `HANDLER_ERROR` with the error's\n * message, verbatim up to 65536 characters (a longer one is cut): throw errors whose message you would show the\n * guest, or wrap the handler.\n *\n * @remarks\n *\n * Methods belong to the element: they survive `reset()`, `load()`,\n * `setConfig()` and `terminate()`. Exposing a name again replaces its handler. Names that\n * start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:\n * validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key\n * survives the copy).\n *\n * @param name - The method name, a string of at most 256 characters.\n *\n * @param fn - The handler; its arguments come from the guest by structured clone.\n *\n * @throws\n *\n * A `TypeError` if `name` is not a string or is longer than 256 characters, or `fn` is not a function.\n */\n",
+              "docComment": "/**\n * Publishes a host method the guest calls with `bridge.call(name, ...args)`. The guest receives the handler's return\n * value (awaited if it is a promise). A throw or rejection reaches the guest as `HANDLER_ERROR` with the error's\n * message, verbatim up to 65536 characters (a longer one is cut, and ends `[… cut at 65536 characters]`): throw errors\n * whose message you would show the guest, or wrap the handler.\n *\n * @remarks\n *\n * Methods belong to the element: they survive `reset()`, `load()`,\n * `setConfig()` and `terminate()`. Exposing a name again replaces its handler. Names that\n * start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:\n * validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key\n * survives the copy).\n *\n * @param name - The method name, a string of at most 256 characters.\n *\n * @param fn - The handler; its arguments come from the guest by structured clone.\n *\n * @throws\n *\n * A `TypeError` if `name` is not a string or is longer than 256 characters, or `fn` is not a function.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -3940,7 +3940,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#listGuestWrites:member(1)",
-              "docComment": "/**\n * The guest's pending writes and removals (see `guestWrites`), sorted by path. They belong to the current\n * environment and survive its termination; the next build and the element's removal discard them.\n *\n * @returns One {@link GuestWrite} per path with a pending change, each a fresh object whose `content` is a copy of\n * the bytes. Empty while `guestWrites` is off.\n */\n",
+              "docComment": "/**\n * The guest's pending writes and removals (see `guestWrites` and docs/API.md#guest-writes), sorted by path. They belong\n * to the current environment and survive its termination; the next build and the element's removal discard them.\n *\n * @returns One {@link GuestWrite} per path with a pending change, each a fresh object: `{ path, change: 'write', type, size, content }`\n * (`type` as the files would give it, `content` a copy of the bytes) or `{ path, change: 'remove' }`. Empty while\n * `guestWrites` is off.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4024,7 +4024,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#registerFiles:member(1)",
-              "docComment": "/**\n * Adds or replaces files in the element's store. The guest sees them from the next environment build on\n * (`reset()`, `load()` or `setConfig()`), never in a guest already\n * running. Files survive every rebuild and `terminate()`.\n *\n * @remarks\n *\n * A path is relative (`src/main.js`): segments of letters, digits and `._~!$&'()*+,;=@-` separated by single slashes,\n * at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised. A file's type comes from its\n * extension unless the entry gives one; an unknown extension is `application/octet-stream`. A reference in the guest's\n * markup, stylesheets or modules names a file only for the kind of load its type is for.\n *\n * Fires `fileschanged` when something changed; registering identical content again changes nothing.\n *\n * @param files - The files by path. An entry is a `string` (stored as UTF-8), a `Uint8Array` (copied), or\n * `{ content, type }` to set the MIME type instead of deriving it from the extension.\n *\n * @throws\n *\n * A {@link FileError} with `code` `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED`. The whole batch is\n * validated first, so a refusal changes nothing.\n */\n",
+              "docComment": "/**\n * Adds or replaces files in the element's store. The guest sees them from the next environment build on\n * (`reset()`, `load()` or `setConfig()`), never in a guest already\n * running. Files survive every rebuild and `terminate()`.\n *\n * @remarks\n *\n * - The whole batch is validated first. It fires `fileschanged` when something changed; registering identical content\n *  again changes nothing.\n * - A path is relative (`src/main.js`): segments of letters, digits and the characters of `._~!$&'()*+,;=@-`,\n *  separated by single slashes, at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised.\n * - A file's type comes from its extension (`.js` and `.mjs` `text/javascript`, `.css` `text/css`, `.json`\n *  `application/json`, `.svg` `image/svg+xml`, `.png`, `.woff2`, `.mp4` and the like); an unknown extension is\n *  `application/octet-stream`.\n * - A reference names a file only for the kind of load its type is for: `<script src>`, `modulepreload`,\n *  `preload as=script` and module imports only JavaScript types; a stylesheet `<link>`, `preload as=style` and\n *  `@import` only `text/css`; `img`, `srcset`, `poster`, icon links and CSS `url()` only `image/*`; `url()` in\n *  `@font-face` and `preload as=font` only `font/*`; `audio`, `video` and `source` only `audio/*` and `video/*`;\n *  `track` only `text/vtt`. A reference to a file of another type stays as written and fails closed, with one\n *  warning. This holds for registered files as for committed ones: `x.js` registered as `text/plain` is never a\n *  script. Code that passes `sandboxFiles.url()` to a script element or `importScripts()` itself decides what it\n *  loads (Chromium runs such a file whatever its type; Firefox and WebKit refuse it in `importScripts()`).\n * - How the guest names files (markup, module imports, stylesheets) is described in the README's Files section; why:\n *  ADR-004.\n *\n * @param files - The files by path. An entry is a `string` (stored as UTF-8), a `Uint8Array` (copied), or\n * `{ content, type }` to set the MIME type instead of deriving it from the extension.\n *\n * @throws\n *\n * A {@link FileError} with `code` `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED`. The whole batch is\n * validated first, so a refusal changes nothing.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4117,7 +4117,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#setConfig:member(1)",
-              "docComment": "/**\n * Replaces the configuration and rebuilds the environment now (while the element is in the document).\n *\n * @remarks\n *\n * - The configuration is applied over the defaults, not over the previous one: an option left out returns to its\n *  default, `html` included, so a `setConfig()` after `load()` starts with an empty document unless\n *  it passes `html` again.\n * - The argument is copied (structured clone) before anything reads it; changing your objects afterwards changes\n *  nothing, not even at the next `reset()`.\n * - Values that cannot be used (an entry that is not allowed, a list option that is not a list, an `html` that is not\n *  a string) are dropped with one `console.warn` per element and message, and never applied half-way.\n * - The configuration the environment already stands on, set again, changes nothing: no rebuild and no event.\n * - A config that cannot be used at all (not an object, not cloneable, an `origins` that is not an object or has a\n *  kind that is not a list) applies nothing and the previous config stays: the sandbox terminates, and stays terminated\n *  until a usable config is set. The `terminated` event of a refused\n *  build comes in a task of its own, like `ready`.\n *\n * @param config - The new configuration; see {@link SandboxConfig}.\n */\n",
+              "docComment": "/**\n * Replaces the configuration and rebuilds the environment now (while the element is in the document).\n *\n * @remarks\n *\n * - The configuration is applied over the defaults, not over the previous one: an option left out returns to its\n *  default, `html` included, so a `setConfig()` after `load()` starts with an empty document unless\n *  it passes `html` again.\n * - The argument is copied (structured clone) before anything reads it; changing your objects afterwards changes\n *  nothing, not even at the next `reset()`.\n * - Values that cannot be used (an entry that is not allowed, a list option that is not a list, an `html` that is not\n *  a string) are dropped with one `console.warn` per element and message, and never applied half-way.\n * - The configuration the environment already stands on, set again, changes nothing: no rebuild and no event, so read\n *  `state` rather than wait for `ready`. Anything a build reads that changed since (`load()`, the files) rebuilds as\n *  usual.\n * - A config that cannot be used at all (not an object, not cloneable such as a `Proxy` or a function value, an\n *  `origins` that is not an object or has a kind that is not a list) applies nothing and the previous config stays: the\n *  sandbox terminates, and stays terminated until a usable config is set. A build that fails terminates it too.\n * - It never throws. `state` is `'terminated'` when it returns after a refusal; the `terminated` event of a refused\n *  build comes in a task of its own, like `ready`, and not at all if another build started meanwhile.\n *\n * @param config - The new configuration; see {@link SandboxConfig}.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4166,7 +4166,7 @@
             {
               "kind": "Property",
               "canonicalReference": "web-sandbox!WebSandbox#state:member",
-              "docComment": "/**\n * Where the element is in its lifecycle, read-only: `'idle'`, `'loading'`, `'ready'` or `'terminated'`\n * ({@link SandboxState}). It already has the new value when `ready` or `terminated` is dispatched.\n */\n",
+              "docComment": "/**\n * Where the element is in its lifecycle ({@link SandboxState}). It already has the new value when `ready` or\n * `terminated` is dispatched.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4736,7 +4736,7 @@
         {
           "kind": "Interface",
           "canonicalReference": "web-sandbox!WebSandboxEventMap:interface",
-          "docComment": "/**\n * The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.\n *\n * @remarks\n *\n * Every event is a `CustomEvent` dispatched on the element and none is `composed`. The `detail` is frozen, deeply:\n * the bytes of a typed array, the entries of a `Map` and a `Date`'s time are the only parts that stay changeable.\n * Fields that come from the guest are validated and clamped, but remain the guest's data. Reference: docs/API.md#events.\n */\n",
+          "docComment": "/**\n * The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.\n *\n * @remarks\n *\n * Every event is a `CustomEvent` dispatched on the element and none is `composed`. The bubbling ones reach a listener on\n * `window` for every sandbox on the page; `event.target` says which. The `detail` is frozen, deeply: every object and\n * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an\n * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and\n * clamped, but remain the guest's data: read them, do not merge them into your objects.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -4760,7 +4760,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!WebSandboxEventMap#\"sandbox-log\":member",
-              "docComment": "/**\n * A log line, from the guest's console or written by the element: `detail` is a {@link SandboxLog}. Guest lines are\n * limited to {@link LOG_EVENTS_PER_SECOND} per environment per second. Bubbles.\n */\n",
+              "docComment": "/**\n * A log line from the guest's console or written by the element; see {@link SandboxLog}.\n *\n * @remarks\n *\n * Guest lines are limited to {@link LOG_EVENTS_PER_SECOND} per environment per second. Bubbles.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4801,7 +4801,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!WebSandboxEventMap#fetch:member",
-              "docComment": "/**\n * A `sandboxFetch()` request settled, refusals included: `detail` is a {@link FetchRecord}. Dispatched only with\n * `fetchBridge` configured (without it the request rejects with `FETCH_NOT_ALLOWED` and no event is dispatched).\n * Bubbles.\n */\n",
+              "docComment": "/**\n * A `sandboxFetch()` request settled, refusals included; see {@link FetchRecord}.\n *\n * @remarks\n *\n * Dispatched only with `fetchBridge` configured. Without it `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no\n * event is dispatched. Bubbles.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4842,7 +4842,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!WebSandboxEventMap#fileschanged:member",
-              "docComment": "/**\n * `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()`\n * changed the files, synchronously: `detail.paths` lists the paths that changed. Does not bubble.\n */\n",
+              "docComment": "/**\n * `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; `detail.paths` lists the paths\n * that changed.\n *\n * @remarks\n *\n * Dispatched synchronously, once per call that changed something. Does not bubble.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4874,7 +4874,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!WebSandboxEventMap#fileswritten:member",
-              "docComment": "/**\n * The guest's write or removal changed what `listGuestWrites()` shows at a path (`guestWrites`):\n * one path per event in `detail.paths`, at most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles.\n */\n",
+              "docComment": "/**\n * The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths`\n * holds that one path.\n *\n * @remarks\n *\n * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4906,7 +4906,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!WebSandboxEventMap#ready:member",
-              "docComment": "/**\n * The guest checked in and `state` is now `'ready'`. Once per environment; `detail` is `null`. Does not bubble.\n * In cooperative mode the guest document may still be loading. Without `allow-scripts` no guest script runs, and\n * the event comes with the frame's load.\n */\n",
+              "docComment": "/**\n * The guest checked in and `state` is now `'ready'`.\n *\n * @remarks\n *\n * Once per environment. In cooperative mode the guest document may still be loading (see\n * docs/API.md#ready-and-the-startup-gate). Without `allow-scripts` no guest script runs: `ready` comes with the\n * frame's load, and calls time out. Does not bubble.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4938,7 +4938,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!WebSandboxEventMap#terminated:member",
-              "docComment": "/**\n * The sandbox was terminated: `state` is `'terminated'` and `detail.reason` says why. Fired once per termination,\n * for a call to `terminate()`, a budget or liveness check that ended the guest, a failed frame\n * check, or a configuration or build that was refused (in a task of its own, and not at all if another build\n * started meanwhile). Removing the element ends its environment without this event. Does not bubble.\n */\n",
+              "docComment": "/**\n * The sandbox was terminated: `state` is `'terminated'` and `detail.reason` says why.\n *\n * @remarks\n *\n * Once per termination, for a call to `terminate()`, a budget or liveness check that ended the guest, a failed frame\n * check, or a configuration or build that was refused (that one in a task of its own, and not at all if another build\n * started meanwhile). Removing the element ends its environment without this event. Branch on `state` and the event,\n * not on the reason's text. Does not bubble.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4970,7 +4970,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!WebSandboxEventMap#violation:member",
-              "docComment": "/**\n * The guest's policy refused a load: `detail` is a {@link SandboxViolation}. At most {@link VIOLATION_EVENT_LIMIT} per\n * environment. A report is a claim by the guest, not a host fact. Bubbles.\n */\n",
+              "docComment": "/**\n * The guest's policy refused a load; see {@link SandboxViolation}.\n *\n * @remarks\n *\n * At most {@link VIOLATION_EVENT_LIMIT} per environment. A report is a claim by the guest, not a host fact. Bubbles.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",

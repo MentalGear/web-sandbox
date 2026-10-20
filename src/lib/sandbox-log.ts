@@ -36,7 +36,7 @@ export type SandboxLogLevel = 'log' | 'info' | 'warn' | 'error';
 export interface SandboxLog {
     /** Always `'LOG'`. */
     type: 'LOG';
-    /** How serious the line is. */
+    /** How serious the line is. A level the guest sends that is not one of {@link SandboxLogLevel} reads as `'log'`. */
     level: SandboxLogLevel;
     /**
      * What was logged, structured-cloned: at most {@link LOG_MAX_ARGS} values, strings cut at {@link LOG_MAX_STRING}

@@ -39,11 +39,11 @@ export interface SandboxViolation {
     /** The column of the refused code, a positive integer, when the browser gives one. */
     columnNumber?: number;
     /**
-     * Strict mode only (ADR-005, A6): which document's report this is, set by the host from the port it arrived
-     * on, never read from the frame. 'view': the view document, which runs no guest code, so its reports are
-     * the library's own and complete up to the cap. 'logic': the worker, whose reports guest code can forge
-     * or suppress like any cooperative-mode report, and which depend on the engine (WebKit raises none in workers;
-     * Firefox raises the worker's importScripts refusals in the view, so those arrive as 'view').
+     * Strict mode only (ADR-005): which document's report this is, set by the element from the port it arrived on, never
+     * read from the report. `'view'` is the view document, which runs no guest code, so its reports are the library's own
+     * and complete up to the cap. `'logic'` is the worker, whose reports guest code can forge or suppress like any
+     * cooperative-mode report, and which depend on the engine (WebKit raises none in workers; Firefox raises the worker's
+     * `importScripts()` refusals in the view, so those arrive as `'view'`).
      */
     source?: 'view' | 'logic';
 }
