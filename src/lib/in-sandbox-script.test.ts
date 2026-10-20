@@ -5,7 +5,7 @@ import { workerBootstrap } from "./worker-bootstrap";
 import { bootstrapListeners } from "./egress";
 
 // The bootstrap captures MessagePort.prototype.postMessage and its onmessage setter, and the MessageEvent
-// getters, before any guest code runs, and only ever calls those (review B2). The tests run it against
+// getters, before any guest code runs, and only ever calls those (AR:B2). The tests run it against
 // stand-ins installed as the platform's: a port records what was posted through its prototype method in
 // `posted`, and its handler is reached through `onmessage`; an event exposes data, ports and source through
 // prototype getters, with an own isTrusted, as a browser's MessageEvent does.
@@ -32,7 +32,7 @@ class FakePort {
     /** Delivers `data` to the handler the bootstrap set, as a MessageEvent would. */
     deliver(data: unknown) { this.handler!(new FakeMessageEvent({ data })); }
 }
-// Cooperative mode makes its own channel (broad review CB1): port1 stays with the bootstrap, port2 is announced to the host.
+// Cooperative mode makes its own channel (BR:CB1): port1 stays with the bootstrap, port2 is announced to the host.
 // A test that wants to watch the bootstrap's end sets `next` to its FakePort first.
 class FakeMessageChannel {
     static next: FakePort | null = null;
@@ -106,7 +106,7 @@ describe("inSandboxScript", () => {
             type: 'LOG',
             level: 'info',
             args: ['cooperative Ready'],
-            own: true, // the relay's own line (review round 2, M-1)
+            own: true, // the relay's own line (R2:M-1)
         });
         expect(typeof port.onmessage).toBe('function');
     });
@@ -143,7 +143,7 @@ describe("inSandboxScript", () => {
         expect(frames).toHaveLength(1000 + 2);
         expect(frames.at(-2)).toEqual({ type: 'LOG', level: 'warn', args: ['[Sandbox] 102 console line(s) logged before the sandbox was connected were dropped (102 past 1000 lines): at most 1000 lines and 4194304 bytes are kept until then.'], own: true });
         expect(frames.at(-1)).toEqual({ type: 'LOG', level: 'info', args: ['strict Ready'], own: true });
-        // the flushed lines filled this second's window (review round 2, M-2): a line right after waits for the next one
+        // the flushed lines filled this second's window (R2:M-2): a line right after waits for the next one
         sandboxConsole.log('after');
         expect(port.posted.mock.calls.at(-1)![0]).toMatchObject({ type: 'LOG', level: 'warn', own: true, args: [expect.stringContaining('lines past that are dropped')] });
         now += 1000;
@@ -267,7 +267,7 @@ describe("inSandboxScript", () => {
         delete (globalThis as any).__ranByCaptured;
         const frames = port.posted.mock.calls.map(call => call[0]);
         expect(frames.filter((f: any) => f.type === 'EXECUTED')).toEqual([]);
-        expect(frames.filter((f: any) => f.type === 'LOG' && typeof f.args[0] === 'string').map((f: any) => f.args[0])).toEqual(['Boom', '[object Object]']); // a thrown value whose message is not a string: named by its kind (review round 1, R4-7)
+        expect(frames.filter((f: any) => f.type === 'LOG' && typeof f.args[0] === 'string').map((f: any) => f.args[0])).toEqual(['Boom', '[object Object]']); // a thrown value whose message is not a string: named by its kind (R1:R4-7)
         port.deliver({ type: 'PING', n: -3 }); // a probe's ping: answered like any ping
         expect(port.posted.mock.calls.at(-1)![0]).toEqual({ type: 'PONG', n: -3 });
     });
@@ -360,7 +360,7 @@ describe("inSandboxScript", () => {
         const start = () => {
             const registered: { type: string; cb: Function; options: unknown }[] = [];
             (globalThis as any).addEventListener = (type: string, cb: Function, options?: unknown) => { registered.push({ type, cb, options }); };
-            // the worker's postMessage, which the globals allowlist hands the bootstrap (review round 4, M-1): here the window's
+            // the worker's postMessage, which the globals allowlist hands the bootstrap (R4:M-1): here the window's
             inSandboxScript(false, 'worker', createMockConsole(), createBroker, undefined, undefined, (message: unknown) => window.postMessage(message));
             return registered.find(r => r.type === 'message')!;
         };
@@ -391,7 +391,7 @@ describe("inSandboxScript", () => {
             listener.cb(initPort(late, { source: null }));
             expect(late.posted).not.toHaveBeenCalled();
             // a worker announces nothing: its frame does (worker-bootstrap.ts), once the worker told it, once, that it
-            // runs (review round 2, C-5), through the postMessage it was handed (in jsdom, the window's)
+            // runs (R2:C-5), through the postMessage it was handed (in jsdom, the window's)
             expect(announcements).toEqual([{ data: { type: 'WORKER_STARTED' }, target: undefined, transfer: undefined }]);
         });
     });
@@ -521,7 +521,7 @@ describe("inSandboxScript", () => {
         const resizeFrames = (port: FakePort) => port.posted.mock.calls.map(c => c[0] as any).filter(f => f?.type === 'RESIZE');
 
         // The bootstrap measures through Element.prototype's own methods and getters, captured before any guest code
-        // runs (review round 2, C-1), so the stand-ins are installed there, before it starts.
+        // runs (R2:C-1), so the stand-ins are installed there, before it starts.
         it("observes the root element and reports a changed height as a RESIZE frame, outside the broker", () => {
             const observers = installObserver();
             const box = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ height: 120.4 } as DOMRect);

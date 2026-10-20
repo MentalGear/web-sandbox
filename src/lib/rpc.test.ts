@@ -217,7 +217,7 @@ describe('failures the other side reports (guarantee: they reject with its code 
 
 describe('forged refusals (guarantee: nothing the other side sends can produce a local-only refusal code)', () => {
     // The test plays the other side and answers with whatever it likes; the broker under test is the refused side.
-    // ARGS_NOT_TRANSFERABLE is not among them (review round 4, C-5): the other side reports it for arguments it could
+    // ARGS_NOT_TRANSFERABLE is not among them (R4:C-5): the other side reports it for arguments it could
     // never carry, as the caller's own broker refuses them before sending.
     const LOCAL_CODES = ['TIMEOUT', 'TERMINATED', 'SEND_FAILED', 'INVALID_CALL'];
 

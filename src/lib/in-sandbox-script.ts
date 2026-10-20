@@ -9,7 +9,7 @@ import type { LimitValue } from './limits';
 
 /**
  * The type of the one message the guest frame posts to the host page in cooperative mode, carrying its port (the
- * announcement, broad review 2026-10-14 CB1); the worker-mode frame posts the same one. host.ts accepts exactly one
+ * announcement, BR:CB1); the worker-mode frame posts the same one. host.ts accepts exactly one
  * per environment. The stringified functions spell the literal out (they close over nothing); a unit test keeps
  * them equal to this constant.
  */
@@ -32,9 +32,9 @@ export const ANNOUNCEMENT_TYPE = 'SANDBOX_PORT' satisfies FrameType;
  * can replace: every call goes through a captured function and the captured Reflect.apply, no spread or iteration
  * (they consult Array.prototype[Symbol.iterator]), no instanceof (Symbol.hasInstance). Its closures run long after
  * guest code started (every console call, every frame), and each of them enforces something the host relies on: the
- * relay's budgets, the port's secrecy, the startup gate. Before (review round 2, C-1), the relay's token bucket called
- * Math.min when a line was logged, so a guest that set `Math.min = () => Infinity` lifted the per-second caps. A unit
- * test scans the text after the list (`CAPTURE_POINT`), so a regression fails CI.
+ * relay's budgets, the port's secrecy, the startup gate (R2:C-1: a relay that called Math.min when a line was logged
+ * would let a guest that set `Math.min = () => Infinity` lift the per-second caps). A unit test scans the text after the
+ * list (`CAPTURE_POINT`), so a regression fails CI.
  */
 export function inSandboxScript(
     scriptUnsafe: boolean,
@@ -44,8 +44,8 @@ export function inSandboxScript(
     // The features, one literal from the host: the opt-in ones only when on. `externalPort` (strict mode): no INIT_PORT
     // listener of its own; the strict worker prelude takes the ports from the one trusted INIT message and hands the
     // logic port to attach().
-    // `guestWrites`: the host records the guest's file writes (backlog C5); returned as `writeFiles` below.
-    // `callBudget`: the per-second budget of the calls the guest makes (review round 3, M-2), from the element's config
+    // `guestWrites`: the host records the guest's file writes (BL:C5); returned as `writeFiles` below.
+    // `callBudget`: the per-second budget of the calls the guest makes (R3:M-2), from the element's config
     // (`callLimits`); the host always passes it. A call heavier than its bytes is refused for good (config-schema.ts).
     // `listeners`: the listeners this bootstrap installs, the egress table's rows for this mode (egress.ts,
     // bootstrapListeners): it installs these and no other. `uncaught`: the per-second budget of uncaught errors and
@@ -58,7 +58,7 @@ export function inSandboxScript(
     // broker's are measured with it, made before any guest code runs.
     createSizeOfFn?: typeof createSizeOf,
     // Worker mode: the platform's postMessage of the worker, which the globals allowlist took before deleting it
-    // (worker-globals.ts, review round 4, M-1), for the one WORKER_STARTED below. Nothing else in the worker holds it.
+    // (worker-globals.ts, R4:M-1), for the one WORKER_STARTED below. Nothing else in the worker holds it.
     postToFrameFn?: ((message: unknown) => void) | null,
 ): {
     attach(port: MessagePort): void;
@@ -66,29 +66,28 @@ export function inSandboxScript(
     log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void;
     readEvent(event: unknown, kind: 'error' | 'rejection' | 'violation'): Record<string, unknown>;
 } {
-    // The announcement (broad review 2026-10-14, CB1), the first statement, before anything else in the guest
+    // The announcement (BR:CB1), the first statement, before anything else in the guest
     // document can run: in cooperative mode the bootstrap makes the channel itself, keeps port1 in this closure and
     // posts port2 to the host page (parent.parent: the guest's parent is the wrapper). The host takes exactly one
     // announcement per environment, from this frame's window, and ends the environment on a second one (a guest
-    // that reloads or rewrites itself runs a bootstrap again). Before, the host posted its port INTO the guest
-    // frame after the wrapper loaded, and a capture listener here took it; document.open() erases every listener
-    // of the window, so guest code that called it before the wrapper's load received the host's port in a
-    // listener of its own (and could answer the watchdog from a nested worker). Now no listener in the guest realm
-    // ever carries a port of ours: the guest's end never leaves this closure, and the host's end never enters
-    // the guest. Worker mode: the frame (worker-bootstrap.ts) announces the same way and hands port1 to the worker,
+    // that reloads or rewrites itself runs a bootstrap again). The host never posts its port INTO the guest frame: a
+    // capture listener here would take it, but document.open() erases every listener of the window, so guest code that
+    // called it before the wrapper's load would receive the host's port in a listener of its own (and could answer the
+    // watchdog from a nested worker). So no listener in the guest realm ever carries a port of ours: the guest's end
+    // never leaves this closure, and the host's end never enters the guest. Worker mode: the frame (worker-bootstrap.ts) announces the same way and hands port1 to the worker,
     // whose one INIT_PORT listener below takes it (a worker has no document to open, and no guest code runs in it
     // before the port is there).
     const announced = mode === 'cooperative' ? new MessageChannel() : null;
     if (announced) parent.parent.postMessage({ type: 'SANDBOX_PORT' }, '*', [announced.port2]);
 
-    // ---- The captured list (review B2, C3; review round 2, C-1). The port never reaches guest code (review B2): every
+    // ---- The captured list (AR:B2, AR:C3, R2:C-1). The port never reaches guest code (AR:B2): every
     // operation on it, and on the events that carry it, goes through a primitive captured here and is called through the
     // captured Reflect.apply, so patching MessagePort.prototype (postMessage, onmessage), MessageEvent.prototype (data,
     // ports, source), Event.prototype or Function.prototype afterwards changes nothing this script does, and never hands
     // a patched function the port as `this` or as an argument. (A guest that held the port could hand it to a nested
     // worker that answers the watchdog's pings while the guest loops.) The internal lists are written with a captured
     // defineProperty, or have no prototype, and are read by index, so inherited setters or iterators on Array.prototype
-    // see none of it either (review C3). The list only captures: anything that runs later is written below it.
+    // see none of it either (AR:C3). The list only captures: anything that runs later is written below it.
     const g = globalThis as any;
     const apply = Reflect.apply;
     const construct = Reflect.construct;
@@ -112,7 +111,7 @@ export function inSandboxScript(
     const StringConstructor = String;
     const TypeErrorConstructor = TypeError;
     const DOMExceptionConstructor = typeof DOMException === 'function' ? DOMException : null;
-    // What execute() compiles with (focused review 2026-10-14, F2): captured now, so guest code that replaces
+    // What execute() compiles with (FR:F2): captured now, so guest code that replaces
     // globalThis.Function (or Reflect) later cannot choose what an EXECUTE frame runs, or when.
     const FunctionConstructor = Function;
     const clone = g.structuredClone;
@@ -131,7 +130,7 @@ export function inSandboxScript(
     const mapForEach = Map.prototype.forEach;
     const mapSize = getOwn(Map.prototype, 'size')!.get!;
     const hasOwnProperty = Object.prototype.hasOwnProperty;
-    // What structured clone makes of an error, told apart by its prototype alone (C-3, below): the realm's own
+    // What structured clone makes of an error, told apart by its prototype alone (R3:C-3, below): the realm's own
     // prototypes, and the platform's getters of what an error carries where it is not an own property of the clone
     // (Firefox's `stack`; a DOMException's name and message).
     const ERROR_PROTOTYPES = [Error.prototype, TypeError.prototype, RangeError.prototype, SyntaxError.prototype, ReferenceError.prototype, EvalError.prototype, URIError.prototype];
@@ -144,7 +143,7 @@ export function inSandboxScript(
     const slice = String.prototype.slice;
     const startsWith = String.prototype.startsWith;
     const clock = g.performance;
-    const clockNow = clock ? clock.now : undefined; // read once (review round 4, C-1)
+    const clockNow = clock ? clock.now : undefined; // read once (R4:C-1)
     const nowOf = typeof clockNow === 'function' ? clockNow : null;
     const DateConstructor = Date;
     const dateNow = Date.now;
@@ -168,19 +167,19 @@ export function inSandboxScript(
     const HeadersConstructor = g.Headers;
     const headersForEach = typeof HeadersConstructor === 'function' ? HeadersConstructor.prototype.forEach : null;
     const ResponseConstructor = g.Response;
-    // PD2 (below): the platform's fetch and Request, and Request.prototype's keepalive getter.
+    // BR:PD2 (below): the platform's fetch and Request, and Request.prototype's keepalive getter.
     const nativeFetch = g.fetch;
     const RequestConstructor = g.Request;
     let keepaliveOf: (() => unknown) | undefined;
     for (let proto = typeof RequestConstructor === 'function' ? RequestConstructor.prototype : null; proto && !keepaliveOf; proto = protoOf(proto)) {
         keepaliveOf = getOwn(proto, 'keepalive')?.get; // own on Request.prototype in every engine measured
     }
-    // PD4 (below): the traversal methods' owners.
+    // BR:PD4 (below): the traversal methods' owners.
     const HistoryConstructor = g.History;
     const NavigationConstructor = g.Navigation;
     const historyPrototype = mode === 'cooperative' && typeof HistoryConstructor === 'function' ? HistoryConstructor.prototype : null;
     const navigationPrototype = mode === 'cooperative' && typeof NavigationConstructor === 'function' ? NavigationConstructor.prototype : null;
-    // Auto-sizing (B6, below): the document and what is measured, through the prototypes' own getters.
+    // Auto-sizing (BL:B6, below): the document and what is measured, through the prototypes' own getters.
     const doc: Document | null = mode === 'cooperative' ? document : null;
     const ResizeObserverFound = g.ResizeObserver;
     const ResizeObserverConstructor = mode === 'cooperative' && typeof ResizeObserverFound === 'function' ? ResizeObserverFound : null;
@@ -196,7 +195,7 @@ export function inSandboxScript(
         readyStateOf = getOwn(proto, 'readyState')?.get; // on Document.prototype in every engine
     }
     const sizeOf = createSizeOfFn ? createSizeOfFn() : null;
-    // The one reader of guest values (class G, review round 5, N-6; readEvent and readOptions below): Reflect.get, and the
+    // The one reader of guest values (class G, R5:N-6; readEvent and readOptions below): Reflect.get, and the
     // platform's getters of the events the bootstrap reads, from each interface's prototype chain, by "Interface.field".
     // Guest code that later puts its own getter on ErrorEvent.prototype (or any prototype on the way) changes nothing the
     // bootstrap reads. Null where an engine has no such interface: then the field is read once through Reflect.get.
@@ -222,7 +221,7 @@ export function inSandboxScript(
     const append = (target: unknown[], value: unknown) => defineOwn(target, target.length, { value, writable: true, enumerable: true, configurable: true });
     const publish = (name: string, value: unknown) => defineOwn(g, name, { value, writable: true, enumerable: true, configurable: true });
 
-    // ---- One reader of guest values (class G; review round 5, N-6, and the reader N-2's fix shares). An object the guest
+    // ---- One reader of guest values (class G; R5:N-6, and the reader R5:N-2's fix shares). An object the guest
     // hands the library (an option object, an event, a thrown value) can answer each read differently, through a getter or
     // a Proxy: sandboxFetch read `init.method` once to test it and again to use it, so it tested one value and sent
     // another. Every guest-supplied option object and event is read here, each listed field once, into a snapshot of our
@@ -293,12 +292,12 @@ export function inSandboxScript(
         if (PEER_CONNECTION_CONSTRUCTORS[i]! in g) deleteOwn(g, PEER_CONNECTION_CONSTRUCTORS[i]!);
     }
 
-    // Hardening of the guest realm against platform gaps CSP does not cover (broad review 2026-10-14), each made
+    // Hardening of the guest realm against platform gaps CSP does not cover (BR:PD2, BR:PD4, BR:PD6), each made
     // here, before guest code, with primitives captured above, and each limited to this realm: a frame or a worker
     // the guest creates is a realm of its own and keeps the platform's behaviour (the residual of backlog S13).
     //
-    // PD2, keepalive. Firefox sends `fetch(url, { keepalive: true })` without checking connect-src (measured on a
-    // plain page with a header policy too: a platform bug). The guest's fetch builds the Request first with the
+    // BR:PD2, keepalive. Firefox sends `fetch(url, { keepalive: true })` without checking connect-src (a platform bug,
+    // on a plain page with a header policy too). The guest's fetch builds the Request first with the
     // captured constructor, exactly as fetch() itself would, reads `keepalive` from that Request (so a getter on
     // the init, or a Request made with keepalive, cannot answer twice), refuses a keepalive request, and hands
     // only that Request to the platform's fetch. Writable, so guest code can still wrap fetch; not configurable,
@@ -319,7 +318,7 @@ export function inSandboxScript(
         };
         defineOwn(g, 'fetch', { value: guardedFetch, writable: true, enumerable: true, configurable: false });
     }
-    // PD4, history traversal (cooperative mode). history.back(), forward() and go() traverse the whole tab's session
+    // BR:PD4, history traversal (cooperative mode). history.back(), forward() and go() traverse the whole tab's session
     // history, so a guest's history.back() navigated the HOST page in Firefox and WebKit; the Navigation API's back(),
     // forward() and traverseTo() reach the same history where it exists. In the guest realm they do nothing
     // (the Navigation API's resolve nothing and reject as when there is no entry to go to): not configurable,
@@ -338,7 +337,7 @@ export function inSandboxScript(
         const TRAVERSALS = ['back', 'forward', 'traverseTo'];
         for (let i = 0; i < TRAVERSALS.length; i++) defineOwn(navigationPrototype, TRAVERSALS[i]!, { value: refused, writable: false, enumerable: true, configurable: false });
     }
-    // PD6, window.name (cooperative mode). A frame's name is a target the host page's links, forms and window.open()
+    // BR:PD6, window.name (cooperative mode). A frame's name is a target the host page's links, forms and window.open()
     // look up, so a guest that named itself received the host's navigations and window.open() handles meant for a window
     // of the host's own. Here window.name reads '' and ignores writes. The platform's accessor is an own property of
     // the window and nothing else holds it, so once it is replaced no guest code can reach it: redefining or
@@ -362,8 +361,8 @@ export function inSandboxScript(
     // each, through the platform's getters (readEvent), so a getter the guest put on the prototype answers nothing here.
     // Its strings are cut before they are posted (backlog S61.3; class E-cpu, "cut before posting"), at
     // VIOLATION_MAX_STRING, the length the host keeps (violation.ts, which cuts them again on receipt): a report names a
-    // URL the guest chose, and every engine reports an https URL whole, so a fetch of a 100 000-character URL crossed
-    // whole to the host page's thread, up to VIOLATION_LIMIT times (measured: test/e2e/violation-strings.spec.ts). The
+    // URL the guest chose, and every engine reports an https URL whole, so a fetch of a 100 000-character URL would cross
+    // whole to the host page's thread, up to VIOLATION_LIMIT times (test/e2e/violation-strings.spec.ts). The
     // cut is the bootstrap's one helper (cutAt), on the snapshot readEvent made.
     const VIOLATION_LIMIT: LimitValue<'VIOLATION_EVENT_LIMIT'> = 100;
     const VIOLATION_MAX_STRING: LimitValue<'VIOLATION_MAX_STRING'> = 2048; // VIOLATION_MAX_STRING (violation.ts), typed by it
@@ -382,7 +381,7 @@ export function inSandboxScript(
         });
     };
 
-    // Content auto-sizing (backlog B6, src/lib/auto-resize.ts), opt-in and cooperative mode only: a worker has no
+    // Content auto-sizing (BL:B6, src/lib/auto-resize.ts), opt-in and cooperative mode only: a worker has no
     // document. A ResizeObserver on the root element reports the content height as a RESIZE frame, outside
     // the broker like VIOLATION. Its callbacks run at most once per rendering update, after layout, so the
     // guest measures once per frame and sends only a changed height. The measure is the root element's
@@ -415,10 +414,10 @@ export function inSandboxScript(
 
     // ---- Sliding one-second windows: the guest's per-second budgets (the console relay's, below, and the calls'), each
     // the host's own rule (rate-limit.ts) with the host's constant: at most `limit` in any one-second window. Each
-    // admitted weight is kept with its time until it leaves the window (review round 2, M-1: a token bucket let a full
-    // bucket and its refill through in one window, twice what the host takes, so the host dropped lines the guest had
+    // admitted weight is kept with its time until it leaves the window (R2:M-1: a token bucket would let a full bucket
+    // and its refill through in one window, twice what the host takes, so the host would drop lines the guest had
     // relayed, among them the relay's own warning that it had started dropping). Inline arithmetic and lists of our own
-    // only (C-1: Math.min, which the bucket called, is the guest's to replace). `mode` 'spent' records a weight already
+    // only (R2:C-1: Math.min is the guest's to replace). `mode` 'spent' records a weight already
     // spent (the lines flushed on attach, below) whatever the window holds; 'fits' only says whether it would be admitted.
     // A weight that is not a finite number ≥ 0 is refused in every mode, recording nothing: rate-limit.ts's isWeight, the
     // same expression (backlog S61, class C; a unit test compares the texts, and a differential property runs both).
@@ -456,15 +455,15 @@ export function inSandboxScript(
         };
     };
 
-    // The per-second budget of the calls the guest makes (review round 3, M-2): at most callBudget.calls calls and
+    // The per-second budget of the calls the guest makes (R3:M-2): at most callBudget.calls calls and
     // callBudget.bytes bytes of their frames in any one-second window, counted here, in the broker that holds the only
     // way onto the port, so a call past it never crosses: the broker refuses it BUSY. The host counts the same window on
-    // receipt (host.ts) and answers BUSY past it. Before, calls of 32 MiB back to back kept the host 15–39% busy within
-    // every other cap, and small calls reached 44 000 per second. A call counts against both windows or neither.
-    // A call heavier than the whole byte budget can never fit an empty window (review round 5, L-2 = N-5; the config schema's
+    // receipt (host.ts) and answers BUSY past it. Without it, calls of 32 MiB back to back keep the host's thread busy
+    // within every other cap, and small calls reach tens of thousands per second. A call counts against both windows or
+    // neither. A call heavier than the whole byte budget can never fit an empty window (R5:L-2; the config schema's
     // invariant, config-schema.ts): it is refused for good, ARGS_NOT_TRANSFERABLE, which is not retryable, as the element
-    // refuses one that arrives anyway. Before, it was BUSY, every time: with a budget smaller than one call (about 136
-    // bytes), every call, sandboxFetch() and guest writes included, was BUSY forever.
+    // refuses one that arrives anyway. BUSY would be wrong: with a budget smaller than one call (about 136 bytes), every
+    // call, sandboxFetch() and guest writes included, would be BUSY forever.
     const callBudget = features?.callBudget;
     const budgetCalls = callBudget ? callBudget.calls : 0;
     const budgetBytes = callBudget ? callBudget.bytes : 0;
@@ -480,7 +479,7 @@ export function inSandboxScript(
 
     // The guest's broker accepts a library code (FETCH_*) in the refusal of a call to a reserved method, so
     // sandboxFetch() rejects with the host's code; the host's broker never accepts one (see rpc.ts). The startup gate
-    // (below) refuses through it a call it cannot hold: its builder makes every RPC frame (rpc.ts, C-1).
+    // (below) refuses through it a call it cannot hold: its builder makes every RPC frame (rpc.ts, R3:C-1).
     let refuseHeld: ((request: unknown, reason: string) => void) | null = null;
     const bridge = createBrokerFn ? createBrokerFn(send, {
         acceptLibraryCodes: true,
@@ -492,15 +491,15 @@ export function inSandboxScript(
     const bridgeCall = bridge ? bridge.callWithTimeout : null; // read once: sandboxFetch and guest writes call it (below)
     if (bridge) publish('bridge', bridge);
 
-    // The host-mediated fetch bridge (backlog B5, src/lib/fetch-bridge.ts, ADR-006), opt-in, both modes. A
+    // The host-mediated fetch bridge (BL:B5, src/lib/fetch-bridge.ts, ADR-006), opt-in, both modes. A
     // separate global, never a replacement for fetch: guest code that wants it as fetch assigns it itself.
     // It sends only url, method, headers and body (string, ArrayBuffer or typed array) to the reserved
     // sandbox:fetch method; the host decides everything else and refuses with a FETCH_* code. The broker's
     // own timeout is a backstop a little past the host's, so the host's FETCH_TIMEOUT normally arrives first.
     // Whole responses only: the answer becomes a Response here, with its body in memory.
-    // Defined in every environment (review round 1, R4-8): without the bridge the host refuses every request with
-    // FETCH_NOT_ALLOWED ("the fetch bridge is off"), as docs/API.md says, where the global used to be missing and a
-    // call threw a ReferenceError. One path either way: the host decides.
+    // Defined in every environment (R1:R4-8): without the bridge the host refuses every request with FETCH_NOT_ALLOWED
+    // ("the fetch bridge is off"), as docs/API.md says, rather than a call throwing a ReferenceError. One path either way:
+    // the host decides.
     if (bridge) {
         const callWithTimeout = bridgeCall!;
         const fetchBridgeFeature = features?.fetchBridge;
@@ -538,8 +537,8 @@ export function inSandboxScript(
             if (bytes) return bytes;
             throw construct(TypeErrorConstructor, ['sandboxFetch: the body must be a string, an ArrayBuffer or a typed array']);
         };
-        // init's three fields, each read once (readOptions; review round 5, N-6: `method` was read to test it and again to
-        // send it, so a getter answered 'GET' to the test and anything at all to the send).
+        // init's three fields, each read once (readOptions; R5:N-6: `method` read to test it and again to send it would
+        // let a getter answer 'GET' to the test and anything at all to the send).
         const FETCH_INIT = ['method', 'headers', 'body'];
         publish('sandboxFetch', (input: unknown, init?: unknown) => {
             let request;
@@ -569,7 +568,7 @@ export function inSandboxScript(
         });
     }
 
-    // Guest writes (backlog C5, src/lib/guest-writes.ts), opt-in, every mode: the one way to send a write or a
+    // Guest writes (BL:C5, src/lib/guest-writes.ts), opt-in, every mode: the one way to send a write or a
     // removal to the host, the reserved sandbox:write method. Like sandboxFetch, it calls the broker's
     // callWithTimeout captured here, before any guest code runs, so replacing bridge.callWithTimeout (or the port's
     // prototypes, see above) later changes nothing on this path. It is not a global: the bootstrap hands it to
@@ -581,24 +580,24 @@ export function inSandboxScript(
         writeFiles = (request: unknown) => callWithTimeout(30000, 'sandbox:write', request);
     }
 
-    // ---- The console relay (review round 1: R4-1, R3-3, R4-2, R4-6, R4-7): the one chokepoint every guest log line
+    // ---- The console relay (R1:R4-1, R1:R3-3, R1:R4-2, R1:R4-6, R1:R4-7): the one chokepoint every guest log line
     // goes through, in every mode (cooperative, worker, and strict, whose prelude logs through `log` below). It never
     // throws, whatever the guest logs, and what it posts is bounded before it is posted:
     //   - at most LOG_MAX_ARGS arguments, strings cut at LOG_MAX_STRING (the host cuts again on receipt);
     //   - an Error or DOMException becomes { name, message, stack }, strings cut the same way, wherever it is in an
-    //     argument (review round 3, C-3: nested, it measured as past the byte budget, which it was not);
+    //     argument (R3:C-3: nested, it would measure as past the byte budget, which it is not);
     //   - a value structured clone refuses (a function, a Symbol, a DOM node, an Event, a Response, a Proxy, a WeakMap,
     //     a Promise) becomes a string that names its kind, instead of a DataCloneError thrown at the guest's console
-    //     call (before, `console.log(() => {})` threw in cooperative mode and in the worker, and the line was lost);
+    //     call and the line lost;
     //   - all arguments of one line together measure at most LOG_MAX_BYTES (structured-size.ts, with primitives
     //     captured now): an argument past what is left of it becomes a string saying so, so
     //     `console.log(new Uint8Array(64 MiB))` crosses as a few bytes, and an argument holding a kind the measure does
     //     not know (an ImageData, a SharedArrayBuffer) crosses as a string that names it, never as past the budget;
     //   - at most LOG_LINES_PER_SECOND lines and LOG_BYTES_PER_SECOND bytes leave in any one-second window (the host's
-    //     own rule and constant, the sliding windows above): the host dispatches no more than that anyway, and a line dropped here is never cloned onto the host's thread,
-    //     which is what a flood within the per-line caps cost (Firefox's host ran ~7 ticks per second). The first
-    //     dropped line sends one warning, once per environment.
-    // Each argument is cloned once here, with the captured structuredClone (review round 2, C-3), and the clone, the
+    //     own rule and constant, the sliding windows above): the host dispatches no more than that anyway, and a line
+    //     dropped here is never cloned onto the host's thread, which is what a flood within the per-line caps costs. The
+    //     first dropped line sends one warning, once per environment.
+    // Each argument is cloned once here, with the captured structuredClone (R2:C-3), and the clone, the
     // snapshot, is what is measured and what the line carries: a getter cannot answer the measure one way and the post
     // another, and a line buffered before the port is attached holds its values as they were when logged, as postMessage
     // would, and is known to post. Mirrors of LOG_MAX_ARGS, LOG_MAX_STRING, LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES and
@@ -609,8 +608,8 @@ export function inSandboxScript(
     const LOG_LINES_PER_SECOND: LimitValue<'LOG_EVENTS_PER_SECOND'> = 1000;
     const LOG_BYTES_PER_SECOND: LimitValue<'LOG_BYTES_PER_SECOND'> = 4194304;
     // At most LOG_BUFFER_LIMIT lines (and LOG_BYTES_PER_SECOND bytes) wait for the port (a strict entry's top level runs
-    // before the view hands the worker its ports: independent verification 2026-10-14): one window's worth, so they fit
-    // the host's window when they are flushed (M-2). Past either they are counted, and one warning on attach says how
+    // before the view hands the worker its ports: VR:V2): one window's worth, so they fit
+    // the host's window when they are flushed (R2:M-2). Past either they are counted, and one warning on attach says how
     // many were dropped, and for which cap.
     const LOG_BUFFER_LIMIT = LOG_LINES_PER_SECOND;
     const cut = (text: string) => cutAt(text, LOG_MAX_STRING) as string;
@@ -633,8 +632,8 @@ export function inSandboxScript(
         if (typeof value === 'function') return '[function]';
         return tagOf(value);
     };
-    // The name of a value's kind, for a line's own words: `Uint8Array` of `[object Uint8Array]` (M-7: the brackets were
-    // doubled), its type for a primitive.
+    // The name of a value's kind, for a line's own words: `Uint8Array` of `[object Uint8Array]` (R3:M-7: the brackets
+    // are not doubled), its type for a primitive.
     // At most 64 characters: a tag is the guest's to choose (Symbol.toStringTag), and this text is posted unmeasured.
     const kindOf = (value: unknown): string => {
         if (typeof value !== 'object' || value === null) return typeof value;
@@ -662,7 +661,7 @@ export function inSandboxScript(
     // A thrown or rejected value as it is reported: its text, an error's "name: message", anything else by kind (a
     // primitive as itself); and how many characters the browser reads of it to make its own report, which the budget of
     // uncaught errors counts (egress.ts, UNCAUGHT_CHARACTERS_PER_SECOND): a string's, or an error's name and message.
-    // Measured in Firefox, which reports every rejection of a worker to the host page's thread: the cost followed the
+    // Firefox reports every rejection of a worker to the host page's thread, and the cost follows the
     // characters of the error's message and name (a stack, a toString or a getter cost nothing, since the browser reads
     // data properties only). Each is read once here, and a getter's answer is counted too: more than the browser reads,
     // never less (research 18: a model of the browser may only err toward refusing).
@@ -688,7 +687,7 @@ export function inSandboxScript(
     const errorText = (value: unknown): string => reportOf(value).text;
     // "Uncaught …" once: Chromium's ErrorEvent message already starts with it, Firefox's and WebKit's do not.
     const uncaught = (text: string) => (apply(startsWith, text, ['Uncaught ']) ? text : 'Uncaught ' + text);
-    // One argument's snapshot (C-3): its clone, or, for a value clone refuses deeper in (a function in an object, a
+    // One argument's snapshot (R3:C-3): its clone, or, for a value clone refuses deeper in (a function in an object, a
     // Proxy), its kind.
     const snapshot = (value: unknown): unknown => {
         try {
@@ -698,10 +697,10 @@ export function inSandboxScript(
         }
     };
 
-    // Errors anywhere in a snapshot become { name, message, stack } (review round 3, C-3), in place, before the line is
-    // measured. Structured clone keeps an Error, and the byte measure counts one as past every budget (structured-size.ts:
-    // its stack is the engine's to serialize), so `console.log({ error })`, `[new TypeError()]` and Promise.allSettled's
-    // results crossed as "past the log line's byte budget", which was false. The walk visits plain objects, arrays, Maps
+    // Errors anywhere in a snapshot become { name, message, stack } (R3:C-3), in place, before the line is measured.
+    // Structured clone keeps an Error, and the byte measure counts one as past every budget (structured-size.ts: its
+    // stack is the engine's to serialize), so `console.log({ error })`, `[new TypeError()]` and Promise.allSettled's
+    // results would cross as "past the log line's byte budget", which is false. The walk visits plain objects, arrays, Maps
     // and Sets, each object once, at most ERROR_WALK_NODES of them and ERROR_WALK_DEPTH deep. An error past those bounds
     // stays, and the measure names it ("unsupported value: Error"): bounded, and true.
     // It runs no guest code with a snapshot object at hand: the snapshot is posted after it (a line logged before the
@@ -808,9 +807,9 @@ export function inSandboxScript(
     // budget cut). Its arguments are snapshots, strings, and primitives.
     // The placeholders are part of the budget by construction (backlog S61.3; class P, the two ends of one budget measuring
     // different things). An argument past what is left becomes a placeholder that says so, and the placeholder takes its
-    // own bytes from what is left; before, nothing checked that it fit, so with less than its size left (50 bytes, and a
-    // placeholder of 118) the line crossed past LOG_MAX_BYTES as the host measures it (sandbox-log.ts, toLogDetail): the
-    // host dropped the placeholder and warned that the guest's line was too large, which the relay never sends. Now room
+    // own bytes from what is left; a placeholder that did not fit (50 bytes left, a placeholder of 118) would make the
+    // line cross past LOG_MAX_BYTES as the host measures it (sandbox-log.ts, toLogDetail): the host would drop the
+    // placeholder and warn that the guest's line was too large, which the relay never sends. So room
     // for one tail is kept back from the start (TAIL_BYTES, the longest tail), and an argument and its placeholder are
     // measured against what is left besides it; when even the placeholder does not fit, the tail ends the line, saying how
     // many arguments it drops. So every prefix of the line fits LOG_MAX_BYTES as the host measures it, argument by argument
@@ -835,7 +834,7 @@ export function inSandboxScript(
             const bytes = sizeOf ? sizeOf(value, left, undefined, unsupported) : 0;
             if (bytes > left) {
                 reduced = true;
-                // what it is: a kind the measure does not know, or a value past what is left of the budget (C-3)
+                // what it is: a kind the measure does not know, or a value past what is left of the budget (R3:C-3)
                 const placeholder = unsupported.kind ? '[unsupported value: ' + unsupported.kind + ']' : '[' + kindOf(value) + ': past the log line\'s byte budget (' + LOG_MAX_BYTES + ')]';
                 const cost = placeholder.length * 2 + 8;
                 if (cost > left) {
@@ -864,8 +863,8 @@ export function inSandboxScript(
     let bufferedBytes = 0;
     // The relay's own lines ('<mode> Ready' and its warnings, each at most once per environment) are marked `own`: the
     // host dispatches up to LOG_OWN_LINES of them per environment besides the guest's lines (sandbox-log.ts), so the
-    // warning that lines were dropped arrives even when the lines before it filled the host's window (M-1, M-2). Only the
-    // bootstrap posts on the port (guest code never holds it, review B2), so no guest line is ever marked.
+    // warning that lines were dropped arrives even when the lines before it filled the host's window (R2:M-1, R2:M-2). Only the
+    // bootstrap posts on the port (guest code never holds it, AR:B2), so no guest line is ever marked.
     const ownLine = (level: 'warn', text: string) => {
         try {
             post({ type: 'LOG', level, args: [text], own: true });
@@ -930,15 +929,15 @@ export function inSandboxScript(
         relayLine(level, args);
     };
 
-    // Every console method that takes arguments (review round 2, C-2): each is a wrapper of ours, built here with index
-    // loops only (no spread, no slice, no iterator: a patched Array.prototype[Symbol.iterator] made the old trace and
-    // assert wrappers throw, and the catch then gave the browser's console the raw arguments). A wrapper relays its line
+    // Every console method that takes arguments (R2:C-2): each is a wrapper of ours, built here with index loops only
+    // (no spread, no slice, no iterator: a patched Array.prototype[Symbol.iterator] would make such a trace or assert
+    // wrapper throw, and its catch then give the browser's console the raw arguments). A wrapper relays its line
     // and hands the browser's console only what relayLine() allows; if anything throws, it hands it nothing: a line
     // that could not be relayed goes nowhere. log, info, warn and error relay at their level; debug, dir, dirxml, table,
     // group and groupCollapsed as 'log' lines; trace as a 'log' line that says so; a failed assert as an 'error' line
     // (a passing one does nothing, here and in the browser). count, countReset, time, timeLog, timeEnd, timeStamp,
     // profile and profileEnd relay nothing to the host, but take arguments to the browser's console: they are bounded
-    // and budgeted like a line (before, they reached it unbounded, past every budget). groupEnd and clear take none.
+    // and budgeted like a line (unbounded, they would reach it past every budget). groupEnd and clear take none.
     type Level = 'log' | 'info' | 'warn' | 'error';
     const CONSOLE_METHODS = ['log', 'info', 'warn', 'error', 'debug', 'dir', 'dirxml', 'table', 'group', 'groupCollapsed', 'trace', 'assert',
         'count', 'countReset', 'time', 'timeLog', 'timeEnd', 'timeStamp', 'profile', 'profileEnd'];
@@ -965,7 +964,7 @@ export function inSandboxScript(
         return given;
     };
     // The browser's own console is given a line only in cooperative mode, for debugging the guest document in its frame
-    // (review round 2, M-5). In a worker (worker and strict mode) the relay is the only sink: Chromium keeps a worker's
+    // (R2:M-5). In a worker (worker and strict mode) the relay is the only sink: Chromium keeps a worker's
     // console arguments in the page's memory (measured: +445 MiB in 90 s of lines within the 4 MiB/s budget), and the
     // host's 'sandbox-log' is the documented place to read them.
     const toBrowserConsole = mode === 'cooperative';
@@ -989,14 +988,14 @@ export function inSandboxScript(
         };
     }
 
-    // ---- The listeners: the egress table's rows for this mode (src/lib/egress.ts; review round 5, N-1, class E-cpu), and
+    // ---- The listeners: the egress table's rows for this mode (src/lib/egress.ts; R5:N-1, class E-cpu), and
     // no other. Every platform surface by which guest activity can make work on the host page's thread is a row there,
     // with what is done about it; the host hands this bootstrap the rows it owns for its mode (`features.listeners`), and
-    // each listener below does what its row says: relay, cancel, count against the budget of uncaught errors. Before, the
-    // listeners were written by hand here, and each round found a surface nobody had listed (4:M-1, errors not cancelled;
-    // 5:N-1, rejections not cancelled). Capture listeners on the global, installed before any guest code runs.
+    // each listener below does what its row says: relay, cancel, count against the budget of uncaught errors. A listener
+    // written by hand here would leave a surface nobody had listed (R4:M-1, errors not cancelled; R5:N-1, rejections
+    // not cancelled). Capture listeners on the global, installed before any guest code runs.
     //
-    // Uncaught errors and unhandled rejections (R4-2, R4-6) are relayed as 'error' lines, "Uncaught …" and
+    // Uncaught errors and unhandled rejections (R1:R4-2, R1:R4-6) are relayed as 'error' lines, "Uncaught …" and
     // "Uncaught (in promise) …". Errors in cooperative and worker mode, trusted ones only; in strict mode the prelude
     // relays the error event (an entry's own error ends the sandbox, in-sandbox-view.ts) and this listener only counts it.
     // Unhandled rejections in every mode, trusted or not: WebKit (every realm) and Firefox (workers) dispatch the
@@ -1007,10 +1006,10 @@ export function inSandboxScript(
     //
     // Cancelled once relayed (worker and strict mode; cooperative mode leaves the browser's console to the guest document
     // for debugging). An uncaught error that is not cancelled reaches the Worker object in the frame, with its message, on
-    // the host page's thread in Firefox and WebKit, outside every budget (review round 4, M-1: errors of 16 Mi characters
-    // in a loop kept Firefox's host page 99% busy and WebKit's 88%); before the port is attached an error still reaches the
+    // the host page's thread in Firefox and WebKit, outside every budget (R4:M-1: errors of 16 Mi characters
+    // in a loop keep Firefox's host page 99% busy and WebKit's 88%); before the port is attached an error still reaches the
     // frame, which reads it as a worker that failed to start (worker-bootstrap.ts), so errors are cancelled from then on.
-    // A rejection that is not cancelled is reported by the browser (review round 5, N-1: Chromium's host page 11–12% busy
+    // A rejection that is not cancelled is reported by the browser (R5:N-1: Chromium's host page 11–12% busy
     // under the reviewers' flood); cancelled, Chromium reports nothing.
     //
     // Counted (worker and strict mode): Firefox reports a worker's unhandled rejection to the host page's thread whether
@@ -1119,7 +1118,7 @@ export function inSandboxScript(
             // Compiled with the Function captured above and called through the captured apply: what runs is the
             // embedder's code, now. Nothing is reported back: workerExecutionTimeout is the host's ping at the
             // deadline, answered above only by a free event loop (host.ts, _armExecutionBudget). No global is
-            // looked up on this path (broad review 2026-10-14, CB2): the code must already be a string (the host
+            // looked up on this path (BR:CB2): the code must already be a string (the host
             // sends one; execute() refuses anything else), and nothing converts it, so guest code that replaced
             // String, Error or any other global cannot change what runs.
             if (!scriptUnsafe) {
@@ -1133,7 +1132,7 @@ export function inSandboxScript(
             } catch (e: any) {
                 let text = '';
                 try {
-                    // the message read once (review round 4, C-1): a getter answers each read as it likes
+                    // the message read once (R4:C-1): a getter answers each read as it likes
                     const message = e === null || e === undefined ? undefined : e.message;
                     text = typeof message === 'string' ? cut(message) : errorText(e);
                 } catch {
@@ -1162,7 +1161,7 @@ export function inSandboxScript(
     // (a no-op while it is registered), so the reopened document's own DOMContentLoaded drains the queue too. Held
     // frames run one per microtask, so a call's method runs before the next frame, as it would have on arrival. At
     // most MAX_HELD wait: past that a call is answered BUSY at once and an execute() is dropped with a log line.
-    // Every primitive is captured above, before guest code (review B2): a guest that replaces
+    // Every primitive is captured above, before guest code (AR:B2): a guest that replaces
     // Document.prototype.readyState, shadows document.readyState or dispatches its own DOMContentLoaded cannot open
     // the gate early. A guest can only keep it closed for itself (document.open(), or stopping the event in a
     // listener of its window): its own calls then wait for 'complete' or time out. Worker and strict mode have no
@@ -1216,7 +1215,7 @@ export function inSandboxScript(
             log('error', [`[Sandbox] execute() was dropped: ${MAX_HELD} calls and executions are already waiting for the guest document to be parsed.`]);
             return;
         }
-        // refused BUSY through the broker's builder (rpc.ts, C-1), which drops a malformed request as it drops any
+        // refused BUSY through the broker's builder (rpc.ts, R3:C-1), which drops a malformed request as it drops any
         if (refuseHeld) refuseHeld(data, `too many calls waiting for the guest document to be parsed (${MAX_HELD})`);
     };
     if (doc) apply(listen, doc, ['DOMContentLoaded', onParsed, true]);
@@ -1258,7 +1257,7 @@ export function inSandboxScript(
             }
         }
         outbox.length = 0;
-        // The lines buffered before the port count against this second's budgets as they leave now (M-2): at most
+        // The lines buffered before the port count against this second's budgets as they leave now (R2:M-2): at most
         // LOG_BUFFER_LIMIT (= LOG_LINES_PER_SECOND) lines and LOG_BYTES_PER_SECOND bytes, what one window holds, so the
         // guest's lines that follow at once wait for the window like any others, and the host dispatches all of them.
         lineBudget(logsBuffered, 'spent');
@@ -1282,11 +1281,11 @@ export function inSandboxScript(
         return { attach, writeFiles, log, readEvent };
     }
 
-    // Worker mode: the one INIT_PORT (review B1), the port1 the frame made (worker-bootstrap.ts): a trusted message with
+    // Worker mode: the one INIT_PORT (AR:B1), the port1 the frame made (worker-bootstrap.ts): a trusted message with
     // exactly one port. In a dedicated worker only the frame that made it can post to it, and no guest code runs here
     // before the port is attached (guest code arrives only as EXECUTE frames on it). A capture listener that stops the
     // event; anything else is ignored and the listener stays. It never throws. Once the port is attached, the worker
-    // tells the frame it runs (WORKER_STARTED, review round 2, C-5): the frame announces the port to the host only then,
+    // tells the frame it runs (WORKER_STARTED, R2:C-5): the frame announces the port to the host only then,
     // so the host is never `ready` with no worker behind the port.
     // Strict mode (externalPort): the strict prelude hands the logic port to attach() itself.
     const onInit = (event: MessageEvent) => {

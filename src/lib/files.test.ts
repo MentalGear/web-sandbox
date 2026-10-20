@@ -602,7 +602,7 @@ describe('FileStore.snapshot: delivery order and reference cycles (PR4)', () => 
         const store = new FileStore(warn);
         store.register({ 's.css': '@import "s.css"; x { y: url(./s.css) } z { w: url(i.svg) }', 'i.svg': '' });
         expect(slotsOf(store, 's.css')).toEqual(['i.svg']);
-        // the @import is the cycle; url(./s.css) names a stylesheet where an image is loaded (focused review W1):
+        // the @import is the cycle; url(./s.css) names a stylesheet where an image is loaded (FR:W1):
         // it stays for that reason, with its own warning, and is no edge of the cycle
         expect(warn).toHaveBeenCalledTimes(2);
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('cycle'))).toEqual([expect.stringContaining('"s.css"')]);

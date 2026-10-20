@@ -23,9 +23,9 @@
  *     wrote is then simply forgotten); a path the guest cannot see is answered `change: 'none'` (the guest rejects
  *     NOT_FOUND) and records nothing. A mark whose path the host unregistered later is forgotten before the marks are
  *     listed or committed, so a listed mark always names a stored file. A removal of a path the build delivered and
- *     the host unregistered since changes the guest's view and records nothing (review round 4, L-4: it was recorded,
- *     announced, and never listed).
- *   - One diff (review round 5, N-4 and L-4). Every request is recorded by record(), which compares the two projections
+ *     the host unregistered since changes the guest's view and records nothing (R4:L-4: a recorded mark would be
+ *     announced and never listed).
+ *   - One diff (R5:N-4, R5:L-4). Every request is recorded by record(), which compares the two projections
  *     of the path before and after it: what listGuestWrites() shows there, and what the guest sees there. The host
  *     announces 'fileswritten' exactly when the first changed, and tells the strict view exactly when the second did, so
  *     the list, the announcement and the view cannot disagree about what a request did.
@@ -86,8 +86,8 @@ export interface GuestWritesOptions {
     store: FileStore;
     /**
      * The store as this environment's build delivered it (FileStore.copy()); `store` when left out. Every answer to the
-     * guest is decided against it plus the overlay (broad review 2026-10-14, CB4): which removals name a file, and the
-     * write-time quota. Answered from the live store, a removal or the quota told the guest about files the host
+     * guest is decided against it plus the overlay (BR:CB4): which removals name a file, and the
+     * write-time quota. Answered from the live store, a removal or the quota would tell the guest about files the host
      * registered after the build, which the guest otherwise never sees.
      */
     built?: FileStore;
@@ -95,7 +95,7 @@ export interface GuestWritesOptions {
 }
 
 /**
- * What one recorded request changed (review round 5, N-4 and L-4; class D): the one diff of the overlay at the request's
+ * What one recorded request changed (R5:N-4, R5:L-4; class D): the one diff of the overlay at the request's
  * path, of which every projection is derived. `listed`: the entry listGuestWrites() shows at the path changed, so
  * 'fileswritten' names it (and only then). `view`: what the guest sees at the path changed, so the strict view is told,
  * with `shown`, what the guest now sees there: the written file, or null for nothing.
@@ -122,7 +122,7 @@ export interface GuestWrites {
     /**
      * The pending change at `path`, as recorded: the written file (its store type and bytes, not a copy: read them, never
      * change them), null for a removal mark, undefined for none. Strict mode reads it right after handle() to show the
-     * view what the guest wrote (R4-4).
+     * view what the guest wrote (R1:R4-4).
      */
     change(path: string): Readonly<CheckedFile> | null | undefined;
     /** Its environment ended: every later request is refused. What was recorded stays listable and committable. */
@@ -138,14 +138,14 @@ export function createGuestWrites({ store, built = store, now = () => performanc
     // path → the write (a CheckedFile) or a removal mark (null). Never holds a refused request.
     const overlay = new Map<string, CheckedFile | null>();
     // Paths of the build the guest removed from its own view (its answer said 'remove'), marked or not: a second removal
-    // is 'none', as the guest's sandboxFiles no longer lists the path. A write to the path brings it back.
+    // is 'none', as the guest's sandboxFiles does not list the path. A write to the path brings it back.
     const removedInView = new Set<string>();
-    // The one predicate a removal mark is recorded by and kept by (L-4): it names a file the store holds.
+    // The one predicate a removal mark is recorded by and kept by (R5:L-4): it names a file the store holds.
     const markable = (path: string) => store.has(path);
     let closed = false;
     // Sliding one-second windows (rate-limit.ts, the limiter the log lines use too): at most the limit in ANY
-    // one-second window, as documented. The fixed windows they replace let 199 requests (and twice the bytes)
-    // through around a window boundary (focused review 2026-10-14, W2). One clock reading serves both.
+    // one-second window, as documented. A fixed window would let 199 requests (and twice the bytes)
+    // through around a window boundary (FR:W2). One clock reading serves both.
     const requests = createRateLimiter(GUEST_WRITES_PER_SECOND);
     const bytes = createRateLimiter(GUEST_WRITE_BYTES_PER_SECOND);
 
@@ -199,15 +199,13 @@ export function createGuestWrites({ store, built = store, now = () => performanc
         return { path: valid, change: 'write', type: file.type, size: file.bytes.length };
     };
 
-    // ---- The one diff (review round 5, N-4 and L-4; class D). The overlay, removedInView and the store are one state,
-    // and the host shows it three ways: listGuestWrites(), the 'fileswritten' announcement, and the strict view's copy of
-    // what the guest sees (VIEW_WRITE). Each used to be derived by a predicate of its own: the host announced when the
-    // overlay's entry at the path changed, and told the view only then. So a removal of a file the host had unregistered
-    // after the build changed nothing listed and was told nowhere, and the view kept showing the file the guest no longer
-    // had (N-4); a withdrawn write (a new path written, then removed) changed the list and was announced (L-4), which is
-    // right, since the list changed, and is now the documented rule. Now both projections at the request's path are taken
-    // before and after it, and compared: the announcement is "the listed entry changed", the view's change is "what the
-    // guest sees changed".
+    // ---- The one diff (R5:N-4, R5:L-4; class D). The overlay, removedInView and the store are one state, and the host
+    // shows it three ways: listGuestWrites(), the 'fileswritten' announcement, and the strict view's copy of what the
+    // guest sees (VIEW_WRITE). Deriving each by a predicate of its own would let them disagree: a removal of a file the
+    // host had unregistered after the build changes nothing listed, yet the view must stop showing the file the guest no
+    // longer has (R5:N-4); a withdrawn write (a new path written, then removed) changes the list and is announced (R5:L-4),
+    // since the list changed. So both projections at the request's path are taken before and after it, and compared:
+    // the announcement is "the listed entry changed", the view's change is "what the guest sees changed".
     type Listed = CheckedFile | 'remove' | null;
     type Shown = CheckedFile | 'built' | null;
     // What listGuestWrites() shows at `path`: the written file, a removal mark (only one that names a stored file: see
@@ -255,7 +253,7 @@ export function createGuestWrites({ store, built = store, now = () => performanc
     };
 
     // A removal mark names a path the store held when it was recorded; the host may unregister that path later
-    // (focused review 2026-10-14, W3). A mark whose path the store no longer holds would remove nothing and only
+    // (FR:W3). A mark whose path the store does not hold would remove nothing and only
     // mislead whoever reads the list, so it is forgotten here, where marks are read: list() and commit() call
     // this first, and handle() needs no copy of it (a removal of such a path is answered 'none' anyway).
     const forgetStaleMarks = () => {

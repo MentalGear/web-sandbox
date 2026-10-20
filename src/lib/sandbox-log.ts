@@ -1,13 +1,14 @@
 /**
- * The detail of the element's 'sandbox-log' event (backlog B3; adversarial review 2026-10, B3).
+ * The detail of the element's 'sandbox-log' event.
+ * Backlog item BL:B3, finding AR:B3.
  *
  * Guest log lines arrive on the port as LOG frames whose every field the guest chose: the bootstrap relays
  * console.log/warn/error, and guest code decides what it logs. The host also logs a few lines of its own
- * (an execution timeout, an entry that failed to start). Before the review both were dispatched as they came,
- * so a listener could not tell them apart, a level of 1 or args that were not an array broke
- * SandboxDevTools, and a guest could make the host run embedder listeners as often as it could post.
+ * (an execution timeout, an entry that failed to start). A line dispatched as it came would not tell a listener
+ * which it was, a level of 1 or args that are not an array would break SandboxDevTools, and a guest could make the host
+ * run embedder listeners as often as it could post.
  *
- * Now every line is normalised here before it is dispatched: a level from a closed set, args an array of at
+ * So every line is normalised here before it is dispatched: a level from a closed set, args an array of at
  * most LOG_MAX_ARGS with every string clamped to LOG_MAX_STRING, and a `source` the host sets from where the
  * line came from, never read from the frame. Guest lines are rate-limited per environment (LOG_EVENTS_PER_SECOND,
  * enforced in host.ts); host lines never are.
@@ -31,7 +32,7 @@ export interface SandboxLog {
 }
 
 /**
- * The byte budget of one line, all its arguments together, measured with structured-size.ts (review round 1, R3-3):
+ * The byte budget of one line, all its arguments together, measured with structured-size.ts (R1:R3-3):
  * LOG_MAX_ARGS and LOG_MAX_STRING bound the strings, this bounds the rest (a typed array, an object of 100 000 keys).
  * The guest's console relay applies it before a line is posted (an argument past it crosses as a string saying so),
  * and the host again on receipt. Mirrored in in-sandbox-script.ts (a test keeps them equal).
@@ -40,14 +41,14 @@ export const LOG_MAX_BYTES = 1048576;
 
 /**
  * The guest's console relay sends at most this many bytes of lines per second, and at most LOG_EVENTS_PER_SECOND lines
- * (review round 1, R3-3): a line dropped in the guest is never cloned onto the host's thread. Mirrored in
+ * (R1:R3-3): a line dropped in the guest is never cloned onto the host's thread. Mirrored in
  * in-sandbox-script.ts (a test keeps them equal).
  */
 export const LOG_BYTES_PER_SECOND = 4194304;
 
 /**
  * What an argument past LOG_MAX_BYTES becomes on receipt. An argument holding a kind the measure does not know (an Error,
- * an ImageData) says that instead, `[Sandbox] dropped: unsupported value: <kind>` (review round 3, C-3).
+ * an ImageData) says that instead, `[Sandbox] dropped: unsupported value: <kind>` (R3:C-3).
  */
 export const LOG_DROPPED_ARGUMENT = "[Sandbox] dropped: past the log line's byte budget";
 
@@ -65,11 +66,11 @@ export const LOG_EVENTS_PER_SECOND = 1000;
 
 /**
  * The guest relay's own lines the host dispatches per environment besides the guest's lines, outside their window
- * (review round 2, M-1, M-2): '<mode> Ready' and the relay's warnings (lines dropped past the per-second budgets, lines
+ * (R2:M-1, R2:M-2): '<mode> Ready' and the relay's warnings (lines dropped past the per-second budgets, lines
  * dropped before the guest was connected, queued frames that could not be posted), each sent at most once per
  * environment and marked `own` by the bootstrap. The guest relay counts its lines in a window of LOG_EVENTS_PER_SECOND,
- * the host's own (in-sandbox-script.ts), so those warnings used to arrive just past a full window, and were dropped:
- * the one line that said lines were missing went missing. Only the bootstrap posts on the port, so a guest cannot mark a
+ * the host's own (in-sandbox-script.ts), so those warnings would arrive just past a full window and be dropped:
+ * the one line that says lines are missing must not go missing. Only the bootstrap posts on the port, so a guest cannot mark a
  * line; past this many marked lines in one environment, a marked line counts as the guest's like any other.
  */
 export const LOG_OWN_LINES = 4;
@@ -111,7 +112,7 @@ export function toLogDetail(frame: unknown, source: 'guest' | 'host', onDropped?
 
 /**
  * `admit()` says whether one more guest line may be dispatched now: at most LOG_EVENTS_PER_SECOND in any one-second
- * window, a sliding window (rate-limit.ts; focused review 2026-10-14, W2: the fixed window this replaced let twice
+ * window, a sliding window (rate-limit.ts; FR:W2: a fixed window lets twice
  * the limit through around its boundary). One per environment (host.ts creates a fresh one on every teardown).
  */
 export function createLogLimiter(now: () => number = () => performance.now()) {

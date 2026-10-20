@@ -1,8 +1,8 @@
 /**
- * The one timer for a delay that a config or a caller chooses (review round 2, L-2): watchdogTimeout,
- * workerExecutionTimeout, a call's timeout, the fetch bridge's timeoutMs. setTimeout takes its delay as a 32-bit signed
- * integer, so 2^31 ms or more (2**33, Infinity) overflowed and fired at once: a watchdog of 2**33 ms terminated a
- * healthy guest within 50–200 ms, and callWithTimeout(Infinity, …) rejected TIMEOUT after its request had been sent.
+ * The one timer for a delay that a config or a caller chooses: watchdogTimeout,
+ * workerExecutionTimeout, a call's timeout, the fetch bridge's timeoutMs (R2:L-2). setTimeout takes its delay as a 32-bit signed
+ * integer, so 2^31 ms or more (2**33, Infinity) overflows and fires at once: a watchdog of 2**33 ms would terminate a
+ * healthy guest within 50–200 ms, and callWithTimeout(Infinity, …) would reject TIMEOUT after its request had been sent.
  * Here a delay past MAX_TIMER_DELAY is waited out in chained timeouts of at most that, and a delay that is not finite
  * (Infinity) never fires: it means off. A delay that is not a number > 0 (0, a negative number, NaN) fires as soon as a
  * timeout of 0 would. A unit test keeps every other setTimeout in the library to a delay of its own choosing.

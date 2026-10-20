@@ -143,8 +143,8 @@ const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]{1,64}$/;
 const MAX_HEADERS = 64;
 const MAX_HEADER_VALUE = 8192;
 // The longest URL the bridge takes, as the guest wrote it and as parsed (percent-encoding can make the parsed one
-// longer): past it a request is refused. A record reports the whole URL, so it is never longer than this either (review
-// round 3, M-4: records were cut to 2048 characters, so a valid request's URL was reported cut).
+// longer): past it a request is refused. A record reports the whole URL, so it is never longer than this either (R3:M-4:
+// a valid request's URL is never reported cut).
 export const MAX_URL = 8192;
 const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
 
@@ -173,9 +173,9 @@ export const FETCH_ORIGIN_RULES: OriginRules = { anyHost: ['https:', 'http:'], l
  * object). Entries that cannot be used are dropped and reported through `warn`; an empty allowlist is a
  * valid policy that refuses everything. A list field that is not a list is dropped with a warning, as a whole: `allow`
  * then admits nothing, `methods` and `headers` keep their defaults. Every value shown in a warning is clamped
- * (`shown`, review round 1 R1-3: JSON.stringify of a BigInt or a cyclic entry threw, and refused the whole config).
+ * (`shown`, R1:R1-3: JSON.stringify of a BigInt or a cyclic entry would throw and refuse the whole config).
  * An allowlist that names the host page's own origin (`hostOrigin`) or a loopback, private or link-local host is
- * honoured, as configured, with one warning each (R3-5): it lets the guest reach what the bridge otherwise refuses.
+ * honoured, as configured, with one warning each (R1:R3-5): it lets the guest reach what the bridge otherwise refuses.
  */
 export function toFetchPolicy(config: unknown, warn: (message: string) => void, hostOrigin = ''): FetchPolicy | null {
     if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
@@ -306,8 +306,8 @@ export interface ValidRequest {
     body: string | Uint8Array | undefined;
 }
 
-// The URL a record names. One longer than MAX_URL is refused anyway and reported cut, without being parsed (review round
-// 4, C-8): parsing a guest's string of any length only to cut its result was work the guest chose the size of.
+// The URL a record names. One longer than MAX_URL is refused anyway and reported cut, without being parsed (R4:C-8):
+// parsing a guest's string of any length only to cut its result would be work the guest chose the size of.
 const reportedUrl = (value: unknown): string => {
     if (typeof value !== 'string') return '';
     if (value.length > MAX_URL) return value.slice(0, MAX_URL);
@@ -342,7 +342,7 @@ const toHeaders = (value: unknown, allowed: readonly string[]): [string, string]
         const lower = name.toLowerCase();
         if (!allowed.includes(lower)) return `header "${lower.slice(0, 64)}" is not allowed`;
         // The value's size is policy; its syntax (a ByteString without NUL, CR or LF) is the platform's, checked
-        // by the Request the bridge builds before it records anything (createFetchBridge, review B6).
+        // by the Request the bridge builds before it records anything (createFetchBridge, AR:B6).
         if (headerValue.length > MAX_HEADER_VALUE) return `header "${lower}" has a value longer than ${MAX_HEADER_VALUE} characters`;
         headers.push([lower, headerValue]);
     }
@@ -373,8 +373,8 @@ export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigi
     if (url.href.length > MAX_URL) return fetchRefusal('FETCH_NOT_ALLOWED', `the URL is longer than ${MAX_URL} characters`);
 
     if (!(policy.allow as readonly string[]).includes(url.origin)) {
-        // One text to the guest for every origin that is not listed (broad review 2026-10-14, CB6): a refusal that
-        // said "the host page's own origin" told the guest which origin embeds it, by probing. Why it is not listed
+        // One text to the guest for every origin that is not listed (BR:CB6): a refusal that
+        // said "the host page's own origin" would tell the guest which origin embeds it, by probing. Why it is not listed
         // stays on the host, in the record's `reason`.
         const refusal = fetchRefusal('FETCH_NOT_ALLOWED', `${url.origin} is not in fetchBridge.allow`);
         if (url.origin === hostOrigin) refusal.reason = "the host page's own origin, which is not in fetchBridge.allow";
@@ -458,18 +458,17 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
     const inFlight = new Set<AbortController>();
     let closed = false;
 
-    // The one place a record is made, and the one place its outcome is final (finding LM-1, class L: an environment's
-    // events reaching listeners after its teardown). Each path below proposes the outcome it settled on; once abortAll()
+    // The one place a record is made, and the one place its outcome is final (LM-1, class L: an environment's events
+    // reaching listeners after its teardown). Each path below proposes the outcome it settled on; once abortAll()
     // has run, the record is 'aborted' instead, with code FETCH_FAILED, whatever was proposed. Status and bytes stay as
-    // measured; a refusal's `reason` goes (it explains a refusal, and this is not one any more).
+    // measured; a refusal's `reason` goes (it explains a refusal, and this is not one).
     //
-    // Why here and not on each path: the paths used to decide on their own, and only the catch looked at the teardown
-    // (the controller's abort reason). A request whose body was already read when a listener of another request's record
-    // tore the environment down settled on the success path and recorded 'ok', dispatched after the teardown that the
-    // listener's reset() or terminate() had made; so did a redirect refusal, a 'failed' record and a request refused after
-    // close. docs/API.md promises that after its teardown an environment's records are 'aborted': with the decision made
+    // Why here and not on each path: a listener of one request's record can tear the environment down (reset() or
+    // terminate()) while another request's body is already read, and that request would settle on the success path and
+    // record 'ok' after the teardown; so would a redirect refusal, a 'failed' record and a request refused after close.
+    // docs/API.md promises that after its teardown an environment's records are 'aborted': with the decision made
     // here, from the bridge's lifetime and not from how the request ended, that holds for every path, present and future,
-    // because no path picks the final outcome any more. `closed` is read after the clock, as the last thing before the
+    // because no path picks the final outcome. `closed` is read after the clock, as the last thing before the
     // record is handed over, so a teardown up to that instant is seen (the unit test tears down from inside that clock
     // read: test/unit/fetch-bridge-lifecycle.test.ts). Nothing can run between this and onRecord.
     //
@@ -507,8 +506,7 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
         if (valid instanceof Error) return refuse(valid);
         if (inFlight.size >= policy.maxConcurrent) refuse(fetchRefusal('FETCH_BUSY', `${policy.maxConcurrent} requests are already in flight`));
 
-        // The platform validates the request before anything is recorded as made (review B6, follow-up audit
-        // 2026-10-14): the Request constructor applies the Fetch standard's own checks (a header value is a
+        // The platform validates the request before anything is recorded as made (AR:B6): the Request constructor applies the Fetch standard's own checks (a header value is a
         // ByteString without NUL, CR or LF; the body is a BufferSource or a string; the method and mode agree),
         // so nothing it refuses can reach fetch() and be reported as 'failed'. What it throws is a refusal; no
         // request exists then. validateRequest() keeps only what is policy: the origin allowlist, private hosts,
@@ -540,11 +538,11 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
         let result: FetchResult;
         try {
             // The init goes to fetch() again, whole. Not the Request alone: measured in WebKit, an abort that reaches
-            // the fetch only through the Request's own (following) signal no longer stops a response whose headers
-            // arrived, so neither the timeout nor a teardown closed the upstream connection
+            // the fetch only through the Request's own (following) signal does not stop a response whose headers
+            // have arrived, so neither the timeout nor a teardown would close the upstream connection
             // (test/e2e/fetch-bridge.spec.ts); with the init, the fetch's signal follows the controller directly. And
             // not a partial init: any init makes the Request constructor reset the referrer policy (Fetch, new
-            // Request(input, init)), and a Referer came back (measured on all three engines).
+            // Request(input, init)), and a Referer comes back (all three engines).
             const response = await (fetchImpl ?? globalThis.fetch)(outgoing, init);
             if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400 && response.headers.has('location'))) {
                 await response.body?.cancel().catch(() => {});

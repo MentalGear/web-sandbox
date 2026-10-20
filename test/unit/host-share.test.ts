@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { meterHits, wallClockBounds } from './host-share-scan';
+import { handTimedScaling, meterHits, wallClockBounds } from './host-share-scan';
 
 /**
  * Backlog T9: every spec that counts the host page's ticks, the gaps between them, a busy share or a stall goes through
@@ -39,6 +39,10 @@ const read = (file: string) => readFileSync(path.join(ROOT, file), 'utf8');
 // Unit tests that may bound their own wall-clock time by a number, each with the reason it measures the code and not the
 // machine. Reviewed; none today.
 const WALL_CLOCK_ALLOWED: Record<string, string> = {};
+
+// Unit tests that may keep a scaling measure of their own (a best-of-N of clock differences, a ratio of two timings),
+// each with the reason scalingRatio (test/unit/scaling.ts) cannot measure it. Reviewed; none today.
+const SCALING_ALLOWED: Record<string, string> = {};
 
 // The meters this scan replaced, verbatim: one of each shape, so the scan is shown to catch them.
 const OLD_METERS: Record<string, string> = {
@@ -124,5 +128,34 @@ describe('T9: every host-tick measure goes through test/e2e/host-share.ts', () =
         // not: a ratio of two sizes measured in the same run, or a wait that must last
         expect(wallClockBounds(`expect(large / small).toBeLessThan(24);`)).toEqual([]);
         expect(wallClockBounds(`const waited = Date.now() - started;\nexpect(waited).toBeGreaterThan(6000);`)).toEqual([]);
+    });
+
+    it('no unit test measures scaling by clock reads of its own, but for a reviewed list; the three it replaced are caught', () => {
+        const tests = [...sources('src'), ...sources('test/unit'), ...sources('test/model')].filter(file => /\.test\.ts$/.test(file) && file !== 'test/unit/host-share.test.ts');
+        expect(tests.filter(file => !(file in SCALING_ALLOWED)).flatMap(file => handTimedScaling(read(file)).map(hit => `${file}:${hit.line} ${hit.pattern}: ${hit.text}`))).toEqual([]);
+        for (const file of Object.keys(SCALING_ALLOWED)) expect(handTimedScaling(read(file)).length, `${file} is listed, so it still has one`).toBeGreaterThan(0);
+        // the three it replaced, verbatim (view-css-loads, css-references and in-sandbox-view tests)
+        expect(handTimedScaling(`let fastest = Infinity;
+            for (let run = 0; run < 3; run++) {
+                const started = performance.now();
+                expect(count(text)).toBe(3 * n);
+                fastest = Math.min(fastest, performance.now() - started);
+            }`).map(hit => hit.pattern)).toEqual(['a fastest of clock differences']);
+        expect(handTimedScaling(`const small = best(1024 * 1024);
+        const large = best(8 * 1024 * 1024);
+        expect(large / small, \`best of 3: \${small.toFixed(1)} ms for 1 MiB, \${large.toFixed(1)} ms for 8 MiB\`).toBeLessThan(24);`).map(hit => hit.pattern)).toEqual(['a ceiling on a ratio of two names']);
+        expect(handTimedScaling(`                template.innerHTML = text;
+                const started = performance.now();
+                sanitizeRender(template.content, () => null, () => false, RENDER_RULES, KEEP_ALL);
+                fastest = Math.min(fastest, performance.now() - started);
+        expect(large / small, \`best of 3: \${small.toFixed(1)} ms for 1 000\`).toBeLessThan(24); // linear: ~8`)).toHaveLength(2);
+        // the same through a Date.now() clock, and a ceiling of or-equal
+        expect(handTimedScaling(`best = Math.min(best, Date.now() - t0);`)).toHaveLength(1);
+        expect(handTimedScaling(`expect(slow / fast).toBeLessThanOrEqual(24);`)).toHaveLength(1);
+        // not: a timing for the log, a ratio that is no ceiling, the helper's result, a comment
+        expect(handTimedScaling(`const measured = time(() => measure(sample)); console.log(measured);`)).toEqual([]);
+        expect(handTimedScaling(`expect(made.size / listed.size).toBeGreaterThan(0.6);\nexpect(busy / elapsed).toBeCloseTo(0.2, 2);`)).toEqual([]);
+        expect(handTimedScaling(`const result = scalingRatio(size(1000), size(8000), { bound: 24 });\nexpect(result.ratio, result.message).toBeLessThan(24);`)).toEqual([]);
+        expect(handTimedScaling(`// fastest = Math.min(fastest, performance.now() - started); expect(large / small).toBeLessThan(24)`)).toEqual([]);
     });
 });

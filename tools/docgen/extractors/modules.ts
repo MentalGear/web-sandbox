@@ -4,13 +4,22 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { ID_CITATION } from '../../../docs/ids';
 import { signatureOf, type Item } from '../engine';
 import { code, row, table, type Extractor } from './markdown';
 
 const ROOT = path.resolve(import.meta.dirname, '../../..');
 
-/** A parenthesis that cites a decision, item or finding: the role is said without it. */
-const CITATION = /\s*\([^()]*\b(?:S\d+|T\d+|ADR-\d+|backlog|review|class [A-Z]|PR\d)\b[^()]*\)/g;
+/**
+ * A parenthesis that cites a decision, item or finding, by an ID of the registry (docs/ids.ts, the one source of the ID
+ * syntax) or by the words that name one: the role is said without it.
+ */
+const CITATION = new RegExp(`\\s*\\([^()]*(?:${ID_CITATION.source}|\\b(?:backlog|review|class [A-Z]|PR\\d)\\b)[^()]*\\)`, 'g');
+
+/** Strips every citation from a sentence: the parenthesised ones, then any ID left bare, and the space it leaves. */
+function withoutCitations(text: string): string {
+    return text.replace(CITATION, '').replace(ID_CITATION, '').replace(/\s{2,}/g, ' ').replace(/\s+([,.:;])/g, '$1').trim();
+}
 
 /** The files of `src/` that are modules (no tests), relative to the repository, sorted with the top level first. */
 export function moduleFiles(directory = 'src'): string[] {
@@ -46,7 +55,7 @@ export function headerSentence(source: string): string | undefined {
     } else if (lines[index]?.startsWith('//')) {
         for (; index < lines.length && lines[index]!.startsWith('//'); index++) text.push(lines[index]!.replace(/^\/\/\s?/, ''));
     } else return undefined;
-    const paragraph = text.join('\n').trim().split(/\n\s*\n/)[0]!.replace(/\s+/g, ' ').replace(CITATION, '');
+    const paragraph = withoutCitations(text.join('\n').trim().split(/\n\s*\n/)[0]!.replace(/\s+/g, ' '));
     const sentence = /^(.*?)(?:\.(?:\s|$)|$)/.exec(paragraph)![1]!.replace(/:$/, '').trim();
     // a long sentence is cut at its first colon: what follows says how, and the table says what
     const role = sentence.length > 120 ? (/^(.{12,}?):/.exec(sentence)?.[1] ?? sentence) : sentence;

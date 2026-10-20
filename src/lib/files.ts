@@ -234,7 +234,7 @@ const EDIT_OVERHEAD = 24;
 
 /**
  * What a module rewrite adds to the snapshot literal, in bytes, counted against MAX_TOTAL_BYTES so the
- * literal never grows past what the cap was measured at: each edit's text plus EDIT_OVERHEAD. The
+ * literal never grows past what the cap is sized for: each edit's text plus EDIT_OVERHEAD. The
  * texts are JSON strings of URLs, so ASCII: their length is their size.
  */
 export function rewriteCost(edits: ByteEdits | null): number {
@@ -468,7 +468,7 @@ export class FileStore {
      * per distinct cycle per store.
      *
      * A reference names a registered file only if the file's type is admitted for the reference's kind of load
-     * (load-kinds.ts; focused review 2026-10-14, W1): an @import names a stylesheet, a url() in @font-face a font,
+     * (load-kinds.ts; FR:W1): an @import names a stylesheet, a url() in @font-face a font,
      * any other url() an image. A reference to a file of another type is left as written (fails closed), with one
      * warning per stylesheet, target and kind; it is no edge either, so it can make no cycle.
      */
@@ -659,8 +659,7 @@ function rewriteModule(path: string, bytes: Uint8Array): ModuleRewrite {
     try {
         edits = moduleSpecifierEdits(source, VIRTUAL_ROOT + path);
     } catch (e) {
-        // The lexer's position only, never its message as such (the one rule for caught errors, focused review
-        // 2026-10-14 F3): es-module-lexer says "Parse error @:line:column", and nothing else reaches the warning.
+        // The lexer's position only, never its message as such (the one rule for caught errors, FR:F3): es-module-lexer says "Parse error @:line:column", and nothing else reaches the warning.
         const at = /@:(\d{1,9}):(\d{1,9})/.exec(e instanceof Error ? String(e.message) : '');
         return { edits: null, failure: at ? `parse error at ${at[1]}:${at[2]}` : 'lexer error' };
     }

@@ -35,7 +35,7 @@
  * always a CSS string, `"<url>"`: for a url token the range is everything between `url(` and `)`, so
  * `url( a.png )` becomes `url("blob:…")`; for a string it is the string token, quotes included.
  *
- * And the kind of load it makes (load-kinds.ts; focused review 2026-10-14, W1), which decides the types of file it
+ * And the kind of load it makes (load-kinds.ts; FR:W1), which decides the types of file it
  * may name: 'style' for the first token of an @import prelude, 'font' for a url() inside an @font-face block (at
  * any depth: @font-face may sit in @media or @supports), 'image' for every other url() and image-set() string
  * (backgrounds, list and border images, cursors, masks, content).

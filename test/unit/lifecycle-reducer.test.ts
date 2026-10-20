@@ -269,7 +269,7 @@ describe('class L, finding by finding', () => {
             const host = readyHost();
             host.onEvent = (event) => { if (event.startsWith('notice [Sandbox]')) host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE }); };
             const output = reduce(host.lc, { t: 'terminate', reason: ENTRY_FAILED_REASON, gen: host.lc.gen, notices });
-            for (const effect of output.effects) { // the effects run as one list, as `_notifyThenAct` did before round 4
+            for (const effect of output.effects) { // the effects run as one list, with no stop between them, which `runEffects` (src/lib/lifecycle.ts) adds
                 if (effect.k === 'notice') host.notice(effect.notice);
                 if (effect.k === 'step') host.step({ ...effect.input, gen: host.lc.gen } as LcInput);
             }

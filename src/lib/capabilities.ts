@@ -8,8 +8,8 @@ import { shown } from "./csp/origins";
  * Keeps only the requested capabilities that appear in `allowed`, warning about each one dropped (through `warn`; the
  * config schema passes the element's once-per-message warning).
  * Returns undefined when nothing was requested, so a config merge keeps its default. A value that is not a list is
- * dropped as a whole, with a warning, and the default stays (review round 1, R1-3: `capabilities: 5` or `{}` threw
- * here, and the whole config was refused).
+ * dropped as a whole, with a warning, and the default stays (R1:R1-3): `capabilities: 5` or `{}` must not refuse
+ * the whole config.
  */
 export function filterCapabilities<T extends string>(
     requested: unknown,
