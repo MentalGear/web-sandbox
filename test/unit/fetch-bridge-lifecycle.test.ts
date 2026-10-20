@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createFetchBridge, toFetchPolicy, FETCH_ERROR_CODES, type FetchBridge, type FetchBridgeConfig, type FetchRecord } from '@src/lib/fetch-bridge';
+import { createFetchBridge, toFetchPolicy, FETCH_ERROR_CODES, FETCH_OUTCOMES, type FetchBridge, type FetchBridgeConfig, type FetchRecord } from '@src/lib/fetch-bridge';
 
 /**
  * Class L (docs/research/18_finding_classes/README.md), LM-1: after its environment's teardown, the fetch bridge
@@ -27,6 +27,12 @@ import { createFetchBridge, toFetchPolicy, FETCH_ERROR_CODES, type FetchBridge, 
 const ORIGIN = 'https://api.example';
 const HOST = 'https://host.example';
 
+/** A union with `K` removed from every member (`Omit` alone would merge the members into one). */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+/** What a record holds besides what every request has (its method, url and duration): the fields of its outcome, exactly. */
+type Settlement = DistributiveOmit<FetchRecord, 'method' | 'url' | 'durationMs'>;
+
 /** Where abortAll() runs: inside record() before the outcome is decided, during the body read, or before the request. */
 type TeardownPoint = 'record' | 'reading' | 'before';
 
@@ -46,9 +52,9 @@ interface SettlePath {
     before?: (bridge: FetchBridge) => void;
     last: TeardownPoint;
     /** What the path records when nothing tears the bridge down; null for a path that exists only after a teardown. */
-    alone: Pick<FetchRecord, 'outcome' | 'code' | 'status' | 'bytes' | 'reason'> | null;
+    alone: Settlement | null;
     /** Status and bytes of the torn record: what was measured when the teardown came. */
-    torn: Pick<FetchRecord, 'status' | 'bytes'>;
+    torn: { status?: number; bytes: number };
 }
 
 const bytes = (n: number) => new Uint8Array(n).fill(65);
@@ -216,11 +222,8 @@ describe('LM-1, class L: after abortAll() every record of the bridge is aborted,
             const { records } = await run(entry, false);
             expect(records).toHaveLength(1);
             const { durationMs: _ignored, method: _method, url: _url, ...record } = records[0]!;
-            const expected: Partial<FetchRecord> = { ...entry.alone };
-            if (expected.status === undefined) delete expected.status;
-            const actual: Partial<FetchRecord> = { ...record };
-            if (actual.status === undefined) delete actual.status;
-            expect(actual).toEqual(expected);
+            // exactly the fields the outcome has: a field it lacks is absent, not undefined
+            expect(record).toStrictEqual(entry.alone);
         });
 
         it(`torn at its last possible point (${entry.last}): aborted, as measured, and the guest is told the sandbox was torn down`, async () => {
@@ -232,6 +235,8 @@ describe('LM-1, class L: after abortAll() every record of the bridge is aborted,
             expect(record.reason).toBeUndefined();
             expect(record.status).toBe(entry.torn.status);
             expect(record.bytes).toBe(entry.torn.bytes);
+            expect('status' in record).toBe(entry.torn.status !== undefined);
+            expect('reason' in record).toBe(false);
             expect(settled.result).toBeNull();
             expect(settled.error).toMatchObject({ code: 'FETCH_FAILED', message: expect.stringContaining('the sandbox was torn down') });
         });
@@ -241,7 +246,7 @@ describe('LM-1, class L: after abortAll() every record of the bridge is aborted,
         const codes = new Set(PATHS.map(entry => entry.alone?.code));
         for (const code of FETCH_ERROR_CODES) expect(codes, code).toContain(code);
         const outcomes = new Set(PATHS.map(entry => entry.alone?.outcome));
-        for (const outcome of ['ok', 'refused', 'failed'] as const) expect(outcomes, outcome).toContain(outcome);
+        for (const outcome of FETCH_OUTCOMES.filter(candidate => candidate !== 'aborted')) expect(outcomes, outcome).toContain(outcome);
         // 'aborted' is what the torn half checks on every path
         for (const point of ['record', 'reading', 'before'] as const) expect(PATHS.some(entry => entry.last === point), point).toBe(true);
     });
@@ -253,10 +258,14 @@ describe('LM-1, class L: after abortAll() every record of the bridge is aborted,
         const recordFn = body.slice(body.indexOf('const record = '), body.indexOf('const tornDown = '));
         expect([...body.matchAll(/onRecord\(/g)].length).toBe(2); // the closed branch and the open one, both in record()
         expect([...recordFn.matchAll(/onRecord\(/g)].length).toBe(2);
-        // and the outcome 'aborted' is chosen nowhere else: no path proposes it, record() alone sets it
-        expect(body).not.toMatch(/record\(base, 'aborted'/);
-        expect([...recordFn.matchAll(/outcome: 'aborted'/g)].length).toBe(1);
-        expect([...body.matchAll(/outcome: 'aborted'/g)].length).toBe(1);
+        // and the outcome 'aborted' is chosen nowhere else: no path proposes it (Settled has no such member), record()
+        // alone asks for the aborted record, and the one builder of it is called from there only
+        expect(body).not.toMatch(/record\(base, \{ outcome: 'aborted'/);
+        expect(body).not.toMatch(/outcome: 'aborted'/);
+        expect([...body.matchAll(/abortedRecord\(/g)].length).toBe(1);
+        expect([...recordFn.matchAll(/abortedRecord\(/g)].length).toBe(1);
+        // the builder of the open path cannot make one either
+        expect(source.slice(source.indexOf('function recordOf'), source.indexOf('function abortedRecord'))).not.toContain('aborted');
     });
 
     it('the shape of LM-1: a listener of one record tears the bridge down, and a request whose body was read is aborted', async () => {

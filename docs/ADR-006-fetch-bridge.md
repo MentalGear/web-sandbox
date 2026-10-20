@@ -86,8 +86,10 @@ embedder also allows direct connections.
    - **Concurrency**: at most `maxConcurrent` (4 by default, at most 16) requests in flight per sandbox; one more is refused
      with `FETCH_BUSY`. So the bridge's memory is bounded by `maxConcurrent × maxBytes`.
 5. **Every request is logged.** The element dispatches a `fetch` event, bubbling like `violation`, once per request when it
-   settles: `{ method, url, outcome, status?, code?, reason?, bytes, durationMs }`, with `outcome` one of `ok`, `refused` (no
-   request made), `failed` (`fetch()` was called and no response was handed over) and `aborted` (torn down). `failed` is not
+   settles: `{ method, url, outcome, bytes, durationMs, … }`, with `outcome` one of `ok` (a response was handed over; has
+   `status`), `refused` (no request made; has `code`, and `reason` for an unlisted origin), `failed` (`fetch()` was called and no
+   response was handed over; has `code`, and `status` when one arrived) and `aborted` (torn down; `code` is `FETCH_FAILED`). The
+   public type, `FetchRecord`, is a union keyed by `outcome`: each member has exactly the fields its outcome has. `failed` is not
    proof that a request left the page: the browser's `fetch()` also rejects some requests before sending them (the host
    page's own `connect-src`, mixed content, local-network blocking), and a page cannot tell those apart. No path to the
    network skips the record, refusals included. The record is built by the host from validated fields, and guest-supplied

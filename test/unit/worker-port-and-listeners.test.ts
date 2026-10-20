@@ -492,11 +492,13 @@ describe('the docs say what the code does', () => {
     });
 
     it('I-1: API.md says an aborted record of a torn-down environment can arrive after reset(), while the next build loads', () => {
-        expect(read('docs/API.md').replace(/\s+/g, ' ')).toContain('an `aborted` record of an environment that `reset()`, `load()` or `setConfig()` tore down can arrive after that call, while the next build is loading');
+        const api = read('docs/API.md').replace(/\s+/g, ' ');
+        expect(api).toContain("an `'aborted'` record of a torn-down environment can arrive after the call that tore it down, while the next build is loading");
+        expect(api).toContain('(by `reset()`, `load()`, `setConfig()`, `terminate()` or removal)');
     });
 
     it("I-2: API.md's events table qualifies the fetch event by fetchBridge", () => {
-        expect(read('docs/API.md')).toMatch(/^\| `fetch` \| `FetchRecord` \| yes \| With `fetchBridge`: /m);
+        expect(read('docs/API.md')).toMatch(/^\| `fetch` \| `FetchRecord` \| yes \| .*Dispatched only with `fetchBridge` configured/m);
     });
 
     it('I-2: the backlog does not say the guest has no sandboxFetch without the bridge', () => {

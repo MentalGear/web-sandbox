@@ -1,11 +1,20 @@
 /**
- * Simple DevTools for WebSandbox: logs the element's events to the host console safely.
+ * Logs one sandbox's `sandbox-log` lines to the host page's console, safely: the values go after a fixed first argument,
+ * so a guest string is never read as a console format string.
+ *
+ * @remarks
+ * It listens on the element it is given and logs only the lines dispatched for that element. Each line is checked again
+ * and logging never throws. Nothing is logged until {@link SandboxDevTools.activate} or {@link SandboxDevTools.toggle}.
  */
 export class SandboxDevTools {
     private _sandbox: HTMLElement;
     private _handler: (e: Event) => void;
     private _active: boolean = false;
 
+    /**
+     * @param sandboxElement - The `<web-sandbox>` element whose `sandbox-log` events to show. Logging is off until
+     * activated.
+     */
     constructor(sandboxElement: HTMLElement) {
         this._sandbox = sandboxElement;
         // 'sandbox-log' is dispatched on the sandbox element itself (and bubbles), so listening on the
@@ -18,6 +27,7 @@ export class SandboxDevTools {
         };
     }
 
+    /** Turns logging on if it is off, and off if it is on. */
     toggle() {
         if (this._active) {
             this.deactivate();
@@ -26,12 +36,14 @@ export class SandboxDevTools {
         }
     }
 
+    /** Starts logging the element's `sandbox-log` lines, and says so on the console. */
     activate() {
         console.info("%c[DevTools] Enabled for Sandbox", "color: #4caf50; font-weight: bold");
         this._sandbox.addEventListener('sandbox-log', this._handler);
         this._active = true;
     }
 
+    /** Stops logging, and says so on the console. */
     deactivate() {
         console.info("%c[DevTools] Disabled", "color: #999");
         this._sandbox.removeEventListener('sandbox-log', this._handler);

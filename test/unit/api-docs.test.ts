@@ -76,9 +76,14 @@ const sorted = (values: Iterable<string>) => [...new Set(values)].sort();
 // The code spans of `text`, outside fenced code blocks (whose ``` fences would pair up with other backticks).
 const spans = (text: string) => new Set([...text.replace(/^```[\s\S]*?^```/gm, '').matchAll(/`([^`\n]+)`/g)].map(match => match[1]!));
 
-/** The top-level member names of an exported interface, read from its source. */
+/**
+ * The top-level member names of an exported interface, read from its source; of an exported object type or a union of
+ * them (FetchRecord), every name any member has.
+ */
 function interfaceKeys(file: string, name: string): string[] {
     const source = read(file);
+    const alias = source.indexOf(`export type ${name} = `);
+    if (alias >= 0) return [...new Set([...source.slice(alias, source.indexOf('\n);', alias)).matchAll(/(?:^|[{;])\s*(\w+)\??:/gm)].map(match => match[1]!))];
     const start = source.search(new RegExp(`export interface ${name}(?: extends \\w+)? \\{`));
     if (start < 0) throw new Error(`${file} has no interface ${name}`);
     const body = source.slice(start, source.indexOf('\n}', start));
@@ -188,8 +193,13 @@ describe('docs/API.md lists the public surface', () => {
             ['### `violation`', 'src/lib/violation.ts', 'SandboxViolation'],
             ['### `fetch`', 'src/lib/fetch-bridge.ts', 'FetchRecord'],
         ];
+        // the host lines are a table of their own, in a region of the sandbox-log section
+        const withoutHostLines = (text: string) => text.replace(/^<!-- generated:begin host-lines -->$[\s\S]*?^<!-- generated:end -->$/gm, '');
         for (const [heading, file, name] of details) {
-            expect(sorted(rowKeys(withoutRegions(section(heading)))), name).toEqual(sorted(interfaceKeys(file, name)));
+            const text = withoutHostLines(section(heading));
+            // FetchRecord is a union: its fields are told by outcome, in prose, each as a code span
+            if (name === 'FetchRecord') for (const key of interfaceKeys(file, name)) expect(spans(text), key).toContain(key);
+            else expect(sorted(rowKeys(text)), name).toEqual(sorted(interfaceKeys(file, name)));
         }
         const listFiles = section('### `listFiles()`');
         for (const key of interfaceKeys('src/lib/files.ts', 'FileInfo')) expect(listFiles, key).toMatch(new RegExp(`\\b${key}\\b`));

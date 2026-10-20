@@ -39,13 +39,13 @@ import { setLongTimeout } from './long-timer';
 export const FETCH_METHOD = 'sandbox:fetch';
 
 /**
- * Why sandboxFetch() rejected (the rejection's `code`). Minted only by this module, on the host:
- *   FETCH_NOT_ALLOWED  refused before any request: the URL, origin, method, a header or the body
- *   FETCH_BUSY         refused before any request: maxConcurrent requests are already in flight (retryable)
- *   FETCH_REDIRECT     the response was a redirect, which is never followed
- *   FETCH_TOO_LARGE    the request body or the response body exceeds maxBytes
- *   FETCH_TIMEOUT      no whole response within timeoutMs (retryable)
- *   FETCH_FAILED       the request failed: network error, CORS, or the sandbox was torn down (retryable)
+ * Why `sandboxFetch()` rejected: the rejection's `code`, and the `code` of a {@link FetchRecord}. Minted only by the host.
+ * - `FETCH_NOT_ALLOWED`: refused before any request, because of the URL, the origin, the method, a header or the body.
+ * - `FETCH_BUSY`: refused before any request, because `maxConcurrent` requests are already in flight. Retryable.
+ * - `FETCH_REDIRECT`: the response was a redirect, which is never followed.
+ * - `FETCH_TOO_LARGE`: the request body or the response body exceeds `maxBytes`.
+ * - `FETCH_TIMEOUT`: no whole response within `timeoutMs`. Retryable.
+ * - `FETCH_FAILED`: the request failed (network error, CORS), or the sandbox was torn down. Retryable.
  */
 export type FetchErrorCode = Extract<RpcLibraryCode, `FETCH_${string}`>;
 
@@ -53,21 +53,58 @@ const FETCH_CODES = ['FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH
 type FetchErrorCodesComplete = Holds<Complete<FetchErrorCode, typeof FETCH_CODES>>;
 
 // Typed as the public API has it; the list it is made from is complete by construction.
+/** Every {@link FetchErrorCode}, as a value. */
 export const FETCH_ERROR_CODES: readonly FetchErrorCode[] = FETCH_CODES;
 
-/** What an embedder configures as `fetchBridge`. Only `allow` is required. */
+/**
+ * The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. Only `allow` is required.
+ *
+ * @remarks
+ * Every request the host makes is pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`),
+ * `cache: 'no-store'` and CORS for the host page's origin. The host page's own origin and loopback, private and
+ * link-local hosts are refused unless listed. A listed public name that resolves to a private address cannot be detected
+ * from a page. A number that is not finite or is below 1 takes its default, and one above its bound takes the bound.
+ * See ADR-006.
+ */
 export interface FetchBridgeConfig {
-    /** Exact origins the guest may reach, like 'https://api.example' or 'http://localhost:8080'. */
+    /**
+     * The exact origins the guest may reach: scheme, host and optional port, like `https://api.example` or
+     * `http://localhost:8080`. An entry with a path, query, fragment, credentials or `*` is dropped with a warning, and so
+     * is a value that is not a list. An empty list refuses everything. Listing the host page's own origin or a loopback,
+     * private or link-local host works, with one warning each.
+     */
     allow: string[];
-    /** Most bytes of one response body (and one request body). Default 1 MiB, at most 32 MiB. */
+    /**
+     * Most bytes of one response body, and of one request body. At most `33554432` (32 MiB).
+     *
+     * @defaultValue `1048576` (1 MiB)
+     */
     maxBytes?: number;
-    /** Most ms for one request, response body included. Default 10 000, at most 120 000. */
+    /**
+     * Most ms for one request, response body included. At most `120000`.
+     *
+     * @defaultValue `10000`
+     */
     timeoutMs?: number;
-    /** Methods the guest may use. Default GET, HEAD and POST; PUT, PATCH and DELETE can be added. */
+    /**
+     * The methods the guest may use, from `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE`. Replaces the default list.
+     *
+     * @defaultValue `['GET', 'HEAD', 'POST']`
+     */
     methods?: string[];
-    /** Request headers the guest may set beyond the safe set (accept, accept-language, content-language, content-type). */
+    /**
+     * Header names the guest may set beyond `accept`, `accept-language`, `content-language` and `content-type`.
+     * `Authorization` only this way; `Cookie`, `Host`, `Origin`, `Referer`, `Sec-*`, `Proxy-*` and other forbidden names
+     * never.
+     *
+     * @defaultValue none
+     */
     headers?: string[];
-    /** Most requests in flight at once. Default 4, at most 16. */
+    /**
+     * Most requests in flight at once; a request past it is refused with `FETCH_BUSY`. At most `16`.
+     *
+     * @defaultValue `4`
+     */
     maxConcurrent?: number;
 }
 
@@ -88,35 +125,49 @@ export interface FetchPolicy {
  */
 export type FetchRefusal = Error & { code: FetchErrorCode; reason?: string };
 
-/** The detail of a 'fetch' event: one request through the bridge, reported once when it settled. */
-export interface FetchRecord {
-    /** The method, upper case ('' when the guest sent no valid one). */
+/**
+ * The `detail` of a `fetch` event: one request through the bridge, reported once when it settled. A union keyed by
+ * `outcome`; each member has exactly the fields its outcome has, and the fields it lacks are typed `never`, so reading
+ * one is allowed and gives `undefined`.
+ *
+ * - `'ok'`: a response was handed to the guest, whatever its HTTP status. Has `status`; has no `code`.
+ * - `'refused'`: no request was made; the bridge's rules, or the browser's `Request`, refused it. `code` says why
+ *   (`FETCH_NOT_ALLOWED`, `FETCH_BUSY` or `FETCH_TOO_LARGE` for a request body). `bytes` is `0`. `reason` is present for
+ *   a refusal of an origin that is not listed: what the host knows beyond the text the guest gets (the host page's own
+ *   origin, or a loopback, private or link-local host).
+ * - `'failed'`: `fetch()` was called and no whole response was handed over; `code` says why (`FETCH_REDIRECT`,
+ *   `FETCH_TOO_LARGE` for a response body, `FETCH_TIMEOUT` or `FETCH_FAILED`). `status` is present once a response's
+ *   status was read (not for a redirect, which is refused first). It is not proof that a request left the page: the browser's `fetch` also rejects some requests before
+ *   sending them (the host page's own `connect-src`, mixed content, local-network blocking).
+ * - `'aborted'`: the environment was torn down (by `reset()`, `load()`, `setConfig()`, `terminate()` or removal) before
+ *   the record was made, whatever the request had settled on. `code` is `FETCH_FAILED`; `status` and `bytes` are as
+ *   measured.
+ *
+ * @remarks
+ * A record belongs to the environment that made the request and is dispatched when the request settles, so an `'aborted'`
+ * record of a torn-down environment can arrive after the call that tore it down, while the next build is loading; after
+ * a teardown an environment's records are all `'aborted'`. Fields that come from the guest are validated or clamped
+ * first. `method` is upper case (`''` when the guest sent no valid one). `url` is the whole URL without its fragment, at
+ * most 8192 characters (a longer one is refused and reported cut), or the guest's string cut to that when it is not a
+ * URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement.
+ */
+export type FetchRecord = {
+    /** The method, upper case; `''` when the guest sent no valid one. */
     method: string;
-    /** The URL without its fragment, or the guest's string when it is not a URL; at most MAX_URL (8192) characters. */
+    /** The URL without its fragment, or the guest's string when it is not a URL; at most 8192 characters. */
     url: string;
-    /**
-     * ok        a response was handed to the guest (any HTTP status)
-     * refused   no request was made: the bridge's policy or the Request constructor refused it (code says why)
-     * failed    fetch() was called and no response was handed over (code says why). Not proof that a request
-     *           left the page: the browser's fetch rejects some requests before sending them (the host page's
-     *           own connect-src, mixed content, local-network blocking), and a page cannot tell those apart
-     * aborted   the sandbox was reset, terminated or removed before the request settled: every record made after the
-     *           bridge's abortAll(), whatever the request settled on (status and bytes as measured)
-     */
-    outcome: 'ok' | 'refused' | 'failed' | 'aborted';
-    /** The HTTP status, when a response arrived. */
-    status?: number;
-    /** Why the request was refused, failed or aborted; absent when outcome is 'ok'. */
-    code?: FetchErrorCode;
-    /**
-     * For a refusal whose text to the guest is deliberately the same for every unlisted origin: what the host knows
-     * beyond it (the host page's own origin; a loopback, private or link-local host). Never sent to the guest.
-     */
-    reason?: string;
-    /** Response body bytes read. */
-    bytes: number;
+    /** Time from the request to its settlement, in ms. */
     durationMs: number;
-}
+} & (
+    | { outcome: 'ok'; status: number; bytes: number; code?: never; reason?: never }
+    | { outcome: 'refused'; code: FetchErrorCode; reason?: string; bytes: 0; status?: never }
+    | { outcome: 'failed'; code: FetchErrorCode; status?: number; bytes: number; reason?: never }
+    | { outcome: 'aborted'; code: 'FETCH_FAILED'; status?: number; bytes: number; reason?: never }
+);
+
+/** Every {@link FetchRecord} `outcome`, as a value; the written-out type and this list are kept equal. */
+export const FETCH_OUTCOMES = ['ok', 'refused', 'failed', 'aborted'] as const satisfies readonly FetchRecord['outcome'][];
+type FetchOutcomesComplete = Holds<Complete<FetchRecord['outcome'], typeof FETCH_OUTCOMES>>;
 
 /** What the guest receives for a whole response; its sandboxFetch() turns it into a Response. */
 export interface FetchResult {
@@ -450,6 +501,36 @@ export interface FetchBridge {
     abortAll(): void;
 }
 
+// What a request is known by when it settles, from the guest's validated fields, and when it started.
+type Base = { method: string; url: string; started: number };
+
+// What a path proposes to record: the outcome it settled on and the fields that outcome has. record() makes the
+// FetchRecord of it, or an 'aborted' one when the environment is gone: no path proposes 'aborted'.
+type Settled =
+    | { outcome: 'ok'; status: number; bytes: number }
+    | { outcome: 'refused'; code: FetchErrorCode; reason?: string }
+    | { outcome: 'failed'; code: FetchErrorCode; status?: number; bytes: number };
+
+/** The members of FetchRecord that a request which was not torn down ends in: each has the fields its outcome has, and no other. */
+function recordOf({ method, url }: Base, durationMs: number, settled: Settled): FetchRecord {
+    switch (settled.outcome) {
+        case 'ok':
+            return Object.freeze({ method, url, durationMs, outcome: 'ok', status: settled.status, bytes: settled.bytes });
+        case 'refused':
+            return Object.freeze({ method, url, durationMs, outcome: 'refused', code: settled.code, bytes: 0, ...(settled.reason === undefined ? {} : { reason: settled.reason }) });
+        case 'failed':
+            return Object.freeze({ method, url, durationMs, outcome: 'failed', code: settled.code, bytes: settled.bytes, ...(settled.status === undefined ? {} : { status: settled.status }) });
+        default:
+            return settled satisfies never; // a new outcome does not compile until it is handled
+    }
+}
+
+/** What a request ends in once its environment is torn down, whatever it settled on: status and bytes as measured (a refusal made no request, so it measured none). */
+function abortedRecord({ method, url }: Base, durationMs: number, settled: Settled): FetchRecord {
+    if (settled.outcome === 'refused') return Object.freeze({ method, url, durationMs, outcome: 'aborted', code: 'FETCH_FAILED', bytes: 0 });
+    return Object.freeze({ method, url, durationMs, outcome: 'aborted', code: 'FETCH_FAILED', bytes: settled.bytes, ...(settled.status === undefined ? {} : { status: settled.status }) });
+}
+
 const TEARDOWN = 'teardown';
 const TIMEOUT = 'timeout';
 
@@ -475,15 +556,14 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
     // Returns the outcome recorded: when it is 'aborted', the guest's call rejects with the teardown refusal
     // (tornDown) instead of handing over a body or another refusal. Its environment is gone, so the answer could only
     // reach a closed port anyway (host.ts, _onGuestMessage), and the guest is told the same thing on every path.
-    const record = (base: { method: string; url: string; started: number }, proposed: FetchRecord['outcome'], details: Partial<FetchRecord>): FetchRecord['outcome'] => {
+    const record = (base: Base, settled: Settled): FetchRecord['outcome'] => {
         const durationMs = Math.max(0, now() - base.started);
         if (closed) {
-            const { reason: _explained, ...measured } = details;
-            onRecord(Object.freeze({ method: base.method, url: base.url, bytes: 0, durationMs, ...measured, outcome: 'aborted', code: 'FETCH_FAILED' }));
+            onRecord(abortedRecord(base, durationMs, settled));
             return 'aborted';
         }
-        onRecord(Object.freeze({ method: base.method, url: base.url, outcome: proposed, bytes: 0, durationMs, ...details }));
-        return proposed;
+        onRecord(recordOf(base, durationMs, settled));
+        return settled.outcome;
     };
     const tornDown = () => fetchRefusal('FETCH_FAILED', 'the sandbox was torn down');
 
@@ -492,7 +572,7 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
         const base = { method: reportedMethod(source.method ?? 'GET'), url: reportedUrl(source.url), started: now() };
 
         const refuse = (error: FetchRefusal): never => {
-            const outcome = record(base, 'refused', error.reason === undefined ? { code: error.code } : { code: error.code, reason: error.reason });
+            const outcome = record(base, error.reason === undefined ? { outcome: 'refused', code: error.code } : { outcome: 'refused', code: error.code, reason: error.reason });
             throw outcome === 'aborted' ? tornDown() : error;
         };
         // A request that reaches a closed bridge: no request is made, and record() reports it 'aborted', not 'refused'.
@@ -568,13 +648,13 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
                 : fetchRefusal('FETCH_FAILED', 'the request failed (network error or CORS)');
             // whatever failed, nothing of this request may stay open upstream
             if (!controller.signal.aborted) controller.abort('done');
-            throw record(base, 'failed', { status, bytes, code: refusal.code }) === 'aborted' ? tornDown() : refusal;
+            throw record(base, { outcome: 'failed', status, bytes, code: refusal.code }) === 'aborted' ? tornDown() : refusal;
         } finally {
             timer.cancel();
             inFlight.delete(controller);
         }
         // Recorded outside the try, so that the teardown refusal thrown here is not taken for a failure of the request.
-        if (record(base, 'ok', { status, bytes }) === 'aborted') throw tornDown();
+        if (record(base, { outcome: 'ok', status: result.status, bytes }) === 'aborted') throw tornDown();
         return result;
     };
 

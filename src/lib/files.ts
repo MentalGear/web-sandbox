@@ -19,36 +19,40 @@ export const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 export const MAX_FILES = 1000;
 export const MAX_PATH_LENGTH = 256;
 
-/** A file's content for registerFiles(): a string is stored as UTF-8; a Uint8Array is copied. */
-export type FileContent = string | Uint8Array; // a string is stored as UTF-8; a Uint8Array is copied
-/** One registerFiles() entry: content typed by its path's extension, or `{ content, type }` with an explicit MIME type. */
+/** A file's content for `registerFiles()`: a string is stored as UTF-8, a `Uint8Array` is copied. */
+export type FileContent = string | Uint8Array;
+/**
+ * One `registerFiles()` entry: the content, typed by its path's extension, or `{ content, type }` with an
+ * explicit MIME type.
+ */
 export type FileEntry = FileContent | { content: FileContent; type: string };
 
-/** One registered file, as listFiles() reports it. */
+/** One registered file, as `listFiles()` reports it. */
 export interface FileInfo {
     /** The path it was registered under, e.g. `src/main.js`. */
     path: string;
-    /** Its MIME type: given at registration, or from the extension (FALLBACK_TYPE when unknown). */
+    /** Its MIME type: given at registration, or from the extension (`application/octet-stream` when unknown). */
     type: string;
-    size: number; // bytes, as registered
+    /** Its size in bytes, as registered. */
+    size: number;
 }
 
 /**
- * Why a change to the files was refused. The strings are API and, for guest writes, wire protocol (pinned by
- * tests; src/lib/rpc.ts lists them among the library codes a reserved method may report, RpcLibraryCode).
- * They are not RpcErrorCode: registerFiles(), unregisterFiles() and commitGuestWrites() refuse the host's own
- * caller, and a guest write is refused by the host's reserved method (guest-writes.ts).
- *   INVALID_PATH          a path fails isValidPath(), or a list of paths is not an array
- *   INVALID_FILE          the batch is not an object, or an entry is not a string, a Uint8Array or
- *                         `{ content, type }` with a valid type (a guest write: not a write or a remove)
- *   FILES_QUOTA_EXCEEDED  the store after the change would exceed MAX_FILES or MAX_TOTAL_BYTES (a
- *                         JavaScript file counts its registered bytes plus what its rewrite adds,
- *                         rewriteCost(); a stylesheet its registered bytes plus what its references
- *                         add, referenceCost())
- *   FILES_NOT_ALLOWED     an opt-in is missing: a guest write while guestWrites is off, or a commit of a file
- *                         whose type is not inert (INERT_TYPES, guest-writes.ts) without `{ code: true }`
- *   FILES_BUSY            a guest write past the per-environment rate (guest-writes.ts); retryable
- * In the guest, every failed lookup is NOT_FOUND (in-sandbox-files.ts).
+ * Why a change to the files was refused: the `code` of a {@link FileError}. The strings are API and, for guest writes,
+ * wire protocol. They are not {@link RpcErrorCode} values: `registerFiles()`,
+ * `unregisterFiles()` and `commitGuestWrites()` refuse the host's own caller, and a guest
+ * write is refused by the host's library method.
+ * - `INVALID_PATH`: a path is not valid, or a list of paths is not an array.
+ * - `INVALID_FILE`: the batch is not an object, or an entry is not a string, a `Uint8Array` or `{ content, type }` with a
+ *   valid type (for a guest write: not a write or a remove).
+ * - `FILES_QUOTA_EXCEEDED`: the store after the change would exceed 1000 files or 8 MiB. A JavaScript file counts its
+ *   registered bytes plus what its module rewrite adds, and a stylesheet its bytes plus what its references add.
+ * - `FILES_NOT_ALLOWED`: an opt-in is missing, either a guest write while `guestWrites` is off or a commit of a file
+ *   whose type is not inert without `{ code: true }`.
+ * - `FILES_BUSY`: a guest write past the per-environment rate ({@link GUEST_WRITES_PER_SECOND},
+ *   {@link GUEST_WRITE_BYTES_PER_SECOND}). Retryable.
+ *
+ * In the guest, every failed lookup is `NOT_FOUND`, which is not in this set.
  */
 export type FileErrorCode = 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEEDED' | 'FILES_NOT_ALLOWED' | 'FILES_BUSY';
 
@@ -57,33 +61,68 @@ export const FILE_ERROR_CODES = ['INVALID_PATH', 'INVALID_FILE', 'FILES_QUOTA_EX
 type FileErrorCodesComplete = Holds<Complete<FileErrorCode, typeof FILE_ERROR_CODES>>;
 
 /**
- * The guest's view, published as the global `sandboxFiles` by the bootstrap (in-sandbox-files.ts) in
- * every environment, empty when no file is registered. Every failed lookup is an Error with `code: 'NOT_FOUND'`.
- * With `guestWrites` the guest's own writes, once the host acknowledged them, are part of this view
- * (guest-writes.ts); they never get a URL.
+ * The guest's view of the registered files: the global `sandboxFiles`, present in every environment (empty when no file
+ * is registered). Every failed lookup is an `Error` with `code: 'NOT_FOUND'`.
+ *
+ * @remarks
+ * With `guestWrites` the guest's own writes, once the host acknowledged them, are part of this view; no URL is minted
+ * for them. This interface is what the guest sees, so no host code implements it.
  */
 export interface SandboxFiles {
-    /** The registered paths with the guest's acknowledged writes and removals applied, sorted. */
+    /**
+     * The registered paths with the guest's acknowledged writes and removals applied.
+     *
+     * @returns The paths, sorted.
+     */
     list(): string[];
-    /** The file's blob: URL, minted in the guest's own realm (the rewritten form of a module or stylesheet). Throws NOT_FOUND, also for a path the guest wrote. */
+    /**
+     * The file's `blob:` URL, minted in the guest's own realm (the rewritten form of a module or stylesheet).
+     *
+     * @param path - A registered path.
+     * @returns The URL.
+     * @throws An `Error` with `code: 'NOT_FOUND'`, also for a path the guest wrote.
+     */
     url(path: string): string;
-    /** The bytes as registered (or as the guest wrote them), a fresh copy per call. Rejects NOT_FOUND. */
+    /**
+     * The bytes as registered, or as the guest wrote them.
+     *
+     * @param path - A registered path or one the guest wrote.
+     * @returns A fresh copy per call. Rejects with `NOT_FOUND` when there is no such file.
+     */
     read(path: string): Promise<Uint8Array>;
-    /** The content as registered (or as the guest wrote it), decoded as UTF-8. Rejects NOT_FOUND. */
+    /**
+     * The content as registered, or as the guest wrote it, decoded as UTF-8.
+     *
+     * @param path - A registered path or one the guest wrote.
+     * @returns The text. Rejects with `NOT_FOUND` when there is no such file.
+     */
     text(path: string): Promise<string>;
     /**
-     * Asks the host to record a write: `entry` is a string, a Blob, an ArrayBuffer or a typed array, or
-     * `{ content, type }`; its bytes are copied when called. Resolves once the host recorded it, and only then
-     * does this view change. Rejects with the host's FileErrorCode, or FILES_NOT_ALLOWED without sending when
-     * guestWrites is off.
+     * Asks the host to record a write. The guest's view changes only once the host has recorded it. The entry's bytes are
+     * copied when this is called.
+     *
+     * @param path - The path to write.
+     * @param entry - A string, a `Blob`, an `ArrayBuffer` or a typed array, or `{ content, type }`.
+     * @returns Resolves once the host recorded the write. Rejects with the host's {@link FileErrorCode}, or with
+     * `FILES_NOT_ALLOWED` without sending when `guestWrites` is off.
      */
     write(path: string, entry: unknown): Promise<void>;
-    /** Asks the host to record a removal. Rejects NOT_FOUND for a path in neither the store nor the guest's writes. */
+    /**
+     * Asks the host to record a removal.
+     *
+     * @param path - The path to remove.
+     * @returns Resolves once the host recorded it. Rejects with `NOT_FOUND` for a path in neither the store nor the
+     * guest's writes.
+     */
     remove(path: string): Promise<void>;
 }
 
-/** The shape of every refusal: a plain Error with an own `code` (backlog B7). */
+/**
+ * The shape of every refusal of the file methods: a plain `Error` with an own `code`. Branch on the code, never on the
+ * message.
+ */
 export interface FileError extends Error {
+    /** Why the change was refused. */
     code: FileErrorCode;
 }
 
