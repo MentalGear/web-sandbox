@@ -76,7 +76,7 @@ test that enumerates the domain:
 A new mitigation (a stylesheet, a rewrite, a listener) is a new cost: measure it on every engine, as the code it guards
 is measured.
 
-### Availability findings (owner's rule, 2026-10-19)
+### Availability findings (owner, 2026-10-20)
 
 A finding whose only effect is that the guest slows the host page (CPU share, stalls, memory) is **documented, not
 mitigated further**, when both hold:
@@ -93,8 +93,10 @@ on Firefox, WebKit and Android, so no budget of the library's removes that cost:
 diminishing returns.
 
 These are **not** availability findings, and are fixed as any other:
-1. a host page frozen beyond the embedder's reach: it cannot regain control, or the stall has no bound but the
-   browser's (high);
+1. a host page that can never regain control, or a stall bounded by nothing the library states (no cap, no limit,
+   only the browser's) (high). A single-operation stall whose cost is bounded by the documented caps, and which the
+   repeated-overrun rule ends at its second occurrence (`VIEW_OVERRUN_WINDOW_MS`), is a documented availability cost
+   (at most medium), not this;
 2. the library's own limits ending a healthy sandbox (a correctness bug);
 3. a flood that breaks a security property: a budget that fails open, a check skipped under pressure, state left
    inconsistent, anything that moves data or crosses the policy.

@@ -4,7 +4,8 @@ How `web-sandbox` is put together, on one page. It is the map; the [API referenc
 decision records say why each part is built the way it is: [ADR-002](docs/ADR-002-host-guest-broker.md) (the broker),
 [ADR-003](docs/ADR-003-lifecycle-and-liveness.md) (lifecycle and liveness), [ADR-004](docs/ADR-004-files-as-blob-urls.md)
 (files), [ADR-005](docs/ADR-005-strict-mode.md) (strict mode), [ADR-006](docs/ADR-006-fetch-bridge.md) (the fetch bridge)
-and [ADR-007](docs/ADR-007-typed-origins.md) (typed origins).
+and [ADR-007](docs/ADR-007-typed-origins.md) (typed origins). What the design defends, and what it leaves to the
+embedder and the browser, is the [threat model](docs/THREAT-MODEL.md).
 
 The tables below are generated from the values the code declares (`bun run docs:gen`), so they cannot drift from it.
 Each section of prose says which declarations it describes; when one changes, `bun run docs:check` fails until the

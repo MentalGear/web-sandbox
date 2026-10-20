@@ -2,7 +2,8 @@
 
 The complete public surface of `web-sandbox`: the element, its configuration, methods and events, and the
 globals the guest gets in each mode. For an overview start with the [README](../README.md); for why each part
-is built the way it is, follow the links to the decision records (ADRs).
+is built the way it is, follow the links to the decision records (ADRs); for what the sandbox defends and what it
+leaves to you, read the [threat model](THREAT-MODEL.md).
 
 - [Registering the element](#registering-the-element)
 - [The element](#the-element)

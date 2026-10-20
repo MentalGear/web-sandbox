@@ -5,6 +5,10 @@
 - [**ARCHITECTURE.md**](../ARCHITECTURE.md) — how the library is put together, on one page: the modes and realms, the
   channels and frames, the lifecycle reducer and its state diagram, the budgets and the module map, with the tables
   generated from the code.
+- [**THREAT-MODEL.md**](THREAT-MODEL.md) — the security model as it stands: the assets and parties, the trust
+  boundaries, each security property with its mechanism, chokepoint and test, availability under the owner's rule,
+  what is out of scope and what the embedder must configure, the accepted risks, and how findings are reported and
+  fixed.
 - [**API.md**](API.md) — the public surface: the element, every configuration option, methods, events,
   lifecycle, refusal codes, the globals guest code gets in each mode, and the limits. Its configuration, limits,
   reasons, host lines, policies and budgets are generated from the code; the rest is checked against it by

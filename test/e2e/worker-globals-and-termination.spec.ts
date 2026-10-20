@@ -7,6 +7,8 @@ import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-global
  *   V1  a guest worker (worker mode, strict mode) keeps only the allowlisted globals: Firefox sends a worker's
  *       EventSource (and loads a worker's FontFace) past the policy unless they are removed; every other network API of a worker is gone or
  *       governed. A worker the guest creates in cooperative mode is a realm of its own (residual, measured).
+ *   V4  a BroadcastChannel (kept in the worker's globals, a document's own in cooperative mode) reaches only the guest's own
+ *       opaque origin: not the host page, not another sandbox;
  *   V2  a strict entry's synchronous console lines arrive (none is lost before the logic port is attached);
  *   V3  the user's modifier clicks and Ctrl/Shift+Enter on a guest link open a new top-level tab in Chromium and
  *       Firefox (cooperative mode, platform behaviour: a limit, measured); strict mode opens none;
@@ -100,6 +102,53 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         await sandbox.page.waitForTimeout(1000);
         expect(recorder.paths('blocked').sort()).toEqual(browserName === 'firefox' ? ['/v1-guest-worker-es', '/v1-guest-worker-font.woff'] : []);
     });
+});
+
+// ---- V4: BroadcastChannel reaches only the guest's own opaque origin (src/lib/worker-globals.ts) ----------------------
+// Three parties open channels of one name: the host page, the main sandbox's guest and a second sandbox's guest. Each
+// opens a listener and a sender; each sender's message must reach its own listener (the positive control, so a pass
+// cannot be vacuous) and no one else's.
+
+const BC_GUEST = (label: string, name: string) => `
+    const rx = new BroadcastChannel(${JSON.stringify(name)});
+    rx.onmessage = (e) => console.log('BC-RX ${label} ' + e.data);
+    globalThis.__bcTx = new BroadcastChannel(${JSON.stringify(name)});
+`;
+
+test.describe('V4: a guest\'s BroadcastChannel reaches only its own opaque origin (cooperative, worker and strict mode)', () => {
+    for (const mode of ['cooperative', 'worker', 'strict'] as const) {
+        test(`${mode} mode: messages cross neither from the host page nor from a second sandbox into the guest, nor from the guest out; each party's own channels hear each other (positive controls)`, async ({ sandbox, page }) => {
+            const name = `v4-${mode}-${Date.now()}`;
+            expect(await sandbox.mount({ mode })).toBe('ready');
+            expect(await sandbox.mountSecond({ mode })).toBe('ready');
+
+            // listeners and senders everywhere first, then every party sends once
+            await page.evaluate((name) => {
+                const w = window as any;
+                w.bcHostRx = [];
+                const rx = new BroadcastChannel(name);
+                rx.onmessage = (e) => w.bcHostRx.push(e.data);
+                w.bcHostRxChannel = rx;
+                w.bcHostTx = new BroadcastChannel(name);
+            }, name);
+            await sandbox.run(BC_GUEST('main', name));
+            await page.evaluate((code) => (document.getElementById('second') as any).execute(code), BC_GUEST('second', name));
+
+            await page.evaluate(() => (window as any).bcHostTx.postMessage('from-host'));
+            await sandbox.run(`globalThis.__bcTx.postMessage('from-main-guest');`);
+            await page.evaluate(() => (document.getElementById('second') as any).execute(`globalThis.__bcTx.postMessage('from-second-guest');`));
+
+            // positive controls: each party heard its own sender
+            await sandbox.waitForLog('BC-RX main from-main-guest');
+            await sandbox.waitForLog('BC-RX second from-second-guest');
+            await page.waitForFunction(() => (window as any).bcHostRx.includes('from-host'));
+            await page.waitForTimeout(1500); // the settle window: a message that crosses would have arrived by now
+
+            // and nothing else did
+            expect((await sandbox.logs()).filter((line) => line.startsWith('BC-RX ')).sort()).toEqual(['BC-RX main from-main-guest', 'BC-RX second from-second-guest']);
+            expect(await page.evaluate(() => (window as any).bcHostRx)).toEqual(['from-host']);
+        });
+    }
 });
 
 // ---- V2: a strict entry's synchronous console lines -------------------------------------------------------------
