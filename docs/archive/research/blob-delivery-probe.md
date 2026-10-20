@@ -164,7 +164,7 @@ grants no reach beyond the guest's own files.
 - **Relative URLs inside blob CSS** (`url(./img.png)`, `@import`) resolve against the blob URL by the
   same rule, so they need rewriting as well. Not asserted.
   *Resolved (2026-10-13)*: rewritten with slots the guest fills in dependency order
-  ([ADR-004, CSS amendment](../../ADR-004-files-as-blob-urls.md#amendment-css-references-and-srcset-2026-10-13));
+  ([ADR-004, CSS amendment](../adr/ADR-004-history.md#amendment-css-references-and-srcset-2026-10-13));
   a reference left as written loads nothing and requests nothing (`files.spec.ts` section 10).
 - **Chromium blob module workers** (section 1).
 - **Engine drift.** Firefox is implementing multiple import maps, and the local Chromium (141) is older
