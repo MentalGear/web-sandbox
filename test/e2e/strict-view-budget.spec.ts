@@ -5,11 +5,10 @@ import { cssLoadBound, RENDER_RULES, sanitizeRender, VIEW_MAX_DISTINCT_URLS, VIE
 import { busyOf, busyShare, describeShare, idleBaseline, lag, loadedShare, operationCost, startLag, viewBound } from './host-share';
 
 /**
- * Review round 5, the strict view's findings where the browser decides, on Chromium, Firefox and WebKit: loads that only
- * the platform sees (M-3), the view's time budget and its one operation (M-2), the cost of the still stylesheet (M-1),
- * the renderer's prediction of the policy (N-3) and the prelude's error listener (N-2). Each test failed at 60814b5 (the
- * measurements say so where they are the evidence). The library's own logic is unit-tested in
- * test/unit/view-round-5.test.ts.
+ * The strict view's findings of R5 where the browser decides, on Chromium, Firefox and WebKit: loads that only
+ * the platform sees (R5:M-3), the view's time budget and its one operation (R5:M-2), the cost of the still stylesheet
+ * (R5:M-1), the renderer's prediction of the policy (R5:N-3) and the prelude's error listener (R5:N-2). The library's own logic is unit-tested in
+ * test/unit/strict-view-budget.test.ts.
  */
 
 // What the host page's thread had left: its busy share against its own idle baseline (./host-share.ts).
@@ -33,7 +32,7 @@ test.describe('N-3 (class B): the renderer keeps a URL only where every engine a
             { origins: { images: ['https://a.example', ORIGIN, `https://127.0.0.1:${port}`], media: ['https://a.example'] } });
         await waitInView(page, browserName, `!!document.getElementById('u')`);
         const kept = await inView(page, browserName, `['a', 'b', 'c', 'v', 'w', 'l', 'm', 'u'].map(id => document.getElementById(id).getAttribute('src'))`);
-        // at 60814b5: v, l and u were kept, and Chromium (all three) and WebKit (v) then refused them
+        // v, l and u are dropped by the renderer: Chromium (all three) and WebKit (v) refuse them
         expect(kept).toEqual(['https://a.example/1.png', 'http://a.example/2.png', 'http://a.example:443/3.png', null, 'https://a.example/w.mp4', null, `${ORIGIN}/test/e2e/pixel.png`, null]);
         await page.waitForTimeout(500);
         const reported = (await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI}`).sort();
@@ -50,7 +49,7 @@ test.describe("N-2 (class G): the strict prelude's error listener reads no gette
                 Object.defineProperty(ErrorEvent.prototype, 'message', { configurable: true, get: ${message} });
                 globalThis.later = () => setTimeout(() => { throw new Error('later'); }, 0);`);
             await sandbox.run('later()');
-            // at 60814b5, throwing: Firefox ended the sandbox with "the guest entry failed to start"
+            // not throwing: it would end the sandbox in Firefox with "the guest entry failed to start"
             await sandbox.waitForLog(/^Uncaught .*later/);
             await new Promise(resolve => setTimeout(resolve, 500));
             expect(await sandbox.state()).toBe('ready');
@@ -86,7 +85,7 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
     const bound = (seconds: number) => VIEW_URLS_PER_SECOND * seconds + VIEW_URLS_PER_SECOND + PER_RENDER + VIEW_URLS_PER_SECOND;
     // Refusals the view's document reports over a window that starts once the flood is under way: twice the rate. Not
     // the bound above, which is of loads: WebKit reports some refusals twice, and each report past the credit is charged
-    // only once it is made (measured at 1.8 times the rate at most, Firefox, before S73).
+    // only once it is made (at most 1.8 times the rate, Firefox).
     const ADMITTED = 2 * VIEW_URLS_PER_SECOND * WINDOW_S;
     // the host page's share over the same WINDOW_S: the best of 2 windows of half of it
     const WINDOWS = { windows: 2, ms: (WINDOW_S * 1000) / 2 };
@@ -110,7 +109,7 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         const loads = requested.filter(time => time >= started && time < until).length;
         const seconds = (until - started) / 1000;
         console.log(`MEASURED ${browserName} M-3 CSS backgrounds, admitted origin: ${loads} loads over the ${seconds.toFixed(1)} s flood, ${(loads / seconds).toFixed(0)} per second (budget ${VIEW_URLS_PER_SECOND}, bound ${bound(seconds).toFixed(0)}); ${describeShare(share)}`);
-        // at 60814b5: Firefox 1400 loads per second; before S73, 5000 over an 11.1 s flood (PR #47 CI, Firefox)
+        // Firefox: about 1400 loads per second under the flood, within the bound (S73; unbounded, 5000 over an 11.1 s flood)
         expect(loads).toBeLessThanOrEqual(bound(seconds));
         expect(loads).toBeGreaterThan(0);
         expect(share.busy).toBeLessThanOrEqual(viewBound(true)); // docs/API.md (a) for a view that loads: 40%, plus 10 points
@@ -283,8 +282,8 @@ const replacementCost = async (page: Page, browserName: string, markup: string, 
 
 test.describe("M-1 (class P, the library's own mitigation): the still stylesheet costs a large replacement little more than the elements do", () => {
     // The bound: the `*` rule may add at most the elements' own cost (twice in all), and each rule for a pseudo-element
-    // the guest's CSS named at most that again (one more style resolution per element and rule). Measured at 60814b5,
-    // where every listed name had a rule whatever the guest named, for 37 449 elements replaced: Firefox 59–222 times
+    // the guest's CSS named at most that again (one more style resolution per element and rule). Without it (a rule
+    // for every listed name, whatever the guest named), 37 449 elements replaced cost: Firefox 59–222 times
     // (22–30 s: ::first-letter and ::first-line), Chromium 3.7–7.9 times, WebKit 1.6–3 times. The runs alternate, and
     // each side keeps its best of three, on the same machine.
     const COUNT = 37449;
@@ -352,8 +351,9 @@ test.describe("M-1 (class P, the library's own mitigation): the still stylesheet
 // What applying `html` costs here, the calibration of the operations below: operationCost() (./host-share.ts).
 
 // An operation whose cost grows with `n` on every engine, faster than `n`: elements matched by a guest rule whose :has()
-// looks at all their later siblings (measured, 16 000 of them: Chromium 1.6 s, WebKit 2.2 s, Firefox 2.9 s). Round 5's
-// M-2 used inline elements restyled by a rule (30 000 took Chromium 7.5–8.3 s), which cost Firefox and WebKit 0.3 s.
+// looks at all their later siblings (16 000 of them: Chromium 1.6 s, WebKit 2.2 s, Firefox 2.9 s). Inline elements
+// restyled by a rule (30 000 take Chromium 7.5–8.3 s) cost Firefox and WebKit only 0.3 s, so they are not an
+// operation that grows on every engine (R5:M-2).
 const heavy = (n: number, text = 'x') => `<style>i:has(~ b){color:red}</style><div>${`<i>${text}</i>`.repeat(n)}<b>y</b></div>`;
 const SIZES = [1000, 2000, 4000, 8000, 12000, 16000, 24000, 30000];
 
@@ -460,7 +460,7 @@ test.describe('M-4 (class P): one view loads at most VIEW_MAX_DISTINCT_URLS dist
                 };
                 step();
             };`, { origins: { images: ['https://a.example'] } });
-        // the host page's longest stall while the flood runs (at 60814b5 WebKit's grew past seconds as the count did)
+        // the host page's longest stall while the flood runs (unbounded, WebKit's grows past seconds as the count does)
         await startLag(page);
         await sandbox.run('flood()');
         const line = await sandbox.waitForLog(`[Sandbox] sandboxView.render: the view refused a render: the view would load more than ${VIEW_MAX_DISTINCT_URLS} distinct URLs in this environment; nothing of it was applied.`, 150000);

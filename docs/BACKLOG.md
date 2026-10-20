@@ -57,7 +57,7 @@ Structured clone keeps an own `__proto__` key (measured in all three engines), s
 `sandbox-log` args from the guest can hold one. Reading such an object is safe, and it never changes
 `Object.prototype`; merging it with `Object.assign` sets the target's prototype. Documented next to `expose()` and
 `sandbox-log` in the README; `deepMerge` (the element's own config merge) skips the key (S20). Asserted:
-`test/e2e/review-channels.spec.ts` ("B8").
+`test/e2e/channel-isolation.spec.ts` ("B8").
 
 ### <a id="s36"></a>S36 · Focus, clipboard and messages to the host window — **documented** (a cooperative-mode limit, S44)
 
@@ -110,7 +110,7 @@ availability wherever the view shares the host page's thread (S42, S52), CSS wit
 a worker that closes itself (only the watchdog notices), memory, and the host site's cookies on requests to allowed
 origins that are same-site with the host page (Firefox and WebKit, observed by the verification; every mode).
 
-Tests: `verification.spec.ts` ("V1 … residual", "V3", "H1"), `broad-review.spec.ts` (PD2–PD8), `webrtc.spec.ts`,
+Tests: `worker-globals-and-termination.spec.ts` ("V1 … residual", "V3", "H1"), `guest-realm-hardening.spec.ts` (PD2–PD8), `webrtc.spec.ts`,
 `host-url.spec.ts`, `watchdog.spec.ts`.
 
 ### <a id="s49"></a>S49 · Fold worker mode into strict mode with `entry` — ⏳ **open** (P3 · M)
@@ -280,7 +280,7 @@ The owner adopted all of the report's recommendations:
     `satisfies` catch a value and its use disagreeing.
 - **B. Measured numbers.** A doc states each bound itself, rendered from code and checked by tests. A measured figure
   may stand beside the bound as an example, with its date and engine, but is never generated and never pinned by a test.
-  The pin at `review-round-4.test.ts:492` goes.
+  The pin at `worker-port-and-listeners.test.ts:492` goes.
 - **C. Public names.** `StrictSandboxConfig`, `CooperativeSandboxConfig`, `WorkerSandboxConfig`, `WebSandboxEventMap`
   and `RpcLibraryCode` are exported as types. `ALLOWED_CAPABILITIES` is marked internal. `ElementBase` is hidden from the
   declaration files.

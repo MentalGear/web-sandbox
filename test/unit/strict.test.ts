@@ -153,7 +153,7 @@ describe('guest writes in strict mode (backlog C5): the worker carries the write
         const el = await mount({ mode: 'strict', guestWrites: true, entry: 'main.js' }, { 'main.js': 'void 0', 'a.png': 'x' });
         const source = sourceOf(el);
         expect(source).toContain('"guestWrites":true');
-        // the third argument: the only types the worker mints URLs for, the view's (review round 1, R2-4)
+        // the third argument: the only types the worker mints URLs for, the view's (R1:R2-4)
         expect(source).toMatch(/\}\)\(\[\[[^\n]*\]\], comms\.writeFiles, \["text\/css",[^\n]*?\]\);\(function inStrictWorker\(/);
         const removal = source.search(/remove\(urlStatics, ['"]createObjectURL['"]\)/);
         expect(removal).toBeGreaterThan(0);

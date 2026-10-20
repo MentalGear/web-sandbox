@@ -3,15 +3,15 @@ import { inFrames, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 
 /**
- * The host page's own policy (review round 1, R2-1 = R3-1; docs/API.md#host-page-policy). The sandbox's frames are srcdoc
+ * The host page's own policy (R1:R2-1 = R1:R3-1; docs/API.md#host-page-policy). The sandbox's frames are srcdoc
  * documents, which inherit the policies of the page that made them: a copy of its CSP list (CSP3), its Trusted Types
  * requirement and its Cross-Origin-Embedder-Policy. Each test serves the e2e harness with one host policy
  * (vite.config.ts, /__host-policy) and asserts, per engine, what the embedder is told:
- *   - strict mode is `ready` only once its view's bootstrap checked in (at 5ede7ba it was `ready` on the frame's load,
- *     and 5 s later "the sandbox view stopped responding");
+ *   - strict mode is `ready` only once its view's bootstrap checked in, not on the frame's load (else a host policy
+ *     that stops the view would show `ready`, and 5 s later "the sandbox view stopped responding");
  *   - a startup script the host page refuses, a worker it refuses, a Trusted Types policy name it refuses: each ends
- *     the build with a reason that names the host page's policy (at 5ede7ba: "did not finish loading", "the guest
- *     entry failed to start", "could not be built (TypeError)");
+ *     the build with a reason that names the host page's policy (not "did not finish loading", "the guest
+ *     entry failed to start" or "could not be built (TypeError)");
  *   - with what docs/API.md says to allow, the same page works (positive controls), and with no host policy at all.
  * Evidence: the element's events in order (host-policy-harness.ts), what the view's DOM holds and how big each frame
  * is, read from outside (strict-view.ts), and the host page's console.
@@ -54,7 +54,7 @@ async function strictEntry(sandbox: SandboxDriver): Promise<HostEvent[]> {
 }
 
 /**
- * The view's bootstrap hash, the way docs/API.md says to get it: the package's viewScriptHash() (review round 1, R4-5).
+ * The view's bootstrap hash, the way docs/API.md says to get it: the package's viewScriptHash() (R1:R4-5).
  * It is the hash the element puts in the view's policy, which the wrapper's srcdoc carries (read here from outside).
  */
 async function viewHash(sandbox: SandboxDriver): Promise<string> {
@@ -158,7 +158,7 @@ test.describe('host page policy', () => {
         expect(await sandbox.callWithTimeoutOutcome(4000, 'nothing-exposed')).toMatchObject({ status: 'rejected', code: 'UNKNOWN_METHOD' });
     });
 
-    // LM-2 (class L; S65 step 2, PR C): a host page's own Trusted Types default policy is embedder code that runs inside
+    // LM-2 (class L; S65): a host page's own Trusted Types default policy is embedder code that runs inside
     // the element's build, at each HTML sink (the wrapper's srcdoc, the inert parse of the markup). One that called reset()
     // there re-entered the build: the nested build stood, and the outer one then went on over it (a second load deadline,
     // which overwrote the first, its announcement listener on the nested frame, which overwrote the nested one's, and a

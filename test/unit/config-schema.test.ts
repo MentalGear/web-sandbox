@@ -7,7 +7,7 @@ import { createRateLimiter } from '@src/lib/rate-limit';
 import { RPC_MAX_BYTES } from '@src/lib/rpc';
 
 /**
- * The config schema (class C; review round 5, L-2 = N-5): `callLimits`, normalised once, with its cross-field invariants.
+ * The config schema (class C; R5:L-2 = R5:N-5): `callLimits`, normalised once, with its cross-field invariants.
  * fast-check is not a dependency: the property runs over a seeded random set of values (the same cases every run) and a
  * table of the edges between them.
  */

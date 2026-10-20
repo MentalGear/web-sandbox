@@ -3,7 +3,7 @@ import { defineWebSandbox, LOAD_TIMEOUT_MS } from '@src/host';
 import { checkIn } from './check-in';
 
 /**
- * LM-2 (class L; S65 step 2, PR C): embedder code that runs inside the element's own build. A host page's Trusted Types
+ * LM-2 (class L; S65): embedder code that runs inside the element's own build. A host page's Trusted Types
  * default policy runs at each HTML sink the build writes (the wrapper's srcdoc, the inert parse of the markup), and a
  * page that patched console.warn runs at each warning; either can call reset(), which builds again from inside the
  * build. The nested build stood, and the outer one then went on over it, with the element's fields:

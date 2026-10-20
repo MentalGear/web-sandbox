@@ -10,7 +10,7 @@
  * A name that is not listed is gone, whatever it is; a new platform API stays out until someone lists it.
  *
  * The globals that can make a request at all are four, each measured as governed by the policy on Chromium, Firefox
- * and WebKit (test/e2e/verification.spec.ts, "V1"): fetch and XMLHttpRequest and WebSocket (connect-src) and
+ * and WebKit (test/e2e/worker-globals-and-termination.spec.ts, "V1"): fetch and XMLHttpRequest and WebSocket (connect-src) and
  * importScripts (script-src). Everything else listed makes no request: the language's built-ins, timers, events,
  * messaging inside the worker, encoding, streams, crypto, blobs and URLs, IndexedDB, canvas and WebGL on an
  * OffscreenCanvas (no URL), WebCodecs (bytes in, frames out), performance and scheduling. WebAssembly's streaming

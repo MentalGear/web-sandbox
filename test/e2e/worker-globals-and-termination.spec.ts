@@ -3,11 +3,11 @@ import { useRecorder, wss } from './recorder';
 import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
 
 /**
- * Independent verification 2026-10-14 (docs/archive/reviews/VERIFICATION-2026-10-14.md), where browser behaviour decides:
- *   V1  a guest worker (worker mode, strict mode) keeps only the allowlisted globals: Firefox sent a worker's
- *       EventSource (and loaded a worker's FontFace) past the policy; every other network API of a worker is gone or
+ * The worker's globals and the guest's termination (V1 to V3 are cited as VR:V1 to VR:V3), where browser behaviour decides:
+ *   V1  a guest worker (worker mode, strict mode) keeps only the allowlisted globals: Firefox sends a worker's
+ *       EventSource (and loads a worker's FontFace) past the policy unless they are removed; every other network API of a worker is gone or
  *       governed. A worker the guest creates in cooperative mode is a realm of its own (residual, measured).
- *   V2  a strict entry's synchronous console lines arrive (they were lost before the logic port was attached);
+ *   V2  a strict entry's synchronous console lines arrive (none is lost before the logic port is attached);
  *   V3  the user's modifier clicks and Ctrl/Shift+Enter on a guest link open a new top-level tab in Chromium and
  *       Firefox (cooperative mode, platform behaviour: a limit, measured); strict mode opens none;
  *   L1  a guest's timers, promise loops and nested workers stop at terminate() and reset();
@@ -226,7 +226,7 @@ test.describe('L1: a guest cannot outlive terminate() or reset()', () => {
 
 // ---- L2: a forged announcement to the top window is never accepted -------------------------------------------------
 
-test.describe('L2: an announcement posted to top by a frame the guest creates is never accepted (the guest frame\'s own forgery ends its environment: broad-review.spec.ts, PD8)', () => {
+test.describe('L2: an announcement posted to top by a frame the guest creates is never accepted (the guest frame\'s own forgery ends its environment: guest-realm-hardening.spec.ts, PD8)', () => {
     test('a frame the guest creates posts SANDBOX_PORT with a port to top: the host does not take it, the bridge stays the guest\'s, the forged port hears nothing', async ({ sandbox, page }) => {
         expect(await sandbox.mount({ html: '<p>guest</p>', watchdogTimeout: 2000 })).toBe('ready');
         await page.evaluate(() => {

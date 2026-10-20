@@ -25,6 +25,41 @@ The security review reports, newest last. Each finding has an anchor, and a pref
 | [Review round 4](reviews/REVIEW-ROUND-4-2026-10-18.md) | `R4:` | The worker's only way out, values read once, the view's URL budget |
 | [Review round 5](reviews/REVIEW-ROUND-5-2026-10-19.md) | `R5:` | The recurring classes behind the findings |
 
+## Renamed test files
+
+The reports and the history files name the test files as they were when written: named after the review that added them. They are named by subject now (the finding IDs stay in the test titles), so search the left column of this table for an old name.
+
+| Was | Is |
+| :--- | :--- |
+| `test/unit/broad-review-bootstrap.test.ts` | `test/unit/guest-realm-hardening.test.ts` |
+| `test/unit/broad-review.test.ts` | `test/unit/fetch-and-csp-guarantees.test.ts` |
+| `test/unit/focused-review.test.ts` | `test/unit/rate-limits-and-config.test.ts` |
+| `test/unit/followup-guarantees.test.ts` | `test/unit/execution-budget-and-violations.test.ts` |
+| `test/unit/owner-decisions.test.ts` | `test/unit/allow-forms-and-view-writes.test.ts` |
+| `test/unit/review-round-1.test.ts` | `test/unit/relay-and-rpc-budgets.test.ts` |
+| `test/unit/review-round-2-lifecycle.test.ts` | `test/unit/lifecycle-edge-cases.test.ts` |
+| `test/unit/review-round-2.test.ts` | `test/unit/bootstrap-capture-and-measure.test.ts` |
+| `test/unit/review-round-3.test.ts` | `test/unit/rpc-bounds-and-call-limits.test.ts` |
+| `test/unit/review-round-4.test.ts` | `test/unit/worker-port-and-listeners.test.ts` |
+| `test/unit/review-round-5.test.ts` | `test/unit/call-settling-and-read-once.test.ts` |
+| `test/unit/verification.test.ts` | `test/unit/entry-sources-and-callbacks.test.ts` |
+| `test/unit/view-round-5.test.ts` | `test/unit/strict-view-budget.test.ts` |
+| `test/e2e/broad-review.spec.ts` | `test/e2e/guest-realm-hardening.spec.ts` |
+| `test/e2e/broad-strict.spec.ts` | `test/e2e/strict-renderer.spec.ts` |
+| `test/e2e/focused-review.spec.ts` | `test/e2e/inert-files-and-smil.spec.ts` |
+| `test/e2e/owner-decisions.spec.ts` | `test/e2e/allow-forms-and-view-writes.spec.ts` |
+| `test/e2e/review-channels.spec.ts` | `test/e2e/channel-isolation.spec.ts` |
+| `test/e2e/review-followup.spec.ts` | `test/e2e/build-failure-and-console.spec.ts` |
+| `test/e2e/review-policy.spec.ts` | `test/e2e/policy-injection.spec.ts` |
+| `test/e2e/review-round-1.spec.ts` | `test/e2e/relay-and-rpc-budgets.spec.ts` |
+| `test/e2e/review-round-2.spec.ts` | `test/e2e/foreign-document-and-view-time.spec.ts` |
+| `test/e2e/review-round-3.spec.ts` | `test/e2e/log-errors-and-call-limits.spec.ts` |
+| `test/e2e/review-round-4.spec.ts` | `test/e2e/worker-port-and-view-cost.spec.ts` |
+| `test/e2e/review-round-5.spec.ts` | `test/e2e/error-cost-and-queued-calls.spec.ts` |
+| `test/e2e/review-strict.spec.ts` | `test/e2e/strict-entry-scope-and-links.spec.ts` |
+| `test/e2e/verification.spec.ts` | `test/e2e/worker-globals-and-termination.spec.ts` |
+| `test/e2e/view-round-5.spec.ts` | `test/e2e/strict-view-budget.spec.ts` |
+
 ## ADRs
 
 The [ADRs](../README.md#decisions) state each decision as it stands. What they said before, and how each decision changed

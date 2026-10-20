@@ -19,12 +19,11 @@ const typesOf = (paths: string[]) => new Map(paths.map(path => [path, mimeTypeFo
  */
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
-// The features every bootstrap is given: the default call budget (review round 3, M-2; docs/API.md, Limits), the egress
-// table's listeners for its mode, and in worker mode the budget of uncaught errors (review round 5, N-1; egress.ts).
+// The features every bootstrap is given: the default call budget (R3:M-2; docs/API.md, Limits), the egress
+// table's listeners for its mode, and in worker mode the budget of uncaught errors (R5:N-1; egress.ts).
 const FEATURES = (mode: string) => toInlineScriptLiteral({ callBudget: { calls: 1000, bytes: 67108864 }, listeners: bootstrapListeners(mode as EgressMode), ...(mode === 'worker' ? { uncaught: UNCAUGHT_BUDGET } : {}) });
 
-// The guest document's security block as the element writes it: the policy, the DNS-prefetch switch (broad review
-// PD3), then the bootstrap. Returns the head's children without the switch, after checking it is the second one.
+// The guest document's security block as the element writes it: the policy, the DNS-prefetch switch (BR:PD3), then the bootstrap. Returns the head's children without the switch, after checking it is the second one.
 const DNS_PREFETCH_OFF = '<meta http-equiv="x-dns-prefetch-control" content="off">';
 const securityChildren = (doc: Document): Element[] => {
     const children = [...doc.head.children];
@@ -59,15 +58,15 @@ const DEFAULT_POLICY = "default-src 'none'; script-src 'unsafe-inline'; style-sr
 const UNSAFE_POLICY = DEFAULT_POLICY.replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' 'unsafe-eval'");
 
 describe('with no files: the policy is unchanged, and the document differs only by the empty files bootstrap', () => {
-    // How 98f9c81 composed the bootstrap, before files existed, and the one thing added since.
-    // and the postMessage worker mode's bootstrap is handed (review round 4, M-1): null in cooperative mode
+    // How the bootstrap is composed when no files are registered; `post` is the postMessage that worker mode's bootstrap
+    // is handed (R4:M-1): null in cooperative mode
     const comms = (scriptUnsafe: boolean, mode: string, post = 'null') => `(${inSandboxScript.toString()})(${scriptUnsafe}, '${mode}', console, ${createBroker.toString()}, ${FEATURES(mode)}, ${createSizeOf.toString()}, ${post});`;
     const EMPTY_FILES = `(${inSandboxFiles.toString()})([]);`;
 
     it('cooperative mode, default config', async () => {
         const el = await mount();
         expect(policyOf(el)).toBe(DEFAULT_POLICY);
-        // blob: only where 98f9c81 had it: worker-src
+        // blob: only in worker-src
         expect(policyOf(el).split(';').map(d => d.trim()).filter(d => d.includes('blob:'))).toEqual(['worker-src blob:']);
         const guest = buildGuestDocument({ csp: DEFAULT_POLICY, bootstrapScript: comms(false, 'cooperative') + EMPTY_FILES, content: '<div id="root"></div>' });
         expect(wrapperOf(el)).toBe(buildWrapperDocument(guest, ''));
@@ -76,11 +75,11 @@ describe('with no files: the policy is unchanged, and the document differs only 
     it('worker mode: the empty bootstrap goes into the worker source', async () => {
         const el = await mount({ mode: 'worker', scriptUnsafe: true });
         expect(policyOf(el)).toBe(UNSAFE_POLICY);
-        // the worker keeps only the allowlisted globals first (independent verification V1), then the comms script and files,
-        // in a function whose second argument is the postMessage the allowlist took (review round 4, M-1)
+        // the worker keeps only the allowlisted globals first (VR:V1), then the comms script and files,
+        // in a function whose second argument is the postMessage the allowlist took (R4:M-1)
         const globals = `(${keepOnlyWorkerGlobals.toString()})(this, ${toInlineScriptLiteral(WORKER_GLOBALS)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)})`;
         const source = `(function (g, postToFrame) {${comms(true, 'worker', 'postToFrame')}${EMPTY_FILES}})(this, ${globals});`;
-        const bootstrap = `(${workerBootstrap.toString()})(${JSON.stringify(source).replaceAll('<', '\\u003c')}, "web-sandbox");`; // the Trusted Types policy name (review round 1, R3-1)
+        const bootstrap = `(${workerBootstrap.toString()})(${JSON.stringify(source).replaceAll('<', '\\u003c')}, "web-sandbox");`; // the Trusted Types policy name (R1:R3-1)
         expect(wrapperOf(el)).toBe(buildWrapperDocument(buildGuestDocument({ csp: UNSAFE_POLICY, bootstrapScript: bootstrap, content: '' }), 'allow-scripts'));
     });
 

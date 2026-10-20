@@ -3,9 +3,9 @@ import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { createBroker } from '@src/lib/rpc';
 
 /**
- * Broad review 2026-10-14, the bootstrap's own guarantees (library logic, run in jsdom): CB2 (no global lookup on
- * the EXECUTE path) and the guest-realm hardening of PD2 (keepalive), PD4 (history traversal) and PD6 (window.name).
- * The browsers decide whether the hardening closes the leak: test/e2e/broad-review.spec.ts.
+ * The bootstrap's own guarantees (library logic, run in jsdom): BR:CB2 (no global lookup on
+ * the EXECUTE path) and the guest-realm hardening of BR:PD2 (keepalive), BR:PD4 (history traversal) and BR:PD6 (window.name).
+ * The browsers decide whether the hardening closes the leak: test/e2e/guest-realm-hardening.spec.ts.
  *
  * The bootstrap's port primitives run against stand-ins installed as the platform's, as in in-sandbox-script.test.ts.
  * PD2's guard is installed once per realm and is not configurable, so this file's realm gets one recording fetch,

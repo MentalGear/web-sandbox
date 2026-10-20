@@ -1,10 +1,10 @@
 import { test, expect, type MountConfig } from './fixture';
 
 /**
- * Review round 3: the findings where the browser decides, on Chromium, Firefox and WebKit: what structured clone makes
- * of an error nested in a logged value (C-3), when a custom element's lifecycle callbacks run during a move (L-1), and
- * when structured clone runs an argument's getter (L-2). Each test failed at 16c545b. The library's own logic is
- * unit-tested in test/unit/review-round-3.test.ts.
+ * Findings of R3 where the browser decides, on Chromium, Firefox and WebKit: what structured clone makes
+ * of an error nested in a logged value (R3:C-3), when a custom element's lifecycle callbacks run during a move (R3:L-1), and
+ * when structured clone runs an argument's getter (R3:L-2). The library's own logic is
+ * unit-tested in test/unit/rpc-bounds-and-call-limits.test.ts.
  */
 
 const MODES: Record<string, MountConfig> = {

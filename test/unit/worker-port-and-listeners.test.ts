@@ -19,8 +19,8 @@ import { stringifiedFor } from './stringified';
 const TYPEOF_SCANNED = await stringifiedFor('typeofRead');
 
 /**
- * Review round 4: each finding where the library's own logic decides, reproduced here first against the code it names
- * (each test failed at c7672bb). The findings where the browser decides are in test/e2e/review-round-4.spec.ts.
+ * Findings of R4 where the library's own logic decides, each reproduced here first against the code it names.
+ * The findings where the browser decides are in test/e2e/worker-port-and-view-cost.spec.ts.
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -63,7 +63,7 @@ afterEach(() => {
 });
 
 describe("M-1: the worker's own postMessage is not a way out: the library's port is the only path to the frame or the view", () => {
-    // A stand-in global shaped like a worker's: the scope's operations on its prototypes (measured on every engine).
+    // A stand-in global shaped like a worker's: the scope's operations on its prototypes (the shape every engine has).
     function standInWorker() {
         class WorkerGlobalScope extends EventTarget {}
         Object.defineProperty(WorkerGlobalScope.prototype, 'setTimeout', { value: () => 0, writable: true, configurable: true });
@@ -483,7 +483,7 @@ describe('the docs say what the code does', () => {
         }
     });
 
-    // the residuals are stated once since S68, in API.md's "The view's cost to the host page", which README links; this
+    // the residuals are stated once (S68), in API.md's "The view's cost to the host page", which README links; this
     // checks the closed list and the bound beside it, never a measured figure (CONTRIBUTING.md, "Measured figures")
     it("M-3: the view's cost statement lists Chromium's <img> cost among the single-operation stalls, under the overrun bound", () => {
         const row = read('docs/API.md').split('\n').find(line => line.startsWith('| The documented single-operation stalls'));

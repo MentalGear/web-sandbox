@@ -5,9 +5,9 @@ import { quietStall, ticks } from './host-share';
 /**
  * Content auto-sizing (backlog B6): with `autoResize: true` the element's height follows the guest's content
  * height; reports are validated, clamped and rate-limited on the host (src/lib/auto-resize.ts).
- * Reports are guest-influenced, so the refusals below forge them from inside the guest. Since review B2 guest
- * code cannot reach the port to post a RESIZE of its own, and since review round 2 (C-1) it cannot replace what the
- * bootstrap measures either (the root's getBoundingClientRect and scroll and client heights, captured before guest code
+ * Reports are guest-influenced, so the refusals below forge them from inside the guest. Guest code cannot reach
+ * the port to post a RESIZE of its own (AR:B2), and it cannot replace what the
+ * bootstrap measures either (R2:C-1; the root's getBoundingClientRect and scroll and client heights, captured before guest code
  * ran): it forges by giving its root element the height it wants reported, which the bootstrap's observer measures.
  */
 
@@ -27,9 +27,9 @@ const elementHeight = (page: Page) => page.evaluate(() => (document.querySelecto
 const inlineHeight = (page: Page) => page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).style.height);
 
 // Tries to make the bootstrap measure `height` (a JS expression) by replacing Element.prototype.getBoundingClientRect, then
-// changes the body's width (never its height, so nothing overflows for real) so the observer fires. Before review B2 the
-// guest posted RESIZE frames on the port itself; it cannot reach the port any more (asserted by the first call). Before
-// review round 2 (C-1) the replaced method was what the bootstrap measured; now it measures with the one it captured.
+// changes the body's width (never its height, so nothing overflows for real) so the observer fires. The
+// guest cannot post RESIZE frames on the port itself (AR:B2; asserted by the first call), and the replaced method is
+// not what the bootstrap measures: it measures with the one it captured (R2:C-1).
 async function forgeReport(sandbox: SandboxDriver, height: string) {
     expect(await sandbox.inGuest(`
         if (!globalThis.__forger) {

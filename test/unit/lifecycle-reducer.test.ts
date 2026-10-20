@@ -10,13 +10,13 @@ import { DEFAULT_TERMINATE_REASON, ENTRY_FAILED_REASON, unknownModeReason, type 
 import { forTheReducer, runReducerSequence, validConfig, type ReducerRunOptions } from '../model/reducer-runner';
 
 /**
- * The lifecycle reducer (src/lib/lifecycle.ts; S65 step 2, PR A), checked three ways:
+ * The lifecycle reducer (src/lib/lifecycle.ts; S65), checked three ways:
  * - against the lifecycle reference model (test/model/lifecycle-model.ts) on thousands of generated sequences, through
  *   test/model/reducer-runner.ts, which runs the real `reduce` and `runEffects` against a fake element; a divergence is
  *   shrunk (test/model/generator.ts, `shrink`) and printed with its seed, the minimal sequence and its trace;
  * - by the reducer's own properties, on every step of those runs and on inputs fuzzed from the states they reached;
- * - on each class-L finding as an explicit trace (research 18, class L): round 4's L-1, L-2 and L-3, round 5's L-1, CB5
- *   (broad review 2026-10-14) and round 1's R3-2.
+ * - on each class-L finding as an explicit trace (research 18, class L): R4:L-1, R4:L-2 and R4:L-3, R5:L-1, BR:CB5
+ *   and R1:R3-2.
  * And it pins the places where the reducer describes today's host.ts rather than the S65 plan.
  */
 
@@ -437,8 +437,8 @@ describe("the reducer describes today's host.ts", () => {
         expect(host.log).not.toContain('flush');
     });
 
-    // LM-2 (S65 step 2, PR C): until PR B the reducer described today's code here, which started a second deadline for
-    // the outer build and let its failure end the nested one; test/unit/lifecycle-reentry.test.ts has the element's half.
+    // LM-2 (S65): a re-entered build has one deadline, the nested build's, and the outer build's failure does not end the
+    // nested one; test/unit/lifecycle-reentry.test.ts has the element's half.
     it('LM-2: a build re-entered from inside the build effect (a host page Trusted Types default policy calling reset()): only the nested build is attached, with one deadline', () => {
         const host = new RecordingHost();
         host.onBuild = () => host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE });
@@ -606,14 +606,14 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
     it('every termination the element starts carries its generation; only terminate() carries none', () => {
         const terminations = [...host.matchAll(/step\(this, \{ t: 'terminate', ([^\n]*)\}\)/g)];
         // terminate(); the watchdogs, the execution timeout, the uncaught budget, VIEW_OVERRUN, the entry failure, the host
-        // page's refusals, a frame that cannot be read at its load (the reducer decides the completion's own since PR D)
+        // page's refusals, a frame that cannot be read at its load (the reducer decides the completion's own)
         expect(terminations.length).toBeGreaterThanOrEqual(9);
         const without = terminations.filter(match => !/\bgen\b/.test(match[1]!)).map(match => match.index!);
         expect(without).toHaveLength(1);
         expect(inside(without[0]!, bodyOf(host, '    terminate(reason', '\n    }\n'))).toBe(true);
         // every other termination goes through the reducer: no `_terminate`, `_terminateBuild` or token is left
         expect(host).not.toMatch(/_terminate\(|_terminateBuild|_dispatchBuildTermination|_dispatchTerminated\(|_pendingTermination|_terminationDispatched|_notifyThenAct|_generation\b/);
-        // a build's answer is the executor's alone (PR C), with its build's generation (LM-2)
+        // a build's answer is the executor's alone, with its build's generation (LM-2)
         expect(host).not.toMatch(/t: 'buildFailed'|t: 'built'/);
         const answers = [...lifecycle.matchAll(/t: '(built|buildFailed)', ([^}]*)\}/g)];
         expect(answers.map(match => match[1])).toEqual(['buildFailed', 'buildFailed', 'built']); // attach's, the build's, the build's

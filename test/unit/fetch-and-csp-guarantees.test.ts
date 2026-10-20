@@ -12,9 +12,9 @@ import { isViewFileType, RENDER_RULES, type RenderSwitches, sanitizeRender } fro
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
 
 /**
- * Broad review 2026-10-14 (docs/archive/reviews/BROAD-REVIEW-2026-10-14.md), host and library side: the guarantees that
- * library logic decides. The browser halves are in test/e2e/broad-review.spec.ts; the bootstrap's in
- * src/lib/in-sandbox-script.test.ts and test/unit/broad-review-bootstrap.test.ts.
+ * Host and library side of BR (the host queue, guest writes, the fetch refusal text, the guest policy's blob: and worker
+ * rules, the module rewrite, load kinds): the guarantees that library logic decides. The browser halves are in test/e2e/guest-realm-hardening.spec.ts; the bootstrap's in
+ * src/lib/in-sandbox-script.test.ts and test/unit/guest-realm-hardening.test.ts.
  */
 
 async function mount(config?: Record<string, unknown>) {
@@ -114,12 +114,12 @@ describe('CB4: a guest write is answered from the build the guest has, never fro
 // ---- CB5 ------------------------------------------------------------------------------------------------
 
 describe('CB5: a terminated listener that builds again from the same inputs is answered once', () => {
-    // a build's 'terminated' comes in a task of its own (review round 1, R3-2)
+    // a build's 'terminated' comes in a task of its own (R1:R3-2)
     const settled = () => new Promise(resolve => setTimeout(resolve, 0));
     it.each([
         ['an unknown mode (a refusal)', { mode: 'Strict' }, false],
         ['origins that cannot be read (a refusal)', { origins: { images: 'x; script-src *' } }, false],
-        // a config other than the mount's: the same one again would be no change, and build nothing (review round 1, R3-7)
+        // a config other than the mount's: the same one again would be no change, and build nothing (R1:R3-7)
         ['a build that throws (a build failure)', { capabilities: ['allow-scripts'], html: '<p>other</p>' }, true],
     ])('%s: one termination, one warning, no recursion; the state stays terminated', async (_, config, breakBuild) => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -333,7 +333,7 @@ describe("I1: the strict renderer's own copy of a <link>'s load kinds agrees wit
     // keeps a <link> only when every rel token is a relation it renders (RENDER_RULES.linkRelations) and its href
     // resolves to a file the view minted. A link it keeps must be one load-kinds.ts resolves for the same file type,
     // and every such link of those relations must be kept, restricted to the types the view mints URLs for at all
-    // (VIEW_FILE_TYPES: no document-capable type such as SVG, broad review ST1): checked over every combination of
+    // (VIEW_FILE_TYPES: no document-capable type such as SVG, BR:ST1): checked over every combination of
     // rel tokens, `as` and type.
     const TOKENS = ['stylesheet', 'icon', 'preload', 'modulepreload', 'prefetch', 'alternate', 'STYLESHEET'];
     const AS = [null, 'style', 'image', 'script', 'font', 'fetch', 'bogus'];

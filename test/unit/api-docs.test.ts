@@ -257,7 +257,7 @@ describe('docs/API.md lists the public surface', () => {
         const removed: string[] = [];
         for (const file of files) {
             const source = read(file);
-            // published with the captured defineProperty (review round 2, C-1): `publish('x', …)` or `defineOwn(g, 'x', { value: … })`,
+            // published with the captured defineProperty (R2:C-1): `publish('x', …)` or `defineOwn(g, 'x', { value: … })`,
             // but for the guard that replaces fetch and the inert window.name, which are no globals of the library's
             for (const match of source.matchAll(/(?:\bpublish\(|defineOwn\(g, )'([A-Za-z]\w*)', (?!\{ get:|\{ value: guardedFetch)/g)) installed.push(match[1]!);
             for (const match of source.matchAll(/remove\((?:g|\w+Statics), '(\w+)'\)/g)) removed.push(match[1]!);
@@ -297,7 +297,7 @@ describe('docs/API.md lists the public surface', () => {
         // the renderer's allowlist, every element of every namespace
         for (const element of [...RENDER_ELEMENTS.html, ...RENDER_ELEMENTS.svg, ...RENDER_ELEMENTS.mathml]) expect(viewSpans.has(element), element).toBe(true);
         expect(viewSection).toContain(`at most ${VIEW_MAX_ELEMENTS} elements, nested at most ${VIEW_MAX_DEPTH} deep`);
-        expect(viewSection).toContain(`at most ${VIEW_MAX_CHARACTERS} characters`); // review round 1, R1-1
+        expect(viewSection).toContain(`at most ${VIEW_MAX_CHARACTERS} characters`); // R1:R1-1
         expect(viewSection).toContain(`at most ${VIEW_RENDER_CHARACTERS_PER_SECOND} characters of markup`);
         expect(VIEW_FILE_TYPES.length).toBe(27); // a new type is a new line of prose in the section, too
         expect(viewSection.replace(/\s+/g, ' ')).toContain(`Strings are cut at ${VIEW_EVENT_LIMITS.maxString} characters, \`ids\` at ${VIEW_EVENT_LIMITS.maxIds} entries, \`form\` at ${VIEW_EVENT_LIMITS.maxFields} fields, and all strings of one detail together at ${VIEW_EVENT_LIMITS.maxTotal} characters`);
@@ -308,7 +308,7 @@ describe('docs/API.md lists the public surface', () => {
         expect(policy).toContain('`viewScriptHash()`');
         expect(policy).toContain(scriptHashSource(WRAPPER_STYLE));
         expect(policy).toContain(scriptHashSource(VIEW_STILL_STYLE)); // allowAnimations: false
-        expect(policy).not.toContain('srcdoc;'); // no reading the hash out of the wrapper's document any more
+        expect(policy).not.toContain('srcdoc;'); // the hash is not read out of the wrapper's document
     });
 
     it('describes the current design only: no backlog ids or history', () => {

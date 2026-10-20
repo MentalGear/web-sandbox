@@ -3,8 +3,8 @@ import { viewBootstrapHash } from '@src/lib/in-sandbox-view';
 import { parseLikeABrowser } from './policy-helpers';
 
 /**
- * Independent verification 2026-10-14 (docs/archive/reviews/VERIFICATION-2026-10-14.md), host and library side: the gaps
- * where a mutation of the code survived every earlier test, each now a test that fails under that mutation.
+ * Mutation gaps the verification found (VR; AR:A1, BR:CB7, FR:F5), host and library side: each is a test that fails under a mutation of the code that
+ * the other tests do not catch.
  */
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');

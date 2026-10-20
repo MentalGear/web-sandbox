@@ -5,7 +5,7 @@ import { INERT_HREF } from '@src/lib/in-sandbox-view';
 import type { SandboxConfig } from '@src/host';
 
 /**
- * Focused review 2026-10-14 (docs/archive/reviews/FOCUSED-REVIEW-2026-10-14.md), where browser behaviour decides:
+ * Inert files and SMIL (each label below is cited as FR:<label>), where browser behaviour decides:
  *   W1  a guest-written file committed with an inert type (no { code: true }) is never loaded as a script by the
  *       next build's markup: resolution admits a file only for the kind of load its type is for, in every engine,
  *       whatever the engine does with a mistyped classic blob: script;
@@ -163,7 +163,7 @@ test.describe('F1: rendered markup cannot re-animate an attribute the renderer c
     test('an animated <image href> loads nothing: the static image of the same policy reaches the listener (positive control), the animated target never does, and an animated blob: URL the view did not mint is gone too', async ({ sandbox, page, browserName }) => {
         expect(await sandbox.mount({ ...strictView, origins: { images: [recorder.allowed] } })).toBe('ready');
         const workerCopy: string = await sandbox.inGuest(`return location.href`); // a blob: URL the view never minted
-        // SVG <image> and <use> are not on the renderer's allowlist either (broad review 2026-10-14): they go with their
+        // SVG <image> and <use> are not on the renderer's allowlist either (ADR-005): they go with their
         // animations; the static image is an HTML <img> of the same policy
         const html = `<img id="static" width="3" height="5" src="${recorder.allowed}/f1-static.svg"><svg width="30" height="30">`
             + `<image id="animated" width="3" height="5" href="${recorder.allowed}/f1-static.svg"><set attributeName="href" to="${recorder.allowed}/f1-animated.svg" begin="0s" fill="freeze"/></image>`

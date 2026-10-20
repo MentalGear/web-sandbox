@@ -132,7 +132,7 @@ The time budget charges what the view does: its flush, the layout it forces and 
 What the browser does afterwards with the URLs the render holds (fetching, decoding and laying out an image, or
 processing the refusal of one the policy refuses) is not the view's work, and runs on the host page's thread wherever
 the view does. Measured on headless Playwright 1.58.1, host ticks of a 10 ms interval over 8 s against idle, renders
-replacing the same target as fast as the view acknowledged them (`test/e2e/review-round-4.spec.ts`, M-2):
+replacing the same target as fast as the view acknowledged them (`test/e2e/worker-port-and-view-cost.spec.ts`, M-2):
 
 | Renders of | Chromium | Firefox | WebKit |
 | :--- | :--- | :--- | :--- |

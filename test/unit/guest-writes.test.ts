@@ -3,7 +3,7 @@ import { GUEST_WRITES_PER_SECOND } from '@src/lib/guest-writes';
 
 /**
  * Guest writes on the element (backlog C5): the config, the reserved method's wiring, the overlay's lifecycle,
- * the current-port rule (review B4) and the listener rule (review B5). The overlay's own rules are in
+ * the current-port rule (AR:B4) and the listener rule (AR:B5). The overlay's own rules are in
  * src/lib/guest-writes.test.ts; the browsers in test/e2e/guest-writes.spec.ts.
  */
 
@@ -109,7 +109,7 @@ describe('lifecycle: discarded by the next build and on removal, kept through a 
     it.each([
         ['reset()', (el: any) => el.reset()],
         ['load()', (el: any) => el.load('<p>x</p>')],
-        // another config: the same one again is no change and builds nothing (review round 1, R3-7)
+        // another config: the same one again is no change and builds nothing (R1:R3-7)
         ['setConfig()', (el: any) => el.setConfig({ guestWrites: true, html: '<p>another</p>' })],
         ['a setConfig() that cannot be used', (el: any) => el.setConfig(null)],
         ['removal from the document', (el: any) => el.remove()],

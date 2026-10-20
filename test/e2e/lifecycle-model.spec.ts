@@ -94,7 +94,7 @@ test.describe('the lifecycle model', () => {
     }
 });
 
-// Review round 4, L-1: a frame's load completed a build inside the embedder's own appendChild() or remove(). The property:
+// R4:L-1: a frame's load must not complete a build inside the embedder's own appendChild() or remove(). The property:
 // remove the element, or move it (within its document, or to a foreign one and back), 12–30 ms into a rebuild, at least
 // 100 times per mode, and no `ready` is ever dispatched inside a DOM operation (the model checks every event as usual).
 test.describe("round 4's L-1 as a property: no `ready` inside a DOM operation", () => {
@@ -129,14 +129,13 @@ test.describe("round 4's L-1 as a property: no `ready` inside a DOM operation", 
     }
 });
 
-// FINDING LM-1, fixed (class L; the lifecycle model, WebKit seed 73 at 500 sequences; made deterministic here). A `fetch`
-// record with outcome `ok` of an environment that a `fetch` listener had torn down was dispatched after the teardown, where
-// API.md (`fetch` — FetchRecord) says that after its teardown an environment's records are `aborted`. A request whose body
-// was already read when the listener of an earlier record tore the environment down recorded `ok`: fetch-bridge.ts looked
-// at the teardown only on a throw. It failed at 446017a on Chromium, Firefox and WebKit, in the first round: the three
-// later records arrived `ok`. Fixed 2026-10-19 by construction, the owner's decision being `aborted`: the bridge's one
-// record() decides the outcome from the bridge's lifetime, so every record made after abortAll() is `aborted`, whatever
-// path it settled on (test/unit/fetch-bridge-lifecycle.test.ts enumerates the paths).
+// LM-1 (class L; found by the lifecycle model, WebKit seed 73 at 500 sequences; made deterministic here). A `fetch`
+// record of an environment that a `fetch` listener has torn down must not be dispatched with outcome `ok` after the
+// teardown: API.md (`fetch` — FetchRecord) says that after its teardown an environment's records are `aborted` (the
+// owner's decision). A request whose body was already read when the listener of an earlier record tore the environment
+// down is one such path, and the three records after it must arrive `aborted` on Chromium, Firefox and WebKit. The bridge's
+// one record() decides the outcome from the bridge's lifetime, so every record made after abortAll() is `aborted`,
+// whatever path it settled on (test/unit/fetch-bridge-lifecycle.test.ts enumerates the paths).
 test.describe('finding: fetch records after a teardown', () => {
     test('a record dispatched after a fetch listener tore its environment down is `aborted`', async ({ sandbox, page, browserName }) => {
         test.setTimeout(90000);

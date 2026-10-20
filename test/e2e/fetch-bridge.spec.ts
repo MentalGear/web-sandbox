@@ -113,7 +113,7 @@ test('loopback, private and localhost names are refused unless listed: every spe
     for (const url of spellings) {
         const refused = await sandbox.inGuest(fetchInGuest(url));
         expect(refused.code, url).toBe('FETCH_NOT_ALLOWED');
-        // one text to the guest for every unlisted origin (broad review CB6); the host's record says why
+        // one text to the guest for every unlisted origin (BR:CB6); the host's record says why
         expect(refused.message, url).toMatch(/ is not in fetchBridge\.allow$/);
         expect(refused.message, url).not.toContain('private');
         expect((await sandbox.waitForFetch(new URL(url).origin)).reason, url).toContain('loopback, private or link-local');
@@ -132,7 +132,7 @@ test("the host page's own origin is refused unless listed", async ({ sandbox }) 
 
     const refused = await sandbox.inGuest(fetchInGuest(harness));
     expect(refused.code).toBe('FETCH_NOT_ALLOWED');
-    // the guest is told what it is told for any unlisted origin (broad review CB6): nothing says which origin embeds it
+    // the guest is told what it is told for any unlisted origin (BR:CB6): nothing says which origin embeds it
     expect(refused.message).toBe(`[sandboxFetch] FETCH_NOT_ALLOWED: ${ORIGIN} is not in fetchBridge.allow`);
     expect((await sandbox.waitForFetch(harness)).reason).toContain("host page's own origin");
 

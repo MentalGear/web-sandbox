@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 /**
- * R4-5, the owner's decision after review round 1 (docs/archive/reviews/REVIEW-ROUND-1-2026-10-15.md, "Awaiting the owner"):
+ * R1:R4-5, the owner's decision on an open finding:
  * three public names. viewScriptHash() for an embedder's own Content-Security-Policy, and sandboxView.text() and
  * sandboxView.set(), so a strict guest updates text and form controls without hand-escaping markup or re-rendering. The
- * browsers' side is test/e2e/owner-decisions.spec.ts ("R4-5"), on all three engines.
+ * browsers' side is test/e2e/allow-forms-and-view-writes.spec.ts (R1:R4-5), on all three engines.
  */
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
@@ -41,7 +41,7 @@ describe('R4-5: viewScriptHash(), the view bootstrap\'s hash source for an embed
 });
 
 // The strict worker's prelude, run as stringified against stand-ins for the worker's platform (as in
-// review-round-1.test.ts): a trusted INIT_WORKER hands it a render port whose posts are recorded, and the view's acks
+// relay-and-rpc-budgets.test.ts): a trusted INIT_WORKER hands it a render port whose posts are recorded, and the view's acks
 // are delivered by hand. One message is in flight at a time (A4).
 class FakeEvent {
     stopImmediatePropagation() {}

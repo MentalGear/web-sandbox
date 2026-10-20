@@ -4,7 +4,7 @@ import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from 
 /**
  * The worker globals allowlist (VR:V1), on a stand-in global shaped like a worker's
  * (measured: interfaces own, the scope's attributes and operations on its prototypes). The e2e spec
- * (test/e2e/verification.spec.ts) runs it in real workers on Chromium, Firefox and WebKit.
+ * (test/e2e/worker-globals-and-termination.spec.ts) runs it in real workers on Chromium, Firefox and WebKit.
  */
 
 // The function as the worker gets it: stringified, run on a stand-in global.

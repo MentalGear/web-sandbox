@@ -7,7 +7,7 @@ import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_BYTES_PER_SECOND, LOG_DROPPED_ARGUMENT, LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_BYTES, LOG_MAX_STRING, toLogDetail } from '@src/lib/sandbox-log';
 
 /**
- * Fresh review round 1 (docs/archive/reviews/REVIEW-ROUND-1-2026-10-15.md): the findings library logic decides, each
+ * Findings of R1 that library logic decides, each
  * reproduced here first. The bootstrap runs against stand-in ports whose postMessage structured-clones the frame, as
  * a browser's does, so a frame clone refuses throws DataCloneError here too.
  */
@@ -94,7 +94,7 @@ function cooperativeComms(console = silentConsole()) {
 describe('R4-1: the console relay never throws; what clone refuses crosses as its kind', () => {
     for (const [mode, start] of [['strict', strictComms], ['cooperative', cooperativeComms]] as const) {
         // DOM nodes, Events and Responses are the browser's to refuse (jsdom's clone as plain objects): e2e,
-        // review-round-1.spec.ts, on all three engines
+        // relay-and-rpc-budgets.spec.ts, on all three engines
         it(`${mode}: functions, Symbols, Proxies, WeakMaps, Promises and objects holding them`, () => {
             const { console, lines } = start();
             const values: unknown[] = [() => 1, Symbol('s'), new Proxy({}, {}), new WeakMap(), Promise.resolve(1), { f() {} }, 'kept', 7];
@@ -118,7 +118,7 @@ describe('R4-1: the console relay never throws; what clone refuses crosses as it
 
 describe('R4-2, R4-6, R4-7: uncaught errors and rejections are log lines; errors and the other console methods relay', () => {
     // Events as the platform makes them: their fields are getters of the interface's prototype, which the bootstrap
-    // captures before guest code and reads through (review round 5, N-6), and isTrusted an own property.
+    // captures before guest code and reads through (R5:N-6), and isTrusted an own property.
     const trusted = (fields: Record<string, unknown>, isTrusted = true) => ('reason' in fields ? new FakeRejectionEvent(fields, isTrusted) : new FakeErrorEvent(fields, isTrusted));
 
     it('cooperative (and worker) mode: an uncaught error is one "Uncaught …" line, whatever the engine puts first; a muted one says what the browser gave; a synthetic one is not relayed', () => {
@@ -259,7 +259,7 @@ describe('R3-3: one byte budget per RPC message, and per channel in flight', () 
         await Promise.resolve();
         await Promise.resolve();
         expect(method).toHaveBeenCalledTimes(2);
-        expect(answers.map(a => [a.id, a.code])).toEqual([[1, 'ARGS_NOT_TRANSFERABLE'], [4, 'BUSY']]); // review round 4, C-5
+        expect(answers.map(a => [a.id, a.code])).toEqual([[1, 'ARGS_NOT_TRANSFERABLE'], [4, 'BUSY']]); // R4:C-5
     });
 
     it('a result past the budget is answered RESULT_NOT_TRANSFERABLE; a response past it is not handed over', async () => {
@@ -541,7 +541,7 @@ describe('R2-5: worker mode removes WebAssembly unless scriptUnsafe, as strict m
             const removal = source.indexOf('function removeWebAssembly');
             expect(removal >= 0, String(scriptUnsafe)).toBe(!scriptUnsafe);
             if (!scriptUnsafe) {
-                // the allowlist runs first, as the argument of the function the rest runs in (review round 4, M-1), whose
+                // the allowlist runs first, as the argument of the function the rest runs in (R4:M-1), whose
                 // first statement is the removal
                 expect(source.indexOf('(function (g, postToFrame) {(function removeWebAssembly')).toBeGreaterThan(0);
                 expect(source.indexOf('keepOnlyWorkerGlobals')).toBeGreaterThan(source.lastIndexOf('})(this, ('));

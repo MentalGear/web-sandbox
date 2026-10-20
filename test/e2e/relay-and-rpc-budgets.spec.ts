@@ -6,8 +6,8 @@ import { busyShare, describeShare, MARGIN } from './host-share';
 const recorder = useRecorder();
 
 /**
- * Fresh review round 1 (docs/archive/reviews/REVIEW-ROUND-1-2026-10-15.md): the findings where the browser decides, on
- * Chromium, Firefox and WebKit. Each test failed at 5ede7ba. Evidence: what the host page's sandbox-log listener
+ * Findings of R1 where the browser decides, on
+ * Chromium, Firefox and WebKit. Evidence: what the host page's sandbox-log listener
  * receives (the harness), and host-page timing measured in the host page.
  */
 
@@ -150,9 +150,9 @@ test.describe('R2-2 (cooperative-mode limit, measured): a script-synthesized mod
     // opens a new tab at the guest's URL (no user gesture needed while its popup blocker is off, as in Playwright), and
     // for the form it skips form-action 'none', so the form's fields reach the listener; Firefox opens the link only
     // within a user's transient activation (after any click in the guest), never the form; Playwright's WebKit opens
-    // none (it opens no tab for a user's own Ctrl+click either: verification.spec.ts, V3's control, a measurement
+    // none (it opens no tab for a user's own Ctrl+click either: worker-globals-and-termination.spec.ts, V3's control, a measurement
     // limit). No capability is involved for the link: no allow-popups. The form needs allow-forms, which is therefore an
-    // unsafe capability (the owner's decision on R2-2): `capabilities` drops it, only `unsafeCapabilities` grants it.
+    // unsafe capability (the owner's decision on R1:R2-2): `capabilities` drops it, only `unsafeCapabilities` grants it.
     // Strict mode has no guest script in its view, so nothing can synthesize a click there; the view also ignores
     // synthetic events (ADR-005).
     const LINK = (origin: string) => `<a id="l" href="${origin}/r22-link">l</a><div id="g" style="width:300px;height:100px;background:#ccc">g</div>`;

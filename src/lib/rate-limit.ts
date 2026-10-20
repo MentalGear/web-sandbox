@@ -21,7 +21,7 @@
  *
  * Auto-sizing (auto-resize.ts) does not use it: it never refuses a report, it delays the newest one, and spacing
  * its writes at least 1000 / AUTO_RESIZE_MAX_UPDATES_PER_SECOND ms apart already gives the same window property
- * (asserted in test/unit/focused-review.test.ts, FR:W2).
+ * (asserted in test/unit/rate-limits-and-config.test.ts, FR:W2).
  *
  * A weight is a finite number ≥ 0 (isWeight), and anything else is refused, by admit() and fits() alike, recording
  * nothing (S61; research 17, P3 and P5b; class C, a caller value checked against the domain of the rule). The

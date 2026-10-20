@@ -2,11 +2,11 @@ import { test, expect } from './fixture';
 import { fromPreset } from './presets';
 
 /**
- * workerExecutionTimeout (backlog B8; ADR-003 amendments 2026-10-14): each execute() gets its own deadline, at which
- * the guest's event loop must be free (focused review F2: the host pings, only a free loop answers), and a loop still
+ * workerExecutionTimeout (BL:B8; ADR-003): each execute() gets its own deadline, at which
+ * the guest's event loop must be free (FR:F2: the host pings, only a free loop answers), and a loop still
  * busy then ends the sandbox with a 'terminated' event, like the watchdog. Evidence: the element's state and
  * events, and the guest's own globals (an environment that was rebuilt has lost them). The evasions (a scheduled
- * loop, a replaced Function) are in focused-review.spec.ts.
+ * loop, a replaced Function) are in inert-files-and-smil.spec.ts.
  */
 
 const preset = fromPreset('worker-timeout');

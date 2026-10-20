@@ -6,7 +6,7 @@ import { VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS } from '@src/lib/i
 import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
 
 /**
- * Broad review 2026-10-14, strict mode (docs/archive/reviews/BROAD-REVIEW-2026-10-14.md, reviewer C), where browser
+ * The strict renderer and view (each label below is cited as BR:<label>), where browser
  * behaviour decides:
  *   allowlist  the renderer keeps only allowlisted elements and attributes: what it does not know is gone before
  *              insertion, in every namespace;
@@ -17,7 +17,7 @@ import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
  *              acknowledged, so the next one still applies;
  *   ST3        one event detail carries at most VIEW_RENDER_MAX_LENGTH characters in all, and says when it was cut;
  *   ST4        an entry that closes its scope cannot take over the marker that ends the entry phase.
- * Evidence (T5): the view's DOM read from outside (strict-view.ts), host lag measured on the host page, new pages
+ * Evidence (T5): the view's DOM read from outside (strict-view.ts), host lag read on the host page, new pages
  * read from outside, the recorder's listener, the host's own record of bridge calls; a positive control beside each
  * negative.
  */
@@ -49,7 +49,7 @@ const b64 = (text: string) => Buffer.from(text, 'utf8').toString('base64');
 
 test.describe('the renderer is an allowlist', () => {
     test('elements and attributes outside the allowlist are gone before insertion, in every namespace: unknown HTML elements are unwrapped, unknown SVG and MathML elements removed with their content', async ({ sandbox, page, browserName }) => {
-        // x.example admitted for images: an image URL the policy refuses is dropped before insertion (review round 4, M-2)
+        // x.example admitted for images: an image URL the policy refuses is dropped before insertion (R4:M-2)
         expect(await sandbox.mount(strict({ origins: { images: ['https://x.example'] } }))).toBe('ready');
         const corpus = [
             '<svg id="s" width="10" height="10"><use id="use" href="#r"/><rect id="r" width="5" height="5" fill="url(https://x.example/p.svg#p)" stroke="url(#g)" cursor="url(https://x.example/c.png), auto"/>'
@@ -310,7 +310,7 @@ test(`ST3: a submitted form's detail carries at most ${MAX_DETAIL} characters in
     test.setTimeout(60000);
     await sandbox.page.evaluate(() => { (window as any).details = []; });
     await sandbox.exposeHost('report', `(d) => { const strings = [d.target.tag, d.target.id, d.target.name, d.target.value, ...d.ids, ...(d.form || []).flat()]; window.details.push({ chars: strings.join('').length, fields: (d.form || []).length, truncated: d.truncated === true, keys: Object.keys(d).sort().join(' ') }); return true; }`);
-    // 15 fields of 60 000 characters: past the detail's budget, within the view's (VIEW_MAX_CHARACTERS, review round 1, R1-1)
+    // 15 fields of 60 000 characters: past the detail's budget, within the view's (VIEW_MAX_CHARACTERS, R1:R1-1)
     const slots = Array.from({ length: 15 }, (_, i) => `<span id="slot-${i}"></span>`).join('');
     await sandbox.registerFiles({ 'main.js': `
         sandboxView.render('<form id="big">${slots}<button id="send" style="position:absolute;left:0;top:0;width:80px;height:30px">send</button></form><form id="small" style="position:absolute;left:0;top:60px"><button id="send2" style="width:80px;height:30px">send</button><input name="q" value="hello"></form><span id="tail"></span>');

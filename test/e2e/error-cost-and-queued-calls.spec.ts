@@ -5,13 +5,12 @@ import type { Page } from '@playwright/test';
 import { busyShare, describeShare, floodControl, interleavedShare, pausableFlood } from './host-share';
 
 /**
- * Review round 5: the findings where the browser decides, on Chromium, Firefox and WebKit. Each names its class
- * (docs/research/18_finding_classes/README.md), and each test failed at 60814b5 (the measurements say so where they are
- * the evidence). The library's own logic is unit-tested in test/unit/review-round-5.test.ts; the egress table's
+ * Findings of R5 where the browser decides, on Chromium, Firefox and WebKit. Each names its class
+ * (docs/research/18_finding_classes/README.md). The library's own logic is unit-tested in test/unit/call-settling-and-read-once.test.ts; the egress table's
  * enumeration of every engine's surfaces is test/e2e/egress.spec.ts.
- *   N-1  unhandled rejections in a loop kept Firefox's host page 99% busy (E-cpu)
- *   L-1  a call made while loading that timed out before `ready` still ran (L)
- *   N-4  a removal of a file the host unregistered after the build left the view showing it (D)
+ *   R5:N-1  unhandled rejections in a loop keep Firefox's host page 99% busy unless bounded (E-cpu)
+ *   R5:L-1  a call made while loading that times out before `ready` never runs (L)
+ *   R5:N-4  a removal of a file the host unregistered after the build shows in the view (D)
  */
 
 // What the host page's thread had left: its busy share against its own idle baseline (./host-share.ts). The floods
@@ -45,13 +44,13 @@ const FOR_5_SECONDS = (setup: string, tick: string) => pausableFlood(setup, tick
 
 test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the host page a bounded share, or end the sandbox', () => {
     // The reviewers' flood: a rejection of 16 Mi characters per timer tick. Firefox reports each to the host page's
-    // thread whether or not it is cancelled (measured: 99% busy at 60814b5, and with the guest cancelling every one);
+    // thread whether or not it is cancelled (99% busy unbounded, and with the guest cancelling every one);
     // past the budget the sandbox ends.
     const FLOODS: Record<string, string> = {
         'rejections of 16 Mi characters': FOR_5_SECONDS(`const big = 'x'.repeat(2 ** 24);`, `() => { Promise.reject(new Error(big)); }`),
         'small rejections, 100 per tick': FOR_5_SECONDS('', `() => { for (let i = 0; i < 100; i++) Promise.reject(new Error('x')); }`),
         'small rejections handled a tick later (rejectionhandled), 100 per tick': FOR_5_SECONDS('', `() => { for (let i = 0; i < 100; i++) { const p = Promise.reject(new Error('x')); setTimeout(() => p.catch(() => {}), 0); } }`),
-        // errors, which the worker cancels once relayed (review round 4, M-1), count against the same budget
+        // errors, which the worker cancels once relayed (R4:M-1), count against the same budget
         'uncaught errors of 16 Mi characters': FOR_5_SECONDS(`const big = 'x'.repeat(2 ** 24);`, `() => { reportError(new Error(big)); }`),
         'small uncaught errors, 100 per tick': FOR_5_SECONDS('', `() => { for (let i = 0; i < 100; i++) reportError(new Error('x')); }`),
     };
@@ -79,7 +78,7 @@ test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the ho
     }
 
     // Within the budget the sandbox stays, and the host page is near idle: rejections cancelled once relayed, so Chromium
-    // no longer reports them on its page (it did: 11-39% busy at 60814b5), and Firefox's report stays small.
+    // reports none on its page (uncancelled it is 11-39% busy), and Firefox's report stays small.
     for (const mode of ['worker', 'strict'] as const) {
         test(`${mode} mode, within the budget (300 rejections of 2 Ki characters per second, each handled a tick later): the sandbox stays, the host page near idle, every rejection relayed`, async ({ sandbox, page, browserName }) => {
             test.setTimeout(60000);
@@ -107,10 +106,10 @@ test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the ho
 
 test.describe('L-1 (L): queued calls are posted only when the build is ready', () => {
     // The owner's repro: a call made at once after setConfig() with a large view. When its timeout falls between the
-    // wrapper's load and the view's check-in (the window the large view widens), the call timed out and still ran at
-    // 60814b5: strict mode had flushed the queue at the load. The window's place differs per run and engine, so the call
+    // wrapper's load and the view's check-in (the window the large view widens), the call times out and must not run:
+    // the queue is flushed at `ready`, not at the load. The window's place differs per run and engine, so the call
     // is made with several timeouts, one build each, and every call that timed out before its build's `ready` is checked;
-    // a call that timed out after `ready` had been posted, and may run (it was no longer queued).
+    // a call that timed out after `ready` had been posted may run (it is not in the queue).
     test("strict mode, the owner's repro: a call that times out before `ready` never runs, at any timeout", async ({ sandbox, page, browserName }) => {
         test.setTimeout(90000);
         await sandbox.registerFiles({ 'main.js': `bridge.expose('m', (text) => console.log('L1 ' + text));` });

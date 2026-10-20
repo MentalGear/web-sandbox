@@ -1,5 +1,5 @@
 /**
- * Helpers for the policy tests of the adversarial review 2026-10 (A1): a browser's reading of a policy string,
+ * Helpers for the policy tests (AR:A1): a browser's reading of a policy string,
  * and a seeded source of injection-shaped strings. Not a test file itself.
  */
 /** A policy as a browser reads it (CSP Level 3, 2.2.1): ';'-separated, names lower-cased, the first occurrence wins. */

@@ -12,8 +12,8 @@ import { deepMerge } from '@src/lib/utils';
 import { prng } from './policy-helpers';
 
 /**
- * Focused review 2026-10-14 (docs/archive/reviews/FOCUSED-REVIEW-2026-10-14.md), host and library side: the guarantees
- * that only library logic decides. The browser halves are in test/e2e/focused-review.spec.ts.
+ * Rate limits and config hardening (FR:W1 to FR:F6), host and library side: the guarantees
+ * that only library logic decides. The browser halves are in test/e2e/inert-files-and-smil.spec.ts.
  */
 
 async function mount(config?: Record<string, unknown>) {
@@ -188,7 +188,7 @@ describe('W4: sandboxFiles.write() and remove() always return a promise', () => 
         expect(() => { result = api.write('a.txt', proxy); }).not.toThrow();
         expect(result).toBeInstanceOf(Promise);
         await expect(result).rejects.toMatchObject({ name: 'TypeError' });
-        // sandboxFiles tells content apart by brand checks (review round 2, C-1), which run no trap; reading the entry does
+        // sandboxFiles tells content apart by brand checks (R2:C-1), which run no trap; reading the entry does
         const hostile = new Proxy({}, { get() { throw new Error('trap'); } });
         await expect(api.write('b.txt', hostile)).rejects.toThrow('trap');
         expect(sent).toEqual([]);
@@ -210,7 +210,7 @@ describe('F3: a reason, event or host line never carries the text of a caught er
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount();
         const reasons = terminations(el);
-        // each build's 'terminated' comes in a task of its own (review round 1, R3-2), so each is awaited
+        // each build's 'terminated' comes in a task of its own (R1:R3-2), so each is awaited
         const settled = () => new Promise(resolve => setTimeout(resolve, 0));
         el.setConfig({ html: 'x', hook: function hook() { return SECRET; } });
         await settled();
@@ -266,7 +266,7 @@ describe('F3: a reason, event or host line never carries the text of a caught er
 });
 
 describe('F4: no config transform writes a config-derived key by assignment', () => {
-    // An own "__proto__" key, as JSON.parse and structured clone produce it (review B8), at the top level.
+    // An own "__proto__" key, as JSON.parse and structured clone produce it (AR:B8), at the top level.
     const injected = () => JSON.parse('{"__proto__": {"scripts": ["https://evil.example"], "images": ["https://evil.example"]}, "images": ["https://a.example"], "img-src": ["https://evil.example"]}');
     const steps: [string, (input: any) => unknown][] = [
         ['parseOrigins', (d) => parseOrigins(d, 'cooperative', () => {})],
@@ -334,7 +334,7 @@ describe('F6: a refused config is never stored', () => {
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         el.setConfig({ mode: 'strict', origins: null });
-        await new Promise(resolve => setTimeout(resolve, 0)); // a build's 'terminated' comes in a task (review round 1, R3-2)
+        await new Promise(resolve => setTimeout(resolve, 0)); // a build's 'terminated' comes in a task (R1:R3-2)
         expect(reasons).toEqual(['the configuration could not be used (TypeError)']);
         expect([el._config.mode, el._config.watchdogTimeout, el._config.workerExecutionTimeout, el._origins.images]).toEqual(['worker', 9, 7, ['https://kept.example']]);
     });
@@ -347,7 +347,7 @@ describe('F6: a refused config is never stored', () => {
         for (const mode of ['cooperative', 'worker', 'strict']) {
             for (const value of [null, 'https://a.example', ['x'], 5, { images: 'https://a.example' }, { connect: null }]) {
                 el.setConfig({ mode, origins: value });
-                await new Promise(resolve => setTimeout(resolve, 0)); // each build's 'terminated' in a task (R3-2)
+                await new Promise(resolve => setTimeout(resolve, 0)); // each build's 'terminated' in a task (R1:R3-2)
             }
         }
         expect(reasons).toEqual(new Array(18).fill('the configuration could not be used (TypeError)'));
