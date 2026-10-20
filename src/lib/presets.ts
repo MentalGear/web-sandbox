@@ -487,7 +487,7 @@ console.log('TEST_DONE');`,
             "textarea": `<textarea><head></textarea>`,
             "plaintext": `<plaintext>`,
         },
-        // markup runs with allow-scripts; nothing here evaluates strings, so no scriptUnsafe (broad review I2)
+        // markup runs with allow-scripts; nothing here evaluates strings, so no scriptUnsafe (BR:I2)
         rules: { mode: "cooperative", capabilities: ["allow-scripts"] }
     },
     "form-action-exfil": {
@@ -502,7 +502,7 @@ console.log('TEST_DONE');`,
   <input name="stolen" value="session-secret">
 </form>
 <script>document.getElementById('f').submit();</script>`,
-        // allow-forms is an unsafe capability (review round 1, R2-2): without it no submission starts at all, and the
+        // allow-forms is an unsafe capability (R1:R2-2): without it no submission starts at all, and the
         // attack would prove nothing about form-action
         rules: { mode: "cooperative", capabilities: ["allow-scripts"], unsafeCapabilities: ["allow-forms"] }
     },

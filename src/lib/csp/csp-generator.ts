@@ -32,9 +32,9 @@ import type { OriginKind, OriginPolicy } from "./origins";
  *     file is admitted exactly for the loads that may name it (ADR-004). Strict mode never puts blob: in
  *     script-src: its view runs no guest script and its worker is classic.
  *   - worker-src blob: alone: the library's workers start from blob: URLs, and WebKit ran a data: SharedWorker
- *     outside the policy (broad review PD1). frame-src, object-src, base-uri, form-action and manifest-src 'none'
+ *     outside the policy (BR:PD1). frame-src, object-src, base-uri, form-action and manifest-src 'none'
  *     (research 12, S9). No 'self' anywhere: browsers disagree on what it matches for the guest's opaque origin
- *     (S14). No data: anywhere: a data: SVG opened in a new tab runs script (ST1); registered files cover the need.
+ *     (S14). No data: anywhere: a data: SVG opened in a new tab runs script (BR:ST1); registered files cover the need.
  *   - upgrade-insecure-requests: a plain-http origin (loopback only) still loads, upgraded where the engine does so.
  *   - prefetch-src is not emitted: it is not a CSP Level 3 directive (Chromium warns about it); any engine that
  *     still reads it falls back to default-src 'none'.

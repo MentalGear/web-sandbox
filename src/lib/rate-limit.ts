@@ -1,11 +1,11 @@
 /**
- * The one rate limiter of the library's per-second limits that refuse (focused review 2026-10-14, W2): guest log
+ * The one rate limiter of the library's per-second limits that refuse: guest log
  * lines (sandbox-log.ts), guest writes, by count and by bytes (guest-writes.ts), and the calls the guest makes, by
- * count and by bytes (host.ts; review round 3, M-2).
+ * count and by bytes (host.ts; R3:M-2; FR:W2).
  *
  * The documented property is "at most `limit` in any one-second window", and a sliding window is what makes it
- * hold. The earlier limiters counted in fixed windows that a first event opened: a guest that filled the end of
- * one window and the start of the next got twice the limit through in a few milliseconds (199 of 100 writes,
+ * hold. A fixed window that a first event opens does not hold it: a guest that fills the end of
+ * one window and the start of the next gets twice the limit through in a few milliseconds (199 of 100 writes,
  * 1999 of 1000 log lines), which no reading of "per second" allows. A token bucket would not hold it either: a
  * full bucket plus its refill admits up to twice the capacity in one window.
  *
@@ -21,12 +21,12 @@
  *
  * Auto-sizing (auto-resize.ts) does not use it: it never refuses a report, it delays the newest one, and spacing
  * its writes at least 1000 / AUTO_RESIZE_MAX_UPDATES_PER_SECOND ms apart already gives the same window property
- * (asserted in test/unit/focused-review.test.ts, W2).
+ * (asserted in test/unit/focused-review.test.ts, FR:W2).
  *
  * A weight is a finite number ≥ 0 (isWeight), and anything else is refused, by admit() and fits() alike, recording
- * nothing (backlog S61; research 17, P3 and P5b; class C, a caller value checked against the domain of the rule). The
- * arithmetic above holds only over that domain: a weight of NaN made `total + weight > limit` false, so the host admitted
- * it, while the guest's copy of the rule, which asks `total + weight <= limit`, refused it; a negative weight was
+ * nothing (S61; research 17, P3 and P5b; class C, a caller value checked against the domain of the rule). The
+ * arithmetic above holds only over that domain: a weight of NaN makes `total + weight > limit` false, so the host would admit
+ * it, while the guest's copy of the rule, which asks `total + weight <= limit`, refuses it; a negative weight would be
  * admitted and recorded nothing, so it took nothing from the window either way, which no reading of "weight" allows.
  * Both are latent: every caller passes a count or a measure. The guest's copy (in-sandbox-script.ts, slidingWindow)
  * spells out the same expression, since it is stringified and may call nothing of this module; a unit test keeps the

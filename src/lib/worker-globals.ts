@@ -1,6 +1,5 @@
 /**
- * What guest code may find on a worker's global object, in worker mode and in strict mode (independent verification
- * 2026-10-14, V1; ADR-005 G4 amendment).
+ * What guest code may find on a worker's global object, in worker mode and in strict mode (VR:V1; ADR-005 G4 amendment).
  *
  * Why an allowlist. A worker inherits its creator's policy, and connect-src is meant to govern every request it
  * makes, but an engine can miss one of its network APIs: Firefox (146) sent `new EventSource(url)` from a worker to
@@ -23,7 +22,7 @@
  * this prelude never reaches), the RTC interfaces, MediaSource, BackgroundFetch, Reporting. On the navigator:
  * `serviceWorker` and `connection`.
  *
- * Absent too, the worker's own channel to its parent (review round 4, M-1): `postMessage`, `onmessage` and
+ * Absent too, the worker's own channel to its parent (R4:M-1): `postMessage`, `onmessage` and
  * `onmessageerror`. A dedicated worker's postMessage reaches the Worker object in the document that made it (worker
  * mode's hidden frame, strict mode's view), and that document runs on the host page's thread in Firefox and WebKit:
  * every message is deserialized there, outside every budget the library keeps (measured with four 8 MiB messages per
@@ -99,7 +98,7 @@ export const WORKER_NAVIGATOR_MEMBERS: readonly string[] = [
  * Deletes every global of the worker that is not in `allowed`, and every member of its navigator's prototype that is
  * not in `navigatorMembers`, before any other script of the library or the guest runs in the worker. Stringified
  * into the worker's source (host.ts); self-contained, and it reaches nothing but `g`, the object literals' own
- * Object, and the arguments. The global's names live in two places, measured on all three engines: interfaces (and a
+ * Object, and the arguments. The global's names live in two places (all three engines): interfaces (and a
  * few members) are own properties of the global object, the scope's attributes and operations (`fetch`, `fonts`,
  * `caches`, `importScripts`, …) are on DedicatedWorkerGlobalScope.prototype and WorkerGlobalScope.prototype; both are
  * pruned, up to EventTarget.prototype (its methods are listeners, nothing more).

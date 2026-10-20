@@ -41,8 +41,7 @@ import { parseInert } from "./trusted-types";
  * reference with a CSS string, `"<sentinel>"`, and its part tells the bootstrap to escape the blob: URL
  * for a CSS string (and then for the attribute, in a `style` attribute) rather than for an attribute.
  *
- * Every reference names a file only for the kind of load it makes (load-kinds.ts; focused review 2026-10-14,
- * W1): `<script src>` only JavaScript, `<link rel=stylesheet>` only CSS, `<img>` only images, and so on. A
+ * Every reference names a file only for the kind of load it makes (load-kinds.ts; FR:W1): `<script src>` only JavaScript, `<link rel=stylesheet>` only CSS, `<img>` only images, and so on. A
  * reference to a file of another type is left as written and fails closed, with one warning: a classic
  * `<script src="blob:…">` runs whatever the blob's type, so the type the store gave a file has to be decided here.
  *
@@ -118,7 +117,7 @@ export function virtualPathOf(value: string, baseUrl: string): string | null {
  * VIRTUAL_DOCUMENT_URL), for a load of `kinds`, or null: the one place a reference is resolved, for markup here
  * and for inline CSS (stylesheets resolve in files.ts with the same table).
  *
- * The file's type must be admitted for every kind (load-kinds.ts, focused review 2026-10-14, W1). A registered file
+ * The file's type must be admitted for every kind (load-kinds.ts, FR:W1). A registered file
  * of another type is not named: `onMismatch` hears of it, and the reference is left as written (fails closed).
  *
  * Resolution is the URL parser's, as a browser would do it: `logo.svg`, `./logo.svg`, `/logo.svg`,

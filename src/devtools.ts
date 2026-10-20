@@ -38,7 +38,7 @@ export class SandboxDevTools {
         this._active = false;
     }
 
-    // Robust against any detail (review B3): the element normalises every line (src/lib/sandbox-log.ts), but this
+    // Robust against any detail (AR:B3): the element normalises every line (src/lib/sandbox-log.ts), but this
     // class may be pointed at anything that dispatches 'sandbox-log', so it checks again and never throws. The
     // logged values go after a fixed first argument, so a guest string is never read as a console format string
     // (no %c styling of host console lines).

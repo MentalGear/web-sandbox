@@ -61,7 +61,7 @@ describe('inSandboxFiles (the guest bootstrap, run from its source text)', () =>
         const at = (text: string) => new TextEncoder().encode(source.slice(0, source.indexOf(text))).length;
         const edits = [at("'./a.js'"), at("'./a.js'") + 8, '"https://vfs.invalid/a.js"', at("'./b.js'"), at("'./b.js'") + 8, '"https://vfs.invalid/b.js"'];
         // jsdom's Blob has no arrayBuffer(): give it one (through FileReader) for this read() only, before the store
-        // captures it (review round 2, C-1: sandboxFiles uses what it took before any guest code ran)
+        // captures it (R2:C-1: sandboxFiles uses what it took before any guest code ran)
         const original = Blob.prototype.arrayBuffer;
         Blob.prototype.arrayBuffer = function (this: Blob) { return bytesOf(this).then(b => new Uint8Array(b).buffer); };
         try {
