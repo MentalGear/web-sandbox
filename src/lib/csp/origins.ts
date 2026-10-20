@@ -54,8 +54,8 @@ export function originRules(kind: OriginKind): OriginRules {
 const isKind = (key: string): key is OriginKind => (ORIGIN_KINDS as readonly string[]).includes(key);
 
 // An entry as it may appear in a warning: a string clamped and JSON-quoted (control characters show), else its type.
-// Every config warning shows a value through it (review round 1, R1-3: JSON.stringify of a BigInt or a cyclic entry
-// threw, and refused the whole config).
+// Every config warning shows a value through it (R1:R1-3): JSON.stringify of a BigInt or a cyclic entry would throw
+// and refuse the whole config.
 export const shown = (value: unknown) => (typeof value === 'string' ? JSON.stringify(value.slice(0, 64)) : `a value of type ${value === null ? 'null' : typeof value}`);
 
 /** The empty policy: no origin for any kind. */

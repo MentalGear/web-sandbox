@@ -6,8 +6,7 @@ const CSP = "default-src 'none';";
 // parse the way the browser will: the HTML parser, not string matching
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
 
-// The guest document's security block as the element writes it: the policy, the DNS-prefetch switch (broad review
-// PD3), then the bootstrap. Returns the head's children without the switch, after checking it is the second one.
+// The guest document's security block as the element writes it: the policy, the DNS-prefetch switch (BR:PD3), then the bootstrap. Returns the head's children without the switch, after checking it is the second one.
 const DNS_PREFETCH_OFF = '<meta http-equiv="x-dns-prefetch-control" content="off">';
 const securityChildren = (doc: Document): Element[] => {
     const children = [...doc.head.children];

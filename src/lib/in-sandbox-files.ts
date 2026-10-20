@@ -57,16 +57,16 @@ import type { FileSnapshotEntry } from './files';
  *   - removing a path the host holds in neither its store nor the guest's writes rejects NOT_FOUND, minted
  *     here from the host's answer.
  */
-// `urlTypes` (strict mode's worker, review round 1 R2-4): the only types url() mints a URL for, VIEW_FILE_TYPES. A URL
+// `urlTypes` (strict mode's worker, R1:R2-4): the only types url() mints a URL for, VIEW_FILE_TYPES. A URL
 // the worker minted reaches the view only as a string in rendered markup, and the view admits it as an image only for
 // a type it would show itself: a URL for any other type (an SVG) is one the view could be made to load as CSS. Any other
 // file is read() and text() only; url() of it is NOT_FOUND. Null or absent: every file gets one (cooperative, worker).
 export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((request: unknown) => Promise<unknown>) | null, urlTypes?: readonly string[] | null) {
-    // ---- The captured list (review round 2, C-1): sandboxFiles' methods run whenever guest code calls them, so what they
+    // ---- The captured list (R2:C-1): sandboxFiles' methods run whenever guest code calls them, so what they
     // use is taken here, before any guest code runs, and nothing below reads a global or a prototype guest code can
     // replace (a unit test scans the text). Promises are made with the captured Promise and chained with the captured
     // `then`, and this code never uses the promise a `then` returns. Two lookups of the realm stay reachable all the same
-    // (review round 3, C-5): `then` makes the promise it returns through the species constructor, read from
+    // (R3:C-5): `then` makes the promise it returns through the species constructor, read from
     // `Promise.prototype.constructor[Symbol.species]`, and resolving with an object reads its `then`, inherited from
     // `Object.prototype` when guest code put one there. Both run guest code that can change only what the guest's own
     // sandboxFiles calls resolve with, in its own realm.
@@ -276,7 +276,7 @@ export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((requ
         let ready: Uint8Array<ArrayBuffer> | Promise<Uint8Array<ArrayBuffer>> | null;
         let type: unknown;
         let wrapped: boolean;
-        // Everything that inspects the guest's entry runs inside the try (focused review 2026-10-14, W4): a brand
+        // Everything that inspects the guest's entry runs inside the try (FR:W4): a brand
         // check on a Proxy can throw, and write() must reject then, never throw where the caller awaits a promise.
         try {
             wrapped = !isContent(entry);

@@ -114,7 +114,7 @@ describe('createFetchBridge (backlog B5)', () => {
         return { response: new Response(body, init), state };
     }
 
-    // fetch() is given the Request the bridge built (review B6): the calls record what it carries.
+    // fetch() is given the Request the bridge built (AR:B6): the calls record what it carries.
     function bridgeWith(fetchImpl: (request: Request) => Promise<Response>, overrides: Record<string, unknown> = {}) {
         const records: FetchRecord[] = [];
         const calls: { url: string; init: RequestInit; request: Request }[] = [];
