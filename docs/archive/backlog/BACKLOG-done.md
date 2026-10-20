@@ -16,7 +16,7 @@ authority. IDs such as `S6`, `T4` and `BL:B5` resolve here through [ids.ts](../.
 | Private `MessageChannel` transport | ✅ implemented, iframe + worker; taken only from the host's INIT_PORT, never reachable by guest code, only the current environment's port heard (S21) |
 | Promise-based RPC, both directions | ✅ `src/lib/rpc.ts`, allowlist-only, iframe + worker (B1); every refusal carries a code the other side cannot forge (B7); at most 256 inbound calls in flight per environment, then `BUSY` (S22) |
 | Host-mediated network | ✅ opt-in `fetchBridge`: `sandboxFetch()` under the bridge discipline, every request logged as a `fetch` event, refusals coded (B5, [ADR-006](../../ADR-006-fetch-bridge.md)) |
-| Modes | ✅ `'strict'` (the default), `'cooperative'` (cooperative content; its limits a frozen list, S44) and `'worker'` (frozen; to be folded into strict mode, S49); `'iframe'` was renamed `'cooperative'` and fails closed with a reason that says so (S48, [ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen)) |
+| Modes | ✅ `'strict'` (the default), `'cooperative'` (cooperative content; its limits a frozen list, S44) and `'worker'` (frozen; to be folded into strict mode, S49); `'iframe'` was renamed `'cooperative'` and fails closed with a reason that says so (S48, [ADR-005 amendment](../adr/ADR-005-history.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen)) |
 | Limits | **Strict mode, every default user**: host-page availability wherever the view shares the host's thread (S42, S52), CSS within the policy, worker violation reports per engine and guest-influenced, a worker that closes itself, memory, same-site cookies on requests to allowed origins (every mode). **Cooperative mode only**, a frozen list (no new guest-realm patches; new findings are documented here): S6 same-thread execution, S8, S13, S15, S17, S18, S35's and S36's residuals, forgeable violation reports, CB3-class guest-only stalls (S44) |
 | Worker-mode isolation | ✅ worker spawned inside the sandbox frame (S1); it keeps only allowlisted globals, so every request it can make goes through `fetch`, `XMLHttpRequest`, `WebSocket` or `importScripts`, each governed by the policy on every engine (S43) |
 | Lifecycle & events | ✅ `state`, `terminate()`, `reset()`, teardown on removal (B2); `sandbox-log` dispatched on the element and bubbling (B3), normalised, labelled `guest`/`host` and rate-limited (S22); `violation` for refused loads, capped per environment (S5; per directive for the strict view, S24); a listener's `reset()`/`terminate()` is never undone, through one helper (S22); every build failure, and every config that cannot be used, is a termination with a reason, and the config is a copy (S26); `workerExecutionTimeout` requires a free event loop at each `execute()` deadline, else terminates (B8, S30); `ready` is the guest's check-in, never its subresources, with its calls and `execute()` held in the guest until its document is parsed (S46) |
@@ -54,7 +54,7 @@ The adversarial review of 2026-10-14 ([report](../reviews/ADVERSARIAL-REVIEW-202
 Its follow-up audit the same day made C1 and C4 (S24) hold by construction, added and closed S26, and closed B8; S24's C5 was closed
 by option B (inert link hrefs), approved by the owner.
 D3 was done on 2026-10-14 as an API reference only; its framework adapters moved to Rejected. C5 (guest writes) was done the same day
-as a reserved broker method, `sandbox:write` ([ADR-004 amendment](../../ADR-004-files-as-blob-urls.md#amendment-guest-writes-2026-10-14)).
+as a reserved broker method, `sandbox:write` ([ADR-004 amendment](../adr/ADR-004-history.md#amendment-guest-writes-2026-10-14)).
 Two focused review rounds the same day ([report](../reviews/FOCUSED-REVIEW-2026-10-14.md)) added and closed S27–S31.
 The broad review the same day ([report](../reviews/BROAD-REVIEW-2026-10-14.md)) added S32–S37: S32–S35 and S37 done, S35's and S36's residuals stated.
 Its strict-mode reviewer added S38–S42 (S42 open). The independent verification the same day ([report](../reviews/VERIFICATION-2026-10-14.md))
@@ -903,7 +903,7 @@ with `__proto__`, `constructor`, `prototype` at any depth). Tests: `src/lib/csp/
 
 ### <a id="s21"></a>S21 · The channel: one trusted INIT_PORT, a port guest code cannot reach — ✅ **done**
 
-*From the review, B1, B2 and B4; [ADR-002 amendment](../../ADR-002-host-guest-broker.md#amendment-2026-10-14-adversarial-review-the-channel).*
+*From the review, B1, B2 and B4; [ADR-002 amendment](../adr/ADR-002-history.md#amendment-2026-10-14-adversarial-review-the-channel).*
 
 **Verified** (2026-10-14, all three engines): another frame on the host page that posted INIT_PORT before the
 host captured the guest's bridge or, without a port, left it dead (B1). Guest code that patched
@@ -928,7 +928,7 @@ The specs that used to forge frames on the port now forge through what the boots
 64 Ki), labelled `source: 'guest' | 'host'` by the host, and guest lines are limited to 1000 per second per
 environment with one warning; `SandboxDevTools` never throws and never lets a guest string be a console format
 string (B3). The execution timeout and the entry-failure path re-check the environment after dispatching their
-log line, so a listener's `reset()`/`terminate()` is not undone ([ADR-003 amendment](../../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone), B5).
+log line, so a listener's `reset()`/`terminate()` is not undone ([ADR-003 amendment](../adr/ADR-003-history.md#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone), B5).
 A fetch header value must be a ByteString without CR, LF or NUL, so a refused request is recorded as `refused`,
 not `failed` (B6). At most 256 inbound calls run at once per channel; beyond that a call is refused at once with
 the new reported code `BUSY` (B7). Tests: `test/unit/channel-guarantees.test.ts`, `src/lib/rpc.test.ts`,
@@ -943,7 +943,7 @@ the detail itself from the raw line and its source.
 
 ### <a id="s23"></a>S23 · Strict mode: the entry's scope and the prelude's lists — ✅ **done**
 
-*From the review, C2 and C3; [ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-14-adversarial-review).*
+*From the review, C2 and C3; [ADR-005 amendment](../adr/ADR-005-history.md#amendment-2026-10-14-adversarial-review).*
 
 **Verified** (2026-10-14, all three engines): the entry was appended to the prelude in one classic script, whose
 declarations are instantiated before any of it runs; a top-level `function Worker() {}` in the entry made the
@@ -969,7 +969,7 @@ a name the prelude cannot delete is an error. The prelude's lists have no protot
   nowhere. Revoking earlier had broken WebKit's `sandboxFiles`; at this point `sandboxFiles`, the worker's own
   `blob:` URLs, Blob reads and `execute()` work on all three engines, and WebKit's in-worker muting of later error
   text from the revoked script is routed around (the view logs those errors, with their text).
-  [ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction).
+  [ADR-005 amendment](../adr/ADR-005-history.md#amendment-2026-10-14-follow-up-audit-c1-c4-and-c5-by-construction).
   Asserted: `test/e2e/review-strict.spec.ts` ("C1", 3 tests), `src/lib/in-sandbox-view.test.ts`.
 - **C4, the view's violation cap was shared** with the guest's own refused loads — ✅ done (follow-up audit): the
   view and the host count the view's reports per directive (the browser names the directive there; the logic port
@@ -1001,7 +1001,7 @@ policy the next `reset()` built.
 throw with `terminated` and `the environment could not be built: …`. `setConfig()` reads one `structuredClone` of
 its argument; a config that cannot be cloned or is not an object applies nothing and terminates with
 `the configuration could not be used: …`, refusing every build until a usable config arrives (like A4's unknown
-mode). `setConfig()` never throws. [ADR-003 amendment](../../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment).
+mode). `setConfig()` never throws. [ADR-003 amendment](../adr/ADR-003-history.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment).
 Tests: `test/unit/policy-guarantees.test.ts` ("Every build failure is a termination"), `test/e2e/review-followup.spec.ts`.
 
 ### <a id="s27"></a>S27 · A committed inert file could run as a script of the next build — ✅ **done**
@@ -1016,7 +1016,7 @@ loaded the same way.
 **Done**: one table (`src/lib/load-kinds.ts`) of which types each kind of load admits; markup and inline CSS
 resolution, registered stylesheets' references, the strict renderer, the import map, the strict entry and the
 policy's `blob:` admission all read it. A mismatch stays as written, with one warning. Limits stated in API.md and
-[ADR-004](../../ADR-004-files-as-blob-urls.md#amendment-2026-10-14-a-reference-names-a-file-only-for-the-kind-of-load-its-type-is-for):
+[ADR-004](../adr/ADR-004-history.md#amendment-2026-10-14-a-reference-names-a-file-only-for-the-kind-of-load-its-type-is-for):
 committed CSS still styles the next build's markup; code that loads `sandboxFiles.url()` as a script itself
 decides what runs. Tests: `src/lib/load-kinds.test.ts`, `test/unit/focused-review.test.ts`, `test/e2e/focused-review.spec.ts`.
 
@@ -1039,7 +1039,7 @@ past the 30 s call timeout (W5). Tests: `test/unit/focused-review.test.ts`.
 **Verified** (all three engines): `<set>`/`<animate>` inside a rendered link set its `href` back to the guest's
 URL after the renderer made it `about:blank#` (`animVal`, and Chromium's accessibility tree); inside an `<image>`
 it loaded an unchecked URL (Chromium, Firefox). **Done**: the renderer removes every SVG animation element
-([ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer)).
+([ADR-005 amendment](../adr/ADR-005-history.md#amendment-2026-10-14-focused-review-no-attribute-changes-after-the-renderer)).
 Tests: `test/e2e/focused-review.spec.ts` ("F1"), `src/lib/in-sandbox-view.test.ts`.
 
 ### <a id="s30"></a>S30 · `workerExecutionTimeout` could be evaded — ✅ **done**
@@ -1051,7 +1051,7 @@ budget and looped; replacing `globalThis.Function` made the bootstrap report com
 ran. **Done**: the budget is "the event loop is free at each deadline": the host pings through the bootstrap's
 captured handler and terminates unless it answers within `EXECUTION_TIMEOUT_GRACE_MS`; the guest reports nothing;
 executed code is compiled with a captured `Function`
-([ADR-003 amendment](../../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline)).
+([ADR-003 amendment](../adr/ADR-003-history.md#amendment-2026-10-14-the-execution-budget-is-a-free-event-loop-at-the-deadline)).
 Tests: `test/e2e/focused-review.spec.ts` ("F2"), `test/unit/followup-guarantees.test.ts`.
 
 ### <a id="s31"></a>S31 · Error text in reasons, assigned config keys, two eval writers, a refused config stored; fetch per build — ✅ **done**
@@ -1064,13 +1064,13 @@ directives as own keys only (F4: `drop-meta-ignored.ts` assigned a configured `_
 prototype). `addEvalSource` is the one writer of `'unsafe-eval'`, for the host and the strict view, and never puts
 it in `default-src` (F5). `setConfig()` checks and warns on the candidate and stores it last; a `connectionsAllowed`
 that is not an object is refused (F6). `sandbox:fetch` is registered per build, closed over that build's bridge
-([ADR-006 amendment](../../ADR-006-fetch-bridge.md#amendment-2026-10-14-the-method-is-bound-to-its-build)).
+([ADR-006 amendment](../adr/ADR-006-history.md#amendment-2026-10-14-the-method-is-bound-to-its-build)).
 Tests: `test/unit/focused-review.test.ts`.
 
 ### <a id="s32"></a>S32 · The guest announces its port; a second announcement ends the environment — ✅ **done**
 
 *From the [broad review 2026-10-14](../reviews/BROAD-REVIEW-2026-10-14.md), CB1 (medium/low) and PD8 (low);
-[ADR-002 amendment](../../ADR-002-host-guest-broker.md#amendment-2026-10-14-broad-review-the-guest-announces-its-port).*
+[ADR-002 amendment](../adr/ADR-002-history.md#amendment-2026-10-14-broad-review-the-guest-announces-its-port).*
 
 **Verified** (all three engines): guest code that called `document.open()` before the wrapper's load erased the
 bootstrap's capture listener, installed its own and received the host's INIT_PORT; it then posted on the host's port
@@ -1081,7 +1081,7 @@ Worker mode's frame does the same. Tests: `test/e2e/broad-review.spec.ts` ("CB1"
 
 ### <a id="s33"></a>S33 · Lifecycle: calls queued while loading, a bounded load, one answer per build, one document — ✅ **done**
 
-*From the broad review, CB3, CB5, CB7 (low, info); [ADR-003 amendment](../../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-loading-is-bounded-one-answer-per-build-one-document).*
+*From the broad review, CB3, CB5, CB7 (low, info); [ADR-003 amendment](../adr/ADR-003-history.md#amendment-2026-10-14-loading-is-bounded-one-answer-per-build-one-document).*
 
 **Done**: a queued call that timed out leaves the queue (it ran at the next flush before); `loading` ends after
 `LOAD_TIMEOUT_MS` with a reason (Chromium and WebKit stayed `loading` while a guest kept its document open); a
@@ -1092,7 +1092,7 @@ bounds only the guest's check-in: a guest that keeps its document open is `ready
 
 ### <a id="s34"></a>S34 · Policy: no `data:` workers; every policy step widens only its own kinds — ✅ **done**
 
-*From the broad review, PD1 (high, WebKit) and PA1 (info, latent); [ADR-004 amendment](../../ADR-004-files-as-blob-urls.md#amendment-2026-10-14-broad-review-answers-from-the-build-file-sources-widen-only-their-kinds).*
+*From the broad review, PD1 (high, WebKit) and PA1 (info, latent); [ADR-004 amendment](../adr/ADR-004-history.md#amendment-2026-10-14-broad-review-answers-from-the-build-file-sources-widen-only-their-kinds).*
 
 **Verified**: WebKit ran a `data:` SharedWorker outside the guest policy (fetch, WebSocket, `importScripts` reached a
 blocked listener, no violation). File sources' `blob:` reached `worker-src` through its fallback to `script-src`.
@@ -1128,7 +1128,7 @@ rewrites; a test keeps the strict renderer's link kinds equal to `load-kinds.ts`
 **Done**: the renderer keeps only allowlisted elements per namespace and allowlisted attributes; unknown HTML
 elements are unwrapped, unknown SVG and MathML elements removed with their content; `use`, markers, SVG filters,
 SVG `image`, `foreignObject`, handlers, form targets, popovers and invoker commands are gone
-([ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view)).
+([ADR-005 amendment](../adr/ADR-005-history.md#amendment-2026-10-14-broad-review-an-allowlist-renderer-and-a-bounded-view)).
 Tests: `test/e2e/broad-strict.spec.ts`, `src/lib/in-sandbox-view.test.ts`.
 
 ### <a id="s39"></a>S39 · A file the strict view showed could open as a script-running document — ✅ **done**
@@ -1157,7 +1157,7 @@ the common cases, CSS paint and bidirectional text layout are not bounded.
 **Accepted** (owner's decision with S48): in WebKit, strict mode protects confidentiality and egress, not the host
 page's availability. Cooperative mode is no better there: a guest `while (true) {}` already freezes WebKit's host page
 (S6). Stated in the README ("What strict mode does not cover"), API.md and the
-[ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen).
+[ADR-005 amendment](../adr/ADR-005-history.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen).
 Options (a)–(c) below stay on record; (c), an out-of-process view, is ADR-005's "Revisit if".
 
 
@@ -1173,7 +1173,7 @@ expensive properties, so not by construction; (b) is the allowlist answer and co
 ### <a id="s43"></a>S43 · A guest worker keeps only allowlisted globals — ✅ **done**
 
 *From the [independent verification 2026-10-14](../reviews/VERIFICATION-2026-10-14.md), V1 (high on Firefox);
-[ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist).*
+[ADR-005 amendment](../adr/ADR-005-history.md#amendment-2026-10-14-independent-verification-the-workers-globals-are-an-allowlist).*
 
 **Verified** (all three engines, and on a plain page with a header policy): in Firefox, `new EventSource(url)` from the
 strict-mode worker and from worker mode's worker reached an origin `connect-src` blocks, and `new FontFace(…, 'url(…)')`
@@ -1202,7 +1202,7 @@ Docs: README mitigation 2, B8's "Done", the reports' "skipped" wording, the adve
 ### <a id="s46"></a>S46 · `ready` is the guest's check-in — ✅ **done**
 
 *From the [independent verification](../reviews/VERIFICATION-2026-10-14.md#decisions-after-the-verification), decision 1;
-[ADR-003 amendment](../../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-ready-is-the-guests-check-in), ADR-002
+[ADR-003 amendment](../adr/ADR-003-history.md#amendment-2026-10-14-ready-is-the-guests-check-in), ADR-002
 amendment.*
 
 **Verified**: `ready` waited for the wrapper's load, which waits for the guest document's subresources, so
@@ -1243,7 +1243,7 @@ representable, and the pipeline's order mattered.
   `effective-directive`, `file-sources`, `strict-policy`, `inlineScriptsAllowed`, `CSPDirectives`, `_getCSPDirectives`,
   the drop steps' warning sets.
 - `fetchBridge.allow` now refuses entries the URL parser would rewrite (IPv4 shorthand, percent-encoding, non-ASCII,
-  trailing dot, whitespace) and IPv6 literals ([ADR-006 amendment](../../ADR-006-fetch-bridge.md#amendment-2026-10-14-one-origin-parser)).
+  trailing dot, whitespace) and IPv6 literals ([ADR-006 amendment](../adr/ADR-006-history.md#amendment-2026-10-14-one-origin-parser)).
 
 Tests: `src/lib/origin.test.ts` (the grammar, a 5000-input property), `src/lib/csp/origins.test.ts` (parsing, strict,
 the types with `@ts-expect-error`), `src/lib/csp/csp-generator.test.ts` (golden policies, a 3000-config property:
@@ -1254,7 +1254,7 @@ Dropped specs, now unrepresentable: the `-elem` directive cases of the A3 class 
 ### <a id="s48"></a>S48 · Strict is the default; `'iframe'` is renamed `'cooperative'`; cooperative mode's limits are frozen — ✅ **done**
 
 *From the [independent verification](../reviews/VERIFICATION-2026-10-14.md#decisions-after-the-verification), decision 2;
-owner-approved design; [ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen).*
+owner-approved design; [ADR-005 amendment](../adr/ADR-005-history.md#amendment-2026-10-15-strict-is-the-default-cooperative-modes-limits-are-frozen).*
 
 **Why**: every review found its new issues in the document mode (frames and workers the guest creates, user actions,
 platform gaps), and each fix was another guest-realm patch. Strict mode closes that class by construction.
@@ -1279,7 +1279,7 @@ each failing at `8b561d1`.
 ### <a id="s50"></a>S50 · The host page's policy reaches the sandbox's frames — ✅ **done**
 
 *From [review round 1](../reviews/REVIEW-ROUND-1-2026-10-15.md), R2-1 = R3-1 (medium);
-[ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-15-review-round-1-the-views-check-in-its-character-budget-host-page-availability).*
+[ADR-005 amendment](../adr/ADR-005-history.md#amendment-2026-10-15-review-round-1-the-views-check-in-its-character-budget-host-page-availability).*
 
 **Verified** (all three engines, the harness served with each host policy): the frames are `srcdoc` documents and
 inherit the host page's CSP list, Trusted Types and COEP. Host `script-src 'self'`: strict was `ready`, then 5 s later
@@ -1305,7 +1305,7 @@ Tests: `test/e2e/host-policy.spec.ts`, `test/unit/review-round-1.test.ts` (Trust
 ### <a id="s51"></a>S51 · One console relay; byte budgets on log lines and RPC messages — ✅ **done**
 
 *From review round 1, R4-1 = R2-3, R3-3, R4-2 (medium), R4-6, R4-7 (low);
-[ADR-002 amendment](../../ADR-002-host-guest-broker.md#amendment-2026-10-15-review-round-1-byte-budgets-on-every-message).*
+[ADR-002 amendment](../adr/ADR-002-history.md#amendment-2026-10-15-review-round-1-byte-budgets-on-every-message).*
 
 **Verified**: `console.log(fn)` (and Symbols, DOM nodes, Events, Responses, Proxies, WeakMaps, Promises) threw
 `DataCloneError` in cooperative mode, the worker and the strict worker; a strict guest's `console.log(new Uint8Array(64 MiB))`
@@ -1351,8 +1351,8 @@ capability (S54). Tests: `test/unit/review-round-1.test.ts`, `test/e2e/review-ro
 ### <a id="s54"></a>S54 · The owner's decisions after review round 1: images the guest writes, `text()`/`set()`, the view's hash, `allow-forms` — ✅ **done**
 
 *From [review round 1](../reviews/REVIEW-ROUND-1-2026-10-15.md), "Awaiting the owner" (R4-4, R4-5, R2-2);
-[ADR-005 amendment](../../ADR-005-strict-mode.md#amendment-2026-10-15-the-owners-decisions-after-review-round-1),
-[ADR-004 amendment](../../ADR-004-files-as-blob-urls.md#amendment-2026-10-15-the-strict-view-shows-raster-image-guest-writes).*
+[ADR-005 amendment](../adr/ADR-005-history.md#amendment-2026-10-15-the-owners-decisions-after-review-round-1),
+[ADR-004 amendment](../adr/ADR-004-history.md#amendment-2026-10-15-the-strict-view-shows-raster-image-guest-writes).*
 
 **Done**:
 - **R4-4**: the strict view shows the raster images the guest writes (PNG, JPEG, GIF, WebP, AVIF; `VIEW_WRITE_TYPES` =
@@ -2240,7 +2240,7 @@ the viewport is not measured; the element needs a non-inline `display`.
 `Error` with a `code` from the closed set below, minted in `src/lib/rpc.ts`; the element's own
 termination refusals take theirs from the broker too. A guest throwing the host's termination text
 with `code: 'TERMINATED'` rejects the host's call with `HANDLER_ERROR`. The decision
-is recorded in [ADR-002](../../ADR-002-host-guest-broker.md#amendment-2026-10-11-refusals-carry-a-code).
+is recorded in [ADR-002](../adr/ADR-002-history.md#amendment-2026-10-11-refusals-carry-a-code).
 The acceptance below holds in both modes: `test/e2e/broker.spec.ts` (refusals asserted by exact
 code, guest-to-host ones from inside the guest), plus `src/lib/rpc.test.ts` (every code path,
 forged response codes, and the pinned code strings).
@@ -2295,7 +2295,7 @@ Their separate retry/stop field is not adopted: here it follows from the code.
 
 **Acceptance**: each behaviour is one rule, documented in `API.md`, with a test.
 
-**Done** (2026-10-14, [ADR-003 amendment](../../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)):
+**Done** (2026-10-14, [ADR-003 amendment](../adr/ADR-003-history.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)):
 - `workerExecutionTimeout` is a budget, not an idle reset: each `execute()` has its own deadline, at which the
   guest's event loop must be free; the host pings the bootstrap's captured handler and, without an answer within
   `EXECUTION_TIMEOUT_GRACE_MS`, ends the sandbox (`Execution Timeout` host line, then `terminated` with
@@ -2337,7 +2337,7 @@ with the guest's own `blob:` URLs as its last statement, keeping parser order an
 (S2). No match keeps the markup verbatim (byte-identical document); a query or fragment, another
 spelling or an unregistered path stays as written and fails closed with no request. Iframe mode only,
 and only when the bootstrap can run. Rejected: `<base href>`, a `MutationObserver` swap, inlining
-contents, a guest-side parser. Decisions and fidelity notes: [ADR-004, amendment](../../ADR-004-files-as-blob-urls.md#amendment-markup-references-2026-10-13).
+contents, a guest-side parser. Decisions and fidelity notes: [ADR-004, amendment](../adr/ADR-004-history.md#amendment-markup-references-2026-10-13).
 Tests: `src/lib/markup-references.test.ts`, `test/unit/files.test.ts`, `test/e2e/files.spec.ts`
 section 8 on all three engines.
 
@@ -2353,7 +2353,7 @@ map is merged into it on the host and taken out of the markup (`src/lib/import-m
 the same in every engine. `read()`/`text()` return the bytes as registered (the rewrite travels as byte
 edits); the quota counts what the rewrite adds. Computed `import()`, `new URL(…, import.meta.url)`,
 module workers and module graphs in worker mode stay unsupported and fail closed; a file the lexer
-cannot parse is delivered unchanged with a warning. Decisions: [ADR-004, module graph amendment](../../ADR-004-files-as-blob-urls.md#amendment-module-graph-2026-10-13).
+cannot parse is delivered unchanged with a warning. Decisions: [ADR-004, module graph amendment](../adr/ADR-004-history.md#amendment-module-graph-2026-10-13).
 Tests: `src/lib/module-specifiers.test.ts`, `src/lib/import-map.test.ts`, `src/lib/files.test.ts`,
 `src/lib/in-sandbox-files.test.ts`, `src/lib/markup-references.test.ts`, `test/unit/files.test.ts`,
 `test/e2e/files.spec.ts` section 9 on all three engines.
@@ -2370,7 +2370,7 @@ cycle (strongly connected component, self-imports included) is left as written w
 the guest never loops and the rest of each sheet applies. `read()`/`text()` keep the registered bytes;
 the quota counts path + 72 bytes per reference that could name a file. Queries, fragments,
 unregistered paths and run-time URLs stay as written and fail closed with no request. No policy change.
-Decisions and per-engine measurements: [ADR-004, CSS amendment](../../ADR-004-files-as-blob-urls.md#amendment-css-references-and-srcset-2026-10-13).
+Decisions and per-engine measurements: [ADR-004, CSS amendment](../adr/ADR-004-history.md#amendment-css-references-and-srcset-2026-10-13).
 Tests: `src/lib/css-references.test.ts`, `src/lib/srcset.test.ts`, `src/lib/files.test.ts`,
 `src/lib/in-sandbox-files.test.ts`, `src/lib/markup-references.test.ts`, `test/unit/files.test.ts`,
 `test/e2e/files.spec.ts` section 10 on all three engines.
@@ -2428,7 +2428,7 @@ a dead session id outlived the sandbox for the Service Worker's lifetime.
 **Guarantee**: a guest can change files only when the embedder opted in, and never past the host's
 path rules and cap.
 
-**Done** (2026-10-14, [ADR-004 amendment](../../ADR-004-files-as-blob-urls.md#amendment-guest-writes-2026-10-14)):
+**Done** (2026-10-14, [ADR-004 amendment](../adr/ADR-004-history.md#amendment-guest-writes-2026-10-14)):
 `guestWrites: true` (only a literal `true`) gives `sandboxFiles.write(path, entry)` and `remove(path)` a host behind
 them: the reserved broker method `sandbox:write` (not the raw `FS_WRITE` frame sketched below: the reserved
 namespace already makes a library method unreplaceable, guest code can no longer post frames at all, and the

@@ -202,7 +202,7 @@ WebKit on Linux is not Safari.
   `terminate()`; an entry failure dispatched its line and then terminated, tearing down the environment a listener's
   `reset()` had just built (confirmed against `ca2110c`: state `terminated`).
 - **Fix**: the element counts environments; a host path that dispatches and then acts re-checks the count first
-  ([ADR-003 amendment](../../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)).
+  ([ADR-003 amendment](../adr/ADR-003-history.md#amendment-2026-10-14-a-listeners-reset-or-terminate-is-never-undone)).
 - **Evidence**: unit tests (the timeout case failed before; the entry-failure case was confirmed against the old code).
 
 ### B6 · Fetch header values were not checked as ByteStrings
@@ -432,7 +432,7 @@ offense, a test that fails before each change, evidence read from outside the sa
   documented as "the browser's `fetch()` rejected", not "a request was sent".
 - **Backlog B8.** `workerExecutionTimeout` is a per-`execute()` budget for code still running and terminates
   (the guest reports `EXECUTED`); `execute()` and `call()` refuse at once while idle; `console.info` is relayed;
-  `VIEW_LIVENESS_TIMEOUT_MS` is exported ([ADR-003 amendment](../../ADR-003-lifecycle-and-liveness.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)).
+  `VIEW_LIVENESS_TIMEOUT_MS` is exported ([ADR-003 amendment](../adr/ADR-003-history.md#amendment-2026-10-14-one-rule-per-budget-build-and-missing-environment)).
 
 ### Two new gaps (backlog S26, fixed)
 

@@ -20,7 +20,7 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S69](#s69) | 💤 deferred | Build the relay worker; availability findings are documented (owner, 2026-10-19) |
 | [S70](#s70) | ⏸️ decide | For the owner: three edges the schema found |
 | [S74](#s74) | ⏸️ after every phase | The final independent adversarial review board |
-| [S76](#s76) | ⏸️ in progress | Self-explaining code and generated docs: steps 0 to 3 done; ADRs, code comments and the public API follow |
+| [S76](#s76) | ⏸️ in progress | Self-explaining code and generated docs: steps 0 to 4 done; code comments and the public API follow |
 | [D1](#bl-d1) | 🟡 ready except the licence | An installable package; waits for H5's `LICENSE` |
 | [H5](#bl-h5) | 🟡 partly done | Missing repo basics: the `LICENSE` is the owner's choice |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
@@ -246,6 +246,8 @@ S60's remaining clean-up (stale files and branches) follows, then the review boa
 state.
 
 **Step 3 done (2026-10-20).** The review reports, the finished research notes and the done items of this backlog are in [`docs/archive/`](archive/README.md); every ID resolves there through [ids.ts](ids.ts).
+
+**Step 4 done (2026-10-20).** Each of the seven [ADRs](README.md#decisions) states its decision as it stands: the context, the decision and its reasoning, the alternatives and the consequences, with the current status in its header. The amendment trails and the first texts they replaced are in [`docs/archive/adr/`](archive/README.md#adrs), one file per ADR, verbatim, and each ADR links its file in its last line. Where an ADR disagreed with the code, the code won (the sizes and counts, the lifecycle reducer, the policy template, the config types).
 
 **Step 0 done (2026-10-19), and the owner's decisions on it.** The measurement report has the counts. In short:
 - 60% TSDoc coverage of the public surface;
