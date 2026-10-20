@@ -59,6 +59,8 @@ Navigate to [http://localhost:4444/playground/index.html](http://localhost:4444/
 
 ## Architecture
 
+The whole picture, on one page, with the realms, channels, frames and lifecycle drawn from the code: [ARCHITECTURE.md](ARCHITECTURE.md).
+
 *   **`src/host.ts`**: The core implementation of the `<web-sandbox>` custom element. It handles frame creation, configuration, and communication.
 *   **`src/lib/origin.ts`**, **`src/lib/csp/origins.ts`**, **`src/lib/csp/csp-generator.ts`**: The guest policy: the one origin parser (shared with `fetchBridge.allow`), `origins` parsed at the boundary, and one policy template per mode.
 *   **`src/lib/frame-documents.ts`**: Builds the wrapper and guest documents (see Security Mitigations).

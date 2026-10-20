@@ -20,6 +20,8 @@ jobs:
       - run: bun run build
       # the public API against its reviewed report, etc/web-sandbox.api.md (bun run api:update accepts a change)
       - run: bun run api:check
+      # the generated regions and the markers of the handwritten sections against the code (bun run docs:gen, docs:gen --accept)
+      - run: bun run docs:check
       - run: ./scripts/smoke-package.sh
 
   e2e:

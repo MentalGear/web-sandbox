@@ -1,3 +1,5 @@
+// Small helpers shared across the library: defineData, which writes a key as plain data, and type-level completeness checks.
+//
 // Every key a merge writes becomes an own data property, defined, never assigned (review A7, follow-up audit
 // 2026-10-14). Assignment ([[Set]]) is what made a key dangerous: `output['__proto__'] = value` replaces the
 // prototype of the object written to, and a config parsed from JSON can carry "__proto__" as an own key. A

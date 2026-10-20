@@ -262,21 +262,9 @@ describe('the config schema: every option, normalised once, with the cross-field
     });
 });
 
-// docs/API.md's Configuration table, row by row: Option | Type | Default | Modes | What it does.
+// docs/API.md's Configuration table is generated from the schema (tools/docgen/extractors/config.ts, checked by
+// `bun run docs:check`); what the schema says of itself, and the prose that names options, is checked here.
 const API = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../docs/API.md'), 'utf8');
-function configurationRows(): Map<string, { type: string; documented: string; modes: string; text: string }> {
-    const start = API.indexOf('\n## Configuration\n');
-    const end = API.indexOf('\n### ', start);
-    const rows = new Map<string, { type: string; documented: string; modes: string; text: string }>();
-    for (const line of API.slice(start, end).split('\n')) {
-        const match = line.match(/^\| `(\w+)` \|/);
-        if (!match) continue;
-        const cells = line.split(/(?<!\\)\|/).slice(1, -1).map(cell => cell.trim());
-        rows.set(match[1]!, { type: cells[1]!, documented: cells[2]!, modes: cells[3]!, text: cells[4]! });
-    }
-    return rows;
-}
-const modesOf = (cell: string): string[] => (cell === '—' || cell.startsWith('all') ? [...SANDBOX_MODES] : cell.split(',').map(mode => mode.trim())).sort();
 const rendered = (value: unknown): string | null => {
     if (typeof value === 'string') return `\`'${value}'\``;
     if (typeof value === 'boolean' || typeof value === 'number') return `\`${value}\``;
@@ -284,29 +272,19 @@ const rendered = (value: unknown): string | null => {
     return null;
 };
 
-describe("docs/API.md's Configuration table and the config schema", () => {
-    const rows = configurationRows();
-
-    it('every option row has a schema entry, and every option of the schema a row', () => {
-        expect([...rows.keys()].sort()).toEqual([...CONFIG_OPTIONS].sort());
-    });
-
-    it('each option has the default and the modes the schema declares', () => {
+describe("the config schema, which docs/API.md's Configuration table is generated from", () => {
+    it('each option documents the default it has, and the defaults are the ones stored', () => {
         for (const name of CONFIG_OPTIONS) {
             const rule = (CONFIG_SCHEMA as Record<string, OptionRule>)[name]!;
-            const row = rows.get(name)!;
-            expect(row.documented, name).toBe(rule.documented);
             const literal = rendered(rule.default);
-            if (literal !== null) expect(row.documented.startsWith(literal), `${name}: ${row.documented} is not ${literal}`).toBe(true);
-            expect(modesOf(row.modes), name).toEqual([...rule.modes!].sort());
+            if (literal !== null) expect(rule.documented!.startsWith(literal), `${name}: ${rule.documented} is not ${literal}`).toBe(true);
         }
-        // what the stored defaults are
         const defaults = defaultConfig();
         for (const name of CONFIG_OPTIONS) {
             if ((PARSED_APART as readonly string[]).includes(name)) continue;
             expect((defaults as unknown as Record<string, unknown>)[name], name).toEqual((CONFIG_SCHEMA as Record<string, OptionRule>)[name]!.default);
         }
-        expect(rows.get('callLimits')!.documented).toBe(`${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes / 1048576} MiB per second`);
+        expect(CONFIG_SCHEMA.callLimits.documented).toBe(`${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes / 1048576} MiB per second`);
     });
 
     it('the options ignored outside their modes, with a warning or silently, as the Configuration section lists them', () => {

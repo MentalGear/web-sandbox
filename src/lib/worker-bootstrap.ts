@@ -1,5 +1,5 @@
 /**
- * This function is stringified and injected into the sandbox frame in worker mode.
+ * Worker mode's frame bootstrap: stringified and injected into the sandbox frame.
  * It spawns the guest worker from *inside* the frame, so the worker inherits the frame's
  * opaque origin and CSP instead of the host's, and connects it to the host.
  *

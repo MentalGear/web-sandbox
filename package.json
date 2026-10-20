@@ -30,6 +30,8 @@
     "typecheck": "tsc --noEmit -p .",
     "api:check": "bun run build:lib && api-extractor run",
     "api:update": "bun run build:lib && api-extractor run --local",
+    "docs:gen": "bun tools/docgen/docs.ts",
+    "docs:check": "bun tools/docgen/docs.ts --check",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
