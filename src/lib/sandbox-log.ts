@@ -19,15 +19,35 @@
 import { createRateLimiter } from './rate-limit';
 import { createSizeOf } from './structured-size';
 
+/** The level of a {@link SandboxLog} line. Anything the guest sends that is not one of these reads as `'log'`. */
 export type SandboxLogLevel = 'log' | 'info' | 'warn' | 'error';
 
-/** The detail of a 'sandbox-log' event. Frozen. */
+/**
+ * The `detail` of a `sandbox-log` event: one log line, frozen.
+ *
+ * @remarks
+ * Every field of a guest's line is normalised before it is dispatched, so a listener never sees a malformed one. Guest
+ * code decides what it logs, so `args` is guest data when `source` is `'guest'`: read it, do not merge it into your
+ * objects. The guest's console relay (`log`, `info`, `warn`, `error`, and the other `console` methods as `log` or
+ * `error`), its uncaught errors and unhandled rejections, a throw from `execute()` and one `<mode> Ready` line per
+ * environment arrive here, and so do the element's own lines (`source: 'host'`, never rate-limited). Reference with the
+ * host's lines: docs/API.md#sandbox-log--sandboxlog.
+ */
 export interface SandboxLog {
+    /** Always `'LOG'`. */
     type: 'LOG';
+    /** How serious the line is. */
     level: SandboxLogLevel;
-    /** What was logged, structured-cloned: guest data when source is 'guest'. At most LOG_MAX_ARGS. */
+    /**
+     * What was logged, structured-cloned: at most {@link LOG_MAX_ARGS} values, strings cut at {@link LOG_MAX_STRING}
+     * characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced
+     * by a string that says so.
+     */
     args: readonly unknown[];
-    /** 'host': a line the element wrote itself. 'guest': a line from the guest's port, whatever it claims. */
+    /**
+     * `'host'` for a line the element wrote itself, `'guest'` for a line that came from the guest's port, whatever it
+     * claims. Set by the element, never read from the line.
+     */
     source: 'guest' | 'host';
 }
 
@@ -52,15 +72,15 @@ export const LOG_BYTES_PER_SECOND = 4194304;
  */
 export const LOG_DROPPED_ARGUMENT = "[Sandbox] dropped: past the log line's byte budget";
 
-/** Most arguments one line keeps; later ones are dropped. */
+/** Most arguments one {@link SandboxLog} line keeps; later ones are dropped. */
 export const LOG_MAX_ARGS = 64;
 
-/** Longest string argument, in UTF-16 code units; longer ones are cut. */
+/** Longest string argument of a {@link SandboxLog} line, in UTF-16 code units; a longer one is cut. */
 export const LOG_MAX_STRING = 65536;
 
 /**
- * Most guest lines dispatched per environment in any one-second window; later lines in that window are dropped,
- * with one warning per environment. Host lines are not counted.
+ * Most guest lines dispatched as `sandbox-log` per environment in any one-second window (a sliding window). Later lines in
+ * that window are dropped, with one warning per environment. The element's own lines are not counted.
  */
 export const LOG_EVENTS_PER_SECOND = 1000;
 

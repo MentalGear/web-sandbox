@@ -1,6 +1,6 @@
 // The capabilities (sandbox flags and Permissions Policy features) an embedder can grant the guest. Its network
 // policy is `origins` (src/lib/csp/origins.ts).
-/** The values `capabilities` accepts: sandbox flags that keep the guest inside the frame. */
+/** The values the `capabilities` option accepts: sandbox flags that keep the guest inside the frame. */
 export const SAFE_CAPABILITIES = [
     "allow-orientation-lock",
     "allow-pointer-lock",
@@ -19,7 +19,7 @@ export const SAFE_CAPABILITIES = [
 // - allow-modals: alert/confirm/prompt can imitate host UI and block the host's main thread
 // - allow-downloads: writes files to the user's disk
 // - allow-presentation: the Presentation API opens a URL on a second screen, outside the frame's CSP
-/** The sandbox flags among UNSAFE_CAPABILITIES. */
+/** The sandbox flags among {@link UNSAFE_CAPABILITIES}: each reaches outside the frame and needs an explicit opt-in. */
 export const UNSAFE_SANDBOX_FLAGS = [
     "allow-downloads",
     "allow-forms",
@@ -31,12 +31,12 @@ export const UNSAFE_SANDBOX_FLAGS = [
 // Not sandbox flags: these are Permissions Policy features, granted through the iframe `allow` attribute.
 // - fullscreen: a fullscreen guest can draw fake browser UI (phishing). Browsers require a user gesture
 //   to enter fullscreen and show an exit hint.
-/** The Permissions Policy features among UNSAFE_CAPABILITIES, granted through the frames' `allow` attribute. */
+/** The Permissions Policy features among {@link UNSAFE_CAPABILITIES}, granted through the frames' `allow` attribute. */
 export const UNSAFE_PERMISSIONS = [
     "fullscreen",
 ] as const;
 
-/** The values `unsafeCapabilities` accepts: each reaches outside the frame and warns once when enabled. */
+/** The values the `unsafeCapabilities` option accepts: each reaches outside the frame and warns once when enabled. */
 export const UNSAFE_CAPABILITIES = [...UNSAFE_SANDBOX_FLAGS, ...UNSAFE_PERMISSIONS] as const;
 
 /**
@@ -45,8 +45,15 @@ export const UNSAFE_CAPABILITIES = [...UNSAFE_SANDBOX_FLAGS, ...UNSAFE_PERMISSIO
  */
 export const ALLOWED_CAPABILITIES = [...SAFE_CAPABILITIES, ...UNSAFE_SANDBOX_FLAGS] as const;
 
+/** A member of {@link SAFE_CAPABILITIES}: an entry of the `capabilities` option. */
 export type SafeCapability = (typeof SAFE_CAPABILITIES)[number];
+/** A member of {@link UNSAFE_CAPABILITIES}: an entry of the `unsafeCapabilities` option. */
 export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];
+/** A member of {@link UNSAFE_PERMISSIONS}: a capability granted through the frames' `allow` attribute, not a sandbox flag. */
 export type UnsafePermission = (typeof UNSAFE_PERMISSIONS)[number];
 // ALLOWED_CAPABILITIES's members, derived from the two public lists it joins, so the public type names no internal value.
+/**
+ * A value that may end up in a frame's `sandbox` attribute: a {@link SafeCapability} or a member of
+ * {@link UNSAFE_SANDBOX_FLAGS}.
+ */
 export type SandboxCapability = SafeCapability | (typeof UNSAFE_SANDBOX_FLAGS)[number];

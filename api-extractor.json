@@ -20,7 +20,7 @@
 
   // Not needed by the gate. The doc model (for api-documenter) comes with the generated reference; the d.ts rollup
   // would change what the package ships, which smoke-package.sh pins.
-  "docModel": { "enabled": false },
+  "docModel": { "enabled": true },
   "dtsRollup": { "enabled": false },
   "tsdocMetadata": { "enabled": false },
 

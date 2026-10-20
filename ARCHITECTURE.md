@@ -256,7 +256,7 @@ Each file of `src/` with the role its header comment gives.
 | Module | Role |
 | :--- | :--- |
 | `src/csp-directives.ts` | The capabilities (sandbox flags and Permissions Policy features) an embedder can grant the guest |
-| `src/devtools.ts` | Simple DevTools for WebSandbox: logs the element's events to the host console safely |
+| `src/devtools.ts` | Logs one sandbox's `sandbox-log` lines to the host page's console, safely |
 | `src/host.ts` | The `<web-sandbox>` custom element |
 | `src/index.ts` | Public entry point of the package |
 | `src/lib/auto-resize.ts` | Content auto-sizing, host side |

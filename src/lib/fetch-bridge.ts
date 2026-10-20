@@ -39,13 +39,13 @@ import { setLongTimeout } from './long-timer';
 export const FETCH_METHOD = 'sandbox:fetch';
 
 /**
- * Why sandboxFetch() rejected (the rejection's `code`). Minted only by this module, on the host:
- *   FETCH_NOT_ALLOWED  refused before any request: the URL, origin, method, a header or the body
- *   FETCH_BUSY         refused before any request: maxConcurrent requests are already in flight (retryable)
- *   FETCH_REDIRECT     the response was a redirect, which is never followed
- *   FETCH_TOO_LARGE    the request body or the response body exceeds maxBytes
- *   FETCH_TIMEOUT      no whole response within timeoutMs (retryable)
- *   FETCH_FAILED       the request failed: network error, CORS, or the sandbox was torn down (retryable)
+ * Why `sandboxFetch()` rejected: the rejection's `code`, and the `code` of a {@link FetchRecord}. Minted only by the host.
+ * - `FETCH_NOT_ALLOWED`: refused before any request, because of the URL, the origin, the method, a header or the body.
+ * - `FETCH_BUSY`: refused before any request, because `maxConcurrent` requests are already in flight. Retryable.
+ * - `FETCH_REDIRECT`: the response was a redirect, which is never followed.
+ * - `FETCH_TOO_LARGE`: the request body or the response body exceeds `maxBytes`.
+ * - `FETCH_TIMEOUT`: no whole response within `timeoutMs`. Retryable.
+ * - `FETCH_FAILED`: the request failed (network error, CORS), or the sandbox was torn down. Retryable.
  */
 export type FetchErrorCode = Extract<RpcLibraryCode, `FETCH_${string}`>;
 
@@ -53,21 +53,58 @@ const FETCH_CODES = ['FETCH_NOT_ALLOWED', 'FETCH_BUSY', 'FETCH_REDIRECT', 'FETCH
 type FetchErrorCodesComplete = Holds<Complete<FetchErrorCode, typeof FETCH_CODES>>;
 
 // Typed as the public API has it; the list it is made from is complete by construction.
+/** Every {@link FetchErrorCode}, as a value. */
 export const FETCH_ERROR_CODES: readonly FetchErrorCode[] = FETCH_CODES;
 
-/** What an embedder configures as `fetchBridge`. Only `allow` is required. */
+/**
+ * The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. Only `allow` is required.
+ *
+ * @remarks
+ * Every request the host makes is pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`),
+ * `cache: 'no-store'` and CORS for the host page's origin. The host page's own origin and loopback, private and
+ * link-local hosts are refused unless listed. A listed public name that resolves to a private address cannot be detected
+ * from a page. A number that is not finite or is below 1 takes its default, and one above its bound takes the bound.
+ * See ADR-006.
+ */
 export interface FetchBridgeConfig {
-    /** Exact origins the guest may reach, like 'https://api.example' or 'http://localhost:8080'. */
+    /**
+     * The exact origins the guest may reach: scheme, host and optional port, like `https://api.example` or
+     * `http://localhost:8080`. An entry with a path, query, fragment, credentials or `*` is dropped with a warning, and so
+     * is a value that is not a list. An empty list refuses everything. Listing the host page's own origin or a loopback,
+     * private or link-local host works, with one warning each.
+     */
     allow: string[];
-    /** Most bytes of one response body (and one request body). Default 1 MiB, at most 32 MiB. */
+    /**
+     * Most bytes of one response body, and of one request body. At most 32 MiB.
+     *
+     * @defaultValue `1048576` (1 MiB)
+     */
     maxBytes?: number;
-    /** Most ms for one request, response body included. Default 10 000, at most 120 000. */
+    /**
+     * Most ms for one request, response body included. At most `120000`.
+     *
+     * @defaultValue `10000`
+     */
     timeoutMs?: number;
-    /** Methods the guest may use. Default GET, HEAD and POST; PUT, PATCH and DELETE can be added. */
+    /**
+     * The methods the guest may use, from `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE`. Replaces the default list.
+     *
+     * @defaultValue `['GET', 'HEAD', 'POST']`
+     */
     methods?: string[];
-    /** Request headers the guest may set beyond the safe set (accept, accept-language, content-language, content-type). */
+    /**
+     * Header names the guest may set beyond `accept`, `accept-language`, `content-language` and `content-type`.
+     * `Authorization` only this way; `Cookie`, `Host`, `Origin`, `Referer`, `Sec-*`, `Proxy-*` and other forbidden names
+     * never.
+     *
+     * @defaultValue none
+     */
     headers?: string[];
-    /** Most requests in flight at once. Default 4, at most 16. */
+    /**
+     * Most requests in flight at once; a request past it is refused with `FETCH_BUSY`. At most `16`.
+     *
+     * @defaultValue `4`
+     */
     maxConcurrent?: number;
 }
 
@@ -115,6 +152,7 @@ export interface FetchRecord {
     reason?: string;
     /** Response body bytes read. */
     bytes: number;
+    /** Time from the request to its settlement, in ms. */
     durationMs: number;
 }
 

@@ -14,15 +14,29 @@
  * validated and clamped here, and the number of events per environment is capped.
  */
 
-/** The detail of a 'violation' event. Guest-supplied: validated and clamped, but not trusted. */
+/**
+ * The `detail` of a `violation` event: the guest's policy refused a load. Guest-supplied: validated and clamped, but not
+ * trusted.
+ *
+ * @remarks
+ * A report is evidence that the guest attempted something the policy refused, never a host fact: guest code can suppress
+ * its own reports, a frame the guest creates reports to itself, and worker reports depend on the engine (WebKit raises
+ * none in workers). At most {@link VIOLATION_EVENT_LIMIT} events per environment; in strict mode per `source`, and for the
+ * view per directive, so refused loads of one kind never hide a report of another. See ADR-005.
+ */
 export interface SandboxViolation {
-    /** The effective directive that refused the load, e.g. 'connect-src' or 'img-src'. */
+    /** The effective directive that refused the load, e.g. `'connect-src'` or `'img-src'`. */
     directive: string;
-    /** What was refused: a URL (possibly reduced to its origin by the browser), or 'inline', 'eval', … */
+    /**
+     * What was refused: a URL (possibly reduced to its origin by the browser; a `data:` or `blob:` URL is reported by its
+     * scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters.
+     */
     blockedURI: string;
-    /** Where the refused code ran, when the browser says (a blob: URL, about:srcdoc, …). */
+    /** Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like). At most 2048 characters. */
     sourceFile?: string;
+    /** The line of the refused code, a positive integer, when the browser gives one. */
     lineNumber?: number;
+    /** The column of the refused code, a positive integer, when the browser gives one. */
     columnNumber?: number;
     /**
      * Strict mode only (ADR-005, A6): which document's report this is, set by the host from the port it arrived
@@ -35,9 +49,9 @@ export interface SandboxViolation {
 }
 
 /**
- * Most 'violation' events one environment can produce; later reports are dropped (one warning). This
- * bounds the host work a guest can cause through this channel: dispatching an event runs embedder
- * listeners. The guest bootstrap stops forwarding at the same number, so an honest guest never sends more.
+ * Most `violation` events one environment can produce; later reports are dropped, with one warning. It bounds the host
+ * work a guest can cause through this channel, since dispatching an event runs embedder listeners. In strict mode it applies
+ * per `source`, and for the view per directive. The guest bootstrap stops forwarding at the same number.
  */
 export const VIOLATION_EVENT_LIMIT = 100;
 

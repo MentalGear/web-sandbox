@@ -127,6 +127,14 @@ A finding ID alone (`M-2`) names rows in several reports, so it resolves to none
 gets an entry in the registry and an anchor on each finding; once it is closed, it moves to `docs/archive/reviews/`, its
 registry entry changes with it, and no citation does.
 
+**TSDoc on the public API.** Every export of `src/index.ts`, every member of its classes and interfaces, every parameter
+(`@param name - …`) and every returned value (`@returns`) has its TSDoc, and the docs state what holds now: behaviour,
+units, defaults (`@defaultValue`), bounds, what refuses or throws (`@throws`) and which event fires. The summary is one
+or two sentences; the rest goes under `@remarks`. Related exports are linked with `{@link Name}` (the members of
+`WebSandbox` are written as code, since the class and its interface share a name); a registry ID may be cited where the
+reader needs the background. `test/unit/tsdoc-coverage.test.ts` fails on a gap, and docs/API.md's reference parts are
+rendered from this text ([below](#generated-docs-and-their-markers)).
+
 **Values first, types derived.** What a doc renders or a test compares exists once, as a runtime value
 (`CONFIG_SCHEMA`, `CHANNEL_BUDGETS`, the egress table), and its types are derived from it (`as const`, `typeof`,
 `satisfies`). No doc, comment or test keeps its own hand-written copy of such a list.
@@ -135,8 +143,10 @@ registry entry changes with it, and no citation does.
 stand beside the bound as an example, with its date and engine; it is never generated, and no test pins it.
 
 **The guards**, in the unit run and CI:
-- `bun run api:check`: the public API against its reviewed report, [etc/web-sandbox.api.md](etc/web-sandbox.api.md);
-  `bun run api:update` accepts a change, which the PR then shows.
+- `bun run api:check`: the public API against its reviewed report, [etc/web-sandbox.api.md](etc/web-sandbox.api.md),
+  and the checked-in doc model [etc/web-sandbox.api.json](etc/web-sandbox.api.json) (the declarations with their TSDoc,
+  which the generated reference reads) against what the build writes; `bun run api:update` accepts a change, which the PR
+  then shows.
 - `bun run docs:check`: every generated region equals what the code renders, and no handwritten section is stale
   ([below](#generated-docs-and-their-markers)).
 - `test/unit/doc-links.test.ts`: every relative link and anchor in the Markdown files, and every ID in the registry's

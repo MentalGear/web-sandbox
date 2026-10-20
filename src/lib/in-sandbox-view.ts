@@ -30,7 +30,11 @@ import { KIND_DIRECTIVES } from './csp/csp-generator';
  * inStrictWorker (the worker's prelude). The rest is host-only.
  */
 
-/** The largest html one render may carry, in UTF-16 code units (256 Ki characters; A4). */
+/**
+ * The most characters (UTF-16 code units, 256 Ki) one strict-mode view operation may carry: the `html` of
+ * `sandboxView.render()`, the string of `text()` and the value of `set()`. A longer one makes the call throw a
+ * `RangeError` in the guest.
+ */
 export const VIEW_RENDER_MAX_LENGTH = 262144;
 
 /** The longest element id a render may target. */
@@ -2957,11 +2961,16 @@ export function viewBootstrapHash(): string {
 }
 
 /**
- * The strict view bootstrap's CSP hash source, `'sha256-…'`, for this release of the package (R1:R4-5): the
- * very value the element puts in the view's script-src, so an embedder can allow it in the host page's own
- * Content-Security-Policy, which the view inherits (docs/API.md, "Host page policy"). The bootstrap is a string literal
- * of the bundle (above), so the hash is the same in a build step (importing the package needs no DOM) and in the browser,
- * however the embedder's app is bundled or minified; it changes only with the package's own version.
+ * The CSP hash source of strict mode's view bootstrap for this release of the package (R1:R4-5): the very value the
+ * element puts in the view's `script-src`, so an embedder can allow it in the host page's own Content-Security-Policy,
+ * which the view inherits (docs/API.md#host-page-policy).
+ *
+ * @remarks
+ * The bootstrap is a string literal of the bundle, so the hash is the same in a build step (importing the package needs
+ * no DOM) and in the browser, however the embedder's app is bundled or minified. It changes only with the package's
+ * version.
+ *
+ * @returns The hash source, `'sha256-…'`, quotes included.
  */
 export function viewScriptHash(): string {
     return viewBootstrapHash();

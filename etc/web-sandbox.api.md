@@ -21,7 +21,6 @@ export interface CooperativeSandboxConfig extends SandboxConfigOptions {
     allowAnimations?: never;
     allowAutoplay?: never;
     entry?: never;
-    // (undocumented)
     mode: 'cooperative';
     origins?: SandboxOrigins;
     workerExecutionTimeout?: never;
@@ -33,7 +32,7 @@ export function defineWebSandbox(tagName?: string): typeof WebSandbox;
 // @public
 export const EXECUTION_TIMEOUT_GRACE_MS = 1000;
 
-// @public (undocumented)
+// @public
 export const FETCH_ERROR_CODES: readonly FetchErrorCode[];
 
 // @public
@@ -53,7 +52,6 @@ export type FetchErrorCode = Extract<RpcLibraryCode, `FETCH_${string}`>;
 export interface FetchRecord {
     bytes: number;
     code?: FetchErrorCode;
-    // (undocumented)
     durationMs: number;
     method: string;
     outcome: 'ok' | 'refused' | 'failed' | 'aborted';
@@ -73,7 +71,6 @@ export type FileEntry = FileContent | {
 
 // @public
 export interface FileError extends Error {
-    // (undocumented)
     code: FileErrorCode;
 }
 
@@ -83,7 +80,6 @@ export type FileErrorCode = 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEE
 // @public
 export interface FileInfo {
     path: string;
-    // (undocumented)
     size: number;
     type: string;
 }
@@ -123,7 +119,6 @@ export const MAX_INBOUND_IN_FLIGHT = 256;
 
 // @public
 export interface RpcError extends Error {
-    // (undocumented)
     code: RpcErrorCode;
 }
 
@@ -136,10 +131,10 @@ export type RpcLibraryCode = 'FETCH_NOT_ALLOWED' | 'FETCH_BUSY' | 'FETCH_REDIREC
 // @public
 export const SAFE_CAPABILITIES: readonly ["allow-orientation-lock", "allow-pointer-lock", "allow-scripts"];
 
-// @public (undocumented)
+// @public
 export type SafeCapability = (typeof SAFE_CAPABILITIES)[number];
 
-// @public (undocumented)
+// @public
 export type SandboxCapability = SafeCapability | (typeof UNSAFE_SANDBOX_FLAGS)[number];
 
 // @public
@@ -165,11 +160,8 @@ export interface SandboxConfigOptions {
 // @public
 export class SandboxDevTools {
     constructor(sandboxElement: HTMLElement);
-    // (undocumented)
     activate(): void;
-    // (undocumented)
     deactivate(): void;
-    // (undocumented)
     toggle(): void;
 }
 
@@ -186,10 +178,8 @@ export interface SandboxFiles {
 // @public
 export interface SandboxLog {
     args: readonly unknown[];
-    // (undocumented)
     level: SandboxLogLevel;
     source: 'guest' | 'host';
-    // (undocumented)
     type: 'LOG';
 }
 
@@ -212,10 +202,8 @@ export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 // @public
 export interface SandboxViolation {
     blockedURI: string;
-    // (undocumented)
     columnNumber?: number;
     directive: string;
-    // (undocumented)
     lineNumber?: number;
     source?: 'view' | 'logic';
     sourceFile?: string;
@@ -242,10 +230,10 @@ export const UNSAFE_PERMISSIONS: readonly ["fullscreen"];
 // @public
 export const UNSAFE_SANDBOX_FLAGS: readonly ["allow-downloads", "allow-forms", "allow-modals", "allow-popups", "allow-presentation"];
 
-// @public (undocumented)
+// @public
 export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];
 
-// @public (undocumented)
+// @public
 export type UnsafePermission = (typeof UNSAFE_PERMISSIONS)[number];
 
 // @public
@@ -262,29 +250,22 @@ export const VIOLATION_EVENT_LIMIT = 100;
 
 // @public
 export interface WebSandbox {
-    // (undocumented)
     addEventListener<K extends keyof WebSandboxEventMap>(type: K, listener: (this: WebSandbox, event: WebSandboxEventMap[K]) => unknown, options?: boolean | AddEventListenerOptions): void;
-    // (undocumented)
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
-    // (undocumented)
     removeEventListener<K extends keyof WebSandboxEventMap>(type: K, listener: (this: WebSandbox, event: WebSandboxEventMap[K]) => unknown, options?: boolean | EventListenerOptions): void;
-    // (undocumented)
     removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
 }
 
 // @public
 export class WebSandbox extends HTMLElement {
     constructor();
-    // (undocumented)
     adoptedCallback(): void;
     call<T = unknown>(method: string, ...args: unknown[]): Promise<T>;
     callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T>;
     commitGuestWrites(paths: string[], options?: {
         code?: boolean;
     }): void;
-    // (undocumented)
     connectedCallback(): void;
-    // (undocumented)
     disconnectedCallback(): void;
     execute(code: string): void;
     expose(name: string, fn: (...args: any[]) => unknown): void;
@@ -301,25 +282,18 @@ export class WebSandbox extends HTMLElement {
 
 // @public
 export interface WebSandboxEventMap extends HTMLElementEventMap {
-    // (undocumented)
     'sandbox-log': CustomEvent<SandboxLog>;
-    // (undocumented)
     fetch: CustomEvent<FetchRecord>;
-    // (undocumented)
     fileschanged: CustomEvent<{
         readonly paths: readonly string[];
     }>;
-    // (undocumented)
     fileswritten: CustomEvent<{
         readonly paths: readonly string[];
     }>;
-    // (undocumented)
     ready: CustomEvent<null>;
-    // (undocumented)
     terminated: CustomEvent<{
         readonly reason: string;
     }>;
-    // (undocumented)
     violation: CustomEvent<SandboxViolation>;
 }
 
@@ -330,7 +304,6 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions {
     autoResize?: never;
     entry?: never;
     html?: never;
-    // (undocumented)
     mode: 'worker';
     origins?: SandboxOrigins;
 }

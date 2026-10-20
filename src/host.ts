@@ -36,57 +36,72 @@ import { INITIAL_LIFECYCLE, runNotices, step as runStep, type BuildContext, type
 import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
- * The element's configuration, passed to setConfig(): every option left out takes its default
- * (CONFIG_SCHEMA, src/lib/config-schema.ts), not its previous value. Reference with defaults and modes: docs/API.md#configuration.
+ * The configuration `setConfig()` takes: a union keyed by `mode`.
  *
- * A union keyed by `mode` (ADR-007), so what a mode cannot use does not type-check: strict mode's `origins` has no
- * `scripts`. A config from JSON is held to the same rules at run time (dropped with a warning). Strict mode is the
- * default, so a config that names no mode is a strict config; cooperative and worker mode are named.
+ * @remarks
+ * Every option left out takes its default, not its previous value. The union narrows each mode, so an option a mode
+ * cannot use does not type-check (strict mode's `origins` has no `scripts`; ADR-007). A config from JSON is held to the
+ * same rules at run time: an option outside its modes is ignored and holds its default, mostly with one warning. A
+ * config that names no `mode` is a strict config. Defaults, bounds and modes of every option: docs/API.md#configuration.
  */
 export type SandboxConfig = StrictSandboxConfig | CooperativeSandboxConfig | WorkerSandboxConfig;
 
 /**
- * Strict mode (ADR-005), the default: guest code runs only in a worker spawned by a view document that runs no guest
- * script; the worker draws into the view with sandboxView.render(). `html` is the initial view, rendered without its
- * scripts and handlers.
+ * The configuration of strict mode (ADR-005), the default: guest code runs only in a worker that a view document
+ * spawns, and the worker draws into the view with `sandboxView.render()`. `html` is the initial view, rendered without
+ * its scripts and event-handler attributes.
  */
 export interface StrictSandboxConfig extends SandboxConfigOptions {
-    /** Execution mode: strict when left out. Any value that is not a mode starts no environment (AR:A4). */
+    /**
+     * Names the mode; strict when left out. A value that is not a mode starts no environment: the sandbox terminates
+     * with a reason that names it (AR:A4).
+     */
     mode?: 'strict';
-    /** As in the other modes, without `scripts`: the view runs only the library's bootstrap. */
+    /** The origins the view's policy admits: as in the other modes, but without `scripts`, since the view runs only the library's bootstrap. */
     origins?: StrictSandboxOrigins;
     /** Not in strict mode (R1:R3-6): no capability reaches outside the view. Dropped at run time. */
     unsafeCapabilities?: never;
 }
 
 /**
- * Cooperative mode, for content that cooperates: guest code runs in the guest document, within a frozen list of
- * documented limits (README, "Cooperative-mode limits"); 'iframe' was renamed 'cooperative'.
+ * The configuration of cooperative mode, for content that cooperates: guest code runs in the guest document, within the
+ * documented limits of the mode (README, "Cooperative-mode limits"). The mode was called `'iframe'`; that name is refused.
  */
 export interface CooperativeSandboxConfig extends SandboxConfigOptions {
+    /** Names the mode. */
     mode: 'cooperative';
-    /** The exact origins the guest may load each kind from (src/lib/csp/origins.ts). Default: none. */
+    /**
+     * The exact origins the guest may load each kind from (ADR-007).
+     * @defaultValue none
+     */
     origins?: SandboxOrigins;
-    /** Strict mode only (R1:R3-6); ignored with a warning at run time. */
+    /** Strict mode only (R1:R3-6): ignored with a warning at run time. */
     entry?: never;
-    /** Strict mode only: the guest document is the guest's own; ignored with a warning at run time. */
+    /** Strict mode only (the guest document is the guest's own): ignored with a warning at run time. */
     allowAnimations?: never;
-    /** Strict mode only; ignored with a warning at run time. */
+    /** Strict mode only: ignored with a warning at run time. */
     allowAutoplay?: never;
-    /** Worker and strict mode only: the guest document may share the host's thread, so no timer could fire (R1:R3-6). */
+    /** Worker and strict mode only (the guest document may share the host's thread, so no timer could fire; R1:R3-6): ignored. */
     workerExecutionTimeout?: never;
 }
 
-/** Worker mode: guest code runs in a worker inside the frame (frozen; to be folded into strict mode, S49). */
+/**
+ * The configuration of worker mode: guest code runs in a worker inside the frame. The mode is frozen and is to be folded
+ * into strict mode (S49).
+ */
 export interface WorkerSandboxConfig extends SandboxConfigOptions {
+    /** Names the mode. */
     mode: 'worker';
-    /** The exact origins the guest may load each kind from (src/lib/csp/origins.ts). Default: none. */
+    /**
+     * The exact origins the guest may load each kind from (ADR-007).
+     * @defaultValue none
+     */
     origins?: SandboxOrigins;
-    /** Strict mode only (R1:R3-6); ignored with a warning at run time. */
+    /** Strict mode only (R1:R3-6): ignored with a warning at run time. */
     entry?: never;
-    /** Strict mode only: a worker has no document; ignored with a warning at run time. */
+    /** Strict mode only (a worker has no document): ignored with a warning at run time. */
     allowAnimations?: never;
-    /** Strict mode only; ignored with a warning at run time. */
+    /** Strict mode only: ignored with a warning at run time. */
     allowAutoplay?: never;
     /** A worker has no document (R1:R3-6): ignored. */
     html?: never;
@@ -94,22 +109,95 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions {
     autoResize?: never;
 }
 
-/** The element's events and what each one carries (docs/API.md#events; R1:R4-12). */
+/**
+ * The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.
+ *
+ * @remarks
+ * Every event is a `CustomEvent` dispatched on the element and none is `composed`. The `detail` is frozen, deeply:
+ * the bytes of a typed array, the entries of a `Map` and a `Date`'s time are the only parts that stay changeable.
+ * Fields that come from the guest are validated and clamped, but remain the guest's data. Reference: docs/API.md#events.
+ */
 export interface WebSandboxEventMap extends HTMLElementEventMap {
+    /**
+     * The guest checked in and `state` is now `'ready'`. Once per environment; `detail` is `null`. Does not bubble.
+     * In cooperative mode the guest document may still be loading. Without `allow-scripts` no guest script runs, and
+     * the event comes with the frame's load.
+     */
     ready: CustomEvent<null>;
+    /**
+     * The sandbox was terminated: `state` is `'terminated'` and `detail.reason` says why. Fired once per termination,
+     * for a call to `terminate()`, a budget or liveness check that ended the guest, a failed frame
+     * check, or a configuration or build that was refused (in a task of its own, and not at all if another build
+     * started meanwhile). Removing the element ends its environment without this event. Does not bubble.
+     */
     terminated: CustomEvent<{ readonly reason: string }>;
+    /**
+     * A log line, from the guest's console or written by the element: `detail` is a {@link SandboxLog}. Guest lines are
+     * limited to {@link LOG_EVENTS_PER_SECOND} per environment per second. Bubbles.
+     */
     'sandbox-log': CustomEvent<SandboxLog>;
+    /**
+     * The guest's policy refused a load: `detail` is a {@link SandboxViolation}. At most {@link VIOLATION_EVENT_LIMIT} per
+     * environment. A report is a claim by the guest, not a host fact. Bubbles.
+     */
     violation: CustomEvent<SandboxViolation>;
+    /**
+     * A `sandboxFetch()` request settled, refusals included: `detail` is a {@link FetchRecord}. Dispatched only with
+     * `fetchBridge` configured (without it the request rejects with `FETCH_NOT_ALLOWED` and no event is dispatched).
+     * Bubbles.
+     */
     fetch: CustomEvent<FetchRecord>;
+    /**
+     * `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()`
+     * changed the files, synchronously: `detail.paths` lists the paths that changed. Does not bubble.
+     */
     fileschanged: CustomEvent<{ readonly paths: readonly string[] }>;
+    /**
+     * The guest's write or removal changed what `listGuestWrites()` shows at a path (`guestWrites`):
+     * one path per event in `detail.paths`, at most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles.
+     */
     fileswritten: CustomEvent<{ readonly paths: readonly string[] }>;
 }
 
-/** Typed listeners for the element's events (WebSandboxEventMap; R1:R4-12): types only, merged into the class. */
+/**
+ * Typed event listeners for `WebSandbox`: each event's `detail` is typed by {@link WebSandboxEventMap}. This
+ * declaration is types only, merged into the class.
+ */
 export interface WebSandbox {
+    /**
+     * Listens for an event of the element; the listener's `event.detail` has the type {@link WebSandboxEventMap} gives
+     * the event's name.
+     *
+     * @typeParam K - The event name.
+     * @param type - The event name, one of {@link WebSandboxEventMap}'s.
+     * @param listener - Called with the event, `this` being the element.
+     * @param options - As for `EventTarget.addEventListener`.
+     */
     addEventListener<K extends keyof WebSandboxEventMap>(type: K, listener: (this: WebSandbox, event: WebSandboxEventMap[K]) => unknown, options?: boolean | AddEventListenerOptions): void;
+    /**
+     * Listens for any event by name, untyped: the platform's own signature.
+     *
+     * @param type - The event name.
+     * @param listener - A function or an object with `handleEvent`.
+     * @param options - As for `EventTarget.addEventListener`.
+     */
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+    /**
+     * Removes a listener added with the typed overload of `addEventListener()`.
+     *
+     * @typeParam K - The event name.
+     * @param type - The event name, one of {@link WebSandboxEventMap}'s.
+     * @param listener - The function that was added.
+     * @param options - As for `EventTarget.removeEventListener`.
+     */
     removeEventListener<K extends keyof WebSandboxEventMap>(type: K, listener: (this: WebSandbox, event: WebSandboxEventMap[K]) => unknown, options?: boolean | EventListenerOptions): void;
+    /**
+     * Removes a listener by event name, untyped: the platform's own signature.
+     *
+     * @param type - The event name.
+     * @param listener - The function or object that was added.
+     * @param options - As for `EventTarget.removeEventListener`.
+     */
     removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
 }
 
@@ -120,116 +208,167 @@ declare global {
     }
 }
 
-/** The options every mode takes. */
+/**
+ * The options every mode takes, and the ones a mode's config narrows ({@link StrictSandboxConfig},
+ * {@link CooperativeSandboxConfig}, {@link WorkerSandboxConfig}).
+ *
+ * @remarks
+ * An option left out takes its default, whatever `setConfig()` was given before. An option a mode does not
+ * read holds its default in that mode. Each option's accepted values, bounds, warnings and modes are declared once, in
+ * the config schema (`CONFIG_SCHEMA`, src/lib/config-schema.ts), and docs/API.md#configuration renders them.
+ */
 export interface SandboxConfigOptions {
     /**
-     * 'unsafe-eval', needed to use .execute method (run arbitrary code in the sandbox). For testing: enabling it
-     * logs one warning per instance (backlog S4), since it lets guest code compile strings as code.
-     * Only a literal `true` enables it. Default false.
+     * Whether the guest policy allows `'unsafe-eval'` (strings run as code, WebAssembly too) and
+     * `execute()` runs code. For testing: each element that enables it warns once. Only a literal `true`
+     * enables it.
+     *
+     * @defaultValue `false`
      */
     scriptUnsafe?: boolean;
-    /** Sandbox attributes that keep the guest inside the frame (SAFE_CAPABILITIES). Default []. */
+    /**
+     * Sandbox flags that keep the guest inside the frame, from {@link SAFE_CAPABILITIES}. An entry that is not one is
+     * dropped with a warning. Worker mode always adds `allow-scripts`; strict mode's view always has `allow-scripts` and
+     * `allow-forms`, so listing either there changes nothing.
+     *
+     * @defaultValue `[]`
+     */
     capabilities?: SafeCapability[];
     /**
-     * Capabilities that reach outside the frame (popups, modals, downloads, forms, presentation, fullscreen). Opt-in
-     * only, logs a warning. Dropped in strict mode. Default [].
+     * Capabilities that act outside the frame, from {@link UNSAFE_CAPABILITIES} (popups, modals, downloads, forms,
+     * presentation, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;
+     * dropped with a warning in strict mode.
+     *
+     * @defaultValue `[]`
      */
     unsafeCapabilities?: UnsafeCapability[];
     /**
-     * Initial HTML content: the initial view in strict mode (its scripts and handlers do not run; one warning per
-     * element says so), the guest document in cooperative mode. Ignored in worker mode. Empty (the default) means
-     * `<div id="root"></div>`. load() sets it too.
+     * The initial HTML: the initial view in strict mode (its `<script>` elements and event-handler attributes never
+     * run, and markup that holds any warns once per element), the guest document in cooperative mode. Ignored in worker
+     * mode. `load()` sets it too. Empty means `<div id="root"></div>`. A value that is not a string is
+     * dropped with a warning.
+     *
+     * @defaultValue `''`
      */
     html?: string;
     /**
-     * Strict mode: the path of a registered JavaScript file the worker runs first, as a classic script.
-     * Ignored (with a warning) in other modes.
+     * Strict mode only: the path of a registered JavaScript file (see `registerFiles()`) that the worker
+     * runs first, as a classic script. Ignored with a warning in other modes. If it is not a registered JavaScript file
+     * the sandbox terminates.
+     *
+     * @defaultValue none
      */
     entry?: string;
     /**
-     * Strict mode: whether CSS animations and transitions run in the view. Default `true`. Left out (or `undefined`) or
-     * `true` keeps them; any other value turns them off: `false`, and anything that is not a boolean, with one warning.
-     * Ignored, with a warning, in the other modes.
+     * Strict mode only: whether CSS animations and transitions run in the view. `true` or left out keeps them; any
+     * other value turns them off, with one warning when it is not a boolean. Ignored with a warning in other modes.
      *
-     * **Warning**: while `true` (the default), CSS animations and transitions in the view run on the host page's main
-     * thread wherever the browser runs the view there: Firefox, Safari and every WebKit browser, Android (Android WebView
-     * always), and Chromium without sandboxed-iframe isolation; desktop Chromium 127+ isolates the view in a process of
-     * its own. A guest can then keep the host page busy (measured: 80–98% of its main thread) for as long as they run:
-     * the view's time budget does not bound them. Set `false` to remove animations and transitions from the view
-     * (elements show their end state), which restores the bound. With `false`, a host page whose `style-src` refuses
-     * inline styles must allow the view's stylesheet by its hash (docs/API.md#host-page-policy).
+     * @remarks
+     * While `true`, animations run on the host page's main thread wherever the browser runs the view there, and the
+     * view's time budget does not bound them: a guest can keep the page busy for as long as they run. `false` removes
+     * them (elements show their end state), which restores the bound. With `false`, a host page whose `style-src`
+     * refuses inline styles must allow the view's stylesheet by its hash (docs/API.md#host-page-policy).
+     *
+     * @defaultValue `true`
      */
     allowAnimations?: boolean;
     /**
-     * Strict mode: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Default `false`: the
-     * `autoplay` attribute is removed, and media plays only when the user starts it. Only a literal `true` keeps it: left
-     * out (or `undefined`) or `false` removes it, and so does any other value, with one warning when it is not a boolean.
-     * Ignored, with a warning, in the other modes.
+     * Strict mode only: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Only a literal
+     * `true` keeps `autoplay`; left out, `false` or any other value (with one warning when it is not a boolean) removes
+     * it, and media then plays only when the user starts it. Ignored with a warning in other modes.
      *
-     * **Warning**: with `true`, autoplaying media decodes and paints on the host page's main thread wherever the view
-     * runs there (see `allowAnimations`), for as long as it plays, and the view's time budget does not bound it
-     * (measured: up to +6 points of the host page's main thread for 20 looping videos).
+     * @remarks
+     * With `true`, playing media costs the host page's main thread where the view shares it, outside the view's time
+     * budget.
+     *
+     * @defaultValue `false`
      */
     allowAutoplay?: boolean;
     /**
-     * A budget in ms for each execute() (worker and strict mode); 0 (the default) is off. At the deadline the guest's
-     * event loop must be free: the host pings it, and a guest that does not answer within
-     * EXECUTION_TIMEOUT_GRACE_MS ends the sandbox ('Execution Timeout', then 'terminated'). See _armExecutionBudget.
+     * A deadline in ms for each `execute()`, in worker and strict mode. At the deadline the guest's event
+     * loop must be free: the element pings the guest, and if no answer arrives within
+     * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).
+     * Anything but a finite number above 0 is off. Not read in cooperative mode.
+     *
+     * @defaultValue `0` (off)
      */
     workerExecutionTimeout?: number;
     /**
-     * Liveness watchdog budget in ms (0 = off, the default): terminates a guest that stops answering for this long.
-     * Off by default because legitimate synchronous work longer than the budget would be stopped too. See src/lib/watchdog.ts for what it can and cannot bound.
+     * Terminates a guest that stops answering for this long, in ms; anything but a finite number above 0 is off. It
+     * starts at `ready`. Off by default because legitimate synchronous work longer than the budget is stopped too.
+     * In cooperative mode it bounds a looping guest only where the browser runs the frame in its own process.
+     *
+     * @defaultValue `0` (off)
      */
     watchdogTimeout?: number;
     /**
-     * Content auto-sizing (cooperative and strict mode, off by default): the element's height follows the guest's content
-     * height, validated, clamped and rate-limited on the host (src/lib/auto-resize.ts). Only a literal true
-     * enables it. No effect in worker mode, which has no document (one warning per instance).
+     * Whether the element's height follows the guest's content height, from `ready` on; the height is validated,
+     * clamped to {@link AUTO_RESIZE_MAX_HEIGHT} and changes at most {@link AUTO_RESIZE_MAX_UPDATES_PER_SECOND} times a
+     * second. Only a literal `true` enables it. Strict and cooperative mode; in worker mode it does nothing, with one
+     * warning.
+     *
+     * @defaultValue `false`
      */
     autoResize?: boolean;
     /**
-     * The host-mediated fetch bridge (off by default): the guest gets sandboxFetch(url, init), and the host makes
-     * the request under a fixed discipline (exact-origin allowlist, no credentials, no redirects, capped body
-     * and time) and reports each one as a 'fetch' event. The guest policy is unchanged. See src/lib/fetch-bridge.ts.
+     * Opens `sandboxFetch()` in the guest: the host makes each request under a fixed discipline (exact-origin
+     * allowlist, no credentials, no redirects, capped body and time) and reports it as a `fetch` event. The guest's
+     * policy is unchanged. Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. See ADR-006.
+     *
+     * @defaultValue off
      */
     fetchBridge?: FetchBridgeConfig;
     /**
-     * Guest writes (off by default): the guest's sandboxFiles.write() and remove() are recorded by the host in an
-     * overlay of this environment, checked like registerFiles(), reported as 'fileswritten', listed by
-     * listGuestWrites() and applied only by commitGuestWrites(). Only a literal true enables it. See
-     * src/lib/guest-writes.ts.
+     * Whether the guest's `sandboxFiles.write()` and `remove()` are recorded as pending changes of the environment,
+     * announced as `fileswritten`, listed by `listGuestWrites()` and applied only by
+     * `commitGuestWrites()`. Only a literal `true` enables it.
+     *
+     * @defaultValue `false`
      */
     guestWrites?: boolean;
     /**
-     * The per-second budget of the calls the guest makes (every mode): `maxPerSecond` calls and `maxBytesPerSecond`
-     * bytes of them in any one-second window, per environment. The guest's bridge refuses a call past it with BUSY,
-     * and the element answers BUSY to one that arrives anyway. A field left out takes its default; one that is not a
-     * finite number of at least 1 takes its default with one warning. There is no "off".
+     * The per-second budget of the calls the guest makes, per environment and in every mode. A call past it is refused
+     * with `BUSY` by the guest's `bridge` before sending, and by the element if it arrives anyway. A field left out takes
+     * its default; one that is not a finite number of at least 1 takes it with one warning. There is no way to turn
+     * the budget off.
+     *
+     * @defaultValue `{ maxPerSecond: 1000, maxBytesPerSecond: 67108864 }`
      */
     callLimits?: CallLimits;
 }
 
-/** `callLimits` (docs/API.md#calllimits): the per-second budget of the calls the guest makes. */
+/** The per-second budget of the calls the guest makes ({@link SandboxConfigOptions.callLimits}). */
 export interface CallLimits {
-    /** Calls per second. Default 1000. */
+    /**
+     * Most calls in any one-second window (a sliding window).
+     *
+     * @defaultValue `1000`
+     */
     maxPerSecond?: number;
-    /** Bytes of calls per second, each call's whole message measured as RPC_MAX_BYTES is. Default 67108864 (64 MiB). */
+    /**
+     * Most bytes of calls in any one-second window, each call's whole message measured as `call()`
+     * measures it. A value below `RPC_MAX_BYTES` (33 MiB) also caps one call: a heavier call is refused with
+     * `ARGS_NOT_TRANSFERABLE`, with one warning at `setConfig()`.
+     *
+     * @defaultValue `67108864` (64 MiB)
+     */
     maxBytesPerSecond?: number;
 }
 
 /**
- * Where the element is in its lifecycle (read it from `sandbox.state`):
- *   idle        constructed, or removed from the document: no frame
- *   loading     a frame was created; waiting for the guest to check in (its bootstrap announces its port, S46; in
- *               worker mode once its worker runs; in strict mode the view's bootstrap checks in on its own port), or
- *               without a bootstrap (no allow-scripts), for the frame's one load
- *   ready       the guest's port is this environment's and 'ready' dispatched; in cooperative mode the guest document
- *               may still be loading (its calls and execute() wait in the guest until it is parsed)
- *   terminated  torn down by terminate(), a budget (watchdog, workerExecutionTimeout), a frame-integrity check
- *               or a build that failed; stays so until reset(), load() or setConfig() builds a new environment
- * There is deliberately no 'running' state: nothing the guest reports could make it truthful (execute() reports
- * nothing back, and guest code as a whole never says it is running or that it stopped).
+ * Where the element is in its lifecycle; read it from `state`.
+ *
+ * - `'idle'`: constructed, or removed from the document. There is no frame.
+ * - `'loading'`: a frame was built and the guest has not checked in (without a bootstrap, the frame has not loaded).
+ * - `'ready'`: the guest checked in and `ready` was dispatched. In cooperative mode the guest document may still be
+ *   loading; its calls and `execute()` wait until it is parsed.
+ * - `'terminated'`: torn down by `terminate()`, a budget (`watchdogTimeout`, `workerExecutionTimeout`),
+ *   a frame check, or a build that failed. It stays so until `reset()`, `load()` or
+ *   `setConfig()` builds a new environment.
+ *
+ * @remarks
+ * There is deliberately no `'running'` state: nothing the guest reports could make it truthful. Lifecycle
+ * reference: docs/API.md#lifecycle and ADR-003.
  */
 export type SandboxState = 'idle' | 'loading' | 'ready' | 'terminated';
 
@@ -360,30 +499,28 @@ const viewErrorLine = (message: unknown) => uncaughtLine(typeof message === 'str
 
 
 /**
- * workerExecutionTimeout's grace (FR:F2): at an execute()'s deadline the host pings the
- * guest, and a guest that has not answered within this long is terminated. Only a free event loop can answer, so
- * this is how long the loop may still be busy at the deadline; counted in ticks, so a host stall never counts.
+ * How long, in ms, the guest's event loop may still be busy at an `execute()` deadline (`workerExecutionTimeout`): the
+ * element pings the guest there, and a guest that has not answered within this time ends the sandbox. Only a free event
+ * loop can answer. Counted in host ticks, so a stall of the host page never counts (FR:F2).
  */
 export const EXECUTION_TIMEOUT_GRACE_MS = 1000;
 
 /**
- * Strict mode's view liveness check (ADR-005): always on, independent of watchdogTimeout. The view runs no guest
- * script, so it answers within this budget unless it is gone (Chromium replaces a view whose navigation the
- * wrapper refuses with an error page, research 15 P4) or rendering guest markup keeps its thread busy for
- * that long. Host stalls are never counted (watchdog.ts).
+ * How long, in ms, strict mode's view may go without answering before the sandbox terminates (ADR-005). Always on,
+ * independent of `watchdogTimeout`. Counted in host ticks, so a stall of the host page never counts (watchdog.ts).
  */
 export const VIEW_LIVENESS_TIMEOUT_MS = 5000;
 
 /**
- * How long a build may stay `loading` (BR:CB3): the liveness budget, counted in host ticks
- * (watchdog.ts), so a host stall never counts. It bounds the wait for the guest's check-in: the announcement its
- * bootstrap posts as its first statement (cooperative mode, S46), the frame's announcement once its worker runs (worker
- * mode), or the view's check-in on its own port (strict mode, R1:R3-1); and, where no bootstrap runs (no allow-scripts),
- * the wait for the frame's one load. A build still `loading` then is terminated with 'the sandbox did not finish
- * loading', or with the reason that names the host page's policy when the frame loaded and its startup script never
- * checked in. Where a bootstrap checks in, the guest's own subresources and scripts
- * never count (the check-in comes before them): a guest page with slow images, or one that never finishes its
- * document, is `ready`. Without one, the frame's load waits for the guest's subresources, and they count.
+ * How long, in ms, a build may stay `loading` before the sandbox terminates; the reason names the host page's policy
+ * when the frame loaded and its startup script never checked in (BR:CB3). Counted in host ticks, so a stall of the host
+ * page never counts.
+ *
+ * @remarks
+ * It bounds the wait for the guest's check-in, which comes before the guest's own subresources and scripts: a guest
+ * page with slow images, or one that never finishes its document, is `ready`. Where no bootstrap runs (no
+ * `allow-scripts`) it bounds the wait for the frame's one load, and the guest's subresources count. The value is
+ * {@link VIEW_LIVENESS_TIMEOUT_MS}.
  */
 export const LOAD_TIMEOUT_MS = VIEW_LIVENESS_TIMEOUT_MS;
 
@@ -424,8 +561,15 @@ interface StrictInit {
 const ElementBase: typeof HTMLElement = typeof HTMLElement === 'function' ? HTMLElement : (class {} as unknown as typeof HTMLElement);
 
 /**
- * The `<web-sandbox>` element: one sandboxed environment for untrusted web content, rebuilt by setConfig(),
- * load() and reset(). Register it with defineWebSandbox(). Public surface: docs/API.md.
+ * The `<web-sandbox>` custom element: one sandboxed environment for untrusted web content, rebuilt by
+ * `setConfig()`, `load()` and `reset()`. Register it with
+ * {@link defineWebSandbox}.
+ *
+ * @remarks
+ * The element has no observed attributes and one property, `state`; everything else is set through its
+ * methods. It builds an environment only while it is in the document of the window that defined it: moved into another
+ * document it tears its environment down and stays `'idle'` there, with one warning. Its events are listed in
+ * {@link WebSandboxEventMap}. Reference: docs/API.md.
  */
 export class WebSandbox extends ElementBase {
     private _iframe: HTMLIFrameElement | null = null;
@@ -534,7 +678,10 @@ export class WebSandbox extends ElementBase {
         this._exposeGuestWrites(null);
     }
 
-    /** Where the sandbox is in its lifecycle; see SandboxState. Agrees with 'ready' / 'terminated' when they fire. */
+    /**
+     * Where the element is in its lifecycle, read-only: `'idle'`, `'loading'`, `'ready'` or `'terminated'`
+     * ({@link SandboxState}). It already has the new value when `ready` or `terminated` is dispatched.
+     */
     get state(): SandboxState {
         return this._lc.state;
     }
@@ -543,28 +690,48 @@ export class WebSandbox extends ElementBase {
     // looked up on the element (BR:CB7): Firefox gives an element adopted into another document that document's
     // HTMLElement prototype, so `this.initialize` and `this._teardown` are gone there; a method call would throw, and the
     // guest would keep running with nothing left that could end it.
+    /**
+     * Custom element reaction: the browser calls it when the element is inserted into a document. It builds an
+     * environment from the current configuration (see `state`) where the element may build one;
+     * nothing is dispatched synchronously.
+     */
     connectedCallback() {
         connected(this);
     }
 
-    // Removing the element ends its environment: a frame outside the document cannot be used, and keeping
-    // its port, timers and watchdog alive would only let pending calls hang. Pending calls reject with
-    // TERMINATED. This is not a termination — no 'terminated' event — and re-inserting the element builds
+    // A frame outside the document cannot be used, and keeping its port, timers and watchdog alive would only let
+    // pending calls hang. This is not a termination — no 'terminated' event — and re-inserting the element builds
     // a fresh environment through connectedCallback (which also makes moving the element a clean re-init).
+    /**
+     * Custom element reaction: the browser calls it when the element is removed from a document. The environment ends
+     * and pending calls reject with `TERMINATED`. This is not a termination: no `terminated` event is dispatched, and
+     * inserting the element again builds a fresh environment.
+     */
     disconnectedCallback() {
         disconnected(this);
     }
 
-    // Moving the element into another document (adoptNode, or appending it to an iframe's document) ends its
-    // environment like a removal; connectedCallback then refuses to build there (BR:CB7).
+    // connectedCallback then refuses to build in the other document (BR:CB7).
+    /**
+     * Custom element reaction: the browser calls it when the element is moved into another document
+     * (`adoptNode()`, or appending it to an iframe's document). Its environment ends as for a removal and it stays
+     * `'idle'` there, with one warning; moved back, it builds again.
+     */
     adoptedCallback() {
         adopted(this);
     }
 
     /**
-     * Tears the sandbox down now and fires 'terminated' with `{ reason }`. Pending calls reject with
-     * TERMINATED, later calls are refused at once, and `state` stays 'terminated' until reset(), load()
-     * or setConfig(). Calling it again while terminated does nothing, so 'terminated' fires once per termination.
+     * Removes the frame now, sets `state` to `'terminated'` and dispatches `terminated` with `{ reason }`. Pending calls
+     * reject with `TERMINATED` and later calls are refused at once. The sandbox stays terminated until
+     * `reset()`, `load()` or `setConfig()` builds a new environment.
+     *
+     * @remarks
+     * Calling it while terminated does nothing, so `terminated` fires once per termination. The reason is also written to
+     * the console as a warning.
+     *
+     * @param reason - Why, as the `terminated` event reports it; `'terminated by the host'` when left out. A value that
+     * is not a string, or is empty or only white space, is replaced by that default.
      */
     terminate(reason: string = reasonText('host')): void {
         // a reason that says nothing (not a string, empty, only white space) is the default one (R2:L-7)
@@ -573,18 +740,33 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Recreates the environment now, from any state (terminated included): a fresh frame with a fresh
-     * opaque origin and the current config. Guest-exposed methods are gone, host-exposed ones persist,
-     * and pending calls reject with TERMINATED. Wait for 'ready' before relying on the new frame.
+     * Rebuilds the environment now, from any state (terminated included): a fresh frame with a fresh opaque origin, the
+     * current configuration and a new snapshot of the files. Methods the guest exposed are gone, methods exposed with
+     * `expose()` stay, and pending calls reject with `TERMINATED`. Wait for `ready` before relying on the
+     * new environment. Outside the document it builds nothing until the element is inserted.
      */
     reset(): void {
         step(this, { t: 'build', why: 'reset', ctx: this._buildContext() });
     }
 
     /**
-     * Replaces the configuration and rebuilds the environment now (when the element is in the document).
-     * Anything left out keeps its default (see CONFIG_SCHEMA), not its previous value: `html`
-     * included. Values that cannot be used are dropped with a warning before anything is applied.
+     * Replaces the configuration and rebuilds the environment now (while the element is in the document).
+     *
+     * @remarks
+     * - The configuration is applied over the defaults, not over the previous one: an option left out returns to its
+     *   default, `html` included, so a `setConfig()` after `load()` starts with an empty document unless
+     *   it passes `html` again.
+     * - The argument is copied (structured clone) before anything reads it; changing your objects afterwards changes
+     *   nothing, not even at the next `reset()`.
+     * - Values that cannot be used (an entry that is not allowed, a list option that is not a list, an `html` that is not
+     *   a string) are dropped with one `console.warn` per element and message, and never applied half-way.
+     * - The configuration the environment already stands on, set again, changes nothing: no rebuild and no event.
+     * - A config that cannot be used at all (not an object, not cloneable, an `origins` that is not an object or has a
+     *   kind that is not a list) applies nothing and the previous config stays: the sandbox terminates, and stays terminated
+     *   until a usable config is set. The `terminated` event of a refused
+     *   build comes in a task of its own, like `ready`.
+     *
+     * @param config - The new configuration; see {@link SandboxConfig}.
      */
     setConfig(config: SandboxConfig) {
         // A config the element cannot use is a termination with a reason, never a throw that leaves the old
@@ -656,48 +838,75 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Adds or replaces files in this element's store (a string is stored as UTF-8, a Uint8Array is
-     * copied; `{ content, type }` overrides the type from the extension). The guest sees them from the
-     * next environment build on — reset(), load() or setConfig() — never in the frame already running.
-     * The whole batch is validated first: a refusal throws an Error with `code` INVALID_PATH,
-     * INVALID_FILE or FILES_QUOTA_EXCEEDED and changes nothing. Fires 'fileschanged' with `{ paths }`
-     * when something changed.
+     * Adds or replaces files in the element's store. The guest sees them from the next environment build on
+     * (`reset()`, `load()` or `setConfig()`), never in a guest already
+     * running. Files survive every rebuild and `terminate()`.
+     *
+     * @remarks
+     * A path is relative (`src/main.js`): segments of letters, digits and `._~!$&'()*+,;=@-` separated by single slashes,
+     * at most 256 characters, no `.` or `..` segment. Paths are checked, never normalised. A file's type comes from its
+     * extension unless the entry gives one; an unknown extension is `application/octet-stream`. A reference in the guest's
+     * markup, stylesheets or modules names a file only for the kind of load its type is for.
+     *
+     * Fires `fileschanged` when something changed; registering identical content again changes nothing.
+     *
+     * @param files - The files by path. An entry is a `string` (stored as UTF-8), a `Uint8Array` (copied), or
+     * `{ content, type }` to set the MIME type instead of deriving it from the extension.
+     * @throws A {@link FileError} with `code` `INVALID_PATH`, `INVALID_FILE` or `FILES_QUOTA_EXCEEDED`. The whole batch is
+     * validated first, so a refusal changes nothing.
      */
     registerFiles(files: Record<string, FileEntry>): void {
         this._dispatchFilesChanged(this._files.register(files));
     }
 
     /**
-     * Removes the given paths from the store, or every file when called without paths. Unregistered
-     * paths are ignored; an invalid one throws INVALID_PATH and removes nothing. Like registerFiles(),
-     * this takes effect at the next environment build.
+     * Removes files from the store. Like `registerFiles()`, it takes effect at the next environment
+     * build. Fires `fileschanged` when something was removed.
+     *
+     * @param paths - The paths to remove; every file when left out. A path that is not registered is ignored.
+     * @throws A {@link FileError} with `code` `INVALID_PATH` for an invalid path (or `paths` that is not an array); nothing
+     * is removed then.
      */
     unregisterFiles(paths?: string[]): void {
         this._dispatchFilesChanged(this._files.unregister(paths));
     }
 
-    /** The registered files, sorted by path. */
+    /**
+     * The registered files, sorted by path.
+     *
+     * @returns One {@link FileInfo} per file: its path, its MIME type and its size in bytes as registered.
+     */
     listFiles(): FileInfo[] {
         return this._files.list();
     }
 
     /**
-     * The guest's pending writes and removals (guestWrites), sorted by path:
-     * `{ path, change: 'write', type, size, content }` (content a copy of the bytes) or `{ path, change: 'remove' }`.
-     * Empty when writes are off. They belong to the current environment, survive its termination, and are discarded by
-     * the next build and on removal.
+     * The guest's pending writes and removals (see `guestWrites`), sorted by path. They belong to the current
+     * environment and survive its termination; the next build and the element's removal discard them.
+     *
+     * @returns One {@link GuestWrite} per path with a pending change, each a fresh object whose `content` is a copy of
+     * the bytes. Empty while `guestWrites` is off.
      */
     listGuestWrites(): GuestWrite[] {
         return this._guestWrites?.list() ?? [];
     }
 
     /**
-     * Applies the guest's pending changes at `paths` (required: an array of paths; a path with no pending change is
-     * skipped) to the store, atomically, as registerFiles() and unregisterFiles() would, and fires 'fileschanged'.
-     * A write whose type is not inert (anything but images, fonts, audio, video, text/plain, application/json and
-     * text/css: JavaScript, HTML, SVG, XML, WebAssembly, unknown types) is refused with FILES_NOT_ALLOWED unless
-     * `options.code === true`. Refusals throw INVALID_PATH, FILES_NOT_ALLOWED or FILES_QUOTA_EXCEEDED and change
-     * nothing. Committed paths leave the pending list; the guest sees them from the next build on.
+     * Applies the guest's pending changes at `paths` to the files, atomically, as one `registerFiles()` or
+     * `unregisterFiles()` would, and removes them from the pending list. The guest sees committed files
+     * from the next build on. Fires `fileschanged` when the files changed.
+     *
+     * @remarks
+     * A write whose type is not inert is refused unless `options.code` is `true`. Inert are the images, fonts, audio and
+     * video types a browser only decodes, `text/plain`, `application/json` and `text/css`; JavaScript, HTML, SVG, XML,
+     * WebAssembly and any type the guest made up can run or be parsed as code. The type checked is the one the file
+     * will be loaded as, never just its name. All checks come first, the quota included, so a refusal changes neither the
+     * files nor the pending list.
+     *
+     * @param paths - The paths to commit; required, since there is no "commit everything". A path with no pending change
+     * is skipped.
+     * @param options - `code: true` allows the writes whose type is not inert.
+     * @throws A {@link FileError} with `code` `INVALID_PATH`, `FILES_NOT_ALLOWED` or `FILES_QUOTA_EXCEEDED`.
      */
     commitGuestWrites(paths: string[], options?: { code?: boolean }): void {
         const { paths: checked, code } = parseCommitArguments(paths, options);
@@ -787,8 +996,11 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Sets `html` (the guest document, or the initial view in strict mode), keeps the rest of the configuration
-     * and rebuilds the environment now. Worker mode ignores the markup but still rebuilds.
+     * Sets `html` (the guest document, or the initial view in strict mode), keeps the rest of the configuration and
+     * rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still
+     * rebuilds.
+     *
+     * @param html - The markup, as for the `html` option of {@link SandboxConfigOptions}.
      */
     load(html: string) {
         this._config.html = html;
@@ -796,11 +1008,20 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Runs `code` in the guest's global scope as a function body (the guest document, or the worker in worker
-     * and strict mode), compiled with the Function the bootstrap captured. Returns nothing, and nothing is reported
-     * back; workerExecutionTimeout checks the event loop at its deadline. Needs scriptUnsafe and a string; ignored with a warning otherwise, and
-     * while there is no environment (idle or terminated), like call(), which rejects then. Queued while loading;
-     * a synchronous throw becomes a 'sandbox-log' error.
+     * Runs `code` in the guest's global scope as the body of a function: in the guest document in cooperative mode, in
+     * the worker in worker and strict mode. It is compiled with the `Function` the bootstrap captured before any guest
+     * code ran. Nothing reaches the host: no return value and no report that it returned.
+     *
+     * @remarks
+     * Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing, and so it does while the element is
+     * `'idle'` or `'terminated'` (where `call()` rejects). While `'loading'` the code is queued and sent
+     * when the build becomes `ready`; in cooperative mode it runs once the guest document is parsed. A synchronous throw
+     * becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
+     *
+     * In worker and strict mode each call has its own `workerExecutionTimeout` deadline, at which the guest's event loop
+     * must be free; see {@link SandboxConfigOptions.workerExecutionTimeout}.
+     *
+     * @param code - The function body to run.
      */
     execute(code: string) {
         if (typeof code !== 'string') {
@@ -834,10 +1055,21 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Publishes a host method the guest can invoke with `bridge.call(name, ...)`.
-     * Methods live on the element, so they survive frame recreation (load()/setConfig()).
-     * Exposing a name again replaces its handler; names starting with "sandbox:" are reserved (refused with a
-     * warning). The arguments are the guest's data: validate them before use.
+     * Publishes a host method the guest calls with `bridge.call(name, ...args)`. The guest receives the handler's return
+     * value (awaited if it is a promise). A throw or rejection reaches the guest as `HANDLER_ERROR` with the error's
+     * message, verbatim up to 65536 characters (a longer one is cut): throw errors whose message you would show the
+     * guest, or wrap the handler.
+     *
+     * @remarks
+     * Methods belong to the element: they survive `reset()`, `load()`,
+     * `setConfig()` and `terminate()`. Exposing a name again replaces its handler. Names that
+     * start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
+     * validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
+     * survives the copy).
+     *
+     * @param name - The method name, a string of at most 256 characters.
+     * @param fn - The handler; its arguments come from the guest by structured clone.
+     * @throws A `TypeError` if `name` is not a string or is longer than 256 characters, or `fn` is not a function.
      */
     expose(name: string, fn: (...args: any[]) => unknown): void {
         // A name that is not a string, or a handler that is not a function, is a mistake to say at once (R1:R3-9): ignored,
@@ -855,12 +1087,27 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Invokes a guest-exposed method and resolves with its result. Every rejection is an Error with a
-     * `code` (RpcErrorCode, see rpc.ts); UNKNOWN_METHOD, HANDLER_ERROR and RESULT_NOT_TRANSFERABLE
-     * are reported by the guest, and their message is the guest's text.
-     * Works WITHOUT scriptUnsafe: it calls a pre-registered function on the guest, it never evals.
-     * Times out after 30 s (TIMEOUT). Queued while loading; rejects with TERMINATED when the environment goes away,
-     * and at once while there is none (idle or terminated).
+     * Calls a method the guest exposed with `bridge.expose()` and resolves with its result. It works without
+     * `scriptUnsafe`: it never evaluates code.
+     *
+     * @remarks
+     * Arguments and results are copied by structured clone, at most `RPC_MAX_BYTES` (33 MiB) per message, counted on both
+     * sides on the copy that is sent: past it a call is refused before anything is sent (`ARGS_NOT_TRANSFERABLE`) and a
+     * result is answered `RESULT_NOT_TRANSFERABLE`. A value the measure does not know (an `Error`, an `ImageData`, a
+     * `SharedArrayBuffer`) is refused the same way. The whole message is measured, the method name included, and a name
+     * is at most 256 characters (`INVALID_CALL`).
+     *
+     * The call times out after 30 s (`TIMEOUT`). Calls made while `'loading'` are queued and sent when the build becomes
+     * `ready`; in cooperative mode a call reaches the guest's method once the guest document is parsed. Calls made while
+     * `'idle'` or `'terminated'` reject at once with `TERMINATED`, and so do pending ones when the environment goes away.
+     *
+     * @typeParam T - The type of the result, which the caller asserts: the guest's value is not checked against it.
+     * @param method - The name the guest exposed.
+     * @param args - The arguments, copied by structured clone.
+     * @returns The guest method's return value (awaited if it is a promise).
+     * @throws Never synchronously: the promise rejects with an {@link RpcError}, an `Error` whose `code` is an
+     * {@link RpcErrorCode}. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and
+     * their message is the guest's text.
      */
     call<T = unknown>(method: string, ...args: unknown[]): Promise<T> {
         const refusal = this._noEnvironmentError();
@@ -868,7 +1115,17 @@ export class WebSandbox extends ElementBase {
         return this._issue(() => this._broker.call(method, ...args)) as Promise<T>;
     }
 
-    /** Like call(), but with an explicit timeout in ms for this one call (0 disables the timeout). */
+    /**
+     * Like `call()`, with a timeout of your own for this one call. Every other timeout is waited out in
+     * full, however long: `watchdogTimeout` and `workerExecutionTimeout` do not shorten it.
+     *
+     * @typeParam T - The type of the result, which the caller asserts.
+     * @param timeoutMs - The timeout in ms. `0`, any value that is not above 0, and `Infinity` disable it.
+     * @param method - The name the guest exposed.
+     * @param args - The arguments, copied by structured clone.
+     * @returns The guest method's return value (awaited if it is a promise).
+     * @throws Never synchronously: the promise rejects as `call()`'s does.
+     */
     callWithTimeout<T = unknown>(timeoutMs: number, method: string, ...args: unknown[]): Promise<T> {
         const refusal = this._noEnvironmentError();
         if (refusal) return Promise.reject(refusal);
@@ -2088,10 +2345,13 @@ function adopted(element: WebSandbox) {
 }
 
 /**
- * Registers the element under `tagName` (default `<web-sandbox>`). Safe to call more than once.
- * Importing the library does not register anything, so you can pick your own tag name.
- * Throws if `tagName` is taken by another element; the class can be registered under one name only (the
- * browser throws NotSupportedError for a second, different name).
+ * Registers `WebSandbox` as a custom element under `tagName` and returns the class. Importing the package
+ * registers nothing, so you pick the name. Calling it again with the same name does nothing.
+ *
+ * @param tagName - The tag name; `'web-sandbox'` when left out. The class can be registered under one name only.
+ * @returns The `WebSandbox` class.
+ * @throws An `Error` if the name is already defined by another element; the browser's `NotSupportedError` for a second,
+ * different name of this class, and its `SyntaxError` for a name that is not a valid custom element name.
  */
 export function defineWebSandbox(tagName = 'web-sandbox'): typeof WebSandbox {
     const existing = customElements.get(tagName);
