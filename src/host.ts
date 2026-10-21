@@ -256,7 +256,7 @@ export interface SandboxConfigOptions {
     capabilities?: SafeCapability[];
     /**
      * Capabilities that act outside the frame, from {@link UNSAFE_CAPABILITIES} (popups, modals, downloads, forms,
-     * presentation, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;
+     * presentation, pointer lock, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;
      * dropped with a warning in strict mode.
      *
      * @defaultValue `[]`

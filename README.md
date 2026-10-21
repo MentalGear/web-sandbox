@@ -233,10 +233,10 @@ sandbox.setConfig({ entry: 'main.js', autoResize: true });
 ## Capabilities
 
 `capabilities` takes the sandbox flags that keep the guest inside the frame: `allow-scripts`,
-`allow-pointer-lock`, `allow-orientation-lock`.
+`allow-orientation-lock`.
 
 Capabilities that let the guest act outside the frame — `allow-forms`, `allow-popups`, `allow-modals`,
-`allow-downloads`, `allow-presentation` and `fullscreen` — are dropped from `capabilities` with a
+`allow-downloads`, `allow-presentation`, `allow-pointer-lock` and `fullscreen` — are dropped from `capabilities` with a
 warning. If you really need one, pass it in `unsafeCapabilities` (cooperative and worker mode; strict mode drops
 them); the sandbox logs a warning for each one enabled. A popup, for example, is a new top-level window that no CSP
 governs, so its URL is an exfiltration channel ([research 13](docs/research/13_popup_exfiltration/README.md)). Without
@@ -258,7 +258,8 @@ sandbox.setConfig({
 (plus the legacy `allowfullscreen`) on both the wrapper and the guest frame, since a feature reaches the
 guest only if every frame on the way delegates it. The `*` is needed because a sandboxed `srcdoc` frame
 has a fresh opaque origin that the default allowlist never matches. The risk is UI spoofing — a fullscreen guest can draw a fake browser window — which
-browsers soften by requiring a user gesture and showing an exit hint.
+browsers soften by requiring a user gesture and showing an exit hint. `allow-pointer-lock` is unsafe for the same
+reason: a guest that holds the pointer lock can hide the cursor and capture relative input, so it can draw a cursor of its own over fake host UI.
 
 `allow-same-origin` and the `allow-top-navigation*` flags are never accepted.
 
@@ -629,7 +630,10 @@ What remains for the default:
     guest code. The view's reports are complete and unforgeable up to the cap.
 *   **A worker that closes itself** is noticed only by the watchdog; **memory** is not bounded.
 *   **Cookies**: Firefox and WebKit attach the host site's cookies to a request to an allowed origin that is same-site
-    with the host page (every mode).
+    with the host page (every mode). Listing such an origin in any `origins` kind (the host page's own host, a
+    subdomain or a parent of it) or a loopback, private or link-local host warns once per kind, in every mode; prefer
+    the fetch bridge, which sends no credentials. The check compares names, with no public-suffix list: a sibling
+    subdomain is not recognised.
 
 ### Cooperative-mode limits
 

@@ -89,13 +89,14 @@ Specs under `test/e2e/` and `docs/research/` run on Chromium, Firefox and WebKit
 
 ### Isolation of the guest from the host
 
-<!-- describes: capabilities sig:52c8 -->
+<!-- describes: capabilities sig:5a25 -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
 | No access to the host page's DOM, scripts, storage, cookies (`document.cookie`) or Service Workers | Sandboxed frames without `allow-same-origin`: an opaque origin. The flags come only from closed lists; `allow-same-origin` and top navigation are on neither | `SAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS` (`src/csp-directives.ts`); `filterCapabilities` (`src/lib/capabilities.ts`); `_getSandboxFlags` (`src/host.ts`) | `test/unit/host.test.ts`; `test/e2e/security.spec.ts` ("Isolation"); research [02](research/02_sw_tampering/README.md), [03](research/03_storage_sharing/README.md), [05](research/05_outer_frame_tampering/README.md) reproductions | [ADR-001](ADR-001-continue-or-adopt.md#the-opaque-origin-and-the-unique-origin) |
 | No navigation of the guest's own frame, the host page or the tab | The wrapper's `frame-src 'none'`; no `allow-top-navigation*`; `form-action 'none'`, `base-uri 'none'`; strict: every rendered link's href is `INERT_HREF`, link clicks and submits are cancelled, `meta`, `base` and frames are never rendered | `WRAPPER_CSP`, `buildWrapperDocument` (`src/lib/frame-documents.ts`); `INERT_HREF`, `RENDER_ELEMENTS` (`src/lib/in-sandbox-view.ts`) | research [14](research/14_self_navigation/README.md) and [07](research/07_data_uri_navigation/README.md) reproductions; `test/e2e/strict.spec.ts` ("G4 navigation"); `test/e2e/worker-globals-and-termination.spec.ts` ("V3") | `ADR-005#the-guarantees-on-chromium-firefox-and-webkit` (G4) |
 | No popups unless the embedder opts in | `allow-popups` is an unsafe capability (cooperative and worker mode only, with a warning); strict mode takes none | `UNSAFE_SANDBOX_FLAGS`; `CONFIG_SCHEMA.unsafeCapabilities` (`src/lib/config-schema.ts`) | research [13](research/13_popup_exfiltration/README.md) reproduction; `test/e2e/hard-security.spec.ts` | [research 13](research/13_popup_exfiltration/README.md) |
+| No pointer lock unless the embedder opts in | `allow-pointer-lock` is an unsafe capability like `fullscreen` (cooperative and worker mode only, with a warning; dropped from `capabilities`, and from `unsafeCapabilities` in strict mode): a guest holding the lock can hide the cursor and capture relative input, so it can draw a cursor of its own over fake host UI | `UNSAFE_SANDBOX_FLAGS`; `CONFIG_SCHEMA.capabilities`, `CONFIG_SCHEMA.unsafeCapabilities` (`src/lib/config-schema.ts`) | `test/unit/config-schema.test.ts`; `test/e2e/pointer-lock.spec.ts` | the UI-spoofing reasoning of `fullscreen` ([README](../README.md#capabilities)) |
 | The host page's URL is not readable | The wrapper's base is `about:blank` and both frames are `no-referrer`; strict: the renderer forces `referrerpolicy="no-referrer"`, and the worker's location is its own `blob:` URL | `WRAPPER_BASE`, `FRAME_REFERRER_POLICY` (`src/lib/frame-documents.ts`); `sanitizeRender` | `test/e2e/host-url.spec.ts` | [S15](archive/backlog/BACKLOG-done.md#s15); cooperative residuals [S17](archive/backlog/BACKLOG-done.md#s17), [S18](archive/backlog/BACKLOG-done.md#s18) |
 | Strict: no guest script runs in any document | The view's `script-src` is the bootstrap's hash with `script-src-attr 'none'`; an allowlist renderer drops scripts, handlers, frames, `meta`, `base`, templates; markup is moved, never cloned | `strictViewPolicy` (`src/lib/csp/csp-generator.ts`); `sanitizeRender`, `RENDER_ELEMENTS`, `RENDER_ATTRIBUTES` | `test/e2e/strict.spec.ts` ("G1"); `test/e2e/strict-renderer.spec.ts`; `src/lib/in-sandbox-view.test.ts` | `ADR-005#the-renderer`; [research 15](research/15_strict_mode/README.md) |
 | Strict: nothing the view shows opens as a script-running document | The view mints URLs only for `VIEW_FILE_TYPES`; `data:` is not an origin, so no image, font or media loads from it | `VIEW_FILE_TYPES` (`src/lib/in-sandbox-view.ts`); `src/lib/load-kinds.ts` | `test/e2e/strict-renderer.spec.ts` ("ST1"); `test/unit/strict.test.ts` | [BR:ST1](archive/reviews/BROAD-REVIEW-2026-10-14.md#br-st1) |
@@ -248,13 +249,15 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
 - **Exposed methods are the attack surface** the embedder adds: validate every argument, copy objects with spread, never
   `Object.assign` or `for…in` ([S25](BACKLOG.md#s25)), and throw only errors whose message the guest may see.
 - **Opt-ins widen the model**, each with a warning: `scriptUnsafe` (`execute()` and `eval` in the guest's realm;
-  `WebAssembly` in the worker), `unsafeCapabilities` (popups, modals, downloads, forms, fullscreen), `fetchBridge`
+  `WebAssembly` in the worker), `unsafeCapabilities` (popups, modals, downloads, forms, presentation, pointer lock, fullscreen), `fetchBridge`
   (requests from the host page, carrying its origin in `Origin`), `origins` (each listed origin receives whatever the
   guest sends it), `allowAutoplay`.
 - **Cooperative mode**: check `event.source` in the host page's own `message` listeners, and do not target named frames
   or windows on a page that embeds sandboxes ([S36](BACKLOG.md#s36), [S44](BACKLOG.md#s44)).
 - **A same-site origin** listed in `origins` receives the host site's cookies on the guest's requests in Firefox and
-  WebKit (every mode): do not list one.
+  WebKit (every mode): do not list one. Any `origins` kind that lists the host page's own host, a subdomain or a parent
+  of it, or a loopback, private or link-local host, warns once per kind in every mode (`warnHostReach`,
+  `src/lib/config-schema.ts`); a sibling subdomain is not recognised (no public-suffix list).
 
 ### Engine differences that change a guarantee
 
@@ -265,7 +268,7 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
 | Firefox | Reports a worker's unhandled rejections on the host page's thread, cancelled or not; lets a worker's `EventSource` and `FontFace` past the policy | The uncaught budget (not for a tagged reason, [S78](BACKLOG.md#s78)); the worker allowlist leaves both out |
 | WebKit | Compiles `WebAssembly` without `'unsafe-eval'`; raises no violation reports in workers; refuses the view's `blob:` worker under COEP `require-corp`; sends the full host URL to same-site origins and shows it to frames the guest creates (cooperative) | `WebAssembly` deleted unless `scriptUnsafe`; worker reports are per engine; strict mode does not start under COEP; [S17](archive/backlog/BACKLOG-done.md#s17) and [S18](archive/backlog/BACKLOG-done.md#s18) are cooperative limits |
 | Chromium, WebKit | Show the host origin in `location.ancestorOrigins` (cooperative) | A cooperative limit ([S15](archive/backlog/BACKLOG-done.md#s15)) |
-| Firefox, WebKit | Attach the host site's cookies to requests to same-site origins | Do not list a same-site origin |
+| Firefox, WebKit | Attach the host site's cookies to requests to same-site origins | Do not list a same-site origin; `origins` warns for the host page's host, its subdomains and parents, and loopback hosts (not for a sibling subdomain) |
 | Firefox | Has no Trusted Types | The host page's requirement has no effect there |
 
 ## Accepted risks and open items

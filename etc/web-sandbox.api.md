@@ -148,7 +148,7 @@ export type RpcErrorCode = 'TIMEOUT' | 'TERMINATED' | 'ARGS_NOT_TRANSFERABLE' | 
 export type RpcLibraryCode = 'FETCH_NOT_ALLOWED' | 'FETCH_BUSY' | 'FETCH_REDIRECT' | 'FETCH_TOO_LARGE' | 'FETCH_TIMEOUT' | 'FETCH_FAILED' | 'INVALID_PATH' | 'INVALID_FILE' | 'FILES_QUOTA_EXCEEDED' | 'FILES_NOT_ALLOWED' | 'FILES_BUSY';
 
 // @public
-export const SAFE_CAPABILITIES: readonly ["allow-orientation-lock", "allow-pointer-lock", "allow-scripts"];
+export const SAFE_CAPABILITIES: readonly ["allow-orientation-lock", "allow-scripts"];
 
 // @public
 export type SafeCapability = (typeof SAFE_CAPABILITIES)[number];
@@ -241,13 +241,13 @@ export type StrictSandboxOrigins = Omit<SandboxOrigins, 'scripts'> & {
 };
 
 // @public
-export const UNSAFE_CAPABILITIES: readonly ["allow-downloads", "allow-forms", "allow-modals", "allow-popups", "allow-presentation", "fullscreen"];
+export const UNSAFE_CAPABILITIES: readonly ["allow-downloads", "allow-forms", "allow-modals", "allow-pointer-lock", "allow-popups", "allow-presentation", "fullscreen"];
 
 // @public
 export const UNSAFE_PERMISSIONS: readonly ["fullscreen"];
 
 // @public
-export const UNSAFE_SANDBOX_FLAGS: readonly ["allow-downloads", "allow-forms", "allow-modals", "allow-popups", "allow-presentation"];
+export const UNSAFE_SANDBOX_FLAGS: readonly ["allow-downloads", "allow-forms", "allow-modals", "allow-pointer-lock", "allow-popups", "allow-presentation"];
 
 // @public
 export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];

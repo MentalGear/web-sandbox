@@ -3,7 +3,6 @@
 /** The values the `capabilities` option accepts: sandbox flags that keep the guest inside the frame. */
 export const SAFE_CAPABILITIES = [
     "allow-orientation-lock",
-    "allow-pointer-lock",
     "allow-scripts",
 ] as const;
 
@@ -18,12 +17,15 @@ export const SAFE_CAPABILITIES = [
 //   cooperative-mode limit)
 // - allow-modals: alert/confirm/prompt can imitate host UI and block the host's main thread
 // - allow-downloads: writes files to the user's disk
+// - allow-pointer-lock: a guest can hide the cursor and capture relative input, so it can draw its own cursor and fake
+//   host UI (the UI-spoofing reasoning of fullscreen below); browsers require a user gesture to lock and show an exit hint
 // - allow-presentation: the Presentation API opens a URL on a second screen, outside the frame's CSP
 /** The sandbox flags among {@link UNSAFE_CAPABILITIES}: each reaches outside the frame and needs an explicit opt-in. */
 export const UNSAFE_SANDBOX_FLAGS = [
     "allow-downloads",
     "allow-forms",
     "allow-modals",
+    "allow-pointer-lock",
     "allow-popups",
     "allow-presentation",
 ] as const;

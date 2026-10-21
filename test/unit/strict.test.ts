@@ -99,16 +99,17 @@ describe('the strict documents', () => {
         expect(view.querySelector('script')!.textContent).toBe(viewBootstrapText());
     });
 
-    it('sandbox flags: allow-scripts allow-forms plus the safe capabilities, on both frames; unsafe capabilities dropped with one warning, no allow attribute', async () => {
+    it('sandbox flags: allow-scripts allow-forms plus the safe capabilities, on both frames; unsafe capabilities (allow-pointer-lock too) dropped with one warning, no allow attribute', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'strict', capabilities: ['allow-pointer-lock'], unsafeCapabilities: ['allow-popups', 'allow-modals', 'fullscreen'] });
+        const el = await mount({ mode: 'strict', capabilities: ['allow-orientation-lock', 'allow-pointer-lock' as never], unsafeCapabilities: ['allow-popups', 'allow-modals', 'allow-pointer-lock', 'fullscreen'] });
         el.reset();
         const wrapper = wrapperOf(el);
         const inner = parse(wrapper.srcdoc).querySelector('iframe')!;
-        expect([wrapper.getAttribute('sandbox'), inner.getAttribute('sandbox')]).toEqual(['allow-scripts allow-forms allow-pointer-lock', 'allow-scripts allow-forms allow-pointer-lock']);
+        expect([wrapper.getAttribute('sandbox'), inner.getAttribute('sandbox')]).toEqual(['allow-scripts allow-forms allow-orientation-lock', 'allow-scripts allow-forms allow-orientation-lock']);
         expect([wrapper.getAttribute('allow'), inner.getAttribute('allow'), wrapper.hasAttribute('allowfullscreen')]).toEqual([null, null, false]);
         const messages = warn.mock.calls.map(c => String(c[0]));
-        expect(messages.filter(m => m.includes('not available in strict mode'))).toEqual(['[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: allow-popups, allow-modals, fullscreen.']);
+        expect(messages.filter(m => m.includes('not available in strict mode'))).toEqual(['[Sandbox] unsafeCapabilities are not available in strict mode and were dropped: allow-popups, allow-modals, allow-pointer-lock, fullscreen.']);
+        expect(messages.filter(m => m.includes('"allow-pointer-lock" is not allowed in "capabilities"'))).toHaveLength(1);
         expect(messages.filter(m => m.includes('is enabled: it lets guest content act outside'))).toEqual([]);
         expect(await mount({ mode: 'strict' }).then(e => wrapperOf(e).getAttribute('sandbox'))).toBe('allow-scripts allow-forms');
     });
