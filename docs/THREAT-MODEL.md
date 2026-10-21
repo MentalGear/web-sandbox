@@ -41,7 +41,7 @@ frozen ([S49](BACKLOG.md#s49)).
 | Guest code cannot navigate the host page, the tab or its own frame | ✓ | ✓, except the user's modifier clicks and the guest's synthesized ones on a link ([R1:R2-2](archive/reviews/REVIEW-ROUND-1-2026-10-15.md#r1-r2-2)) and session-history entries | ✓ |
 | The guest reaches the network only through the policy (`origins`) or the fetch bridge | ✓ | ✓, except frames and workers the guest creates, WebKit's preconnect and the pre-policy window ([S8](BACKLOG.md#s8)) | ✓ |
 | Nothing the guest reads reveals the host page's URL | ✓ | partly: [S15](archive/backlog/BACKLOG-done.md#s15), [S17](archive/backlog/BACKLOG-done.md#s17), [S18](archive/backlog/BACKLOG-done.md#s18) | ✓ |
-| The host can always stop the guest | ✓ | only where the frame has its own process | ✓ |
+| The host can always stop the guest | ✓, but `terminate()` waits for a stall of the view where it shares the host page's thread, and for reports already queued ([Availability](#availability); [S77](BACKLOG.md#s77), [S78](BACKLOG.md#s78)) | only where the frame has its own process | ✓, but it waits for reports already queued ([S77](BACKLOG.md#s77), [S78](BACKLOG.md#s78)) |
 | The host page's availability | a stated bound where the view shares its thread ([Availability](#availability)) | none where the frame shares its thread | the worker is off the thread; Firefox's rejection reports are bounded |
 | `violation` reports cannot be forged | the view's (`source: 'view'`) | no | no |
 
@@ -132,7 +132,7 @@ are governed by the policy but not logged: only the bridge's requests are `fetch
 | Strict mode's ports reach only the library's code | The view takes one `INIT_VIEW` from `parent.parent`; the worker's prelude takes one trusted `INIT_WORKER` (a guest's synthetic event is not trusted) and keeps the render port in a closure | `inSandboxView`, `inStrictWorker` (`src/lib/in-sandbox-view.ts`) | `test/e2e/strict-entry-scope-and-links.spec.ts`; `test/e2e/strict.spec.ts` | `ADR-005#flow-control-files-clobbering-liveness` |
 | Only the current environment is heard, and answered | The host handles a frame only from the current port; an answer goes back on the port its request came from, which teardown closed | `_onGuestMessage`, `_onViewMessage` (`src/host.ts`) | `test/unit/channel-guarantees.test.ts` ("B4"); `test/e2e/channel-isolation.spec.ts` | [AR:B4](archive/reviews/ADVERSARIAL-REVIEW-2026-10.md#ar-b4) |
 | A call reaches only what the other side exposed, and a refusal code cannot be forged | Dispatch through a `Map` of exposed names; `sandbox:` names in a registry of their own; a code reported by the other side is clamped to its group, and a library code passes only for a reserved method on the guest's broker | `createBroker` (`src/lib/rpc.ts`) | `src/lib/rpc.test.ts`; `test/e2e/broker.spec.ts` | `ADR-002#refusal-codes`, `ADR-002#reserved-methods-and-library-codes` |
-| Every frame is declared and bounded before it is posted | One frame table; RPC frames built only by the broker's three builders; every string a frame carries out of a guest realm or the view is cut, checked or measured before posting, and checked again by the host | `FRAMES` (`src/lib/frames.ts`); `requestFrame`, `resultFrame`, `refusalFrame` (`src/lib/rpc.ts`); `createSizeOf` (`src/lib/structured-size.ts`) | `test/unit/structural.test.ts`; `test/unit/rpc-bounds-and-call-limits.test.ts` | [R3:C-1](archive/reviews/REVIEW-ROUND-3-2026-10-18.md#r3-c-1), [R2:C-3](archive/reviews/REVIEW-ROUND-2-2026-10-15.md#r2-c-3) |
+| Every frame is declared and bounded before it is posted (the measure's gap: [S77](BACKLOG.md#s77)) | One frame table; RPC frames built only by the broker's three builders; every string a frame carries out of a guest realm or the view is cut, checked or measured before posting, and checked again by the host | `FRAMES` (`src/lib/frames.ts`); `requestFrame`, `resultFrame`, `refusalFrame` (`src/lib/rpc.ts`); `createSizeOf` (`src/lib/structured-size.ts`) | `test/unit/structural.test.ts`; `test/unit/rpc-bounds-and-call-limits.test.ts` | [R3:C-1](archive/reviews/REVIEW-ROUND-3-2026-10-18.md#r3-c-1), [R2:C-3](archive/reviews/REVIEW-ROUND-2-2026-10-15.md#r2-c-3) |
 | A guest value is read once, at the boundary | Library code in a guest realm reads each property of a guest value once, as a snapshot | the stringified functions of `src/lib/realms.ts` | `test/unit/read-once.test.ts` | [R5:N-6](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-6) |
 | The view's violation reports are complete and unforgeable | No guest code runs in the view, and the host labels each report by the port it arrived on; capped per directive | `_dispatchViolation` (`src/host.ts`) | `test/e2e/violations.spec.ts` | `ADR-005#the-guarantees-on-chromium-firefox-and-webkit` (G6) |
 
@@ -159,14 +159,30 @@ forge or suppress them, and they differ per engine. Treat them as claims.
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
-| Strict and worker mode: a looping guest never holds the host page's thread, and the host can always stop it | Guest code runs in a worker; `terminate()` always works; `watchdogTimeout` (opt-in) ends a guest that stops answering, and `workerExecutionTimeout` one whose `execute()` overruns its deadline; the bootstrap answers the probes, and guest code cannot answer for it | `startWatchdog` (`src/lib/watchdog.ts`); `_startWatchdog` (`src/host.ts`) | `src/lib/watchdog.test.ts`; `test/e2e/watchdog.spec.ts`; `test/e2e/worker-timeout.spec.ts` | `ADR-003#strict-mode-bounds-execution-on-every-engine`, [S6](archive/backlog/BACKLOG-done.md#s6) |
-| Strict: a view that stops answering ends the sandbox | The host pings the view always, `VIEW_LIVENESS_TIMEOUT_MS`, host stalls not counted | the view watchdog (`src/host.ts`) | `test/e2e/strict.spec.ts` ("A5") | `ADR-005#flow-control-files-clobbering-liveness` |
-| Every channel of guest activity is bounded in count, bytes and time | One table of surfaces (the egress table) and one of channels (`CHANNEL_BUDGETS`), each naming its constants; the bootstrap installs exactly the listeners of its rows; logs and calls are counted by the guest and again by the host | `EGRESS`, `CHANNEL_BUDGETS`, `bootstrapListeners` (`src/lib/egress.ts`) | `test/unit/budgets.test.ts`; `test/unit/egress.test.ts`; `test/e2e/egress.spec.ts` (every engine's surfaces against the table) | [API.md, Budgets](API.md#budgets); [R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1) |
+| Strict and worker mode: a looping guest never holds the host page's thread, and the host can stop it | Guest code runs in a worker; `terminate()` ends the environment, but cannot run during a stall of the view on the host page's thread, nor before the reports already queued are processed ([S77](BACKLOG.md#s77), [S78](BACKLOG.md#s78)); `watchdogTimeout` (opt-in) ends a guest that stops answering, and `workerExecutionTimeout` one whose `execute()` overruns its deadline; the bootstrap answers the probes, and guest code cannot answer for it | `startWatchdog` (`src/lib/watchdog.ts`); `_startWatchdog` (`src/host.ts`) | `src/lib/watchdog.test.ts`; `test/e2e/watchdog.spec.ts`; `test/e2e/worker-timeout.spec.ts` | `ADR-003#strict-mode-bounds-execution-on-every-engine`, [S6](archive/backlog/BACKLOG-done.md#s6) |
+| Strict: a view that stops answering ends the sandbox | The host pings the view always, `VIEW_LIVENESS_TIMEOUT_MS`, host stalls not counted. Where the view has a process of its own (desktop Chromium), one long operation is no host stall, so a documented stall over about 5 s ends a healthy sandbox ([S79](BACKLOG.md#s79)) | the view watchdog (`src/host.ts`) | `test/e2e/strict.spec.ts` ("A5") | `ADR-005#flow-control-files-clobbering-liveness` |
+| Every channel of guest activity is bounded in count, bytes and time, except the gaps listed below the table ([S77](BACKLOG.md#s77), [S78](BACKLOG.md#s78)) | One table of surfaces (the egress table) and one of channels (`CHANNEL_BUDGETS`), each naming its constants; the bootstrap installs exactly the listeners of its rows; logs and calls are counted by the guest and again by the host | `EGRESS`, `CHANNEL_BUDGETS`, `bootstrapListeners` (`src/lib/egress.ts`) | `test/unit/budgets.test.ts`; `test/unit/egress.test.ts`; `test/e2e/egress.spec.ts` (every engine's surfaces against the table) | [API.md, Budgets](API.md#budgets); [R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1) |
 | Strict: the view's cost to the thread it runs on is one stated bound | A long-run share (`VIEW_APPLY_MS_PER_SECOND`), the single-operation bound with the repeated-overrun rule, rates and caps on what the meter cannot see, and a closed list of what is outside | `viewBudget` (`src/lib/in-sandbox-view.ts`) | `test/e2e/view-bound.spec.ts`; `test/unit/view-bound.test.ts`; `test/unit/view-budget.prop.test.ts` | [API.md, The view's cost to the host page](API.md#the-views-cost-to-the-host-page); [S72](archive/backlog/BACKLOG-done.md#s72), [R5:M-2](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-m-2) |
 | A config cannot make a budget fail open | One schema decides every option and its cross-field invariants before anything is built; `callLimits` has no off switch (it takes finite numbers ≥ 1), and every call that can be carried fits an empty window | `CONFIG_SCHEMA`, `normaliseConfig` (`src/lib/config-schema.ts`) | `test/unit/config-schema.test.ts`; `test/unit/rate-limit.prop.test.ts` | [R5:L-2](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-l-2) |
 
-What holds memory is capped (files, the bridge's `maxConcurrent × maxBytes`, the bytes of calls running at once, the
-view's document), but no budget counts memory itself. The values are in [Limits](API.md#limits).
+**Open gaps in these rows** (owner, 2026-10-21: backlogged, not mitigated now; they stay rated high).
+- **The byte measure counts a proxy** ([S77](BACKLOG.md#s77)). A `Blob` or a `File` measures 64 bytes though a clone
+  carries the `File`'s `name` (and the `Blob`'s `type` on Firefox and WebKit) whole, and a sparse array measures its
+  present elements, not its `length`. So a guest can pass the byte budgets of log lines, calls, results and the bytes of
+  calls running at once with a long `File` name (on Chromium, 8 calls held 1 GiB against the 64 MiB cap), stall
+  Firefox's host page deserializing it, and hold the host page's thread for a minute or more with one 16-byte log line
+  (the library's own `freezeDeep` walks the array's `length`).
+- **The uncaught-characters budget** ([S78](BACKLOG.md#s78)): on Firefox a rejection reason whose `Symbol.toStringTag`
+  the guest set is not charged its characters, so the host page's thread can stall for seconds a second while the
+  sandbox stays `ready` (strict and worker mode).
+- **`terminate()` ends such a flood, but only after the reports already queued are processed**: seconds on Firefox,
+  on Chromium as long as the queue of sparse-array lines.
+- **The view's liveness ping** ends a healthy sandbox on one documented stall on desktop Chromium
+  ([S79](BACKLOG.md#s79)); it fails closed.
+
+What holds memory is capped (files, the bridge's `maxConcurrent × maxBytes`, the view's document), but no budget counts
+memory itself, and the bytes of calls running at once are capped only as far as the measure above is true (not for a
+`File`'s name). The values are in [Limits](API.md#limits).
 
 ## Availability
 
@@ -179,6 +195,11 @@ can never regain control, or a stall bounded by nothing the library states, no c
 (high); the library's own limits ending a healthy sandbox (a correctness bug); a flood that breaks a security property (a budget that fails open, a check skipped
 under pressure, inconsistent state, anything that moves data or crosses the policy).
 
+**The board's rule (owner, 2026-10-21).** In the S74 review board's fix batches, a finding that leaks data is fixed;
+every denial-of-service or availability finding, including a budget that fails open with only an availability effect,
+is backlogged. Backlogged is not mitigated and not downgraded: [S77](BACKLOG.md#s77) and [S78](BACKLOG.md#s78) are open
+and rated high, and the gaps they describe are listed under [Resource limits](#resource-limits).
+
 **Where the view runs.** Desktop Chromium (127 and later) runs the strict view in a process of its own; Firefox,
 WebKit and Safari, Android WebView and Chromium's headless shell run it on the host page's thread
 ([research 16](research/16_view_isolation/README.md)). There no budget of the library's removes the view's cost; the
@@ -190,9 +211,9 @@ bound is what is promised.
 | :--- | :--- | :--- |
 | The view's operations and loads, where it shares the host page's thread | The long-run share, the single-operation rule, the rates and caps | [API.md (a) to (c)](API.md#the-views-cost-to-the-host-page) |
 | What runs without the view acting: CSS animations and transitions while `allowAnimations` is `true` (the default), animated images, indeterminate `<progress>`, autoplaying media, `:hover` restyles, relayout after decodes and font swaps | the caps on what the view holds; `allowAnimations: false` removes animations and transitions | [API.md (d)](API.md#d-outside-the-bound) |
-| The documented single-operation stalls (CSS filters, bidirectional text, large selectors, a large textarea's first value): at most medium | Bounded by the caps on the document (what the view can hold); the first stall past `VIEW_MAX_OPERATION_MS` in a `VIEW_OVERRUN_WINDOW_MS` is allowed, the second ends the sandbox. Where the view shares the host page's thread, `terminate()` cannot run during one: the embedder regains control when the stall ends | [API.md (b) and (d)](API.md#b-the-single-operation-bound), [(d) Outside the bound](API.md#d-outside-the-bound) |
-| Firefox's reports of the worker's unhandled rejections, made on the host page's thread whether cancelled or not | `UNCAUGHT_PER_SECOND` and `UNCAUGHT_CHARACTERS_PER_SECOND`, past which the sandbox ends; one report is made before anything can end it | [Budgets](API.md#budgets), `src/lib/egress.ts` |
-| Memory | not bounded; the caps bound what is held, not what it costs | [API.md (d)](API.md#d-outside-the-bound) |
+| The documented single-operation stalls (CSS filters, bidirectional text, large selectors, a large textarea's first value): at most medium | Bounded by the caps on the document (what the view can hold); the first stall past `VIEW_MAX_OPERATION_MS` in a `VIEW_OVERRUN_WINDOW_MS` is allowed, the second ends the sandbox, except on desktop Chromium, where the view's liveness ping ends the sandbox at the first stall that lasts over about 5 s ([S79](BACKLOG.md#s79)). Where the view shares the host page's thread, `terminate()` cannot run during one: the embedder regains control when the stall ends | [API.md (b) and (d)](API.md#b-the-single-operation-bound), [(d) Outside the bound](API.md#d-outside-the-bound) |
+| Firefox's reports of the worker's unhandled rejections, made on the host page's thread whether cancelled or not | `UNCAUGHT_PER_SECOND` and `UNCAUGHT_CHARACTERS_PER_SECOND`, past which the sandbox ends; one report is made before anything can end it. Not bounded in characters for a reason whose `Symbol.toStringTag` the guest set ([S78](BACKLOG.md#s78), high) | [Budgets](API.md#budgets), `src/lib/egress.ts` |
+| Memory | not bounded; the caps bound what is held, not what it costs (and not a `File`'s name, [S77](BACKLOG.md#s77)) | [API.md (d)](API.md#d-outside-the-bound) |
 
 The relay worker that would move the guest's floods off the host page, and make the guest-realm budgets independent of
 the prelude's integrity, is designed and deferred ([S69](BACKLOG.md#s69), [research 19](research/19_relay_worker/README.md)).
@@ -241,7 +262,7 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
 | :--- | :--- | :--- |
 | Firefox, WebKit, Android, Chromium's headless shell | The strict view runs on the host page's thread | Availability is the stated bound, not isolation ([Availability](#availability)) |
 | WebKit always, Chromium in some environments | A cooperative frame shares the host page's thread | A cooperative guest loop freezes the host page |
-| Firefox | Reports a worker's unhandled rejections on the host page's thread, cancelled or not; lets a worker's `EventSource` and `FontFace` past the policy | The uncaught budget; the worker allowlist leaves both out |
+| Firefox | Reports a worker's unhandled rejections on the host page's thread, cancelled or not; lets a worker's `EventSource` and `FontFace` past the policy | The uncaught budget (not for a tagged reason, [S78](BACKLOG.md#s78)); the worker allowlist leaves both out |
 | WebKit | Compiles `WebAssembly` without `'unsafe-eval'`; raises no violation reports in workers; refuses the view's `blob:` worker under COEP `require-corp`; sends the full host URL to same-site origins and shows it to frames the guest creates (cooperative) | `WebAssembly` deleted unless `scriptUnsafe`; worker reports are per engine; strict mode does not start under COEP; [S17](archive/backlog/BACKLOG-done.md#s17) and [S18](archive/backlog/BACKLOG-done.md#s18) are cooperative limits |
 | Chromium, WebKit | Show the host origin in `location.ancestorOrigins` (cooperative) | A cooperative limit ([S15](archive/backlog/BACKLOG-done.md#s15)) |
 | Firefox, WebKit | Attach the host site's cookies to requests to same-site origins | Do not list a same-site origin |
@@ -260,7 +281,12 @@ The open items of the [backlog](BACKLOG.md) that bear on this model:
 | [S69](BACKLOG.md#s69) | The relay worker, deferred: the worker side of class E-cpu stays bounded by guest-realm budgets | strict, worker |
 | [S70](BACKLOG.md#s70) | For the owner: with `fetchBridge.maxBytes` above about 16.5 MiB, a long string request body is refused by the guest's broker before the bridge; a tiny `watchdogTimeout` may end a healthy guest | every mode |
 | [S49](BACKLOG.md#s49) | Worker mode, frozen until folded into strict mode | worker |
-| [S74](BACKLOG.md#s74) | The final adversarial review board of the current state | — |
+| [S77](BACKLOG.md#s77) | **High**, backlogged (owner, 2026-10-21): the byte measure counts a `File`'s name and a `Blob`'s type as 64 bytes and a sparse array by its present elements; five byte budgets fail open, and the library's own `freezeDeep` walks `length` | strict, worker |
+| [S78](BACKLOG.md#s78) | **High**, backlogged (owner, 2026-10-21): a rejection reason tagged with `Symbol.toStringTag` is not charged to the uncaught-characters budget on Firefox | strict, worker |
+| [S79](BACKLOG.md#s79) | Medium: on desktop Chromium the view's liveness ping ends a healthy sandbox on one documented stall (fails closed) | strict |
+| [S80](BACKLOG.md#s80) | Medium: no test guards the event reads of the bootstrap's `error` and `unhandledrejection` listeners | strict, worker |
+| [S81](BACKLOG.md#s81), [S82](BACKLOG.md#s82) | Low: tests that fail under machine load; the other lows of the board's pass 1 | — |
+| [S74](BACKLOG.md#s74) | The final adversarial review board of the current state; pass 1 (2026-10-21) found 4 high, so it does not count | — |
 
 Residuals stated in the decisions rather than the backlog: DNS rebinding and the host origin in `Origin` for the fetch
 bridge ([ADR-006](ADR-006-fetch-bridge.md#consequences)); CSS within the policy, forgeable worker reports, a worker that

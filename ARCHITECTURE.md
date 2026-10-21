@@ -246,7 +246,11 @@ a bound in count, bytes and time. The surfaces a guest can reach are listed once
 handled; the bounds are listed once per channel (`CHANNEL_BUDGETS`), each naming the constants behind it in the limits
 registry; a test fails on a surface that relays, budgets or caps and belongs to no channel. A bound that depends on the
 platform (the view shares the host page's thread on Firefox, WebKit and Android) is stated as a bound, with the embedder's
-way out: `terminate()`, or removing the element. The tables are in the API reference: [Limits](docs/API.md#limits) and
+way out: `terminate()`, or removing the element. Three gaps are open (owner, 2026-10-21: backlogged, not mitigated now):
+the byte measure counts a `File`'s name and a sparse array's `length` as nothing ([S77](docs/BACKLOG.md#s77), high), the
+uncaught-characters budget misses a tagged rejection reason on Firefox ([S78](docs/BACKLOG.md#s78), high), and on
+desktop Chromium the view's liveness ping ends a healthy sandbox on one long stall ([S79](docs/BACKLOG.md#s79)). The
+tables are in the API reference: [Limits](docs/API.md#limits) and
 [Budgets](docs/API.md#budgets).
 
 ## Module map
