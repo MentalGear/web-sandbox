@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { admitGuestCall, CALL_INVARIANTS, callBudgetOf, CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, DEFAULT_CALL_BUDGET, defaultConfig, heaviestCall, ignoredIn, normaliseConfig, PARSED_APART, SANDBOX_MODES, type CallBudget, type NormalisedConfig, type OptionName, type OptionRule, type SandboxMode } from '@src/lib/config-schema';
+import { ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { createRateLimiter } from '@src/lib/rate-limit';
 import { RPC_MAX_BYTES } from '@src/lib/rpc';
 
@@ -124,8 +125,8 @@ const normaliseWhole = (config: unknown) => normaliseConfig(config, { hostOrigin
 const ANY: unknown[] = [undefined, null, 0, 1, -1, NaN, Infinity, '', 'x', true, false, {}, [], [1], 1n];
 const POOLS: Record<string, unknown[]> = {
     mode: [undefined, 'strict', 'cooperative', 'worker', 'iframe', 'Strict', '', null, 5, {}],
-    capabilities: [undefined, null, [], ['allow-scripts'], ['allow-forms'], ['allow-scripts', 'allow-pointer-lock', 'allow-popups'], ['nope', 5], 'allow-scripts', {}],
-    unsafeCapabilities: [undefined, null, [], ['allow-popups'], ['allow-forms', 'fullscreen'], ['allow-scripts'], 'allow-popups', [{}]],
+    capabilities: [undefined, null, [], ['allow-scripts'], ['allow-forms'], ['allow-scripts', 'allow-pointer-lock', 'allow-popups'], ['allow-orientation-lock'], ['nope', 5], 'allow-scripts', {}],
+    unsafeCapabilities: [undefined, null, [], ['allow-popups'], ['allow-pointer-lock'], ['allow-forms', 'fullscreen'], ['allow-scripts'], 'allow-popups', [{}]],
     html: [undefined, '', '<p>x</p>', '<script>1</script>', 5, null, {}],
     fetchBridge: [undefined, null, true, { allow: [] }, { allow: ['https://api.example', HOST, 'http://127.0.0.1:8080', 'nope'], methods: ['get', 'CONNECT'], headers: ['Authorization', 'cookie'] },
         { allow: [], maxBytes: 0 }, { allow: [], maxBytes: 1e15, timeoutMs: 1e15, maxConcurrent: 1e15 }, { allow: [], maxBytes: 0.5, timeoutMs: -1, maxConcurrent: NaN }, { allow: 'x', methods: 'GET' }],
@@ -307,6 +308,10 @@ describe("the config schema, which docs/API.md's Configuration table is generate
         ['capabilities', 5, 'strict', [], '"capabilities" must be a list'],
         ['unsafeCapabilities', ['allow-popups'], 'cooperative', ['allow-popups'], 'unsafe capability "allow-popups" is enabled'],
         ['unsafeCapabilities', ['allow-popups'], 'strict', [], 'unsafeCapabilities are not available in strict mode and were dropped: allow-popups.'],
+        ['capabilities', ['allow-pointer-lock'], 'cooperative', [], '"allow-pointer-lock" is not allowed in "capabilities" and was dropped. It reaches outside the sandbox'],
+        ['capabilities', ['allow-pointer-lock'], 'strict', [], '"allow-pointer-lock" is not allowed in "capabilities" and was dropped. It reaches outside the sandbox'],
+        ['unsafeCapabilities', ['allow-pointer-lock'], 'worker', ['allow-pointer-lock'], 'unsafe capability "allow-pointer-lock" is enabled'],
+        ['unsafeCapabilities', ['allow-pointer-lock'], 'strict', [], 'unsafeCapabilities are not available in strict mode and were dropped: allow-pointer-lock.'],
         ['scriptUnsafe', 'true', 'cooperative', false, null],
         ['scriptUnsafe', true, 'cooperative', true, 'scriptUnsafe is enabled'],
         ['entry', 'main.js', 'cooperative', undefined, '"entry" is used only in strict mode and was ignored.'],
@@ -341,5 +346,46 @@ describe("the config schema, which docs/API.md's Configuration table is generate
         expect(normaliseWhole({ callLimits: { maxPerSecond: 0 } }).value!.callBudget).toEqual(DEFAULT_CALL_BUDGET);
         expect(normaliseWhole({ origins: { scripts: ['https://s.example'] } }).value!.origins.scripts).toEqual([]);
         expect(normaliseWhole({ mode: 'cooperative', origins: { scripts: ['https://s.example'] } }).value!.origins.scripts).toEqual(['https://s.example']);
+    });
+});
+
+// `origins`: what a listed origin reaches beyond the internet at large is said in every mode, once per kind
+// (warnHostReach, the one pass over the parsed policy). The kinds are the schema's own (ORIGIN_KINDS).
+describe('origins: the host page\'s site and loopback hosts warn, in every mode, once per kind', () => {
+    const PAGE = 'https://app.example:8443';
+    const reach = (mode: SandboxMode, origins: Record<string, string[]>) => normaliseConfig({ mode, origins }, { hostOrigin: PAGE }).warnings.filter(message => message.includes(' lists '));
+    // strict mode drops `scripts`, so no origin of that kind is left to warn about there
+    const kindsIn = (mode: SandboxMode) => ORIGIN_KINDS.filter(kind => !(kind === 'scripts' && mode === 'strict'));
+
+    it.each(SANDBOX_MODES)('%s: every kind warns for the host origin, for a host of its site and for loopback, one warning naming kind, origin and why', (mode) => {
+        for (const kind of kindsIn(mode)) {
+            const hostOrigin = reach(mode, { [kind]: [PAGE] });
+            expect(hostOrigin, `${kind} host origin`).toHaveLength(1);
+            expect(hostOrigin[0]).toContain(`origins.${kind} lists ${PAGE} (the host page's own origin)`);
+            expect(hostOrigin[0]).toContain("carry the host site's cookies");
+            expect(hostOrigin[0]).toContain('fetch bridge');
+            const loopback = reach(mode, { [kind]: ['http://localhost:5173', 'http://127.0.0.1:9000'] });
+            expect(loopback, `${kind} loopback`).toHaveLength(1);
+            expect(loopback[0]).toContain(`origins.${kind} lists http://localhost:5173 (a loopback, private or link-local host), http://127.0.0.1:9000 (a loopback, private or link-local host)`);
+            const site = reach(mode, { [kind]: ['https://api.app.example', 'https://example', 'https://other.example'] });
+            expect(site, `${kind} site`).toHaveLength(1);
+            expect(site[0]).toContain(`origins.${kind} lists https://api.app.example (on the host page's site), https://example (on the host page's site):`);
+            expect(site[0]).not.toContain('other.example');
+        }
+    });
+
+    it('a kind that lists nothing of the kind is silent; a kind is named once however many entries it lists; other kinds are not named', () => {
+        expect(reach('cooperative', { connect: ['https://api.other.example'], images: ['https://img.other.example'] })).toEqual([]);
+        const both = reach('cooperative', { images: [PAGE, 'https://api.app.example', 'http://localhost:1'], fonts: [PAGE] });
+        expect(both).toHaveLength(2);
+        expect(both[0]).toContain('origins.images lists');
+        expect(both[0]).not.toContain('origins.fonts');
+        expect(normaliseConfig({ mode: 'cooperative', origins: { connect: [PAGE] } }, { hostOrigin: '' }).warnings.filter(message => message.includes(' lists '))).toEqual([]);
+    });
+
+    it('same host with another scheme or port, a subdomain and a parent warn; a sibling, an IP address and a lookalike do not', () => {
+        const warns = (origin: string) => reach('cooperative', { connect: [origin] }).length === 1;
+        for (const origin of ['https://app.example', 'https://app.example:1', 'wss://app.example', 'https://x.app.example', 'https://example']) expect(warns(origin), origin).toBe(true);
+        for (const origin of ['https://sibling.example', 'https://notapp.example', 'https://app.example.evil', 'https://203.0.113.7']) expect(warns(origin), origin).toBe(false);
     });
 });

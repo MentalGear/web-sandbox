@@ -466,9 +466,9 @@ test.describe('configuration', () => {
         const warnings: string[] = [];
         page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
         expect(await sandbox.mount(strict({
-            capabilities: ['allow-pointer-lock'],
+            capabilities: ['allow-orientation-lock'],
             // @ts-expect-error not in strict mode (R1:R3-6); a config from JSON can still carry them
-            unsafeCapabilities: ['allow-popups', 'fullscreen'],
+            unsafeCapabilities: ['allow-popups', 'allow-pointer-lock', 'fullscreen'],
             // @ts-expect-error strict mode has no scripts kind; a config from JSON can still carry one
             origins: { scripts: ['https://cdn.example'] },
         }))).toBe('ready');
@@ -478,7 +478,7 @@ test.describe('configuration', () => {
             const inner = new DOMParser().parseFromString(frame.srcdoc, 'text/html').querySelector('iframe')!;
             return { outer: frame.getAttribute('sandbox'), inner: inner.getAttribute('sandbox'), allow: frame.getAttribute('allow'), innerAllow: inner.getAttribute('allow') };
         });
-        expect(attributes).toEqual({ outer: 'allow-scripts allow-forms allow-pointer-lock', inner: 'allow-scripts allow-forms allow-pointer-lock', allow: null, innerAllow: null });
+        expect(attributes).toEqual({ outer: 'allow-scripts allow-forms allow-orientation-lock', inner: 'allow-scripts allow-forms allow-orientation-lock', allow: null, innerAllow: null });
         expect(warnings.filter(w => w.includes('not available in strict mode'))).toHaveLength(1);
         expect(warnings.filter(w => w.includes('origins.scripts is not used in strict mode'))).toHaveLength(1);
     });
