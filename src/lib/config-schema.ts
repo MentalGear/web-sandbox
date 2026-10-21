@@ -258,18 +258,22 @@ const viewSwitch = (name: ViewSwitch) => ({ given, mode, warn }: OptionInput): b
  */
 export function warnHostReach(policy: OriginPolicy, hostOrigin: string, warn: (message: string) => void): OriginPolicy {
     for (const kind of ORIGIN_KINDS) {
-        const site: string[] = [];
-        const local: string[] = [];
+        const listed: string[] = [];
+        let site = false;
+        let local = false;
         for (const origin of policy[kind]) {
-            if (sharesHostSite(origin, hostOrigin)) site.push(origin === hostOrigin ? `${origin} (the host page's own origin)` : `${origin} (on the host page's site)`);
-            if (isPrivateHost(new URL(origin).hostname)) local.push(`${origin} (a loopback, private or link-local host)`);
+            // one entry per origin, with every reason it is listed for
+            const reasons: string[] = [];
+            if (sharesHostSite(origin, hostOrigin)) { reasons.push(origin === hostOrigin ? "the host page's own origin" : "on the host page's site"); site = true; }
+            if (isPrivateHost(new URL(origin).hostname)) { reasons.push('a loopback, private or link-local host'); local = true; }
+            if (reasons.length > 0) listed.push(`${origin} (${reasons.join(', ')})`);
         }
-        if (site.length + local.length === 0) continue;
+        if (listed.length === 0) continue;
         const why = [
-            site.length > 0 ? "a guest request to the host page's site can carry the host site's cookies (its SameSite=None cookies, on Firefox and WebKit)" : '',
-            local.length > 0 ? "a loopback, private or link-local host is the user's own machine or network, which the guest then reaches" : '',
+            site ? "a guest request to the host page's site can carry the host site's cookies (its SameSite=None cookies, on Firefox and WebKit)" : '',
+            local ? "a loopback, private or link-local host is the user's own machine or network, which the guest then reaches" : '',
         ].filter(Boolean).join('; ');
-        warn(`[Sandbox] origins.${kind} lists ${[...site, ...local].join(', ')}: ${why}. Prefer the fetch bridge (fetchBridge.allow), whose requests carry no credentials.`);
+        warn(`[Sandbox] origins.${kind} lists ${listed.join(', ')}: ${why}. Prefer the fetch bridge (fetchBridge.allow), whose requests carry no credentials.`);
     }
     return policy;
 }

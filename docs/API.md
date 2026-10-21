@@ -162,12 +162,15 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 - **An origin that reaches the host page's site or the user's machine warns**, in every mode, once per kind: the warning
   names the kind, each such origin and why. That covers the host page's own origin on any scheme or port, a
   subdomain or a parent of the host page's host (`api.example.com` and `example.com` for a page on `app.example.com`),
-  and a loopback, private or link-local host (`localhost`, `127.0.0.1`, `10.x`, `192.168.x`, `169.254.x`). Firefox and
+  and a loopback, private or link-local host (`localhost`, `127.0.0.1`, `10.x`, `192.168.x`, `169.254.x`) or a name that is private by
+  convention (a single label such as `intranet`, and `*.local`, `*.internal` such as `host.docker.internal`, `*.lan`,
+  `*.home.arpa`, `*.localdomain`, `*.corp`, `*.home`, `*.intranet`). Firefox and
   WebKit attach the host site's `SameSite=None` cookies to a guest request to a same-site origin, so prefer
   [`fetchBridge`](#fetchbridge), which sends no credentials. The entry is kept; the warning is the only effect. The
   same-site check compares names and uses no public-suffix list: a sibling (`a.example.com` for a page on
   `b.example.com`) is not recognised, though a cookie set with `Domain=example.com` reaches it, and a public suffix
-  above the host page counts as its parent. A name that only resolves to a private address is not recognised either.
+  above the host page counts as its parent. A name that only resolves to a private address, and is not private by convention, is
+  not recognised either.
 - **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used.
 - **Strict mode has no `scripts`**: a type error in TypeScript (`SandboxConfig` is a union keyed by `mode`), and dropped
   with one warning at run time, for a config from JSON. With a mode chosen at run time, type `origins` as

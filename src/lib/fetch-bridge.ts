@@ -349,20 +349,41 @@ const isPrivateIPv6 = (hextets: number[]): boolean => {
 };
 
 /**
+ * The names that are private by convention, as a value (class C: the one list isPrivateHost reads, and the test that
+ * enumerates it). A name ends in one of these suffixes (or is one) when it is meant for a machine or network of the
+ * user's own, whatever address it resolves to: the page never sees DNS answers, but these names are decidable from the
+ * name. `reason` is why each is here.
+ */
+export const PRIVATE_NAME_SUFFIXES = [
+    { suffix: 'localhost', reason: 'RFC 6761: loopback, by name, in every resolver' },
+    { suffix: 'local', reason: 'RFC 6762: multicast DNS, names on the local link (printer.local)' },
+    { suffix: 'internal', reason: 'ICANN (2024) reserved it for private use; also the cloud and container hosts (metadata.google.internal, host.docker.internal)' },
+    { suffix: 'home.arpa', reason: 'RFC 8375: the home network' },
+    { suffix: 'localdomain', reason: 'the resolver default for the machine itself (localhost.localdomain)' },
+    { suffix: 'lan', reason: 'the convention of home and office routers (router.lan)' },
+    { suffix: 'intranet', reason: 'the convention of a company network' },
+    { suffix: 'corp', reason: 'the convention of a company network, and a name ICANN never delegated (name collision)' },
+    { suffix: 'home', reason: 'the convention of a home network, and a name ICANN never delegated (name collision)' },
+] as const;
+
+/**
  * Whether a URL's hostname (as `new URL()` writes it, so already canonical: IPv4 in dotted decimal, IPv6
- * in brackets) names this machine or a private, link-local or otherwise non-public address: localhost and
- * *.localhost, and IPv4/IPv6 literals in those ranges. A name that only RESOLVES to such an address cannot
+ * in brackets) names this machine or a private, link-local or otherwise non-public address: IPv4/IPv6 literals in those
+ * ranges, a single-label name (`printer`, `intranet`: only a search domain or hosts file can resolve it, and that is the
+ * user's own network) and the names private by convention (PRIVATE_NAME_SUFFIXES: `localhost`, `*.local`,
+ * `*.internal`, `*.lan`, `*.home.arpa`, …). A name that only RESOLVES to such an address cannot
  * be recognised here (DNS rebinding): the page never sees DNS answers.
  */
 export function isPrivateHost(hostname: string): boolean {
     const host = hostname.toLowerCase().replace(/\.$/, '');
-    if (host === 'localhost' || host.endsWith('.localhost')) return true;
     if (host.startsWith('[') && host.endsWith(']')) {
         const hextets = ipv6Hextets(host.slice(1, -1));
         return hextets === null ? true : isPrivateIPv6(hextets); // an IPv6 literal we cannot read is refused
     }
     const octets = ipv4Octets(host);
-    return octets !== null && isPrivateIPv4(octets);
+    if (octets !== null) return isPrivateIPv4(octets);
+    if (!host.includes('.')) return true; // a single label
+    return PRIVATE_NAME_SUFFIXES.some(({ suffix }) => host === suffix || host.endsWith(`.${suffix}`));
 }
 
 /** A request the bridge will make: every field validated. */

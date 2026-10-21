@@ -347,7 +347,8 @@ const items = await response.json();
 *   **Exact origins only.** `allow` lists origins (`https://api.example`, `http://localhost:8080`); an entry
     with a path, query or wildcard is dropped with a warning. Anything else is refused before a request is
     made, including the host page's own origin and loopback, private and link-local hosts (`localhost`,
-    `127.0.0.1`, `10.x`, `192.168.x`, `[::1]`, …) unless you list them. A listed public name that resolves to
+    `127.0.0.1`, `10.x`, `192.168.x`, `[::1]`, …) and names private by convention (`printer.local`,
+    `host.docker.internal`, a single label such as `intranet`) unless you list them. A listed public name that resolves to
     a private address (DNS rebinding) cannot be detected from a page.
 *   **No host authority.** Requests never carry cookies or other credentials (`credentials: 'omit'`) nor a
     `Referer`, and never follow redirects. Your page's `fetch` never makes them: its Service Worker never answers

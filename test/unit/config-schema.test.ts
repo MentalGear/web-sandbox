@@ -370,7 +370,8 @@ describe('origins: the host page\'s site and loopback hosts warn, in every mode,
             expect(loopback[0]).toContain(`origins.${kind} lists http://localhost:5173 (a loopback, private or link-local host), http://127.0.0.1:9000 (a loopback, private or link-local host)`);
             const site = reach(mode, { [kind]: ['https://api.app.example', 'https://example', 'https://other.example'] });
             expect(site, `${kind} site`).toHaveLength(1);
-            expect(site[0]).toContain(`origins.${kind} lists https://api.app.example (on the host page's site), https://example (on the host page's site):`);
+            // a single label is private by name too (isPrivateHost): one entry, both reasons
+            expect(site[0]).toContain(`origins.${kind} lists https://api.app.example (on the host page's site), https://example (on the host page's site, a loopback, private or link-local host):`);
             expect(site[0]).not.toContain('other.example');
         }
     });

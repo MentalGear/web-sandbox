@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createFetchBridge, FETCH_ERROR_CODES, FETCH_ORIGIN_RULES, FETCH_OUTCOMES, isPrivateHost, toFetchPolicy, validateRequest, type FetchPolicy, type FetchRecord } from './fetch-bridge';
+import { normaliseConfig } from './config-schema';
+import { createFetchBridge, FETCH_ERROR_CODES, FETCH_ORIGIN_RULES, FETCH_OUTCOMES, isPrivateHost, PRIVATE_NAME_SUFFIXES, toFetchPolicy, validateRequest, type FetchPolicy, type FetchRecord } from './fetch-bridge';
 
 const HOST = 'https://host.example';
 const policy = (overrides: Record<string, unknown> = {}): FetchPolicy => toFetchPolicy({ allow: ['https://api.example'], ...overrides }, () => {})!;
@@ -54,6 +55,42 @@ describe('isPrivateHost (backlog B5): loopback, private, link-local and localhos
             'https://192.169.0.1', 'https://[2001:db8::1]', 'https://[::ffff:8.8.8.8]']) {
             expect(isPrivateHost(hostOf(url)), url).toBe(false);
         }
+    });
+});
+
+describe('isPrivateHost: the names that are private by convention (PRIVATE_NAME_SUFFIXES, each with its reason)', () => {
+    const hostOf = (url: string) => new URL(url).hostname;
+    it('every listed suffix, itself and under any depth, in any case, with or without the root dot, and nothing that only contains it', () => {
+        expect(PRIVATE_NAME_SUFFIXES.map(row => row.suffix)).toEqual(expect.arrayContaining(['localhost', 'local', 'internal', 'lan', 'home.arpa']));
+        expect(new Set(PRIVATE_NAME_SUFFIXES.map(row => row.suffix)).size).toBe(PRIVATE_NAME_SUFFIXES.length);
+        for (const { suffix, reason } of PRIVATE_NAME_SUFFIXES) {
+            expect(reason.length, suffix).toBeGreaterThan(10);
+            for (const url of [`https://${suffix}`, `https://x.${suffix}`, `https://a.b.${suffix}`, `https://X.${suffix.toUpperCase()}.`]) expect(isPrivateHost(hostOf(url)), url).toBe(true);
+            for (const url of [`https://${suffix}.example`, `https://x${suffix}.example`, `https://x.${suffix}x.example`, `https://x-${suffix}.example`]) expect(isPrivateHost(hostOf(url)), url).toBe(false);
+        }
+    });
+    it('the names the embedder meets: mDNS, containers, cloud metadata, routers, a single label', () => {
+        for (const url of ['https://printer.local', 'https://host.docker.internal', 'https://kubernetes.docker.internal', 'https://metadata.google.internal', 'https://router.lan',
+            'https://nas.home.arpa', 'https://intranet', 'https://router', 'https://a', 'https://wiki.corp', 'https://localhost.localdomain']) {
+            expect(isPrivateHost(hostOf(url)), url).toBe(true);
+        }
+        for (const url of ['https://api.example', 'https://local.example', 'https://internal.example.com', 'https://lan.example', 'https://home.example', 'https://arpa.example', 'https://example.com']) {
+            expect(isPrivateHost(hostOf(url)), url).toBe(false);
+        }
+    });
+    it('both call sites use it: the bridge refuses an unlisted one with the private-host reason, and an allow entry and an origins entry warn', () => {
+        for (const origin of ['https://printer.local', 'https://host.docker.internal', 'https://nas.home.arpa', 'https://intranet']) {
+            const refused = validateRequest({ url: `${origin}/x` }, policy(), HOST);
+            expect(refusalCode(refused), origin).toBe('FETCH_NOT_ALLOWED');
+            expect((refused as any).reason, origin).toBe('a loopback, private or link-local host, which is not in fetchBridge.allow');
+            const warnings: string[] = [];
+            toFetchPolicy({ allow: [origin] }, (message) => warnings.push(message));
+            expect(warnings, origin).toEqual([expect.stringContaining(`fetchBridge.allow lists ${origin}, a loopback, private or link-local host`)]);
+            const reach = normaliseConfig({ mode: 'cooperative', origins: { connect: [origin] } }, { hostOrigin: HOST }).warnings.filter(message => message.includes(' lists '));
+            expect(reach, origin).toEqual([expect.stringContaining(`origins.connect lists ${origin} (a loopback, private or link-local host)`)]);
+        }
+        const none = normaliseConfig({ mode: 'cooperative', origins: { connect: ['https://api.example'] } }, { hostOrigin: HOST }).warnings.filter(message => message.includes(' lists '));
+        expect(none).toEqual([]);
     });
 });
 

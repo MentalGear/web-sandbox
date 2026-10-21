@@ -56,7 +56,9 @@ embedder also allows direct connections.
      literal — or one with a path, query, credentials or wildcard is dropped with a warning. No CSP source expressions. Only
      `http:` and `https:` request URLs, never with credentials in the URL; the fragment is dropped.
    - **The host page's origin and loopback, private and link-local hosts** (`localhost`, `*.localhost`, 127/8, 10/8,
-     172.16/12, 192.168/16, 169.254/16, 100.64/10, `::1`, `fc00::/7`, `fe80::/10`, IPv4-mapped forms, …) are refused unless
+     172.16/12, 192.168/16, 169.254/16, 100.64/10, `::1`, `fc00::/7`, `fe80::/10`, IPv4-mapped forms, …) and the names that
+     are private by convention (a single label, `*.local`, `*.internal`, `*.lan`, `*.home.arpa`, …; `PRIVATE_NAME_SUFFIXES`
+     has the list with the reason for each) are refused unless
      listed. The exact allowlist already refuses them; they are checked again by name so the refusal says why and the check
      survives any later widening of the allowlist. Every spelling the URL parser canonicalises (`127.1`, `2130706433`,
      `0x7f.1`, `[::ffff:127.0.0.1]`) is caught. **DNS rebinding is a limit, not a guarantee**: a page cannot see DNS
