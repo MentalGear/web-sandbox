@@ -280,7 +280,7 @@ function frameLiteralsInSource(): { posted: Set<string>; compared: Set<string>; 
     return { posted, compared, all };
 }
 
-describe("the fetch bridge's requests are made by its frame, and only there (P1-ISO-1, class E-net)", () => {
+describe("the fetch bridge's requests are made by its frame, and only there (BD1:ISO-1, class E-net)", () => {
     // The functions stringified into a realm that may name the platform's fetch: the guest bootstrap, which guards the
     // guest's own fetch (keepalive), and the bridge's frame, which makes every bridge request.
     const MAY_FETCH: readonly [string, string][] = [['src/lib/in-sandbox-script.ts', 'inSandboxScript'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame']];

@@ -72,7 +72,7 @@ cannot name one, and the bridge keeps the same grammar). Tests: `src/lib/origin.
 
 ## Amendment (2026-10-21): the request is made by a frame of the library's
 
-**When**: the S74 review board's P1-ISO-1 (class E-net). The bridge made each request with the host page's
+**When**: the S74 review board's BD1:ISO-1 (class E-net). The bridge made each request with the host page's
 `globalThis.fetch`, so the host page's Service Worker handled it (a cache-first worker answered the guest from the host
 app's cache, in Chromium and WebKit) and any wrapper of the host page's `fetch` applied to it (an auth wrapper added the
 user's `Authorization`, in every engine). Decision 6 read: "The request comes from the host page. So the target sees the

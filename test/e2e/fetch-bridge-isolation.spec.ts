@@ -3,7 +3,7 @@ import { useRecorder } from './recorder';
 import type { Page } from '@playwright/test';
 
 /**
- * Where a bridge request runs (P1-ISO-1, class E-net; ADR-006; src/lib/bridge-frame.ts): the host decides it and the
+ * Where a bridge request runs (BD1:ISO-1, class E-net; ADR-006; src/lib/bridge-frame.ts): the host decides it and the
  * bridge's own frame, an opaque origin of the library's, makes it. So nothing of the host page's fetch environment
  * applies to it: not the host page's Service Worker (a cache-first one would answer from the host app's cache), not a
  * wrapper of the host page's fetch (an auth wrapper would add the user's token), and the target sees `Origin: null`.

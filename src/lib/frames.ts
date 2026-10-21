@@ -290,7 +290,7 @@ export const FRAMES = {
         fields: { detail: { bound: 'cut', how: 'every string of it through clamp, at most VIEW_EVENT_LIMITS.maxString each and maxTotal together; ids and form fields capped' } },
     },
 
-    // ---- the fetch bridge's frame (P1-ISO-1): the host decides each request, the frame makes it
+    // ---- the fetch bridge's frame (BD1:ISO-1): the host decides each request, the frame makes it
     BRIDGE_INIT: {
         purpose: "The host hands the fetch bridge's frame its port, at the frame's load.",
         routes: [{ channel: 'bridge-init', from: ['host'], to: ['bridge-frame'] }],

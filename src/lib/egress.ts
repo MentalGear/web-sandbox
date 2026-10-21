@@ -212,7 +212,7 @@ const own: EgressRow[] = [
     { realm: 'view', surface: 'message', modes: ['strict'], owner: 'view', handling: ['own'],
         bound: 'the one INIT_VIEW, from the host page; the guest has no window to post from', test: 'test/e2e/strict-entry-scope-and-links.spec.ts' },
 
-    // ---- the fetch bridge's frame: no guest code or markup, and no handle of the guest's on it (P1-ISO-1)
+    // ---- the fetch bridge's frame: no guest code or markup, and no handle of the guest's on it (BD1:ISO-1)
     { realm: 'bridge-frame', surface: 'message', modes: ['strict', 'worker', 'cooperative'], owner: 'bridge-frame', handling: ['own'],
         bound: 'the one BRIDGE_INIT, from the host page (its parent); the guest has no window to post from', test: 'test/e2e/fetch-bridge-isolation.spec.ts' },
 
@@ -231,7 +231,7 @@ for (const type of WINDOW_EVENT_TYPES) {
     windowRows.push({ realm: 'frame', surface: type, modes: ['worker'], owner: 'worker-bootstrap', handling: ['unreachable'],
         bound: 'worker mode\'s frame holds no guest code and no guest markup, and the worker cannot reach its window', test: 'test/e2e/egress.spec.ts' });
     if (type !== 'message') windowRows.push({ realm: 'bridge-frame', surface: type, modes: ['strict', 'worker', 'cooperative'], owner: 'bridge-frame', handling: ['unreachable'],
-        bound: 'the fetch bridge\'s frame holds no guest code and no guest markup, and the guest has no handle on its window', test: 'test/unit/structural.test.ts (P1-ISO-1)' });
+        bound: 'the fetch bridge\'s frame holds no guest code and no guest markup, and the guest has no handle on its window', test: 'test/unit/structural.test.ts (BD1:ISO-1)' });
     if (heardInView.has(type)) continue;
     windowRows.push({ realm: 'view', surface: type, modes: ['strict'], owner: 'view', handling: ['unheard'],
         bound: 'no listener of the library in the view; what the guest renders to raise it is bounded by the view\'s budgets (the rendering row)', test: 'test/e2e/egress.spec.ts' });

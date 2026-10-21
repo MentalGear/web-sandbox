@@ -75,7 +75,7 @@ test('the request carries no credentials and no referrer; the target sees Origin
         expect(headers.cookie).toBeUndefined();
         expect(headers.authorization).toBeUndefined();
         expect(headers.referer).toBeUndefined();
-        expect(headers.origin).toBe('null'); // the bridge's frame has an opaque origin (P1-ISO-1)
+        expect(headers.origin).toBe('null'); // the bridge's frame has an opaque origin (BD1:ISO-1)
     }
 
     // positive control: the cookie is in the jar and goes where credentials apply (a first-party navigation)

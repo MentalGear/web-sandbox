@@ -1,5 +1,5 @@
 /**
- * The fetch bridge's frame, host side (ADR-006; P1-ISO-1, class E-net): the frame that makes every bridge request, and
+ * The fetch bridge's frame, host side (ADR-006; BD1:ISO-1, class E-net): the frame that makes every bridge request, and
  * the transport the bridge is given (fetch-bridge.ts, createFetchBridge). The one chokepoint for where a bridge request
  * runs: the host decides it, this frame makes it, and nothing of the host page's makes it.
  *

@@ -2929,7 +2929,7 @@ let cachedHash: string | null = null;
 /**
  * The role attribute of the bootstrap's script element in the fetch bridge's frame (bridge-frame.ts,
  * buildBridgeDocument). The library has one hashed bootstrap, so one hash in the host page's policy admits both of its
- * documents (P1-ISO-1): in a script element with this attribute it runs the bridge's frame (in-bridge-frame.ts), in any
+ * documents (BD1:ISO-1): in a script element with this attribute it runs the bridge's frame (in-bridge-frame.ts), in any
  * other the view. The attribute is outside the hashed text, and both documents are the library's own, built before any
  * guest byte exists.
  */
@@ -2983,7 +2983,7 @@ export function viewBootstrapHash(): string {
  * @remarks
  * It is the very value the element puts in the `script-src` of both documents, and both inherit the host page's policy
  * (docs/API.md#host-page-policy), so one hash admits them both: the view in strict mode, and with `fetchBridge` the
- * frame that makes the bridge's requests, in every mode (P1-ISO-1). The bootstrap is a string literal of the bundle, so the hash is the same in a build
+ * frame that makes the bridge's requests, in every mode (BD1:ISO-1). The bootstrap is a string literal of the bundle, so the hash is the same in a build
  * step (importing the package needs no DOM) and in the browser, however the embedder's app is bundled or minified. It
  * changes only with the package's version.
  *

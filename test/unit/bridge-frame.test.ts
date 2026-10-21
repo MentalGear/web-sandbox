@@ -6,7 +6,7 @@ import { BRIDGE_ROLE, viewBootstrapHash, viewBootstrapText } from '@src/lib/in-s
 import { playBridgeFrame } from './check-in';
 
 /**
- * The fetch bridge's frame, host side (P1-ISO-1, class E-net; src/lib/bridge-frame.ts): every bridge request is made by
+ * The fetch bridge's frame, host side (BD1:ISO-1, class E-net; src/lib/bridge-frame.ts): every bridge request is made by
  * the frame's own code (in-bridge-frame.ts, run here by playBridgeFrame, since jsdom runs no frame), the host's policy
  * code decides it, and the bridge fails closed when the frame never starts. The browsers' side (the Service Worker, a
  * host fetch wrapper, `Origin: null`, the host page's policy) is test/e2e/fetch-bridge-isolation.spec.ts.

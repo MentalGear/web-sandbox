@@ -6,7 +6,7 @@
  * 'none' by default), and every request the host makes for the guest is decided and logged here.
  *
  * Bridge discipline: the bridge grants no more than a direct guest request would. Every request is decided here, on
- * the host, and made by the bridge's frame (bridge-frame.ts, in-bridge-frame.ts; P1-ISO-1, class E-net), a frame of
+ * the host, and made by the bridge's frame (bridge-frame.ts, in-bridge-frame.ts; BD1:ISO-1, class E-net), a frame of
  * the library's with an opaque origin: the transport createFetchBridge is given is that frame's, and nothing here calls
  * the host page's fetch. So no Service Worker of the host page answers a bridge request (none controls an opaque
  * origin), no wrapper of the host page's fetch sees it, and the target sees `Origin: null`. Every request is pinned to:
@@ -517,7 +517,7 @@ export interface FetchBridgeOptions {
     hostOrigin: string;
     /** Called once per request, when it settles (the host dispatches the 'fetch' event). */
     onRecord: (record: FetchRecord) => void;
-    /** What makes the requests: the bridge frame's transport (P1-ISO-1). There is no default. */
+    /** What makes the requests: the bridge frame's transport (BD1:ISO-1). There is no default. */
     transport: BridgeTransport;
     now?: () => number;
 }

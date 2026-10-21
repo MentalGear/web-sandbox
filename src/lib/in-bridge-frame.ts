@@ -1,5 +1,5 @@
 /**
- * The fetch bridge's frame, frame side (ADR-006; P1-ISO-1, class E-net): the only code that performs a request of the
+ * The fetch bridge's frame, frame side (ADR-006; BD1:ISO-1, class E-net): the only code that performs a request of the
  * bridge. The host decides every request (fetch-bridge.ts: the allowlist, methods, headers, the budgets, the redirect
  * and size refusals, the record); this frame makes it, from an opaque origin of its own, so the request is never the
  * host page's: no Service Worker controls an opaque origin, no wrapper of the host page's `fetch` can reach a

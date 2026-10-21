@@ -614,7 +614,7 @@ export class WebSandbox extends ElementBase {
     private _origins: OriginPolicy = NO_ORIGINS; // the parsed `origins` (ADR-007), what the guest policy admits
     private _warnedConfig = new Set<string>();   // the config schema's warnings (normaliseConfig), once each per instance
     private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
-    private _bridgeFrame: BridgeFrame | null = null; // the frame that makes this environment's bridge requests (P1-ISO-1)
+    private _bridgeFrame: BridgeFrame | null = null; // the frame that makes this environment's bridge requests (BD1:ISO-1)
     private _warnedBridgeFrame = false;      // the bridge's frame did not start, said once per instance
     // The guest-write overlay (BL:C5): created by each build when guestWrites is on, else null. It outlives its
     // environment's termination (closed, still listable and committable) and is discarded by the next build and on
@@ -1721,7 +1721,7 @@ export class WebSandbox extends ElementBase {
     // request must be served by the bridge of the environment it arrived in. Reading this._fetchBridge when the method
     // runs would let a request that arrived just before a rebuild be served by the next environment's bridge (FR:H).
     // Closed over its own bridge, it reaches the one teardown closed, and is refused there.
-    // Its requests are made by its own frame (bridge-frame.ts; P1-ISO-1, class E-net), prepared by the build and put in
+    // Its requests are made by its own frame (bridge-frame.ts; BD1:ISO-1, class E-net), prepared by the build and put in
     // the shadow root after the wrapper: the bridge's only transport. The host page's fetch makes none of them.
     private _startFetchBridge(prepared: HTMLIFrameElement | null) {
         const policy = this._fetchPolicy;
@@ -2274,7 +2274,7 @@ interface PreparedBuild {
     iframe: HTMLIFrameElement; // the wrapper, its srcdoc written, not in the document
     built: FileStore; // the copy of the store this build delivers (BR:CB4)
     strictInit: StrictInit | null; // strict mode: what the wrapper's load hands the view
-    bridgeFrame: HTMLIFrameElement | null; // the fetch bridge's frame, its srcdoc written, not in the document (P1-ISO-1)
+    bridgeFrame: HTMLIFrameElement | null; // the fetch bridge's frame, its srcdoc written, not in the document (BD1:ISO-1)
 }
 
 // The context of a build where the element may not build (buildsHere): it stops instead, and asks nothing else.

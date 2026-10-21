@@ -1,4 +1,4 @@
-// The host page's Service Worker, for test/e2e/fetch-bridge-isolation.spec.ts (P1-ISO-1): an ordinary cache-first worker
+// The host page's Service Worker, for test/e2e/fetch-bridge-isolation.spec.ts (BD1:ISO-1): an ordinary cache-first worker
 // (the shape of Workbox's CacheFirst runtime caching) for the paths that spec names: a request is answered from the
 // cache when it holds the URL, else from the network.
 self.addEventListener('install', () => self.skipWaiting());

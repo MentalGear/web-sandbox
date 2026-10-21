@@ -185,7 +185,7 @@ export const BRIDGE_PREFIX = `<!DOCTYPE html><html><head><meta http-equiv="Conte
 export const BRIDGE_FRAME_SANDBOX = 'allow-scripts';
 
 /**
- * Builds the fetch bridge's frame document (P1-ISO-1; bridge-frame.ts): its policy (bridgeFramePolicy), no referrer,
+ * Builds the fetch bridge's frame document (BD1:ISO-1; bridge-frame.ts): its policy (bridgeFramePolicy), no referrer,
  * and the library's hashed bootstrap in a script element with the bridge's role (`role`, in-sandbox-view.ts,
  * BRIDGE_ROLE), which runs the bridge's frame there. Nothing else: no guest byte, no markup, no style.
  */

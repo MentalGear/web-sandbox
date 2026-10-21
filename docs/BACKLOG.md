@@ -21,11 +21,11 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S70](#s70) | ⏸️ decide | For the owner: three edges the schema found |
 | [S74](#s74) | ⏸️ after every phase | The final independent adversarial review board |
 | [S76](#s76) | ⏸️ in progress | Self-explaining code and generated docs: steps 0 to 6 done; the owner reviews the outcome |
-| [S77](#s77) | ⏳ open (P2 · M) · **high** | The byte measure counts a proxy: a `File`'s name and a `Blob`'s type, a sparse array's `length` (S74 board P1-CHL-2, P1-LIM-3); backlogged, not mitigated now (owner, 2026-10-21) |
-| [S78](#s78) | ⏳ open (P2 · S) · **high** | A rejection reason tagged with `Symbol.toStringTag` evades the uncaught-characters budget on Firefox (S74 board P1-LIM-1); backlogged, not mitigated now (owner, 2026-10-21) |
-| [S79](#s79) | ⏳ open (P2 · M) · medium | Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall (S74 board P1-LIM-2) |
-| [S80](#s80) | ⏳ open (P2 · S) · medium | The event-read scan was never built; reverting R5:N-2 and R5:N-6 passes the suite (S74 board P1-TST-1) |
-| [S81](#s81) | ⏳ open (P3 · S) · low | Tests that fail under heavy machine load (S74 board P1-CO-1, P1-NEW-13) |
+| [S77](#s77) | ⏳ open (P2 · M) · **high** | The byte measure counts a proxy: a `File`'s name and a `Blob`'s type, a sparse array's `length` (S74 board BD1:CHL-2, BD1:LIM-3); backlogged, not mitigated now (owner, 2026-10-21) |
+| [S78](#s78) | ⏳ open (P2 · S) · **high** | A rejection reason tagged with `Symbol.toStringTag` evades the uncaught-characters budget on Firefox (S74 board BD1:LIM-1); backlogged, not mitigated now (owner, 2026-10-21) |
+| [S79](#s79) | ⏳ open (P2 · M) · medium | Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall (S74 board BD1:LIM-2) |
+| [S80](#s80) | ⏳ open (P2 · S) · medium | The event-read scan was never built; reverting R5:N-2 and R5:N-6 passes the suite (S74 board BD1:TST-1) |
+| [S81](#s81) | ⏳ open (P3 · S) · low | Tests that fail under heavy machine load (S74 board BD1:CO-1, BD1:NEW-13) |
 | [S82](#s82) | ⏳ open (P3 · M) · low | The S74 pass 1 lows, as one checklist; the docs-only ones are marked |
 | [D1](#bl-d1) | 🟡 ready except the licence | An installable package; waits for H5's `LICENSE` |
 | [H5](#bl-h5) | 🟡 partly done | Missing repo basics: the `LICENSE` is the owner's choice |
@@ -314,25 +314,25 @@ documented rather than mitigated (CONTRIBUTING.md, "Availability findings").
 **Pass 1 (2026-10-21, main 9141e4e)** found 4 confirmed high and no critical, so it does not count toward clearing the
 board (0 of 2). **The owner's decision on it: fix only what leaks data now; every DoS or availability finding goes to
 this backlog**, high ones included, rated as the verifiers confirmed them (S77 to S82). Fixed in their own batches, as
-findings that leak data: the fetch bridge running in the host page's fetch environment (P1-ISO-1, ADR-006), the
-same-site origins warning (P1-NEW-1) and `allow-pointer-lock` as a safe capability (P1-NEW-14). The board's reports
-(`p1-*.md`) and the verifiers' verdicts (`v1-*.md`) are cited per item.
+findings that leak data: the fetch bridge running in the host page's fetch environment (BD1:ISO-1, ADR-006), the
+same-site origins warning (BD1:NEW-1) and `allow-pointer-lock` as a safe capability (BD1:NEW-14). The board's reports and the verifiers' verdicts are kept in
+[BOARD-PASS-1-2026-10-20.md](archive/reviews/BOARD-PASS-1-2026-10-20.md); each item cites its findings by ID (`BD1:`).
 
 ### <a id="s77"></a>S77 · The byte measure counts a proxy: a `File`'s name, a `Blob`'s type, a sparse array's `length` — ⏳ **open** (P2 · M · **high**)
 
-**Backlogged, not mitigated now (owner, 2026-10-21).** Confirmed high by the S74 board's verifiers (P1-CHL-2 and
-P1-LIM-3: reports `p1-chl.md`, `p1-lim.md`; verdicts `v1-chl2.md`, `v1-lim.md`). The severity stays high: the byte
+**Backlogged, not mitigated now (owner, 2026-10-21).** Confirmed high by the S74 board's verifiers (BD1:CHL-2 and
+BD1:LIM-3, with their verdicts in the archived report). The severity stays high: the byte
 budgets fail open in the default configuration (CONTRIBUTING.md, "Availability findings", exceptions 1 and 3). One
 item, because the root cause is one: `structured-size` measures a proxy instead of every field the clone carries or a
 host walk reads. Class P (a budget that counts a proxy).
 
 **Path.** A strict (or worker) guest at the default configuration:
-- *P1-CHL-2.* `new File([], 'x'.repeat(2**27))` (or a `Blob` with a long `type`) measures 64 bytes
+- *BD1:CHL-2.* `new File([], 'x'.repeat(2**27))` (or a `Blob` with a long `type`) measures 64 bytes
   (`src/lib/structured-size.ts`: the `Blob.prototype.size` brand check, then a constant), but the clone copies the
   `name` (and the `type` on Firefox and WebKit) whole. It crosses `LOG_MAX_BYTES`, `RPC_MAX_BYTES`, the call and result
   byte budgets and the in-flight cap through `sandbox-log`, a call to an exposed method and the result of the host's
   `call()`; a plain string of the same length is refused.
-- *P1-LIM-3.* A sparse array (`a = []; a.length = 2**32 - 1; a[5] = 1; console.log(a)`) measures 16 bytes (its present
+- *BD1:LIM-3.* A sparse array (`a = []; a.length = 2**32 - 1; a[5] = 1; console.log(a)`) measures 16 bytes (its present
   keys), but the library's own `freezeDeep` (`src/lib/element-events.ts`) loops to `length` on the host page's thread
   for every `sandbox-log` dispatch, with or without a listener.
 
@@ -373,7 +373,7 @@ host walk reads. Class P (a budget that counts a proxy).
 
 ### <a id="s78"></a>S78 · A tagged rejection reason evades the uncaught-characters budget on Firefox — ⏳ **open** (P2 · S · **high**)
 
-**Backlogged, not mitigated now (owner, 2026-10-21).** Confirmed high (S74 board P1-LIM-1: `p1-lim.md`, `v1-lim.md`).
+**Backlogged, not mitigated now (owner, 2026-10-21).** Confirmed high (S74 board BD1:LIM-1, with its verdict in the archived report).
 The character half of the uncaught budget fails open in the default configuration (exception 3), and the stall is
 bounded by nothing the library states (exception 1). Class G with B (guest-controlled state, `Symbol.toStringTag`,
 decides a budget).
@@ -405,7 +405,7 @@ a guest value.
 
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
 
-*S74 board P1-LIM-2 (`p1-lim.md`, `v1-lim.md`), confirmed medium.* Class B. The 5 s view liveness ping
+*S74 board BD1:LIM-2 (with its verdict in the archived report), confirmed medium.* Class B. The 5 s view liveness ping
 (`_startViewWatchdog`, `VIEW_LIVENESS_TIMEOUT_MS`, `src/host.ts`) assumes a stall of the view is a stall of the host
 page, which the watchdog does not count. Desktop Chromium 127+ runs the view in a process of its own: the host page's
 ticks keep counting while the view is busy, so one documented single-operation stall that lasts over about 5 s ends the
@@ -429,7 +429,7 @@ the 5 s outer bound in API.md (b) and (d) and in the reasons table.
 
 ### <a id="s80"></a>S80 · The event-read scan was never built; the guest's event getters are unguarded by any test — ⏳ **open** (P2 · S · medium)
 
-*S74 board P1-TST-1 (`p1-tst.md`), medium; class G with E-cpu.* Reverting R5:N-2 and R5:N-6 (the bootstrap's `error` and
+*S74 board BD1:TST-1, medium; class G with E-cpu.* Reverting R5:N-2 and R5:N-6 (the bootstrap's `error` and
 `unhandledrejection` listeners read the event through `readEvent`'s getters captured before guest code) passes the whole
 suite: 147 unit tests and 107 e2e tests on Chromium with each mutant (the `reason` read, then the `message` and `error`
 reads, taken directly). Under the mutant a strict guest that redefines `PromiseRejectionEvent.prototype.reason` (the
@@ -449,7 +449,7 @@ positive controls: a unit test and an e2e (a strict entry redefines `PromiseReje
 
 ### <a id="s81"></a>S81 · Tests that fail under heavy machine load — ⏳ **open** (P3 · S · low)
 
-*S74 board P1-CO-1 (the coordinator, `p1-coordinator.md`) and P1-NEW-13 (`p1-new.md`).* With six reviewers keeping a
+*S74 board BD1:CO-1 (the coordinator) and BD1:NEW-13 (the newcomer).* With six reviewers keeping a
 4-core machine at load 7 to 18, the local CI mirror failed these on WebKit (and the unit run two more) while GitHub CI
 on the same commit was green; each is measured against the load, not against the code:
 - `test/e2e/channel-isolation.spec.ts:76`: the positive control `strangerDelivered > 20` got 18. It counts deliveries in a
@@ -468,92 +468,92 @@ at low load.
 ### <a id="s82"></a>S82 · S74 pass 1: the low findings, one checklist — ⏳ **open** (P3 · M · low)
 
 The lows of the S74 board's pass 1, none of which leaks data. Each entry gives its ID in the board's report for that
-area (`p1-chl.md`, `p1-iso.md`, `p1-lim.md`, `p1-doc.md`, `p1-tst.md`, `p1-new.md`). **[docs]** marks an item whose fix
+area ([BOARD-PASS-1-2026-10-20.md](archive/reviews/BOARD-PASS-1-2026-10-20.md): the sections CHL, ISO, LIM, DOC, TST and NEW). **[docs]** marks an item whose fix
 is in `docs/`, the README or the ADRs only; **[comments]** a code-comment fix; **[tests]** a test gap; the rest need
 code. Each code fix names its class and extends that class's chokepoint and structural test (CONTRIBUTING.md, "Fixing
 a finding").
 
-*Channels and lifecycle (`p1-chl.md`)*
-- [ ] P1-CHL-1: an embedder `console.warn` hook inside `setConfig()`'s `applyConfig` effect is outside the executor's
+*Channels and lifecycle*
+- [ ] BD1:CHL-1: an embedder `console.warn` hook inside `setConfig()`'s `applyConfig` effect is outside the executor's
   generation check; a `terminate()` from there is undone.
-- [ ] P1-CHL-1b: the same class at the log cap line (`src/host.ts`, the warning at the cap).
-- [ ] P1-CHL-3: L1 ("a guest cannot outlive `terminate()` or `reset()`") is asserted for cooperative and worker mode
+- [ ] BD1:CHL-1, second site: the same class at the log cap line (`src/host.ts`, the warning at the cap).
+- [ ] BD1:CHL-3: L1 ("a guest cannot outlive `terminate()` or `reset()`") is asserted for cooperative and worker mode
   only; not for strict mode, and not for the element's removal (the property holds). **[tests]**
 
-*Isolation (`p1-iso.md`)*
-- [ ] P1-ISO-2: the `keepalive` guard is only a shadow on the worker global; the platform's `fetch` stays on
+*Isolation*
+- [ ] BD1:ISO-2: the `keepalive` guard is only a shadow on the worker global; the platform's `fetch` stays on
   `WorkerGlobalScope.prototype`.
-- [ ] P1-ISO-3: cooperative mode: the guest replaces its own document without being ended, and the replacement has none
+- [ ] BD1:ISO-3: cooperative mode: the guest replaces its own document without being ended, and the replacement has none
   of the bootstrap's hardening (a cooperative-mode limit to list, S44).
-- [ ] P1-ISO-4: the `origins.connect` reference is wrong for strict and worker mode and omits what an `https:` entry
+- [ ] BD1:ISO-4: the `origins.connect` reference is wrong for strict and worker mode and omits what an `https:` entry
   opens (`wss:`, EventSource, beacon). **[docs]**
 
-*Limits (`p1-lim.md`)*
-- [ ] P1-LIM-4: `fetchBridge` numeric options fall back or clamp silently.
-- [ ] P1-LIM-5: the strict prelude reads `refused` and `ids` of the view's frames through the guest's
+*Limits*
+- [ ] BD1:LIM-4: `fetchBridge` numeric options fall back or clamp silently.
+- [ ] BD1:LIM-5: the strict prelude reads `refused` and `ids` of the view's frames through the guest's
   `Object.prototype` (affects only the guest).
-- [ ] P1-LIM-6: no e2e covers the guest-controlled kinds of a rejection or the isolated view (S78 and S79 carry the
+- [ ] BD1:LIM-6: no e2e covers the guest-controlled kinds of a rejection or the isolated view (S78 and S79 carry the
   tests). **[tests]**
 
-*Docs (`p1-doc.md`)*
-- [ ] P1-DOC-1: the owner enables private vulnerability reporting (repository Settings, Code security). SECURITY.md keeps
+*Docs*
+- [ ] BD1:DOC-1: the owner enables private vulnerability reporting (repository Settings, Code security). SECURITY.md keeps
   the route and says `main` is what is supported. **[owner]**
-- [ ] P1-DOC-2: `load(html)` does not validate; its TSDoc says a non-string is dropped with a warning, and
+- [ ] BD1:DOC-2: `load(html)` does not validate; its TSDoc says a non-string is dropped with a warning, and
   `load(() => 1)` terminates strict mode (embedder-only). Code, or the TSDoc.
-- [ ] P1-DOC-3: three code comments (`violation.ts`, `in-sandbox-script.ts`, `auto-resize.ts`) say the guest can reach the
+- [ ] BD1:DOC-3: three code comments (`violation.ts`, `in-sandbox-script.ts`, `auto-resize.ts`) say the guest can reach the
   port, against the threat model; `auto-resize.ts` says "cooperative mode only". **[comments]**
-- [ ] P1-DOC-4: THREAT-MODEL's "`ready` only follows the guest's check-in" against the no-script cooperative `ready`;
+- [ ] BD1:DOC-4: THREAT-MODEL's "`ready` only follows the guest's check-in" against the no-script cooperative `ready`;
   ARCHITECTURE's "a render never crosses the host page's thread" (the "always stop" half is qualified with S77 to S79).
   **[docs]**
-- [ ] P1-DOC-5: ADR-006 says the bridge being off removes `sandboxFetch`; it does not. **[docs]**
-- [ ] P1-DOC-6: retry guidance contradicts itself (ADR-002, the `RpcErrorCode` TSDoc, README, API.md). **[docs]** and TSDoc
-- [ ] P1-DOC-7: ADR-005 says a consumer's build changes the view bootstrap text; the package pins it. **[docs]**
-- [ ] P1-DOC-8: ADR-003's "every budget terminates" is not what the budgets do. **[docs]**
-- [ ] P1-DOC-9: README says custom elements are inline and to set `display`; the element is a block. **[docs]**
-- [ ] P1-DOC-10: API.md states an invariant that S70 records as false for string bodies. **[docs]**
-- [ ] P1-DOC-11: hand-copied lists and numbers in README and API.md that nothing keeps equal to the code. **[docs]**
-- [ ] P1-DOC-12: the Trusted Types row says Firefox has none. **[docs]**
-- [ ] P1-DOC-13: history left in current docs and tests (about 25 test titles with "round N", 28 PR2/3/4 labels, dated
+- [ ] BD1:DOC-5: ADR-006 says the bridge being off removes `sandboxFetch`; it does not. **[docs]**
+- [ ] BD1:DOC-6: retry guidance contradicts itself (ADR-002, the `RpcErrorCode` TSDoc, README, API.md). **[docs]** and TSDoc
+- [ ] BD1:DOC-7: ADR-005 says a consumer's build changes the view bootstrap text; the package pins it. **[docs]**
+- [ ] BD1:DOC-8: ADR-003's "every budget terminates" is not what the budgets do. **[docs]**
+- [ ] BD1:DOC-9: README says custom elements are inline and to set `display`; the element is a block. **[docs]**
+- [ ] BD1:DOC-10: API.md states an invariant that S70 records as false for string bodies. **[docs]**
+- [ ] BD1:DOC-11: hand-copied lists and numbers in README and API.md that nothing keeps equal to the code. **[docs]**
+- [ ] BD1:DOC-12: the Trusted Types row says Firefox has none. **[docs]**
+- [ ] BD1:DOC-13: history left in current docs and tests (about 25 test titles with "round N", 28 PR2/3/4 labels, dated
   lines, `CSP_CONFIG_RATIONALE.md`, `deepMerge`), past the ratchet. **[docs]** and test names
-- [ ] P1-DOC-14: the "reproduction under `docs/research/NN_*/`" rule is not what practice follows since research 14;
+- [ ] BD1:DOC-14: the "reproduction under `docs/research/NN_*/`" rule is not what practice follows since research 14;
   the "Enforced by" cell cites `host.test.ts` and omits `capability-presets.spec.ts`. **[docs]**
 
-*Tests (`p1-tst.md`)*
-- [ ] P1-TST-2: the frame-table scan sees only UPPER_SNAKE `type` literals written first; a `CHANNEL_BUDGETS` row
+*Tests*
+- [ ] BD1:TST-2: the frame-table scan sees only UPPER_SNAKE `type` literals written first; a `CHANNEL_BUDGETS` row
   deletion is caught only by the docs. **[tests]**
-- [ ] P1-TST-3: the generation-compare scan matches one spelling of a comparison. **[tests]**
-- [ ] P1-TST-4: the host's cap on the guest's own log lines (`LOG_OWN_LINES`) has no test. **[tests]**
-- [ ] P1-TST-5: the wrapper's `frame-src 'none'` is pinned to itself. **[tests]**
-- [ ] P1-TST-6: the RESIZE source filter and the view's own listeners against the egress table are unchecked. **[tests]**
-- [ ] P1-TST-7: the Navigation API half of PD4 is tested for `back()` only (not `forward`, `traverseTo`). **[tests]**
-- [ ] P1-TST-8: docs gates: THREAT-MODEL markers and backticked refs, a third copy of the defaults in `@defaultValue`,
+- [ ] BD1:TST-3: the generation-compare scan matches one spelling of a comparison. **[tests]**
+- [ ] BD1:TST-4: the host's cap on the guest's own log lines (`LOG_OWN_LINES`) has no test. **[tests]**
+- [ ] BD1:TST-5: the wrapper's `frame-src 'none'` is pinned to itself. **[tests]**
+- [ ] BD1:TST-6: the RESIZE source filter and the view's own listeners against the egress table are unchecked. **[tests]**
+- [ ] BD1:TST-7: the Navigation API half of PD4 is tested for `back()` only (not `forward`, `traverseTo`). **[tests]**
+- [ ] BD1:TST-8: docs gates: THREAT-MODEL markers and backticked refs, a third copy of the defaults in `@defaultValue`,
   HTML links, unregistered ID prefixes. **[tests]**
-- [ ] P1-TST-9: the structural scans read esbuild text, not the shipped bundle; the `RpcFrame` brand is checked by
+- [ ] BD1:TST-9: the structural scans read esbuild text, not the shipped bundle; the `RpcFrame` brand is checked by
   `typecheck` only. **[tests]**
-- [ ] P1-TST-10 (info): redundant layers shadow each other; research 17's property tests and research 19's probes are
+- [ ] BD1:TST-10 (info): redundant layers shadow each other; research 17's property tests and research 19's probes are
   not in CI. **[tests]**
 
-*Newcomer (`p1-new.md`)*
-- [ ] P1-NEW-2: cooperative mode without `allow-scripts` reaches `ready` with no guest (the TSDoc says the frame's
+*Newcomer*
+- [ ] BD1:NEW-2: cooperative mode without `allow-scripts` reaches `ready` with no guest (the TSDoc says the frame's
   load, README and API.md say the check-in). **[docs]** and TSDoc
-- [ ] P1-NEW-3: `viewScriptHash()` does not match the view when the package runs from source under Vite (fails
+- [ ] BD1:NEW-3: `viewScriptHash()` does not match the view when the package runs from source under Vite (fails
   closed; `dist` matches).
-- [ ] P1-NEW-4: some config refusals name no key (`origins.images: 'https://x'` gives "(TypeError)"); list options are
+- [ ] BD1:NEW-4: some config refusals name no key (`origins.images: 'https://x'` gives "(TypeError)"); list options are
   dropped with a warning or terminate, inconsistently.
-- [ ] P1-NEW-5: silent config typos (`watchdogTimout`, `unsafeCapablities`); `fetchBridge` without `allow` warns not.
-- [ ] P1-NEW-6: a looping `entry` spins the worker until `terminate()` with the watchdog off by default; the quickstart
+- [ ] BD1:NEW-5: silent config typos (`watchdogTimout`, `unsafeCapablities`); `fetchBridge` without `allow` warns not.
+- [ ] BD1:NEW-6: a looping `entry` spins the worker until `terminate()` with the watchdog off by default; the quickstart
   does not say so. **[docs]**
-- [ ] P1-NEW-7: `registerFiles()` after a refused entry does not revive the sandbox (as documented); the message does
+- [ ] BD1:NEW-7: `registerFiles()` after a refused entry does not revive the sandbox (as documented); the message does
   not say to `reset()`.
-- [ ] P1-NEW-8: the README fetch-bridge example has no `entry` or `mode`, so it does not run in the default strict
+- [ ] BD1:NEW-8: the README fetch-bridge example has no `entry` or `mode`, so it does not run in the default strict
   mode. **[docs]**
-- [ ] P1-NEW-9: `import 'web-sandbox'` fails while the package is private (D1); `bun run dev` hardcodes port 4444.
+- [ ] BD1:NEW-9: `import 'web-sandbox'` fails while the package is private (D1); `bun run dev` hardcodes port 4444.
   **[docs]**
-- [ ] P1-NEW-10: README says the element is block in one place and inline in another (`:host` is block). **[docs]**
-- [ ] P1-NEW-11: the playground assigns to the frozen `sandbox-log` detail (`playground.ts`), a `TypeError` on every
+- [ ] BD1:NEW-10: README says the element is block in one place and inline in another (`:host` is block). **[docs]**
+- [ ] BD1:NEW-11: the playground assigns to the frozen `sandbox-log` detail (`playground.ts`), a `TypeError` on every
   strict preset; that the detail is frozen is undocumented. **[docs]** and playground
-- [ ] P1-NEW-12: the library's own lines ("strict Ready") are logged with `source: 'guest'`. **[docs]** or code
-- [ ] P1-NEW-13: tests under heavy load: S81.
+- [ ] BD1:NEW-12: the library's own lines ("strict Ready") are logged with `source: 'guest'`. **[docs]** or code
+- [ ] BD1:NEW-13: tests under heavy load: S81.
 
 ---
 
