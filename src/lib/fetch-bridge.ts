@@ -39,7 +39,7 @@
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
 import type { RpcLibraryCode } from './rpc';
-import type { Complete, Holds } from './utils';
+import { ownField, type Complete, type Holds } from './utils';
 import { parseOrigin, type Origin, type OriginRules } from './origin';
 import { shown } from './csp/origins';
 import { setLongTimeout } from './long-timer';
@@ -128,6 +128,10 @@ export interface FetchBridgeConfig {
      */
     maxConcurrent?: number;
 }
+
+/** The fields of {@link FetchBridgeConfig}, as a value: what toFetchPolicy reads (own fields only, ownField), and what the config tests enumerate. */
+export const FETCH_BRIDGE_FIELDS = ['allow', 'maxBytes', 'timeoutMs', 'methods', 'headers', 'maxConcurrent'] as const satisfies readonly (keyof FetchBridgeConfig)[];
+type FetchBridgeFieldsComplete = Holds<Complete<keyof FetchBridgeConfig, typeof FETCH_BRIDGE_FIELDS>>;
 
 /** A validated FetchBridgeConfig: every field present and in range. */
 export interface FetchPolicy {
@@ -260,7 +264,7 @@ export function toFetchPolicy(config: unknown, warn: (message: string) => void, 
     if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
     const source = config as Record<string, unknown>;
     const listOf = (field: 'allow' | 'methods' | 'headers', fallback: readonly unknown[]): readonly unknown[] => {
-        const value = source[field];
+        const value = ownField(source, field);
         if (value === undefined) return fallback;
         if (Array.isArray(value)) return value;
         warn(`[Sandbox] fetchBridge.${field} must be a list; ${shown(value)} was dropped.`);
@@ -301,11 +305,11 @@ export function toFetchPolicy(config: unknown, warn: (message: string) => void, 
 
     return Object.freeze({
         allow: Object.freeze([...allow]),
-        maxBytes: boundedInteger(source.maxBytes, DEFAULT_MAX_BYTES, MAX_MAX_BYTES),
-        timeoutMs: boundedInteger(source.timeoutMs, DEFAULT_FETCH_TIMEOUT_MS, MAX_TIMEOUT_MS),
+        maxBytes: boundedInteger(ownField(source, 'maxBytes'), DEFAULT_MAX_BYTES, MAX_MAX_BYTES),
+        timeoutMs: boundedInteger(ownField(source, 'timeoutMs'), DEFAULT_FETCH_TIMEOUT_MS, MAX_TIMEOUT_MS),
         methods: Object.freeze([...methods]),
         headers: Object.freeze([...headers]),
-        maxConcurrent: boundedInteger(source.maxConcurrent, DEFAULT_MAX_CONCURRENT, MAX_MAX_CONCURRENT),
+        maxConcurrent: boundedInteger(ownField(source, 'maxConcurrent'), DEFAULT_MAX_CONCURRENT, MAX_MAX_CONCURRENT),
     });
 }
 
@@ -361,20 +365,41 @@ const isPrivateIPv6 = (hextets: number[]): boolean => {
 };
 
 /**
+ * The names that are private by convention, as a value (class C: the one list isPrivateHost reads, and the test that
+ * enumerates it). A name ends in one of these suffixes (or is one) when it is meant for a machine or network of the
+ * user's own, whatever address it resolves to: the page never sees DNS answers, but these names are decidable from the
+ * name. `reason` is why each is here.
+ */
+export const PRIVATE_NAME_SUFFIXES = [
+    { suffix: 'localhost', reason: 'RFC 6761: loopback, by name, in every resolver' },
+    { suffix: 'local', reason: 'RFC 6762: multicast DNS, names on the local link (printer.local)' },
+    { suffix: 'internal', reason: 'ICANN (2024) reserved it for private use; also the cloud and container hosts (metadata.google.internal, host.docker.internal)' },
+    { suffix: 'home.arpa', reason: 'RFC 8375: the home network' },
+    { suffix: 'localdomain', reason: 'the resolver default for the machine itself (localhost.localdomain)' },
+    { suffix: 'lan', reason: 'the convention of home and office routers (router.lan)' },
+    { suffix: 'intranet', reason: 'the convention of a company network' },
+    { suffix: 'corp', reason: 'the convention of a company network, and a name ICANN never delegated (name collision)' },
+    { suffix: 'home', reason: 'the convention of a home network, and a name ICANN never delegated (name collision)' },
+] as const;
+
+/**
  * Whether a URL's hostname (as `new URL()` writes it, so already canonical: IPv4 in dotted decimal, IPv6
- * in brackets) names this machine or a private, link-local or otherwise non-public address: localhost and
- * *.localhost, and IPv4/IPv6 literals in those ranges. A name that only RESOLVES to such an address cannot
+ * in brackets) names this machine or a private, link-local or otherwise non-public address: IPv4/IPv6 literals in those
+ * ranges, a single-label name (`printer`, `intranet`: only a search domain or hosts file can resolve it, and that is the
+ * user's own network) and the names private by convention (PRIVATE_NAME_SUFFIXES: `localhost`, `*.local`,
+ * `*.internal`, `*.lan`, `*.home.arpa`, …). A name that only RESOLVES to such an address cannot
  * be recognised here (DNS rebinding): the page never sees DNS answers.
  */
 export function isPrivateHost(hostname: string): boolean {
     const host = hostname.toLowerCase().replace(/\.$/, '');
-    if (host === 'localhost' || host.endsWith('.localhost')) return true;
     if (host.startsWith('[') && host.endsWith(']')) {
         const hextets = ipv6Hextets(host.slice(1, -1));
         return hextets === null ? true : isPrivateIPv6(hextets); // an IPv6 literal we cannot read is refused
     }
     const octets = ipv4Octets(host);
-    return octets !== null && isPrivateIPv4(octets);
+    if (octets !== null) return isPrivateIPv4(octets);
+    if (!host.includes('.')) return true; // a single label
+    return PRIVATE_NAME_SUFFIXES.some(({ suffix }) => host === suffix || host.endsWith(`.${suffix}`));
 }
 
 /** A request the bridge will make: every field validated. */
@@ -476,14 +501,28 @@ export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigi
     return { url, method, headers, body };
 }
 
-/** Reads a response body chunk by chunk, stopping as soon as it exceeds maxBytes. */
-async function readBody(response: BridgeResponse, maxBytes: number, onBytes: (total: number) => void): Promise<Uint8Array> {
+/**
+ * Whether a response to `method` has no body to read: a response to HEAD, one with a null-body status (204, 304 and the
+ * rest), or one the transport gave no body. Such a response is empty and never too large, whatever Content-Length it
+ * repeats for the resource it stands for. Chromium hands a HEAD response an empty stream, not a null body, so the method
+ * counts too.
+ */
+const hasNoBody = (method: string, response: BridgeResponse): boolean => response.body === null || method === 'HEAD' || NULL_BODY_STATUSES.includes(response.status);
+
+/**
+ * Reads a response body chunk by chunk, stopping as soon as it exceeds maxBytes. A response without a body (hasNoBody)
+ * is read as empty; the declared length is checked only for a body that would be read.
+ */
+async function readBody(response: BridgeResponse, method: string, maxBytes: number, onBytes: (total: number) => void): Promise<Uint8Array> {
+    if (response.body === null || hasNoBody(method, response)) {
+        await response.body?.cancel().catch(() => {});
+        return new Uint8Array(0);
+    }
     const declared = response.headers.get('content-length');
     if (declared !== null && /^\d+$/.test(declared.trim()) && Number(declared) > maxBytes) {
-        await response.body?.cancel().catch(() => {});
+        await response.body.cancel().catch(() => {});
         throw fetchRefusal('FETCH_TOO_LARGE', `the response declares ${declared} bytes, more than ${maxBytes}`);
     }
-    if (!response.body) return new Uint8Array(0);
 
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
@@ -670,7 +709,7 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, transport, now
                 throw fetchRefusal('FETCH_REDIRECT', 'the response was a redirect, which the bridge never follows');
             }
             status = response.status;
-            const body = await readBody(response, policy.maxBytes, (total) => { bytes = total; });
+            const body = await readBody(response, valid.method, policy.maxBytes, (total) => { bytes = total; });
             const headers: [string, string][] = [];
             response.headers.forEach((value, name) => headers.push([name, value]));
             result = {
@@ -678,7 +717,7 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, transport, now
                 status,
                 statusText: response.statusText,
                 headers,
-                body: NULL_BODY_STATUSES.includes(status) ? new Uint8Array(0) : body,
+                body,
             };
         } catch (error) {
             // A teardown's abort lands here too, as whatever the fetch or the read threw: record() makes it 'aborted'

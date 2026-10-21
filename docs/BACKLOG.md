@@ -508,8 +508,9 @@ a finding").
 - [ ] BD1:CHL-1: an embedder `console.warn` hook inside `setConfig()`'s `applyConfig` effect is outside the executor's
   generation check; a `terminate()` from there is undone.
 - [ ] BD1:CHL-1, second site: the same class at the log cap line (`src/host.ts`, the warning at the cap).
-- [ ] BD1:CHL-3: L1 ("a guest cannot outlive `terminate()` or `reset()`") is asserted for cooperative and worker mode
-  only; not for strict mode, and not for the element's removal (the property holds). **[tests]**
+- [x] BD1:CHL-3: L1 ("a guest cannot outlive `terminate()` or `reset()`") is asserted for cooperative and worker mode
+  only; not for strict mode, and not for the element's removal (the property holds). **[tests]** Done: L1 is every mode
+  × `terminate`, `reset` and `remove` (`test/e2e/worker-globals-and-termination.spec.ts`).
 
 *Isolation*
 - [ ] BD1:ISO-2: the `keepalive` guard is only a shadow on the worker global; the platform's `fetch` stays on
@@ -554,16 +555,26 @@ a finding").
 
 *Tests*
 - [ ] BD1:TST-2: the frame-table scan sees only UPPER_SNAKE `type` literals written first; a `CHANNEL_BUDGETS` row
-  deletion is caught only by the docs. **[tests]**
-- [ ] BD1:TST-3: the generation-compare scan matches one spelling of a comparison. **[tests]**
-- [ ] BD1:TST-4: the host's cap on the guest's own log lines (`LOG_OWN_LINES`) has no test. **[tests]**
-- [ ] BD1:TST-5: the wrapper's `frame-src 'none'` is pinned to itself. **[tests]**
+  deletion is caught only by the docs. **[tests]** Half done: every post in the stringified code must be a literal of a
+  row of FRAMES or a forwarded frame (`unreadablePosts`, `test/unit/structural.test.ts`, with the four mutants as the
+  scan's own test). Left: keying `CHANNEL_BUDGETS` rows by frame type, so that a deleted row of the logic port fails a
+  test and not only the docs (a change of the table's shape, and of what the budgets table renders).
+- [x] BD1:TST-3: the generation-compare scan matches one spelling of a comparison. **[tests]** Done: `!=`, `==`, orderings,
+  `Object.is` and the identity of `_lc` (`GEN_COMPARISON`, `test/unit/lifecycle-reducer.test.ts`, with its own test).
+- [x] BD1:TST-4: the host's cap on the guest's own log lines (`LOG_OWN_LINES`) has no test. **[tests]** Done
+  (`test/unit/channel-guarantees.test.ts`).
+- [x] BD1:TST-5: the wrapper's `frame-src 'none'` is pinned to itself. **[tests]** Done: `WRAPPER_CSP` is asserted as the
+  directive list the docs state (`test/unit/host-page-policy.test.ts`).
 - [ ] BD1:TST-6: the RESIZE source filter and the view's own listeners against the egress table are unchecked. **[tests]**
-- [ ] BD1:TST-7: the Navigation API half of PD4 is tested for `back()` only (not `forward`, `traverseTo`). **[tests]**
+  Half done: the RESIZE source filter (`test/unit/channel-guarantees.test.ts`). Left: the egress scan of the view's and the
+  strict worker's listeners (`egress.test.ts` reads only the bootstraps'), which needs the view's rows keyed to its
+  listeners and the generated `unheard` rows to fail on a contradicting row.
+- [x] BD1:TST-7: the Navigation API half of PD4 is tested for `back()` only (not `forward`, `traverseTo`). **[tests]** Done
+  (unit and e2e, all three traversals).
 - [ ] BD1:TST-8: docs gates: THREAT-MODEL markers and backticked refs, a third copy of the defaults in `@defaultValue`,
-  HTML links, unregistered ID prefixes. **[tests]**
+  HTML links, unregistered ID prefixes. **[tests]** Left: new gates in the docs generator, not a cheap test.
 - [ ] BD1:TST-9: the structural scans read esbuild text, not the shipped bundle; the `RpcFrame` brand is checked by
-  `typecheck` only. **[tests]**
+  `typecheck` only. **[tests]** Left: needs the scans run over the built `dist/`, a build step in the unit run.
 - [ ] BD1:TST-10 (info): redundant layers shadow each other; research 17's property tests and research 19's probes are
   not in CI. **[tests]**
 

@@ -1,5 +1,5 @@
 import { parseOrigin, type Origin, type OriginRules } from "../origin";
-import { defineData } from "../utils";
+import { defineData, ownField } from "../utils";
 
 /**
  * `origins`: what the embedder may open in the guest policy (ADR-007). One list of exact origins per kind of load,
@@ -100,7 +100,7 @@ export function parseOrigins(input: unknown, mode: unknown, warn: (message: stri
 
     const policy: Record<string, readonly Origin[]> = {};
     for (const kind of ORIGIN_KINDS) {
-        const entries = Object.hasOwn(source, kind) ? source[kind] : undefined;
+        const entries = ownField(source, kind);
         if (entries !== undefined && !Array.isArray(entries)) throw new TypeError(`origins.${kind} must be a list of origins`);
         defineData(policy, kind, Object.freeze(originsOf(kind, entries ?? [], mode, warn)));
     }

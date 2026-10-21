@@ -185,6 +185,22 @@ test('a response body over maxBytes is refused with FETCH_TOO_LARGE: by its Cont
     }
 });
 
+test('HEAD on a resource over maxBytes is ok: a response without a body is never too large, though it repeats the resource\'s Content-Length', async ({ sandbox }) => {
+    const maxBytes = 64 * 1024;
+    expect(await sandbox.mount({ fetchBridge: { allow: [recorder.allowed], maxBytes } })).toBe('ready');
+    const url = `${recorder.allowed}/declared?bytes=${10 * MiB}`;
+
+    const head = await sandbox.inGuest(`
+        const response = await sandboxFetch(${JSON.stringify(url)}, { method: 'HEAD' });
+        return { status: response.status, ok: response.ok, length: response.headers.get('content-length'), type: response.headers.get('content-type'), text: await response.text() };
+    `);
+    expect(head).toEqual({ status: 200, ok: true, length: String(10 * MiB), type: 'application/octet-stream', text: '' });
+    expect(await sandbox.waitForFetch(`${recorder.allowed}/declared`)).toMatchObject({ method: 'HEAD', outcome: 'ok', status: 200, bytes: 0 });
+
+    // positive control: the same resource with GET is refused FETCH_TOO_LARGE
+    expect(await sandbox.inGuest(fetchInGuest(url))).toMatchObject({ code: 'FETCH_TOO_LARGE' });
+});
+
 test('reset() during a slow response aborts the upstream request: the listener sees the connection closed', async ({ sandbox, page }) => {
     expect(await sandbox.mount(bridgeTo(recorder.allowed))).toBe('ready');
     await sandbox.run(`sandboxFetch('${recorder.allowed}/slow').then(() => console.log('SLOW settled'), () => console.log('SLOW settled'))`);

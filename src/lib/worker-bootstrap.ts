@@ -20,36 +20,33 @@
  *   'failed'         the worker's script threw before it started (an error event with a message): a library bug.
  *
  * Under a host page's Trusted Types requirement (R1:R3-1), which this srcdoc frame inherits, the Worker
- * constructor refuses a string (Chromium, WebKit). The URL is tried as a string first, then through a policy of this
- * frame's own named like the element's (trusted-types.ts), whose rule passes the worker's URL. A host page whose
- * trusted-types directive does not name it makes createPolicy throw here, also when the host page itself never needed
- * the policy (its own default policy took the element's strings, R2:C-6): the refusal says so.
+ * constructor refuses a string (Chromium, WebKit) and the host page is told of every string it refuses. The URL goes
+ * through a policy of this frame's own, named like the element's (trusted-types.ts), whose rule passes the worker's URL,
+ * from the first write. A host page whose trusted-types directive does not name it makes createPolicy throw here, also
+ * when the host page itself never needed the policy (its own default policy took the element's strings, R2:C-6): the URL
+ * is then written as a string, and where that is refused too the refusal says so.
  */
 export function workerBootstrap(workerSource: string, trustedTypesPolicy?: string) {
     const refuse = (refused: 'worker' | 'trusted-types' | 'failed') => parent.parent.postMessage({ type: 'SANDBOX_PORT', refused }, '*');
     const workerUrl = URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' }));
     let worker: Worker;
-    try {
-        worker = new Worker(workerUrl);
-    } catch (error) {
-        const factory = (globalThis as any).trustedTypes;
-        if (!(error instanceof TypeError) || !factory || !trustedTypesPolicy) {
-            refuse('worker');
-            return;
-        }
-        let policy: { createScriptURL(url: string): unknown };
+    // The URL goes through the frame's own policy from the first write (no string for a host page that enforces Trusted
+    // Types to report), when there is one; if the host page refused the policy's name, as a string, which a page that
+    // requires Trusted Types refuses too.
+    const factory = (globalThis as any).trustedTypes;
+    let policy: { createScriptURL(url: string): unknown } | null = null;
+    if (factory && trustedTypesPolicy) {
         try {
             policy = factory.createPolicy(trustedTypesPolicy, { createScriptURL: (url: string) => url });
         } catch {
-            refuse('trusted-types');
-            return;
+            policy = null;
         }
-        try {
-            worker = new Worker(policy.createScriptURL(workerUrl) as string);
-        } catch {
-            refuse('worker');
-            return;
-        }
+    }
+    try {
+        worker = new Worker(policy ? policy.createScriptURL(workerUrl) as string : workerUrl);
+    } catch (error) {
+        refuse(!policy && error instanceof TypeError && factory && trustedTypesPolicy ? 'trusted-types' : 'worker');
+        return;
     }
     const channel = new MessageChannel();
     let started = false;
