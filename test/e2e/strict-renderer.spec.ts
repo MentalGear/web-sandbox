@@ -228,7 +228,7 @@ test.describe('ST1: nothing the strict view shows opens in a new tab as a docume
 // The host page's longest stall: ./host-share.ts (startLag, lag).
 
 const repeat = (s: string, n: number) => s.repeat(n);
-// 10 × 10 × 10 × 10 × 10 instances from about 1 KB (measured before the fix: 5.8–6.5 s of host stall on all three engines)
+// 10 × 10 × 10 × 10 × 10 instances from about 1 KB: seconds of host stall on all three engines if the renderer let them be instanced
 const USE_FANOUT = (() => {
     let s = '<svg id="fan" width="100" height="100"><defs><g id="a0"><rect width="1" height="1"/></g>';
     for (let i = 1; i <= 5; i++) s += `<g id="a${i}">${repeat(`<use href="#a${i - 1}"/>`, 10)}</g>`;
@@ -255,8 +255,7 @@ test.describe('ST2: one render cannot stall the host by fan-out, and the view ho
             console.log(`MEASURED ${browserName} ST2 ${name} lag ${stall} ms (the machine's own ${quiet} ms)`);
             expect(await inView(page, browserName, `document.querySelectorAll('#fan use, #fan marker, #fan symbol').length`)).toBe(0);
             // a 1.5 KB render costs a few milliseconds once nothing instances; 500 ms over the machine's own stall is far
-            // above that on every engine, and far below the measured stall before the fix (5.8–6.5 s for <use>, 1.1–2.9 s
-            // for markers)
+            // above that on every engine, and far below the stall of instancing (seconds, for <use> and for markers)
             expect(stall).toBeLessThan(quiet + 500);
         });
     }

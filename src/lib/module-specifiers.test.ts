@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { applyEdits, moduleSpecifierEdits, resolveModuleSpecifier, rewriteInlineModule, VIRTUAL_ROOT } from './module-specifiers';
 
 /**
- * The host-side rewrite of a registered module's relative specifiers (ADR-004, PR3). What it
+ * The host-side rewrite of a registered module's relative specifiers (ADR-004). What it
  * guarantees: every relative specifier in an import or export-from statement and in a literal import()
  * becomes the JSON string of a URL inside https://vfs.invalid/; nothing else in the source changes.
  */

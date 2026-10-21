@@ -107,7 +107,8 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 - Each option's default, accepted values, bounds, warnings and modes are declared once (`src/lib/config-schema.ts`), and
   so are the checks across options, which hold for every config: every call that `callLimits` can carry fits an empty
   window ([below](#calllimits)); a `fetchBridge` response of `maxBytes` fits one call result; a `fetchBridge` request
-  body of `maxBytes`, and a guest write of the whole file quota, fit one call, unless a `maxBytesPerSecond` below
+  body of `maxBytes` bytes (a string body is measured at two bytes a character, so a string above about 16.5 MiB is refused
+  by the guest's broker: [S70](BACKLOG.md#s70)), and a guest write of the whole file quota, fit one call, unless a `maxBytesPerSecond` below
   `RPC_MAX_BYTES` caps calls, which it says once. `watchdogTimeout` and `workerExecutionTimeout` are independent: either
   may be the shorter.
 
@@ -143,7 +144,7 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 
 | Kind | Directive | What loads from it |
 | :--- | :--- | :--- |
-| `connect` | `connect-src` | `fetch()`, `XMLHttpRequest`, `WebSocket` (`wss:` origins too), `EventSource`, `sendBeacon()`. |
+| `connect` | `connect-src` | `fetch()`, `XMLHttpRequest`, `WebSocket` (it needs its own `wss://` entry). In cooperative mode also `EventSource` and `sendBeacon()`; the worker of strict and worker mode has neither. |
 | `images` | `img-src` | Images, CSS backgrounds, icons. |
 | `styles` | `style-src` | Stylesheets: `<link rel=stylesheet>`, `@import`. Inline styles are always allowed. |
 | `fonts` | `font-src` | `@font-face` fonts. |
@@ -156,18 +157,25 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   policy cannot name one), IPv4 shorthand, percent-encoding, non-ASCII name (write its `xn--` form) or trailing dot.
   An `xn--` label is checked by the browser's own URL parser, and engines differ on invalid Punycode: one that an engine
   refuses is dropped there, so write the form your registrar gives.
+- **A scheme is matched as written.** `https://api.example.com` does not admit `wss://api.example.com`: list both for a
+  WebSocket and a `fetch()` to one host (measured on Chromium 145, Firefox 146 and WebKit 26). WebKit also lets a
+  `wss://host` entry admit `https://host` requests, so an entry that is only for a WebSocket opens the host to `fetch()`
+  there.
 - **Anything else is dropped** with one warning per entry: `https:` and other schemes, `*` and `*.example.com`,
   `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
   narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
 - **An origin that reaches the host page's site or the user's machine warns**, in every mode, once per kind: the warning
   names the kind, each such origin and why. That covers the host page's own origin on any scheme or port, a
   subdomain or a parent of the host page's host (`api.example.com` and `example.com` for a page on `app.example.com`),
-  and a loopback, private or link-local host (`localhost`, `127.0.0.1`, `10.x`, `192.168.x`, `169.254.x`). Firefox and
+  and a loopback, private or link-local host (`localhost`, `127.0.0.1`, `10.x`, `192.168.x`, `169.254.x`) or a name that is private by
+  convention (a single label such as `intranet`, and `*.local`, `*.internal` such as `host.docker.internal`, `*.lan`,
+  `*.home.arpa`, `*.localdomain`, `*.corp`, `*.home`, `*.intranet`). Firefox and
   WebKit attach the host site's `SameSite=None` cookies to a guest request to a same-site origin, so prefer
   [`fetchBridge`](#fetchbridge), which sends no credentials. The entry is kept; the warning is the only effect. The
   same-site check compares names and uses no public-suffix list: a sibling (`a.example.com` for a page on
   `b.example.com`) is not recognised, though a cookie set with `Domain=example.com` reaches it, and a public suffix
-  above the host page counts as its parent. A name that only resolves to a private address is not recognised either.
+  above the host page counts as its parent. A name that only resolves to a private address, and is not private by convention, is
+  not recognised either.
 - **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used.
 - **Strict mode has no `scripts`**: a type error in TypeScript (`SandboxConfig` is a union keyed by `mode`), and dropped
   with one warning at run time, for a config from JSON. With a mode chosen at run time, type `origins` as
@@ -210,10 +218,14 @@ The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. Only `al
 
 The host decides every request, and a hidden frame of the library's with an opaque origin makes it, never the host
 page: the host page's Service Worker and any wrapper of its `fetch` never see it. So the target sees `Origin: null`,
-and its CORS must allow that: `Access-Control-Allow-Origin: *` (no credentials are sent) or `null`. Every request is
-pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`) and `cache: 'no-store'`. The
-frame runs the library's hashed bootstrap, so a host page policy that admits the sandbox admits it
-([Host page policy](#host-page-policy)). The host page's own origin and loopback, private and link-local hosts are refused
+and its CORS must allow that: `Access-Control-Allow-Origin: *` or `null`, for public data only. Every sandboxed frame
+on the web, an attacker's too, has the origin `null`: a target must never pair it with
+`Access-Control-Allow-Credentials: true` or treat `null` as trusted. The bridge itself sends no credentials (no cookies,
+no HTTP authentication), so it gets what any anonymous page gets. Every request is pinned to no credentials, no
+`Referer`, no redirects (refused with `FETCH_REDIRECT`) and `cache: 'no-store'`. The frame runs the same hashed
+bootstrap as the strict view, under the same hash, so a host page policy that admits the sandbox admits it, and one
+that refuses the view refuses it too (strict mode then ends with the startup reason). A frame that fails to start
+alone fails the bridge closed and leaves the sandbox running ([Host page policy](#host-page-policy)). The host page's own origin and loopback, private and link-local hosts are refused
 unless listed. A listed public name that resolves to a private address cannot be detected
 from a page. A number that is not finite or is below 1 takes its default, and one above its bound takes the bound.
 See [ADR-006](ADR-006-fetch-bridge.md).
@@ -225,7 +237,7 @@ See [ADR-006](ADR-006-fetch-bridge.md).
 | `timeoutMs` | `number` | `10000` | Most ms for one request, response body included. At most `120000`. |
 | `methods` | `string[]` | `['GET', 'HEAD', 'POST']` | The methods the guest may use, from `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE`. Replaces the default list. |
 | `headers` | `string[]` | none | Header names the guest may set beyond `accept`, `accept-language`, `content-language` and `content-type`. `Authorization` only this way; `Cookie`, `Host`, `Origin`, `Referer`, `Sec-*`, `Proxy-*` and other forbidden names never. |
-| `maxConcurrent` | `number` | `4` | Most requests in flight at once; a request past it is refused with `FETCH_BUSY`. At most `16`. |
+| `maxConcurrent` | `number` | `4` | Most requests in flight at once; a request past it is refused with `FETCH_BUSY`. At most `16`. The host's memory for the bridge is bounded by about 3 times `maxConcurrent` times `maxBytes`: a response is held as the chunks read and as the joined body, and the result is cloned for the guest (a bound, not a measurement). |
 <!-- generated:end -->
 
 ### `callLimits`
@@ -267,7 +279,7 @@ renders is work on that thread:
 | Firefox | Your page's thread. Fission isolates only cross-site frames, and the view (an opaque-origin sandboxed frame) is placed with the site that created it. |
 | Safari, every WebKit browser | Your page's thread: WebKit has no site isolation. |
 | Android | Chromium isolates partially; Android WebView has no out-of-process frames at all. |
-| Chromium on the desktop | A process of its own from Chromium 127 (sandboxed frames are isolated); your page's thread where that isolation is off, as in the headless shell. |
+| Chromium on the desktop | A process apart from your page's, from Chromium 127 (sandboxed frames are isolated). All the sandboxed frames of your page can share that one process, so one sandbox's work can stall another's view ([S79](BACKLOG.md#s79)). Your page's thread where that isolation is off, as in the headless shell. |
 
 Rendering follows script: wherever the view's script runs on your page's thread, so does its rendering.
 
@@ -427,7 +439,8 @@ Methods belong to the element: they survive `reset()`, `load()`,
 `setConfig()` and `terminate()`. Exposing a name again replaces its handler. Names that
 start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
 validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
-survives the copy).
+survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
+`eval` or template sink.
 
 **Parameters**
 
@@ -629,7 +642,9 @@ Every event is a `CustomEvent` dispatched on the element and none is `composed`.
 `window` for every sandbox on the page; `event.target` says which. The `detail` is frozen, deeply: every object and
 array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
 `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
-clamped, but remain the guest's data: read them, do not merge them into your objects.
+clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
+line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`): show it with `textContent`,
+never in an HTML, URL (such as a link `href`), `eval` or template sink. `terminated.reason` is the library's text.
 
 | Event | `detail` | Bubbles | When |
 | :--- | :--- | :--- | :--- |
@@ -655,7 +670,7 @@ its shape.
 | :--- | :--- | :--- |
 | `type` | `'LOG'` | Always `'LOG'`. |
 | `level` | `'log' \| 'info' \| 'warn' \| 'error'` | How serious the line is. A level the guest sends that is not one of `SandboxLogLevel` reads as `'log'`. |
-| `args` | `readonly unknown[]` | What was logged, structured-cloned: at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING` characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced by a string that says so. |
+| `args` | `readonly unknown[]` | What was logged, structured-cloned: at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING` characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced by a string that says so. Guest-controlled text when `source` is `'guest'`: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
 | `source` | `'guest' \| 'host'` | `'host'` for a line the element wrote itself, `'guest'` for a line that came from the guest's port, whatever it claims. Set by the element, never read from the line. |
 <!-- generated:end -->
 
@@ -734,8 +749,8 @@ view per directive, so refused loads of one kind never hide a report of another.
 | Field | Type | Meaning |
 | :--- | :--- | :--- |
 | `directive` | `string` | The effective directive that refused the load, e.g. `'connect-src'` or `'img-src'`. |
-| `blockedURI` | `string` | What was refused: a URL (possibly reduced to its origin by the browser; a `data:` or `blob:` URL is reported by its scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters. |
-| `sourceFile` | `string?` | Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like). At most 2048 characters. |
+| `blockedURI` | `string` | What was refused: a URL (possibly reduced to its origin by the browser; a `data:` or `blob:` URL is reported by its scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
+| `sourceFile` | `string?` | Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like). At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
 | `lineNumber` | `number?` | The line of the refused code, a positive integer, when the browser gives one. |
 | `columnNumber` | `number?` | The column of the refused code, a positive integer, when the browser gives one. |
 | `source` | `'view' \| 'logic'?` | Strict mode only ([ADR-005](ADR-005-strict-mode.md)): which document's report this is, set by the element from the port it arrived on, never read from the report. `'view'` is the view document, which runs no guest code, so its reports are the library's own and complete up to the cap. `'logic'` is the worker, whose reports guest code can forge or suppress like any cooperative-mode report, and which depend on the engine (WebKit raises none in workers; Firefox raises the worker's `importScripts()` refusals in the view, so those arrive as `'view'`). |
@@ -767,7 +782,9 @@ record of a torn-down environment can arrive after the call that tore it down, w
 a teardown an environment's records are all `'aborted'`. Fields that come from the guest are validated or clamped
 first. `method` is upper case (`''` when the guest sent no valid one). `url` is the whole URL without its fragment, at
 most 8192 characters (a longer one is refused and reported cut), or the guest's string cut to that when it is not a
-URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement.
+URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement. `url` is
+guest-controlled text (it can be `javascript:`): show it with `textContent`, never in an HTML, URL (such as a link
+`href`), `eval` or template sink.
 
 ```ts
 type FetchRecord = {
@@ -862,6 +879,8 @@ mode), announced its port; in worker mode the worker's frame announced it once i
 view's bootstrap posted its check-in on the port only it holds. It does not wait for the guest's images or its own scripts, so `LOAD_TIMEOUT_MS`
 bounds only that check-in; a page with slow images, or one that never finishes its document, is `ready`. A frame
 that loaded but whose startup script never checked in was refused by the host page's policy, and the reason says so.
+The exception is a cooperative frame without `allow-scripts`: no script runs in it, so `ready` comes with the frame's load,
+and no guest script has run.
 
 A plugin or guest whose own initialisation outlives `ready` (an `async` setup, a module that awaits) should say when it
 is done: expose a method once it is (`bridge.expose('ready', () => true)` in the guest) and have the host retry
@@ -1206,12 +1225,12 @@ page in Chromium and Firefox, with no user activation (measured; cooperative mod
 | Files named from markup | `src`, `href`, `poster` in rendered markup | ✓ | — |
 | Worker globals | allowlist | — | allowlist |
 
-A config without `mode` is strict. `'iframe'` was renamed `'cooperative'`; it starts nothing, like any value that is not
+A config without `mode` is strict. `'iframe'` is not a mode; it starts nothing, like any value that is not
 a mode. [ADR-005](ADR-005-strict-mode.md)
 
 **What strict mode does not cover**: the host page's availability wherever the view shares the host page's thread
 (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation; desktop Chromium 127+ runs it in a
-process of its own): there the view's cost is the bound stated in [The view's cost to the host page](#the-views-cost-to-the-host-page),
+process apart from the page's, which the page's other sandboxes can share): there the view's cost is the bound stated in [The view's cost to the host page](#the-views-cost-to-the-host-page),
 and what it lists as outside it. Cooperative mode is no better there. Also
 CSS within what the policy allows, the worker's `violation` reports (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the host site's
 cookies on requests to allowed same-site origins (every mode).
@@ -1365,7 +1384,7 @@ that the machine's other load is the same in the baseline as in the window.
 
 | Engine and build | The view runs on | So the bound is on |
 | :--- | :--- | :--- |
-| Desktop Chromium 127+ (`IsolateSandboxedIframes`) | a process of its own | the view's own process; the host page's thread gets only the view's bounded notices (VIOLATION, GUEST_ERROR, RESIZE) |
+| Desktop Chromium 127+ (`IsolateSandboxedIframes`) | a process apart from the host page's, shared with the page's other sandboxed frames | that process (so another sandbox's work can stall this view, [S79](BACKLOG.md#s79)); the host page's thread gets only the view's bounded notices (VIOLATION, GUEST_ERROR, RESIZE) |
 | Chromium's headless shell, Chromium with that isolation off | the host page's thread | the host page's thread |
 | Firefox (Fission isolates only cross-site frames; the view is placed with the site that made it) | the host page's thread | the host page's thread |
 | WebKit and Safari (no site isolation) | the host page's thread | the host page's thread |
@@ -1404,9 +1423,8 @@ loads the view's document starts over any t seconds number at most
   resolution changes; a linked or imported sheet past its second's worth), charged once the platform reports it, and
   bounded only by that CSS's text.
 
-The server's latency is in none of the first three: nothing an operation can load waits for its response to be charged
-(review round 5, M-3, where it did: behind a slow server every render applied meanwhile got through, and Firefox made
-5 000 loads over an 11.1 s flood). A load the browser itself defers (an image with `loading="lazy"` until it is
+The server's latency is in none of the first three: nothing an operation can load waits for its response to be charged,
+so a slow server cannot let renders through meanwhile ([R5:M-3](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-m-3)). A load the browser itself defers (an image with `loading="lazy"` until it is
 scrolled to, media until it plays) is charged when it is rendered and starts later: at most what the body holds of
 them, `VIEW_MAX_URLS`.
 
@@ -1441,11 +1459,15 @@ twice within 5 minutes`), and no operation runs after it; an overrun later than 
 window runs from it. Why not the first: the meter measures wall time on a thread the view shares with your page and the
 machine, so under load it passes 2000 ms for operations that are healthy ([ADR-005](ADR-005-strict-mode.md)).
 
-**Exception: desktop Chromium** ([S79](BACKLOG.md#s79), open). There the view runs in a process of its own, so the host
-page's ticks keep counting while the view is busy, and the view's liveness ping (5000 ms)
+**Exception: desktop Chromium** ([S79](BACKLOG.md#s79), open). There the view runs in a process apart from the host page's,
+so the host page's ticks keep counting while the view is busy, and the view's liveness ping (5000 ms)
 ends the sandbox (`the sandbox view stopped responding`) at the **first** operation that keeps the view silent for longer
 than that, as a 240 000-character bidirectional paragraph does (5.7 s measured, Chromium 145). An overrun of 2 to about 5
 s is survived there as described; a longer one is not. This fails closed, and the host page is not stalled.
+The process is shared by all the sandboxed frames of the page, so the same happens across sandboxes: a loop in another
+sandbox's cooperative guest, or one documented stall in another strict view, keeps this view silent and its liveness ping
+ends it too (measured on Chromium 145 with two sandboxes at the default configuration; a cooperative sandbox in that
+position is frozen for as long as the other's loop runs).
 
 So the bound is: **at most one stall past 2000 ms per 5 minutes beyond the first**, and **each stall is what that one
 operation costs before the view can observe it**: an operation is not interruptible, so the view learns its cost only
@@ -1461,8 +1483,7 @@ it never ran. What one operation within the caps can cost is listed in (d), the 
 One render's loads add to it, after the operation: up to `VIEW_MAX_URLS` (1000) URL attributes, about a second of the
 host page's thread at most, and what its CSS can load, which its count bounds ((a)); all of them are charged when the
 operation is applied, and the next operation waits until the load budget has repaid them. Measured at
-`VIEW_MAX_DISTINCT_URLS`, the host page's longest stall: Chromium 297 ms, Firefox 654 ms, WebKit 809 ms (review round 5,
-M-4).
+`VIEW_MAX_DISTINCT_URLS`, the host page's longest stall: Chromium 297 ms, Firefox 654 ms, WebKit 809 ms ([R5:M-4](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-m-4)).
 
 ### (c) The rates and caps that bound what the meter does not see
 
@@ -1524,16 +1545,25 @@ policy must allow:
 | `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` | the same | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
 | With `fetchBridge` | the bridge's frame runs the view bootstrap too: the same hash, or `'unsafe-inline'`, admits it; `connect-src`: every origin in `fetchBridge.allow` (the frame's requests inherit your policy) | the same: `'unsafe-inline'` admits the frame's script | the same |
-| Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox`, which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
+| Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox` from their first write (so the page gets no violation, console error or report from them), which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox 146, the version measured, has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
 | `Cross-Origin-Embedder-Policy: require-corp` | works in Chromium and Firefox; WebKit refuses the view's `blob:` worker | works; resources from `origins` need CORP or CORS headers | as strict |
 
 - **What a refusal looks like**: the build ends with a reason that names your page's policy: `the sandbox's startup
   script did not run …` (a refused bootstrap), `the sandbox's worker could not be loaded …` (a refused `blob:` worker),
-  `… does not allow the policy name 'web-sandbox' …` (Trusted Types). A refused fetch bridge frame leaves the sandbox
-  running and fails the bridge closed: every `sandboxFetch()` rejects with `FETCH_FAILED`, each `fetch` record is
-  `refused` with a `reason` that names the hash, and the element warns once. A refused wrapper style leaves the frame 150 px
+  `… does not allow the policy name 'web-sandbox' …` (Trusted Types). The fetch bridge's frame and the strict view run
+  one bootstrap under one hash and one policy, so a host policy that refuses one refuses the other, and strict mode then
+  ends the build with the startup reason above. A bridge frame that fails to start alone (its script refused while the
+  sandbox runs) leaves the sandbox running and fails the bridge closed: every `sandboxFetch()` rejects with `FETCH_FAILED`,
+  each `fetch` record is `refused` with a `reason` that names the hash, and the element warns once. A refused wrapper style leaves the frame 150 px
   high, and the element warns with the hash to allow; so does a refused animation stylesheet (`allowAnimations: false`),
   whose view then shows no guest stylesheet.
+- **Cooperative and worker mode need `'unsafe-inline'` in your page's `script-src`**, and that has a price. Their
+  bootstrap is inline and its hash changes with every build, so no hash or nonce can name it. Next to a hash or a nonce a
+  browser ignores `'unsafe-inline'`, so a page whose `script-src` carries one (the one `viewScriptHash()` serves, or its
+  own nonce) cannot run these modes: the build ends with `the sandbox's startup script did not run …`. A page that allows
+  `'unsafe-inline'` allows inline script everywhere on it, and so gives up its defence against an injected `<script>`.
+  Prefer strict mode, whose hash sits beside your own hashes and nonces; using `'unsafe-inline'` there instead of the hash
+  costs the same.
 - **Your `connect-src`, `img-src` and the other fetch directives narrow `origins` silently**: an origin listed in
   `origins` that your page's policy does not allow is refused in the sandbox too. The refusal happens in the sandbox's
   documents, so it arrives as the element's `violation` event (where the browser reports it), never as a

@@ -32,6 +32,7 @@ import { setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./l
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
+import { detachEnvironment, releaseEnvironment, type EnvironmentFields } from "./lib/environment";
 import { hostLine, reasonText } from "./lib/reasons";
 import { INITIAL_LIFECYCLE, runNotices, step as runStep, type BuildContext, type Generation, type LcInput, type LcState, type LifecycleHost, type Notice } from "./lib/lifecycle";
 import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
@@ -66,7 +67,7 @@ export interface StrictSandboxConfig extends SandboxConfigOptions {
 
 /**
  * The configuration of cooperative mode, for content that cooperates: guest code runs in the guest document, within the
- * documented limits of the mode (README, "Cooperative-mode limits"). The mode was called `'iframe'`; that name is refused.
+ * documented limits of the mode (README, "Cooperative-mode limits"). `'iframe'` is not a mode: it is refused like any other unknown value.
  */
 export interface CooperativeSandboxConfig extends SandboxConfigOptions {
     /** Names the mode. */
@@ -118,7 +119,9 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions {
  * `window` for every sandbox on the page; `event.target` says which. The `detail` is frozen, deeply: every object and
  * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
  * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
- * clamped, but remain the guest's data: read them, do not merge them into your objects.
+ * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
+ * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`): show it with `textContent`,
+ * never in an HTML, URL (such as a link `href`), `eval` or template sink. `terminated.reason` is the library's text.
  */
 export interface WebSandboxEventMap extends HTMLElementEventMap {
     /**
@@ -408,7 +411,7 @@ const IDLE_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox is not in the 
 interface GuestMarkupPlan {
     // the markup cut into parts for the bootstrap to write (markup-references.ts), or null to embed it as written
     parts: MarkupParts | null;
-    // the one import map (module graph, PR3): every registered JavaScript file, plus the guest's own
+    // the one import map (module graph): every registered JavaScript file, plus the guest's own
     // inline maps merged (import-map.ts), or null when no JavaScript file is registered
     importMap: { paths: string[]; guest: string | null } | null;
 }
@@ -594,12 +597,14 @@ const ElementBase: typeof HTMLElement = typeof HTMLElement === 'function' ? HTML
  * {@link WebSandboxEventMap}. Reference: docs/API.md.
  */
 export class WebSandbox extends ElementBase {
-    private _iframe: HTMLIFrameElement | null = null;
+    // The per-environment resources (this and the fields below named in EnvironmentFields) are declared in
+    // src/lib/environment.ts, which releases them: _teardown detaches them all before it releases any (LM-2; S74).
+    private _iframe: EnvironmentFields['_iframe'] = null;
     // The reversed handshake (BR:CB1): the listener on the host's window, removed by _teardown
     // (cooperative and worker mode). Whether this build's guest announces, whether the wrapper loaded and the window
     // whose announcement was accepted are the build's progress in the reducer (`_lc.build`; S65).
-    private _stopListening: (() => void) | null = null;
-    private _loadDeadline: Watchdog | null = null; // LOAD_TIMEOUT_MS until the guest checks in, or a frame with no bootstrap loads (BR:CB3, S46)
+    private _stopListening: EnvironmentFields['_stopListening'] = null;
+    private _loadDeadline: EnvironmentFields['_loadDeadline'] = null; // LOAD_TIMEOUT_MS until the guest checks in, or a frame with no bootstrap loads (BR:CB3, S46)
     // The lifecycle's state (src/lib/lifecycle.ts, LcState; backlog S65): `state`, the environment count (`gen`: every
     // teardown increments it), a build's 'terminated' waiting for its task (`pending`, R1:R3-2), the 'terminated' reasons
     // being dispatched (`dispatching`, R4:L-3), the one being dispatched when the last build started (`within`,
@@ -607,14 +612,14 @@ export class WebSandbox extends ElementBase {
     // load(), the files: `inputs`, R1:R3-7) and the refusal of the last setConfig() argument (`refused`). One value. The
     // executor's `step` (module level, below) writes it, and nothing else does.
     private _lc: LcState = INITIAL_LIFECYCLE;
-    private _watchdog: Watchdog | null = null;
-    private _resizer: AutoResizer | null = null; // this environment's auto-sizing (BL:B6), or null when off
+    private _watchdog: EnvironmentFields['_watchdog'] = null;
+    private _resizer: EnvironmentFields['_resizer'] = null; // this environment's auto-sizing (BL:B6), or null when off
     private _autoHeight: string | null = null;   // the inline height auto-sizing last wrote on the element
     private _fetchPolicy: FetchPolicy | null = null; // the validated fetchBridge config, or null when off (BL:B5)
     private _origins: OriginPolicy = NO_ORIGINS; // the parsed `origins` (ADR-007), what the guest policy admits
     private _warnedConfig = new Set<string>();   // the config schema's warnings (normaliseConfig), once each per instance
-    private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
-    private _bridgeFrame: BridgeFrame | null = null; // the frame that makes this environment's bridge requests (BD1:ISO-1)
+    private _fetchBridge: EnvironmentFields['_fetchBridge'] = null; // this environment's bridge: its requests end with it
+    private _bridgeFrame: EnvironmentFields['_bridgeFrame'] = null; // the frame that makes this environment's bridge requests (BD1:ISO-1)
     private _warnedBridgeFrame = false;      // the bridge's frame did not start, said once per instance
     // The guest-write overlay (BL:C5): created by each build when guestWrites is on, else null. It outlives its
     // environment's termination (closed, still listable and committable) and is discarded by the next build and on
@@ -640,18 +645,18 @@ export class WebSandbox extends ElementBase {
     // for the executor's `applyConfig` effect (_configure), within its own call. Why the last argument could not be used
     // is the reducer's (`_lc.refused`): while set, every build is refused with it, as for an unknown mode.
     private _configuring: { copy: unknown; unusable: unknown } | null = null;
-    private _port: MessagePort | null = null;     // the guest's port: the guest document's bootstrap, or the worker (logic port)
-    private _viewPort: MessagePort | null = null; // strict mode: the view's port (violations, resize, entry errors, liveness)
-    private _viewWatchdog: Watchdog | null = null; // strict mode: the view liveness check (ADR-005)
+    private _port: EnvironmentFields['_port'] = null;     // the guest's port: the guest document's bootstrap, or the worker (logic port)
+    private _viewPort: EnvironmentFields['_viewPort'] = null; // strict mode: the view's port (violations, resize, entry errors, liveness)
+    private _viewWatchdog: EnvironmentFields['_viewWatchdog'] = null; // strict mode: the view liveness check (ADR-005)
     // Strict mode (R1:R4-4): guest writes posted to the view and not yet confirmed (VIEW_WRITTEN), by id; their guest is
     // answered on confirmation. Emptied by every teardown.
-    private _viewWrites = new Map<number, { shown: () => void; lost: (error: Error) => void }>();
+    private _viewWrites: EnvironmentFields['_viewWrites'] = new Map();
     private _viewWriteIds = 0;
     private _strictInit: StrictInit | null = null; // strict mode: what the next frame load hands the view
-    private _executionTimers = new Set<LongTimeout>(); // workerExecutionTimeout deadlines of this environment
+    private _executionTimers: EnvironmentFields['_executionTimers'] = new Set(); // workerExecutionTimeout deadlines of this environment
     // Liveness probes started at a deadline (FR:F2): each PING number they sent (negative, so never the watchdog's)
     // → that probe's end. A PONG to any of a probe's pings passes it.
-    private _executionProbes = new Map<number, () => void>();
+    private _executionProbes: EnvironmentFields['_executionProbes'] = new Map();
     private _probePings = 0; // numbers the probes' pings: -1, -2, …
     // What waits for the port while loading, in the order it was issued (R2:L-3): execute() code and the host's own RPC
     // requests (cloned at call time), in one queue, so a call made before an execute() is sent before it.
@@ -1118,7 +1123,8 @@ export class WebSandbox extends ElementBase {
      * `setConfig()` and `terminate()`. Exposing a name again replaces its handler. Names that
      * start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
      * validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
-     * survives the copy).
+     * survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
+     * `eval` or template sink.
      *
      * @param name - The method name, a string of at most 256 characters.
      * @param fn - The handler; its arguments come from the guest by structured clone.
@@ -1773,8 +1779,14 @@ export class WebSandbox extends ElementBase {
 
     // The resources of the environment (the executor's `teardown` effect): its generation is the reducer's. Everything a
     // build makes is made in _attachBuild or later, and released here (LM-2).
+    // Detach, then release (class L; S74): first every per-environment field is written, the declared resources taken
+    // into a record and their fields cleared, and only then is anything released, from the record. A release can run
+    // embedder code synchronously (a frame's removal fires the host window's `focus` on Firefox, and a focused guest's
+    // `pagehide` calls `parent.parent.focus()` on every engine), and a listener's reset(), load() or setConfig() builds
+    // a new environment from inside it: it finds the element holding no environment, and its fields are not written
+    // again by this teardown. test/unit/teardown-reentry.test.ts re-enters at every release; it also scans this body
+    // for a write after the first release.
     private _teardown() {
-        this._guestWrites?.close(); // its writes stay listable and committable until the next build
         this._logLimiter = createLogLimiter(); // the log rate limit is per environment
         this._warnedLogLimit = false;
         this._guestCalls = createRateLimiter(this._callBudget.calls); // and so is the call budget (R3:M-2)
@@ -1786,25 +1798,13 @@ export class WebSandbox extends ElementBase {
         this._queue = []; // what was queued for the old environment
         this._violationCounts.clear(); // the violation cap is per environment
         this._strictInit = null;
+        const guestWrites = this._guestWrites;
+        const detached = detachEnvironment(this);
+        guestWrites?.close(); // its writes stay listable and committable until the next build
         // Reject any in-flight calls so their promises never hang once this environment goes away.
         // They reject with code TERMINATED, minted by the broker (see rpc.ts).
         this._broker.rejectAllPending(RESET_CALL_MESSAGE);
-        if (this._stopListening) { this._stopListening(); this._stopListening = null; }
-        if (this._loadDeadline) { this._loadDeadline.stop(); this._loadDeadline = null; }
-        if (this._iframe) { this._iframe.onload = null; this._iframe.remove(); this._iframe = null; }
-        if (this._port) { this._port.close(); this._port = null; }
-        if (this._viewPort) { this._viewPort.close(); this._viewPort = null; }
-        const unshown = [...this._viewWrites.values()];
-        this._viewWrites.clear(); // the guest writes the view never confirmed: their guest is gone with its port
-        for (const { lost } of unshown) lost(new Error('[Sandbox] the sandbox was reset or terminated before the view showed this write.'));
-        for (const timer of this._executionTimers) timer.cancel();
-        this._executionTimers.clear();
-        for (const end of new Set(this._executionProbes.values())) end(); // stops every probe; empties the map
-        if (this._watchdog) { this._watchdog.stop(); this._watchdog = null; }
-        if (this._viewWatchdog) { this._viewWatchdog.stop(); this._viewWatchdog = null; }
-        if (this._resizer) { this._resizer.stop(); this._resizer = null; } // the height it wrote stays until the next report
-        if (this._fetchBridge) { this._fetchBridge.abortAll(); this._fetchBridge = null; } // upstream requests end with the environment
-        if (this._bridgeFrame) { this._bridgeFrame.close(); this._bridgeFrame = null; } // and so does the frame that made them
+        releaseEnvironment(detached);
     }
 
     // What a build reads besides the reducer's state, asked as it starts (src/lib/lifecycle.ts, BuildContext). Every build
@@ -1888,7 +1888,7 @@ export class WebSandbox extends ElementBase {
         // an empty store is NOT_FOUND like any other miss, never a ReferenceError.
         let filesCall = `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}${writes ? ', comms.writeFiles' : ''})`;
         // With JavaScript files: the one import map, registered with the URLs filesCall just created,
-        // before any guest markup (module graph, PR3). It hands the files object on to the next step.
+        // before any guest markup (module graph). It hands the files object on to the next step.
         if (plan.importMap) {
             filesCall = `(${inSandboxImportMap.toString()})(${filesCall}, ${toInlineScriptLiteral(plan.importMap.paths)}, ${toInlineScriptLiteral(plan.importMap.guest)})`;
         }
@@ -2021,7 +2021,8 @@ export class WebSandbox extends ElementBase {
         const permissions = this._getPermissions();
         const policy = this._guestPolicy(files);
 
-        // TODO: run through DOMPurify ?
+        // Guest markup is the guest's own: cooperative mode runs it as it is (that is the mode), and strict mode's view cleans
+        // it with its allowlist renderer (sanitizeRender), not here.
         let guestDocument: string;
         if (isWorkerMode) {
             // worker mode is headless: no guest markup, so no markup references either

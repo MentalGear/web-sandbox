@@ -68,7 +68,7 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['h
 | Accepted | Why |
 | :--- | :--- |
 | `https://host[:port]` | the one scheme a guest load may use; `upgrade-insecure-requests` is always on |
-| `wss://host[:port]`, in `connect` only | WebSocket; meaningless for any other kind |
+| `wss://host[:port]`, in `connect` only | WebSocket; meaningless for any other kind. A scheme is matched as written: `https://host` does not admit `wss://host` (Chromium 145, Firefox 146, WebKit 26), and WebKit lets a `wss://host` entry admit `https://host` requests too |
 | `http://localhost[:port]`, `http://127.0.0.1[:port]` | local development. Loopback only: a plain-http public origin is a network attacker's |
 
 Refused, each dropped with a warning: scheme-wide sources (`https:`), wildcards (`*`, `*.example.com`, `:*`), every keyword

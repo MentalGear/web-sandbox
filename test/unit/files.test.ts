@@ -253,7 +253,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
     const NONCE = '0123456789abcdef0123456789abcdef';
     const FILES = { 'logo.svg': '<svg/>', 'app.js': 'void 0', 'img/x.svg': '<svg/>' };
     const snapshotLiteral = (el: any) => toInlineScriptLiteral(el._files.snapshot());
-    // FILES has one JavaScript file, so the bootstrap also registers the import map (module graph, PR3)
+    // FILES has one JavaScript file, so the bootstrap also registers the import map (module graph)
     const filesStep = (el: any) => `(${inSandboxImportMap.toString()})((${inSandboxFiles.toString()})(${snapshotLiteral(el)}), ["app.js"], null)`;
     const comms = (mode = 'cooperative') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()}, ${FEATURES(mode)}, ${createSizeOf.toString()}, null);`;
     const bootstrapScriptOf = (el: HTMLElement) => parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;

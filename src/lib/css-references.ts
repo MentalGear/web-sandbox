@@ -1,5 +1,5 @@
 /**
- * URL references in CSS (ADR-004, PR4). Host-only: nothing here is stringified into the guest.
+ * URL references in CSS (ADR-004). Host-only: nothing here is stringified into the guest.
  *
  * A registered stylesheet reaches the guest as a blob: URL, and a relative URL never resolves inside a
  * blob: stylesheet: its base URL is the blob URL, whose path is opaque, so `url(img.png)` and

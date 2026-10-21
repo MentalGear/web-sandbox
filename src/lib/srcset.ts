@@ -1,5 +1,5 @@
 /**
- * The URLs of a `srcset` attribute (ADR-004, PR4). Host-only.
+ * The URLs of a `srcset` attribute (ADR-004). Host-only.
  *
  * Follows the HTML standard's "parse a srcset attribute"
  * (https://html.spec.whatwg.org/multipage/images.html#parse-a-srcset-attribute) as far as it decides

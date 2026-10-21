@@ -44,7 +44,7 @@ const WALL_CLOCK_ALLOWED: Record<string, string> = {};
 // each with the reason scalingRatio (test/unit/scaling.ts) cannot measure it. Reviewed; none today.
 const SCALING_ALLOWED: Record<string, string> = {};
 
-// The meters this scan replaced, verbatim: one of each shape, so the scan is shown to catch them.
+// Samples of the meter shapes this scan forbids, verbatim: one of each, so the scan is shown to catch them.
 const OLD_METERS: Record<string, string> = {
     'worker-port-and-view-cost.spec.ts countTicks': `const countTicks = (page: Page, ms: number) => page.evaluate((duration) => new Promise<number>(resolve => {
     let count = 0;
@@ -121,7 +121,7 @@ describe('T9: every host-tick measure goes through test/e2e/host-share.ts', () =
         expect(tests.length).toBeGreaterThan(40);
         expect(tests.filter(file => !(file in WALL_CLOCK_ALLOWED)).flatMap(file => wallClockBounds(read(file)).map(hit => `${file}:${hit.line} ${hit.text}`))).toEqual([]);
         for (const file of Object.keys(WALL_CLOCK_ALLOWED)) expect(wallClockBounds(read(file)).length, `${file} is listed, so it still has one`).toBeGreaterThan(0);
-        // the two it replaced, verbatim, and the indirect form
+        // two samples, verbatim, and the indirect form
         expect(wallClockBounds(`const started = performance.now();\n        expect(count(css)).toBe(3 * 13000);\n        expect(performance.now() - started).toBeLessThan(1000);`)).toHaveLength(1);
         expect(wallClockBounds(`expect(performance.now() - started).toBeLessThan(3000);`)).toHaveLength(1);
         expect(wallClockBounds(`const elapsed = Date.now() - started;\nexpect(elapsed, 'ms').toBeLessThanOrEqual(500);`)).toHaveLength(1);
@@ -134,7 +134,7 @@ describe('T9: every host-tick measure goes through test/e2e/host-share.ts', () =
         const tests = [...sources('src'), ...sources('test/unit'), ...sources('test/model')].filter(file => /\.test\.ts$/.test(file) && file !== 'test/unit/host-share.test.ts');
         expect(tests.filter(file => !(file in SCALING_ALLOWED)).flatMap(file => handTimedScaling(read(file)).map(hit => `${file}:${hit.line} ${hit.pattern}: ${hit.text}`))).toEqual([]);
         for (const file of Object.keys(SCALING_ALLOWED)) expect(handTimedScaling(read(file)).length, `${file} is listed, so it still has one`).toBeGreaterThan(0);
-        // the three it replaced, verbatim (view-css-loads, css-references and in-sandbox-view tests)
+        // three samples, verbatim (view-css-loads, css-references and in-sandbox-view tests)
         expect(handTimedScaling(`let fastest = Infinity;
             for (let run = 0; run < 3; run++) {
                 const started = performance.now();

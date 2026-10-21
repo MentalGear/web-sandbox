@@ -6,11 +6,11 @@
  * event on the element. A <meta> policy cannot use report-uri / report-to (S7), so this is the only
  * reporting route.
  *
- * What a report is worth: every field comes from the guest's realm, and guest code can reach the port
- * (for example by patching MessagePort.prototype.postMessage before the bootstrap next posts), so a report
- * is a claim by the guest, never a host fact. A report is evidence that the guest attempted something the
- * policy refused; the absence of reports proves nothing, since guest code can suppress its own (and a
- * frame the guest creates reports to itself, not here). Hence the detail is minimal, every field is
+ * What a report is worth: every field comes from the guest's realm. The guest's end of the port never reaches guest
+ * code (CAPTURE_POINT, ADR-002#the-channel), but the bootstrap shares its realm with guest code, which can bend what
+ * the bootstrap reads, so a report is a claim by the guest, never a host fact. A report is evidence that the guest
+ * attempted something the policy refused; the absence of reports proves nothing, since guest code can suppress its
+ * own (and a frame the guest creates reports to itself, not here). Hence the detail is minimal, every field is
  * validated and clamped here, and the number of events per environment is capped.
  */
 
@@ -29,10 +29,15 @@ export interface SandboxViolation {
     directive: string;
     /**
      * What was refused: a URL (possibly reduced to its origin by the browser; a `data:` or `blob:` URL is reported by its
-     * scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters.
+     * scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters. Guest-controlled text: show it with
+     * `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink.
      */
     blockedURI: string;
-    /** Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like). At most 2048 characters. */
+    /**
+     * Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like). At most 2048
+     * characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
+     * `eval` or template sink.
+     */
     sourceFile?: string;
     /** The line of the refused code, a positive integer, when the browser gives one. */
     lineNumber?: number;

@@ -3,19 +3,19 @@ import { defineWebSandbox, LOAD_TIMEOUT_MS } from '@src/host';
 import { checkIn } from './check-in';
 
 /**
- * LM-2 (class L; S65): embedder code that runs inside the element's own build. A host page's Trusted Types
- * default policy runs at each HTML sink the build writes (the wrapper's srcdoc, the inert parse of the markup), and a
- * page that patched console.warn runs at each warning; either can call reset(), which builds again from inside the
- * build. The nested build stood, and the outer one then went on over it, with the element's fields:
+ * LM-2 (class L; S65): embedder code that runs inside the element's own build. A page that patched console.warn runs
+ * at each warning, and any setter the page wrapped (the srcdoc setter, where an engine runs a Trusted Types default
+ * policy for a string) runs at each assignment; either can call reset(), which builds again from inside the build. The nested build stood, and the outer one then went on over it, with the element's fields:
  * - a second load deadline, which overwrote the nested one's; the nested deadline was never stopped, and LOAD_TIMEOUT_MS
  *   later it ended the sandbox, `ready` as it was;
  * - its announcement listener, on the nested frame, which overwrote the nested one's stop: one listener on the host's
  *   window outlived its environment;
  * - a second appendChild of the nested frame;
  * - and, had the outer build then thrown, its failure ended the nested build.
- * The e2e half, with a real default policy (Chromium, WebKit): test/e2e/host-policy.spec.ts, "LM-2".
+ * The e2e half (Chromium, WebKit): test/e2e/host-policy.spec.ts, "LM-2": the library's own sinks never ask a real default
+ * policy, so none of its code runs there.
  *
- * Here the default policy is played by the srcdoc setter itself, which is where the engine calls it (the assignment).
+ * Here the embedder's code is played by the srcdoc setter itself (the assignment).
  */
 
 defineWebSandbox();

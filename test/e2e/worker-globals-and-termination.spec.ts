@@ -255,14 +255,17 @@ const OUTLIVE = (origin: string) => `
     if (typeof Worker === 'function') new Worker(URL.createObjectURL(new Blob(["setInterval(() => fetch('${origin}/l1-worker').catch(() => {}), 50)"], { type: 'text/javascript' })));
 `;
 
-test.describe('L1: a guest cannot outlive terminate() or reset()', () => {
-    for (const mode of ['cooperative', 'worker'] as const) {
-        for (const ending of ['terminate', 'reset'] as const) {
-            test(`${mode} mode, ${ending}(): timers, a promise loop${mode === 'cooperative' ? ' and a nested worker' : ''} all stop; they ran before (positive control)`, async ({ sandbox }) => {
+// Every mode (strict, the default, ends with its view's document; cooperative with its frame; worker with its frame's
+// worker) against every ending: terminate(), reset() and the element's removal (BD1:CHL-3).
+test.describe('L1: a guest cannot outlive terminate(), reset() or the element\'s removal', () => {
+    for (const mode of ['strict', 'cooperative', 'worker'] as const) {
+        for (const ending of ['terminate', 'reset', 'remove'] as const) {
+            test(`${mode} mode, ${ending}: timers, a promise loop${mode === 'cooperative' ? ' and a nested worker' : ''} all stop; they ran before (positive control)`, async ({ sandbox }) => {
                 expect(await sandbox.mount({ mode, origins: { connect: [recorder.allowed] } })).toBe('ready');
                 await sandbox.run(OUTLIVE(recorder.allowed));
                 for (const path of ['/l1-interval', '/l1-timeout', '/l1-promise', ...(mode === 'cooperative' ? ['/l1-worker'] : [])]) await recorder.waitFor('allowed', path);
                 if (ending === 'terminate') await sandbox.page.evaluate(() => (document.querySelector('web-sandbox') as any).terminate('L1'));
+                else if (ending === 'remove') await sandbox.page.evaluate(() => (document.querySelector('web-sandbox') as any).remove());
                 else expect(await sandbox.reset()).toBe('ready');
                 await sandbox.page.waitForTimeout(300); // requests already on their way
                 recorder.clear();

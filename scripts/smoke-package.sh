@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Packs the library with bun, checks that the tarball holds exactly the files the package is (broad review PD9),
+# Packs the library with bun, checks that the tarball holds exactly the files the package is (BR:PD9),
 # installs it into a throwaway consumer project, and checks that the public entry point resolves, type-checks and
 # bundles (backlog D1).
 set -euo pipefail
@@ -15,8 +15,8 @@ tarball="$(ls "$work"/*.tgz)"
 
 # The manifest, exactly: package.json, the README and the notices, the one bundle, and the declarations tsc emitted
 # into the freshly cleaned dist/ (build:lib removes it first). No source map (not shipped: dist/index.js is the
-# readable, unminified bundle), and nothing a stale dist/ could leave behind (an old build.ts wrote host.js and
-# devtools.js there, which the old `"files": ["dist"]` packed).
+# readable, unminified bundle), and nothing a stale dist/ could leave behind (a stale host.js or devtools.js, which a
+# `"files": ["dist"]` would pack).
 expected="$(
     printf '%s\n' package/package.json package/README.md package/THIRD_PARTY_NOTICES.md package/dist/index.js
     (cd "$root" && find dist -name '*.d.ts' -type f | sed 's|^|package/|')
@@ -56,7 +56,7 @@ cat > tsconfig.json <<'JSON'
 JSON
 
 bunx tsc -p .
-# The same consumer under Node's own resolution (review round 1, R4-3): the declarations' relative imports must carry
+# The same consumer under Node's own resolution (R1:R4-3): the declarations' relative imports must carry
 # their .js extensions (scripts/declaration-specifiers.ts), else TS2834 here; skipLibCheck is off, and the
 # @ts-expect-error lines fail the check if the package's types ever read as `any`.
 cat > tsconfig.nodenext.json <<'JSON'
@@ -65,7 +65,7 @@ JSON
 bunx tsc -p tsconfig.nodenext.json
 bun build consumer.ts --target browser --outdir out >/dev/null
 
-# The view bootstrap's hash, the way docs/API.md says to read it for a host page's policy (review round 2, C-8): importing
+# The view bootstrap's hash, the way docs/API.md says to read it for a host page's policy (R2:C-8): importing
 # the package in a build step needs no DOM, and gives the same value from a consumer's minified bundle, because the
 # bootstrap is a string literal of the package. The browser's side (the hash in the view's policy) is
 # test/e2e/package.spec.ts.

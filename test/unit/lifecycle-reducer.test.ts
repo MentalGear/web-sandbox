@@ -554,8 +554,17 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
     };
     const method = (name: string) => bodyOf(host, `    private ${name}(`, '\n    }\n');
     const inside = (index: number, [start, end]: readonly [number, number]) => index > start && index < end;
-    // A comparison that involves a generation: `gen`, `.gen`, or the environment of a call (`_issuedIn`).
-    const GEN_COMPARISON = /\b(?:gen|_issuedIn)\s*[!=]==|[!=]==\s*[\w.]*\bgen\b/g;
+    // A comparison that involves a generation (`gen`, `.gen`, or the environment of a call, `_issuedIn`) or the identity of
+    // the state that holds it (`_lc` itself, not a field of it: "did the environment change?" asked another way), in any
+    // spelling: strict or loose equality, an ordering, or Object.is (BD1:TST-3). `=>` and `->` are not orderings.
+    const COMPARE = '(?:[!=]==?|(?<![=-])[<>]=?)';
+    const GEN_COMPARISON = new RegExp([
+        `\\b(?:gen|_issuedIn)\\s*${COMPARE}`,
+        `${COMPARE}\\s*[\\w.]*\\b(?:gen|_issuedIn)\\b`,
+        `\\b_lc(?![.\\w])\\s*${COMPARE}`,
+        `${COMPARE}\\s*[\\w.]*\\b_lc(?![.\\w])`,
+        `Object\\.is\\([^)]*\\b(?:gen|_issuedIn|_lc)\\b`,
+    ].join('|'), 'g');
 
     it("'ready' and 'terminated' are made in one place each: the executor's dispatch (lifecycleHostOf); 'terminated' between its dispatchStarted and dispatchEnded steps", () => {
         const adapter = bodyOf(host, 'function lifecycleHostOf(');
@@ -601,6 +610,27 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
         for (const index of inLifecycle) expect(owners.some(owner => inside(index, owner)), lifecycle.slice(index - 60, index + 20)).toBe(true);
         // and the executor's comparison is the one runEffects and runNotices use
         expect([...lifecycle.matchAll(/tornDownSince\(host, stampGen\)/g)]).toHaveLength(2);
+    });
+
+    it('and the scan sees every spelling of a second predicate for "is this still our environment": loose equality, an ordering, Object.is, the identity of the state', () => {
+        const spellings = [
+            'if (this._lc.gen != 0 && data?.type === \'NEVER\') return;',
+            'if (this._lc.gen == this._issuedIn) return;',
+            'if (!Object.is(this._lc.gen, this._lc.gen)) return;',
+            'const before = this._lc; if (this._lc !== before) return;',
+            'const before = this._lc; if (before != this._lc) return;',
+            'if (this._lc.gen > 3) return;',
+            'if (this._lc.gen <= other.gen) return;',
+            'if (3 < this._lc.gen) return;',
+        ];
+        for (const spelling of spellings) expect([...spelling.matchAll(GEN_COMPARISON)].length, spelling).toBeGreaterThan(0);
+        // not comparisons: an assignment, an arrow function, a field of the state, a type
+        for (const other of ['this._issuedIn = this._lc.gen;', 'const read = () => this._lc.gen;', 'if (this._lc.state === \'ready\') return;', 'if (\'ready\' === this._lc.state) return;', 'const x: Array<number> = [];']) {
+            expect([...other.matchAll(GEN_COMPARISON)].length, other).toBe(0);
+        }
+        // and in the source of host.ts, put into _postRpc's neighbour, each is one more than the one the source has
+        const own = [...host.matchAll(GEN_COMPARISON)].length;
+        for (const spelling of spellings) expect([...(host + spelling).matchAll(GEN_COMPARISON)].length - own, spelling).toBeGreaterThan(0);
     });
 
     it('every termination the element starts carries its generation; only terminate() carries none', () => {

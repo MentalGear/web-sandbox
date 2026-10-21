@@ -56,7 +56,9 @@ embedder also allows direct connections.
      literal — or one with a path, query, credentials or wildcard is dropped with a warning. No CSP source expressions. Only
      `http:` and `https:` request URLs, never with credentials in the URL; the fragment is dropped.
    - **The host page's origin and loopback, private and link-local hosts** (`localhost`, `*.localhost`, 127/8, 10/8,
-     172.16/12, 192.168/16, 169.254/16, 100.64/10, `::1`, `fc00::/7`, `fe80::/10`, IPv4-mapped forms, …) are refused unless
+     172.16/12, 192.168/16, 169.254/16, 100.64/10, `::1`, `fc00::/7`, `fe80::/10`, IPv4-mapped forms, …) and the names that
+     are private by convention (a single label, `*.local`, `*.internal`, `*.lan`, `*.home.arpa`, …; `PRIVATE_NAME_SUFFIXES`
+     has the list with the reason for each) are refused unless
      listed. The exact allowlist already refuses them; they are checked again by name so the refusal says why and the check
      survives any later widening of the allowlist. Every spelling the URL parser canonicalises (`127.1`, `2130706433`,
      `0x7f.1`, `[::ffff:127.0.0.1]`) is caught. **DNS rebinding is a limit, not a guarantee**: a page cannot see DNS
@@ -91,7 +93,7 @@ embedder also allows direct connections.
    - **Whole responses only.** No streaming. If it is ever needed, it uses one dedicated port per request so closing that port
      is the cancel; chunks never go on the broker port.
    - **Concurrency**: at most `maxConcurrent` (4 by default, at most 16) requests in flight per sandbox; one more is refused
-     with `FETCH_BUSY`. So the bridge's memory is bounded by `maxConcurrent × maxBytes`.
+     with `FETCH_BUSY`. So the host's memory for the bridge is bounded by about 3 × `maxConcurrent` × `maxBytes`: a response is held as the chunks read and as the joined body, and the result is cloned for the guest (a bound, not a measurement).
 5. **Every request is logged.** The element dispatches a `fetch` event, bubbling like `violation`, once per request when it
    settles: `{ method, url, outcome, bytes, durationMs, … }`, with `outcome` one of `ok` (a response was handed over; has
    `status`), `refused` (no request made; has `code`, and `reason` for an unlisted origin), `failed` (`fetch()` was called and no
@@ -121,12 +123,15 @@ embedder also allows direct connections.
      chunk a pull, an error code. Every check (origins, methods, headers, sizes, redirects, the timeout, concurrency, the
      record) stays on the host.
    - **Its script.** The frame runs the library's one hashed bootstrap (the strict view's, in the bridge's role), so the
-     hash `viewScriptHash()` returns admits both, and a host page policy that admits the sandbox admits the frame. A frame
-     that has not checked in within `LOAD_TIMEOUT_MS` (host ticks) never will: the bridge fails closed, every request
-     `refused` with `FETCH_FAILED` and the reason in its record, the embedder warned once, and the sandbox otherwise
+     hash `viewScriptHash()` returns admits both, and a host page policy that admits the sandbox admits the frame; one that
+     refuses the view refuses the frame, and strict mode then ends the build with the startup reason. A frame that has not
+     checked in within `LOAD_TIMEOUT_MS` (host ticks) while the sandbox runs never will: the bridge fails closed, every
+     request `refused` with `FETCH_FAILED` and the reason in its record, the embedder warned once, and the sandbox otherwise
      untouched (the bridge is optional; ending a working sandbox over it would be the surprise).
-   - **CORS.** The target sees `Origin: null`, so its response must allow `*` (no credentials are sent, so `*` works) or
-     `null`; a target that allows only the host page's origin refuses the bridge (`FETCH_FAILED`). Responses are
+   - **CORS.** The target sees `Origin: null`, so its response must allow `*` or `null`; a target that allows only the host
+     page's origin refuses the bridge (`FETCH_FAILED`). Every sandboxed frame on the web, an attacker's too, has that origin,
+     so a target answers `*` or `null` only for public data, never with `Access-Control-Allow-Credentials: true`, and never
+     treats `null` as trusted; the bridge sends no credentials, so it gets what any anonymous page gets. Responses are
      CORS-filtered for an opaque origin, so the guest sees only CORS-exposed headers.
 
 ## Alternatives considered
@@ -159,7 +164,8 @@ Firefox and WebKit against the recorder's two listeners outside the browser and 
   auth wrapper of the host page's `fetch` never adds its token, the target sees `Origin: null` in every mode, and teardown
   aborts a request in flight (`test/e2e/fetch-bridge-isolation.spec.ts`, positive control: the host page's own request
   gets the cached data and the token); a host page policy with the view's hash admits the frame, one without it ends the
-  build with the startup reason, and a frame whose script is refused fails the bridge closed;
+  build with the startup reason (the frame and the view share the hash), and a frame whose script alone is refused (the test
+  gives it a hash of its own) fails the bridge closed;
 - a cookie on the harness origin never reaches it through the bridge, while the host page's own request carries it; no
   `Cookie`, `Authorization` or `Referer` reaches the target;
 - a redirect from an allowlisted origin to another is refused and the other origin records nothing (positive control: a
@@ -168,8 +174,8 @@ Firefox and WebKit against the recorder's two listeners outside the browser and 
   counted stream; end to end, the upstream connection closes long before the end);
 - `reset()` during a slow response, and the timeout, close the upstream connection;
 - the host origin, and every spelling of a loopback host, are refused unless listed, with one text to the guest;
-- the reserved name cannot be taken by `expose()` on either side; with the bridge off there is no `sandboxFetch` and a direct
-  call to the reserved method is refused without a request;
+- the reserved name cannot be taken by `expose()` on either side; with the bridge off `sandboxFetch` is still published and rejects
+  `FETCH_NOT_ALLOWED` (a direct call to the reserved method is refused the same way), without a request;
 - the guest policy is unchanged: a direct `fetch` and `WebSocket` to the listed origin are still refused and reported as
   violations.
 

@@ -1473,42 +1473,35 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
     // The view's two sinks under a host page's Trusted Types (R1:R3-1): the view inherits the host page's
     // `require-trusted-types-for 'script'`, which makes the template's innerHTML and the Worker constructor throw a
-    // TypeError for a string. Each is tried with the string first; only when that throws a TypeError and the view has
-    // Trusted Types is the operation repeated through the one policy of the view's own, created once, named like the
-    // element's (trusted-types.ts: the host page's trusted-types directive admits it already). Its rules pass the
-    // value through: the markup goes into an inert template and through the renderer, and the URL is the worker's own.
+    // TypeError for a string, and reports every such string to the host page (a violation, a console error, its
+    // report-uri), caught or not. A document cannot be asked whether it enforces Trusted Types, so where the view has
+    // Trusted Types both sinks go through the one policy of the view's own from the first write: created once (by
+    // trustedTypesReady, before the check-in), named like the element's (trusted-types.ts: the host page's trusted-types
+    // directive admits it already). Its rules pass the value through: the markup goes into an inert template and through
+    // the renderer, and the URL is the worker's own. Without the policy (no Trusted Types here, or the name refused,
+    // which trustedTypesReady has told the host about where the document requires them) the value is written as it is.
     let policy: { createHTML(value: string): unknown; createScriptURL(value: string): unknown } | null = null;
     const trusted = (sink: (value: unknown) => void, value: string, kind: 'createHTML' | 'createScriptURL') => {
-        try {
-            sink(value);
-            return;
-        } catch (error) {
-            const factory = g.trustedTypes;
-            if (!(error instanceof TypeError) || !factory) throw error;
-        }
-        if (!policy) {
-            const pass = (input: string) => input;
-            policy = g.trustedTypes.createPolicy(options.trustedTypesPolicy, { createHTML: pass, createScriptURL: pass });
-        }
-        sink(policy![kind](value));
+        sink(policy ? policy[kind](value) : value);
     };
 
-    // Whether the sinks are usable: the document does not require Trusted Types, or the policy exists or could be made.
+    // Whether the sinks are usable: the document has no Trusted Types, or the policy exists or could be made, or the
+    // policy was refused and the document does not require Trusted Types (a string takes: only then is the name's refusal harmless).
     const trustedTypesReady = () => {
         if (policy || !g.trustedTypes) return true;
-        try {
-            const probe = call(D.createElement, document, ['template']) as HTMLTemplateElement;
-            probe.innerHTML = '';
-            return true;
-        } catch (error) {
-            if (!(error instanceof TypeError)) return true; // not Trusted Types: the sinks' own callers handle it
-        }
         try {
             const pass = (input: string) => input;
             policy = g.trustedTypes.createPolicy(options.trustedTypesPolicy, { createHTML: pass, createScriptURL: pass });
             return true;
         } catch {
-            return false;
+            // refused: the sinks are written as strings, which a document that requires Trusted Types refuses
+        }
+        try {
+            const probe = call(D.createElement, document, ['template']) as HTMLTemplateElement;
+            probe.innerHTML = '';
+            return true;
+        } catch (error) {
+            return !(error instanceof TypeError); // not Trusted Types: the sinks' own callers handle it
         }
     };
 

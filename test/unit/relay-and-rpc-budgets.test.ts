@@ -328,45 +328,34 @@ describe('structured-size: a bounded measure', () => {
     });
 });
 
-describe("R3-1: the wrapper style's hash, as docs/API.md lists it for a host page's style-src", () => {
-    it('is the hash of WRAPPER_STYLE (constant), and the host-policy spec allows the same', async () => {
-        const { readFileSync } = await import('node:fs');
-        const { join } = await import('node:path');
-        const { scriptHashSource } = await import('@src/lib/csp/script-hash');
-        const { WRAPPER_STYLE } = await import('@src/lib/frame-documents');
-        const hash = scriptHashSource(WRAPPER_STYLE);
-        expect(readFileSync(join(__dirname, '../../docs/API.md'), 'utf8')).toContain(hash);
-        expect(readFileSync(join(__dirname, '../e2e/host-policy.spec.ts'), 'utf8')).toContain(hash);
-    });
-});
-
 describe('R3-1: the Trusted Types policy blesses only the sandbox\'s own documents', () => {
     afterEach(() => { delete (globalThis as any).trustedTypes; vi.resetModules(); });
 
+    // a TrustedHTML: a DOMParser takes it as its string
+    class TrustedHtmlLike { constructor(public trusted: string) {} toString() { return this.trusted; } }
     const install = (refuse = false) => {
         const created: { name: string; rules: any }[] = [];
         (globalThis as any).trustedTypes = {
             createPolicy(name: string, rules: any) {
                 if (refuse) throw new TypeError('refused by trusted-types');
                 created.push({ name, rules });
-                return { createHTML: (input: string) => ({ trusted: rules.createHTML(input) }) };
+                return { createHTML: (input: string) => new TrustedHtmlLike(rules.createHTML(input)) };
             },
         };
         return created;
     };
-    // an HTML sink as Chromium enforces it: a string throws a TypeError, a trusted value is taken
-    const sink = () => ({ value: null as unknown, set srcdoc(v: unknown) { if (typeof v === 'string') throw new TypeError('requires TrustedHTML'); this.value = v; } });
+    // an HTML sink as Chromium enforces it: a string throws a TypeError (and the page would be told: `strings` counts them), a trusted value is taken
+    const sink = () => ({ value: null as unknown, strings: 0, set srcdoc(v: unknown) { if (typeof v === 'string') { this.strings++; throw new TypeError('requires TrustedHTML'); } this.value = v; } });
 
-    it('a string is assigned as it is where the page takes it; no policy is created', async () => {
-        const created = install();
-        const { setLibrarySrcdoc } = await import('@src/lib/trusted-types');
+    it('no Trusted Types in the browser: a string is assigned as it is, and no policy exists', async () => {
+        const { setLibrarySrcdoc, parseInert } = await import('@src/lib/trusted-types');
         const plain = { srcdoc: '' } as any;
         setLibrarySrcdoc(plain, '<!DOCTYPE html>x');
         expect(plain.srcdoc).toBe('<!DOCTYPE html>x');
-        expect(created).toEqual([]);
+        expect(parseInert('<p id="a">x</p>').getElementById('a')!.textContent).toBe('x');
     });
 
-    it("where the page requires Trusted HTML: one policy, 'web-sandbox', that blesses a wrapper document and markup being parsed inert, nothing else", async () => {
+    it("with Trusted Types: one policy, 'web-sandbox', that blesses a wrapper document and markup being parsed inert, nothing else; no string ever reaches a sink", async () => {
         const created = install();
         const { setLibrarySrcdoc, parseInert, TRUSTED_TYPES_POLICY } = await import('@src/lib/trusted-types');
         const { buildWrapperDocument } = await import('@src/lib/frame-documents');
@@ -374,10 +363,13 @@ describe('R3-1: the Trusted Types policy blesses only the sandbox\'s own documen
         const wrapper = buildWrapperDocument('<p>guest</p>', 'allow-scripts');
         setLibrarySrcdoc(frame as any, wrapper);
         expect(frame.value).toEqual({ trusted: wrapper });
+        expect(frame.strings).toBe(0);
         expect(created.map(p => p.name)).toEqual([TRUSTED_TYPES_POLICY]);
         const rules = created[0]!.rules;
         expect(() => rules.createHTML('<img src=x onerror=alert(1)>')).toThrow(TypeError);
-        expect(() => setLibrarySrcdoc(sink() as any, '<p>not a wrapper</p>')).toThrow(TypeError);
+        const other = sink();
+        expect(() => setLibrarySrcdoc(other as any, '<p>not a wrapper</p>')).toThrow(TypeError);
+        expect(other.strings).toBe(0);
         // parseInert: jsdom's DOMParser takes strings, so the policy is not needed there; its rule admits markup only while parsing
         expect(parseInert('<p id="a">x</p>').getElementById('a')!.textContent).toBe('x');
         expect(() => rules.createHTML('<p>after</p>')).toThrow(TypeError);
@@ -385,11 +377,16 @@ describe('R3-1: the Trusted Types policy blesses only the sandbox\'s own documen
         expect(created).toHaveLength(1); // created once per page
     });
 
-    it("a trusted-types directive that does not name the policy: TrustedTypesRefusal (the element's reason names the policy)", async () => {
-        install(true);
+    it("a trusted-types directive that does not name the policy: asked once; a page that takes a string gets one, a page that does not gets TrustedTypesRefusal (the element's reason names the policy)", async () => {
+        let asked = 0;
+        (globalThis as any).trustedTypes = { createPolicy() { asked++; throw new TypeError('refused by trusted-types'); } };
         const { setLibrarySrcdoc, TrustedTypesRefusal } = await import('@src/lib/trusted-types');
         const { buildWrapperDocument } = await import('@src/lib/frame-documents');
         expect(() => setLibrarySrcdoc(sink() as any, buildWrapperDocument('', ''))).toThrow(TrustedTypesRefusal);
+        const plain = { srcdoc: '' } as any;
+        setLibrarySrcdoc(plain, '<!DOCTYPE html>x');
+        expect(plain.srcdoc).toBe('<!DOCTYPE html>x');
+        expect(asked).toBe(1);
     });
 });
 

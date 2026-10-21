@@ -46,6 +46,17 @@ describe('TSDoc coverage of the public API', () => {
         expect(missing).toEqual([]);
     });
 
+    // The public fields and exports that carry text the guest chose: their TSDoc (and so docs/API.md, rendered from it)
+    // says how to show it. terminated.reason is the library's own text and is not listed.
+    const GUEST_TEXT_FIELDS = ['WebSandboxEventMap', 'WebSandbox.expose', 'SandboxLog.args', 'SandboxViolation.blockedURI', 'SandboxViolation.sourceFile', 'FetchRecord', 'RpcError'] as const;
+
+    it.each(GUEST_TEXT_FIELDS)('%s says to show guest-controlled text with textContent, never in an HTML, URL, eval or template sink', (field) => {
+        const item = items.find(entry => entry.path === field);
+        expect(item, field).toBeDefined();
+        const text = `${item!.doc.summary} ${item!.doc.remarks}`.replace(/\s+/g, ' ');
+        expect(text, field).toContain("show it with `textContent`, never in an HTML, URL (such as a link `href`");
+    });
+
     it('the model is the checked-in copy of what the build writes (bun run api:check compares them)', () => {
         expect(existsSync(MODEL)).toBe(true);
     });

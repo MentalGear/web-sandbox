@@ -112,7 +112,7 @@ opaque origin, and a cross-origin request from a `null` origin needs CORS header
 not send. The second defence layer held after the first was removed entirely.
 
 This is the defence-in-depth argument working exactly as
-[`CSP_CONFIG_RATIONALE.md`](../../CSP_CONFIG_RATIONALE.md) §4 predicts — and it should not be
+[`CSP_CONFIG_RATIONALE.md`](../../archive/research/CSP_CONFIG_RATIONALE.md) §4 predicts — and it should not be
 mistaken for the CSP having done its job.
 
 ### Residual risk

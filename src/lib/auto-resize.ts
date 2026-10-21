@@ -1,12 +1,13 @@
 /**
- * Content auto-sizing, host side (backlog B6). Opt-in with `autoResize: true`, cooperative mode only.
+ * Content auto-sizing, host side (backlog B6). Opt-in with `autoResize: true`, in strict and cooperative mode.
  *
- * The guest bootstrap (in-sandbox-script.ts) observes the guest's root element with a ResizeObserver and
- * reports the content height over the port as a first-class RESIZE frame, outside the broker, so no
+ * The guest bootstrap (in-sandbox-script.ts; in strict mode, the view) observes the guest's root element with a
+ * ResizeObserver and reports the content height over the port as a first-class RESIZE frame, outside the broker, so no
  * exposed method name can collide with it. The host turns reports into the element's height here.
  *
- * Every report is guest-supplied: guest code can reach the port (it can patch
- * MessagePort.prototype.postMessage) and post any value, as often as it likes. So nothing here trusts a
+ * Every report is a claim of the guest's realm (in strict mode, the view's): guest code cannot post on the port itself
+ * (CAPTURE_POINT, ADR-002#the-channel), but it can bend what the bootstrap measures, and a report may be any value, as
+ * often as the realm likes. So nothing here trusts a
  * report beyond its shape, and this module is the one place a report can become a height:
  *   - validation: a finite, non-negative number, rounded up to whole pixels and clamped to
  *     AUTO_RESIZE_MAX_HEIGHT; anything else is not a report and is dropped;

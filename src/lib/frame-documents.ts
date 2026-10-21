@@ -138,7 +138,7 @@ export const WRAPPER_PREFIX = `<!DOCTYPE html><html><head><meta http-equiv="Cont
 /**
  * The wrapper's one stylesheet: the guest frame fills the wrapper. A srcdoc document inherits the host page's policy
  * (R1:R3-1), so a host page whose style-src has neither 'unsafe-inline' nor this text's hash
- * (WRAPPER_STYLE_HASH, constant: docs/API.md#host-page-policy lists it, a unit test keeps the two equal) refuses it.
+ * (the hash of WRAPPER_STYLE: a constant of the library that docs/API.md#host-page-policy lists, kept equal by test/unit/host-page-policy.test.ts) refuses it.
  * Without it the frame still fills the width and has no border or margin (attributes, which no style-src governs),
  * but is 150 px high: nothing but CSS sizes a frame's height to a parent of auto height, and a srcdoc document is
  * never in quirks mode, where a percentage height would do. The wrapper has no script (it loads exactly once, by

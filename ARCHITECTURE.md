@@ -73,8 +73,9 @@ bundle, so those functions close over nothing, and the tests scan their text).
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
 there. The **view** has the DOM and none of the guest's code: it cleans the markup the worker asks to render, moves it into
-its document, and enforces the view's budgets. They talk on the render port, which the host is not on, so a render never
-crosses the host page's thread. The host talks to each on a port of its own, and watches the view for liveness always and
+its document, and enforces the view's budgets. They talk on the render port, which the host is not on, so the host's own code never
+carries a render (the view's work still runs on the host page's thread where the browser places the view there, and is
+bounded: [API.md](docs/API.md#the-views-cost-to-the-host-page)). The host talks to each on a port of its own, and watches the view for liveness always and
 the worker's with `watchdogTimeout`. The guest can therefore draw but not script, and a flood of drawing is bounded where
 it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render path,
 [ADR-002](docs/ADR-002-host-guest-broker.md).
@@ -288,6 +289,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/css-references.ts` | URL references in CSS |
 | `src/lib/egress.ts` | The egress table |
 | `src/lib/element-events.ts` | The element's events |
+| `src/lib/environment.ts` | The resources of one environment, declared once |
 | `src/lib/fetch-bridge.ts` | The host-mediated fetch bridge, host side |
 | `src/lib/files.ts` | The host side of file delivery: path validation, the MIME table and the store that lives on the element |
 | `src/lib/frame-documents.ts` | Builds the documents the sandbox is made of |

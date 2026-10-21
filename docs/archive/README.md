@@ -100,6 +100,8 @@ reproductions and design probes of [docs/research](../research/README.md) (01 to
 - [LOCAL_FIRST_ARCH.md](research/LOCAL_FIRST_ARCH.md), [BROWSER_COMPATIBILITY.md](research/BROWSER_COMPATIBILITY.md),
   [RESOURCE_QUOTAS.md](research/RESOURCE_QUOTAS.md), [RESEARCH_SANDBOXING.md](research/RESEARCH_SANDBOXING.md),
   [DEVTOOLS_SECURITY.md](research/DEVTOOLS_SECURITY.md): early architecture and design notes.
+- [CSP_CONFIG_RATIONALE.md](research/CSP_CONFIG_RATIONALE.md): why `'unsafe-inline'` and not nonces, in the design the guest policy
+  template replaced ([ADR-007](../ADR-007-typed-origins.md)).
 - [CSP-Content-Security-Policy-settings.md](research/CSP-Content-Security-Policy-settings.md): general CSP background,
   superseded for this library by [ADR-007](../ADR-007-typed-origins.md).
 - [Sandbox_Architecture_Decision.md](research/Sandbox_Architecture_Decision.md),

@@ -30,8 +30,9 @@ export type SandboxLogLevel = 'log' | 'info' | 'warn' | 'error';
  * code decides what it logs, so `args` is guest data when `source` is `'guest'`: read it, do not merge it into your
  * objects. The guest's console relay (`log`, `info`, `warn`, `error`, and the other `console` methods as `log` or
  * `error`), its uncaught errors and unhandled rejections, a throw from `execute()` and one `<mode> Ready` line per
- * environment arrive here, and so do the element's own lines (`source: 'host'`, never rate-limited). Reference with the
- * host's lines: docs/API.md#sandbox-log--sandboxlog.
+ * environment arrive here, and so do the element's own lines (`source: 'host'`, never rate-limited). The `<mode> Ready`
+ * line is posted by the guest's bootstrap, so its `source` is `'guest'` though the text is the library's. Reference with
+ * the host's lines: docs/API.md#sandbox-log--sandboxlog.
  */
 export interface SandboxLog {
     /** Always `'LOG'`. */
@@ -41,7 +42,8 @@ export interface SandboxLog {
     /**
      * What was logged, structured-cloned: at most {@link LOG_MAX_ARGS} values, strings cut at {@link LOG_MAX_STRING}
      * characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced
-     * by a string that says so.
+     * by a string that says so. Guest-controlled text when `source` is `'guest'`: show it with `textContent`, never in an
+     * HTML, URL (such as a link `href`), `eval` or template sink.
      */
     args: readonly unknown[];
     /**

@@ -133,7 +133,8 @@ describe('PD2: the guest realm\'s fetch refuses keepalive', () => {
 
 describe('PD4, PD6: history traversal and window.name in the guest realm', () => {
     it('history.back(), forward() and go() do nothing and cannot be put back; the Navigation API refuses traversal', async () => {
-        class Navigation { back() { (globalThis as any).__traversed = true; } forward() {} traverseTo() {} }
+        const traversed: string[] = [];
+        class Navigation { back() { traversed.push('back'); } forward() { traversed.push('forward'); } traverseTo(_key?: string) { traversed.push('traverseTo'); } }
         (globalThis as any).Navigation = Navigation;
         const original = ORIGINAL_BACK;
         inSandboxScript(false, 'cooperative', console_(), createBroker);
@@ -143,9 +144,16 @@ describe('PD4, PD6: history traversal and window.name in the guest realm', () =>
             expect(History.prototype[name]).not.toBe(original);
             expect(Reflect.defineProperty(History.prototype, name, { value: original })).toBe(false);
         }
-        const result = new Navigation().back() as unknown as { committed: Promise<unknown>; finished: Promise<unknown> };
-        await expect(result.committed).rejects.toMatchObject({ name: 'InvalidStateError' });
-        expect((globalThis as any).__traversed).toBeUndefined();
+        // every way the Navigation API traverses (BD1:TST-7), each refused with the same rejection, none reaching the platform's
+        const navigation = new Navigation();
+        for (const name of ['back', 'forward', 'traverseTo'] as const) {
+            const descriptor = Object.getOwnPropertyDescriptor(Navigation.prototype, name)!;
+            expect([descriptor.configurable, descriptor.writable], name).toEqual([false, false]);
+            const result = (name === 'traverseTo' ? navigation.traverseTo('key') : navigation[name]()) as unknown as { committed: Promise<unknown>; finished: Promise<unknown> };
+            await expect(result.committed, name).rejects.toMatchObject({ name: 'InvalidStateError' });
+            await expect(result.finished, name).rejects.toMatchObject({ name: 'InvalidStateError' });
+        }
+        expect(traversed).toEqual([]);
         delete (globalThis as any).Navigation;
     });
 

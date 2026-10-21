@@ -1,7 +1,7 @@
 import { VIRTUAL_ROOT } from './module-specifiers';
 
 /**
- * The guest's own import maps (ADR-004, PR3). Host-only.
+ * The guest's own import maps (ADR-004). Host-only.
  *
  * When JavaScript files are registered, the bootstrap registers the document's one import map
  * (inSandboxImportMap, in-sandbox-files.ts). Firefox honours only the first import map of a document,
