@@ -565,7 +565,7 @@ a finding").
 - [ ] BD1:TST-2: the frame-table scan sees only UPPER_SNAKE `type` literals written first; a `CHANNEL_BUDGETS` row
   deletion is caught only by the docs. **[tests]** Half done: every post in the stringified code must be a literal of a
   row of FRAMES or a forwarded frame (`unreadablePosts`, `test/unit/structural.test.ts`, with the four mutants as the
-  scan's own test). Left: keying `CHANNEL_BUDGETS` rows by frame type, so that a deleted row of the logic port fails a
+  scan's own test), including the bridge frame's, in the frame and in the host's posts to it. Left: keying `CHANNEL_BUDGETS` rows by frame type, so that a deleted row of the logic port fails a
   test and not only the docs (a change of the table's shape, and of what the budgets table renders).
 - [x] BD1:TST-3: the generation-compare scan matches one spelling of a comparison. **[tests]** Done: `!=`, `==`, orderings,
   `Object.is` and the identity of `_lc` (`GEN_COMPARISON`, `test/unit/lifecycle-reducer.test.ts`, with its own test).
