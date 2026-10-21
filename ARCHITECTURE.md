@@ -289,6 +289,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/css-references.ts` | URL references in CSS |
 | `src/lib/egress.ts` | The egress table |
 | `src/lib/element-events.ts` | The element's events |
+| `src/lib/environment.ts` | The resources of one environment, declared once |
 | `src/lib/fetch-bridge.ts` | The host-mediated fetch bridge, host side |
 | `src/lib/files.ts` | The host side of file delivery: path validation, the MIME table and the store that lives on the element |
 | `src/lib/frame-documents.ts` | Builds the documents the sandbox is made of |

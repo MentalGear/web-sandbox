@@ -423,6 +423,9 @@ its generation, which `reduce` drops once stale. Differences from the design abo
 - A build runs in two effects (LM-2): `build` prepares it detached, where embedder code can run (a Trusted Types default
   policy, a patched `console.warn`), and `attach` makes it the element's only if `reduce` still holds it to be current.
 - The frame-load microtask stays in the adapter (round 4's L-1); the reducer gets its `stillOurs`.
+- The environment's resources are one declared list (`src/lib/environment.ts`, S74): the teardown detaches them all into a
+  record and then releases from it, so embedder code that runs inside a release and builds again finds no environment on
+  the element (LM-2).
 The structural test (`test/unit/lifecycle-reducer.test.ts`, "class L in host.ts"): `_lc` is written by the executor
 only; `ready` and `terminated` are made in one place each; `_flushQueues` is reached only from the `flush` effect,
 which only the transition to `ready` emits; the generation is compared only in `reduce`, the executor and a call's own
