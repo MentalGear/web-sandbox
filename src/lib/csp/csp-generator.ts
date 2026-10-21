@@ -22,6 +22,10 @@ import type { OriginKind, OriginPolicy } from "./origins";
  *   worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none';
  *   upgrade-insecure-requests                          (the same for both)
  *
+ * The fetch bridge's frame has a template of its own (bridgeFramePolicy): default-src 'none', script-src the
+ * bootstrap's hash, connect-src the origins of fetchBridge.allow, every other directive 'none', no
+ * upgrade-insecure-requests.
+ *
  * Why each fixed part:
  *   - script-src 'unsafe-inline' (cooperative): the library's bootstrap is an inline script, and without it there is
  *     no bridge, no sandboxFiles, no violation reports and WebRTC stays available. No nonce, hash or
@@ -112,6 +116,33 @@ export function strictViewPolicy(input: PolicyInput & { bootstrapHash: string })
     ]);
 }
 
+/**
+ * The fetch bridge's frame (bridge-frame.ts; ADR-006): the library's bootstrap by its hash, and connections to the
+ * origins of `fetchBridge.allow` only, so the frame can reach nothing the host's allowlist did not admit even if the
+ * host's own check were wrong. Everything else 'none'. No upgrade-insecure-requests: a listed plain-http origin is
+ * reached as listed, as the host's allowlist admits it.
+ */
+export function bridgeFramePolicy(input: { allow: readonly Origin[]; bootstrapHash: string }): string {
+    if (!HASH_SOURCE.test(input.bootstrapHash)) throw new Error('[Sandbox] the bridge frame policy needs the bootstrap as one sha256 hash source.');
+    const connect: string[] = [];
+    for (const origin of input.allow) {
+        if (typeof origin !== 'string' || !ORIGIN_PATTERN.test(origin)) throw new Error('[Sandbox] the bridge frame policy was given something that is not an origin for connect-src; refused.');
+        connect.push(origin);
+    }
+    return format([
+        ['default-src', []],
+        ['script-src', [input.bootstrapHash]],
+        ['script-src-attr', []],
+        ['style-src', []],
+        ['img-src', []],
+        ['font-src', []],
+        ['media-src', []],
+        ['connect-src', connect],
+        ['worker-src', []],
+        ...FIXED.filter(([name]) => name !== 'worker-src'),
+    ], false);
+}
+
 // The four directives both templates fill the same way. Strict mode never reads `scripts`.
 const fetchDirectives = (input: PolicyInput): Directive[] => [
     ['img-src', sourcesOf(input, 'images')],
@@ -131,9 +162,9 @@ function sourcesOf(input: PolicyInput, kind: OriginKind): string[] {
     return sources;
 }
 
-function format(directives: readonly Directive[]): string {
+function format(directives: readonly Directive[], upgrade = true): string {
     const parts: string[] = [];
     for (const [name, sources] of directives) parts.push(`${name} ${sources.length === 0 ? NONE : sources.join(' ')}`);
-    parts.push('upgrade-insecure-requests');
+    if (upgrade) parts.push('upgrade-insecure-requests');
     return parts.join('; ');
 }

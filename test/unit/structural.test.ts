@@ -14,6 +14,8 @@ import { VIEW_OPTIONS } from '@src/lib/in-sandbox-view';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 import { CHANNELS, FRAMES, type FrameField, type FrameRoute, type FrameType } from '@src/lib/frames';
 import { REALMS, scanned, STRINGIFIED } from '@src/lib/realms';
+import { BRIDGE_FRAME_SANDBOX } from '@src/lib/frame-documents';
+import { BRIDGE_REQUEST_OPTIONS } from '@src/lib/in-bridge-frame';
 
 /**
  * Structural checks (backlog S61.3; research 18): the chokepoints that closed a class, each kept closed by a test that
@@ -124,6 +126,23 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     // worker-bootstrap.ts, workerBootstrap: worker mode's frame
     ['SANDBOX_PORT', 'refused', 'refused'],
     ['INIT_PORT', 'type', "'INIT_PORT'"],
+    // in-bridge-frame.ts, inBridgeFrame: the fetch bridge's frame, to the host page (bridge port)
+    ['BRIDGE_READY', 'type', "'BRIDGE_READY'"],
+    ['BRIDGE_HEAD', 'type', "'BRIDGE_HEAD'"],
+    ['BRIDGE_HEAD', 'id', 'id'],
+    ['BRIDGE_HEAD', 'responseType', 'response.type'],
+    ['BRIDGE_HEAD', 'status', 'response.status'],
+    ['BRIDGE_HEAD', 'statusText', 'statusText'],
+    ['BRIDGE_HEAD', 'headers', 'pairs'],
+    ['BRIDGE_HEAD', 'hasBody', 'stream !== null'],
+    ['BRIDGE_CHUNK', 'type', "'BRIDGE_CHUNK'"],
+    ['BRIDGE_CHUNK', 'id', 'id'],
+    ['BRIDGE_CHUNK', 'chunk', 'chunk'],
+    ['BRIDGE_END', 'type', "'BRIDGE_END'"],
+    ['BRIDGE_END', 'id', 'id'],
+    ['BRIDGE_ERROR', 'type', "'BRIDGE_ERROR'"],
+    ['BRIDGE_ERROR', 'id', 'id'],
+    ['BRIDGE_ERROR', 'code', 'code'],
     // in-sandbox-view.ts, inSandboxView: the strict view, to the host page (view port) or the worker (render port)
     ['VIOLATION', 'directive', 'name'],
     ['VIOLATION', 'blockedURI', 'cutText(blockedURI, options.violationMaxString)'],
@@ -260,6 +279,56 @@ function frameLiteralsInSource(): { posted: Set<string>; compared: Set<string>; 
     }
     return { posted, compared, all };
 }
+
+describe("the fetch bridge's requests are made by its frame, and only there (P1-ISO-1, class E-net)", () => {
+    // The functions stringified into a realm that may name the platform's fetch: the guest bootstrap, which guards the
+    // guest's own fetch (keepalive), and the bridge's frame, which makes every bridge request.
+    const MAY_FETCH: readonly [string, string][] = [['src/lib/in-sandbox-script.ts', 'inSandboxScript'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame']];
+    const unixOf = (file: string) => file.split(path.sep).join('/');
+
+    it("no code of src/ names the platform's fetch outside those two realm functions: the host never makes a bridge request itself", () => {
+        const found: string[] = [];
+        let inRealms = 0;
+        for (const file of sourceFiles('src')) {
+            const tokens = tokenize(read(file));
+            const unix = unixOf(file);
+            const allowed = MAY_FETCH.filter(([module]) => module === unix).map(([, name]) => bodyOf(tokens, name));
+            for (let i = 0; i < tokens.length; i++) {
+                const token = tokens[i]!;
+                if (token.kind !== SyntaxKind.Identifier || token.text !== 'fetch') continue;
+                // a property key (`fetch: …` in a literal) names no fetch; a read, a call or `x.fetch` does
+                const afterDot = tokens[i - 1]?.kind === SyntaxKind.DotToken || tokens[i - 1]?.kind === SyntaxKind.QuestionDotToken;
+                if (!afterDot && tokens[i + 1]?.kind === SyntaxKind.ColonToken) continue;
+                if (allowed.some(([open, close]) => i > open && i < close)) inRealms++;
+                else found.push(`${unix}: fetch at ${token.start}`);
+            }
+        }
+        expect(found).toEqual([]);
+        expect(inRealms).toBeGreaterThanOrEqual(2); // positive control: the scan sees the two that do
+    });
+
+    it("the bridge's one transport is its frame's, and the frame is built only by the frame builder, sandboxed to scripts alone", () => {
+        const callers = (name: string) => sourceFiles('src')
+            .filter(file => read(file).replace(`function ${name}(`, '').includes(`${name}(`))
+            .map(unixOf);
+        expect(callers('createFetchBridge')).toEqual(['src/host.ts']);
+        expect(read('src/host.ts')).toMatch(/const frame = createBridgeFrame\(\{[^]*?\}\);\s*this\._bridgeFrame = frame;\s*this\._fetchBridge = createFetchBridge\(\{[^}]*transport: frame\.transport,/);
+        expect(callers('createBridgeFrame')).toEqual(['src/host.ts']);
+        expect(callers('buildBridgeDocument')).toEqual(['src/lib/bridge-frame.ts']);
+        expect(BRIDGE_FRAME_SANDBOX).toBe('allow-scripts');
+        expect(read('src/lib/bridge-frame.ts')).toContain("iframe.setAttribute('sandbox', BRIDGE_FRAME_SANDBOX);");
+        // the frame's realm, its two channels and its frames are rows of the tables the docs are made from
+        expect(REALMS['bridge-frame'].channels).toEqual(['bridge-init', 'bridge-port']);
+        expect(Object.entries(FRAMES).filter(([, row]) => row.routes.some(route => route.channel === 'bridge-port')).map(([type]) => type).sort())
+            .toEqual(['BRIDGE_ABORT', 'BRIDGE_CHUNK', 'BRIDGE_END', 'BRIDGE_ERROR', 'BRIDGE_FETCH', 'BRIDGE_HEAD', 'BRIDGE_PULL', 'BRIDGE_READY']);
+    });
+
+    it('the frame makes each request with the options the host checked it with, and nothing the host sent can change them', () => {
+        expect(read('src/lib/in-bridge-frame.ts')).toContain('for (const name of Object.keys(pinned)) init[name] = pinned[name];');
+        expect(read('src/lib/fetch-bridge.ts')).toContain('...BRIDGE_REQUEST_OPTIONS,');
+        expect(BRIDGE_REQUEST_OPTIONS).toEqual({ credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'manual', mode: 'cors', cache: 'no-store', keepalive: false });
+    });
+});
 
 describe('the frame table (src/lib/frames.ts) and the realms registry (src/lib/realms.ts) against the code', () => {
     it('every frame literal in src/ is a row of FRAMES, and every row is posted somewhere and read somewhere', () => {

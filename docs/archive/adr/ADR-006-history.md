@@ -69,3 +69,18 @@ with one parser (`src/lib/origin.ts`, `parseOrigin`); the bridge's rules are `ht
 parser would rewrite into another spelling is now refused with the same warning: IPv4 shorthand (`https://127.1`),
 percent-encoding, a non-ASCII name (write its `xn--` form), a trailing dot, whitespace, and IPv6 literals (a policy
 cannot name one, and the bridge keeps the same grammar). Tests: `src/lib/origin.test.ts`, `src/lib/fetch-bridge.test.ts`.
+
+## Amendment (2026-10-21): the request is made by a frame of the library's
+
+**When**: the S74 review board's P1-ISO-1 (class E-net). The bridge made each request with the host page's
+`globalThis.fetch`, so the host page's Service Worker handled it (a cache-first worker answered the guest from the host
+app's cache, in Chromium and WebKit) and any wrapper of the host page's `fetch` applied to it (an auth wrapper added the
+user's `Authorization`, in every engine). Decision 6 read: "The request comes from the host page. So the target sees the
+host page's origin in `Origin` (never its URL: no `Referer`), and the response must pass CORS for that origin; `*`
+works, since no credentials are sent. This is more than a direct guest request reveals (`Origin: null`), and is accepted
+because every target is one the embedder listed. Running the bridge from an opaque-origin context of its own would hide
+it, at the cost of another frame or worker; see *Revisit if*." Its *Revisit if* item ("hiding the host origin from
+targets matters: make the requests from a library-owned opaque-origin worker, keeping this policy code on the host") is
+what the new decision 6 does, with a sandboxed frame rather than a worker (a host-made `blob:` worker is controlled by
+the host page's Service Worker, and a `data:` worker would need `worker-src data:` in the host page's policy). Tests:
+`test/unit/structural.test.ts`, `test/unit/bridge-frame.test.ts`, `test/e2e/fetch-bridge-isolation.spec.ts`.

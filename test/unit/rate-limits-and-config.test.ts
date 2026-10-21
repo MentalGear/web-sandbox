@@ -10,6 +10,7 @@ import { parseOrigins } from '@src/lib/csp/origins';
 import { cooperativePolicy, strictViewPolicy } from '@src/lib/csp/csp-generator';
 import { deepMerge } from '@src/lib/utils';
 import { prng } from './policy-helpers';
+import { playBridgeFrame } from './check-in';
 
 /**
  * Rate limits and config hardening (FR:W1 to FR:F6), host and library side: the guarantees
@@ -366,6 +367,7 @@ describe('Hardening: sandbox:fetch is bound to the build it belongs to, like san
         const request = { url: 'https://api.example/data', method: 'GET', headers: [] };
         el._onGuestMessage(port1, (frame: unknown) => answers.push(frame), { type: 'RPC_REQ', id: 1, method: 'sandbox:fetch', args: [request] }, null);
         el.reset(); // synchronously, before the broker's microtask runs the method
+        playBridgeFrame(el); // the next environment's frame (jsdom runs none)
         await settle();
         expect(fetchSpy).not.toHaveBeenCalled();
         expect(answers).toMatchObject([{ ok: false, code: 'FETCH_FAILED' }]);

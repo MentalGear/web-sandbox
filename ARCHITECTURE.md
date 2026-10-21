@@ -13,7 +13,7 @@ section has been read (see [CONTRIBUTING](CONTRIBUTING.md#generated-docs-and-the
 
 ## Modes and realms
 
-<!-- describes: realms sig:637a -->
+<!-- describes: realms sig:88e1 -->
 
 Guest content never runs in the host page's realm. The element builds a **wrapper** frame it owns (`frame-src 'none'`,
 an inert base URL, no referrer) and puts the guest inside it, in a frame with an opaque origin and a Content-Security-Policy
@@ -25,19 +25,24 @@ What differs between the three modes is which realm the guest's code runs in:
 - **cooperative**: in the guest document, for content that cooperates, within a frozen list of documented limits.
 - **worker**: in a worker spawned by a frame with no guest markup. Frozen, to be folded into strict mode.
 
+In every mode, with `fetchBridge`, the element adds one more frame of its own beside the wrapper: the **bridge frame**,
+hidden, with an opaque origin and no guest code, which makes each request the host decided, so no Service Worker or
+`fetch` wrapper of the host page applies to it ([ADR-006](docs/ADR-006-fetch-bridge.md)).
+
 Each realm is declared once, with the functions the library stringifies into it (a realm cannot import from the host's
 bundle, so those functions close over nothing, and the tests scan their text).
 
 <!-- generated:begin realms -->
 | Realm | What it is | Guest code | Code stringified into it | Channels |
 | :--- | :--- | :--- | :--- | :--- |
-| `host` | The host page's window: the element, its listeners, and the host end of every port. | no | — | `announcement`, `logic-port`, `view-port`, `view-init` |
+| `host` | The host page's window: the element, its listeners, and the host end of every port. | no | — | `announcement`, `logic-port`, `view-port`, `view-init`, `bridge-init`, `bridge-port` |
 | `wrapper` | The sandbox frame's document (frame-documents.ts): it holds the guest frame or the strict view, and runs no script. | no | — | — |
 | `cooperative` | Cooperative mode's guest document: the bootstrap, then the guest's markup and scripts. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `inSandboxImportMap`, `inSandboxMarkup` | `announcement`, `logic-port` |
 | `worker-frame` | Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup. | no | `workerBootstrap` | `announcement`, `worker` |
 | `worker` | Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeWebAssembly` | `logic-port`, `worker` |
 | `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound` | `view-init`, `view-port`, `render-port`, `worker` |
 | `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap and the prelude, then the guest's entry. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `assertEntryScoped`, `inStrictWorker` | `logic-port`, `render-port`, `worker` |
+| `bridge-frame` | The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it. | no | `inBridgeFrame` | `bridge-init`, `bridge-port` |
 <!-- generated:end -->
 
 <!-- generated:begin stringified -->
@@ -58,11 +63,12 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `sanitizeRender` | `src/lib/in-sandbox-view.ts` | `view` |
 | `viewBudget` | `src/lib/in-sandbox-view.ts` | `view` |
 | `cssLoadBound` | `src/lib/in-sandbox-view.ts` | `view` |
+| `inBridgeFrame` | `src/lib/in-bridge-frame.ts` | `bridge-frame` |
 <!-- generated:end -->
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:637a5a37377249d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:88e15a37377249d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
@@ -75,13 +81,13 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Channels and frames
 
-<!-- describes: channels, frames sig:f6937968 -->
+<!-- describes: channels, frames sig:49abc1c7 -->
 
 Realms talk on channels, and every message on them is a frame of a declared type. A frame is declared once, with the
 channels it may cross, the realms at its ends, and for each field what bounds it. What a frame carries out of a guest
 realm or the view is cut, checked or measured before it is posted, and the host checks it again on receipt, so the guest
-chooses a value but never its size. The stringified code writes the frame types as literals; a test keeps them equal to
-the declaration.
+chooses a value but never its size; so is what the bridge frame carries of a response the guest's target chose. The
+stringified code writes the frame types as literals; a test keeps them equal to the declaration.
 
 How a field is bounded:
 
@@ -101,6 +107,8 @@ How a field is bounded:
 | `render-port` | MessagePort | `view`, `strict-worker` | Strict mode: the view and the guest's worker; the host is not on this path. | 7 |
 | `view-init` | window message | `host`, `view` | Strict mode: the host hands the view its two ports, once per build. | 1 |
 | `worker` | worker message | `worker-frame`, `worker`, `view`, `strict-worker` | A frame and the worker it spawned: the worker gets its ports, and worker mode's worker says it started. | 3 |
+| `bridge-init` | window message | `host`, `bridge-frame` | The fetch bridge: the host hands the bridge's frame its port, once per build. | 1 |
+| `bridge-port` | MessagePort | `host`, `bridge-frame` | The fetch bridge: the host and the bridge's frame, which makes every request the host decided; the guest is not on this path. | 8 |
 <!-- generated:end -->
 
 <!-- generated:begin frames -->
@@ -139,6 +147,15 @@ How a field is bounded:
 | `VIEW_LISTEN` | `render-port`: strict-worker → view | `types` (constant) | The event types the worker's sandboxView.on() handlers listen to. |
 | `VIEW_ACK` | `render-port`: view → strict-worker | `refused` (constant) | The view applied a flush of operations: the worker's next one may go. What it refused, by name. |
 | `VIEW_EVENT` | `render-port`: view → strict-worker | `detail` (cut) | An event of a type the worker listens to, as a detail. |
+| `BRIDGE_INIT` | `bridge-init`: host → bridge-frame | `maxBytes` (host) | The host hands the fetch bridge's frame its port, at the frame's load. |
+| `BRIDGE_READY` | `bridge-port`: bridge-frame → host | — | The bridge frame's check-in, its first frame: the frame holds its port. None within LOAD_TIMEOUT_MS: the bridge refuses every request. |
+| `BRIDGE_FETCH` | `bridge-port`: host → bridge-frame | `id` (host), `url` (host), `method` (host), `headers` (host), `body` (host) | A request the host checked (fetch-bridge.ts), for the frame to make with BRIDGE_REQUEST_OPTIONS. |
+| `BRIDGE_PULL` | `bridge-port`: host → bridge-frame | `id` (host) | The bridge reads the next chunk of a response's body: one a pull. |
+| `BRIDGE_ABORT` | `bridge-port`: host → bridge-frame | `id` (host) | The host ended a request (its timeout, a refusal, a teardown): the frame aborts its fetch. |
+| `BRIDGE_HEAD` | `bridge-port`: bridge-frame → host | `id` (not a string), `responseType` (constant), `status` (not a string), `statusText` (checked), `headers` (checked), `hasBody` (not a string) | A response's head, as the frame received it: the host decides on it (a redirect, the declared length). |
+| `BRIDGE_CHUNK` | `bridge-port`: bridge-frame → host | `id` (not a string), `chunk` (checked) | The next chunk of a response's body, in answer to a BRIDGE_PULL. |
+| `BRIDGE_END` | `bridge-port`: bridge-frame → host | `id` (not a string) | A response's body ended. |
+| `BRIDGE_ERROR` | `bridge-port`: bridge-frame → host | `id` (not a string), `code` (constant) | A request failed in the frame: the network or CORS, a head too large, or a Request the browser refused. |
 <!-- generated:end -->
 
 ## The lifecycle: one reducer, one executor
@@ -239,7 +256,7 @@ stateDiagram-v2
 
 ## Budgets
 
-<!-- describes: budgets:channels sig:65f1 -->
+<!-- describes: budgets:channels sig:8864 -->
 
 Everything the guest can make the host page, the view or the network do goes through a **channel**, and every channel has
 a bound in count, bytes and time. The surfaces a guest can reach are listed once (the egress table), each with how it is
@@ -265,6 +282,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/host.ts` | The `<web-sandbox>` custom element |
 | `src/index.ts` | Public entry point of the package |
 | `src/lib/auto-resize.ts` | Content auto-sizing, host side |
+| `src/lib/bridge-frame.ts` | The fetch bridge's frame, host side |
 | `src/lib/capabilities.ts` | Filtering of the capabilities an embedder lists: the allowed ones are kept, every other one dropped with a warning |
 | `src/lib/config-schema.ts` | The config schema |
 | `src/lib/css-references.ts` | URL references in CSS |
@@ -272,10 +290,11 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/element-events.ts` | The element's events |
 | `src/lib/fetch-bridge.ts` | The host-mediated fetch bridge, host side |
 | `src/lib/files.ts` | The host side of file delivery: path validation, the MIME table and the store that lives on the element |
-| `src/lib/frame-documents.ts` | Builds the two documents the sandbox is made of |
+| `src/lib/frame-documents.ts` | Builds the documents the sandbox is made of |
 | `src/lib/frames.ts` | The frame table |
 | `src/lib/guest-writes.ts` | Guest writes, host side: the overlay of one environment |
 | `src/lib/import-map.ts` | The guest's own import maps |
+| `src/lib/in-bridge-frame.ts` | The fetch bridge's frame, frame side: the only code that performs a request of the bridge |
 | `src/lib/in-sandbox-files.ts` | The guest side of the registered files, `sandboxFiles`, and of the guest writes |
 | `src/lib/in-sandbox-script.ts` | The guest bootstrap of every mode |
 | `src/lib/in-sandbox-view.ts` | Strict mode's view and worker prelude |

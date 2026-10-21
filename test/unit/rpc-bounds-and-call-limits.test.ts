@@ -558,7 +558,7 @@ describe('M-4: a valid URL is reported in full in the fetch record, up to the UR
             policy: toFetchPolicy({ allow: ['https://api.example'] }, () => {})!,
             hostOrigin: 'https://host.example',
             onRecord: (record) => records.push(record),
-            fetchImpl: async () => new Response('ok'),
+            transport: async () => new Response('ok'),
         });
         const long = 'https://api.example/' + 'a'.repeat(3000);
         await bridge.handle({ url: long, method: 'GET' });

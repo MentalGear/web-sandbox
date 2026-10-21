@@ -49,6 +49,10 @@ const LIBRARY_VALUES: Record<string, Record<string, string>> = {
     inSandboxMarkup: {
         files: 'the sandboxFiles object it was handed',
     },
+    inBridgeFrame: {
+        requests: 'its own map of the requests in flight',
+        entry: 'its own record of one request',
+    },
     keepOnlyWorkerGlobals: {
         descriptor: 'a descriptor the platform made, before any guest code runs',
         O: 'Object, before any guest code runs',

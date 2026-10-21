@@ -1,11 +1,12 @@
-import { assertParserSafeScript } from './csp/script-hash';
+import { assertHashableScript, assertParserSafeScript } from './csp/script-hash';
 
 /**
- * Builds the two documents the sandbox is made of:
+ * Builds the documents the sandbox is made of:
  *
  *   host page
- *   └─ wrapper frame  (library-owned, CSP: frame-src 'none')
- *      └─ guest frame (security block first, then untrusted content)
+ *   ├─ wrapper frame  (library-owned, CSP: frame-src 'none')
+ *   │  └─ guest frame (security block first, then untrusted content)
+ *   └─ bridge frame   (with fetchBridge: library-owned, its own policy, the hashed bootstrap; buildBridgeDocument)
  *
  * The wrapper exists because no CSP directive limits where a document may navigate *itself*.
  * The embedder's frame-src does: it is checked on every navigation of a child frame, including
@@ -170,4 +171,26 @@ export function buildWrapperDocument(guestDocument: string, sandboxFlags: string
         + `<style>${WRAPPER_STYLE}</style>`;
 
     return `${WRAPPER_PREFIX}${head}</head><body marginwidth="0" marginheight="0">${guestFrame}</body></html>`;
+}
+
+/**
+ * The start of the fetch bridge's frame document (buildBridgeDocument): its policy, whose first directives are always
+ * these (csp-generator.ts, bridgeFramePolicy). The Trusted Types policy the element assigns a srcdoc through
+ * (trusted-types.ts) blesses only HTML that starts with it or with WRAPPER_PREFIX.
+ */
+export const BRIDGE_POLICY_START = "default-src 'none'; script-src ";
+export const BRIDGE_PREFIX = `<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${BRIDGE_POLICY_START}`;
+
+/** The sandbox flags of the fetch bridge's frame: scripts, and an opaque origin of its own (never allow-same-origin). */
+export const BRIDGE_FRAME_SANDBOX = 'allow-scripts';
+
+/**
+ * Builds the fetch bridge's frame document (P1-ISO-1; bridge-frame.ts): its policy (bridgeFramePolicy), no referrer,
+ * and the library's hashed bootstrap in a script element with the bridge's role (`role`, in-sandbox-view.ts,
+ * BRIDGE_ROLE), which runs the bridge's frame there. Nothing else: no guest byte, no markup, no style.
+ */
+export function buildBridgeDocument(csp: string, bootstrap: string, role: string): string {
+    if (!csp.startsWith(BRIDGE_POLICY_START)) throw new Error('[Sandbox] the bridge frame document needs the bridge frame policy');
+    assertHashableScript(bootstrap);
+    return `${BRIDGE_PREFIX}${escapeAttribute(csp.slice(BRIDGE_POLICY_START.length))}"><meta name="referrer" content="${FRAME_REFERRER_POLICY}"><script data-role="${escapeAttribute(role)}">${bootstrap}</script></head><body></body></html>`;
 }
