@@ -289,7 +289,11 @@ export function createBridgeFrame(setup: BridgeFrameSetup): BridgeFrame {
         port.onmessage = null;
         port.close();
         iframe.onload = null;
-        iframe.remove();
+        try {
+            iframe.remove();
+        } catch (error) {
+            if ((error as { name?: unknown } | null)?.name !== 'NotFoundError') throw error; // already gone: embedder code removed it first
+        }
     };
 
     return { transport, close };

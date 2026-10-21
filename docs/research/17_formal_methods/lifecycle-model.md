@@ -223,6 +223,16 @@ prepared without touching the element, attached only if the reducer still holds 
 and every per-build resource, the one load deadline included, is made by the attached build and released by the
 teardown; a deadline acts only while its build is `loading`.
 
+The same re-entry comes from a release point of the teardown (S74): removing the wrapper runs the host window's `focus` on
+Firefox, and a focused guest's `pagehide` handler calls `parent.parent.focus()` on every engine, and a listener that
+calls `reset()`, `load()` or `setConfig()` there built a whole environment inside the old teardown; the rest of the outer
+teardown then cleared its fields (`_iframe`, the bridge) and closed its bridge, leaving a guest running with no frame on
+record (Firefox), or threw NotFoundError out of the embedder's `terminate()` (Chromium, WebKit). The teardown now detaches
+every per-environment field into a record before it releases any, and releases from the record
+(`src/lib/environment.ts`, one declared list). A reducer state that refuses a build while tearing down was rejected: it
+would drop a public call made from a listener. `test/unit/teardown-reentry.test.ts` re-enters with each public call at
+every declared release point and at every `remove()` and `close()` the teardown makes.
+
 ## The reducer runner (S65 step 2)
 
 The lifecycle reducer (`src/lib/lifecycle.ts`) is checked against the same model in a unit run, with no browser.
