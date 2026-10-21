@@ -61,8 +61,11 @@ transitions, generated from the code. The rules this ADR decides, each one a cas
   so a `sandbox-log` listener that calls `terminate()` is not undone by the rebuild that was to follow, and one that
   calls `reset()` does not have its new environment torn down. `terminate()` and `reset()` called by the embedder carry
   no generation and act on whatever stands.
-- **One rule for every budget: a guest over a budget is terminated.** `reset()` is the embedder's choice, because
-  rebuilding would bring back a sandbox the embedder did not ask for and fire no event.
+- **One rule for a guest over a time or uncaught budget: it is terminated.** That covers the watchdog, the execution
+  deadline, the view's repeated overrun, the uncaught budget and the load deadline. A rate budget does not end the sandbox:
+  it refuses (calls past `callLimits` get `BUSY`, writes `FILES_BUSY`), drops (log lines past the rate) or delays (the
+  view), as the [Budgets table](API.md#budgets) says per channel. `reset()` is the embedder's choice after a termination,
+  because rebuilding would bring back a sandbox the embedder did not ask for and fire no event.
 - **Every build failure is a termination.** A build that threw (a directive given a string instead of a list, for
   example) ends with `terminated` and `the environment could not be built (<error name>)`. `setConfig()` copies its
   argument with `structuredClone` first, so a config that cannot be copied (a `Proxy`, a function value) or is not an

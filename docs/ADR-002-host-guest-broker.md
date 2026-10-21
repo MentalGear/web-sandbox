@@ -62,8 +62,8 @@ about it.
   it is not trustworthy, and nothing needs to trust it.
 - **One field with disjoint groups, not a category code plus a detail code.** The guarantee only needs the groups to
   be disjoint and the clamp to enforce that on receipt; a category on top adds a second field to branch on.
-- **No separate retry field.** Whether to retry follows from the code: only `TIMEOUT` is worth retrying, and
-  `TERMINATED` only after the next `ready`. A second field would be one more thing that could disagree with the code.
+- **No separate retry field.** Whether to retry follows from the code: only `TIMEOUT` and `BUSY` are worth
+  retrying, and `TERMINATED` only after the next `ready`. A second field would be one more thing that could disagree with the code.
 - **How refusals are tested.** Each refusal test asserts the exact code, runs as the refused side (from inside the
   guest for guest-to-host calls), and checks that no handler ran. One test pins the code strings, since they are wire
   protocol.

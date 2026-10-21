@@ -50,14 +50,17 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
 
 ## Security changes
 
-Every mitigation has a reproduction under `docs/research/NN_*/reproduce.spec.ts` that **fails against
-the vulnerable code** and passes with the fix. Add one with any security change, and check that it
-fails before your fix (revert the fix locally and run it).
+Every mitigation has a test that **fails against the vulnerable code** and passes with the fix: an e2e spec in
+`test/e2e/` for a behaviour of a browser (all three engines), a unit test in `test/unit/` for one of the code, named by
+its subject. Add one with any security change, and check that it fails before your fix (revert the fix locally and run
+it). `docs/research/NN_*/` holds research, and the first attacks (01 to 14) have their own `reproduce.spec.ts` there;
+a new fix does not need a research folder, only one when the question is research of its own.
 
-The attack itself is a preset in `src/lib/presets.ts` (`category: 'security'`, `research: 'NN_*'`, and a
-`target` URL if it reaches for the network), so the playground can replay it; the reproduction runs it
-with `fromPreset('<id>')` from `test/e2e/presets.ts`, aiming the target at a recorder listener with
-`aimedAt()`. `test/unit/presets.test.ts` fails if a security preset has no spec or a reproduction no preset.
+An attack that the playground should replay is a preset in `src/lib/presets.ts` (`category: 'security'`, `research:
+'NN_*'` when it has a research folder, and a `target` URL if it reaches for the network); the spec runs it with
+`fromPreset('<id>')` from `test/e2e/presets.ts`, aiming the target at a recorder listener with `aimedAt()`.
+`test/unit/presets.test.ts` fails if a security preset has no spec, a research reproduction runs no preset, or a preset
+that names a research folder is not run by its reproduction.
 
 All specs run on the shared harness in `test/e2e/fixture.ts`; drive the sandbox through
 `SandboxDriver`, not through the playground.
@@ -89,12 +92,15 @@ the section of the surface it concerns), with what the embedder can do about it,
 its channel in the [budgets table](docs/API.md#budgets) (a share, a cap or a constant; a measured figure goes in the note
 under the table, dated, with its engines); `CHANNEL_BUDGETS` in `src/lib/egress.ts` is what the table is
 generated from. The view shares the host page's thread
-on Firefox, WebKit and Android, so no budget of the library's removes that cost: past a stated bound, chasing it gives
+on Firefox, WebKit, Safari, Android WebView and Chromium's headless shell, so no budget of the library's removes that cost: past a stated bound, chasing it gives
 diminishing returns.
 
-**The review board's rule (owner, 2026-10-21):** in the S74 board's fix batches a finding that leaks data is fixed, while
-every DoS or availability finding, the exception 3 kind (a budget failing open with only an availability effect)
-included, is backlogged and keeps the severity the verifier confirmed (S77 and S78 stay rated high).
+**The review board's rule (owner, 2026-10-21):** a board pass is **clean** when none of its confirmed findings leaks data
+or can manipulate it, at any severity, a docs gap that leads embedders into such a leak included. A DoS or availability
+finding, the exception 3 kind (a budget failing open with only an availability effect) included, is backlogged: it does
+not count against a pass and keeps the severity the verifier confirmed (S77 and S78 stay rated high). Docs drift, test
+gaps and correctness bugs with no data effect do not count either, and are fixed right away where that makes sense.
+In the S74 board's fix batches a finding that leaks data is fixed ([S74](docs/BACKLOG.md#s74)).
 
 These are **not** availability findings, and are fixed as any other:
 1. a host page that can never regain control, or a stall bounded by nothing the library states (no cap, no limit,

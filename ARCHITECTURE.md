@@ -73,8 +73,9 @@ bundle, so those functions close over nothing, and the tests scan their text).
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
 there. The **view** has the DOM and none of the guest's code: it cleans the markup the worker asks to render, moves it into
-its document, and enforces the view's budgets. They talk on the render port, which the host is not on, so a render never
-crosses the host page's thread. The host talks to each on a port of its own, and watches the view for liveness always and
+its document, and enforces the view's budgets. They talk on the render port, which the host is not on, so the host's own code never
+carries a render (the view's work still runs on the host page's thread where the browser places the view there, and is
+bounded: [API.md](docs/API.md#the-views-cost-to-the-host-page)). The host talks to each on a port of its own, and watches the view for liveness always and
 the worker's with `watchdogTimeout`. The guest can therefore draw but not script, and a flood of drawing is bounded where
 it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render path,
 [ADR-002](docs/ADR-002-host-guest-broker.md).

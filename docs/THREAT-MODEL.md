@@ -97,7 +97,7 @@ Specs under `test/e2e/` and `docs/research/` run on Chromium, Firefox and WebKit
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
-| No access to the host page's DOM, scripts, storage, cookies (`document.cookie`) or Service Workers | Sandboxed frames without `allow-same-origin`: an opaque origin. The flags come only from closed lists; `allow-same-origin` and top navigation are on neither | `SAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS` (`src/csp-directives.ts`); `filterCapabilities` (`src/lib/capabilities.ts`); `_getSandboxFlags` (`src/host.ts`) | `test/unit/host.test.ts`; `test/e2e/security.spec.ts` ("Isolation"); research [02](research/02_sw_tampering/README.md), [03](research/03_storage_sharing/README.md), [05](research/05_outer_frame_tampering/README.md) reproductions | [ADR-001](ADR-001-continue-or-adopt.md#the-opaque-origin-and-the-unique-origin) |
+| No access to the host page's DOM, scripts, storage, cookies (`document.cookie`) or Service Workers | Sandboxed frames without `allow-same-origin`: an opaque origin. The flags come only from closed lists; `allow-same-origin` and top navigation are on neither | `SAFE_CAPABILITIES`, `UNSAFE_SANDBOX_FLAGS` (`src/csp-directives.ts`); `filterCapabilities` (`src/lib/capabilities.ts`); `_getSandboxFlags` (`src/host.ts`) | `test/unit/host.test.ts` (the closed lists: no dangerous capability on them); `test/e2e/security.spec.ts` ("Isolation": the opaque origin the flags give); `test/e2e/capability-presets.spec.ts` (the `sandbox` attribute the frame gets, and the flags dropped with a warning); research [02](research/02_sw_tampering/README.md), [03](research/03_storage_sharing/README.md), [05](research/05_outer_frame_tampering/README.md) reproductions | [ADR-001](ADR-001-continue-or-adopt.md#the-opaque-origin-and-the-unique-origin) |
 | No navigation of the guest's own frame, the host page or the tab | The wrapper's `frame-src 'none'`; no `allow-top-navigation*`; `form-action 'none'`, `base-uri 'none'`; strict: every rendered link's href is `INERT_HREF`, link clicks and submits are cancelled, `meta`, `base` and frames are never rendered | `WRAPPER_CSP`, `buildWrapperDocument` (`src/lib/frame-documents.ts`); `INERT_HREF`, `RENDER_ELEMENTS` (`src/lib/in-sandbox-view.ts`) | research [14](research/14_self_navigation/README.md) and [07](research/07_data_uri_navigation/README.md) reproductions; `test/e2e/strict.spec.ts` ("G4 navigation"); `test/e2e/worker-globals-and-termination.spec.ts` ("V3") | `ADR-005#the-guarantees-on-chromium-firefox-and-webkit` (G4) |
 | No popups unless the embedder opts in | `allow-popups` is an unsafe capability (cooperative and worker mode only, with a warning); strict mode takes none | `UNSAFE_SANDBOX_FLAGS`; `CONFIG_SCHEMA.unsafeCapabilities` (`src/lib/config-schema.ts`) | research [13](research/13_popup_exfiltration/README.md) reproduction; `test/e2e/hard-security.spec.ts` | [research 13](research/13_popup_exfiltration/README.md) |
 | No pointer lock unless the embedder opts in | `allow-pointer-lock` is an unsafe capability like `fullscreen` (cooperative and worker mode only, with a warning; dropped from `capabilities`, and from `unsafeCapabilities` in strict mode): a guest holding the lock can hide the cursor and capture relative input, so it can draw a cursor of its own over fake host UI | `UNSAFE_SANDBOX_FLAGS`; `CONFIG_SCHEMA.capabilities`, `CONFIG_SCHEMA.unsafeCapabilities` (`src/lib/config-schema.ts`) | `test/unit/config-schema.test.ts`; `test/e2e/pointer-lock.spec.ts` | the UI-spoofing reasoning of `fullscreen` ([README](../README.md#capabilities)) |
@@ -153,7 +153,7 @@ forge or suppress them, and they differ per engine. Treat them as claims.
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
 | An old environment cannot act | Every callback, timer and port input carries the generation it was armed in, and `reduce` drops a stale one with no effect | `reduce`, `isStale` (`src/lib/lifecycle.ts`) | `test/unit/lifecycle-reducer.test.ts`; `test/unit/lifecycle-model.test.ts`; `test/e2e/lifecycle-model.spec.ts` | `ADR-003#the-lifecycle-is-one-reducer`, [S65](archive/backlog/BACKLOG-done.md#s65) |
-| Queued work leaves only at `ready`, and `ready` only follows the guest's check-in | Only `loading` reaches `ready`, on the announcement or the view's `VIEW_READY`; the `flush` effect is emitted only by that transition | `LC_INPUTS`, `reduce` (`src/lib/lifecycle.ts`) | `test/unit/lifecycle-transitions.test.ts`; `test/unit/call-settling-and-read-once.test.ts` | [R5:L-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-l-1) |
+| Queued work leaves only at `ready`, and `ready` follows the guest's check-in (a cooperative frame without `allow-scripts` has no guest code: `ready` follows the frame's load, and no guest script has run) | Only `loading` reaches `ready`, on the announcement or the view's `VIEW_READY` (or, with no guest script allowed, the wrapper's load); the `flush` effect is emitted only by that transition | `LC_INPUTS`, `reduce` (`src/lib/lifecycle.ts`) | `test/unit/lifecycle-transitions.test.ts`; `test/unit/call-settling-and-read-once.test.ts` | [R5:L-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-l-1) |
 | `terminate()` or removing the element ends everything of the environment | Teardown removes the frame (the workers end with the document that made them), closes the ports, rejects pending calls with `TERMINATED`, aborts the bridge's requests and closes the guest-write overlay | `_teardown` (`src/host.ts`); `abortAll` (`src/lib/fetch-bridge.ts`) | `test/e2e/worker-globals-and-termination.spec.ts` ("L1"); `test/unit/fetch-bridge-lifecycle.test.ts` | [LM-1](research/17_formal_methods/lifecycle-model.md#lm-1) |
 | Embedder code that runs inside the element's own calls cannot corrupt it | A build is prepared detached and attached only if still current; events are dispatched after the state is stored, with deeply frozen details | the `build` and `attach` effects (`src/lib/lifecycle.ts`); `src/lib/element-events.ts` | `test/unit/lifecycle-reentry.test.ts`; `test/unit/lifecycle-edge-cases.test.ts`; `test/unit/element-events.test.ts` | [LM-2](research/17_formal_methods/lifecycle-model.md#lm-2), [R4:L-1](archive/reviews/REVIEW-ROUND-4-2026-10-18.md#r4-l-1) |
 | A guest that reloads or rewrites its document is ended | The wrapper loads once and the guest announces once; a second of either ends the environment, and no port is handed to the new document | the reducer's `frameLoad` and `announced` inputs | [research 14](research/14_self_navigation/README.md) reproduction ("14.2"); `test/e2e/ready.spec.ts` | [research 14](research/14_self_navigation/README.md) |
@@ -167,7 +167,7 @@ forge or suppress them, and they differ per engine. Treat them as claims.
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
 | Strict and worker mode: a looping guest never holds the host page's thread, and the host can stop it | Guest code runs in a worker; `terminate()` ends the environment, but cannot run during a stall of the view on the host page's thread, nor before the reports already queued are processed ([S77](BACKLOG.md#s77), [S78](BACKLOG.md#s78)); `watchdogTimeout` (opt-in) ends a guest that stops answering, and `workerExecutionTimeout` one whose `execute()` overruns its deadline; the bootstrap answers the probes, and guest code cannot answer for it | `startWatchdog` (`src/lib/watchdog.ts`); `_startWatchdog` (`src/host.ts`) | `src/lib/watchdog.test.ts`; `test/e2e/watchdog.spec.ts`; `test/e2e/worker-timeout.spec.ts` | `ADR-003#strict-mode-bounds-execution-on-every-engine`, [S6](archive/backlog/BACKLOG-done.md#s6) |
-| Strict: a view that stops answering ends the sandbox | The host pings the view always, `VIEW_LIVENESS_TIMEOUT_MS`, host stalls not counted. Where the view has a process of its own (desktop Chromium), one long operation is no host stall, so a documented stall over about 5 s ends a healthy sandbox ([S79](BACKLOG.md#s79)) | the view watchdog (`src/host.ts`) | `test/e2e/strict.spec.ts` ("A5") | `ADR-005#flow-control-files-clobbering-liveness` |
+| Strict: a view that stops answering ends the sandbox | The host pings the view always, `VIEW_LIVENESS_TIMEOUT_MS`, host stalls not counted. Where the view has a process apart from the host page's (desktop Chromium), one long operation is no host stall, so a documented stall over about 5 s ends a healthy sandbox; the process is shared by the page's sandboxed frames, so another sandbox's loop or stall does the same ([S79](BACKLOG.md#s79)) | the view watchdog (`src/host.ts`) | `test/e2e/strict.spec.ts` ("A5") | `ADR-005#flow-control-files-clobbering-liveness` |
 | Every channel of guest activity is bounded in count, bytes and time, except the gaps listed below the table ([S77](BACKLOG.md#s77), [S78](BACKLOG.md#s78)) | One table of surfaces (the egress table) and one of channels (`CHANNEL_BUDGETS`), each naming its constants; the bootstrap installs exactly the listeners of its rows; logs and calls are counted by the guest and again by the host | `EGRESS`, `CHANNEL_BUDGETS`, `bootstrapListeners` (`src/lib/egress.ts`) | `test/unit/budgets.test.ts`; `test/unit/egress.test.ts`; `test/e2e/egress.spec.ts` (every engine's surfaces against the table) | [API.md, Budgets](API.md#budgets); [R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1) |
 | Strict: the view's cost to the thread it runs on is one stated bound | A long-run share (`VIEW_APPLY_MS_PER_SECOND`), the single-operation bound with the repeated-overrun rule, rates and caps on what the meter cannot see, and a closed list of what is outside | `viewBudget` (`src/lib/in-sandbox-view.ts`) | `test/e2e/view-bound.spec.ts`; `test/unit/view-bound.test.ts`; `test/unit/view-budget.prop.test.ts` | [API.md, The view's cost to the host page](API.md#the-views-cost-to-the-host-page); [S72](archive/backlog/BACKLOG-done.md#s72), [R5:M-2](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-m-2) |
 | A config cannot make a budget fail open | One schema decides every option and its cross-field invariants before anything is built; `callLimits` has no off switch (it takes finite numbers ≥ 1), and every call that can be carried fits an empty window | `CONFIG_SCHEMA`, `normaliseConfig` (`src/lib/config-schema.ts`) | `test/unit/config-schema.test.ts`; `test/unit/rate-limit.prop.test.ts` | [R5:L-2](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-l-2) |
@@ -187,7 +187,7 @@ forge or suppress them, and they differ per engine. Treat them as claims.
 - **The view's liveness ping** ends a healthy sandbox on one documented stall on desktop Chromium
   ([S79](BACKLOG.md#s79)); it fails closed.
 
-What holds memory is capped (files, the bridge's `maxConcurrent × maxBytes`, the view's document), but no budget counts
+What holds memory is capped (files, the bridge's about 3 × `maxConcurrent` × `maxBytes`, a bound and not a measurement, the view's document), but no budget counts
 memory itself, and the bytes of calls running at once are capped only as far as the measure above is true (not for a
 `File`'s name). The values are in [Limits](API.md#limits).
 
@@ -207,10 +207,12 @@ every denial-of-service or availability finding, including a budget that fails o
 is backlogged. Backlogged is not mitigated and not downgraded: [S77](BACKLOG.md#s77) and [S78](BACKLOG.md#s78) are open
 and rated high, and the gaps they describe are listed under [Resource limits](#resource-limits).
 
-**Where the view runs.** Desktop Chromium (127 and later) runs the strict view in a process of its own; Firefox,
-WebKit and Safari, Android WebView and Chromium's headless shell run it on the host page's thread
-([research 16](research/16_view_isolation/README.md)). There no budget of the library's removes the view's cost; the
-bound is what is promised.
+**Where the view runs.** Firefox, WebKit and Safari, Android WebView and Chromium's headless shell run the strict view on
+the host page's thread ([research 16](research/16_view_isolation/README.md)); there no budget of the library's removes
+the view's cost, and the bound is what is promised. Desktop Chromium (127 and later) runs it in a process apart from the
+host page's, but not in one of its own: the sandboxed frames of the page can share a process, so one sandbox's work (a
+cooperative guest's loop, another view's documented stall) can stall another sandbox's view and end it through its
+liveness ping ([S79](BACKLOG.md#s79)).
 
 **The residual costs that are documented**, each ended by `terminate()` or by removing the element:
 
@@ -237,8 +239,10 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
   policy's job.
 - **Side channels**: Spectre-class reads, timing (the worker keeps `performance` and timers), and CSS-based probing of the
   view's own content within the policy. Isolation from the host page is by origin; against a Spectre-class reader it
-  holds only where the browser runs the sandbox in a process of its own (desktop Chromium's sandboxed-frame isolation,
-  for the view and its worker).
+  holds only where the browser runs the sandbox in a process apart from the host page's (desktop Chromium's
+  sandboxed-frame isolation, for the view and its worker). That process can be shared with the page's other sandboxed
+  frames (other sandboxes' views, guest frames and bridge frames, and the bodies their fetches carry), so it does not
+  separate one sandbox from another ([S79](BACKLOG.md#s79)).
 - **Browser extensions**, which can read and change any frame.
 - **UI spoofing inside the element's box**, and what the user chooses to do with what the view shows.
 - **Denial of service by the embedder's own configuration**: an `expose()`d method that does heavy work per call, a
@@ -248,15 +252,25 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
 - **The host page's policy** narrows the sandbox's (a `srcdoc` frame inherits it). It must allow the view bootstrap's
   hash (`viewScriptHash()`) and `worker-src blob:`, or the build ends with a reason that names the host page's policy;
   and the wrapper style (or the frame is 150 px high) and, with `allowAnimations: false`, the animation stylesheet (or
-  the view drops the guest's stylesheets), each with a warning ([Host page policy](API.md#host-page-policy)).
+  the view drops the guest's stylesheets), each with a warning ([Host page policy](API.md#host-page-policy)). The fetch
+  bridge's frame runs the same bootstrap under the same hash, so a policy that refuses the view refuses it too.
+- **Cooperative and worker mode cost the host page its script policy.** Their inline bootstrap needs `'unsafe-inline'` in
+  the host page's `script-src`, which a browser ignores next to a hash or a nonce: the page cannot have a nonce- or
+  hash-based `script-src` and run these modes; it allows inline script everywhere instead, which removes its own defence
+  against an injected `<script>`. Prefer strict mode, whose hash sits beside the page's own.
 - **Trusted Types**: a `trusted-types` directive must name the policy `web-sandbox`; `execute()` and the guest's `eval`
   are refused under `require-trusted-types-for 'script'`, and in cooperative mode the guest inherits the requirement.
 - **Cross-Origin-Embedder-Policy `require-corp`**: WebKit refuses the view's `blob:` worker, so a strict build fails there.
+- **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`, a
+  `fetch` record's `url` (it can be `javascript:`), the message of a call rejected by a guest handler. The library
+  validates and clamps its size and shape, not its content. Show it with `textContent`; never pass it to an HTML, URL (a
+  link `href`), `eval` or template sink, or the guest's text runs with the host page's authority.
 - **Exposed methods are the attack surface** the embedder adds: validate every argument, copy objects with spread, never
   `Object.assign` or `for…in` ([S25](BACKLOG.md#s25)), and throw only errors whose message the guest may see.
 - **Opt-ins widen the model**, each with a warning: `scriptUnsafe` (`execute()` and `eval` in the guest's realm;
   `WebAssembly` in the worker), `unsafeCapabilities` (popups, modals, downloads, forms, presentation, pointer lock, fullscreen), `fetchBridge`
-  (requests from the host page, carrying its origin in `Origin`), `origins` (each listed origin receives whatever the
+  (requests made from an opaque origin: the target sees `Origin: null` and no credentials, so it must not treat `null` as
+  trusted, [API.md, `fetchBridge`](API.md#fetchbridge)), `origins` (each listed origin receives whatever the
   guest sends it), `allowAutoplay`.
 - **Cooperative mode**: check `event.source` in the host page's own `message` listeners, and do not target named frames
   or windows on a page that embeds sandboxes ([S36](BACKLOG.md#s36), [S44](BACKLOG.md#s44)).
@@ -275,7 +289,7 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
 | WebKit | Compiles `WebAssembly` without `'unsafe-eval'`; raises no violation reports in workers; refuses the view's `blob:` worker under COEP `require-corp`; sends the full host URL to same-site origins and shows it to frames the guest creates (cooperative) | `WebAssembly` deleted unless `scriptUnsafe`; worker reports are per engine; strict mode does not start under COEP; [S17](archive/backlog/BACKLOG-done.md#s17) and [S18](archive/backlog/BACKLOG-done.md#s18) are cooperative limits |
 | Chromium, WebKit | Show the host origin in `location.ancestorOrigins` (cooperative) | A cooperative limit ([S15](archive/backlog/BACKLOG-done.md#s15)) |
 | Firefox, WebKit | Attach the host site's cookies to requests to same-site origins | Do not list a same-site origin; `origins` warns for the host page's host, its subdomains and parents, and loopback hosts (not for a sibling subdomain) |
-| Firefox | Has no Trusted Types | The host page's requirement has no effect there |
+| Firefox (146, as Playwright runs it) | Has no Trusted Types (`typeof trustedTypes` is `undefined`) | The host page's requirement has no effect there; a Firefox that ships them is governed like the other engines |
 
 ## Accepted risks and open items
 
@@ -295,7 +309,7 @@ The open items of the [backlog](BACKLOG.md) that bear on this model:
 | [S79](BACKLOG.md#s79) | Medium: on desktop Chromium the view's liveness ping ends a healthy sandbox on one documented stall (fails closed) | strict |
 | [S80](BACKLOG.md#s80) | Medium: no test guards the event reads of the bootstrap's `error` and `unhandledrejection` listeners | strict, worker |
 | [S81](BACKLOG.md#s81), [S82](BACKLOG.md#s82) | Low: tests that fail under machine load; the other lows of the board's pass 1 | — |
-| [S74](BACKLOG.md#s74) | The final adversarial review board of the current state; pass 1 (2026-10-21) found 4 high, so it does not count | — |
+| [S74](BACKLOG.md#s74) | The final adversarial review board of the current state; a pass is clean when none of its findings leaks or can manipulate data (owner, 2026-10-21); passes 1 and 2 (2026-10-21) were not | — |
 
 Residuals stated in the decisions rather than the backlog: DNS rebinding for the fetch bridge
 ([ADR-006](ADR-006-fetch-bridge.md#consequences)); CSS within the policy, forgeable worker reports, a worker that
@@ -330,5 +344,5 @@ qualifies, high when the host page can never regain control or the stall is boun
 
 **Fixing.** A fix names its class and extends that class's list or chokepoint and its structural test, never one
 instance only; a new mitigation is a new cost, measured in every engine
-([CONTRIBUTING, Fixing a finding](../CONTRIBUTING.md#fixing-a-finding)). Every security change brings a reproduction
-under `docs/research/NN_*/` that fails against the vulnerable code ([Security changes](../CONTRIBUTING.md#security-changes)).
+([CONTRIBUTING, Fixing a finding](../CONTRIBUTING.md#fixing-a-finding)). Every security change brings a test that
+fails against the vulnerable code, in `test/e2e/` or `test/unit/` ([Security changes](../CONTRIBUTING.md#security-changes)).

@@ -1,12 +1,11 @@
 /**
- * Gives every relative specifier in the emitted declarations (dist/**\/*.d.ts) its `.js` extension (review round 1,
- * R4-3). tsc emits a declaration's imports as the sources wrote them, extensionless (the sources are resolved by a
+ * Gives every relative specifier in the emitted declarations (dist/**\/*.d.ts) its `.js` extension (R1:R4-3). tsc emits a declaration's imports as the sources wrote them, extensionless (the sources are resolved by a
  * bundler), and a consumer type-checking under `module`/`moduleResolution: NodeNext` refuses those (TS2834); with
  * skipLibCheck every type of the package then read as `any`, silently. Each specifier must name an emitted declaration
  * (`x.d.ts`, or `x/index.d.ts`), else the build fails: a specifier this cannot place is never left as it was.
  * Run by `bun run build:lib` after tsc; scripts/smoke-package.sh type-checks a NodeNext consumer against the result.
  *
- * Only the specifiers of real import and export declarations and import types are rewritten (review round 2, C-11), found
+ * Only the specifiers of real import and export declarations and import types are rewritten (R2:C-11), found
  * among the text's tokens (js-tokens.ts: TypeScript's own scanner): `from "./x"`, `import "./x"` and `import("./x")`. A
  * regular expression over the text also rewrote such a phrase inside a comment (a doc comment that quotes an import) or
  * a string, where it is not a specifier; the scanner never yields a token from either.

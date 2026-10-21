@@ -66,7 +66,7 @@ export interface StrictSandboxConfig extends SandboxConfigOptions {
 
 /**
  * The configuration of cooperative mode, for content that cooperates: guest code runs in the guest document, within the
- * documented limits of the mode (README, "Cooperative-mode limits"). The mode was called `'iframe'`; that name is refused.
+ * documented limits of the mode (README, "Cooperative-mode limits"). `'iframe'` is not a mode: it is refused like any other unknown value.
  */
 export interface CooperativeSandboxConfig extends SandboxConfigOptions {
     /** Names the mode. */
@@ -118,7 +118,9 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions {
  * `window` for every sandbox on the page; `event.target` says which. The `detail` is frozen, deeply: every object and
  * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
  * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
- * clamped, but remain the guest's data: read them, do not merge them into your objects.
+ * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
+ * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`): show it with `textContent`,
+ * never in an HTML, URL (such as a link `href`), `eval` or template sink. `terminated.reason` is the library's text.
  */
 export interface WebSandboxEventMap extends HTMLElementEventMap {
     /**
@@ -408,7 +410,7 @@ const IDLE_CALL_MESSAGE = "[Sandbox] call() rejected: the sandbox is not in the 
 interface GuestMarkupPlan {
     // the markup cut into parts for the bootstrap to write (markup-references.ts), or null to embed it as written
     parts: MarkupParts | null;
-    // the one import map (module graph, PR3): every registered JavaScript file, plus the guest's own
+    // the one import map (module graph): every registered JavaScript file, plus the guest's own
     // inline maps merged (import-map.ts), or null when no JavaScript file is registered
     importMap: { paths: string[]; guest: string | null } | null;
 }
@@ -1118,7 +1120,8 @@ export class WebSandbox extends ElementBase {
      * `setConfig()` and `terminate()`. Exposing a name again replaces its handler. Names that
      * start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
      * validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
-     * survives the copy).
+     * survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
+     * `eval` or template sink.
      *
      * @param name - The method name, a string of at most 256 characters.
      * @param fn - The handler; its arguments come from the guest by structured clone.
@@ -1888,7 +1891,7 @@ export class WebSandbox extends ElementBase {
         // an empty store is NOT_FOUND like any other miss, never a ReferenceError.
         let filesCall = `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(files)}${writes ? ', comms.writeFiles' : ''})`;
         // With JavaScript files: the one import map, registered with the URLs filesCall just created,
-        // before any guest markup (module graph, PR3). It hands the files object on to the next step.
+        // before any guest markup (module graph). It hands the files object on to the next step.
         if (plan.importMap) {
             filesCall = `(${inSandboxImportMap.toString()})(${filesCall}, ${toInlineScriptLiteral(plan.importMap.paths)}, ${toInlineScriptLiteral(plan.importMap.guest)})`;
         }
@@ -2021,7 +2024,8 @@ export class WebSandbox extends ElementBase {
         const permissions = this._getPermissions();
         const policy = this._guestPolicy(files);
 
-        // TODO: run through DOMPurify ?
+        // Guest markup is the guest's own: cooperative mode runs it as it is (that is the mode), and strict mode's view cleans
+        // it with its allowlist renderer (sanitizeRender), not here.
         let guestDocument: string;
         if (isWorkerMode) {
             // worker mode is headless: no guest markup, so no markup references either

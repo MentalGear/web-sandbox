@@ -352,8 +352,8 @@ export function inSandboxScript(
     // CSP violation reports (backlog S5, src/lib/violation.ts): the egress table's securitypolicyviolation row, installed
     // with the others below, before any guest code runs: a capture listener on the global object is the first listener on
     // the event's path, so guest code cannot stop it from seeing a violation by registering first. Guest
-    // code can still suppress its own reports later (it can reach the port), which is why a report is
-    // evidence of an attempt and silence proves nothing. Forwarded as a first-class VIOLATION frame, not
+    // code can still suppress its own reports later (the bootstrap shares its realm, though the port never reaches
+    // it), which is why a report is evidence of an attempt and silence proves nothing. Forwarded as a first-class VIOLATION frame, not
     // through the broker, so it can never collide with an exposed method name. Reports raised before
     // INIT_PORT wait in the outbox like bridge frames. Synthetic events (isTrusted false) are not reports.
     // At most VIOLATION_LIMIT per environment (the host caps at the same number, VIOLATION_EVENT_LIMIT,
@@ -389,7 +389,8 @@ export function inSandboxScript(
     // which never reads less than the viewport); when content overflows the viewport, scrollHeight, so
     // overflow the root's box does not contain still grows the frame. The body is observed as well once it
     // exists, for guests whose root is pinned to the viewport (html { height: 100% }). The host validates,
-    // clamps and rate-limits every report: guest code can reach the port and post its own.
+    // clamps and rate-limits every report: the fields are claims of the guest's realm, since guest code can bend what the
+    // bootstrap reads (it cannot post on the port itself).
     if (features?.autoResize === true && doc && ResizeObserverConstructor && observe && rootOf && bodyOf && boundingBox && scrollHeightOf && clientHeightOf) {
         let lastHeight = -1;
         const measure = () => {

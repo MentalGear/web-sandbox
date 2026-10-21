@@ -5,7 +5,7 @@ import { admitsAll, linkKinds, type LoadKindName } from "./load-kinds";
 import { parseInert } from "./trusted-types";
 
 /**
- * Markup references to registered files (ADR-004, PR2). Host-only: nothing here is stringified into
+ * Markup references to registered files (ADR-004). Host-only: nothing here is stringified into
  * the guest; the guest side is inSandboxMarkup (in-sandbox-files.ts).
  *
  * Guest markup such as `<script src="app.js">` or `<img src="img/logo.svg">` names a file by a
@@ -29,13 +29,13 @@ import { parseInert } from "./trusted-types";
  * If nothing matched, there are no parts and the guest document is built exactly as before (the
  * original markup verbatim). So the rewrite only ever happens to markup that names a registered file.
  *
- * With the module graph (PR3, when JavaScript files are registered) the same parse also rewrites the
+ * With the module graph (when JavaScript files are registered) the same parse also rewrites the
  * relative specifiers of inline `<script type="module">` against VIRTUAL_DOCUMENT_URL, as for a
  * registered module, and takes the guest's inline `<script type="importmap">` elements out of the
  * markup, for the host to merge into the one import map the bootstrap registers (import-map.ts).
  * Either counts as a change, so the markup is then written by the bootstrap even with no slot.
  *
- * With CSS references (PR4) the same parse also cuts slots into `srcset` of `img` and `source` (each
+ * With CSS references the same parse also cuts slots into `srcset` of `img` and `source` (each
  * candidate URL that names a file; srcset.ts), and into the CSS of `<style>` elements and `style=""`
  * attributes (each url() or @import that names a file; css-references.ts). A CSS slot replaces a URL
  * reference with a CSS string, `"<sentinel>"`, and its part tells the bootstrap to escape the blob: URL
@@ -59,7 +59,7 @@ export const VIRTUAL_ROOT = 'https://vfs.invalid/';
 const HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 
 // The attributes that name a file by one URL, with the kind of load each makes (load-kinds.ts): 'link' takes its
-// kinds from the link's rel and as (linkKinds). srcset (always images) and CSS (PR4) are handled below, by their
+// kinds from the link's rel and as (linkKinds). srcset (always images) and CSS are handled below, by their
 // own parsers; <iframe src>, <embed>, <object>, <a href>, imagesrcset and anything inside <template> stay as
 // written. Imports inside inline modules are the module graph's (rewriteGuestMarkup, below).
 export const REFERENCES: readonly (readonly [element: string, attribute: string, kind: LoadKindName | 'link'])[] = [
@@ -250,7 +250,7 @@ export function rewriteGuestMarkup(markup: string, files: FileTypes, options: Gu
         return edits.length === 0 ? null : replaceRanges(source, edits);
     };
 
-    // srcset (PR4): each candidate URL that names a file; the others stay as written
+    // srcset: each candidate URL that names a file; the others stay as written
     for (const element of doc.querySelectorAll(SRCSET_SELECTOR)) {
         if (element.namespaceURI !== HTML_NAMESPACE) continue;
         const value = element.getAttribute('srcset')!;
@@ -258,7 +258,7 @@ export function rewriteGuestMarkup(markup: string, files: FileTypes, options: Gu
         if (rewritten !== null) element.setAttribute('srcset', rewritten);
     }
 
-    // CSS (PR4): url() and @import in <style> text and in style attributes. A reference becomes a CSS
+    // CSS: url() and @import in <style> text and in style attributes. A reference becomes a CSS
     // string holding the sentinel; the bootstrap puts the URL into that string, escaped for it.
     for (const style of doc.querySelectorAll('style')) {
         if (style.namespaceURI !== HTML_NAMESPACE) continue;

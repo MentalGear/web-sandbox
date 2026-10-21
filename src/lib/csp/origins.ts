@@ -33,7 +33,11 @@ import { defineData } from "../utils";
  * @defaultValue none
  */
 export interface SandboxOrigins {
-    /** fetch(), XMLHttpRequest, WebSocket (wss: too), EventSource, sendBeacon: connect-src. */
+    /**
+     * fetch(), XMLHttpRequest and WebSocket: connect-src. A WebSocket needs an entry of its own (`wss://host`): an
+     * `https://host` entry does not admit it. Cooperative mode's guest document also has EventSource and sendBeacon(),
+     * which this list governs; strict and worker mode's worker has neither.
+     */
     connect?: readonly string[];
     /** Images, CSS backgrounds, icons: img-src. */
     images?: readonly string[];

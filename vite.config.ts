@@ -65,7 +65,7 @@ export default defineConfig({
         res.setHeader('cache-control', 'no-store');
         res.end(JSON.stringify({ method: req.method, headers: req.headers }));
       });
-      // Test endpoint (host-policy.spec.ts, review round 1 R3-1): the e2e harness served with the policy headers a
+      // Test endpoint (host-policy.spec.ts, R1:R3-1): the e2e harness served with the policy headers a
       // spec names, `?csp=<Content-Security-Policy>` and `&coep=<Cross-Origin-Embedder-Policy>`, so a spec can mount
       // the sandbox on a host page whose own policy the sandbox's frames inherit. The page's one script is external
       // (host-policy-harness.ts), so a host policy without 'unsafe-inline' still runs it.

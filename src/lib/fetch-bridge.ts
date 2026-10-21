@@ -23,9 +23,13 @@
  *   - a body cap read incrementally (Content-Length is checked first, never trusted), one chunk at a time as the host
  *     reads it from the frame, a per-call timeout and an AbortController that teardown also fires; whole responses
  *     only, no streaming;
- *   - a cap on concurrent requests, so the host's memory is bounded by maxConcurrent × maxBytes.
+ *   - a cap on concurrent requests, so the host's memory is bounded by about 3 × maxConcurrent × maxBytes (a bound, not a
+ *     measurement: a body is held as the chunks read and as the joined body, and the result is cloned for the guest).
  * The target sees `Origin: null` (never the host page's origin or URL: no Referer), and the response must pass CORS for
- * an opaque origin: `Access-Control-Allow-Origin: *` (no credentials are sent) or `null`.
+ * an opaque origin. Every sandboxed frame on the web has that origin, an attacker's too, so a target answers
+ * `Access-Control-Allow-Origin: *` or `null` only for public data, never with `Access-Control-Allow-Credentials: true`,
+ * and never treats `null` as trusted. The bridge sends no credentials (cookies, HTTP authentication), so it gets what any
+ * anonymous page gets.
  *
  * Every request is reported once, when it settles, as a FetchRecord (the host's 'fetch' event): refused
  * attempts included. Fields that come from the guest are validated or clamped before they are reported. Once the
@@ -69,10 +73,14 @@ export const FETCH_ERROR_CODES: readonly FetchErrorCode[] = FETCH_CODES;
  * @remarks
  * The host decides every request, and a hidden frame of the library's with an opaque origin makes it, never the host
  * page: the host page's Service Worker and any wrapper of its `fetch` never see it. So the target sees `Origin: null`,
- * and its CORS must allow that: `Access-Control-Allow-Origin: *` (no credentials are sent) or `null`. Every request is
- * pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`) and `cache: 'no-store'`. The
- * frame runs the library's hashed bootstrap, so a host page policy that admits the sandbox admits it
- * (docs/API.md#host-page-policy). The host page's own origin and loopback, private and link-local hosts are refused
+ * and its CORS must allow that: `Access-Control-Allow-Origin: *` or `null`, for public data only. Every sandboxed frame
+ * on the web, an attacker's too, has the origin `null`: a target must never pair it with
+ * `Access-Control-Allow-Credentials: true` or treat `null` as trusted. The bridge itself sends no credentials (no cookies,
+ * no HTTP authentication), so it gets what any anonymous page gets. Every request is pinned to no credentials, no
+ * `Referer`, no redirects (refused with `FETCH_REDIRECT`) and `cache: 'no-store'`. The frame runs the same hashed
+ * bootstrap as the strict view, under the same hash, so a host page policy that admits the sandbox admits it, and one
+ * that refuses the view refuses it too (strict mode then ends with the startup reason). A frame that fails to start
+ * alone fails the bridge closed and leaves the sandbox running (docs/API.md#host-page-policy). The host page's own origin and loopback, private and link-local hosts are refused
  * unless listed. A listed public name that resolves to a private address cannot be detected
  * from a page. A number that is not finite or is below 1 takes its default, and one above its bound takes the bound.
  * See ADR-006.
@@ -112,7 +120,9 @@ export interface FetchBridgeConfig {
      */
     headers?: string[];
     /**
-     * Most requests in flight at once; a request past it is refused with `FETCH_BUSY`. At most `16`.
+     * Most requests in flight at once; a request past it is refused with `FETCH_BUSY`. At most `16`. The host's memory
+     * for the bridge is bounded by about 3 times `maxConcurrent` times `maxBytes`: a response is held as the chunks read
+     * and as the joined body, and the result is cloned for the guest (a bound, not a measurement).
      *
      * @defaultValue `4`
      */
@@ -161,12 +171,18 @@ export type FetchRefusal = Error & { code: FetchErrorCode; reason?: string; unse
  * a teardown an environment's records are all `'aborted'`. Fields that come from the guest are validated or clamped
  * first. `method` is upper case (`''` when the guest sent no valid one). `url` is the whole URL without its fragment, at
  * most 8192 characters (a longer one is refused and reported cut), or the guest's string cut to that when it is not a
- * URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement.
+ * URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement. `url` is
+ * guest-controlled text (it can be `javascript:`): show it with `textContent`, never in an HTML, URL (such as a link
+ * `href`), `eval` or template sink.
  */
 export type FetchRecord = {
     /** The method, upper case; `''` when the guest sent no valid one. */
     method: string;
-    /** The URL without its fragment, or the guest's string when it is not a URL; at most 8192 characters. */
+    /**
+     * The URL without its fragment, or the guest's string when it is not a URL; at most 8192 characters.
+     * Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`: it can be
+     * `javascript:`), `eval` or template sink.
+     */
     url: string;
     /** Time from the request to its settlement, in ms. */
     durationMs: number;

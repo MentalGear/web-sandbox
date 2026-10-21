@@ -376,7 +376,7 @@ export function inSandboxMarkup(files: { url(path: string): string }, parts: (st
 
 /**
  * Stringified into the guest document after inSandboxFiles, when at least one JavaScript file is
- * registered (module graph, ADR-004 PR3). Same rules: self-contained, no async/await.
+ * registered (module graph, ADR-004). Same rules: self-contained, no async/await.
  *
  * Registers the document's one import map, before the parser reaches any guest markup and before any
  * module script or import(): Firefox honours only the first import map of a document, and none once a
