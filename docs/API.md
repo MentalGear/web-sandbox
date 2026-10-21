@@ -92,7 +92,7 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 ## Configuration
 
-<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig sig:108352c838da91d012d1923da001 -->
+<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig sig:10835a2538da91d012d1923da001 -->
 [`setConfig(config)`](#setconfigconfig) takes a `SandboxConfig`, a union keyed by `mode` (`StrictSandboxConfig`,
 `CooperativeSandboxConfig`, `WorkerSandboxConfig`, each extending `SandboxConfigOptions`, the options every mode takes):
 strict mode's `origins` has no `scripts`, and a config without `mode` is a strict config (strict mode is the default).
@@ -116,15 +116,15 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 | :--- | :--- | :--- | :--- | :--- |
 | `mode` | `'strict' \| 'cooperative' \| 'worker'` | `'strict'` | — | Where guest code runs; see [Modes](#modes). Any other value starts no environment: the sandbox terminates with the reason `unknown mode …` until a valid mode is configured. `'iframe'` was renamed `'cooperative'`: refused the same way, and the reason says so. |
 | `html` | `string` | `''` | strict, cooperative | The initial view (strict mode) or the guest document (cooperative mode). In strict mode its `<script>` elements and `on…` handler attributes never run, and markup that holds any warns once per element: ``strict mode (the default) runs no script in `html`; …``. Empty means `<div id="root"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml). |
-| `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-orientation-lock`, `allow-pointer-lock`, `allow-scripts`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms` (listing either there changes nothing). |
-| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-downloads`, `allow-forms`, `allow-modals`, `allow-popups`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). |
+| `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-orientation-lock`, `allow-scripts`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms` (listing either there changes nothing). |
+| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-downloads`, `allow-forms`, `allow-modals`, `allow-pointer-lock`, `allow-popups`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `allow-pointer-lock` and `fullscreen` let a guest hide the cursor, capture relative input or draw over the whole screen, so each can imitate host or browser UI. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). |
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
 | `origins` | `SandboxOrigins` | none | all (strict: no `scripts`) | The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. See [below](#origins). |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in strict and worker mode on every browser, and in cooperative mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | strict, worker | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
 | `autoResize` | `boolean` | `false` | strict, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
-| `fetchBridge` | `FetchBridgeConfig` | off | all | Opens [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md) |
+| `fetchBridge` | `FetchBridgeConfig` | off | all | Opens [`sandboxFetch()`](#sandboxfetch); the host decides each request, and a hidden frame with an opaque origin makes it (the target sees `Origin: null`). A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md) |
 | `callLimits` | `CallLimits` | 1000 calls and 64 MiB per second | all | The per-second budget of the calls the guest makes, per environment; see [below](#calllimits). |
 | `allowAnimations` | `boolean` | `true` | strict | Whether CSS animations and transitions run in the view. **While `true`, they run on your page's main thread wherever the browser runs the view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation), and the view's time budget does not bound them: a guest can keep your page 80–98% busy.** `false` removes them (elements show their end state). Left out or `true` keeps them; any other value turns them off, with one warning when it is not a boolean. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
 | `allowAutoplay` | `boolean` | `false` | strict | Whether `<video autoplay>` and `<audio autoplay>` in the view start on their own; while `false` the `autoplay` attribute is removed and media plays only when the user starts it. With `true`, playing media costs your page's main thread where the view shares it (measured up to +6 points for 20 looping videos), outside the time budget. Only a literal `true` enables it: left out or `false` keeps it off, and so does any other value, with one warning when it is not a boolean. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
@@ -159,6 +159,15 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 - **Anything else is dropped** with one warning per entry: `https:` and other schemes, `*` and `*.example.com`,
   `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
   narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
+- **An origin that reaches the host page's site or the user's machine warns**, in every mode, once per kind: the warning
+  names the kind, each such origin and why. That covers the host page's own origin on any scheme or port, a
+  subdomain or a parent of the host page's host (`api.example.com` and `example.com` for a page on `app.example.com`),
+  and a loopback, private or link-local host (`localhost`, `127.0.0.1`, `10.x`, `192.168.x`, `169.254.x`). Firefox and
+  WebKit attach the host site's `SameSite=None` cookies to a guest request to a same-site origin, so prefer
+  [`fetchBridge`](#fetchbridge), which sends no credentials. The entry is kept; the warning is the only effect. The
+  same-site check compares names and uses no public-suffix list: a sibling (`a.example.com` for a page on
+  `b.example.com`) is not recognised, though a cookie set with `Domain=example.com` reaches it, and a public suffix
+  above the host page counts as its parent. A name that only resolves to a private address is not recognised either.
 - **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used.
 - **Strict mode has no `scripts`**: a type error in TypeScript (`SandboxConfig` is a union keyed by `mode`), and dropped
   with one warning at run time, for a config from JSON. With a mode chosen at run time, type `origins` as
@@ -199,9 +208,13 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upg
 <!-- generated:begin api-fetch-bridge -->
 The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. Only `allow` is required.
 
-Every request the host makes is pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`),
-`cache: 'no-store'` and CORS for the host page's origin. The host page's own origin and loopback, private and
-link-local hosts are refused unless listed. A listed public name that resolves to a private address cannot be detected
+The host decides every request, and a hidden frame of the library's with an opaque origin makes it, never the host
+page: the host page's Service Worker and any wrapper of its `fetch` never see it. So the target sees `Origin: null`,
+and its CORS must allow that: `Access-Control-Allow-Origin: *` (no credentials are sent) or `null`. Every request is
+pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`) and `cache: 'no-store'`. The
+frame runs the library's hashed bootstrap, so a host page policy that admits the sandbox admits it
+([Host page policy](#host-page-policy)). The host page's own origin and loopback, private and link-local hosts are refused
+unless listed. A listed public name that resolves to a private address cannot be detected
 from a page. A number that is not finite or is below 1 takes its default, and one above its bound takes the bound.
 See [ADR-006](ADR-006-fetch-bridge.md).
 
@@ -658,15 +671,19 @@ structured clone refuses (a function, a Symbol, a DOM node, an `Event`, a `Respo
 handlers and of worker mode's worker: they arrive as `Uncaught Script error.`, all the browser gives.
 
 The bounds: `LOG_MAX_ARGS` and `LOG_MAX_STRING` bound the strings; `LOG_MAX_BYTES` bounds all arguments of a line
-together, whatever they are (a typed array, an object of 100 000 keys), measured as [`call()`](#callmethod-args)
-measures a message: an argument past what is left of it is a string saying so (`[Uint8Array: past the log line's byte
+together (a typed array, an object of 100 000 keys), measured as [`call()`](#callmethod-args)
+measures a message, **except** that the measure counts a `File` or a `Blob` as 64 bytes though a clone carries the
+`File`'s `name` (and the `Blob`'s `type` on Firefox and WebKit) whole, and a sparse array by its present elements, not
+its `length` ([S77](BACKLOG.md#s77), open, high): an argument past what is left of it is a string saying so (`[Uint8Array: past the log line's byte
 budget (1048576)]`), and one holding a value the measure does not know (an `ImageData`) a string naming it
 (`[unsupported value: ImageData]`); when even that string would not fit, the line ends with one string saying how many
 arguments it dropped (`[Sandbox] 3 more argument(s) past the log line's byte budget (1048576)`), so a line never
 measures past `LOG_MAX_BYTES` where it arrives. An `Error` anywhere in an argument (in an object, an array, a `Map`, a `Set`,
 `Promise.allSettled`'s results; within 64 levels and 10 000 objects) is sent as `{ name, message, stack }` first.
 The guest applies them before a line is posted, and sends at most `LOG_EVENTS_PER_SECOND` lines and 4 MiB in any one-second window (one `warn` line when it
-starts dropping), so a flood never reaches the host page's thread. In cooperative mode the browser's own console gets a
+starts dropping), so a flood of values the measure counts truly does not reach the host page's thread; a flood of long `File` names does on Firefox,
+and one line holding a sparse array of a large `length` holds it for as long as the library's own walk of that `length`
+takes (a minute or more in Chromium), until the lines queued are processed and `terminate()` can run (S77). In cooperative mode the browser's own console gets a
 dropped line not at all and a cut line cut; in worker and strict mode it gets none (the worker's console is not a sink:
 `sandbox-log` is). The element measures every line again on receipt, and dispatches at most `LOG_EVENTS_PER_SECOND`
 guest lines in any one-second window per environment (one warning); the relay's own lines (`<mode> Ready` and its
@@ -732,11 +749,12 @@ The `detail` of a `fetch` event: one request through the bridge, reported once w
 one is allowed and gives `undefined`.
 
 - `'ok'`: a response was handed to the guest, whatever its HTTP status. Has `status`; has no `code`.
-- `'refused'`: no request was made; the bridge's rules, or the browser's `Request`, refused it. `code` says why
- (`FETCH_NOT_ALLOWED`, `FETCH_BUSY` or `FETCH_TOO_LARGE` for a request body). `bytes` is `0`. `reason` is present for
- a refusal of an origin that is not listed: what the host knows beyond the text the guest gets (the host page's own
- origin, or a loopback, private or link-local host).
-- `'failed'`: `fetch()` was called and no whole response was handed over; `code` says why (`FETCH_REDIRECT`,
+- `'refused'`: no request was made; the bridge's rules, or the browser's `Request`, refused it, or the bridge's frame
+ could not start. `code` says why (`FETCH_NOT_ALLOWED`, `FETCH_BUSY`, `FETCH_TOO_LARGE` for a request body, or
+ `FETCH_FAILED` when the frame could not start). `bytes` is `0`. `reason` is present for a refusal of an origin that
+ is not listed (the host page's own origin, or a loopback, private or link-local host) and for a frame that could
+ not start: what the host knows beyond the text the guest gets.
+- `'failed'`: the request was handed to the bridge's frame and no whole response was handed over; `code` says why (`FETCH_REDIRECT`,
  `FETCH_TOO_LARGE` for a response body, `FETCH_TIMEOUT` or `FETCH_FAILED`). `status` is present once a response's
  status was read (not for a redirect, which is refused first). It is not proof that a request left the page: the browser's `fetch` also rejects some requests before
  sending them (the host page's own `connect-src`, mixed content, local-network blocking).
@@ -911,7 +929,7 @@ Set only by the host (`FETCH_ERROR_CODES`):
 | `FETCH_REDIRECT` | The response was a redirect, which is never followed. | no |
 | `FETCH_TOO_LARGE` | The request or response body exceeds `maxBytes`. | no |
 | `FETCH_TIMEOUT` | No whole response within `timeoutMs`. | yes |
-| `FETCH_FAILED` | Network error, CORS, or the environment was torn down. | yes |
+| `FETCH_FAILED` | Network error, CORS (the target sees `Origin: null`), the bridge's frame could not start, or the environment was torn down. | yes |
 
 HTTP error statuses resolve, as with `fetch`. `sandboxFetch()` can also reject with a call code (for example
 `TIMEOUT`, as a backstop 5 s after `timeoutMs`), and with a `TypeError` for a body it cannot send.
@@ -1031,8 +1049,8 @@ with `TIMEOUT`, and the change is listed all the same). A listener's `reset()` d
 
 ### `sandboxFetch`
 
-`sandboxFetch(url: string, init?: { method?, headers?, body? }): Promise<Response>` — asks the host to make the
-request under the [`fetchBridge`](#fetchbridge) rules; without `fetchBridge` every request rejects with
+`sandboxFetch(url: string, init?: { method?, headers?, body? }): Promise<Response>` — asks the host for the request,
+which it decides under the [`fetchBridge`](#fetchbridge) rules and the bridge's frame makes; without `fetchBridge` every request rejects with
 `FETCH_NOT_ALLOWED`. Only `method`, `headers` and `body` are read from `init`, each once;
 the body is a string, an `ArrayBuffer` or a typed array. Resolves with a whole `Response` (no streaming, no
 `AbortSignal`); rejects with a [`FetchErrorCode`](#sandboxfetch-fetcherrorcode). `fetch` itself is untouched;
@@ -1259,11 +1277,18 @@ in strict mode.
 | Fetch: default `maxConcurrent` | 4 | — |
 | Fetch: largest `maxConcurrent` | 16 | — |
 | Fetch: characters of a URL, as written and as parsed | 8192 | — |
+| Fetch: characters of a response's status text and headers, together | 262144 | — |
 | Guest writes: requests per second, per environment | 100 | `GUEST_WRITES_PER_SECOND` |
 | Guest writes: bytes per second, per environment | 8388608 (8 MiB) | `GUEST_WRITE_BYTES_PER_SECOND` |
 <!-- generated:end -->
 
 The same limits by channel of guest activity, each with the test that checks it: [Budgets](#budgets).
+
+**Where a byte limit does not hold yet** ([S77](BACKLOG.md#s77), open, high; backlogged, not mitigated now: owner,
+2026-10-21). The byte limits above (a log line, an RPC message, the arguments of calls running at once) are measured
+with the one measure of `call()`, which counts a `File` or a `Blob` as 64 bytes and an array by its present elements;
+a `File`'s `name` (and a `Blob`'s `type` on Firefox and WebKit) and a sparse array's `length` pass them. The bytes of
+calls running at once are therefore capped for what the measure counts, not for a `File`'s name.
 
 ---
 
@@ -1288,7 +1313,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Calls the guest makes (`bridge.call`), to the embedder's methods | `callLimits.maxPerSecond` in any second, by default `GUEST_CALLS_PER_SECOND` (1000), counted by the guest and again by the host; `MAX_INBOUND_IN_FLIGHT` (256) running at once | `RPC_MAX_BYTES` (34603008) a call, its whole frame measured by both ends; `callLimits.maxBytesPerSecond` a second, by default `GUEST_CALL_BYTES_PER_SECOND` (67108864); `RPC_MAX_INBOUND_BYTES` (67108864) of arguments running at once; a method name of at most `MAX_NAME_LENGTH` (256) characters | none of its own: the embedder's methods run as long as they take | none beyond the count and the bytes | test/unit/rpc-bounds-and-call-limits.test.ts (M-2, C-1); test/unit/config-schema.test.ts; test/unit/rate-limit.prop.test.ts |
 | Answers to the host's calls (`bridge.expose`) | one a call the host made: the host's pending calls | `RPC_MAX_BYTES` (34603008) an answer, measured by both ends; an error text cut at `MAX_TEXT_LENGTH` (65536) characters by both ends | the host's call timeout (`callWithTimeout`; by default `DEFAULT_TIMEOUT_MS` (30000) ms) | none beyond the host's pending calls and the bytes | test/unit/rpc-bounds-and-call-limits.test.ts (C-1); test/unit/structural.test.ts |
 | Guest writes (`sandboxFiles.write`, `remove`) | `GUEST_WRITES_PER_SECOND` (100) requests in any second, and each as a call; what is kept, at most `MAX_FILES` (1000) files with the registered ones | `GUEST_WRITE_BYTES_PER_SECOND` (8388608) in any second; what is kept, at most `MAX_TOTAL_BYTES` (8388608) with the registered files | none of its own: the count and the bytes | none beyond the count and the bytes | test/unit/guest-writes.test.ts; test/e2e/guest-writes.spec.ts |
-| `sandboxFetch()`: the host page's fetch, on the guest's behalf | `fetchBridge.maxConcurrent` at once, at most `MAX_MAX_CONCURRENT` (16); and each as a call | `fetchBridge.maxBytes` a response, at most `MAX_MAX_BYTES` (33554432) | `fetchBridge.timeoutMs` a request, at most `MAX_TIMEOUT_MS` (120000) ms | none beyond the count, the bytes and the time: each request is the host page's own fetch | src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts |
+| `sandboxFetch()`: a request the host decides and the bridge's frame makes, on the guest's behalf | `fetchBridge.maxConcurrent` at once, at most `MAX_MAX_CONCURRENT` (16); and each as a call | `fetchBridge.maxBytes` a response, at most `MAX_MAX_BYTES` (33554432); its status text and headers at most `MAX_RESPONSE_HEAD` (262144) characters together | `fetchBridge.timeoutMs` a request, at most `MAX_TIMEOUT_MS` (120000) ms | none beyond the count, the bytes and the time: each request is one fetch of the bridge's frame (an opaque origin: no Service Worker, no wrapper of the host page's), its body crossing to the host page one chunk at a time, as the host reads it | src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts; test/e2e/fetch-bridge-isolation.spec.ts |
 | CSP violation reports, to `violation` | `VIOLATION_EVENT_LIMIT` (100) events an environment (strict mode: per source, and per directive for the view) | each string cut at `VIOLATION_MAX_STRING` (2048) characters before it is posted, by the bootstrap and by the view, and again by the host on receipt | none of its own: the count | none beyond the count | src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts |
 | Content heights (`autoResize`), to the frame's height | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) a second, and one a frame | a number, at most `AUTO_RESIZE_MAX_HEIGHT` (100000) px | none of its own: one relayout of the host page's frame a change | a cap: `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) relayouts of the host page's frame a second | src/lib/auto-resize.test.ts; test/e2e/auto-resize.spec.ts |
 | Liveness answers (PONG, VIEW_PONG), to the host's probes | one a probe of the host's | a number | `VIEW_LIVENESS_TIMEOUT_MS` (5000) ms for the view to answer; `EXECUTION_TIMEOUT_GRACE_MS` (1000) ms past a deadline for the worker (`workerExecutionTimeout`) | none: the library's own | src/lib/watchdog.test.ts; test/e2e/watchdog.spec.ts |
@@ -1300,7 +1325,19 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Cooperative: the guest's own document | none: the guest runs on the host page's thread wherever the engine puts its frame there | none | none: one loop can freeze the host page ([Modes](#modes)) | unbounded: a cooperative-mode limit | README (cooperative-mode limits) |
 <!-- generated:end -->
 
-<!-- describes: budgets sig:f207 -->
+**Where the table's bounds do not hold yet** (backlogged, not mitigated now: owner, 2026-10-21; both stay rated high).
+- **Bytes** ([S77](BACKLOG.md#s77)): the byte columns of the log lines, calls and answers rows, and the in-flight cap,
+  rest on one measure that counts a `File` or a `Blob` as 64 bytes and a sparse array by its present elements. A `File`'s
+  `name` crosses every one of them whole, and a sparse array's `length` is walked by the library's own `freezeDeep` on the
+  host page's thread for each `sandbox-log` line. "None beyond the count and the bytes" is therefore not true of those
+  rows for these values.
+- **Characters** ([S78](BACKLOG.md#s78)): on Firefox, the second row's character budget does not count a rejection
+  reason whose `Symbol.toStringTag` the guest set, so only its count (`UNCAUGHT_PER_SECOND`) bounds those, and the host
+  page's thread stalls for seconds a second while the sandbox stays `ready`.
+- **`terminate()`** ends either flood, but only after the reports already queued are processed; and where the view shares
+  the host page's thread it cannot run during a stall of the view ([(b)](#b-the-single-operation-bound)).
+
+<!-- describes: budgets sig:6872 -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
 shared 4-core VM, 2026-10-19 ([R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
 of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;
@@ -1404,6 +1441,12 @@ twice within 5 minutes`), and no operation runs after it; an overrun later than 
 window runs from it. Why not the first: the meter measures wall time on a thread the view shares with your page and the
 machine, so under load it passes 2000 ms for operations that are healthy ([ADR-005](ADR-005-strict-mode.md)).
 
+**Exception: desktop Chromium** ([S79](BACKLOG.md#s79), open). There the view runs in a process of its own, so the host
+page's ticks keep counting while the view is busy, and the view's liveness ping (5000 ms)
+ends the sandbox (`the sandbox view stopped responding`) at the **first** operation that keeps the view silent for longer
+than that, as a 240 000-character bidirectional paragraph does (5.7 s measured, Chromium 145). An overrun of 2 to about 5
+s is survived there as described; a longer one is not. This fails closed, and the host page is not stalled.
+
 So the bound is: **at most one stall past 2000 ms per 5 minutes beyond the first**, and **each stall is what that one
 operation costs before the view can observe it**: an operation is not interruptible, so the view learns its cost only
 when it has ended, and the host page stalls for all of it. That cost is bounded only by the caps of (c) on what the
@@ -1441,7 +1484,7 @@ The first three rows are (a)'s and (b)'s; the rest bound what the view's meter c
 | `LOG_EVENTS_PER_SECOND` | 1000 | The guest's error texts the view posts to the host page per second (GUEST_ERROR and GUEST_UNCAUGHT frames, each cut to 2048 characters before posting). |
 | `VIOLATION_EVENT_LIMIT` | 100 | `violation` events the host page dispatches from the view, per directive; every refusal is charged to `VIEW_URLS_PER_SECOND` all the same. |
 | `UNCAUGHT_PER_SECOND` | 1000 | Uncaught errors and unhandled rejections of the guest's worker per second, which Firefox reports on the view's thread; past it the sandbox ends. |
-| `UNCAUGHT_CHARACTERS_PER_SECOND` | 1048576 | Their characters per second; past it the sandbox ends. |
+| `UNCAUGHT_CHARACTERS_PER_SECOND` | 1048576 | Their characters per second; past it the sandbox ends (not counted for a reason the guest tagged with `Symbol.toStringTag` on Firefox: [S78](BACKLOG.md#s78)). |
 
 The call budgets (`callLimits`) and the worker's log budget do not touch the view: calls and log lines go between the
 host page and the worker over the logic port, never through the view.
@@ -1456,9 +1499,9 @@ This list is closed: a cost of the view not listed here and not inside (a) or (b
 | What else runs on its own, which `allowAnimations: false` does not stop: animated images, indeterminate `<progress>`, autoplaying media with `allowAutoplay: true` | 2 000 animated PNGs: WebKit 39% (+22 points), Firefox 12%; 5 000 `<progress>`: up to +4 points; 20 looping videos: up to +6 points | research 16 |
 | Relayout after image decodes or font swaps: the browser's work after the frame the meter measured; only the load rate and the caps of (c) bound it | One render of 1 000 admitted images without dimensions above 15 000 paragraphs, the responses spread over 2 s, so that each arrival lays the paragraphs out again: over the 3 s after it, Chromium 40%, Firefox 22%, WebKit 37% busy, longest gap 226, 55 and 289 ms (the loads themselves included; (a)'s flood of images with dimensions, 3–8%). One `@font-face` swap over 15 000 paragraphs: 2%, 5% and 23% busy over the 3 s around it, longest gap 31, 54 and 214 ms. | [review round 5](archive/reviews/REVIEW-ROUND-5-2026-10-19.md), "What remains"; `test/e2e/view-bound.spec.ts` (d), on demand |
 | The documented single-operation stalls, each one operation's own cost: CSS filters, bidirectional text, small CSS changes over many elements, selectors whose matching grows faster than the elements, `<img>` in Chromium, and WebKit's first value of a 250 000-character textarea | 10 `blur()`s on 1 000 elements: WebKit 3.7 s (100 on 1 000: over 180 s); 240 000 characters of bidirectional text in one paragraph: tens of seconds in Chromium and WebKit; a 31-character `text()` into a `<style>` over 46 000 elements: Firefox 7 s; a rule whose `:has()` looks at every later sibling, over 24 000 elements: Chromium 4.2 s, Firefox 8.9–9.2 s, WebKit 7.1–8.6 s; 6 500 `<img alt>`: Chromium 1.9–2.6 s, Firefox and WebKit about 150 ms (an example, measured 2026-10-18); the first `set()` of a 250 000-character textarea: WebKit over 2 s, an overrun the sandbox survives. Past `VIEW_MAX_OPERATION_MS` each is an overrun, after the stall: charged in full, and the second within `VIEW_OVERRUN_WINDOW_MS` ends the sandbox ((b)). | [broad review](archive/reviews/BROAD-REVIEW-2026-10-14.md), review rounds [1](archive/reviews/REVIEW-ROUND-1-2026-10-15.md), [4](archive/reviews/REVIEW-ROUND-4-2026-10-18.md) and [5](archive/reviews/REVIEW-ROUND-5-2026-10-19.md) |
-| Memory: not bounded | No budget counts it. The caps of (c) bound what the document holds, not what that costs in memory (decoded images, the caches of up to `VIEW_MAX_DISTINCT_URLS` URLs, layout structures); measured only where it ended a run: a flood of large rejections took Firefox's content process to 7 GB before the uncaught budget ended such floods | [review round 5](archive/reviews/REVIEW-ROUND-5-2026-10-19.md), N-1 |
+| Memory: not bounded | No budget counts it. The caps of (c) bound what the document holds, not what that costs in memory (decoded images, the caches of up to `VIEW_MAX_DISTINCT_URLS` URLs, layout structures), nor a `File`'s name that the byte measure does not count ([S77](BACKLOG.md#s77): on Chromium, 8 calls held 1 GiB against the 64 MiB cap of arguments running at once, and the host renderer grew by about 2 GiB); measured otherwise only where it ended a run: a flood of large rejections took Firefox's content process to 7 GB before the uncaught budget ended such floods | [review round 5](archive/reviews/REVIEW-ROUND-5-2026-10-19.md), N-1 |
 | `:hover` restyles driven by the user's pointer over many elements | 80–100% busy while the pointer moves (5 000 elements under a `:hover ~` rule) | research 16 |
-| Firefox's cost of the worker's unhandled rejections, which it reports on the view's thread, cancelled or not | Within `UNCAUGHT_PER_SECOND`: 1 000 cancelled a second idle, 1 000 handled a tick later 4–7% busy, 1 Mi characters a second 6%; one rejection of 16 Mi characters about 0.5 s, after which the sandbox ends. A relay worker does not change it. | `src/lib/egress.ts`; [research 19](research/19_relay_worker/README.md) |
+| Firefox's cost of the worker's unhandled rejections, which it reports on the view's thread, cancelled or not | Within `UNCAUGHT_PER_SECOND`: 1 000 cancelled a second idle, 1 000 handled a tick later 4–7% busy, 1 Mi characters a second 6%; one rejection of 16 Mi characters about 0.5 s, after which the sandbox ends. A relay worker does not change it. **Not for a reason whose `Symbol.toStringTag` the guest set** ([S78](BACKLOG.md#s78), open, high): its characters are not counted, so only `UNCAUGHT_PER_SECOND` bounds it, and a 4 s flood of 16 Mi-character rejections stalled Firefox's host page for 18.9 s (longest 7.6 s) with the sandbox `ready` (measured 2026-10-21). | `src/lib/egress.ts`; [research 19](research/19_relay_worker/README.md) |
 
 Outside the statement altogether, as everywhere: cooperative mode, whose guest runs in a frame that can freeze the host
 page with one loop where it shares its thread ([Modes](#modes)).
@@ -1480,19 +1523,24 @@ policy must allow:
 | `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; with `allowAnimations: false`, also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
 | `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` | the same | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
+| With `fetchBridge` | the bridge's frame runs the view bootstrap too: the same hash, or `'unsafe-inline'`, admits it; `connect-src`: every origin in `fetchBridge.allow` (the frame's requests inherit your policy) | the same: `'unsafe-inline'` admits the frame's script | the same |
 | Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox`, which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
 | `Cross-Origin-Embedder-Policy: require-corp` | works in Chromium and Firefox; WebKit refuses the view's `blob:` worker | works; resources from `origins` need CORP or CORS headers | as strict |
 
 - **What a refusal looks like**: the build ends with a reason that names your page's policy: `the sandbox's startup
   script did not run …` (a refused bootstrap), `the sandbox's worker could not be loaded …` (a refused `blob:` worker),
-  `… does not allow the policy name 'web-sandbox' …` (Trusted Types). A refused wrapper style leaves the frame 150 px
+  `… does not allow the policy name 'web-sandbox' …` (Trusted Types). A refused fetch bridge frame leaves the sandbox
+  running and fails the bridge closed: every `sandboxFetch()` rejects with `FETCH_FAILED`, each `fetch` record is
+  `refused` with a `reason` that names the hash, and the element warns once. A refused wrapper style leaves the frame 150 px
   high, and the element warns with the hash to allow; so does a refused animation stylesheet (`allowAnimations: false`),
   whose view then shows no guest stylesheet.
 - **Your `connect-src`, `img-src` and the other fetch directives narrow `origins` silently**: an origin listed in
   `origins` that your page's policy does not allow is refused in the sandbox too. The refusal happens in the sandbox's
   documents, so it arrives as the element's `violation` event (where the browser reports it), never as a
   `securitypolicyviolation` on your page, and nothing warns at `setConfig()`.
-- **The view bootstrap's hash** is `viewScriptHash()`, the very value the element puts in the view's `script-src`.
+- **The view bootstrap's hash** is `viewScriptHash()`, the very value the element puts in the view's `script-src`, and in
+  the fetch bridge's frame's: the library has one hashed bootstrap, which runs the view in strict mode and, with
+  `fetchBridge`, the frame that makes the bridge's requests in every mode, so one hash admits both.
   It is constant for one version of the package (the bootstrap is a string literal of the package's bundle, so your
   bundler or minifier does not change it), and it changes with the package's version, so it is not listed here: read
   it in a build step (importing the package needs no DOM, in Node or Bun) and put it in your page's policy:
@@ -1514,7 +1562,7 @@ Values:
 | Export | What it is |
 | :--- | :--- |
 | `defineWebSandbox` | Registers `WebSandbox` as a custom element under `tagName` and returns the class. |
-| `viewScriptHash` | The CSP hash source of strict mode's view bootstrap for this release of the package, to allow in the host page's own Content-Security-Policy. |
+| `viewScriptHash` | The CSP hash source of the library's bootstrap for this release of the package, to allow in the host page's own Content-Security-Policy: strict mode's view runs it, and so does the fetch bridge's frame. |
 | `SandboxDevTools` | Logs one sandbox's `sandbox-log` lines to the host page's console, safely: the values go after a fixed first argument, so a guest string is never read as a console format string. |
 | `WebSandbox` | The `<web-sandbox>` custom element: one sandboxed environment for untrusted web content, rebuilt by `setConfig()`, `load()` and `reset()`. |
 | `AUTO_RESIZE_MAX_HEIGHT` | The tallest height, in CSS pixels, a guest can give the element; larger reports are clamped to it. |

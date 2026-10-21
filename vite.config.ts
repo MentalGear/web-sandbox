@@ -57,8 +57,10 @@ export default defineConfig({
       }
       // Test endpoint (fetch bridge specs, backlog B5): answers with the request's method and headers, so a
       // spec can see what reached the harness origin, outside the browser. Same origin as the harness, so a
-      // credentialed request here carries the harness's cookies in every engine.
+      // credentialed request here carries the harness's cookies in every engine. CORS for any origin: the bridge's
+      // requests come from an opaque origin, `Origin: null` (BD1:ISO-1).
       server.middlewares.use('/__echo', (req, res) => {
+        res.setHeader('access-control-allow-origin', '*');
         res.setHeader('content-type', 'application/json');
         res.setHeader('cache-control', 'no-store');
         res.end(JSON.stringify({ method: req.method, headers: req.headers }));

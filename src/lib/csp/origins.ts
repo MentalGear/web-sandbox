@@ -24,8 +24,11 @@ import { defineData } from "../utils";
  * per entry (other schemes, `*`, `'self'` and other keywords, paths, credentials, an IPv6 literal, a non-ASCII or
  * percent-encoded host), and a key that is not a kind is dropped too. Dropping only narrows: a kind with no origin left
  * admits none. An `origins` that is not an object, or a kind that is not a list, cannot be read and refuses the whole
- * config. Registered files add `blob:` to the directive of each kind of load their type is for, whatever is listed
- * here. See ADR-007.
+ * config. An origin on the host page's site (its own host on any scheme or port, a subdomain or a parent of it) or a
+ * loopback, private or link-local host is kept, with one warning per kind in every mode: Firefox and WebKit may send
+ * the host site's cookies with a guest request to the first, and the second reaches the user's own machine or
+ * network; the fetch bridge sends no credentials. Registered files add `blob:` to the directive of each kind of load
+ * their type is for, whatever is listed here. See ADR-007.
  *
  * @defaultValue none
  */

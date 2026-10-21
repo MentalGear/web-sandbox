@@ -92,6 +92,10 @@ generated from. The view shares the host page's thread
 on Firefox, WebKit and Android, so no budget of the library's removes that cost: past a stated bound, chasing it gives
 diminishing returns.
 
+**The review board's rule (owner, 2026-10-21):** in the S74 board's fix batches a finding that leaks data is fixed, while
+every DoS or availability finding, the exception 3 kind (a budget failing open with only an availability effect)
+included, is backlogged and keeps the severity the verifier confirmed (S77 and S78 stay rated high).
+
 These are **not** availability findings, and are fixed as any other:
 1. a host page that can never regain control, or a stall bounded by nothing the library states (no cap, no limit,
    only the browser's) (high). A single-operation stall whose cost is bounded by the documented caps, and which the
@@ -120,6 +124,7 @@ the registry [docs/ids.ts](docs/ids.ts):
 | Form | Names | Example |
 | :--- | :--- | :--- |
 | `R1:`, `R2:`, `R3:`, `R4:`, `R5:` and the finding's own ID | a finding of that review round | `R5:M-2`, `R1:R3-6` |
+| `BD1:` and the finding's own ID | a finding of the S74 review board's pass 1 (ISO, CHL, LIM, DOC, TST, NEW, CO) | `BD1:ISO-1` |
 | `AR:`, `BR:`, `FR:`, `VR:` and the finding's own ID | a finding of the adversarial, broad and focused reviews and the verification | `BR:CB1` |
 | `S<n>`, `T<n>`; `BL:` for the B, C, D and H series | a backlog item | `S76`, `BL:D1` |
 | `ADR-<nnn>`, `ADR-<nnn>#<heading anchor>` | an ADR, or one of its sections | `ADR-005` |

@@ -5,9 +5,13 @@
  * the host to make the request: the guest's policy is unchanged (connect-src stays what the embedder set,
  * 'none' by default), and every request the host makes for the guest is decided and logged here.
  *
- * Bridge discipline: the bridge grants no more than a direct guest request would. A fetch from the host
- * page runs with the host page's authority, so every request it makes for the guest is pinned to:
- *   - credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', mode: 'cors';
+ * Bridge discipline: the bridge grants no more than a direct guest request would. Every request is decided here, on
+ * the host, and made by the bridge's frame (bridge-frame.ts, in-bridge-frame.ts; BD1:ISO-1, class E-net), a frame of
+ * the library's with an opaque origin: the transport createFetchBridge is given is that frame's, and nothing here calls
+ * the host page's fetch. So no Service Worker of the host page answers a bridge request (none controls an opaque
+ * origin), no wrapper of the host page's fetch sees it, and the target sees `Origin: null`. Every request is pinned to:
+ *   - credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', mode: 'cors' (BRIDGE_REQUEST_OPTIONS, the
+ *     same options in the Request the host checks and in the request the frame makes);
  *   - redirect: 'manual' — a redirect is never followed; the opaque redirect it yields is refused with
  *     FETCH_REDIRECT (the same no-follow guarantee as 'error', but told apart from a network failure);
  *   - an exact-origin allowlist (scheme, host and port; no source expressions). That alone refuses the host
@@ -16,11 +20,12 @@
  *     widening of the allowlist. A page cannot see DNS answers: a listed public name that resolves to a
  *     private address (DNS rebinding) is a limit, not a guarantee;
  *   - methods and request headers from allowlists (no Cookie ever; Authorization only when listed);
- *   - a body cap read incrementally (Content-Length is checked first, never trusted), a per-call timeout
- *     and an AbortController that teardown also fires; whole responses only, no streaming;
+ *   - a body cap read incrementally (Content-Length is checked first, never trusted), one chunk at a time as the host
+ *     reads it from the frame, a per-call timeout and an AbortController that teardown also fires; whole responses
+ *     only, no streaming;
  *   - a cap on concurrent requests, so the host's memory is bounded by maxConcurrent × maxBytes.
- * The request is made from the host page, so the target sees the host page's origin in `Origin` (never its
- * URL: no Referer) and the response must pass CORS for that origin.
+ * The target sees `Origin: null` (never the host page's origin or URL: no Referer), and the response must pass CORS for
+ * an opaque origin: `Access-Control-Allow-Origin: *` (no credentials are sent) or `null`.
  *
  * Every request is reported once, when it settles, as a FetchRecord (the host's 'fetch' event): refused
  * attempts included. Fields that come from the guest are validated or clamped before they are reported. Once the
@@ -34,6 +39,7 @@ import type { Complete, Holds } from './utils';
 import { parseOrigin, type Origin, type OriginRules } from './origin';
 import { shown } from './csp/origins';
 import { setLongTimeout } from './long-timer';
+import { BRIDGE_REQUEST_OPTIONS } from './in-bridge-frame';
 
 /** The method name the bridge is exposed under: reserved, so no exposed method can collide with it. */
 export const FETCH_METHOD = 'sandbox:fetch';
@@ -45,7 +51,8 @@ export const FETCH_METHOD = 'sandbox:fetch';
  * - `FETCH_REDIRECT`: the response was a redirect, which is never followed.
  * - `FETCH_TOO_LARGE`: the request body or the response body exceeds `maxBytes`.
  * - `FETCH_TIMEOUT`: no whole response within `timeoutMs`. Retryable.
- * - `FETCH_FAILED`: the request failed (network error, CORS), or the sandbox was torn down. Retryable.
+ * - `FETCH_FAILED`: the request failed (network error, CORS), the bridge's frame could not start, or the sandbox was
+ *   torn down. Retryable.
  */
 export type FetchErrorCode = Extract<RpcLibraryCode, `FETCH_${string}`>;
 
@@ -60,9 +67,13 @@ export const FETCH_ERROR_CODES: readonly FetchErrorCode[] = FETCH_CODES;
  * The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. Only `allow` is required.
  *
  * @remarks
- * Every request the host makes is pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`),
- * `cache: 'no-store'` and CORS for the host page's origin. The host page's own origin and loopback, private and
- * link-local hosts are refused unless listed. A listed public name that resolves to a private address cannot be detected
+ * The host decides every request, and a hidden frame of the library's with an opaque origin makes it, never the host
+ * page: the host page's Service Worker and any wrapper of its `fetch` never see it. So the target sees `Origin: null`,
+ * and its CORS must allow that: `Access-Control-Allow-Origin: *` (no credentials are sent) or `null`. Every request is
+ * pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`) and `cache: 'no-store'`. The
+ * frame runs the library's hashed bootstrap, so a host page policy that admits the sandbox admits it
+ * (docs/API.md#host-page-policy). The host page's own origin and loopback, private and link-local hosts are refused
+ * unless listed. A listed public name that resolves to a private address cannot be detected
  * from a page. A number that is not finite or is below 1 takes its default, and one above its bound takes the bound.
  * See ADR-006.
  */
@@ -123,7 +134,7 @@ export interface FetchPolicy {
  * refusal whose guest text says less; it goes to the record, never to the guest (the broker sends only the message
  * and the code).
  */
-export type FetchRefusal = Error & { code: FetchErrorCode; reason?: string };
+export type FetchRefusal = Error & { code: FetchErrorCode; reason?: string; unsent?: true };
 
 /**
  * The `detail` of a `fetch` event: one request through the bridge, reported once when it settled. A union keyed by
@@ -131,11 +142,12 @@ export type FetchRefusal = Error & { code: FetchErrorCode; reason?: string };
  * one is allowed and gives `undefined`.
  *
  * - `'ok'`: a response was handed to the guest, whatever its HTTP status. Has `status`; has no `code`.
- * - `'refused'`: no request was made; the bridge's rules, or the browser's `Request`, refused it. `code` says why
- *   (`FETCH_NOT_ALLOWED`, `FETCH_BUSY` or `FETCH_TOO_LARGE` for a request body). `bytes` is `0`. `reason` is present for
- *   a refusal of an origin that is not listed: what the host knows beyond the text the guest gets (the host page's own
- *   origin, or a loopback, private or link-local host).
- * - `'failed'`: `fetch()` was called and no whole response was handed over; `code` says why (`FETCH_REDIRECT`,
+ * - `'refused'`: no request was made; the bridge's rules, or the browser's `Request`, refused it, or the bridge's frame
+ *   could not start. `code` says why (`FETCH_NOT_ALLOWED`, `FETCH_BUSY`, `FETCH_TOO_LARGE` for a request body, or
+ *   `FETCH_FAILED` when the frame could not start). `bytes` is `0`. `reason` is present for a refusal of an origin that
+ *   is not listed (the host page's own origin, or a loopback, private or link-local host) and for a frame that could
+ *   not start: what the host knows beyond the text the guest gets.
+ * - `'failed'`: the request was handed to the bridge's frame and no whole response was handed over; `code` says why (`FETCH_REDIRECT`,
  *   `FETCH_TOO_LARGE` for a response body, `FETCH_TIMEOUT` or `FETCH_FAILED`). `status` is present once a response's
  *   status was read (not for a redirect, which is refused first). It is not proof that a request left the page: the browser's `fetch` also rejects some requests before
  *   sending them (the host page's own `connect-src`, mixed content, local-network blocking).
@@ -449,7 +461,7 @@ export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigi
 }
 
 /** Reads a response body chunk by chunk, stopping as soon as it exceeds maxBytes. */
-async function readBody(response: Response, maxBytes: number, onBytes: (total: number) => void): Promise<Uint8Array> {
+async function readBody(response: BridgeResponse, maxBytes: number, onBytes: (total: number) => void): Promise<Uint8Array> {
     const declared = response.headers.get('content-length');
     if (declared !== null && /^\d+$/.test(declared.trim()) && Number(declared) > maxBytes) {
         await response.body?.cancel().catch(() => {});
@@ -481,13 +493,32 @@ async function readBody(response: Response, maxBytes: number, onBytes: (total: n
     return body;
 }
 
+/**
+ * A response as the bridge reads it: what the bridge's frame reports of the response it received (bridge-frame.ts), its
+ * body read from the frame one chunk at a time. A platform Response has this shape too (the unit tests' transports).
+ */
+export interface BridgeResponse {
+    readonly type: string;
+    readonly status: number;
+    readonly statusText: string;
+    readonly headers: { get(name: string): string | null; has(name: string): boolean; forEach(callback: (value: string, name: string) => void): void };
+    readonly body: ReadableStream<Uint8Array> | null;
+}
+
+/**
+ * What makes a bridge request: given the Request the bridge built and checked, and the init it was built from (the
+ * validated method, headers and body, BRIDGE_REQUEST_OPTIONS and the request's signal), it resolves with the response or
+ * rejects. In the element it is always the bridge frame's (bridge-frame.ts, createBridgeFrame); a test passes its own.
+ */
+export type BridgeTransport = (request: Request, init: RequestInit) => Promise<BridgeResponse>;
+
 export interface FetchBridgeOptions {
     policy: FetchPolicy;
     hostOrigin: string;
     /** Called once per request, when it settles (the host dispatches the 'fetch' event). */
     onRecord: (record: FetchRecord) => void;
-    /** The fetch to use; the page's by default. */
-    fetchImpl?: typeof fetch;
+    /** What makes the requests: the bridge frame's transport (BD1:ISO-1). There is no default. */
+    transport: BridgeTransport;
     now?: () => number;
 }
 
@@ -535,7 +566,7 @@ const TEARDOWN = 'teardown';
 const TIMEOUT = 'timeout';
 
 /** One bridge per environment: its requests end with the environment (abortAll). */
-export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now = () => performance.now() }: FetchBridgeOptions): FetchBridge {
+export function createFetchBridge({ policy, hostOrigin, onRecord, transport, now = () => performance.now() }: FetchBridgeOptions): FetchBridge {
     const inFlight = new Set<AbortController>();
     let closed = false;
 
@@ -588,22 +619,17 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
 
         // The platform validates the request before anything is recorded as made (AR:B6): the Request constructor applies the Fetch standard's own checks (a header value is a
         // ByteString without NUL, CR or LF; the body is a BufferSource or a string; the method and mode agree),
-        // so nothing it refuses can reach fetch() and be reported as 'failed'. What it throws is a refusal; no
+        // so nothing it refuses can reach the frame and be reported as 'failed'. What it throws is a refusal; no
         // request exists then. validateRequest() keeps only what is policy: the origin allowlist, private hosts,
-        // methods, header names, sizes. fetch() is given that Request and the same init, so what was checked is
-        // what is sent.
+        // methods, header names, sizes. The transport is given that Request and the same init, and the frame makes
+        // the request from the same fields and the same pinned options, so what was checked is what is sent.
         const controller = new AbortController();
         const init: RequestInit = {
             method: valid.method,
             headers: valid.headers,
             body: valid.body as BodyInit | undefined,
             signal: controller.signal,
-            credentials: 'omit',
-            referrerPolicy: 'no-referrer',
-            redirect: 'manual',
-            mode: 'cors',
-            cache: 'no-store',
-            keepalive: false,
+            ...BRIDGE_REQUEST_OPTIONS,
         };
         let outgoing: Request;
         try {
@@ -617,13 +643,12 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
         let status: number | undefined;
         let result: FetchResult;
         try {
-            // The init goes to fetch() again, whole. Not the Request alone: measured in WebKit, an abort that reaches
-            // the fetch only through the Request's own (following) signal does not stop a response whose headers
-            // have arrived, so neither the timeout nor a teardown would close the upstream connection
-            // (test/e2e/fetch-bridge.spec.ts); with the init, the fetch's signal follows the controller directly. And
-            // not a partial init: any init makes the Request constructor reset the referrer policy (Fetch, new
-            // Request(input, init)), and a Referer comes back (all three engines).
-            const response = await (fetchImpl ?? globalThis.fetch)(outgoing, init);
+            // The frame makes the request (in-bridge-frame.ts), with the init again, whole: an abort that reaches a
+            // fetch only through the Request's own (following) signal does not stop a response whose headers have
+            // arrived in WebKit, and any partial init makes the Request constructor reset the referrer policy, which
+            // brings a Referer back (all three engines; test/e2e/fetch-bridge.spec.ts). The controller's abort reaches
+            // the frame as BRIDGE_ABORT, which aborts the frame's own fetch.
+            const response = await transport(outgoing, init);
             if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400 && response.headers.has('location'))) {
                 await response.body?.cancel().catch(() => {});
                 throw fetchRefusal('FETCH_REDIRECT', 'the response was a redirect, which the bridge never follows');
@@ -642,6 +667,13 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, fetchImpl, now
         } catch (error) {
             // A teardown's abort lands here too, as whatever the fetch or the read threw: record() makes it 'aborted'
             // (abortAll closes the bridge before it aborts), so no branch here needs to recognise it.
+            if (!controller.signal.aborted && error instanceof Error && (error as FetchRefusal).unsent === true) {
+                // The transport never made the request (its frame could not start): a refusal, with the host's reason.
+                controller.abort('done');
+                const unsent = error as FetchRefusal;
+                const outcome = record(base, unsent.reason === undefined ? { outcome: 'refused', code: unsent.code } : { outcome: 'refused', code: unsent.code, reason: unsent.reason });
+                throw outcome === 'aborted' ? tornDown() : unsent;
+            }
             const reason = controller.signal.aborted ? controller.signal.reason : null;
             const refusal = reason === TIMEOUT ? fetchRefusal('FETCH_TIMEOUT', `no whole response within ${policy.timeoutMs} ms`)
                 : error instanceof Error && FETCH_ERROR_CODES.includes((error as any).code) ? error as Error & { code: FetchErrorCode }

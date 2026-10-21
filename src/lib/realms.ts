@@ -26,7 +26,7 @@ export const REALMS = {
         summary: "The host page's window: the element, its listeners, and the host end of every port.",
         guestCode: false,
         builder: null,
-        channels: ['announcement', 'logic-port', 'view-port', 'view-init'],
+        channels: ['announcement', 'logic-port', 'view-port', 'view-init', 'bridge-init', 'bridge-port'],
         egress: 'host',
     },
     'wrapper': {
@@ -70,6 +70,13 @@ export const REALMS = {
         builder: 'src/host.ts, _getStrictWorkerSource',
         channels: ['logic-port', 'render-port', 'worker'],
         egress: 'worker',
+    },
+    'bridge-frame': {
+        summary: "The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it.",
+        guestCode: false,
+        builder: 'src/lib/in-sandbox-view.ts, viewBootstrapSource',
+        channels: ['bridge-init', 'bridge-port'],
+        egress: 'bridge-frame',
     },
 } as const satisfies Record<string, RealmRow>;
 
@@ -115,6 +122,7 @@ export const STRINGIFIED = {
     sanitizeRender: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     viewBudget: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     cssLoadBound: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
+    inBridgeFrame: { module: 'src/lib/in-bridge-frame.ts', realms: ['bridge-frame'], capture: NO_GUEST, readOnce: true, typeofRead: true },
 } as const satisfies Record<string, StringifiedRow>;
 
 export type StringifiedName = keyof typeof STRINGIFIED;

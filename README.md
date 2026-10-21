@@ -63,13 +63,13 @@ The whole picture, on one page, with the realms, channels, frames and lifecycle 
 
 *   **`src/host.ts`**: The core implementation of the `<web-sandbox>` custom element. It handles frame creation, configuration, and communication.
 *   **`src/lib/origin.ts`**, **`src/lib/csp/origins.ts`**, **`src/lib/csp/csp-generator.ts`**: The guest policy: the one origin parser (shared with `fetchBridge.allow`), `origins` parsed at the boundary, and one policy template per mode.
-*   **`src/lib/frame-documents.ts`**: Builds the wrapper and guest documents (see Security Mitigations).
+*   **`src/lib/frame-documents.ts`**: Builds the wrapper, guest and fetch bridge frame documents (see Security Mitigations).
 *   **`src/lib/rpc.ts`**: The broker behind `expose()` and `call()`; the host and the guest run the same code.
 *   **`src/lib/files.ts`**, **`src/lib/in-sandbox-files.ts`**: Registered files: the host's store, and the guest's `sandboxFiles`.
 *   **`src/lib/markup-references.ts`**: Resolves guest markup references (`<script src="app.js">`) to registered files before the guest is built.
 *   **`src/lib/module-specifiers.ts`**, **`src/lib/import-map.ts`**: The module graph: relative imports in registered modules rewritten to virtual URLs (with the bundled es-module-lexer), and the guest's own import maps merged into the one the bootstrap registers.
 *   **`src/lib/auto-resize.ts`**: Auto-sizing on the host: validates, clamps and rate-limits the guest's height reports.
-*   **`src/lib/fetch-bridge.ts`**: The fetch bridge on the host: the allowlist, the request discipline, and the `fetch` log.
+*   **`src/lib/fetch-bridge.ts`**, **`src/lib/bridge-frame.ts`**, **`src/lib/in-bridge-frame.ts`**: The fetch bridge: on the host, the allowlist, the request discipline and the `fetch` log; the frame with an opaque origin that makes every request.
 *   **`src/lib/in-sandbox-view.ts`**, **`src/lib/csp/script-hash.ts`**: Strict mode: the view's hashed bootstrap and renderer, the worker's prelude (`sandboxView`), and the synchronous SHA-256 that admits the bootstrap.
 *   **`src/lib/presets.ts`**: The scenarios both the Playground and the regression specs run: one definition per attack (payload, rules, research folder).
 *   **`vite.config.ts`**: The dev server for the playground and the e2e harness.
@@ -167,7 +167,8 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     it dropped past its per-second window) and
     `'guest'` for everything from the guest, whatever it claims. Guest lines carry the guest's `console` calls (every
     method), uncaught errors and unhandled rejections (`Uncaught …`), in every mode (in worker and strict mode they are
-    cancelled once relayed, and more than 1000 of them, or 1 Mi characters of them, in one second end the sandbox);
+    cancelled once relayed, and more than 1000 of them, or 1 Mi characters of them, in one second end the sandbox; on
+    Firefox the characters of a reason the guest tagged with `Symbol.toStringTag` are not counted, [S78](docs/BACKLOG.md#s78));
     the guest's console never throws:
     a function, a DOM node or anything else structured clone refuses arrives as a string naming its kind, an `Error`
     (also inside an object, an array or `Promise.allSettled`'s results) as `{ name, message, stack }`. Bounded in the
@@ -232,10 +233,10 @@ sandbox.setConfig({ entry: 'main.js', autoResize: true });
 ## Capabilities
 
 `capabilities` takes the sandbox flags that keep the guest inside the frame: `allow-scripts`,
-`allow-pointer-lock`, `allow-orientation-lock`.
+`allow-orientation-lock`.
 
 Capabilities that let the guest act outside the frame — `allow-forms`, `allow-popups`, `allow-modals`,
-`allow-downloads`, `allow-presentation` and `fullscreen` — are dropped from `capabilities` with a
+`allow-downloads`, `allow-presentation`, `allow-pointer-lock` and `fullscreen` — are dropped from `capabilities` with a
 warning. If you really need one, pass it in `unsafeCapabilities` (cooperative and worker mode; strict mode drops
 them); the sandbox logs a warning for each one enabled. A popup, for example, is a new top-level window that no CSP
 governs, so its URL is an exfiltration channel ([research 13](docs/research/13_popup_exfiltration/README.md)). Without
@@ -257,7 +258,8 @@ sandbox.setConfig({
 (plus the legacy `allowfullscreen`) on both the wrapper and the guest frame, since a feature reaches the
 guest only if every frame on the way delegates it. The `*` is needed because a sandboxed `srcdoc` frame
 has a fresh opaque origin that the default allowlist never matches. The risk is UI spoofing — a fullscreen guest can draw a fake browser window — which
-browsers soften by requiring a user gesture and showing an exit hint.
+browsers soften by requiring a user gesture and showing an exit hint. `allow-pointer-lock` is unsafe for the same
+reason: a guest that holds the pointer lock can hide the cursor and capture relative input, so it can draw a cursor of its own over fake host UI.
 
 `allow-same-origin` and the `allow-top-navigation*` flags are never accepted.
 
@@ -315,7 +317,8 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
     to one that arrives anyway. A call heavier than `maxBytesPerSecond` could never fit, so both ends refuse it with
     `ARGS_NOT_TRANSFERABLE`, which is not worth retrying.
 *   **Every message is bounded as a whole**: a method name is at most 256 characters, an error message at most
-    65536 (cut, with a marker), and arguments or a result at most 33 MiB (`RPC_MAX_BYTES`), measured on both sides.
+    65536 (cut, with a marker), and arguments or a result at most 33 MiB (`RPC_MAX_BYTES`), measured on both sides (the
+    measure does not count a `File`'s name or a sparse array's `length`: [S77](docs/BACKLOG.md#s77)).
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never
     evaluates code. A worker-mode guest has no markup, though, so it can only expose methods
     through `execute()`, which does need `scriptUnsafe`.
@@ -325,8 +328,9 @@ Why it is built this way: [ADR-002](docs/ADR-002-host-guest-broker.md).
 ## Fetch bridge
 
 By default the guest reaches no network at all (`connect-src 'none'`). With `fetchBridge`, the guest gets
-`sandboxFetch(url, init)`, and the **host** makes each request under a fixed discipline and logs it. The
-guest policy does not change: direct `fetch` and `WebSocket` stay refused unless `origins.connect` lists them.
+`sandboxFetch(url, init)`: the **host** decides each request under a fixed discipline and logs it, and a hidden
+frame of the library's, with an opaque origin of its own, makes it. The guest policy does not change: direct `fetch`
+and `WebSocket` stay refused unless `origins.connect` lists them.
 
 ```js
 sandbox.setConfig({
@@ -346,7 +350,9 @@ const items = await response.json();
     `127.0.0.1`, `10.x`, `192.168.x`, `[::1]`, …) unless you list them. A listed public name that resolves to
     a private address (DNS rebinding) cannot be detected from a page.
 *   **No host authority.** Requests never carry cookies or other credentials (`credentials: 'omit'`) nor a
-    `Referer`, and never follow redirects. Only `method`, `headers` and `body` are read from `init`.
+    `Referer`, and never follow redirects. Your page's `fetch` never makes them: its Service Worker never answers
+    them (from your app's cache, say) and a wrapper of your `fetch` (an auth header, a tracing header) never applies
+    to them. Only `method`, `headers` and `body` are read from `init`.
     Methods: `GET`, `HEAD`, `POST`, plus `PUT`, `PATCH`, `DELETE` if listed in `methods`. Headers:
     `accept`, `accept-language`, `content-language`, `content-type`, plus names listed in `headers`
     (`Authorization` only that way; `Cookie` never). A header the guest may not set refuses the request.
@@ -357,14 +363,20 @@ const items = await response.json();
     Whole responses only: no streaming, no `AbortSignal`; bodies are strings, `ArrayBuffer`s or typed arrays.
 *   **Refusals have a code**, on the rejection's `code` (type `FetchErrorCode`): `FETCH_NOT_ALLOWED`
     (URL, origin, method, header or body), `FETCH_BUSY`, `FETCH_REDIRECT`, `FETCH_TOO_LARGE`,
-    `FETCH_TIMEOUT`, `FETCH_FAILED` (network error, CORS, or teardown). `FETCH_BUSY`, `FETCH_TIMEOUT` and
+    `FETCH_TIMEOUT`, `FETCH_FAILED` (network error, CORS, the bridge's frame could not start, or teardown).
+    `FETCH_BUSY`, `FETCH_TIMEOUT` and
     `FETCH_FAILED` may succeed if retried. HTTP error statuses resolve, as with `fetch`.
 *   **Every request is logged** as a `fetch` event on the element (it bubbles): `{ method, url, outcome, bytes,
     durationMs, … }`, `outcome` being `ok` (with `status`), `refused` (no request made; with `code`),
     `failed` (with `code`, and `status` when a response arrived) or `aborted`. Each outcome has its own fields:
     `FetchRecord` is a union keyed by `outcome`. Fields that come from the guest are validated or clamped first.
-*   **CORS applies for the host page's origin**, since the host makes the request: the target sees your
-    page's origin in `Origin` (never its URL) and must allow it, or `*`.
+*   **The target sees `Origin: null`**, as for a direct request from the sandbox, never your page's origin or URL:
+    its CORS must allow `*` (no credentials are sent, so `*` works) or `null`. A target that allows only your
+    page's origin refuses the bridge's requests (`FETCH_FAILED`).
+*   **Your page's policy**: the bridge's frame runs the library's hashed bootstrap, so the policy that admits the
+    sandbox admits it (`viewScriptHash()`, or `'unsafe-inline'`; see
+    [Host page policy](docs/API.md#host-page-policy)), and your `connect-src` must allow the listed origins, as for
+    any request. A frame whose script never runs fails closed: every request is refused with `FETCH_FAILED`.
 *   `sandboxFetch` is a separate global; `fetch` itself is untouched (assign `globalThis.fetch = sandboxFetch`
     in the guest if you want that). It works in every mode. The name `sandbox:fetch`, like every
     method name starting with `sandbox:`, is reserved: `expose()` refuses it on both sides.
@@ -584,7 +596,7 @@ defense:
 9.  **Realm-Bound Files**: Registered files reach the guest as `blob:` URLs created in its own realm, which no other sandbox and not the host page can load. Lookups are exact, `blob:` is allowed only for the registered types, and a reference names a file only for the kind of load its type is for (a text file is never a script).
 10. **No WebRTC in the Guest**: The bootstrap removes `RTCPeerConnection` from the guest's global scope before guest code runs (workers never have it), since no CSP directive governs ICE traffic. A frame the guest creates is a realm of its own and keeps it, and its ICE traffic leaves the sandbox ([backlog S13](docs/BACKLOG.md)); strict mode closes this.
 11. **Host URL Hidden**: The guest's base URL is `about:blank` and both frames use the `no-referrer` policy, so the guest cannot read the host page's URL, and relative URLs in guest markup resolve to nothing unless they name a registered file (use absolute URLs or `sandboxFiles` otherwise). Platform limits: Chromium and WebKit show the host origin in `location.ancestorOrigins`; Firefox and WebKit send it as `Referer` on image requests if the guest asks for a referrer, and WebKit sends the full host URL to a same-site origin ([backlog S18](docs/BACKLOG.md)); WebKit shows a frame the guest creates the host page URL without its fragment ([backlog S17](docs/BACKLOG.md)). Strict mode closes S17 and S18.
-12. **Mediated Network, Opt-In**: With `fetchBridge`, the host makes the guest's requests itself, to exact listed origins only, without credentials, referrer or redirects, with capped bodies, time and concurrency, and logs each one. The guest policy stays as strict as configured ([ADR-006](docs/ADR-006-fetch-bridge.md)).
+12. **Mediated Network, Opt-In**: With `fetchBridge`, the host decides the guest's requests, to exact listed origins only, without credentials, referrer or redirects, with capped bodies, time and concurrency, and logs each one; a hidden frame of the library's with an opaque origin makes them, so the host page's Service Worker and `fetch` wrappers never apply, and the target sees `Origin: null`. The guest policy stays as strict as configured ([ADR-006](docs/ADR-006-fetch-bridge.md)).
 13. **Strict Mode, the Default**: Guest code only in a worker; a view whose one script is the library's, admitted by its hash, with rendered markup cleaned before it is inserted and moved, never cloned ([ADR-005](docs/ADR-005-strict-mode.md)).
 14. **Fail Closed on Configuration**: A `mode` the element does not know starts no environment (the sandbox terminates with a reason) rather than falling back to the default (`'iframe'`, renamed `'cooperative'`, is refused like any unknown mode).
 15. **Guest-Realm Hardening (cooperative and worker mode)**: Gaps no CSP directive covers are closed in the guest's realm before guest code runs: `fetch()` with `keepalive` is refused (Firefox sends it past `connect-src`); `history.back()`, `forward()`, `go()` and the Navigation API's traversal do nothing (Firefox and WebKit let them move the host page); `window.name` is inert (a named guest frame received the host's named navigations and `window.open()` handles); DNS prefetching is off; no worker loads from `data:` (WebKit runs a `data:` SharedWorker outside the policy). [Broad review](docs/archive/reviews/BROAD-REVIEW-2026-10-14.md). This list is frozen: a new gap in cooperative mode is a [limit](#cooperative-mode-limits), not a new patch.
@@ -612,6 +624,13 @@ What remains for the default:
     Chromium's `<img>`, WebKit's 250 000-character textarea), memory, `:hover` restyles while the user's pointer moves,
     and Firefox's cost of unhandled rejections.
 
+    Open gaps in the bounds above, backlogged and not mitigated now (owner, 2026-10-21): the byte measure counts a
+    `File`'s name and a `Blob`'s type as 64 bytes and a sparse array by its present elements, so those pass the byte
+    budgets and can stall or fill the host page ([S77](docs/BACKLOG.md#s77), high); on Firefox a rejection reason the guest
+    tagged with `Symbol.toStringTag` is not charged to the characters budget ([S78](docs/BACKLOG.md#s78), high); on
+    desktop Chromium one documented stall over about 5 s ends the sandbox ([S79](docs/BACKLOG.md#s79)). `terminate()` ends
+    such a flood, after the reports already queued are processed.
+
     Cooperative mode is no better: there a guest `while (true) {}` freezes the host page wherever the frame shares its
     thread.
 *   **CSS within what the policy allows**: style-based probing of the view's own content, and loads from the origins
@@ -620,7 +639,10 @@ What remains for the default:
     guest code. The view's reports are complete and unforgeable up to the cap.
 *   **A worker that closes itself** is noticed only by the watchdog; **memory** is not bounded.
 *   **Cookies**: Firefox and WebKit attach the host site's cookies to a request to an allowed origin that is same-site
-    with the host page (every mode).
+    with the host page (every mode). Listing such an origin in any `origins` kind (the host page's own host, a
+    subdomain or a parent of it) or a loopback, private or link-local host warns once per kind, in every mode; prefer
+    the fetch bridge, which sends no credentials. The check compares names, with no public-suffix list: a sibling
+    subdomain is not recognised.
 
 ### Cooperative-mode limits
 

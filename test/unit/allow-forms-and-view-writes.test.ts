@@ -68,7 +68,7 @@ describe('R2-2: allow-forms is an unsafe capability (cooperative and worker mode
     it("strict mode is unchanged: its view always has allow-scripts allow-forms; capabilities: ['allow-forms'] is that and warns nothing; unsafeCapabilities are dropped as before", async () => {
         const messages = warnings();
         expect(flagsOf(await mount({ mode: 'strict' }))).toEqual(['allow-scripts allow-forms', 'allow-scripts allow-forms']);
-        expect(flagsOf(await mount({ mode: 'strict', capabilities: ['allow-forms', 'allow-pointer-lock'] }))).toEqual(['allow-scripts allow-forms allow-pointer-lock', 'allow-scripts allow-forms allow-pointer-lock']);
+        expect(flagsOf(await mount({ mode: 'strict', capabilities: ['allow-forms', 'allow-orientation-lock'] }))).toEqual(['allow-scripts allow-forms allow-orientation-lock', 'allow-scripts allow-forms allow-orientation-lock']);
         expect(flagsOf(await mount({ capabilities: ['allow-forms'] }))).toEqual(['allow-scripts allow-forms', 'allow-scripts allow-forms']); // no mode: strict
         expect(messages().filter(message => message.includes('allow-forms'))).toEqual([]);
         expect(flagsOf(await mount({ mode: 'strict', unsafeCapabilities: ['allow-forms'] }))).toEqual(['allow-scripts allow-forms', 'allow-scripts allow-forms']);

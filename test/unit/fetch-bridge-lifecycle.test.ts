@@ -193,7 +193,7 @@ async function run(entry: SettlePath, torn: boolean) {
         policy,
         hostOrigin: HOST,
         onRecord: (record) => records.push(record),
-        fetchImpl: ((_request: Request, init: RequestInit) => entry.respond({
+        transport: ((_request: Request, init: RequestInit) => entry.respond({
             signal: init.signal!,
             reading: () => { if (torn && entry.last === 'reading') bridge!.abortAll(); },
         })) as unknown as typeof fetch,
@@ -280,7 +280,7 @@ describe('LM-1, class L: after abortAll() every record of the bridge is aborted,
                 if (records.length === 1) bridge!.abortAll(); // the first record's listener resets the sandbox
             },
             // the four answers come at once: their bodies are read together, as in the e2e test of LM-1
-            fetchImpl: (() => new Promise<Response>(resolve => {
+            transport: (() => new Promise<Response>(resolve => {
                 gate.push(() => resolve(new Response(bytes(70), { status: 200 })));
                 if (gate.length === 4) for (const open of gate) open();
             })) as unknown as typeof fetch,

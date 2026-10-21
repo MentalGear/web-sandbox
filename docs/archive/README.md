@@ -5,7 +5,7 @@ History, not current state. The code, [ARCHITECTURE.md](../../ARCHITECTURE.md), 
 says how it came to be. Nothing in the archive is edited to match the code: a statement here may be out of date, and
 git history stays the final archive. Files were moved here, never deleted.
 
-**IDs resolve here.** A comment or a doc cites a finding or a backlog item by its stable ID (`R5:M-2`, `BR:CB1`, `S44`,
+**IDs resolve here.** A comment or a doc cites a finding or a backlog item by its stable ID (`R5:M-2`, `BR:CB1`, `BD1:ISO-1`, `S44`,
 `BL:B5`; [CONTRIBUTING.md](../../CONTRIBUTING.md#code-and-docs-the-current-state)), and the registry
 [ids.ts](../ids.ts) maps the ID to its file and anchor, in this folder for the reports and the done items.
 
@@ -24,6 +24,7 @@ The security review reports, newest last. Each finding has an anchor, and a pref
 | [Review round 3](reviews/REVIEW-ROUND-3-2026-10-18.md) | `R3:` | Whole RPC frames, the call budget, the view's time budget |
 | [Review round 4](reviews/REVIEW-ROUND-4-2026-10-18.md) | `R4:` | The worker's only way out, values read once, the view's URL budget |
 | [Review round 5](reviews/REVIEW-ROUND-5-2026-10-19.md) | `R5:` | The recurring classes behind the findings |
+| [S74 review board, pass 1](reviews/BOARD-PASS-1-2026-10-20.md) | `BD1:` | Six reviewers (isolation, channels, limits, docs, tests, a newcomer) and three verifiers: 4 confirmed high; the owner's decision, 2026-10-21: fix what leaks data, backlog the rest (S77 to S82) |
 
 ## Renamed test files
 

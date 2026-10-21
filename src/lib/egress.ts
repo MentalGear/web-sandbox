@@ -36,11 +36,13 @@ export type EgressRealm =
     | 'frame'
     /** Strict mode's view document, which renders the guest's markup and runs no guest code. */
     | 'view'
+    /** The fetch bridge's frame (bridge-frame.ts), which makes the bridge's requests and runs no guest code. */
+    | 'bridge-frame'
     /** The host page's window, where the element hears the guest frame's announcement. */
     | 'host';
 
 /** The library code that installs the listener, or decides what happens to the surface. */
-export type EgressOwner = 'guest-script' | 'worker-bootstrap' | 'view' | 'host';
+export type EgressOwner = 'guest-script' | 'worker-bootstrap' | 'view' | 'bridge-frame' | 'host';
 
 /**
  * What happens to the surface:
@@ -172,7 +174,7 @@ const own: EgressRow[] = [
 
     // ---- the library's port, the host's end
     { realm: 'port', surface: 'message', modes: ['strict', 'worker', 'cooperative'], owner: 'host', handling: ['relayed', 'budgeted', 'capped'],
-        bound: 'the logic port: only the bootstrap posts on it, through its chokepoints: log lines (LOG_EVENTS_PER_SECOND), calls (callLimits), violations (VIOLATION_EVENT_LIMIT), heights (AUTO_RESIZE_MAX_UPDATES_PER_SECOND), PONG, the budget of uncaught errors; strict mode\'s view port: only the view posts on it, its own frames, bounded in the view (guestText, VIOLATION_EVENT_LIMIT per directive, heights, a first overrun\'s notice at most once per 9 s of its debt and one host line per environment)', test: 'test/unit/relay-and-rpc-budgets.test.ts; test/e2e/worker-port-and-view-cost.spec.ts (M-6, M-5)' },
+        bound: 'the logic port: only the bootstrap posts on it, through its chokepoints: log lines (LOG_EVENTS_PER_SECOND), calls (callLimits), violations (VIOLATION_EVENT_LIMIT), heights (AUTO_RESIZE_MAX_UPDATES_PER_SECOND), PONG, the budget of uncaught errors; strict mode\'s view port: only the view posts on it, its own frames, bounded in the view (guestText, VIOLATION_EVENT_LIMIT per directive, heights, a first overrun\'s notice at most once per 9 s of its debt and one host line per environment); the fetch bridge\'s port: only the bridge\'s frame posts on it, answering the host\'s own frames (one check-in, one head a request, one chunk a pull, MAX_RESPONSE_HEAD and fetchBridge.maxBytes checked before posting)', test: 'test/unit/relay-and-rpc-budgets.test.ts; test/e2e/worker-port-and-view-cost.spec.ts (M-6, M-5); test/e2e/fetch-bridge-isolation.spec.ts' },
     { realm: 'port', surface: 'messageerror', modes: ['strict', 'worker', 'cooperative'], owner: 'host', handling: ['unreachable'],
         bound: 'only the bootstrap posts on the port, frames it built from clones, which deserialize', test: 'test/e2e/egress.spec.ts' },
 
@@ -210,6 +212,10 @@ const own: EgressRow[] = [
     { realm: 'view', surface: 'message', modes: ['strict'], owner: 'view', handling: ['own'],
         bound: 'the one INIT_VIEW, from the host page; the guest has no window to post from', test: 'test/e2e/strict-entry-scope-and-links.spec.ts' },
 
+    // ---- the fetch bridge's frame: no guest code or markup, and no handle of the guest's on it (BD1:ISO-1)
+    { realm: 'bridge-frame', surface: 'message', modes: ['strict', 'worker', 'cooperative'], owner: 'bridge-frame', handling: ['own'],
+        bound: 'the one BRIDGE_INIT, from the host page (its parent); the guest has no window to post from', test: 'test/e2e/fetch-bridge-isolation.spec.ts' },
+
     // ---- the host page's window, and the element's frame in it
     { realm: 'host', surface: 'load', modes: ['strict', 'worker', 'cooperative'], owner: 'host', handling: ['own'],
         bound: 'the wrapper frame\'s load: it loads once; a guest that navigates or reloads it ends the sandbox at the second', test: 'test/unit/fetch-and-csp-guarantees.test.ts; test/e2e/lifecycle.spec.ts' },
@@ -224,6 +230,8 @@ const windowRows: EgressRow[] = [];
 for (const type of WINDOW_EVENT_TYPES) {
     windowRows.push({ realm: 'frame', surface: type, modes: ['worker'], owner: 'worker-bootstrap', handling: ['unreachable'],
         bound: 'worker mode\'s frame holds no guest code and no guest markup, and the worker cannot reach its window', test: 'test/e2e/egress.spec.ts' });
+    if (type !== 'message') windowRows.push({ realm: 'bridge-frame', surface: type, modes: ['strict', 'worker', 'cooperative'], owner: 'bridge-frame', handling: ['unreachable'],
+        bound: 'the fetch bridge\'s frame holds no guest code and no guest markup, and the guest has no handle on its window', test: 'test/unit/structural.test.ts (BD1:ISO-1)' });
     if (heardInView.has(type)) continue;
     windowRows.push({ realm: 'view', surface: type, modes: ['strict'], owner: 'view', handling: ['unheard'],
         bound: 'no listener of the library in the view; what the guest renders to raise it is bounded by the view\'s budgets (the rendering row)', test: 'test/e2e/egress.spec.ts' });
@@ -332,13 +340,13 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
         time: 'none of its own: the count and the bytes',
         cost: 'none beyond the count and the bytes',
         test: 'test/unit/guest-writes.test.ts; test/e2e/guest-writes.spec.ts' },
-    { channel: "`sandboxFetch()`: the host page's fetch, on the guest's behalf",
+    { channel: "`sandboxFetch()`: a request the host decides and the bridge's frame makes, on the guest's behalf",
         surfaces: [['port', 'message']],
         count: '`fetchBridge.maxConcurrent` at once, at most {MAX_MAX_CONCURRENT}; and each as a call',
-        bytes: '`fetchBridge.maxBytes` a response, at most {MAX_MAX_BYTES}',
+        bytes: '`fetchBridge.maxBytes` a response, at most {MAX_MAX_BYTES}; its status text and headers at most {MAX_RESPONSE_HEAD} characters together',
         time: '`fetchBridge.timeoutMs` a request, at most {MAX_TIMEOUT_MS} ms',
-        cost: "none beyond the count, the bytes and the time: each request is the host page's own fetch",
-        test: 'src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts' },
+        cost: "none beyond the count, the bytes and the time: each request is one fetch of the bridge's frame (an opaque origin: no Service Worker, no wrapper of the host page's), its body crossing to the host page one chunk at a time, as the host reads it",
+        test: 'src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts; test/e2e/fetch-bridge-isolation.spec.ts' },
     { channel: 'CSP violation reports, to `violation`',
         surfaces: [['port', 'message'], ['worker', 'securitypolicyviolation'], ['cooperative', 'securitypolicyviolation'], ['view', 'securitypolicyviolation']],
         count: '{VIOLATION_EVENT_LIMIT} events an environment (strict mode: per source, and per directive for the view)',

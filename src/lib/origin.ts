@@ -76,3 +76,28 @@ export function parseOrigin(entry: unknown, rules: OriginRules): Origin | null {
     const origin = `${protocol}//${url.host}`;
     return ORIGIN_PATTERN.test(origin) ? (origin as Origin) : null;
 }
+
+const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+
+/**
+ * Whether `origin` (an Origin) names a host the host page's cookies can be sent to: the host page's own host on any
+ * scheme or port, or a host above or below it (`example.com` and `app.example.com`, where a cookie with
+ * `Domain=example.com` is shared). Decided from the names alone, with no public-suffix list: a sibling
+ * (`a.example.com` and `b.example.com`) shares cookies only through a `Domain` attribute the page cannot see, and a
+ * name above the host page that is itself a public suffix (`co.uk`) counts as above it; neither case is told apart
+ * here. An IP address matches only itself. False for a `hostOrigin` that is not an origin (empty, `null`).
+ */
+export function sharesHostSite(origin: string, hostOrigin: string): boolean {
+    let host: string;
+    let page: string;
+    try {
+        host = new URL(origin).hostname;
+        page = new URL(hostOrigin).hostname;
+    } catch {
+        return false;
+    }
+    if (host === '' || page === '') return false;
+    if (host === page) return true;
+    if (IPV4.test(host) || IPV4.test(page)) return false;
+    return host.endsWith(`.${page}`) || page.endsWith(`.${host}`);
+}

@@ -621,7 +621,7 @@
         {
           "kind": "Interface",
           "canonicalReference": "web-sandbox!FetchBridgeConfig:interface",
-          "docComment": "/**\n * The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. Only `allow` is required.\n *\n * @remarks\n *\n * Every request the host makes is pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`),\n * `cache: 'no-store'` and CORS for the host page's origin. The host page's own origin and loopback, private and\n * link-local hosts are refused unless listed. A listed public name that resolves to a private address cannot be detected\n * from a page. A number that is not finite or is below 1 takes its default, and one above its bound takes the bound.\n * See ADR-006.\n */\n",
+          "docComment": "/**\n * The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. Only `allow` is required.\n *\n * @remarks\n *\n * The host decides every request, and a hidden frame of the library's with an opaque origin makes it, never the host\n * page: the host page's Service Worker and any wrapper of its `fetch` never see it. So the target sees `Origin: null`,\n * and its CORS must allow that: `Access-Control-Allow-Origin: *` (no credentials are sent) or `null`. Every request is\n * pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`) and `cache: 'no-store'`. The\n * frame runs the library's hashed bootstrap, so a host page policy that admits the sandbox admits it\n * (docs/API.md#host-page-policy). The host page's own origin and loopback, private and link-local hosts are refused\n * unless listed. A listed public name that resolves to a private address cannot be detected\n * from a page. A number that is not finite or is below 1 takes its default, and one above its bound takes the bound.\n * See ADR-006.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -801,7 +801,7 @@
         {
           "kind": "TypeAlias",
           "canonicalReference": "web-sandbox!FetchErrorCode:type",
-          "docComment": "/**\n * Why `sandboxFetch()` rejected: the rejection's `code`, and the `code` of a {@link FetchRecord}. Minted only by the host.\n * - `FETCH_NOT_ALLOWED`: refused before any request, because of the URL, the origin, the method, a header or the body.\n * - `FETCH_BUSY`: refused before any request, because `maxConcurrent` requests are already in flight. Retryable.\n * - `FETCH_REDIRECT`: the response was a redirect, which is never followed.\n * - `FETCH_TOO_LARGE`: the request body or the response body exceeds `maxBytes`.\n * - `FETCH_TIMEOUT`: no whole response within `timeoutMs`. Retryable.\n * - `FETCH_FAILED`: the request failed (network error, CORS), or the sandbox was torn down. Retryable.\n */\n",
+          "docComment": "/**\n * Why `sandboxFetch()` rejected: the rejection's `code`, and the `code` of a {@link FetchRecord}. Minted only by the host.\n * - `FETCH_NOT_ALLOWED`: refused before any request, because of the URL, the origin, the method, a header or the body.\n * - `FETCH_BUSY`: refused before any request, because `maxConcurrent` requests are already in flight. Retryable.\n * - `FETCH_REDIRECT`: the response was a redirect, which is never followed.\n * - `FETCH_TOO_LARGE`: the request body or the response body exceeds `maxBytes`.\n * - `FETCH_TIMEOUT`: no whole response within `timeoutMs`. Retryable.\n * - `FETCH_FAILED`: the request failed (network error, CORS), the bridge's frame could not start, or the sandbox was\n *  torn down. Retryable.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -841,7 +841,7 @@
         {
           "kind": "TypeAlias",
           "canonicalReference": "web-sandbox!FetchRecord:type",
-          "docComment": "/**\n * The `detail` of a `fetch` event: one request through the bridge, reported once when it settled. A union keyed by\n * `outcome`; each member has exactly the fields its outcome has, and the fields it lacks are typed `never`, so reading\n * one is allowed and gives `undefined`.\n *\n * - `'ok'`: a response was handed to the guest, whatever its HTTP status. Has `status`; has no `code`.\n * - `'refused'`: no request was made; the bridge's rules, or the browser's `Request`, refused it. `code` says why\n *  (`FETCH_NOT_ALLOWED`, `FETCH_BUSY` or `FETCH_TOO_LARGE` for a request body). `bytes` is `0`. `reason` is present for\n *  a refusal of an origin that is not listed: what the host knows beyond the text the guest gets (the host page's own\n *  origin, or a loopback, private or link-local host).\n * - `'failed'`: `fetch()` was called and no whole response was handed over; `code` says why (`FETCH_REDIRECT`,\n *  `FETCH_TOO_LARGE` for a response body, `FETCH_TIMEOUT` or `FETCH_FAILED`). `status` is present once a response's\n *  status was read (not for a redirect, which is refused first). It is not proof that a request left the page: the browser's `fetch` also rejects some requests before\n *  sending them (the host page's own `connect-src`, mixed content, local-network blocking).\n * - `'aborted'`: the environment was torn down (by `reset()`, `load()`, `setConfig()`, `terminate()` or removal) before\n *  the record was made, whatever the request had settled on. `code` is `FETCH_FAILED`; `status` and `bytes` are as\n *  measured.\n *\n * @remarks\n *\n * A record belongs to the environment that made the request and is dispatched when the request settles, so an `'aborted'`\n * record of a torn-down environment can arrive after the call that tore it down, while the next build is loading; after\n * a teardown an environment's records are all `'aborted'`. Fields that come from the guest are validated or clamped\n * first. `method` is upper case (`''` when the guest sent no valid one). `url` is the whole URL without its fragment, at\n * most 8192 characters (a longer one is refused and reported cut), or the guest's string cut to that when it is not a\n * URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement.\n */\n",
+          "docComment": "/**\n * The `detail` of a `fetch` event: one request through the bridge, reported once when it settled. A union keyed by\n * `outcome`; each member has exactly the fields its outcome has, and the fields it lacks are typed `never`, so reading\n * one is allowed and gives `undefined`.\n *\n * - `'ok'`: a response was handed to the guest, whatever its HTTP status. Has `status`; has no `code`.\n * - `'refused'`: no request was made; the bridge's rules, or the browser's `Request`, refused it, or the bridge's frame\n *  could not start. `code` says why (`FETCH_NOT_ALLOWED`, `FETCH_BUSY`, `FETCH_TOO_LARGE` for a request body, or\n *  `FETCH_FAILED` when the frame could not start). `bytes` is `0`. `reason` is present for a refusal of an origin that\n *  is not listed (the host page's own origin, or a loopback, private or link-local host) and for a frame that could\n *  not start: what the host knows beyond the text the guest gets.\n * - `'failed'`: the request was handed to the bridge's frame and no whole response was handed over; `code` says why (`FETCH_REDIRECT`,\n *  `FETCH_TOO_LARGE` for a response body, `FETCH_TIMEOUT` or `FETCH_FAILED`). `status` is present once a response's\n *  status was read (not for a redirect, which is refused first). It is not proof that a request left the page: the browser's `fetch` also rejects some requests before\n *  sending them (the host page's own `connect-src`, mixed content, local-network blocking).\n * - `'aborted'`: the environment was torn down (by `reset()`, `load()`, `setConfig()`, `terminate()` or removal) before\n *  the record was made, whatever the request had settled on. `code` is `FETCH_FAILED`; `status` and `bytes` are as\n *  measured.\n *\n * @remarks\n *\n * A record belongs to the environment that made the request and is dispatched when the request settles, so an `'aborted'`\n * record of a torn-down environment can arrive after the call that tore it down, while the next build is loading; after\n * a teardown an environment's records are all `'aborted'`. Fields that come from the guest are validated or clamped\n * first. `method` is upper case (`''` when the guest sent no valid one). `url` is the whole URL without its fragment, at\n * most 8192 characters (a longer one is refused and reported cut), or the guest's string cut to that when it is not a\n * URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -1481,7 +1481,7 @@
             },
             {
               "kind": "Content",
-              "text": "readonly [\"allow-orientation-lock\", \"allow-pointer-lock\", \"allow-scripts\"]"
+              "text": "readonly [\"allow-orientation-lock\", \"allow-scripts\"]"
             }
           ],
           "fileUrlPath": "dist/csp-directives.d.ts",
@@ -1799,7 +1799,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#fetchBridge:member",
-              "docComment": "/**\n * Opens `sandboxFetch()` in the guest: the host makes each request under a fixed discipline (exact-origin\n * allowlist, no credentials, no redirects, capped body and time) and reports it as a `fetch` event. The guest's\n * policy is unchanged. Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. See ADR-006.\n *\n * @defaultValue off\n */\n",
+              "docComment": "/**\n * Opens `sandboxFetch()` in the guest: the host decides each request under a fixed discipline (exact-origin\n * allowlist, no credentials, no redirects, capped body and time), a hidden frame of the library's with an opaque\n * origin makes it (the target sees `Origin: null`), and the host reports it as a `fetch` event. The guest's\n * policy is unchanged. Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. See ADR-006.\n *\n * @defaultValue off\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1908,7 +1908,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#unsafeCapabilities:member",
-              "docComment": "/**\n * Capabilities that act outside the frame, from {@link UNSAFE_CAPABILITIES} (popups, modals, downloads, forms,\n * presentation, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;\n * dropped with a warning in strict mode.\n *\n * @defaultValue `[]`\n */\n",
+              "docComment": "/**\n * Capabilities that act outside the frame, from {@link UNSAFE_CAPABILITIES} (popups, modals, downloads, forms,\n * presentation, pointer lock, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;\n * dropped with a warning in strict mode.\n *\n * @defaultValue `[]`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -2611,7 +2611,7 @@
         {
           "kind": "Interface",
           "canonicalReference": "web-sandbox!SandboxOrigins:interface",
-          "docComment": "/**\n * The `origins` option: the exact origins the guest may load each kind of resource from, one list per kind. It adds\n * origins to six directives of the guest's policy and can change nothing else.\n *\n * @remarks\n *\n * An entry is one exact origin, `https://host[:port]`; in `connect` also `wss://host[:port]`; plain `http://` only for\n * `localhost` and `127.0.0.1`. Case is folded and a default port is dropped. Anything else is dropped with one warning\n * per entry (other schemes, `*`, `'self'` and other keywords, paths, credentials, an IPv6 literal, a non-ASCII or\n * percent-encoded host), and a key that is not a kind is dropped too. Dropping only narrows: a kind with no origin left\n * admits none. An `origins` that is not an object, or a kind that is not a list, cannot be read and refuses the whole\n * config. Registered files add `blob:` to the directive of each kind of load their type is for, whatever is listed\n * here. See ADR-007.\n *\n * @defaultValue none\n */\n",
+          "docComment": "/**\n * The `origins` option: the exact origins the guest may load each kind of resource from, one list per kind. It adds\n * origins to six directives of the guest's policy and can change nothing else.\n *\n * @remarks\n *\n * An entry is one exact origin, `https://host[:port]`; in `connect` also `wss://host[:port]`; plain `http://` only for\n * `localhost` and `127.0.0.1`. Case is folded and a default port is dropped. Anything else is dropped with one warning\n * per entry (other schemes, `*`, `'self'` and other keywords, paths, credentials, an IPv6 literal, a non-ASCII or\n * percent-encoded host), and a key that is not a kind is dropped too. Dropping only narrows: a kind with no origin left\n * admits none. An `origins` that is not an object, or a kind that is not a list, cannot be read and refuses the whole\n * config. An origin on the host page's site (its own host on any scheme or port, a subdomain or a parent of it) or a\n * loopback, private or link-local host is kept, with one warning per kind in every mode: Firefox and WebKit may send\n * the host site's cookies with a guest request to the first, and the second reaches the user's own machine or\n * network; the fetch bridge sends no credentials. Registered files add `blob:` to the directive of each kind of load\n * their type is for, whatever is listed here. See ADR-007.\n *\n * @defaultValue none\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -3159,7 +3159,7 @@
             },
             {
               "kind": "Content",
-              "text": "readonly [\"allow-downloads\", \"allow-forms\", \"allow-modals\", \"allow-popups\", \"allow-presentation\", \"fullscreen\"]"
+              "text": "readonly [\"allow-downloads\", \"allow-forms\", \"allow-modals\", \"allow-pointer-lock\", \"allow-popups\", \"allow-presentation\", \"fullscreen\"]"
             }
           ],
           "fileUrlPath": "dist/csp-directives.d.ts",
@@ -3205,7 +3205,7 @@
             },
             {
               "kind": "Content",
-              "text": "readonly [\"allow-downloads\", \"allow-forms\", \"allow-modals\", \"allow-popups\", \"allow-presentation\"]"
+              "text": "readonly [\"allow-downloads\", \"allow-forms\", \"allow-modals\", \"allow-pointer-lock\", \"allow-popups\", \"allow-presentation\"]"
             }
           ],
           "fileUrlPath": "dist/csp-directives.d.ts",
@@ -3344,7 +3344,7 @@
         {
           "kind": "Function",
           "canonicalReference": "web-sandbox!viewScriptHash:function(1)",
-          "docComment": "/**\n * The CSP hash source of strict mode's view bootstrap for this release of the package, to allow in the host page's own\n * Content-Security-Policy (R1:R4-5).\n *\n * @remarks\n *\n * It is the very value the element puts in the view's `script-src`, and the view inherits the host page's policy\n * (docs/API.md#host-page-policy). The bootstrap is a string literal of the bundle, so the hash is the same in a build\n * step (importing the package needs no DOM) and in the browser, however the embedder's app is bundled or minified. It\n * changes only with the package's version.\n *\n * @returns The hash source, `'sha256-…'`, quotes included.\n */\n",
+          "docComment": "/**\n * The CSP hash source of the library's bootstrap for this release of the package, to allow in the host page's own\n * Content-Security-Policy (R1:R4-5): strict mode's view runs it, and so does the fetch bridge's frame.\n *\n * @remarks\n *\n * It is the very value the element puts in the `script-src` of both documents, and both inherit the host page's policy\n * (docs/API.md#host-page-policy), so one hash admits them both: the view in strict mode, and with `fetchBridge` the\n * frame that makes the bridge's requests, in every mode (BD1:ISO-1). The bootstrap is a string literal of the bundle, so the hash is the same in a build\n * step (importing the package needs no DOM) and in the browser, however the embedder's app is bundled or minified. It\n * changes only with the package's version.\n *\n * @returns The hash source, `'sha256-…'`, quotes included.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",

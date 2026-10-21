@@ -262,7 +262,7 @@ describe('C-8: the fetch record does not parse a URL longer than MAX_URL', () =>
             }
         });
         const records: FetchRecord[] = [];
-        const bridge = createFetchBridge({ policy: toFetchPolicy({ allow: ['https://api.example'] }, () => {})!, hostOrigin: 'https://host.example', onRecord: (record) => records.push(record), fetchImpl: async () => new Response('ok') });
+        const bridge = createFetchBridge({ policy: toFetchPolicy({ allow: ['https://api.example'] }, () => {})!, hostOrigin: 'https://host.example', onRecord: (record) => records.push(record), transport: async () => new Response('ok') });
         await bridge.handle({ url: 'https://api.example/' + 'a'.repeat(1 << 20) }).catch(() => {});
         expect(records.map(record => [record.outcome, record.url.length])).toEqual([['refused', 8192]]);
         expect(longParses).toBe(0);
