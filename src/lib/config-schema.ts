@@ -30,7 +30,7 @@ import { isPrivateHost, toFetchPolicy, type FetchPolicy } from './fetch-bridge';
 import { sharesHostSite } from './origin';
 import { RPC_MAX_BYTES, type BudgetRefusal } from './rpc';
 import { MAX_TOTAL_BYTES } from './files';
-import { defineData } from './utils';
+import { defineData, hasOwnField, ownField, type Complete, type Holds } from './utils';
 import { watchdogBudget } from './watchdog';
 import { reasonText } from './reasons';
 
@@ -69,6 +69,10 @@ export const CALL_INVARIANTS: readonly { name: string; holds: (budget: Readonly<
     { name: 'a call is carried up to RPC_MAX_BYTES or the byte budget, whichever is smaller', holds: (budget) => heaviestCall(budget) === Math.min(RPC_MAX_BYTES, budget.bytes) },
 ];
 
+/** The fields of `callLimits`, as a value: what callBudgetOf reads (own fields only, ownField), and what the config tests enumerate. */
+export const CALL_LIMIT_FIELDS = ['maxPerSecond', 'maxBytesPerSecond'] as const satisfies readonly (keyof CallLimits)[];
+type CallLimitFieldsComplete = Holds<Complete<keyof CallLimits, typeof CALL_LIMIT_FIELDS>>;
+
 /**
  * The call budget `callLimits` asks for (from the copy setConfig() took). Each field is a finite number >= 1, else its
  * default: left out, silently; anything else (Infinity, a number below 1, NaN, a string), with a warning. There is no
@@ -85,7 +89,7 @@ export function callBudgetOf(callLimits: unknown, warn: (message: string) => voi
     }
     const limits = callLimits as Record<string, unknown>;
     const field = (name: keyof CallLimits, fallback: number): number => {
-        const value = limits[name];
+        const value = ownField(limits, name);
         if (value === undefined) return fallback;
         if (typeof value === 'number' && Number.isFinite(value) && value >= 1) return value;
         warn(`[Sandbox] callLimits.${name} must be a finite number >= 1; ${typeof value === 'number' ? String(value) : shown(value)} was ignored: the default ${fallback} applies.`);
@@ -385,8 +389,8 @@ export function normaliseConfig(copy: unknown, context: NormaliseContext): Norma
     if (!copy || typeof copy !== 'object' || Array.isArray(copy)) return { value: null, warnings, refusal: new TypeError('setConfig() takes an object') };
     const source = copy as Record<string, unknown>;
     const inputOf = (name: OptionName, mode: unknown): OptionInput => {
-        const present = Object.hasOwn(source, name);
-        return { given: present ? source[name] : undefined, present, mode, context, warn };
+        const present = hasOwnField(source, name);
+        return { given: ownField(source, name), present, mode, context, warn };
     };
     const mode = RULES.mode.read!(inputOf('mode', undefined));
     const values = Object.create(null) as Record<OptionName, unknown>;
@@ -394,7 +398,7 @@ export function normaliseConfig(copy: unknown, context: NormaliseContext): Norma
         for (const name of SCHEMA_NAMES) {
             const rule = RULES[name];
             if (rule.removed !== undefined) {
-                if (Object.hasOwn(source, name)) warn(rule.removed);
+                if (hasOwnField(source, name)) warn(rule.removed);
                 continue;
             }
             values[name] = name === 'mode' ? mode : rule.read!(inputOf(name, mode));

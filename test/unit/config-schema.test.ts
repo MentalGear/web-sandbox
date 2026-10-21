@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { admitGuestCall, CALL_INVARIANTS, callBudgetOf, CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, DEFAULT_CALL_BUDGET, defaultConfig, heaviestCall, ignoredIn, normaliseConfig, PARSED_APART, SANDBOX_MODES, type CallBudget, type NormalisedConfig, type OptionName, type OptionRule, type SandboxMode } from '@src/lib/config-schema';
+import { admitGuestCall, CALL_INVARIANTS, CALL_LIMIT_FIELDS, callBudgetOf, CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, DEFAULT_CALL_BUDGET, defaultConfig, heaviestCall, ignoredIn, normaliseConfig, PARSED_APART, SANDBOX_MODES, type CallBudget, type NormalisedConfig, type OptionName, type OptionRule, type SandboxMode } from '@src/lib/config-schema';
 import { ORIGIN_KINDS } from '@src/lib/csp/origins';
+import { FETCH_BRIDGE_FIELDS } from '@src/lib/fetch-bridge';
 import { createRateLimiter } from '@src/lib/rate-limit';
 import { RPC_MAX_BYTES } from '@src/lib/rpc';
 
@@ -387,5 +388,69 @@ describe('origins: the host page\'s site and loopback hosts warn, in every mode,
         const warns = (origin: string) => reach('cooperative', { connect: [origin] }).length === 1;
         for (const origin of ['https://app.example', 'https://app.example:1', 'wss://app.example', 'https://x.app.example', 'https://example']) expect(warns(origin), origin).toBe(true);
         for (const origin of ['https://sibling.example', 'https://notapp.example', 'https://app.example.evil', 'https://203.0.113.7']) expect(warns(origin), origin).toBe(false);
+    });
+});
+
+// Class C (the chokepoint is ownField, utils.ts): every field of a config the embedder gave is read as the object's own,
+// never through the prototype chain, so a polluted Object.prototype of the host page gives no option a value.
+describe('config reads: own fields only', () => {
+    const NAMES = [...new Set<string>([...Object.keys(CONFIG_SCHEMA), ...FETCH_BRIDGE_FIELDS, ...CALL_LIMIT_FIELDS, ...ORIGIN_KINDS])];
+    // values a pollution gadget would plant: a widening list, a number that lifts a budget, a string, a flag, an object
+    const PLANTED: unknown[] = [['DELETE', 'authorization', 'https://evil.example', 'allow-popups'], 1e308, 'cooperative', true, { images: ['https://evil.example'] }];
+    const CONFIGS: unknown[] = [
+        {},
+        { fetchBridge: { allow: ['https://api.example'] }, callLimits: {}, origins: {} },
+        { fetchBridge: {}, callLimits: { maxPerSecond: 5 }, origins: { images: ['https://img.example'] } },
+        { mode: 'worker', fetchBridge: { allow: [], methods: ['GET'], headers: ['x-a'], maxBytes: 5, timeoutMs: 5, maxConcurrent: 1 }, callLimits: { maxBytesPerSecond: 99999999 } },
+        { mode: 'cooperative', capabilities: [], unsafeCapabilities: [], html: '<p>', origins: { scripts: [], connect: [] }, fetchBridge: { maxBytes: 5 } },
+    ];
+    // JSON.stringify keeps no Infinity, NaN, undefined or BigInt apart from null: name them
+    const replacer = (_key: string, value: unknown): unknown => {
+        if (typeof value === 'number' && !Number.isFinite(value)) return `#${value}`;
+        if (typeof value === 'bigint') return `#${value}n`;
+        return value === undefined ? '#undefined' : value;
+    };
+    const parse = (config: unknown) => {
+        const result = normaliseWhole(structuredClone(config));
+        return JSON.stringify({ value: result.value, warnings: result.warnings, refused: result.refusal !== null }, replacer);
+    };
+
+    it('the names are every option, every fetchBridge and callLimits field and every origins kind', () => {
+        for (const name of ['mode', 'fetchBridge', 'callLimits', 'origins', 'allow', 'methods', 'headers', 'maxBytes', 'timeoutMs', 'maxConcurrent', 'maxPerSecond', 'maxBytesPerSecond', 'images', 'scripts', 'connect']) expect(NAMES).toContain(name);
+    });
+
+    it('a name set on Object.prototype changes no parsed config, warning or refusal', () => {
+        const baselines = CONFIGS.map(parse);
+        const changed: string[] = [];
+        for (const name of NAMES) {
+            for (const planted of PLANTED) {
+                Object.defineProperty(Object.prototype, name, { value: planted, configurable: true, writable: true, enumerable: false });
+                let results: string[];
+                try { results = CONFIGS.map(parse); } finally { Reflect.deleteProperty(Object.prototype, name); }
+                results.forEach((result, index) => { if (result !== baselines[index]) changed.push(`${name} = ${JSON.stringify(planted)} changes config #${index}`); });
+            }
+        }
+        expect(NAMES.filter(name => Object.hasOwn(Object.prototype, name))).toEqual([]);
+        expect(changed).toEqual([]);
+    });
+
+    it('the comparison sees a difference when there is one', () => {
+        expect(parse({ fetchBridge: { allow: ['https://api.example'] } })).not.toBe(parse({ fetchBridge: { allow: ['https://api.example'], maxBytes: 5 } }));
+        expect(parse({ callLimits: {} })).not.toBe(parse({ callLimits: { maxPerSecond: 7 } }));
+    });
+
+    it('the parsers read a field of the config only through ownField', () => {
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const functionText = (file: string, name: string): string => {
+            const text = readFileSync(path.join(here, '../../src/lib', file), 'utf8');
+            const start = text.indexOf(`function ${name}(`);
+            expect(start, `${name} in ${file}`).toBeGreaterThan(-1);
+            return text.slice(start, text.indexOf('\n}\n', start));
+        };
+        for (const [file, name] of [['fetch-bridge.ts', 'toFetchPolicy'], ['config-schema.ts', 'callBudgetOf'], ['config-schema.ts', 'normaliseConfig'], ['csp/origins.ts', 'parseOrigins']] as const) {
+            const body = functionText(file, name);
+            expect(body, `${name} reads a field of its argument through the prototype chain`).not.toMatch(/\b(source|limits)(\[|\.[A-Za-z_])/);
+            expect(body, `${name} checks ownership by hand`).not.toMatch(/Object\.hasOwn\((source|limits)/);
+        }
     });
 });

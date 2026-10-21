@@ -171,6 +171,41 @@ describe('createFetchBridge (backlog B5)', () => {
         await expect(second.bridge.handle({ url: 'https://api.example/lying' })).rejects.toMatchObject({ code: 'FETCH_TOO_LARGE' });
     });
 
+    it('a response without a body is never too large, whatever Content-Length it repeats; a body is checked as before', async () => {
+        const over = String(10 * 1024 * 1024);
+        const policyWith = { methods: ['GET', 'HEAD', 'POST'] };
+        // the answer to HEAD, a 204 and a 304 carry the length of the resource they stand for and no body
+        const bodiless: [string, number][] = [['HEAD', 200], ['GET', 204], ['GET', 304]];
+        for (const [method, status] of bodiless) {
+            for (const length of [over, '10', 'x']) {
+                const { bridge, records } = bridgeWith(async () => new Response(null, { status, headers: { 'content-length': length } }), policyWith);
+                const result = await bridge.handle({ url: 'https://api.example/big', method });
+                expect(result, `${method} ${status} ${length}`).toMatchObject({ status, body: new Uint8Array(0) });
+                expect(records, `${method} ${status} ${length}`).toEqual([expect.objectContaining({ method, outcome: 'ok', status, bytes: 0 })]);
+            }
+        }
+        // Chromium gives a HEAD response an empty stream, not a null body: the method makes it bodiless all the same
+        for (const length of [over, '10']) {
+            const empty = streamed([], { headers: { 'content-length': length } });
+            const { bridge, records } = bridgeWith(async () => empty.response, policyWith);
+            expect(await bridge.handle({ url: 'https://api.example/big', method: 'HEAD' }), length).toMatchObject({ status: 200, body: new Uint8Array(0) });
+            expect(empty.state.pulled).toBe(0);
+            expect(records, length).toEqual([expect.objectContaining({ method: 'HEAD', outcome: 'ok', bytes: 0 })]);
+        }
+        // the same declared length on a response that has a body is still refused unread
+        for (const method of ['GET', 'POST']) {
+            const declared = streamed([10, 10], { headers: { 'content-length': over } });
+            const { bridge, records } = bridgeWith(async () => declared.response, policyWith);
+            await expect(bridge.handle({ url: 'https://api.example/big', method })).rejects.toMatchObject({ code: 'FETCH_TOO_LARGE' });
+            expect(declared.state.pulled, method).toBe(0);
+            expect(declared.state.cancelled, method).toBe(true);
+            expect(records, method).toEqual([expect.objectContaining({ outcome: 'failed', code: 'FETCH_TOO_LARGE' })]);
+        }
+        // and a declared length under the cap on a body is read
+        const small = streamed([10, 10], { headers: { 'content-length': '20' } });
+        expect(await bridgeWith(async () => small.response).bridge.handle({ url: 'https://api.example/small' })).toMatchObject({ status: 200 });
+    });
+
     it('refuses a redirect with FETCH_REDIRECT and does not follow it', async () => {
         const { bridge, records, calls } = bridgeWith(async () => new Response(null, { status: 302, headers: { location: 'https://evil.example/' } }));
         await expect(bridge.handle({ url: 'https://api.example/r' })).rejects.toMatchObject({ code: 'FETCH_REDIRECT' });

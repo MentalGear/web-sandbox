@@ -35,7 +35,7 @@
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
 import type { RpcLibraryCode } from './rpc';
-import type { Complete, Holds } from './utils';
+import { ownField, type Complete, type Holds } from './utils';
 import { parseOrigin, type Origin, type OriginRules } from './origin';
 import { shown } from './csp/origins';
 import { setLongTimeout } from './long-timer';
@@ -118,6 +118,10 @@ export interface FetchBridgeConfig {
      */
     maxConcurrent?: number;
 }
+
+/** The fields of {@link FetchBridgeConfig}, as a value: what toFetchPolicy reads (own fields only, ownField), and what the config tests enumerate. */
+export const FETCH_BRIDGE_FIELDS = ['allow', 'maxBytes', 'timeoutMs', 'methods', 'headers', 'maxConcurrent'] as const satisfies readonly (keyof FetchBridgeConfig)[];
+type FetchBridgeFieldsComplete = Holds<Complete<keyof FetchBridgeConfig, typeof FETCH_BRIDGE_FIELDS>>;
 
 /** A validated FetchBridgeConfig: every field present and in range. */
 export interface FetchPolicy {
@@ -244,7 +248,7 @@ export function toFetchPolicy(config: unknown, warn: (message: string) => void, 
     if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
     const source = config as Record<string, unknown>;
     const listOf = (field: 'allow' | 'methods' | 'headers', fallback: readonly unknown[]): readonly unknown[] => {
-        const value = source[field];
+        const value = ownField(source, field);
         if (value === undefined) return fallback;
         if (Array.isArray(value)) return value;
         warn(`[Sandbox] fetchBridge.${field} must be a list; ${shown(value)} was dropped.`);
@@ -285,11 +289,11 @@ export function toFetchPolicy(config: unknown, warn: (message: string) => void, 
 
     return Object.freeze({
         allow: Object.freeze([...allow]),
-        maxBytes: boundedInteger(source.maxBytes, DEFAULT_MAX_BYTES, MAX_MAX_BYTES),
-        timeoutMs: boundedInteger(source.timeoutMs, DEFAULT_FETCH_TIMEOUT_MS, MAX_TIMEOUT_MS),
+        maxBytes: boundedInteger(ownField(source, 'maxBytes'), DEFAULT_MAX_BYTES, MAX_MAX_BYTES),
+        timeoutMs: boundedInteger(ownField(source, 'timeoutMs'), DEFAULT_FETCH_TIMEOUT_MS, MAX_TIMEOUT_MS),
         methods: Object.freeze([...methods]),
         headers: Object.freeze([...headers]),
-        maxConcurrent: boundedInteger(source.maxConcurrent, DEFAULT_MAX_CONCURRENT, MAX_MAX_CONCURRENT),
+        maxConcurrent: boundedInteger(ownField(source, 'maxConcurrent'), DEFAULT_MAX_CONCURRENT, MAX_MAX_CONCURRENT),
     });
 }
 
@@ -460,14 +464,28 @@ export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigi
     return { url, method, headers, body };
 }
 
-/** Reads a response body chunk by chunk, stopping as soon as it exceeds maxBytes. */
-async function readBody(response: BridgeResponse, maxBytes: number, onBytes: (total: number) => void): Promise<Uint8Array> {
+/**
+ * Whether a response to `method` has no body to read: a response to HEAD, one with a null-body status (204, 304 and the
+ * rest), or one the transport gave no body. Such a response is empty and never too large, whatever Content-Length it
+ * repeats for the resource it stands for. Chromium hands a HEAD response an empty stream, not a null body, so the method
+ * counts too.
+ */
+const hasNoBody = (method: string, response: BridgeResponse): boolean => response.body === null || method === 'HEAD' || NULL_BODY_STATUSES.includes(response.status);
+
+/**
+ * Reads a response body chunk by chunk, stopping as soon as it exceeds maxBytes. A response without a body (hasNoBody)
+ * is read as empty; the declared length is checked only for a body that would be read.
+ */
+async function readBody(response: BridgeResponse, method: string, maxBytes: number, onBytes: (total: number) => void): Promise<Uint8Array> {
+    if (response.body === null || hasNoBody(method, response)) {
+        await response.body?.cancel().catch(() => {});
+        return new Uint8Array(0);
+    }
     const declared = response.headers.get('content-length');
     if (declared !== null && /^\d+$/.test(declared.trim()) && Number(declared) > maxBytes) {
-        await response.body?.cancel().catch(() => {});
+        await response.body.cancel().catch(() => {});
         throw fetchRefusal('FETCH_TOO_LARGE', `the response declares ${declared} bytes, more than ${maxBytes}`);
     }
-    if (!response.body) return new Uint8Array(0);
 
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
@@ -654,7 +672,7 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, transport, now
                 throw fetchRefusal('FETCH_REDIRECT', 'the response was a redirect, which the bridge never follows');
             }
             status = response.status;
-            const body = await readBody(response, policy.maxBytes, (total) => { bytes = total; });
+            const body = await readBody(response, valid.method, policy.maxBytes, (total) => { bytes = total; });
             const headers: [string, string][] = [];
             response.headers.forEach((value, name) => headers.push([name, value]));
             result = {
@@ -662,7 +680,7 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, transport, now
                 status,
                 statusText: response.statusText,
                 headers,
-                body: NULL_BODY_STATUSES.includes(status) ? new Uint8Array(0) : body,
+                body,
             };
         } catch (error) {
             // A teardown's abort lands here too, as whatever the fetch or the read threw: record() makes it 'aborted'

@@ -21,6 +21,18 @@ export type Holds<T extends true> = T;
 export const defineData = (target: object, key: string, value: unknown) =>
     Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
 
+/**
+ * The one reader of a field of a config object (class C): the object's own property, else `undefined`. Never the
+ * prototype chain, so a polluted `Object.prototype` of the host page cannot give a missing option a value. Every read of
+ * a field of an object the embedder gave goes through here (the schema, `origins`, `fetchBridge`, `callLimits`), as every
+ * write goes through defineData; test/unit/config-schema.test.ts sets each option name on `Object.prototype` and scans
+ * the parsers for a read that does not.
+ */
+export const hasOwnField = (object: object, name: string): boolean => Object.hasOwn(object, name);
+
+/** The value of {@link hasOwnField}'s field, else `undefined`. */
+export const ownField = (object: object, name: string): unknown => (hasOwnField(object, name) ? (object as Record<string, unknown>)[name] : undefined);
+
 const isPlainRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 
 /**
