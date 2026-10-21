@@ -24,6 +24,7 @@ import { CONFIG_SCHEMA } from '@src/lib/config-schema';
 import { TERMINATION_REASONS, type ReasonId } from '@src/lib/reasons';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { LIMITS, type LimitName, type LimitRow } from '@src/lib/limits';
+import { OPEN_BACKLOG_ITEMS } from '../../docs/ids';
 
 /**
  * docs/API.md is the consumer's reference (backlog D3): this test fails when the public surface and the
@@ -321,8 +322,9 @@ describe('docs/API.md lists the public surface', () => {
         expect(policy).not.toContain('srcdoc;'); // the hash is not read out of the wrapper's document
     });
 
-    it('describes the current design only: no backlog ids or history', () => {
-        expect(DOC).not.toMatch(/\b[BCDHST]\d{1,2}\b/);
-        expect(DOC).not.toMatch(/\b(previously|no longer|used to|backlog)\b/i);
+    it('describes the current design only: no history, and a backlog item only where it is open (a gap the page states)', () => {
+        const withoutOpenItems = DOC.replace(/\(BACKLOG\.md#[a-z0-9-]+\)/g, '').replace(/\b[ST]\d{1,3}\b/g, id => (OPEN_BACKLOG_ITEMS.includes(id) ? '' : id));
+        expect(withoutOpenItems).not.toMatch(/\b[BCDHST]\d{1,2}\b/);
+        expect(withoutOpenItems).not.toMatch(/\b(previously|no longer|used to|backlog)\b/i);
     });
 });

@@ -6,7 +6,9 @@ Report a suspected vulnerability **privately**, through GitHub's private vulnera
 repository's **Security** tab and choose **Report a vulnerability**, or go straight to
 <https://github.com/MentalGear/web-sandbox/security/advisories/new>.
 
-Do not open a public issue, pull request or discussion for a vulnerability.
+Do not open a public issue, pull request or discussion for a vulnerability. The repository owner turns private
+vulnerability reporting on in the repository's settings; until it is on, the **Report a vulnerability** button is
+missing, and a report waits for the owner to enable it rather than going public.
 
 Please include:
 - the mode (`strict`, `worker` or `cooperative`) and the configuration that matters (`origins`, `capabilities`,
@@ -17,7 +19,8 @@ Please include:
 
 ## Supported versions
 
-The current major line, **1.x**, is supported. Fixes are made on it.
+There are no releases yet (the package is private), so the **`main` branch** is what is supported: fixes are made on
+it. A release line is named here once one exists.
 
 ## What is in scope
 
