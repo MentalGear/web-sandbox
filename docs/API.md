@@ -124,7 +124,7 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in strict and worker mode on every browser, and in cooperative mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | strict, worker | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
 | `autoResize` | `boolean` | `false` | strict, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
-| `fetchBridge` | `FetchBridgeConfig` | off | all | Opens [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md) |
+| `fetchBridge` | `FetchBridgeConfig` | off | all | Opens [`sandboxFetch()`](#sandboxfetch); the host decides each request, and a hidden frame with an opaque origin makes it (the target sees `Origin: null`). A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md) |
 | `callLimits` | `CallLimits` | 1000 calls and 64 MiB per second | all | The per-second budget of the calls the guest makes, per environment; see [below](#calllimits). |
 | `allowAnimations` | `boolean` | `true` | strict | Whether CSS animations and transitions run in the view. **While `true`, they run on your page's main thread wherever the browser runs the view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation), and the view's time budget does not bound them: a guest can keep your page 80–98% busy.** `false` removes them (elements show their end state). Left out or `true` keeps them; any other value turns them off, with one warning when it is not a boolean. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
 | `allowAutoplay` | `boolean` | `false` | strict | Whether `<video autoplay>` and `<audio autoplay>` in the view start on their own; while `false` the `autoplay` attribute is removed and media plays only when the user starts it. With `true`, playing media costs your page's main thread where the view shares it (measured up to +6 points for 20 looping videos), outside the time budget. Only a literal `true` enables it: left out or `false` keeps it off, and so does any other value, with one warning when it is not a boolean. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
@@ -199,9 +199,13 @@ object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upg
 <!-- generated:begin api-fetch-bridge -->
 The `fetchBridge` option: what `sandboxFetch()` in the guest may reach. Only `allow` is required.
 
-Every request the host makes is pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`),
-`cache: 'no-store'` and CORS for the host page's origin. The host page's own origin and loopback, private and
-link-local hosts are refused unless listed. A listed public name that resolves to a private address cannot be detected
+The host decides every request, and a hidden frame of the library's with an opaque origin makes it, never the host
+page: the host page's Service Worker and any wrapper of its `fetch` never see it. So the target sees `Origin: null`,
+and its CORS must allow that: `Access-Control-Allow-Origin: *` (no credentials are sent) or `null`. Every request is
+pinned to no credentials, no `Referer`, no redirects (refused with `FETCH_REDIRECT`) and `cache: 'no-store'`. The
+frame runs the library's hashed bootstrap, so a host page policy that admits the sandbox admits it
+([Host page policy](#host-page-policy)). The host page's own origin and loopback, private and link-local hosts are refused
+unless listed. A listed public name that resolves to a private address cannot be detected
 from a page. A number that is not finite or is below 1 takes its default, and one above its bound takes the bound.
 See [ADR-006](ADR-006-fetch-bridge.md).
 
@@ -732,11 +736,12 @@ The `detail` of a `fetch` event: one request through the bridge, reported once w
 one is allowed and gives `undefined`.
 
 - `'ok'`: a response was handed to the guest, whatever its HTTP status. Has `status`; has no `code`.
-- `'refused'`: no request was made; the bridge's rules, or the browser's `Request`, refused it. `code` says why
- (`FETCH_NOT_ALLOWED`, `FETCH_BUSY` or `FETCH_TOO_LARGE` for a request body). `bytes` is `0`. `reason` is present for
- a refusal of an origin that is not listed: what the host knows beyond the text the guest gets (the host page's own
- origin, or a loopback, private or link-local host).
-- `'failed'`: `fetch()` was called and no whole response was handed over; `code` says why (`FETCH_REDIRECT`,
+- `'refused'`: no request was made; the bridge's rules, or the browser's `Request`, refused it, or the bridge's frame
+ could not start. `code` says why (`FETCH_NOT_ALLOWED`, `FETCH_BUSY`, `FETCH_TOO_LARGE` for a request body, or
+ `FETCH_FAILED` when the frame could not start). `bytes` is `0`. `reason` is present for a refusal of an origin that
+ is not listed (the host page's own origin, or a loopback, private or link-local host) and for a frame that could
+ not start: what the host knows beyond the text the guest gets.
+- `'failed'`: the request was handed to the bridge's frame and no whole response was handed over; `code` says why (`FETCH_REDIRECT`,
  `FETCH_TOO_LARGE` for a response body, `FETCH_TIMEOUT` or `FETCH_FAILED`). `status` is present once a response's
  status was read (not for a redirect, which is refused first). It is not proof that a request left the page: the browser's `fetch` also rejects some requests before
  sending them (the host page's own `connect-src`, mixed content, local-network blocking).
@@ -911,7 +916,7 @@ Set only by the host (`FETCH_ERROR_CODES`):
 | `FETCH_REDIRECT` | The response was a redirect, which is never followed. | no |
 | `FETCH_TOO_LARGE` | The request or response body exceeds `maxBytes`. | no |
 | `FETCH_TIMEOUT` | No whole response within `timeoutMs`. | yes |
-| `FETCH_FAILED` | Network error, CORS, or the environment was torn down. | yes |
+| `FETCH_FAILED` | Network error, CORS (the target sees `Origin: null`), the bridge's frame could not start, or the environment was torn down. | yes |
 
 HTTP error statuses resolve, as with `fetch`. `sandboxFetch()` can also reject with a call code (for example
 `TIMEOUT`, as a backstop 5 s after `timeoutMs`), and with a `TypeError` for a body it cannot send.
@@ -1031,8 +1036,8 @@ with `TIMEOUT`, and the change is listed all the same). A listener's `reset()` d
 
 ### `sandboxFetch`
 
-`sandboxFetch(url: string, init?: { method?, headers?, body? }): Promise<Response>` — asks the host to make the
-request under the [`fetchBridge`](#fetchbridge) rules; without `fetchBridge` every request rejects with
+`sandboxFetch(url: string, init?: { method?, headers?, body? }): Promise<Response>` — asks the host for the request,
+which it decides under the [`fetchBridge`](#fetchbridge) rules and the bridge's frame makes; without `fetchBridge` every request rejects with
 `FETCH_NOT_ALLOWED`. Only `method`, `headers` and `body` are read from `init`, each once;
 the body is a string, an `ArrayBuffer` or a typed array. Resolves with a whole `Response` (no streaming, no
 `AbortSignal`); rejects with a [`FetchErrorCode`](#sandboxfetch-fetcherrorcode). `fetch` itself is untouched;
@@ -1259,6 +1264,7 @@ in strict mode.
 | Fetch: default `maxConcurrent` | 4 | — |
 | Fetch: largest `maxConcurrent` | 16 | — |
 | Fetch: characters of a URL, as written and as parsed | 8192 | — |
+| Fetch: characters of a response's status text and headers, together | 262144 | — |
 | Guest writes: requests per second, per environment | 100 | `GUEST_WRITES_PER_SECOND` |
 | Guest writes: bytes per second, per environment | 8388608 (8 MiB) | `GUEST_WRITE_BYTES_PER_SECOND` |
 <!-- generated:end -->
@@ -1288,7 +1294,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Calls the guest makes (`bridge.call`), to the embedder's methods | `callLimits.maxPerSecond` in any second, by default `GUEST_CALLS_PER_SECOND` (1000), counted by the guest and again by the host; `MAX_INBOUND_IN_FLIGHT` (256) running at once | `RPC_MAX_BYTES` (34603008) a call, its whole frame measured by both ends; `callLimits.maxBytesPerSecond` a second, by default `GUEST_CALL_BYTES_PER_SECOND` (67108864); `RPC_MAX_INBOUND_BYTES` (67108864) of arguments running at once; a method name of at most `MAX_NAME_LENGTH` (256) characters | none of its own: the embedder's methods run as long as they take | none beyond the count and the bytes | test/unit/rpc-bounds-and-call-limits.test.ts (M-2, C-1); test/unit/config-schema.test.ts; test/unit/rate-limit.prop.test.ts |
 | Answers to the host's calls (`bridge.expose`) | one a call the host made: the host's pending calls | `RPC_MAX_BYTES` (34603008) an answer, measured by both ends; an error text cut at `MAX_TEXT_LENGTH` (65536) characters by both ends | the host's call timeout (`callWithTimeout`; by default `DEFAULT_TIMEOUT_MS` (30000) ms) | none beyond the host's pending calls and the bytes | test/unit/rpc-bounds-and-call-limits.test.ts (C-1); test/unit/structural.test.ts |
 | Guest writes (`sandboxFiles.write`, `remove`) | `GUEST_WRITES_PER_SECOND` (100) requests in any second, and each as a call; what is kept, at most `MAX_FILES` (1000) files with the registered ones | `GUEST_WRITE_BYTES_PER_SECOND` (8388608) in any second; what is kept, at most `MAX_TOTAL_BYTES` (8388608) with the registered files | none of its own: the count and the bytes | none beyond the count and the bytes | test/unit/guest-writes.test.ts; test/e2e/guest-writes.spec.ts |
-| `sandboxFetch()`: the host page's fetch, on the guest's behalf | `fetchBridge.maxConcurrent` at once, at most `MAX_MAX_CONCURRENT` (16); and each as a call | `fetchBridge.maxBytes` a response, at most `MAX_MAX_BYTES` (33554432) | `fetchBridge.timeoutMs` a request, at most `MAX_TIMEOUT_MS` (120000) ms | none beyond the count, the bytes and the time: each request is the host page's own fetch | src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts |
+| `sandboxFetch()`: a request the host decides and the bridge's frame makes, on the guest's behalf | `fetchBridge.maxConcurrent` at once, at most `MAX_MAX_CONCURRENT` (16); and each as a call | `fetchBridge.maxBytes` a response, at most `MAX_MAX_BYTES` (33554432); its status text and headers at most `MAX_RESPONSE_HEAD` (262144) characters together | `fetchBridge.timeoutMs` a request, at most `MAX_TIMEOUT_MS` (120000) ms | none beyond the count, the bytes and the time: each request is one fetch of the bridge's frame (an opaque origin: no Service Worker, no wrapper of the host page's), its body crossing to the host page one chunk at a time, as the host reads it | src/lib/fetch-bridge.test.ts; test/e2e/fetch-bridge.spec.ts; test/e2e/fetch-bridge-isolation.spec.ts |
 | CSP violation reports, to `violation` | `VIOLATION_EVENT_LIMIT` (100) events an environment (strict mode: per source, and per directive for the view) | each string cut at `VIOLATION_MAX_STRING` (2048) characters before it is posted, by the bootstrap and by the view, and again by the host on receipt | none of its own: the count | none beyond the count | src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts |
 | Content heights (`autoResize`), to the frame's height | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) a second, and one a frame | a number, at most `AUTO_RESIZE_MAX_HEIGHT` (100000) px | none of its own: one relayout of the host page's frame a change | a cap: `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) relayouts of the host page's frame a second | src/lib/auto-resize.test.ts; test/e2e/auto-resize.spec.ts |
 | Liveness answers (PONG, VIEW_PONG), to the host's probes | one a probe of the host's | a number | `VIEW_LIVENESS_TIMEOUT_MS` (5000) ms for the view to answer; `EXECUTION_TIMEOUT_GRACE_MS` (1000) ms past a deadline for the worker (`workerExecutionTimeout`) | none: the library's own | src/lib/watchdog.test.ts; test/e2e/watchdog.spec.ts |
@@ -1300,7 +1306,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Cooperative: the guest's own document | none: the guest runs on the host page's thread wherever the engine puts its frame there | none | none: one loop can freeze the host page ([Modes](#modes)) | unbounded: a cooperative-mode limit | README (cooperative-mode limits) |
 <!-- generated:end -->
 
-<!-- describes: budgets sig:f207 -->
+<!-- describes: budgets sig:6872 -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
 shared 4-core VM, 2026-10-19 ([R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
 of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;
@@ -1480,19 +1486,24 @@ policy must allow:
 | `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; with `allowAnimations: false`, also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
 | `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` | the same | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
+| With `fetchBridge` | the bridge's frame runs the view bootstrap too: the same hash, or `'unsafe-inline'`, admits it; `connect-src`: every origin in `fetchBridge.allow` (the frame's requests inherit your policy) | the same: `'unsafe-inline'` admits the frame's script | the same |
 | Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox`, which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
 | `Cross-Origin-Embedder-Policy: require-corp` | works in Chromium and Firefox; WebKit refuses the view's `blob:` worker | works; resources from `origins` need CORP or CORS headers | as strict |
 
 - **What a refusal looks like**: the build ends with a reason that names your page's policy: `the sandbox's startup
   script did not run …` (a refused bootstrap), `the sandbox's worker could not be loaded …` (a refused `blob:` worker),
-  `… does not allow the policy name 'web-sandbox' …` (Trusted Types). A refused wrapper style leaves the frame 150 px
+  `… does not allow the policy name 'web-sandbox' …` (Trusted Types). A refused fetch bridge frame leaves the sandbox
+  running and fails the bridge closed: every `sandboxFetch()` rejects with `FETCH_FAILED`, each `fetch` record is
+  `refused` with a `reason` that names the hash, and the element warns once. A refused wrapper style leaves the frame 150 px
   high, and the element warns with the hash to allow; so does a refused animation stylesheet (`allowAnimations: false`),
   whose view then shows no guest stylesheet.
 - **Your `connect-src`, `img-src` and the other fetch directives narrow `origins` silently**: an origin listed in
   `origins` that your page's policy does not allow is refused in the sandbox too. The refusal happens in the sandbox's
   documents, so it arrives as the element's `violation` event (where the browser reports it), never as a
   `securitypolicyviolation` on your page, and nothing warns at `setConfig()`.
-- **The view bootstrap's hash** is `viewScriptHash()`, the very value the element puts in the view's `script-src`.
+- **The view bootstrap's hash** is `viewScriptHash()`, the very value the element puts in the view's `script-src`, and in
+  the fetch bridge's frame's: the library has one hashed bootstrap, which runs the view in strict mode and, with
+  `fetchBridge`, the frame that makes the bridge's requests in every mode, so one hash admits both.
   It is constant for one version of the package (the bootstrap is a string literal of the package's bundle, so your
   bundler or minifier does not change it), and it changes with the package's version, so it is not listed here: read
   it in a build step (importing the package needs no DOM, in Node or Bun) and put it in your page's policy:
@@ -1514,7 +1525,7 @@ Values:
 | Export | What it is |
 | :--- | :--- |
 | `defineWebSandbox` | Registers `WebSandbox` as a custom element under `tagName` and returns the class. |
-| `viewScriptHash` | The CSP hash source of strict mode's view bootstrap for this release of the package, to allow in the host page's own Content-Security-Policy. |
+| `viewScriptHash` | The CSP hash source of the library's bootstrap for this release of the package, to allow in the host page's own Content-Security-Policy: strict mode's view runs it, and so does the fetch bridge's frame. |
 | `SandboxDevTools` | Logs one sandbox's `sandbox-log` lines to the host page's console, safely: the values go after a fixed first argument, so a guest string is never read as a console format string. |
 | `WebSandbox` | The `<web-sandbox>` custom element: one sandboxed environment for untrusted web content, rebuilt by `setConfig()`, `load()` and `reset()`. |
 | `AUTO_RESIZE_MAX_HEIGHT` | The tallest height, in CSS pixels, a guest can give the element; larger reports are clamped to it. |

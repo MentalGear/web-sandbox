@@ -273,7 +273,7 @@ describe('B6: the platform validates a request before the bridge records it (fol
     const bridgeWith = () => {
         const records: any[] = [];
         const fetchImpl = vi.fn(async (_request: Request) => new Response('x'));
-        const bridge = createFetchBridge({ policy, hostOrigin: 'https://host.example', onRecord: (r) => records.push(r), fetchImpl: fetchImpl as any });
+        const bridge = createFetchBridge({ policy, hostOrigin: 'https://host.example', onRecord: (r) => records.push(r), transport: fetchImpl as any });
         return { bridge, records, fetchImpl };
     };
 

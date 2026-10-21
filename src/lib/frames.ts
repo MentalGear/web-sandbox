@@ -24,6 +24,8 @@ export const CHANNELS = {
     'render-port': { kind: 'MessagePort', summary: "Strict mode: the view and the guest's worker; the host is not on this path." },
     'view-init': { kind: 'window message', summary: 'Strict mode: the host hands the view its two ports, once per build.' },
     'worker': { kind: 'worker message', summary: 'A frame and the worker it spawned: the worker gets its ports, and worker mode\'s worker says it started.' },
+    'bridge-init': { kind: 'window message', summary: "The fetch bridge: the host hands the bridge's frame its port, once per build." },
+    'bridge-port': { kind: 'MessagePort', summary: "The fetch bridge: the host and the bridge's frame, which makes every request the host decided; the guest is not on this path." },
 } as const satisfies Record<string, ChannelRow>;
 
 export type ChannelId = keyof typeof CHANNELS;
@@ -286,6 +288,69 @@ export const FRAMES = {
         purpose: 'An event of a type the worker listens to, as a detail.',
         routes: [{ channel: 'render-port', from: ['view'], to: ['strict-worker'] }],
         fields: { detail: { bound: 'cut', how: 'every string of it through clamp, at most VIEW_EVENT_LIMITS.maxString each and maxTotal together; ids and form fields capped' } },
+    },
+
+    // ---- the fetch bridge's frame (P1-ISO-1): the host decides each request, the frame makes it
+    BRIDGE_INIT: {
+        purpose: "The host hands the fetch bridge's frame its port, at the frame's load.",
+        routes: [{ channel: 'bridge-init', from: ['host'], to: ['bridge-frame'] }],
+        fields: { maxBytes: { bound: 'host', how: '`fetchBridge.maxBytes`: past it the frame posts no further chunk of a body' } },
+    },
+    BRIDGE_READY: {
+        purpose: "The bridge frame's check-in, its first frame: the frame holds its port. None within LOAD_TIMEOUT_MS: the bridge refuses every request.",
+        routes: [{ channel: 'bridge-port', from: ['bridge-frame'], to: ['host'] }],
+        fields: NONE,
+    },
+    BRIDGE_FETCH: {
+        purpose: 'A request the host checked (fetch-bridge.ts), for the frame to make with BRIDGE_REQUEST_OPTIONS.',
+        routes: [{ channel: 'bridge-port', from: ['host'], to: ['bridge-frame'] }],
+        fields: {
+            id: { bound: 'host', how: "the host's own counter" },
+            url: { bound: 'host', how: 'the URL the bridge checked, at most MAX_URL characters' },
+            method: { bound: 'host', how: 'a method the policy admits' },
+            headers: { bound: 'host', how: 'the header pairs the policy admits' },
+            body: { bound: 'host', how: 'the request body the bridge checked, at most `fetchBridge.maxBytes`' },
+        },
+    },
+    BRIDGE_PULL: {
+        purpose: "The bridge reads the next chunk of a response's body: one a pull.",
+        routes: [{ channel: 'bridge-port', from: ['host'], to: ['bridge-frame'] }],
+        fields: { id: { bound: 'host', how: "the host's own counter" } },
+    },
+    BRIDGE_ABORT: {
+        purpose: 'The host ended a request (its timeout, a refusal, a teardown): the frame aborts its fetch.',
+        routes: [{ channel: 'bridge-port', from: ['host'], to: ['bridge-frame'] }],
+        fields: { id: { bound: 'host', how: "the host's own counter" } },
+    },
+    BRIDGE_HEAD: {
+        purpose: "A response's head, as the frame received it: the host decides on it (a redirect, the declared length).",
+        routes: [{ channel: 'bridge-port', from: ['bridge-frame'], to: ['host'] }],
+        fields: {
+            id: NUMBER,
+            responseType: { bound: 'constant', how: "the platform's Response type, a member of its closed set" },
+            status: NUMBER,
+            statusText: { bound: 'checked', how: 'with the headers, at most MAX_RESPONSE_HEAD characters, else BRIDGE_ERROR (FETCH_TOO_LARGE) and nothing of the head is posted' },
+            headers: { bound: 'checked', how: 'names and values, with statusText at most MAX_RESPONSE_HEAD characters together' },
+            hasBody: { bound: 'not a string', how: 'a boolean' },
+        },
+    },
+    BRIDGE_CHUNK: {
+        purpose: "The next chunk of a response's body, in answer to a BRIDGE_PULL.",
+        routes: [{ channel: 'bridge-port', from: ['bridge-frame'], to: ['host'] }],
+        fields: {
+            id: NUMBER,
+            chunk: { bound: 'checked', how: "bytes the browser read, one chunk a BRIDGE_PULL, and none once the request's total passed BRIDGE_INIT's maxBytes: at most maxBytes and one chunk a request" },
+        },
+    },
+    BRIDGE_END: {
+        purpose: "A response's body ended.",
+        routes: [{ channel: 'bridge-port', from: ['bridge-frame'], to: ['host'] }],
+        fields: { id: NUMBER },
+    },
+    BRIDGE_ERROR: {
+        purpose: 'A request failed in the frame: the network or CORS, a head too large, or a Request the browser refused.',
+        routes: [{ channel: 'bridge-port', from: ['bridge-frame'], to: ['host'] }],
+        fields: { id: NUMBER, code: { bound: 'constant', how: 'one of FETCH_FAILED, FETCH_TOO_LARGE, FETCH_NOT_ALLOWED' } },
     },
 } as const satisfies Record<string, FrameRow>;
 

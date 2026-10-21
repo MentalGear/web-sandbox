@@ -47,7 +47,7 @@ frozen ([S49](BACKLOG.md#s49)).
 
 ## Trust boundaries
 
-<!-- describes: realms, channels sig:637af693 -->
+<!-- describes: realms, channels sig:88e149ab -->
 
 The realms and the channels between them are generated from the code in [ARCHITECTURE.md](../ARCHITECTURE.md#modes-and-realms)
 (which realm runs guest code, which library functions are stringified into it) and
@@ -57,8 +57,9 @@ The boundaries those tables cross:
 1. **The host page and the sandbox.** Every frame of the sandbox is a sandboxed `srcdoc` frame that never gets
    `allow-same-origin`, `allow-top-navigation*` or `allow-popups-to-escape-sandbox`, so each document in it has an
    opaque origin of its own (a worker has its document's), cross-origin to the host page and to every other sandbox. What crosses is the
-   library's ports, the one announcement (cooperative and worker mode) or `INIT_VIEW` (strict mode), and, in cooperative
-   mode only, whatever the guest posts to the host window.
+   library's ports, the one announcement (cooperative and worker mode) or `INIT_VIEW` (strict mode), `BRIDGE_INIT` to the
+   fetch bridge's frame (with `fetchBridge`, which the guest has no handle on), and, in cooperative mode only, whatever
+   the guest posts to the host window.
 2. **The wrapper and what it holds.** The element's frame holds a wrapper document of the library's: policy
    `frame-src 'none'`, base `about:blank`, `no-referrer`, no script. The guest frame or the strict view inside it cannot
    navigate itself anywhere ([research 14](research/14_self_navigation/README.md)).
@@ -72,8 +73,11 @@ The boundaries those tables cross:
    uncaught errors and rejections) rests on that code running first ([S69](BACKLOG.md#s69) would move it to a realm of
    the library's).
 5. **The sandbox and the network.** One policy template per mode, filled with exact origins only
-   ([ADR-007](ADR-007-typed-origins.md)); the fetch bridge runs on the host, under rules of its own
-   ([ADR-006](ADR-006-fetch-bridge.md)).
+   ([ADR-007](ADR-007-typed-origins.md)); the fetch bridge's rules run on the host, and its requests are made by a frame
+   of the library's with an opaque origin, never by the host page ([ADR-006](ADR-006-fetch-bridge.md)).
+6. **The fetch bridge and the host page's fetch environment.** The host page's Service Worker, its `fetch` wrappers and
+   its origin's authority never apply to a bridge request: the request is made in the bridge's frame, an opaque origin
+   no Service Worker controls and no host script reaches ([P1-ISO-1](#p1-iso-1)).
 
 Every sandbox realm's origin is opaque, and serializes as `"null"`, so no message check reads an origin string: the host takes
 the announcement only from the guest frame's own window (`event.source`), the view takes `INIT_VIEW` only from
@@ -113,6 +117,7 @@ Specs under `test/e2e/` and `docs/research/` run on Chromium, Firefox and WebKit
 | No WebRTC | Strict and worker mode: absent from the worker, and the view renders no frame; cooperative mode: removed from the guest's realm before guest code (a frame the guest creates keeps it: a limit) | `WORKER_GLOBALS`; `inSandboxScript` (`src/lib/in-sandbox-script.ts`) | `test/e2e/webrtc.spec.ts` | [S13](archive/backlog/BACKLOG-done.md#s13) |
 | The view loads only what the policy admits, at a bounded rate | The renderer keeps a URL only where every engine's policy check admits it, and drops the rest before the browser sees it; every load is charged before it can start (CSS-borne ones counted from the text); `VIEW_URLS_PER_SECOND`, `VIEW_MAX_URLS`, `VIEW_MAX_DISTINCT_URLS` | `sanitizeRender`, `cssLoadBound`, `viewBudget` (`src/lib/in-sandbox-view.ts`) | `test/unit/view-css-loads.test.ts`; `test/e2e/strict-view-budget.spec.ts`; `test/e2e/worker-port-and-view-cost.spec.ts` | [S73](archive/backlog/BACKLOG-done.md#s73), [R5:M-3](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-m-3) |
 | The fetch bridge sends only what the embedder allows | On the host: exact-origin allowlist, the host origin and private hosts refused unless listed, `credentials: 'omit'`, `no-referrer`, redirects never followed, method and header allowlists (`Cookie` never), capped bodies, time and concurrency; the platform's `Request` validates first; every request ends with its environment and is logged as a `fetch` event | `createFetchBridge`, `validateRequest`, `isPrivateHost` (`src/lib/fetch-bridge.ts`) | `src/lib/fetch-bridge.test.ts`; `test/unit/fetch-bridge-lifecycle.test.ts`; `test/e2e/fetch-bridge.spec.ts` | [ADR-006](ADR-006-fetch-bridge.md) |
+| <a id="p1-iso-1"></a>A bridge request runs in no fetch environment of the host page's: no Service Worker of its answers it, no `fetch` wrapper of its applies, and the target sees `Origin: null` | The bridge's one transport is a hidden frame of the library's (`sandbox="allow-scripts"`, an opaque origin; its own policy: the library's bootstrap by hash, `connect-src` the allowlist only), which makes every request with the pinned options; the host never calls its page's `fetch`; a frame that never starts fails the bridge closed | `createBridgeFrame`, `prepareBridgeFrame` (`src/lib/bridge-frame.ts`); `inBridgeFrame` (`src/lib/in-bridge-frame.ts`); `buildBridgeDocument` (`src/lib/frame-documents.ts`); `bridgeFramePolicy` (`src/lib/csp/csp-generator.ts`) | `test/unit/structural.test.ts` (no `fetch` outside the two realm functions; the one transport); `test/unit/bridge-frame.test.ts`; `test/e2e/fetch-bridge-isolation.spec.ts` (a cache-first Service Worker, an auth wrapper, `Origin: null`, teardown, the host page's policy) | [ADR-006](ADR-006-fetch-bridge.md) |
 | Cooperative mode: the gaps no directive covers, closed in the guest's realm | `fetch` with `keepalive` refused, history traversal inert, `window.name` inert, DNS prefetch off; a frozen list: a new gap is a limit, not a patch | `inSandboxScript`; `buildGuestDocument` | `test/unit/guest-realm-hardening.test.ts`; `test/e2e/guest-realm-hardening.spec.ts` | [BR:PD2](archive/reviews/BROAD-REVIEW-2026-10-14.md#br-pd2), [S44](BACKLOG.md#s44) |
 
 `registerProtocolHandler` and a top-level navigation to a `data:` URL are refused by the browser in a sandboxed frame
@@ -123,7 +128,7 @@ are governed by the policy but not logged: only the bridge's requests are `fetch
 
 ### Channel integrity
 
-<!-- describes: frames sig:7968 -->
+<!-- describes: frames sig:c1c7 -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
@@ -132,7 +137,8 @@ are governed by the policy but not logged: only the bridge's requests are `fetch
 | Strict mode's ports reach only the library's code | The view takes one `INIT_VIEW` from `parent.parent`; the worker's prelude takes one trusted `INIT_WORKER` (a guest's synthetic event is not trusted) and keeps the render port in a closure | `inSandboxView`, `inStrictWorker` (`src/lib/in-sandbox-view.ts`) | `test/e2e/strict-entry-scope-and-links.spec.ts`; `test/e2e/strict.spec.ts` | `ADR-005#flow-control-files-clobbering-liveness` |
 | Only the current environment is heard, and answered | The host handles a frame only from the current port; an answer goes back on the port its request came from, which teardown closed | `_onGuestMessage`, `_onViewMessage` (`src/host.ts`) | `test/unit/channel-guarantees.test.ts` ("B4"); `test/e2e/channel-isolation.spec.ts` | [AR:B4](archive/reviews/ADVERSARIAL-REVIEW-2026-10.md#ar-b4) |
 | A call reaches only what the other side exposed, and a refusal code cannot be forged | Dispatch through a `Map` of exposed names; `sandbox:` names in a registry of their own; a code reported by the other side is clamped to its group, and a library code passes only for a reserved method on the guest's broker | `createBroker` (`src/lib/rpc.ts`) | `src/lib/rpc.test.ts`; `test/e2e/broker.spec.ts` | `ADR-002#refusal-codes`, `ADR-002#reserved-methods-and-library-codes` |
-| Every frame is declared and bounded before it is posted | One frame table; RPC frames built only by the broker's three builders; every string a frame carries out of a guest realm or the view is cut, checked or measured before posting, and checked again by the host | `FRAMES` (`src/lib/frames.ts`); `requestFrame`, `resultFrame`, `refusalFrame` (`src/lib/rpc.ts`); `createSizeOf` (`src/lib/structured-size.ts`) | `test/unit/structural.test.ts`; `test/unit/rpc-bounds-and-call-limits.test.ts` | [R3:C-1](archive/reviews/REVIEW-ROUND-3-2026-10-18.md#r3-c-1), [R2:C-3](archive/reviews/REVIEW-ROUND-2-2026-10-15.md#r2-c-3) |
+| The fetch bridge's port reaches only the library's code | The bridge's frame takes one `BRIDGE_INIT` from its parent (the host page) with one port; the host hears only that frame's port while it is open, and nothing of the guest's is on it | `inBridgeFrame` (`src/lib/in-bridge-frame.ts`); `createBridgeFrame` (`src/lib/bridge-frame.ts`) | `test/unit/bridge-frame.test.ts`; `test/e2e/fetch-bridge-isolation.spec.ts` | [ADR-006](ADR-006-fetch-bridge.md) |
+| Every frame is declared and bounded before it is posted | One frame table; RPC frames built only by the broker's three builders; every string a frame carries out of a guest realm, the view or the bridge's frame is cut, checked or measured before posting, and checked again by the host | `FRAMES` (`src/lib/frames.ts`); `requestFrame`, `resultFrame`, `refusalFrame` (`src/lib/rpc.ts`); `createSizeOf` (`src/lib/structured-size.ts`) | `test/unit/structural.test.ts`; `test/unit/rpc-bounds-and-call-limits.test.ts` | [R3:C-1](archive/reviews/REVIEW-ROUND-3-2026-10-18.md#r3-c-1), [R2:C-3](archive/reviews/REVIEW-ROUND-2-2026-10-15.md#r2-c-3) |
 | A guest value is read once, at the boundary | Library code in a guest realm reads each property of a guest value once, as a snapshot | the stringified functions of `src/lib/realms.ts` | `test/unit/read-once.test.ts` | [R5:N-6](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-6) |
 | The view's violation reports are complete and unforgeable | No guest code runs in the view, and the host labels each report by the port it arrived on; capped per directive | `_dispatchViolation` (`src/host.ts`) | `test/e2e/violations.spec.ts` | `ADR-005#the-guarantees-on-chromium-firefox-and-webkit` (G6) |
 
@@ -155,7 +161,7 @@ forge or suppress them, and they differ per engine. Treat them as claims.
 
 ### Resource limits
 
-<!-- describes: budgets:channels sig:65f1 -->
+<!-- describes: budgets:channels sig:8864 -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
@@ -262,8 +268,8 @@ The open items of the [backlog](BACKLOG.md) that bear on this model:
 | [S49](BACKLOG.md#s49) | Worker mode, frozen until folded into strict mode | worker |
 | [S74](BACKLOG.md#s74) | The final adversarial review board of the current state | — |
 
-Residuals stated in the decisions rather than the backlog: DNS rebinding and the host origin in `Origin` for the fetch
-bridge ([ADR-006](ADR-006-fetch-bridge.md#consequences)); CSS within the policy, forgeable worker reports, a worker that
+Residuals stated in the decisions rather than the backlog: DNS rebinding for the fetch bridge
+([ADR-006](ADR-006-fetch-bridge.md#consequences)); CSS within the policy, forgeable worker reports, a worker that
 closes itself, memory and same-site cookies ([ADR-005](ADR-005-strict-mode.md#consequences)); an image from an allowed
 origin opens as that origin's document (`ADR-005#the-renderer`).
 
@@ -281,7 +287,7 @@ test that enumerates its domain:
 
 | Class | Chokepoint | Structural test |
 | :--- | :--- | :--- |
-| E-net | the policy template (`src/lib/csp/csp-generator.ts`), `WORKER_GLOBALS`, the renderer's allowlists | `src/lib/csp/csp-generator.test.ts`; `test/unit/policy-guarantees.test.ts`; `test/e2e/worker-globals-and-termination.spec.ts`; `test/e2e/strict-renderer.spec.ts` |
+| E-net | the policy template (`src/lib/csp/csp-generator.ts`), `WORKER_GLOBALS`, the renderer's allowlists; the fetch bridge's frame, its one transport (`src/lib/bridge-frame.ts`) | `src/lib/csp/csp-generator.test.ts`; `test/unit/policy-guarantees.test.ts`; `test/e2e/worker-globals-and-termination.spec.ts`; `test/e2e/strict-renderer.spec.ts`; `test/unit/structural.test.ts`; `test/e2e/fetch-bridge-isolation.spec.ts` |
 | E-cpu | the egress table and `CHANNEL_BUDGETS` (`src/lib/egress.ts`); the frame table (`src/lib/frames.ts`) | `test/unit/egress.test.ts`; `test/e2e/egress.spec.ts`; `test/unit/budgets.test.ts`; `test/unit/structural.test.ts` |
 | P | the snapshot measure (`src/lib/structured-size.ts`) and the RPC frame builders; `viewBudget` | `test/unit/structural.test.ts`; `test/unit/view-budget.prop.test.ts` |
 | G | the capture lists ended by `CAPTURE_POINT`; one read of a guest value | `test/unit/bootstrap-capture-and-measure.test.ts`; `test/unit/read-once.test.ts` |

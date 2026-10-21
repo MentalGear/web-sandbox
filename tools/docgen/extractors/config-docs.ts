@@ -42,7 +42,7 @@ export const OPTION_WORDS: Record<Documented, OptionWords> = {
     autoResize: { type: "`boolean`",
         what: "Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS." },
     fetchBridge: { type: "`FetchBridgeConfig`",
-        what: "Opens [`sandboxFetch()`](#sandboxfetch); the host makes each request. A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md)" },
+        what: "Opens [`sandboxFetch()`](#sandboxfetch); the host decides each request, and a hidden frame with an opaque origin makes it (the target sees `Origin: null`). A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md)" },
     callLimits: { type: "`CallLimits`",
         what: "The per-second budget of the calls the guest makes, per environment; see [below](#calllimits)." },
     allowAnimations: { type: "`boolean`",

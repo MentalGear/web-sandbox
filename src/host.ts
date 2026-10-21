@@ -25,9 +25,10 @@ import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT, type Sa
 import { createLogLimiter, LOG_MAX_BYTES, LOG_OWN_LINES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
+import { BRIDGE_FRAME_REFUSED, createBridgeFrame, prepareBridgeFrame, type BridgeFrame } from "./lib/bridge-frame";
 import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
-import { setWrapperSrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
+import { setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
@@ -331,8 +332,9 @@ export interface SandboxConfigOptions {
      */
     autoResize?: boolean;
     /**
-     * Opens `sandboxFetch()` in the guest: the host makes each request under a fixed discipline (exact-origin
-     * allowlist, no credentials, no redirects, capped body and time) and reports it as a `fetch` event. The guest's
+     * Opens `sandboxFetch()` in the guest: the host decides each request under a fixed discipline (exact-origin
+     * allowlist, no credentials, no redirects, capped body and time), a hidden frame of the library's with an opaque
+     * origin makes it (the target sees `Origin: null`), and the host reports it as a `fetch` event. The guest's
      * policy is unchanged. Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. See ADR-006.
      *
      * @defaultValue off
@@ -612,6 +614,8 @@ export class WebSandbox extends ElementBase {
     private _origins: OriginPolicy = NO_ORIGINS; // the parsed `origins` (ADR-007), what the guest policy admits
     private _warnedConfig = new Set<string>();   // the config schema's warnings (normaliseConfig), once each per instance
     private _fetchBridge: FetchBridge | null = null; // this environment's bridge: its requests end with it
+    private _bridgeFrame: BridgeFrame | null = null; // the frame that makes this environment's bridge requests (P1-ISO-1)
+    private _warnedBridgeFrame = false;      // the bridge's frame did not start, said once per instance
     // The guest-write overlay (BL:C5): created by each build when guestWrites is on, else null. It outlives its
     // environment's termination (closed, still listable and committable) and is discarded by the next build and on
     // removal (_discardGuestWrites).
@@ -1717,13 +1721,38 @@ export class WebSandbox extends ElementBase {
     // request must be served by the bridge of the environment it arrived in. Reading this._fetchBridge when the method
     // runs would let a request that arrived just before a rebuild be served by the next environment's bridge (FR:H).
     // Closed over its own bridge, it reaches the one teardown closed, and is refused there.
-    private _startFetchBridge() {
-        this._fetchBridge = this._fetchPolicy ? createFetchBridge({
-            policy: this._fetchPolicy,
+    // Its requests are made by its own frame (bridge-frame.ts; P1-ISO-1, class E-net), prepared by the build and put in
+    // the shadow root after the wrapper: the bridge's only transport. The host page's fetch makes none of them.
+    private _startFetchBridge(prepared: HTMLIFrameElement | null) {
+        const policy = this._fetchPolicy;
+        if (!policy || !prepared) {
+            this._fetchBridge = null;
+            this._exposeFetch(null);
+            return;
+        }
+        const frame = createBridgeFrame({
+            iframe: prepared,
+            parent: this.shadowRoot!,
+            maxBytes: policy.maxBytes,
+            startupTimeoutMs: LOAD_TIMEOUT_MS,
+            onRefused: () => this._warnBridgeFrameRefused(),
+        });
+        this._bridgeFrame = frame;
+        this._fetchBridge = createFetchBridge({
+            policy,
             hostOrigin: globalThis.location?.origin ?? '',
             onRecord: (record) => this._dispatchFetch(record),
-        }) : null;
+            transport: frame.transport,
+        });
         this._exposeFetch(this._fetchBridge);
+    }
+
+    // The bridge fails closed when its frame never started (every request refused, with the reason in its record);
+    // the embedder is told once, on the console.
+    private _warnBridgeFrameRefused() {
+        if (this._warnedBridgeFrame) return;
+        this._warnedBridgeFrame = true;
+        console.warn(`[Sandbox] ${BRIDGE_FRAME_REFUSED}: every sandboxFetch() request is refused.`);
     }
 
     private _exposeFetch(bridge: FetchBridge | null) {
@@ -1775,6 +1804,7 @@ export class WebSandbox extends ElementBase {
         if (this._viewWatchdog) { this._viewWatchdog.stop(); this._viewWatchdog = null; }
         if (this._resizer) { this._resizer.stop(); this._resizer = null; } // the height it wrote stays until the next report
         if (this._fetchBridge) { this._fetchBridge.abortAll(); this._fetchBridge = null; } // upstream requests end with the environment
+        if (this._bridgeFrame) { this._bridgeFrame.close(); this._bridgeFrame = null; } // and so does the frame that made them
     }
 
     // What a build reads besides the reducer's state, asked as it starts (src/lib/lifecycle.ts, BuildContext). Every build
@@ -2019,8 +2049,8 @@ export class WebSandbox extends ElementBase {
         iframe.style.cssText = isWorkerMode ? "display:none" : "width:100%;height:100%;border:none";
         // srcdoc goes in before the frame is inserted: an iframe inserted without one first
         // loads about:blank, which would count as the frame's one load (see _frameLoadHandler)
-        setWrapperSrcdoc(iframe, buildWrapperDocument(guestDocument, sandboxFlags, permissions));
-        return { iframe, built, strictInit: null };
+        setLibrarySrcdoc(iframe, buildWrapperDocument(guestDocument, sandboxFlags, permissions));
+        return { iframe, built, strictInit: null, bridgeFrame: this._prepareBridgeFrame() };
     }
 
     /**
@@ -2059,8 +2089,13 @@ export class WebSandbox extends ElementBase {
         iframe.setAttribute("sandbox", sandboxFlags);
         iframe.setAttribute("referrerpolicy", FRAME_REFERRER_POLICY);
         iframe.style.cssText = "width:100%;height:100%;border:none";
-        setWrapperSrcdoc(iframe, buildWrapperDocument(view, sandboxFlags, []));
-        return { iframe, built, strictInit };
+        setLibrarySrcdoc(iframe, buildWrapperDocument(view, sandboxFlags, []));
+        return { iframe, built, strictInit, bridgeFrame: this._prepareBridgeFrame() };
+    }
+
+    // The fetch bridge's frame of this build, written detached like the wrapper, or null with the bridge off.
+    private _prepareBridgeFrame(): HTMLIFrameElement | null {
+        return this._fetchPolicy ? prepareBridgeFrame(this._fetchPolicy.allow) : null;
     }
 
     // The executor's `attach` effect: the prepared build becomes the element's, every per-build resource made here (the
@@ -2070,7 +2105,6 @@ export class WebSandbox extends ElementBase {
     // _frameLoadHandler), and no HTML sink is written. So no other build can start in between, and this build's
     // resources are one set.
     private _attachBuild(prepared: PreparedBuild) {
-        this._startFetchBridge();
         this._startGuestWrites(prepared.built);
         const iframe = prepared.iframe;
         this._iframe = iframe;
@@ -2080,6 +2114,7 @@ export class WebSandbox extends ElementBase {
         // inserted. Strict mode's view checks in on its own port instead (R1:R3-1).
         if (prepared.strictInit === null) this._listenForAnnouncement(iframe);
         this.shadowRoot!.appendChild(iframe);
+        this._startFetchBridge(prepared.bridgeFrame); // its frame after the wrapper, which stays the shadow root's first
     }
 
     // The worker's source in strict mode: the scope check, the globals allowlist, the comms script (bridge, logs, violations, execute,
@@ -2239,6 +2274,7 @@ interface PreparedBuild {
     iframe: HTMLIFrameElement; // the wrapper, its srcdoc written, not in the document
     built: FileStore; // the copy of the store this build delivers (BR:CB4)
     strictInit: StrictInit | null; // strict mode: what the wrapper's load hands the view
+    bridgeFrame: HTMLIFrameElement | null; // the fetch bridge's frame, its srcdoc written, not in the document (P1-ISO-1)
 }
 
 // The context of a build where the element may not build (buildsHere): it stops instead, and asks nothing else.

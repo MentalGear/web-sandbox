@@ -62,7 +62,7 @@ test("a cookie set on the harness origin never reaches it through the bridge, th
     expect(String(own.headers.cookie)).toContain('harness_secret=h1');
 });
 
-test('the request carries no credentials and no referrer; the target sees the host origin, never its URL', async ({ sandbox, context, page }) => {
+test('the request carries no credentials and no referrer; the target sees Origin: null, never the host origin or its URL', async ({ sandbox, context, page }) => {
     // A cookie for the listener's host, which a credentialed request there would carry, and one on the harness origin.
     await context.addCookies([{ name: 'listener_secret', value: 'l1', domain: '127.0.0.1', path: '/', secure: true, sameSite: 'None' }]);
     await page.evaluate(() => { document.cookie = 'harness_secret=h1; path=/'; });
@@ -75,7 +75,7 @@ test('the request carries no credentials and no referrer; the target sees the ho
         expect(headers.cookie).toBeUndefined();
         expect(headers.authorization).toBeUndefined();
         expect(headers.referer).toBeUndefined();
-        expect(headers.origin).toBe(ORIGIN);
+        expect(headers.origin).toBe('null'); // the bridge's frame has an opaque origin (P1-ISO-1)
     }
 
     // positive control: the cookie is in the jar and goes where credentials apply (a first-party navigation)
@@ -128,7 +128,7 @@ test('loopback, private and localhost names are refused unless listed: every spe
 
 test("the host page's own origin is refused unless listed", async ({ sandbox }) => {
     expect(await sandbox.mount(bridgeTo(recorder.allowed))).toBe('ready');
-    const harness = `${ORIGIN}/test/e2e/harness.html`;
+    const harness = `${ORIGIN}/__echo?own-origin`; // CORS for any origin, as a target must allow Origin: null
 
     const refused = await sandbox.inGuest(fetchInGuest(harness));
     expect(refused.code).toBe('FETCH_NOT_ALLOWED');
@@ -140,7 +140,7 @@ test("the host page's own origin is refused unless listed", async ({ sandbox }) 
     expect(await sandbox.mount(bridgeTo(ORIGIN))).toBe('ready');
     const listed = await sandbox.inGuest(fetchInGuest(harness));
     expect(listed.status).toBe(200);
-    expect(listed.text).toContain('Sandbox e2e harness');
+    expect(JSON.parse(listed.text)).toMatchObject({ method: 'GET', headers: { origin: 'null' } });
 });
 
 test('a redirect from an allowlisted origin to another is refused with FETCH_REDIRECT, and the other origin records nothing', async ({ sandbox, page }) => {

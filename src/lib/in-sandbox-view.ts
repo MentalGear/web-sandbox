@@ -1,4 +1,5 @@
 import { inSandboxFiles } from './in-sandbox-files';
+import { BRIDGE_FRAME_OPTIONS, inBridgeFrame } from './in-bridge-frame';
 import { assertHashableScript, scriptHashSource } from './csp/script-hash';
 import { escapeAttribute } from './frame-documents';
 import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './markup-references';
@@ -2925,9 +2926,24 @@ export const VIEW_OPTIONS: ViewOptions = {
 let cachedText: string | null = null;
 let cachedHash: string | null = null;
 
-/** The view bootstrap's text for `options`, built from the functions it runs (the tests build it with other options). */
+/**
+ * The role attribute of the bootstrap's script element in the fetch bridge's frame (bridge-frame.ts,
+ * buildBridgeDocument). The library has one hashed bootstrap, so one hash in the host page's policy admits both of its
+ * documents (P1-ISO-1): in a script element with this attribute it runs the bridge's frame (in-bridge-frame.ts), in any
+ * other the view. The attribute is outside the hashed text, and both documents are the library's own, built before any
+ * guest byte exists.
+ */
+export const BRIDGE_ROLE = 'fetch-bridge';
+
+/**
+ * The bootstrap's text for `options`, built from the functions it runs (the tests build it with other options): strict
+ * mode's view, or the fetch bridge's frame where its script element has the bridge's role (BRIDGE_ROLE).
+ */
 export function viewBootstrapSource(options: ViewOptions): string {
-    return `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')});`;
+    const script = 'var s = document.currentScript;';
+    const bridge = `(${inBridgeFrame.toString()})(${JSON.stringify(BRIDGE_FRAME_OPTIONS).replaceAll('<', '\\u003c')});`;
+    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')});`;
+    return `(function () {${script} if (s && s.getAttribute('data-role') === '${BRIDGE_ROLE}') {${bridge}} else {${view}}})();`;
 }
 
 /**
@@ -2961,12 +2977,13 @@ export function viewBootstrapHash(): string {
 }
 
 /**
- * The CSP hash source of strict mode's view bootstrap for this release of the package, to allow in the host page's own
- * Content-Security-Policy (R1:R4-5).
+ * The CSP hash source of the library's bootstrap for this release of the package, to allow in the host page's own
+ * Content-Security-Policy (R1:R4-5): strict mode's view runs it, and so does the fetch bridge's frame.
  *
  * @remarks
- * It is the very value the element puts in the view's `script-src`, and the view inherits the host page's policy
- * (docs/API.md#host-page-policy). The bootstrap is a string literal of the bundle, so the hash is the same in a build
+ * It is the very value the element puts in the `script-src` of both documents, and both inherit the host page's policy
+ * (docs/API.md#host-page-policy), so one hash admits them both: the view in strict mode, and with `fetchBridge` the
+ * frame that makes the bridge's requests, in every mode (P1-ISO-1). The bootstrap is a string literal of the bundle, so the hash is the same in a build
  * step (importing the package needs no DOM) and in the browser, however the embedder's app is bundled or minified. It
  * changes only with the package's version.
  *

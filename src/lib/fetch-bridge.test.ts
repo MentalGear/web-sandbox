@@ -114,16 +114,16 @@ describe('createFetchBridge (backlog B5)', () => {
         return { response: new Response(body, init), state };
     }
 
-    // fetch() is given the Request the bridge built (AR:B6): the calls record what it carries.
-    function bridgeWith(fetchImpl: (request: Request) => Promise<Response>, overrides: Record<string, unknown> = {}) {
+    // The transport is given the Request the bridge built (AR:B6): the calls record what it carries.
+    function bridgeWith(respond: (request: Request) => Promise<Response>, overrides: Record<string, unknown> = {}) {
         const records: FetchRecord[] = [];
         const calls: { url: string; init: RequestInit; request: Request }[] = [];
         const bridge = createFetchBridge({
             policy: policy(overrides), hostOrigin: HOST, onRecord: (r) => records.push(r),
-            fetchImpl: ((request: Request) => {
+            transport: ((request: Request) => {
                 const { method, credentials, referrerPolicy, redirect, mode, cache, keepalive, signal } = request;
                 calls.push({ url: request.url, init: { method, credentials, referrerPolicy, redirect, mode, cache, keepalive, signal }, request });
-                return fetchImpl(request);
+                return respond(request);
             }) as any,
         });
         return { bridge, records, calls };
@@ -236,7 +236,7 @@ describe('FetchRecord, a union keyed by outcome (S76, decision D)', () => {
     it('the outcomes are the list, and the record of each path narrows on it', async () => {
         expect(FETCH_OUTCOMES).toEqual(['ok', 'refused', 'failed', 'aborted']);
         const records: FetchRecord[] = [];
-        const bridge = createFetchBridge({ policy: policy(), hostOrigin: HOST, onRecord: (r) => records.push(r), fetchImpl: (async () => new Response('hello', { status: 201 })) as any });
+        const bridge = createFetchBridge({ policy: policy(), hostOrigin: HOST, onRecord: (r) => records.push(r), transport: (async () => new Response('hello', { status: 201 })) as any });
         await bridge.handle({ url: 'https://api.example/ok' });
         await bridge.handle({ url: 'https://other.example/x' }).catch(() => {});
         expect(records.map(describeRecord)).toEqual(['201 5', "FETCH_NOT_ALLOWED no reason"]);

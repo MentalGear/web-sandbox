@@ -182,7 +182,7 @@ describe('CB6: one refusal text to the guest for every origin that is not listed
             expect(refusal.message, url).toBe(`[sandboxFetch] FETCH_NOT_ALLOWED: ${new URL(url).origin} is not in fetchBridge.allow`);
         }
         const records: FetchRecord[] = [];
-        const bridge = createFetchBridge({ policy, hostOrigin: HOST, onRecord: (record) => records.push(record), fetchImpl: (() => Promise.reject(new Error('not called'))) as unknown as typeof fetch });
+        const bridge = createFetchBridge({ policy, hostOrigin: HOST, onRecord: (record) => records.push(record), transport: (() => Promise.reject(new Error('not called'))) as unknown as typeof fetch });
         for (const url of urls) await bridge.handle({ url }).catch(() => {});
         expect(records.map(record => [record.outcome, record.code, record.reason ?? null])).toEqual([
             ['refused', 'FETCH_NOT_ALLOWED', "the host page's own origin, which is not in fetchBridge.allow"],

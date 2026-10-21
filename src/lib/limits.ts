@@ -16,6 +16,7 @@ import { GUEST_CALL_BYTES_PER_SECOND, GUEST_CALLS_PER_SECOND } from './config-sc
 import { UNCAUGHT_CHARACTERS_PER_SECOND, UNCAUGHT_PER_SECOND } from './egress';
 import { DEFAULT_FETCH_TIMEOUT_MS, DEFAULT_MAX_BYTES, DEFAULT_MAX_CONCURRENT, MAX_MAX_BYTES, MAX_MAX_CONCURRENT, MAX_TIMEOUT_MS, MAX_URL } from './fetch-bridge';
 import { MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES } from './files';
+import { MAX_RESPONSE_HEAD } from './in-bridge-frame';
 import { GUEST_WRITE_BYTES_PER_SECOND, GUEST_WRITES_PER_SECOND } from './guest-writes';
 import {
     VIEW_APPLY_MS_PER_SECOND, VIEW_EVENT_LIMITS, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS,
@@ -101,6 +102,7 @@ export const LIMITS = {
     DEFAULT_MAX_CONCURRENT: { value: DEFAULT_MAX_CONCURRENT, unit: 'count', label: 'Fetch: default `maxConcurrent`', enforced: FETCH, exported: false },
     MAX_MAX_CONCURRENT: { value: MAX_MAX_CONCURRENT, unit: 'count', label: 'Fetch: largest `maxConcurrent`', enforced: FETCH, exported: false },
     MAX_URL: { value: MAX_URL, unit: 'characters', label: 'Fetch: characters of a URL, as written and as parsed', enforced: 'fetch-bridge.ts, the request check', exported: false },
+    MAX_RESPONSE_HEAD: { value: MAX_RESPONSE_HEAD, unit: 'characters', label: "Fetch: characters of a response's status text and headers, together", enforced: "in-bridge-frame.ts, the bridge's frame, before it posts the head", exported: false },
     GUEST_WRITES_PER_SECOND: { value: GUEST_WRITES_PER_SECOND, unit: 'count', label: 'Guest writes: requests per second, per environment', enforced: 'guest-writes.ts, the host', exported: true },
     GUEST_WRITE_BYTES_PER_SECOND: { value: GUEST_WRITE_BYTES_PER_SECOND, unit: 'bytes', label: 'Guest writes: bytes per second, per environment', enforced: 'guest-writes.ts, the host', exported: true },
 } as const satisfies Record<string, LimitRow>;
