@@ -1,6 +1,6 @@
 /**
  * Bundles the package into dist/index.js (`bun run build:lib`, before tsc emits the declarations), with the strict view's
- * bootstrap as one string literal (review round 2, C-8; in-sandbox-view.ts, viewBootstrapText). The text is built here,
+ * bootstrap as one string literal (R2:C-8; in-sandbox-view.ts, viewBootstrapText). The text is built here,
  * once, from the sources, and handed to the bundler as the value of __WEB_SANDBOX_VIEW_BOOTSTRAP__, so the hash of the
  * script the element injects is a constant of the package: what viewScriptHash() returns in a build step is what the
  * browser computes, however a consumer bundles or minifies the package. scripts/smoke-package.sh checks both, through a

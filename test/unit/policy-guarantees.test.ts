@@ -223,7 +223,7 @@ describe('A7: a merge never writes prototypes, with no list of keys', () => {
         }
         return out;
     };
-    // deepMerge as it was before the denylist and before definitions (for…in and [[Set]]), on keys that are not special
+    // a naive merge (for…in and [[Set]]), on keys that are not special: the shape the library's own copies avoid
     const assignMerge = (target: any, source: any): any => {
         const output = { ...target };
         for (const key of Object.keys(source)) {

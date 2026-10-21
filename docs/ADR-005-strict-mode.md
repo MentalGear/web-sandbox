@@ -65,8 +65,8 @@ creates the render port, spawns the worker from a `blob:` URL (`worker-src blob:
   `CooperativeSandboxConfig.mode` is required), and `origins` is parsed for the mode the build will have, so a config that
   names no mode drops `scripts`. A default element with only `html` renders the cleaned html in the view and runs no guest
   script: without an `entry` the worker runs only the prelude. The mode that runs guest script in a document is
-  `'cooperative'`: it is for cooperative content. `'iframe'` was renamed and is not aliased: it fails closed like any
-  unknown mode, and the reason and the one warning say `('iframe' was renamed 'cooperative')`.
+  `'cooperative'`: it is for cooperative content. `'iframe'` is not a mode and is not aliased: it fails closed like any
+  unknown mode, and the reason and the one warning say `('iframe' was renamed 'cooperative')`, the text the code gives.
 - **Markup written for cooperative mode is said to run nothing.** When a strict build's `html` holds a script element or an
   `on…` handler attribute, the element warns once: ``strict mode (the default) runs no script in `html`; name a registered
   file in `entry`, or choose `mode: 'cooperative'`.`` It reads the markup with the host's `DOMParser`, which runs and loads
@@ -179,8 +179,11 @@ script) and no font or media either. The sandbox flags are `allow-scripts allow-
 capabilities; `unsafeCapabilities` are dropped with one warning.
 
 **The hash** is computed synchronously on the host (`src/lib/csp/script-hash.ts`) over the UTF-8 of the bootstrap text, once
-per page. The text is the stringified library functions, so it differs between the dev server, the bundle and a consumer's
-build; hashing at run time always matches what the page serves. The parser changes CR, CR LF and NUL (P2), so the text is
+per page. The text is the stringified library functions, so it differs between a checkout run from source (the dev server, the tests)
+and the built package; the package embeds it as one string literal (`scripts/build-lib.ts`), so a consumer's bundler or
+minifier does not change it, and `viewScriptHash()` is a constant of the package version. Hashing at run time always
+matches what the page serves, from source too; a host policy built from the package's hash does not match a checkout run
+from source, and fails closed there. The parser changes CR, CR LF and NUL (P2), so the text is
 refused if it contains any, or anything that would end or re-enter the script element (A3).
 
 ### The renderer
@@ -411,8 +414,10 @@ animations, a pointer moving over `:hover ~` rules, animated images, indetermina
 The view (a sandboxed `srcdoc` frame in a sandboxed wrapper) runs on the host page's thread in Firefox (Fission isolates only
 cross-site frames; an opaque-origin sandboxed frame is placed with the site that created it), in WebKit and Safari (no site
 isolation), on Android (Chromium isolates partially; Android WebView has no out-of-process frames) and in the Chromium
-headless shell. Desktop Chromium 127+ runs it in a process of its own (`IsolateSandboxedIframes`; turning the feature off
-brings it back). The table is in [API.md](API.md#the-views-cost-to-the-host-page) ([research 16](research/16_view_isolation/README.md)).
+headless shell. Desktop Chromium 127+ runs it in a process apart from the host page's (`IsolateSandboxedIframes`; turning the feature off
+brings it back). That process is not the view's alone: the sandboxed frames of the page can share one, so the frames of
+another sandbox on the page (a cooperative guest's loop, another strict view's documented stall) can stall this view, and
+its liveness ping then ends it ([S79](BACKLOG.md#s79)). The table is in [API.md](API.md#the-views-cost-to-the-host-page) ([research 16](research/16_view_isolation/README.md)).
 So the host-thread residual below is the rule outside desktop Chromium, not an engine detail.
 
 ## Probe findings that shaped it
@@ -441,8 +446,9 @@ labelled A1–A9 where the code and its tests cite them:
   can style the document; the hash is not a secret.
 - **`crypto.subtle.digest`.** Asynchronous: building an environment is synchronous end to end, and the lifecycle invariants
   ([ADR-003](ADR-003-lifecycle-and-liveness.md)) rely on it.
-- **A build-time constant hash.** The bootstrap is the text of library functions as this page serves them: dev server,
-  bundle and a consumer's bundler each produce different text.
+- **A build-time constant hash.** The bootstrap is the text of library functions as this page serves them: a checkout run
+  from source and the built package produce different text, so a constant of one would not match the other (the package
+  does pin its own, `viewScriptHash()`, for the embedder's policy).
 - **Rendered frames with a forced `sandbox=""`.** It stops the hashed copy from running (P1), but leaves frames whose
   refusals are silent, nested `<meta>` referrer choices (P8) and meta refresh in nested documents. Removing them all (A1) is
   simpler and closes every one of those.

@@ -1,6 +1,6 @@
 # CSP Design Rationale & Security Findings
 
-> **Superseded** by [ADR-007](ADR-007-typed-origins.md) (2026-10-14): the guest policy is a fixed template per mode,
+> **Superseded** by [ADR-007](../../ADR-007-typed-origins.md) (2026-10-14): the guest policy is a fixed template per mode,
 > the embedder lists exact origins per kind (`origins`), and every directive is explicit. The reasoning on
 > `'unsafe-inline'` and nonces below still holds; the table of directives does not. Kept as a record.
 
@@ -27,7 +27,7 @@ Allowing `'unsafe-inline'` creates potential side-channels for data exfiltration
 | `img-src` | `'none'` | Blocks image-based exfiltration. |
 | `font-src` | `'none'` | Prevents exfiltration via custom font loading. |
 | `media-src` | `'none'` | Prevents exfiltration via audio/video sources. |
-| `blob:` | only with registered files | Added to `script-src`, `style-src`, `img-src`, `font-src`, `media-src` and `connect-src` only for the types of the files registered ([ADR-004](ADR-004-files-as-blob-urls.md)). A `blob:` URL resolves only in the realm that minted it, so it reaches no network and no other sandbox. |
+| `blob:` | only with registered files | Added to `script-src`, `style-src`, `img-src`, `font-src`, `media-src` and `connect-src` only for the types of the files registered ([ADR-004](../../ADR-004-files-as-blob-urls.md)). A `blob:` URL resolves only in the realm that minted it, so it reaches no network and no other sandbox. |
 | `frame-src` | `'none'` | Prevents nested iframes and clickjacking attempts. |
 | `object-src` | `'none'` | Disables legacy plugins like Flash. |
 | `worker-src` | `blob:` | Allows framework workers while preventing external script execution. |

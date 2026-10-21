@@ -3,7 +3,7 @@ import { isVirtualKey, mergeGuestImportMaps } from './import-map';
 
 /**
  * The guest's own inline import maps, merged on the host into the one map the bootstrap registers
- * (ADR-004, PR3). Guarantees: an invalid map is left out with a warning; maps merge in document order,
+ * (ADR-004). Guarantees: an invalid map is left out with a warning; maps merge in document order,
  * earlier entries winning; no guest entry can match a URL in https://vfs.invalid/, which only the host maps.
  */
 

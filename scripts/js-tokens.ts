@@ -2,7 +2,7 @@
  * The tokens of a JavaScript or TypeScript text, comments and whitespace left out, as TypeScript's own scanner reads them
  * (typescript/unstable/ast, the dev dependency's JavaScript scanner; no type checker, no compiler process), and its
  * comments on their own (comments(), read by test/unit/history-ratchet.test.ts). Shared by
- * scripts/declaration-specifiers.ts (review round 2, C-11: only real import and export specifiers are rewritten, never
+ * scripts/declaration-specifiers.ts (R2:C-11: only real import and export specifiers are rewritten, never
  * text in a comment or a string that looks like one) and by the unit test that scans the guest-realm functions for
  * intrinsics read after their capture point (C-1).
  *

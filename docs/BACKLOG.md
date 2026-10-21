@@ -62,7 +62,8 @@ Tracked as a known limitation; see [ADR-001](ADR-001-continue-or-adopt.md).
 Structured clone keeps an own `__proto__` key (measured in all three engines), so call arguments, results and
 `sandbox-log` args from the guest can hold one. Reading such an object is safe, and it never changes
 `Object.prototype`; merging it with `Object.assign` sets the target's prototype. Documented next to `expose()` and
-`sandbox-log` in the README; `deepMerge` (the element's own config merge) skips the key (S20). Asserted:
+`sandbox-log` in the README. The element merges no guest data into its own state: its configuration goes through the
+config schema, which stores own data keys only (S20; `deepMerge` in `src/lib/utils.ts` is not used by the element). Asserted:
 `test/e2e/channel-isolation.spec.ts` ("B8").
 
 ### <a id="s36"></a>S36 · Focus, clipboard and messages to the host window — **documented** (a cooperative-mode limit, S44)
@@ -305,18 +306,30 @@ The owner adopted all of the report's recommendations:
 
 Once S65, the rest of S61, S76 and S60 are merged: an independent adversarial review board of the whole repository and its
 docs, with reviewers from several model families (Opus, Sonnet and Haiku; S60's independent reviews are folded in). The
-board clears after **two consecutive passes with no finding of high severity or above** (a stricter severity floor than
-the review rounds' medium, as the owner set it). Findings are fixed as before: by class, each naming its class and
-extending its chokepoint and structural test (CONTRIBUTING.md, "Fixing a finding"), after the owner has seen them.
+board is **clean** (owner, 2026-10-21) when none of a pass's confirmed findings leaks data or can manipulate it, at
+any severity, a documentation gap that leads embedders into such a leak included. DoS and availability-only findings
+are backlogged and do not count against a pass. Docs drift, test gaps and correctness bugs with no data effect do not
+count either, and are fixed right away where that makes sense. Findings are
+fixed as before: by class, each naming its class and extending its chokepoint and structural test (CONTRIBUTING.md,
+"Fixing a finding"), after the owner has seen them.
 A finding whose only effect is a bounded cost to the host page that the embedder can end is at most medium, and is
 documented rather than mitigated (CONTRIBUTING.md, "Availability findings").
 
-**Pass 1 (2026-10-21, main 9141e4e)** found 4 confirmed high and no critical, so it does not count toward clearing the
-board (0 of 2). **The owner's decision on it: fix only what leaks data now; every DoS or availability finding goes to
+**Pass 1 (2026-10-21, main 9141e4e)** found findings that leak data (BD1:ISO-1, BD1:NEW-1, BD1:NEW-14), so it was not
+clean. **The owner's decision on it: fix only what leaks data now; every DoS or availability finding goes to
 this backlog**, high ones included, rated as the verifiers confirmed them (S77 to S82). Fixed in their own batches, as
 findings that leak data: the fetch bridge running in the host page's fetch environment (BD1:ISO-1, ADR-006), the
 same-site origins warning (BD1:NEW-1) and `allow-pointer-lock` as a safe capability (BD1:NEW-14). The board's reports and the verifiers' verdicts are kept in
 [BOARD-PASS-1-2026-10-20.md](archive/reviews/BOARD-PASS-1-2026-10-20.md); each item cites its findings by ID (`BD1:`).
+
+**Pass 2 (2026-10-21, main 6d727a8)** found findings that leak data (P2-ISO-1, P2-NEW-1, P2-NEW-2), so it was not clean
+either. Its docs-only and comments-only findings were fixed in their own batch (P2-DOC-1, P2-DOC-2, P2-DOC-4 to
+P2-DOC-6, P2-CHL-2's docs, P2-NEW-3, P2-NEW-6, P2-LIM-4's docs; the S82 checklist's docs items); its
+availability-only findings are backlogged: P2-CHL-2's code half in S79 (the cross-sandbox case), P2-LIM-3 in S77's
+class (a budget that counts a proxy: the fetch result's head is capped in characters, its size is measured in
+structured-clone bytes, so a head of very many small headers can make a response the bridge read in full be refused
+on its way to the guest; availability only, low). The pass 2 reports get their `BD2:` IDs when the coordinator
+registers them.
 
 ### <a id="s77"></a>S77 · The byte measure counts a proxy: a `File`'s name, a `Blob`'s type, a sparse array's `length` — ⏳ **open** (P2 · M · **high**)
 
@@ -368,6 +381,13 @@ host walk reads. Class P (a budget that counts a proxy).
    included: `freezeDeep`'s steps and `String(value).length / 2` stay within k x `sizeOf(value)`. A File-name flood in
    `relay-and-rpc-budgets.spec.ts` beside its string floods.
 4. Docs, once fixed: API.md's list of what the measure knows, and the comment at the top of `structured-size.ts`.
+
+*P2-LIM-3 (S74 pass 2, low, availability only).* The same class on the bridge's result: `MAX_RESPONSE_HEAD` caps the
+response head in characters, the result is measured in structured-clone bytes (about 40 bytes of overhead for every
+header pair), so a head of up to 32 768 small headers measures about 2.5 MB against the 1 MiB `FETCH_RESULT_OVERHEAD`
+that the config invariant allows. With `maxBytes` near 32 MiB the bridge reads the response in full, records `ok`, and
+`sendResult` then refuses it. Fix: bound the number of headers and the head's measured bytes in the frame next to
+`MAX_RESPONSE_HEAD`, and test with the worst head the cap admits.
 
 **Until then** THREAT-MODEL.md ("Resource limits") and API.md ("Budgets", `sandbox-log`) state the gap.
 
@@ -424,6 +444,17 @@ operation is open; the error page of a lost view (ADR-005, A5) stays silent with
 Structural test: a Playwright project with `channel: 'chromium'` (desktop Chromium) running
 `test/e2e/view-bound.spec.ts` (b) with the verdicts of the shared-thread engines. Fallback if that is not wanted: state
 the 5 s outer bound in API.md (b) and (d) and in the reasons table.
+
+**The cross-sandbox case (S74 pass 2, P2-CHL-2).** This extends the mechanism across sandboxes. Desktop Chromium
+groups the sandboxed frames of the page in one process, so the view of sandbox B shares a process with the frames of
+sandbox A: a plain loop in A's cooperative guest, or one documented stall in A's strict view, stalls B's view while the
+host page keeps ticking, and B's liveness ping ends B (`the sandbox view stopped responding`); a cooperative B is
+frozen for as long. Measured on desktop Chromium (`PROBE_CHANNEL=chromium`): host gap 55 ms while B was ended at 5 s;
+two strict sandboxes rendering a 240 000-character bidirectional paragraph both ended. B fails closed and no data
+moves. The predicate of the fix has to be "B's view did not get the thread", so the view stamps each pong with its own
+clock and the host counts the view's elapsed time, not its own ticks. Structural test: a desktop-Chromium project
+running a two-sandbox spec. Until then the docs state that every sandbox of the page shares the one process
+(THREAT-MODEL.md "Where the view runs", API.md "Chromium on the desktop", ADR-005).
 
 **Until then** API.md "(b) The single-operation bound" and THREAT-MODEL.md state it.
 
@@ -485,10 +516,11 @@ a finding").
   `WorkerGlobalScope.prototype`.
 - [ ] BD1:ISO-3: cooperative mode: the guest replaces its own document without being ended, and the replacement has none
   of the bootstrap's hardening (a cooperative-mode limit to list, S44).
-- [ ] BD1:ISO-4: the `origins.connect` reference is wrong for strict and worker mode and omits what an `https:` entry
+- [x] BD1:ISO-4: the `origins.connect` reference is wrong for strict and worker mode and omits what an `https:` entry
   opens (`wss:`, EventSource, beacon). **[docs]**
 
-*Limits*
+*Limits* Done: the claim about `https:` admitting `wss:` is false (measured: it does not, in Chromium 145, Firefox 146 and
+  WebKit 26; WebKit lets a `wss://` entry admit `https://` requests), so API.md, the TSDoc and ADR-007 say that.
 - [ ] BD1:LIM-4: `fetchBridge` numeric options fall back or clamp silently.
 - [ ] BD1:LIM-5: the strict prelude reads `refused` and `ids` of the view's frames through the guest's
   `Object.prototype` (affects only the guest).
@@ -500,22 +532,24 @@ a finding").
   the route and says `main` is what is supported. **[owner]**
 - [ ] BD1:DOC-2: `load(html)` does not validate; its TSDoc says a non-string is dropped with a warning, and
   `load(() => 1)` terminates strict mode (embedder-only). Code, or the TSDoc.
-- [ ] BD1:DOC-3: three code comments (`violation.ts`, `in-sandbox-script.ts`, `auto-resize.ts`) say the guest can reach the
+- [x] BD1:DOC-3: three code comments (`violation.ts`, `in-sandbox-script.ts`, `auto-resize.ts`) say the guest can reach the
   port, against the threat model; `auto-resize.ts` says "cooperative mode only". **[comments]**
-- [ ] BD1:DOC-4: THREAT-MODEL's "`ready` only follows the guest's check-in" against the no-script cooperative `ready`;
+- [x] BD1:DOC-4: THREAT-MODEL's "`ready` only follows the guest's check-in" against the no-script cooperative `ready`;
   ARCHITECTURE's "a render never crosses the host page's thread" (the "always stop" half is qualified with S77 to S79).
   **[docs]**
-- [ ] BD1:DOC-5: ADR-006 says the bridge being off removes `sandboxFetch`; it does not. **[docs]**
-- [ ] BD1:DOC-6: retry guidance contradicts itself (ADR-002, the `RpcErrorCode` TSDoc, README, API.md). **[docs]** and TSDoc
-- [ ] BD1:DOC-7: ADR-005 says a consumer's build changes the view bootstrap text; the package pins it. **[docs]**
-- [ ] BD1:DOC-8: ADR-003's "every budget terminates" is not what the budgets do. **[docs]**
-- [ ] BD1:DOC-9: README says custom elements are inline and to set `display`; the element is a block. **[docs]**
-- [ ] BD1:DOC-10: API.md states an invariant that S70 records as false for string bodies. **[docs]**
-- [ ] BD1:DOC-11: hand-copied lists and numbers in README and API.md that nothing keeps equal to the code. **[docs]**
-- [ ] BD1:DOC-12: the Trusted Types row says Firefox has none. **[docs]**
+- [x] BD1:DOC-5: ADR-006 says the bridge being off removes `sandboxFetch`; it does not. **[docs]**
+- [x] BD1:DOC-6: retry guidance contradicts itself (ADR-002, the `RpcErrorCode` TSDoc, README, API.md). **[docs]** and TSDoc
+- [x] BD1:DOC-7: ADR-005 says a consumer's build changes the view bootstrap text; the package pins it. **[docs]**
+- [x] BD1:DOC-8: ADR-003's "every budget terminates" is not what the budgets do. **[docs]**
+- [x] BD1:DOC-9: README says custom elements are inline and to set `display`; the element is a block. **[docs]**
+- [x] BD1:DOC-10: API.md states an invariant that S70 records as false for string bodies. **[docs]**
+- [ ] BD1:DOC-11: hand-copied lists and numbers in README and API.md that nothing keeps equal to the code. **[docs]** Not done: it needs a marker or a generated region for the README and a test that compares the file-type list.
+- [x] BD1:DOC-12: the Trusted Types row says Firefox has none. **[docs]** Done: the row names Firefox 146 (measured again).
 - [ ] BD1:DOC-13: history left in current docs and tests (about 25 test titles with "round N", 28 PR2/3/4 labels, dated
-  lines, `CSP_CONFIG_RATIONALE.md`, `deepMerge`), past the ratchet. **[docs]** and test names
-- [ ] BD1:DOC-14: the "reproduction under `docs/research/NN_*/`" rule is not what practice follows since research 14;
+  lines, `CSP_CONFIG_RATIONALE.md`, `deepMerge`), past the ratchet. **[docs]** and test names Done: the docs, the comments of `src/`, `test/` and `scripts/`, `CSP_CONFIG_RATIONALE.md` (moved to
+  `docs/archive/research/`) and the `deepMerge` sentence. Left: the test titles with "round N", the `describe` titles with
+  PR labels, `deepMerge` itself (dead code, used by two tests only) and the ratchet's extension.
+- [x] BD1:DOC-14: the "reproduction under `docs/research/NN_*/`" rule is not what practice follows since research 14;
   the "Enforced by" cell cites `host.test.ts` and omits `capability-presets.spec.ts`. **[docs]**
 
 *Tests*
@@ -534,25 +568,25 @@ a finding").
   not in CI. **[tests]**
 
 *Newcomer*
-- [ ] BD1:NEW-2: cooperative mode without `allow-scripts` reaches `ready` with no guest (the TSDoc says the frame's
+- [x] BD1:NEW-2: cooperative mode without `allow-scripts` reaches `ready` with no guest (the TSDoc says the frame's
   load, README and API.md say the check-in). **[docs]** and TSDoc
 - [ ] BD1:NEW-3: `viewScriptHash()` does not match the view when the package runs from source under Vite (fails
   closed; `dist` matches).
 - [ ] BD1:NEW-4: some config refusals name no key (`origins.images: 'https://x'` gives "(TypeError)"); list options are
   dropped with a warning or terminate, inconsistently.
 - [ ] BD1:NEW-5: silent config typos (`watchdogTimout`, `unsafeCapablities`); `fetchBridge` without `allow` warns not.
-- [ ] BD1:NEW-6: a looping `entry` spins the worker until `terminate()` with the watchdog off by default; the quickstart
+- [x] BD1:NEW-6: a looping `entry` spins the worker until `terminate()` with the watchdog off by default; the quickstart
   does not say so. **[docs]**
 - [ ] BD1:NEW-7: `registerFiles()` after a refused entry does not revive the sandbox (as documented); the message does
   not say to `reset()`.
-- [ ] BD1:NEW-8: the README fetch-bridge example has no `entry` or `mode`, so it does not run in the default strict
+- [x] BD1:NEW-8: the README fetch-bridge example has no `entry` or `mode`, so it does not run in the default strict
   mode. **[docs]**
-- [ ] BD1:NEW-9: `import 'web-sandbox'` fails while the package is private (D1); `bun run dev` hardcodes port 4444.
+- [x] BD1:NEW-9: `import 'web-sandbox'` fails while the package is private (D1); `bun run dev` hardcodes port 4444.
   **[docs]**
-- [ ] BD1:NEW-10: README says the element is block in one place and inline in another (`:host` is block). **[docs]**
+- [x] BD1:NEW-10: README says the element is block in one place and inline in another (`:host` is block). **[docs]**
 - [ ] BD1:NEW-11: the playground assigns to the frozen `sandbox-log` detail (`playground.ts`), a `TypeError` on every
-  strict preset; that the detail is frozen is undocumented. **[docs]** and playground
-- [ ] BD1:NEW-12: the library's own lines ("strict Ready") are logged with `source: 'guest'`. **[docs]** or code
+  strict preset; that the detail is frozen is undocumented. **[docs]** and playground Docs half done (the `detail` is deeply frozen: `WebSandboxEventMap`); the playground fix is left.
+- [x] BD1:NEW-12: the library's own lines ("strict Ready") are logged with `source: 'guest'`. **[docs]** or code
 - [ ] BD1:NEW-13: tests under heavy load: S81.
 
 ---
@@ -648,7 +682,7 @@ meets an opaque-origin UI tier. Do not write a JS engine.
 | BrowserPod / CheerpX as a dependency | [2026-08 field scan](ADR-001-continue-or-adopt.md#field-scan--august-2026) | Proprietary licence — free only for personal and open-source use. Disqualified as a dependency. |
 | Building a full OS / Linux tier | Same | BrowserPod and `lifo` are years ahead, and it is not this project's problem. |
 | Writing our own JS engine / VM tier | Same | `quickjs-wasi` and `@tanstack/ai-isolate-quickjs` are MIT and maintained. Adopt, don't build. |
-| Nonce-based CSP instead of `'unsafe-inline'` | General best practice | No benefit under an opaque origin with immutable `srcdoc` CSP — [`CSP_CONFIG_RATIONALE.md`](CSP_CONFIG_RATIONALE.md) §3. |
+| Nonce-based CSP instead of `'unsafe-inline'` | General best practice | No benefit under an opaque origin with immutable `srcdoc` CSP — [`CSP_CONFIG_RATIONALE.md`](archive/research/CSP_CONFIG_RATIONALE.md) §3. |
 | App identity from a hash of the source | [Lunet](https://gozala.io/lunet) | The embedder already knows what it loaded; two tenants with identical code would share storage, and any edit loses the data. If storage needs scoping, the embedder passes a namespace. |
 | Declarative argument rules per method (UCAN policy) | [Dialog DB](https://github.com/dialog-db/dialog-db) | In UCAN a third party writes the policy; here the embedder writes both policy and handler, so checking arguments in code is strictly more expressive. |
 | Method-first names so read-only is a prefix | Dialog DB | There are no grants to narrow; an exposed name is the whole grant. |

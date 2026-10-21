@@ -87,12 +87,15 @@ sandbox.load('<h1>Hello</h1>');     // strict mode, the default: shown, and no s
 ```
 
 Importing the module registers nothing, so you choose the tag name. The element is a block by default; give it a
-height.
+height. The package is private and not published yet ([D1](docs/BACKLOG.md#bl-d1)), so `import … from 'web-sandbox'`
+resolves only in a project that links or packs a checkout; from a checkout, import `./src/index.ts`. `bun run dev` serves the
+playground on port 4444 only (`strictPort`).
 
 **Your page's own policy applies inside the sandbox.** Its frames are `srcdoc` documents, which inherit the host
 page's Content-Security-Policy, Trusted Types and Cross-Origin-Embedder-Policy. A host policy that refuses what the
 sandbox needs ends the build with a reason that names it; what to allow, per mode, is in
-[API.md](docs/API.md#host-page-policy).
+[API.md](docs/API.md#host-page-policy). Cooperative and worker mode need `'unsafe-inline'` in your `script-src`, which
+browsers ignore next to a hash or a nonce: they cost a page its own nonce- or hash-based script policy, so prefer strict mode.
 
 ### Modes
 
@@ -104,8 +107,8 @@ sandbox needs ends the build with a reason that names it; what to allow, per mod
 
 In strict mode `html` (and `load()`) is the initial view: its `<script>` elements and `on…` handlers never run, and
 the element says so once (`strict mode (the default) runs no script in html; …`). Put the code in a registered file
-named by `entry`, or choose `mode: 'cooperative'`. `mode: 'iframe'` was renamed `'cooperative'`: it starts nothing,
-and the `terminated` reason says so.
+named by `entry`, or choose `mode: 'cooperative'`. `mode: 'iframe'` is not a mode: it starts nothing,
+and the `terminated` reason names `'cooperative'`.
 
 **The guest reaches nothing by default.** List the exact origins it may load each kind from in `origins`
 (`connect`, `images`, `styles`, `fonts`, `media`, `scripts`); everything else in its policy is fixed:
@@ -151,7 +154,8 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     leaves it `idle`. Inserting it again builds a fresh one. Moved into another window's document, it builds
     nothing there (one warning) until it is back.
 *   **`ready` is the guest's check-in**, not its load: slow images never delay it. In strict mode it is the view's
-    check-in, on the port only its bootstrap holds; in worker mode it comes once the worker runs. Calls and `execute()` sent while
+    check-in, on the port only its bootstrap holds; in worker mode it comes once the worker runs. A cooperative frame
+    without `allow-scripts` has no guest script to check in: `ready` comes with the frame's load, and calls time out. Calls and `execute()` sent while
     the guest document is still being parsed wait in the guest until it is, in order, so methods its scripts expose
     are there ([API](docs/API.md#ready-and-the-startup-gate)). A build whose guest has not checked in within
     `LOAD_TIMEOUT_MS` (5 s of host time) ends with `the sandbox did not finish loading`, or, when its frame loaded and
@@ -186,6 +190,11 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     `importScripts`). At most 100 per environment (`VIOLATION_EVENT_LIMIT`; for the strict view, per directive);
     type `SandboxViolation`. In
     strict mode each report also carries `source`, `'view'` or `'logic'` (see [Strict mode](#strict-mode)).
+*   **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`,
+    a `fetch` record's `url` (it can be `javascript:`), the message of a call rejected by a guest handler, and the
+    arguments of a method you `expose()`. "Validated and clamped" bounds its size and shape; it does not make it safe to
+    display. Show it with `textContent`, and never pass it to an HTML (`innerHTML`, `insertAdjacentHTML`), URL (a link
+    `href`), `eval` or template sink. (`terminated.reason` is the library's own text.)
 *   **`state === 'terminated'` is a second, authoritative signal** next to a call's `TERMINATED`
     code: the element sets both from its own state, so the guest can produce neither.
 
@@ -196,7 +205,8 @@ browser. In cooperative mode it holds only where the browser runs the sandboxed 
 the browser's choice, not the page's: Chromium often does, but not in every environment, and Safari does not. Where
 the frame shares the host page's thread, a guest stuck in a loop freezes the host page too, and no watchdog can run
 until it stops; the watchdog then only guarantees that the host's own stall is never blamed on the guest. It is off
-by default because a guest doing long synchronous work on purpose would be stopped as well. It checks liveness only;
+by default because a guest doing long synchronous work on purpose would be stopped as well: in strict mode an `entry`
+that loops forever spins its worker until `terminate()` (the host page stays responsive), unless `watchdogTimeout` is set. It checks liveness only;
 `terminate()` is how the host stops a guest at will.
 
 ```js
@@ -215,8 +225,8 @@ sandbox.setConfig({ entry: 'main.js', autoResize: true });
 ```
 
 *   **How**: the guest bootstrap watches the guest's root element with a `ResizeObserver` and reports its
-    height over the private port; the host sets the element's `style.height` in pixels. Give the element a
-    non-inline `display` (custom elements are inline by default, and an inline box ignores `height`).
+    height over the private port; the host sets the element's `style.height` in pixels (the element is a block, so
+    the height applies).
 *   **What is measured**: the root element's box, which follows content in normal flow, plus the scroll
     height when content overflows the frame. A guest that pins its root to the viewport
     (`html { height: 100% }`) still grows the frame but never shrinks it.
@@ -333,15 +343,17 @@ frame of the library's, with an opaque origin of its own, makes it. The guest po
 and `WebSocket` stay refused unless `origins.connect` lists them.
 
 ```js
+// strict mode, the default: the guest's code is a registered file, named by `entry`
+sandbox.registerFiles({ 'main.js': `
+    sandboxFetch('https://api.example/items', { headers: { accept: 'application/json' } })
+        .then(response => response.json())
+        .then(items => console.log(items.length));
+` });
 sandbox.setConfig({
-    capabilities: ['allow-scripts'],
+    entry: 'main.js',
     fetchBridge: { allow: ['https://api.example'], maxBytes: 1024 * 1024, timeoutMs: 10000 },
 });
 sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.url, e.detail.outcome, e.detail.status ?? e.detail.code));
-
-// in the guest
-const response = await sandboxFetch('https://api.example/items', { headers: { accept: 'application/json' } });
-const items = await response.json();
 ```
 
 *   **Exact origins only.** `allow` lists origins (`https://api.example`, `http://localhost:8080`); an entry
@@ -371,12 +383,16 @@ const items = await response.json();
     `failed` (with `code`, and `status` when a response arrived) or `aborted`. Each outcome has its own fields:
     `FetchRecord` is a union keyed by `outcome`. Fields that come from the guest are validated or clamped first.
 *   **The target sees `Origin: null`**, as for a direct request from the sandbox, never your page's origin or URL:
-    its CORS must allow `*` (no credentials are sent, so `*` works) or `null`. A target that allows only your
-    page's origin refuses the bridge's requests (`FETCH_FAILED`).
-*   **Your page's policy**: the bridge's frame runs the library's hashed bootstrap, so the policy that admits the
-    sandbox admits it (`viewScriptHash()`, or `'unsafe-inline'`; see
-    [Host page policy](docs/API.md#host-page-policy)), and your `connect-src` must allow the listed origins, as for
-    any request. A frame whose script never runs fails closed: every request is refused with `FETCH_FAILED`.
+    its CORS must allow `*` or `null`. A target that allows only your page's origin refuses the bridge's requests
+    (`FETCH_FAILED`). Answer `Access-Control-Allow-Origin: *` (or `null`) only for public data, and never with
+    `Access-Control-Allow-Credentials: true`: every sandboxed frame on the web, an attacker's too, has the origin
+    `null`, so a target must not treat `null` as trusted. The bridge itself never sends credentials (no cookies, no HTTP
+    authentication), so it gets what any anonymous page gets.
+*   **Your page's policy**: the bridge's frame runs the same hashed bootstrap as the strict view, under the same hash, so
+    the policy that admits the sandbox admits it (`viewScriptHash()`, or `'unsafe-inline'`; see
+    [Host page policy](docs/API.md#host-page-policy)), and one that refuses the view refuses it too (in strict mode the
+    build then ends with the startup reason). Your `connect-src` must allow the listed origins, as for any request. A
+    frame whose script never runs while the sandbox does fails closed: every request is refused with `FETCH_FAILED`.
 *   `sandboxFetch` is a separate global; `fetch` itself is untouched (assign `globalThis.fetch = sandboxFetch`
     in the guest if you want that). It works in every mode. The name `sandbox:fetch`, like every
     method name starting with `sandbox:`, is reserved: `expose()` refuses it on both sides.
@@ -611,8 +627,7 @@ What remains for the default:
 
 *   **The host page's availability**: strict mode protects confidentiality and egress. It does not protect the host
     page's availability wherever the view shares the host page's thread: Firefox, Safari and every WebKit browser,
-    Android WebView, and Chromium without sandboxed-iframe isolation (the headless shell); desktop Chromium 127+ runs
-    the view in a process of its own ([research 16](docs/research/16_view_isolation/README.md)). There the view's cost
+    Android WebView, and Chromium without sandboxed-iframe isolation (the headless shell). There the view's cost
     is one stated bound, [API.md, "The view's cost to the host page"](docs/API.md#the-views-cost-to-the-host-page),
     measured on every engine by `test/e2e/view-bound.spec.ts`: on average at most 20% of the thread for the view's own
     work, plus at most 20 points for the browser's work on the loads it makes; at most one stall past 2 s per 5 minutes
@@ -628,7 +643,9 @@ What remains for the default:
     `File`'s name and a `Blob`'s type as 64 bytes and a sparse array by its present elements, so those pass the byte
     budgets and can stall or fill the host page ([S77](docs/BACKLOG.md#s77), high); on Firefox a rejection reason the guest
     tagged with `Symbol.toStringTag` is not charged to the characters budget ([S78](docs/BACKLOG.md#s78), high); on
-    desktop Chromium one documented stall over about 5 s ends the sandbox ([S79](docs/BACKLOG.md#s79)). `terminate()` ends
+    desktop Chromium one documented stall over about 5 s ends the sandbox ([S79](docs/BACKLOG.md#s79)), and because all the
+    sandboxed frames of the page can share the view's process, one sandbox's loop or stall can end another's view too
+    ([research 16](docs/research/16_view_isolation/README.md)). `terminate()` ends
     such a flood, after the reports already queued are processed.
 
     Cooperative mode is no better: there a guest `while (true) {}` freezes the host page wherever the frame shares its
@@ -683,4 +700,4 @@ the default. Measured per engine and asserted by tests; worker mode shares the r
     same-site origins when the guest asks. Strict mode's view holds no guest markup when its policy arrives, and no
     guest request carries a `Referer`.
 
-The guarantees above were tested adversarially on 2026-10-14, with every finding fixed, asserted or stated as a residual, then checked by an independent verification: [adversarial review report](docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md), [focused review](docs/archive/reviews/FOCUSED-REVIEW-2026-10-14.md), [broad review](docs/archive/reviews/BROAD-REVIEW-2026-10-14.md), [independent verification](docs/archive/reviews/VERIFICATION-2026-10-14.md).
+Each guarantee above names its code and the test that keeps it closed in [THREAT-MODEL.md](docs/THREAT-MODEL.md). The adversarial reviews of the design are kept in [the archive](docs/archive/README.md): [adversarial review report](docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md), [focused review](docs/archive/reviews/FOCUSED-REVIEW-2026-10-14.md), [broad review](docs/archive/reviews/BROAD-REVIEW-2026-10-14.md), [independent verification](docs/archive/reviews/VERIFICATION-2026-10-14.md).

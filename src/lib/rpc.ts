@@ -104,8 +104,8 @@ export type RpcFrame = (
 /**
  * Why a call was refused: the `code` of an {@link RpcError}. The set is closed and the strings are wire protocol.
  *
- * Set only by the side whose call is refused:
- * - `TIMEOUT`: the per-call timer fired before an answer arrived. The only code worth retrying.
+ * Set by the side whose call is refused (`ARGS_NOT_TRANSFERABLE` is also reported by the other side):
+ * - `TIMEOUT`: the per-call timer fired before an answer arrived. Worth retrying, as `BUSY` is; the others are not (`HANDLER_ERROR` depends on the handler).
  * - `TERMINATED`: the transport went away because the sandbox was reset or terminated. Retry only after the next `ready`.
  * - `ARGS_NOT_TRANSFERABLE`: the arguments cannot be structured-cloned, measure past `RPC_MAX_BYTES` or hold a kind the
  *   measure does not know; nothing was sent. Also reported by the other side for a request that arrives so; nothing ran
@@ -120,7 +120,7 @@ export type RpcFrame = (
  * - `RESULT_NOT_TRANSFERABLE`: the handler's return value cannot be structured-cloned, or an answer arrived past
  *   `RPC_MAX_BYTES`.
  * - `BUSY`: the other side already has {@link MAX_INBOUND_IN_FLIGHT} of your calls (or `RPC_MAX_INBOUND_BYTES` of their
- *   arguments) in flight on this channel, and nothing ran; retry once earlier calls settle. The guest's calls are also
+ *   arguments) in flight on this channel, and nothing ran; worth retrying once earlier calls settle. The guest's calls are also
  *   refused `BUSY` past the per-second budget of `callLimits` (R3:M-2), by the host on receipt and, before anything is
  *   sent, by the guest's own `bridge`.
  */
@@ -183,6 +183,11 @@ export const RESERVED_METHOD_PREFIX = 'sandbox:';
 /**
  * The shape of every rejection of `call()` and `callWithTimeout()`: a plain `Error` with an
  * own `code`. Branch on the code, never on the message.
+ *
+ * @remarks
+ * When the other side reported the code (`HANDLER_ERROR` and the rest of the reported group), the message is its text.
+ * Guest-controlled text when the guest handled the call: show it with `textContent`, never in an HTML, URL (such as a
+ * link `href`), `eval` or template sink.
  */
 export interface RpcError extends Error {
     /** Why the call was refused. */

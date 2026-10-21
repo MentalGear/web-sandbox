@@ -2,7 +2,7 @@
 import { parse } from 'es-module-lexer/js';
 
 /**
- * The module graph (ADR-004, PR3). Host-only: nothing here is stringified into the guest.
+ * The module graph (ADR-004). Host-only: nothing here is stringified into the guest.
  *
  * A registered module reaches the guest as a blob: URL, and a relative specifier never resolves
  * inside a blob: module: its base URL is the blob URL, whose path is opaque, so `./x.js`, `../x.js`

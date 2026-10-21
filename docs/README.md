@@ -46,13 +46,11 @@ Each ADR states its decision as it stands; how it changed is in [the archive](ar
 - [**BACKLOG.md**](BACKLOG.md) — the open work: what is not done, is deferred or waits for the owner, and the
   limits documented as accepted. Finished items are in the archive.
 
-## Research and CSP
+## Research
 
 - [research/](research/README.md) — fourteen documented attack vectors with reproductions, design probes (strict mode,
   view isolation, the relay worker), the formal-methods evaluation and the finding classes. The reproductions run with
   `bun run test:e2e`.
-- [CSP_CONFIG_RATIONALE.md](CSP_CONFIG_RATIONALE.md) — why `'unsafe-inline'`, why not nonces (superseded for
-  the policy itself by [ADR-007](ADR-007-typed-origins.md)).
 
 ## Archive
 
