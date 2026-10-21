@@ -100,6 +100,8 @@ or can manipulate it, at any severity, a docs gap that leads embedders into such
 finding, the exception 3 kind (a budget failing open with only an availability effect) included, is backlogged: it does
 not count against a pass and keeps the severity the verifier confirmed (S77 and S78 stay rated high). Docs drift, test
 gaps and correctness bugs with no data effect do not count either, and are fixed right away where that makes sense.
+The board clears after two consecutive clean passes, and only findings that reach strict mode (at its default
+configuration, or with `origins` or `fetchBridge`) count toward one.
 In the S74 board's fix batches a finding that leaks data is fixed ([S74](docs/BACKLOG.md#s74)).
 
 These are **not** availability findings, and are fixed as any other:

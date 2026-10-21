@@ -309,7 +309,12 @@ docs, with reviewers from several model families (Opus, Sonnet and Haiku; S60's 
 board is **clean** (owner, 2026-10-21) when none of a pass's confirmed findings leaks data or can manipulate it, at
 any severity, a documentation gap that leads embedders into such a leak included. DoS and availability-only findings
 are backlogged and do not count against a pass. Docs drift, test gaps and correctness bugs with no data effect do not
-count either, and are fixed right away where that makes sense. Findings are
+count either, and are fixed right away where that makes sense. The board clears after **two consecutive clean passes**.
+**Scope (owner, 2026-10-21): strict mode first.** Strict mode at its default configuration, with its two opt-ins
+(`origins` and `fetchBridge`), is the supported baseline: only findings that reach it count toward a clean pass.
+Findings that reach only cooperative or worker mode are fixed when cheap, and otherwise documented as those modes'
+limits. S77 is pulled forward into the strict hardening batch, since it makes strict mode's own byte budgets fail open
+at its default configuration. Findings are
 fixed as before: by class, each naming its class and extending its chokepoint and structural test (CONTRIBUTING.md,
 "Fixing a finding"), after the owner has seen them.
 A finding whose only effect is a bounded cost to the host page that the embedder can end is at most medium, and is
@@ -322,8 +327,11 @@ findings that leak data: the fetch bridge running in the host page's fetch envir
 same-site origins warning (BD1:NEW-1) and `allow-pointer-lock` as a safe capability (BD1:NEW-14). The board's reports and the verifiers' verdicts are kept in
 [BOARD-PASS-1-2026-10-20.md](archive/reviews/BOARD-PASS-1-2026-10-20.md); each item cites its findings by ID (`BD1:`).
 
-**Pass 2 (2026-10-21, main 6d727a8)** found findings that leak data (P2-ISO-1, P2-NEW-1, P2-NEW-2), so it was not clean
-either. Its docs-only and comments-only findings were fixed in their own batch (P2-DOC-1, P2-DOC-2, P2-DOC-4 to
+**Pass 2 (2026-10-21, main 6d727a8)** found confirmed findings that leak or can manipulate data (P2-NEW-1, high: a host
+`base-uri` blocks the guest document's base, cooperative mode; P2-ISO-2 with P2-NEW-2, high: host-site and listed-origin
+cookies on guest requests; P2-CHL-1, high: a re-entrant teardown leaves a guest running after `terminate()`; P2-ISO-1,
+medium: the hashed bootstrap replayed on the host page), so it was not clean either. P2-CHL-1 is fixed by
+detach-then-release (`src/lib/environment.ts`). Its docs-only and comments-only findings were fixed in their own batch (P2-DOC-1, P2-DOC-2, P2-DOC-4 to
 P2-DOC-6, P2-CHL-2's docs, P2-NEW-3, P2-NEW-6, P2-LIM-4's docs; the S82 checklist's docs items); its
 availability-only findings are backlogged: P2-CHL-2's code half in S79 (the cross-sandbox case), P2-LIM-3 in S77's
 class (a budget that counts a proxy: the fetch result's head is capped in characters, its size is measured in
