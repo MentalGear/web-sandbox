@@ -250,6 +250,59 @@ function frameLiterals(file: string, name: string): [string, string, string, str
     return out;
 }
 
+// What posts a frame in the stringified functions: the realms' own post helpers and `postMessage`.
+const POSTERS = new Set(['post', 'send', 'toHost', 'postMessage']);
+// What a poster may be given besides a frame literal: a frame already made and checked where it was minted (the
+// chokepoint's own forwarding: the held outbox, the one post function's parameter), and the broker's three builders.
+const FORWARDED = new Set(['frame', 'outbox', 'requestFrame', 'resultFrame', 'refusalFrame']);
+// inSandboxFiles' `send` is `writeFiles`, a call of the guest's broker with a change record as its argument: not a frame.
+const POSTS_NO_FRAMES = new Set(['inSandboxFiles']);
+
+/**
+ * The calls of a poster in `name`'s body (class E-cpu, BD1:TST-2): how many, and those whose first argument is not a
+ * frame the table knows: an object literal whose first property is `type` and whose type is a string literal that is a
+ * row of FRAMES (whatever its case or spelling), or a ternary of such literals, or a forwarded frame (FORWARDED).
+ * A frame of any other shape (`{ kind: … }` in a variable, a type held in a variable, a lower-case or numbered type) is
+ * listed, so it cannot be posted unseen by the field scan above, which reads only literals.
+ */
+function unreadablePosts(text: string, name: string): { posts: number; unreadable: string[] } {
+    const tokens = tokenize(text);
+    const [open, close] = bodyOf(tokens, name);
+    const OPEN = new Set([SyntaxKind.OpenBraceToken, SyntaxKind.OpenParenToken, SyntaxKind.OpenBracketToken, SyntaxKind.TemplateHead]);
+    const CLOSE = new Set([SyntaxKind.CloseBraceToken, SyntaxKind.CloseParenToken, SyntaxKind.CloseBracketToken, SyntaxKind.TemplateTail]);
+    const known = (at: number): boolean => {
+        const token = tokens[at];
+        if (token?.kind === SyntaxKind.Identifier && FORWARDED.has(token.text)) return true;
+        if (token?.kind !== SyntaxKind.OpenBraceToken || tokens[at + 1]?.text !== 'type') return false;
+        const after = tokens[at + 2];
+        if (after?.kind === SyntaxKind.ColonToken && tokens[at + 3]?.kind === SyntaxKind.StringLiteral) return isFrameType(tokens[at + 3]!.text.slice(1, -1));
+        if (after?.kind !== SyntaxKind.CommaToken && after?.kind !== SyntaxKind.CloseBraceToken) return false;
+        try { return variableTypes(tokens, at).every(isFrameType); } catch { return false; }
+    };
+    let posts = 0;
+    const unreadable: string[] = [];
+    for (let i = open + 1; i < close; i++) {
+        const token = tokens[i]!;
+        if (token.kind !== SyntaxKind.Identifier || !POSTERS.has(token.text) || tokens[i + 1]?.kind !== SyntaxKind.OpenParenToken || tokens[i - 1]?.kind === SyntaxKind.FunctionKeyword) continue;
+        posts++;
+        // the first argument: to the comma or the parenthesis that ends it; a ternary's branches start after its `?` and its `:`
+        const branches = [i + 2];
+        let depth = 0;
+        let end = i + 2;
+        for (; end < close; end++) {
+            const kind = tokens[end]!.kind;
+            if (OPEN.has(kind)) depth++;
+            else if (CLOSE.has(kind)) { if (depth === 0) break; depth--; } else if (depth === 0 && kind === SyntaxKind.CommaToken) break;
+            else if (depth === 0 && (kind === SyntaxKind.QuestionToken || kind === SyntaxKind.ColonToken)) branches.push(end + 1);
+        }
+        const argument = text.slice(tokens[i + 2]!.start, tokens[end - 1]!.end).replace(/\s+/g, ' ');
+        // a plain argument is one branch; a ternary's condition is not a frame, only what follows `?` and `:`
+        const frames = branches.length === 1 ? branches : branches.slice(1);
+        if (!frames.every(known)) unreadable.push(`${token.text}(${argument.slice(0, 80)})`);
+    }
+    return { posts, unreadable };
+}
+
 /**
  * Every frame literal in src/'s code (comments and strings aside), by where it stands: posted (`type: 'X'` in an object
  * literal or a type), compared (`.type === 'X'`, `type !== 'X'`), or a constant declared as a frame type
@@ -405,6 +458,41 @@ describe('every string a frame carries out of a guest realm or the view is cut, 
         const listed = new Set(SENT.map(([type, field, expression]) => `${type}.${field} = ${expression}`));
         expect([...found].filter(entry => !listed.has(entry)), 'a frame field SENT does not list').toEqual([]);
         expect([...listed].filter(entry => !found.has(entry)), 'a row of SENT no frame has').toEqual([]);
+    });
+
+    it('every frame the stringified code posts is a literal of a row of FRAMES, or a frame forwarded from where it was made (the scan of the fields above reads only literals)', () => {
+        let posts = 0;
+        const unreadable: string[] = [];
+        for (const [name, row] of Object.entries(STRINGIFIED)) {
+            if (POSTS_NO_FRAMES.has(name)) continue;
+            const found = unreadablePosts(read(row.module), name);
+            posts += found.posts;
+            unreadable.push(...found.unreadable.map(call => `${name}: ${call}`));
+        }
+        expect(unreadable).toEqual([]);
+        expect(posts, 'positive control: the scan finds the posts').toBeGreaterThan(35);
+    });
+
+    it('and the scan sees the shapes the field scan cannot: a lower-case or numbered type, a frame in a variable, a type from a variable', () => {
+        const source = read('src/lib/in-sandbox-script.ts');
+        const anchor = "post({ type: 'PONG', n });";
+        expect(source.split(anchor)).toHaveLength(2); // the one place the mutants go in, a handler where `held` is in scope
+        const mutants: Record<string, string> = {
+            'a lower-case type': "post({ type: 'debug', payload: held });",
+            'a type with a digit': "post({ type: 'LOG2', payload: held });",
+            'a frame in a variable, `kind` for `type`': "const dbg = { kind: 'DEBUG', payload: held }; post(dbg);",
+            'a type from a variable': "const t = 'DEBUG'; post({ type: t, payload: held });",
+            'a frame that is built elsewhere': "post(make(held));",
+            'a ternary with one unknown branch': "post(held ? { type: 'PONG', n } : { type: 'pong', n });",
+        };
+        const clean = unreadablePosts(source, 'inSandboxScript');
+        expect(clean.unreadable).toEqual([]);
+        for (const [shape, mutant] of Object.entries(mutants)) {
+            const found = unreadablePosts(source.replace(anchor, `${anchor} ${mutant}`), 'inSandboxScript');
+            expect(found.unreadable.length, shape).toBeGreaterThan(0);
+        }
+        // and a frame of a known type, written in the usual way, is not reported
+        expect(unreadablePosts(source.replace(anchor, `${anchor} post({ type: 'PONG', n: 1 }); post(held ? { type: 'PONG', n } : { type: 'LOG', level: 'info', args: [] });`), 'inSandboxScript').unreadable).toEqual([]);
     });
 
     it('every field a guest realm or the view posts has a bound of the five kinds: only a frame the host alone sends carries a value of the host\'s', () => {

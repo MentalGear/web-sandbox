@@ -1,6 +1,6 @@
 import { EXECUTION_TIMEOUT_GRACE_MS } from '@src/host';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_STRING, toLogDetail } from '@src/lib/sandbox-log';
+import { LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_STRING, LOG_OWN_LINES, toLogDetail } from '@src/lib/sandbox-log';
 import { SandboxDevTools } from '@src/devtools';
 import { createFetchBridge, toFetchPolicy } from '@src/lib/fetch-bridge';
 import { readFileSync } from 'node:fs';
@@ -91,6 +91,37 @@ describe('B3: every sandbox-log detail is normalised and labelled', () => {
         expect(heard.at(-1)!.args).toEqual(['after reset']);
         port1.close();
         next.close();
+    });
+
+    it(`the relay's own lines (own: true) skip the guest's window for only ${LOG_OWN_LINES} lines per environment: past them they count as the guest's, and the cap holds (BD1:TST-4)`, async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount();
+        const heard = logs(el);
+        const { port1 } = new MessageChannel();
+        el._port = port1;
+        // a guest that broke the bootstrap's capture lists and posts every frame as its own
+        for (let i = 0; i < LOG_OWN_LINES + LOG_EVENTS_PER_SECOND + 500; i++) el._onGuestMessage(port1, () => {}, { type: 'LOG', level: 'log', args: [i], own: true }, null);
+        expect(heard.filter(d => d.source === 'guest')).toHaveLength(LOG_OWN_LINES + LOG_EVENTS_PER_SECOND);
+        // the first LOG_OWN_LINES were outside the window, so the window then took a full LOG_EVENTS_PER_SECOND
+        expect(heard.filter(d => d.source === 'guest').slice(0, LOG_OWN_LINES).map(d => d.args[0])).toEqual(Array.from({ length: LOG_OWN_LINES }, (_, i) => i));
+        expect(heard.filter(d => d.source === 'host').map(d => d.args[0])).toEqual([expect.stringContaining('lines in one second')]);
+        port1.close();
+    });
+
+    it("a RESIZE frame counts only from the port that measures the document: in strict mode the view's, never the worker's logic port (BD1:TST-6)", async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount({ mode: 'strict', autoResize: true });
+        el._startAutoResize(); // what 'ready' does (no frame loads in jsdom)
+        const report = vi.spyOn(el._resizer, 'report');
+        const { port1 } = new MessageChannel();
+        el._port = port1;
+        const frame = { type: 'RESIZE', height: 40 };
+        el._onGuestMessage(port1, () => {}, frame, 'logic'); // the guest's worker, which cannot measure a document it does not have
+        expect(report).not.toHaveBeenCalled();
+        el._onGuestMessage(port1, () => {}, frame, null); // the port of the code that does
+        expect(report).toHaveBeenCalledTimes(1);
+        expect(report).toHaveBeenCalledWith(frame);
+        port1.close();
     });
 
     it('SandboxDevTools never throws on any detail, and never passes a guest value as the console format string', () => {

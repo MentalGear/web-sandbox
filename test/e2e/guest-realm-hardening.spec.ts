@@ -289,12 +289,12 @@ test.describe('PD3: DNS prefetching and preconnect', () => {
 // ---- PD4 ------------------------------------------------------------------------------------------------
 
 test.describe('PD4: the guest never moves the host page through history', () => {
-    test('history.back(), go(-1) and the Navigation API from the guest leave the host URL as it is; the host\'s own history.back() works (positive control)', async ({ sandbox, page }) => {
+    test('history.back(), go(-1) and the Navigation API (back, forward, traverseTo) from the guest leave the host URL as it is; the host\'s own history.back() works (positive control)', async ({ sandbox, page }) => {
         expect(await sandbox.mount({ html: '<p>guest</p>' })).toBe('ready');
         await page.evaluate(() => history.pushState({}, '', '?pd4=1'));
         await page.evaluate(() => history.pushState({}, '', '?pd4=2'));
         const before = page.url();
-        await sandbox.run(`history.back(); history.go(-1); history.go(-2); if (typeof navigation === 'object' && navigation) navigation.back();`);
+        await sandbox.run(`history.back(); history.go(-1); history.go(-2); if (typeof navigation === 'object' && navigation) { navigation.back(); navigation.forward(); navigation.traverseTo('none'); }`);
         await page.waitForTimeout(1000);
         expect(page.url()).toBe(before);
         expect(await sandbox.state()).toBe('ready');
