@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import { realpathSync } from 'fs';
 import { join } from 'path';
+import { realisticHostMiddleware, REALISTIC_HOST_PATH } from './test/e2e/realistic-host-server';
 
 // The e2e server (playwright.config.ts sets WEB_SANDBOX_E2E): no HMR websocket. Through it the dev server
 // reloads every connected page whenever a file in its module graph is written (src/**, dist/index.js once
@@ -81,6 +82,9 @@ export default defineConfig({
           + '<script type="module" src="/test/e2e/host-policy-harness.ts"></script></head>'
           + '<body></body></html>');
       });
+      // Test endpoint (test/e2e/realistic-host.ts): the realistic host page and the backend it talks to, which records what
+      // reaches it per test session (test/e2e/realistic-host-server.ts).
+      if (e2e) server.middlewares.use(REALISTIC_HOST_PATH, realisticHostMiddleware());
       server.httpServer?.once('listening', () => {
         const { port, host } = server.config.server;
         const protocol = server.config.server.https ? 'https' : 'http';

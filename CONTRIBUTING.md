@@ -44,6 +44,14 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
 - **Scaling in a unit test.** A unit test that asserts a cost is linear uses `scalingRatio` from `test/unit/scaling.ts`
   (the sizes sampled alternately, each one's fastest time kept, sampling continued while the ratio is over its bound),
   never a best-of-N or a ratio of clock reads of its own: `test/unit/host-share.test.ts` fails on one (backlog T9).
+- **A host page like a production app's.** A spec that asks what a feature of the host page does to the sandbox runs on
+  the realistic host (`test/e2e/realistic-host.ts`; served by `test/e2e/realistic-host-server.ts`, which also plays the
+  app's backend and records what reaches it): a strict CSP that admits the library the way docs/API.md#host-page-policy
+  says, Trusted Types enforced with a default policy, a cache-first Service Worker and an Authorization `fetch` wrapper
+  for the app's API, cookies on the host site with SameSite None, Lax and Strict, an error reporter and focus listeners,
+  and cross-origin isolation as a variant. `RealisticHost.open()` opens it, `embed()` puts the element in a mode, and
+  `hits()` reads what the backend, its Service Worker and its CSP `report-uri` received. An assertion about the host
+  context names its `INHERITED_CONTEXT` row with `covering('row', …)`.
 - **Discovery.** Specs are found under the checkout's own `test/e2e/` and `docs/research/`; anything under the
   checkout's own `.claude/` (nested worktrees, scratch copies) is ignored, by a pattern anchored at the checkout's root,
   so a checkout that itself lives under another one's `.claude/worktrees/` still finds its specs.
