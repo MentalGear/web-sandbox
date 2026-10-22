@@ -46,3 +46,46 @@ describe("the element tells the config the host page's origin (BD1:NEW-1)", () =
         expect(warnings().filter(m => m.includes("fetchBridge.allow lists the host page's own origin"))).toHaveLength(1);
     });
 });
+
+describe("the element asks the browser which hosts share the page's site (S74, host-site.ts)", () => {
+    // a page at app.wiring.co.uk: a cookie jar that keeps a Domain it may set (not a public suffix), the page's location
+    const SUFFIXES = new Set(['uk', 'co.uk']);
+    const HOST = 'app.wiring.co.uk';
+
+    function pageAt(host: string) {
+        const stored = new Set<string>();
+        vi.stubGlobal('location', { origin: `https://${host}`, hostname: host });
+        Object.defineProperty(document, 'cookie', {
+            configurable: true,
+            get: () => [...stored].map(name => `${name}=1`).join('; '),
+            set: (line: string) => {
+                const [pair, ...attributes] = line.split(';').map(part => part.trim());
+                const name = pair!.split('=')[0]!;
+                const domain = attributes.find(attribute => attribute.startsWith('Domain='))?.slice(7) ?? host;
+                if (attributes.includes('Max-Age=0')) stored.delete(name);
+                else if (domain === host || (host.endsWith(`.${domain}`) && !SUFFIXES.has(domain))) stored.add(name);
+            },
+        });
+    }
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        delete (document as any).cookie;
+    });
+
+    it("a sibling subdomain is on the page's site: cooperative mode warns and keeps it, strict mode (the default) drops it", async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        pageAt(HOST);
+        const cooperative = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { connect: ['https://api.wiring.co.uk'], images: ['https://co.uk'] } });
+        expect(warnings().filter(m => m.includes("origins.connect lists https://api.wiring.co.uk (on the host page's site)"))).toHaveLength(1);
+        expect(cooperative._origins.connect).toEqual(['https://api.wiring.co.uk']);
+        // a public suffix above the page is not on its site, though the name check would have said so
+        expect(warnings().filter(m => m.includes('origins.images'))).toEqual([]);
+        expect(cooperative._origins.images).toEqual(['https://co.uk']);
+
+        const strict = await mount({ origins: { connect: ['https://api.wiring.co.uk'] } });
+        expect(warnings().filter(m => m.includes("origins.connect dropped https://api.wiring.co.uk (on the host page's site)"))).toHaveLength(1);
+        expect(strict._origins.connect).toEqual([]);
+        expect(document.cookie).toBe('');
+    });
+});

@@ -164,18 +164,26 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 - **Anything else is dropped** with one warning per entry: `https:` and other schemes, `*` and `*.example.com`,
   `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
   narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
-- **An origin that reaches the host page's site or the user's machine warns**, in every mode, once per kind: the warning
-  names the kind, each such origin and why. That covers the host page's own origin on any scheme or port, a
-  subdomain or a parent of the host page's host (`api.example.com` and `example.com` for a page on `app.example.com`),
-  and a loopback, private or link-local host (`localhost`, `127.0.0.1`, `10.x`, `192.168.x`, `169.254.x`) or a name that is private by
-  convention (a single label such as `intranet`, and `*.local`, `*.internal` such as `host.docker.internal`, `*.lan`,
-  `*.home.arpa`, `*.localdomain`, `*.corp`, `*.home`, `*.intranet`). Firefox and
-  WebKit attach the host site's `SameSite=None` cookies to a guest request to a same-site origin, so prefer
-  [`fetchBridge`](#fetchbridge), which sends no credentials. The entry is kept; the warning is the only effect. The
-  same-site check compares names and uses no public-suffix list: a sibling (`a.example.com` for a page on
-  `b.example.com`) is not recognised, though a cookie set with `Domain=example.com` reaches it, and a public suffix
-  above the host page counts as its parent. A name that only resolves to a private address, and is not private by convention, is
-  not recognised either.
+- **An origin on the host page's site is dropped in strict mode, and kept with a warning in cooperative and worker
+  mode**, once per kind: the warning names the kind and each such origin. A request to it can carry the host site's
+  cookies in some engines (Chromium sends none, because the sandbox's frame is credentialless there; Firefox sends its
+  `SameSite=None` cookies; WebKit sends `None`, `Lax` and `Strict` ones), so prefer [`fetchBridge`](#fetchbridge),
+  which sends no credentials in any engine, for an API that knows the user.
+- **The host page's site is the browser's registrable domain of the page's host**: `example.com` for `app.example.com`,
+  `example.co.uk` for `www.example.co.uk`, and `user.github.io` for itself. On it are the host page's own origin on any
+  scheme or port, its subdomains, its parents down to that domain and its siblings (`api.example.com` for a page on
+  `app.example.com`); a public suffix (`co.uk`) is not. The element asks the browser, once per host name and only for an
+  entry that could be on the site, with a cookie-domain probe: it sets a test cookie for each parent domain of the host
+  (`Domain=co.uk`, `Domain=example.co.uk`), keeps the first the browser accepts, and removes the cookie at once, so the
+  library bundles no public-suffix list. An IP address and a name with no dot are their own site, with no cookie set.
+  Where the probe cannot run (cookies blocked, a page with no cookie jar), the check is by name alone: the page's own
+  host and the names above and below it, so a sibling is not recognised there, and a public suffix above the page
+  counts as its parent.
+- **A loopback, private or link-local host warns**, in every mode, once per kind, and is kept: `localhost`, `127.0.0.1`,
+  `10.x`, `192.168.x`, `169.254.x`, or a name that is private by convention (a single label such as `intranet`, and
+  `*.local`, `*.internal` such as `host.docker.internal`, `*.lan`, `*.home.arpa`, `*.localdomain`, `*.corp`, `*.home`,
+  `*.intranet`). It is the user's own machine or network, which the guest then reaches. A name that only resolves to a
+  private address, and is not private by convention, is not recognised.
 - **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used.
 - **Strict mode has no `scripts`**: a type error in TypeScript (`SandboxConfig` is a union keyed by `mode`), and dropped
   with one warning at run time, for a config from JSON. With a mode chosen at run time, type `origins` as
@@ -1234,7 +1242,7 @@ a mode. [ADR-005](ADR-005-strict-mode.md)
 process apart from the page's, which the page's other sandboxes can share): there the view's cost is the bound stated in [The view's cost to the host page](#the-views-cost-to-the-host-page),
 and what it lists as outside it. Cooperative mode is no better there. Also
 CSS within what the policy allows, the worker's `violation` reports (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the host site's
-cookies on requests to allowed same-site origins (every mode).
+cookies on requests to allowed same-site origins (cooperative and worker mode; strict mode drops such an origin; Firefox and WebKit).
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;

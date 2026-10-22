@@ -268,10 +268,12 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
   guest sends it), `allowAutoplay`.
 - **Cooperative mode**: check `event.source` in the host page's own `message` listeners, and do not target named frames
   or windows on a page that embeds sandboxes ([S36](BACKLOG.md#s36), [S44](BACKLOG.md#s44)).
-- **A same-site origin** listed in `origins` receives the host site's cookies on the guest's requests in Firefox and
-  WebKit (every mode): do not list one. Any `origins` kind that lists the host page's own host, a subdomain or a parent
-  of it, or a loopback, private or link-local host, warns once per kind in every mode (`warnHostReach`,
-  `src/lib/config-schema.ts`); a sibling subdomain is not recognised (no public-suffix list).
+- **A same-site origin** listed in `origins` (on the host page's site as the browser decides it: the page's own origin,
+  its subdomains, its parents and its siblings) is dropped in strict mode, and kept with a warning in cooperative and
+  worker mode, once per kind (`limitHostReach`, `src/lib/config-schema.ts`). A request to it can carry the host site's
+  cookies in Firefox and WebKit; Chromium sends none, because the wrapper frame is credentialless. Reach an API that
+  knows the user with `fetchBridge`, which sends no credentials in any engine. A loopback, private or link-local origin
+  is kept in every mode, with a warning once per kind.
 
 ### Engine differences that change a guarantee
 
@@ -282,7 +284,8 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
 | Firefox | Reports a worker's unhandled rejections on the host page's thread, cancelled or not; lets a worker's `EventSource` and `FontFace` past the policy | The uncaught budget; the worker allowlist leaves both out |
 | WebKit | Compiles `WebAssembly` without `'unsafe-eval'`; raises no violation reports in workers; refuses the view's `blob:` worker under COEP `require-corp`; sends the full host URL to same-site origins and shows it to frames the guest creates (cooperative) | `WebAssembly` deleted unless `scriptUnsafe`; worker reports are per engine; strict mode does not start under COEP; [S17](archive/backlog/BACKLOG-done.md#s17) and [S18](archive/backlog/BACKLOG-done.md#s18) are cooperative limits |
 | Chromium, WebKit | Show the host origin in `location.ancestorOrigins` (cooperative) | A cooperative limit ([S15](archive/backlog/BACKLOG-done.md#s15)) |
-| Firefox, WebKit | Attach the host site's cookies to requests to same-site origins | Do not list a same-site origin; `origins` warns for the host page's host, its subdomains and parents, and loopback hosts (not for a sibling subdomain) |
+| Firefox, WebKit | Attach the host site's cookies to guest requests to same-site origins (Firefox `SameSite=None`, none under its Total Cookie Protection; WebKit all three values) | Strict mode drops a same-site origin from `origins`; cooperative and worker mode warn; reach the API with `fetchBridge` |
+| Chromium | Honours `credentialless`: the wrapper frame and what it nests send no cookie. A popup opened with `allow-popups` has no opener | None for cookies; `window.open()` returns `null` there |
 | Firefox (146, as Playwright runs it) | Has no Trusted Types (`typeof trustedTypes` is `undefined`) | The host page's requirement has no effect there; a Firefox that ships them is governed like the other engines |
 
 ## Accepted risks and open items

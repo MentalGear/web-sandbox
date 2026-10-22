@@ -27,7 +27,7 @@ import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, type SafeCapability, type Unsaf
 import { filterCapabilities } from './capabilities';
 import { NO_ORIGINS, ORIGIN_KINDS, parseOrigins, shown, type OriginPolicy } from './csp/origins';
 import { isPrivateHost, toFetchPolicy, type FetchPolicy } from './fetch-bridge';
-import { sharesHostSite } from './origin';
+import { sharesHostSite, type Origin } from './origin';
 import { RPC_MAX_BYTES, type BudgetRefusal } from './rpc';
 import { MAX_TOTAL_BYTES } from './files';
 import { defineData, hasOwnField, ownField, type Complete, type Holds } from './utils';
@@ -192,8 +192,13 @@ export interface NormalisedConfig {
 
 /** What normalising reads besides the argument. */
 export interface NormaliseContext {
-    /** The host page's origin, which fetchBridge.allow (fetch-bridge.ts) and every `origins` kind (warnHostReach) warn about. */
+    /** The host page's origin, which fetchBridge.allow (fetch-bridge.ts) and every `origins` kind (limitHostReach) warn about. */
     hostOrigin: string;
+    /**
+     * The host page's registrable domain in this browser (host-site.ts), asked only for an `origins` entry that could be
+     * on the page's site; null where the browser cannot be asked. Without it, limitHostReach decides by name alone.
+     */
+    hostSite?: () => string | null;
 }
 
 /** What an option's rules see while one argument is normalised. */
@@ -249,34 +254,61 @@ const viewSwitch = (name: ViewSwitch) => ({ given, mode, warn }: OptionInput): b
 };
 
 /**
- * The one pass over a parsed `origins` that says what a listed origin reaches beyond the internet at large, in every
- * mode and for every kind (ORIGIN_KINDS, so a new kind is covered): one warning per kind. An origin on the host page's
- * site (sharesHostSite) may receive the host site's cookies with a guest request on Firefox and WebKit (README,
- * "Cookies"); a loopback, private or link-local host (isPrivateHost) is a machine or network of the user's, which the
- * guest then reaches. fetchBridge.allow says the same for its entries (toFetchPolicy); the fetch bridge sends no
- * credentials, so it is what the warning points to. Returns `policy` as it is.
+ * The one pass over a parsed `origins` that decides what a listed origin reaches beyond the internet at large, in every
+ * kind (ORIGIN_KINDS, so a new kind is covered), with one warning per kind and reason:
+ *  - An origin on the host page's site (sharesHostSite: the same registrable domain as the browser decides it, the host
+ *    page's own origin, its subdomains, its parents and its siblings) may receive the host site's cookies with a guest
+ *    request (INHERITED_CONTEXT.cookies; the engines differ, and the wrapper frame is credentialless where the browser
+ *    has it). Strict mode, the mode for content that is not trusted, drops it from the policy; cooperative and worker
+ *    mode keep it and warn.
+ *  - A loopback, private or link-local host (isPrivateHost) is a machine or network of the user's, which the guest then
+ *    reaches: kept, with a warning, in every mode.
+ * fetchBridge.allow says the same for its entries (toFetchPolicy); the fetch bridge sends no credentials, so it is what
+ * the warnings point to. Returns `policy` itself when nothing is dropped.
  */
-export function warnHostReach(policy: OriginPolicy, hostOrigin: string, warn: (message: string) => void): OriginPolicy {
+export function limitHostReach(policy: OriginPolicy, context: NormaliseContext, mode: unknown, warn: (message: string) => void): OriginPolicy {
+    const { hostOrigin, hostSite } = context;
+    const dropSameSite = mode === 'strict';
+    const kept: Record<string, readonly Origin[]> = {};
+    let dropped = false;
     for (const kind of ORIGIN_KINDS) {
+        const keep: Origin[] = [];
+        const refused: string[] = [];
         const listed: string[] = [];
         let site = false;
         let local = false;
         for (const origin of policy[kind]) {
             // one entry per origin, with every reason it is listed for
             const reasons: string[] = [];
-            if (sharesHostSite(origin, hostOrigin)) { reasons.push(origin === hostOrigin ? "the host page's own origin" : "on the host page's site"); site = true; }
-            if (isPrivateHost(new URL(origin).hostname)) { reasons.push('a loopback, private or link-local host'); local = true; }
-            if (reasons.length > 0) listed.push(`${origin} (${reasons.join(', ')})`);
+            const onSite = sharesHostSite(origin, hostOrigin, hostSite);
+            const onLocal = isPrivateHost(new URL(origin).hostname);
+            if (onSite) reasons.push(origin === hostOrigin ? "the host page's own origin" : "on the host page's site");
+            if (onLocal) reasons.push('a loopback, private or link-local host');
+            const entry = `${origin} (${reasons.join(', ')})`;
+            if (onSite && dropSameSite) { refused.push(entry); continue; }
+            keep.push(origin);
+            if (reasons.length === 0) continue;
+            listed.push(entry);
+            site ||= onSite;
+            local ||= onLocal;
+        }
+        kept[kind] = Object.freeze(keep);
+        if (refused.length > 0) {
+            dropped = true;
+            warn(`[Sandbox] origins.${kind} dropped ${refused.join(', ')}: ${SITE_COOKIES}; strict mode admits no origin on the host page's site. Use the fetch bridge (fetchBridge.allow), whose requests carry no credentials, or cooperative mode, which warns.`);
         }
         if (listed.length === 0) continue;
         const why = [
-            site ? "a guest request to the host page's site can carry the host site's cookies (its SameSite=None cookies, on Firefox and WebKit)" : '',
+            site ? SITE_COOKIES : '',
             local ? "a loopback, private or link-local host is the user's own machine or network, which the guest then reaches" : '',
         ].filter(Boolean).join('; ');
         warn(`[Sandbox] origins.${kind} lists ${listed.join(', ')}: ${why}. Prefer the fetch bridge (fetchBridge.allow), whose requests carry no credentials.`);
     }
-    return policy;
+    return dropped ? (Object.freeze(kept) as OriginPolicy) : policy;
 }
+
+// What the warnings say of the host site's cookies.
+const SITE_COOKIES = "a guest request to the host page's site can carry the host site's cookies (SameSite=None ones in Firefox, and with Lax and Strict in WebKit; Chromium sends none, the sandbox's frame is credentialless there)";
 
 /**
  * The schema: every option of SandboxConfig, in the order its rules run. The warnings come in that order: the values
@@ -325,7 +357,7 @@ export const CONFIG_SCHEMA = {
         default: NO_ORIGINS, documented: 'none', modes: ALL_MODES,
         // parsed for the mode the build will have, the default included, so strict mode drops `scripts` whether the
         // config names it or not; a value that cannot be read refuses the config (origins.ts)
-        read: ({ given, mode, warn, context }) => warnHostReach(parseOrigins(given, mode, warn), context.hostOrigin, warn),
+        read: ({ given, mode, warn, context }) => limitHostReach(parseOrigins(given, mode, warn), context, mode, warn),
     },
     autoResize: {
         default: false, documented: '`false`', modes: ['strict', 'cooperative'], ignoredIn: (mode) => mode === 'worker',
