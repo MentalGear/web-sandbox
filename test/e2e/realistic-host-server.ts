@@ -2,10 +2,9 @@
  * The server half of the realistic host (test/e2e/realistic-host.ts), mounted by vite.config.ts at /__realistic-host in
  * the e2e server. It plays the application's own backend, and records what reaches it, per test session:
  *
- *   GET  /page?session=S&csp=…&coop=…&coep=…&cookies=0|1&sw=0|1&tt-default=1
- *                          the host page: the headers a production app sends (the Content-Security-Policy and
- *                          cross-origin isolation headers the spec names, a Permissions-Policy, a Referrer-Policy,
- *                          nosniff) and, unless cookies=0, the host site's cookies with SameSite None, Lax and Strict.
+ *   GET  /page?session=S&csp=…&h-<header>=…&cookies=0|1&sw=0|1&tt-default=1
+ *                          the host page: the headers a production app sends (the Content-Security-Policy the spec
+ *                          names, a Permissions-Policy, a Referrer-Policy, nosniff, and the PAGE_HEADERS a spec sets) and, unless cookies=0, the host site's cookies with SameSite None, Lax and Strict.
  *                          Its one script is external (realistic-host-page.ts), so a policy without 'unsafe-inline' runs it.
  *   GET  /sw.js            the host app's Service Worker: cache-first for its API, reporting what it handled
  *   *    /api/S/NAME       the host app's own API: answers { name, n } (n counts the session's hits on that name) and records the
@@ -70,6 +69,10 @@ self.addEventListener('fetch', (event) => {
 });
 `;
 
+/** The headers of the page that a spec can set or replace (`h-<name>` in the query). */
+export const PAGE_HEADERS = ['cross-origin-opener-policy', 'cross-origin-embedder-policy', 'referrer-policy', 'permissions-policy'] as const;
+export type PageHeader = (typeof PAGE_HEADERS)[number];
+
 const PAGE = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Realistic host</title>'
     + '<script type="module" src="/test/e2e/realistic-host-page.ts"></script></head>'
     + '<body><main id="app">The application</main></body></html>';
@@ -102,9 +105,12 @@ export function realisticHostMiddleware() {
             res.setHeader('x-content-type-options', 'nosniff');
             res.setHeader('referrer-policy', 'strict-origin-when-cross-origin');
             res.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=()');
-            for (const [header, parameter] of [['content-security-policy', 'csp'], ['cross-origin-opener-policy', 'coop'], ['cross-origin-embedder-policy', 'coep']] as const) {
-                const value = query.get(parameter);
-                if (value) res.setHeader(header, value);
+            const csp = query.get('csp');
+            if (csp) res.setHeader('content-security-policy', csp);
+            // the other headers a spec sets, as `h-<name>=<value>` (the page's own defaults above are replaced)
+            for (const header of PAGE_HEADERS) {
+                const value = query.get(`h-${header}`);
+                if (value !== null) res.setHeader(header, value);
             }
             if (query.get('cookies') !== '0') res.setHeader('set-cookie', HOST_COOKIES.map(cookie => `${cookie.name}=${cookie.value}; Path=/; ${cookie.attributes}`));
             res.end(PAGE);

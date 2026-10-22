@@ -5,7 +5,7 @@ import { WRAPPER_STYLE } from '@src/lib/frame-documents';
 import { VIEW_STILL_STYLE } from '@src/lib/in-sandbox-view';
 import type { InheritedContextId } from '@src/lib/inherited-context';
 import { expect, ORIGIN, type SandboxDriver } from './fixture';
-import { HOST_COOKIES, REALISTIC_HOST_PATH, type ApiHit, type SessionRecord } from './realistic-host-server';
+import { HOST_COOKIES, REALISTIC_HOST_PATH, type ApiHit, type PageHeader, type SessionRecord } from './realistic-host-server';
 
 /**
  * A host page that looks like a production application, for every test that wants one (S74, class A; CONTRIBUTING.md,
@@ -56,6 +56,8 @@ export interface HostOptions {
     guestCode?: 'none' | 'execute';
     /** COOP `same-origin` and COEP `require-corp`. */
     isolation?: boolean;
+    /** Other headers of the page, set or replaced (see PAGE_HEADERS in realistic-host-server.ts). */
+    headers?: Partial<Record<PageHeader, string>>;
     /** The page's Trusted Types default policy (default: on, where Trusted Types is enforced). */
     ttDefault?: boolean;
     /** The page's Service Worker (default: on). */
@@ -172,14 +174,19 @@ export class RealisticHost {
         });
         this.csp = serializeCsp(hostDirectives({ ...options, session: this.session, viewHash: await this.viewHash() }));
         const query = new URLSearchParams({ session: this.session, csp: this.csp });
-        if (options.isolation) { query.set('coop', 'same-origin'); query.set('coep', 'require-corp'); }
+        if (options.isolation) { query.set('h-cross-origin-opener-policy', 'same-origin'); query.set('h-cross-origin-embedder-policy', 'require-corp'); }
+        for (const [header, value] of Object.entries(options.headers ?? {})) query.set(`h-${header}`, value);
         if (options.cookies === false) query.set('cookies', '0');
         if (options.serviceWorker === false) query.set('sw', '0');
         if (options.guestCode !== 'execute' && options.ttDefault !== false) query.set('tt-default', '1');
+        // (a page with a Cross-Origin-Opener-Policy is a new browsing context group; going there straight from the harness page
+        // makes Playwright's Firefox throw on a frame it lost, so the old page is left first)
+        await page.goto('about:blank');
         await page.goto(`${HOST_BASE}/page?${query}`);
         await page.waitForFunction(() => (window as any).harnessReady === true);
-        // the element's first build (no script to run) has finished: its 'ready' is not a later build's
-        await page.waitForFunction(() => (document.querySelector('web-sandbox') as any).state === 'ready');
+        // the element's first build (no script to run) has finished: its 'ready' is not a later build's (a host policy can end it
+        // already: a Trusted Types list that does not name the library's policy)
+        await page.waitForFunction(() => ['ready', 'terminated'].includes((document.querySelector('web-sandbox') as any).state));
         // The host site's cookies. An engine that refuses a `Secure` cookie on an http page (WebKit) is given it by the
         // context instead: the page is a test server's, a production page is https.
         if (options.cookies !== false) {

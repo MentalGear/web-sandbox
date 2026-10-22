@@ -51,7 +51,12 @@ WEB_SANDBOX_E2E_PORT=24000 bun run test:e2e        # pick the port yourself
   for the app's API, cookies on the host site with SameSite None, Lax and Strict, an error reporter and focus listeners,
   and cross-origin isolation as a variant. `RealisticHost.open()` opens it, `embed()` puts the element in a mode, and
   `hits()` reads what the backend, its Service Worker and its CSP `report-uri` received. An assertion about the host
-  context names its `INHERITED_CONTEXT` row with `covering('row', …)`.
+  context names its `INHERITED_CONTEXT` row with `covering('row', …)`. The directive matrix
+  (`test/e2e/directive-matrix.spec.ts`, its values in `test/e2e/directive-matrix.ts`) runs a strict-mode sandbox on that
+  host with each CSP directive at a restrictive value and expects it to work or to end with a named termination reason,
+  never a silent partial state; a new directive is added to `CSP_DIRECTIVES` and must be classified (cases, or excluded
+  with a reason), and `test/unit/realistic-host-coverage.test.ts` fails for an `INHERITED_CONTEXT` row that neither the
+  realistic-host spec nor the matrix covers.
 - **Discovery.** Specs are found under the checkout's own `test/e2e/` and `docs/research/`; anything under the
   checkout's own `.claude/` (nested worktrees, scratch copies) is ignored, by a pattern anchored at the checkout's root,
   so a checkout that itself lives under another one's `.claude/worktrees/` still finds its specs.
