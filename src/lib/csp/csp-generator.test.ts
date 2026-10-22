@@ -67,7 +67,7 @@ describe('the templates: golden policies', () => {
 });
 
 describe("the fetch bridge's frame policy (THREAT-MODEL, the bridge frame's row; ADR-006)", () => {
-    const FRAME_DIRECTIVES = (connect: string) => `default-src 'none'; script-src ${HASH}; script-src-attr 'none'; style-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src ${connect}; worker-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'`;
+    const FRAME_DIRECTIVES = (connect: string) => `default-src 'none'; script-src ${HASH}; script-src-attr 'none'; style-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src ${connect}; worker-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; manifest-src 'none'; base-uri about:`;
     const policy = (allow: string[], bootstrapHash = HASH) => bridgeFramePolicy({ allow: allow as never, bootstrapHash });
 
     it("is the bootstrap's hash, connect-src the allowlist's origins, and every other directive 'none', with no upgrade-insecure-requests", () => {
