@@ -1875,6 +1875,104 @@ code and a timer of compiled code the entry queued are logged once and leave the
 or log line sees the marker (the compiled-code cases failed on WebKit before, 3 of 3 each). After the fix: the test above
 0 of 300 runs on WebKit under the same load.
 
+### <a id="s77"></a>S77 · The byte measure counts a proxy: a `File`'s name, a `Blob`'s type, a sparse array's `length` — ✅ **done** (P2 · M · **high**)
+
+**Was backlogged (owner, 2026-10-21).** Confirmed high by the S74 board's verifiers (BD1:CHL-2 and
+BD1:LIM-3, with their verdicts in the archived report). The severity stays high: the byte
+budgets fail open in the default configuration (CONTRIBUTING.md, "Availability findings", exceptions 1 and 3). One
+item, because the root cause is one: `structured-size` measures a proxy instead of every field the clone carries or a
+host walk reads. Class P (a budget that counts a proxy).
+
+**Path.** A strict (or worker) guest at the default configuration:
+- *BD1:CHL-2.* `new File([], 'x'.repeat(2**27))` (or a `Blob` with a long `type`) measures 64 bytes
+  (`src/lib/structured-size.ts`: the `Blob.prototype.size` brand check, then a constant), but the clone copies the
+  `name` (and the `type` on Firefox and WebKit) whole. It crosses `LOG_MAX_BYTES`, `RPC_MAX_BYTES`, the call and result
+  byte budgets and the in-flight cap through `sandbox-log`, a call to an exposed method and the result of the host's
+  `call()`; a plain string of the same length is refused.
+- *BD1:LIM-3.* A sparse array (`a = []; a.length = 2**32 - 1; a[5] = 1; console.log(a)`) measures 16 bytes (its present
+  keys), but the library's own `freezeDeep` (`src/lib/element-events.ts`) loops to `length` on the host page's thread
+  for every `sandbox-log` dispatch, with or without a listener.
+
+**Evidence** (the load is the machine's 1-minute average on 4 shared cores).
+- Chromium, 8 concurrent calls with a File of 2^27 characters each: 1 GiB held against the 64 MiB in-flight cap
+  (`RPC_MAX_INBOUND_BYTES`); the host renderer grew from 145 MiB to 2291 MiB (load 4.4), and the V8 heap counters show
+  none of it. One call with 32 Files of 2^23 characters: 256 Mi characters in a frame measured at about 3 KB.
+- Firefox, a 3 s loop of `console.log(file)` (the host deserializes the names on its own thread): at 2^24 characters,
+  24 stalls over 50 ms, 2027 ms in all, longest 308 ms (load 6.2); one line with a 2^28-character name, 839 ms in one
+  stall (load 2.5). The control loop with a plain string: none. Chromium and WebKit: no stalls at 2^24, the cost is
+  memory.
+- Sparse array, Chromium's headless shell, one 16-byte line (load 2.6): the event arrives after 88.5 s in strict mode and
+  90.5 s in worker mode, the host stalled for all of it, the sandbox `ready`. At length 2^28: Chromium 3056 ms a line,
+  Firefox 499 ms, WebKit never delivered. The clone itself costs 2 to 3 ms; with `freezeDeep` walking `Object.keys`
+  the same line arrives in 6 ms. The guest may send `LOG_EVENTS_PER_SECOND` (1000) such lines a second, and on
+  Chromium `terminate()` ran only after the queued lines drained (33 s for 10 lines of 2^28, load 2.9).
+- `terminate()` ends a File flood (about 2 ms), but memory already handed to a pending exposed method is freed only
+  when that method settles.
+
+**Fix, by construction** (the verifiers').
+1. One measure, one table of kinds: each kind lists every field structured clone serializes for it, read through
+   getters captured before `CAPTURE_POINT`. `Blob`: the 64-byte handle plus `type` by the string rule. `File`: a
+   `Blob`'s fields plus `name` by the string rule plus 8 for `lastModified`. A kind with no entry measures `Infinity`,
+   as an unknown kind does. Arrays are charged `max(8 * length, keys)`, so a sparse array past about 130 000 slots
+   exceeds `LOG_MAX_BYTES` and `RPC_MAX_BYTES`. The relay, both brokers, `toLogDetail` and `handleRequest` share the
+   measure, so every channel is fixed at once.
+2. Any library walk over a guest value visits only what the measure counted: `freezeDeep` iterates `Object.keys`.
+3. Structural tests. In `test/unit/structural.test.ts`, on every engine: for each kind in the table, build an instance
+   with every script-settable string field at 1 Mi characters, send it through a `MessageChannel`, and assert that the
+   measure of the received copy is at least 2 x the length of every string-valued property it exposes; enumerate the
+   string-valued getters of each kind's prototype chain and fail on one that is neither counted nor declared as not
+   serialized. A property test (fast-check) over generated snapshots, sparse and holey arrays and large `length`
+   included: `freezeDeep`'s steps and `String(value).length / 2` stay within k x `sizeOf(value)`. A File-name flood in
+   `relay-and-rpc-budgets.spec.ts` beside its string floods.
+4. Docs, once fixed: API.md's list of what the measure knows, and the comment at the top of `structured-size.ts`.
+
+**Done.** The snapshot a sender makes with its captured `structuredClone` is the one canonical form of a value that
+leaves a sandbox, and `createSizeOf` (`src/lib/structured-size.ts`) counts every field of it that the receiver is handed:
+a `Blob`'s `type`, a `File`'s `name` and `lastModified`, each read through a getter captured before any guest code runs,
+and an array by the more of its `length` times 8 and its keys (a sparse array past the limit by `length` alone is answered
+before its keys are listed). A kind outside the allow-list measures `Infinity`, as before. `freezeDeep` walks own keys,
+arrays included. Tests: `test/unit/measure-delivered.test.ts` (a property over every supported kind, alone and nested;
+the string-valued getters of `Blob` and `File` enumerated), `test/unit/element-events.test.ts` (the bounded walk) and
+`test/e2e/exact-budget.spec.ts` (the property on each engine's clone and message channel; a File name, a Blob type and a
+sparse array against the log, call and result budgets). P2-LIM-3 (the fetch result's head) is not part of this fix: it is
+in [S82](../../BACKLOG.md#s82).
+
+### <a id="s78"></a>S78 · A tagged rejection reason evades the uncaught-characters budget on Firefox — ✅ **done** (P2 · S · **high**)
+
+**Was backlogged (owner, 2026-10-21).** Confirmed high (S74 board BD1:LIM-1, with its verdict in the archived report).
+The character half of the uncaught budget fails open in the default configuration (exception 3), and the stall is
+bounded by nothing the library states (exception 1). Class G with B (guest-controlled state, `Symbol.toStringTag`,
+decides a budget).
+
+**Path.** `isErrorLike` (`src/lib/in-sandbox-script.ts`) decides by `tagOf(value)`; the guest sets that tag. A reason
+whose tag is neither `Error` nor `DOMException` is described with `characters: 0` (`reportOf`), so only the count
+(1000 a second) is left, though Firefox makes the full costly report on the host page's thread, cancelled or not. One
+assignment, `Error.prototype[Symbol.toStringTag] = 'X'`, untags every error; a `DOMException` needs
+`Object.defineProperty(e, Symbol.toStringTag, ...)`. Strict and worker mode.
+
+**Evidence** (Firefox; the load is the machine's 1-minute average). A 4 s flood of one 16 Mi-character rejection a tick
+(load 4.7 to 3.7): the control `new Error(big)` ends at +1171 ms by the budget (longest stall 476 ms); the tagged one
+stays `ready`, longest stall 7597 ms, 18 850 ms of stalls in all. Strict with the prototype tagged, 2 s (load 1.2):
+8631 ms of stalls, longest 3444 ms; worker mode, own tag (load 1.05): 9386 ms, longest 3585 ms. A plain
+`{ name, message }` and `[big]` cost 5 and 45 ms: Firefox makes no costly report for them, so they are not a gap.
+`terminate()` scheduled at +1000 ms of a 10 s flood ran at +1056 to +1435 ms, then the host stalled 1.5 to 2 s more on
+the reports already queued (the browser's queue bounds that, no library limit).
+
+**Fix, by construction** (the verifier's). Chokepoint: `reportOf` counts characters for every object reason, with no
+gate on the tag: read `name` and `message` once each, own or inherited, and count their lengths (over-counting is
+allowed). Structural tests: a unit property test over a closed list of reason shapes (Error, own-tagged Error,
+`Error.prototype`-tagged Error, `DOMException`, a `DOMException` tagged by `defineProperty`, a subclass, a Proxy of an
+Error, a plain object, an array, a string) checking that `characters` is at least the length of every string reachable
+as `name` or `message`; a tagged row in the N-1 e2e (`test/e2e/error-cost-and-queued-calls.spec.ts`) on Firefox,
+asserting the sandbox ends with `uncaughtBudget`; a scan that no budget decision in the bootstrap branches on `tagOf` of
+a guest value.
+
+**Done.** `reportOf` (`src/lib/in-sandbox-script.ts`) computes the characters of a report first, from the `name` and
+`message` of every object or function (a `String` object counts as its string), and only then decides the text of the line
+by the tag: no budget decision reads `Symbol.toStringTag`. Tests: `test/unit/egress.test.ts` (a closed list of reason
+shapes, the source order), and the N-1 rows with a tagged error and a tagged `Error.prototype` in
+`test/e2e/error-cost-and-queued-calls.spec.ts`.
+
 ### <a id="t6"></a>T6 · Two CPU-heavy unit tests failed once on a loaded machine — ✅ **done**
 
 `review-round-2.test.ts` (C-7: past the comparison cap the sandbox rebuilds) and `review-round-5.test.ts` (5:L-1: the

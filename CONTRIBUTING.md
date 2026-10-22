@@ -98,7 +98,7 @@ diminishing returns.
 **The review board's rule (owner, 2026-10-21):** a board pass is **clean** when none of its confirmed findings leaks data
 or can manipulate it, at any severity, a docs gap that leads embedders into such a leak included. A DoS or availability
 finding, the exception 3 kind (a budget failing open with only an availability effect) included, is backlogged: it does
-not count against a pass and keeps the severity the verifier confirmed (S77 and S78 stay rated high). Docs drift, test
+not count against a pass and keeps the severity the verifier confirmed. Docs drift, test
 gaps and correctness bugs with no data effect do not count either, and are fixed right away where that makes sense.
 The board clears after two consecutive clean passes, and only findings that reach strict mode (at its default
 configuration, or with `origins` or `fetchBridge`) count toward one.
