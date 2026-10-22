@@ -3,6 +3,11 @@
  * clone copies for a value. Measured where a message is made (the guest's console relay and both brokers) and again
  * where it arrives (R1:R3-3), so neither side has to trust the other's measure.
  *
+ * Exact by construction (S77): the snapshot is the one canonical form of a value that leaves a sandbox (a closed set of
+ * kinds: the primitives, arrays, plain objects and the built-ins below; any other kind measures Infinity and is refused),
+ * and every field it carries to the receiver is counted below. What is measured is what is posted, and what is posted is
+ * what the receiver gets, so a budget never counts less than is delivered.
+ *
  * What it measures is a SNAPSHOT (R2:C-3): a value that is already the result of a structured clone, as a
  * message is when it arrives, and as every sender makes one first, with a structuredClone captured before any guest
  * code ran; the sender then posts that snapshot, never the live value. Measuring the live value would let a getter answer the
@@ -12,11 +17,16 @@
  * Proxy and no function, so the walk is an allow-list of the types clone produces whose size it knows exactly:
  *   - a string: two bytes per UTF-16 code unit plus 8; a BigInt: its two's-complement bytes plus 8, by its hexadecimal
  *     digits, found without making anything larger than the limit; any other primitive 8;
- *   - a plain object or an array (each object 16): its own enumerable keys, each like a string, and their values;
+ *   - a plain object (16): its own enumerable keys, each like a string, and their values; an array likewise, and besides
+ *     its `length` times 8, whichever is more: a clone keeps a sparse array's length, and a walk to it costs that much, so
+ *     one of 2**32 - 1 slots is past every limit however few elements it holds;
  *   - a Map or a Set: its entries; a Date 16; a RegExp its source like a string (the flags are at most 8 characters);
  *     a String, Number, Boolean or BigInt object like its primitive;
  *   - an ArrayBuffer: its byteLength; a typed array or a DataView: its whole buffer, which clone copies, once per buffer;
- *   - a Blob or a File: 64 (clone copies a handle, not its bytes).
+ *   - a Blob: 64 (clone copies a handle to its bytes, not the bytes) plus its `type` like a string; a File: a Blob's
+ *     fields plus its `name` like a string and 8 for `lastModified`. Each field is read through a getter captured below,
+ *     and the table lists every field the clone of that kind carries (a test enumerates the string-valued getters of the
+ *     prototypes and fails on one that is neither counted nor declared not serialized).
  * Anything else measures Infinity, past every limit: an Error (its stack is the engine's to serialize), a platform
  * object (ImageData, ImageBitmap, FileList, CryptoKey, …), a SharedArrayBuffer, a function or a symbol (never in a
  * snapshot), or a value whose reading throws. A sender that wants an error across sends what it needs of it: the console
@@ -60,7 +70,10 @@ export function createSizeOf(): SizeOf {
     const setForEach = Set.prototype.forEach;
     const dateTime = Date.prototype.getTime;
     const regExpSource = getOwn(RegExp.prototype, 'source')!.get!;
+    // A Blob and a File carry, besides the handle to their bytes, strings and a number the clone copies whole (S77).
     const blobSize = typeof Blob === 'function' ? getOwn(Blob.prototype, 'size')!.get! : null;
+    const blobType = typeof Blob === 'function' ? getOwn(Blob.prototype, 'type')!.get! : null;
+    const fileName = typeof File === 'function' ? getOwn(File.prototype, 'name')!.get! : null;
     const stringValue = String.prototype.valueOf;
     const numberValue = Number.prototype.valueOf;
     const booleanValue = Boolean.prototype.valueOf;
@@ -157,12 +170,21 @@ export function createSizeOf(): SizeOf {
                 apply(setAdd, seen, [object]);
                 total += 16;
                 if (isArray(object) || protoOf(object) === ObjectPrototype) {
+                    // charged by length, as the more of that and its keys: a sparse array's keys are few, its length is not.
+                    // Past the limit by length alone, its keys are not even listed.
+                    const slots = isArray(object) ? 8 * (object as unknown[]).length : 0;
+                    if (total + slots > limit) {
+                        total += slots;
+                        break;
+                    }
+                    const start = total;
                     const keys = keysOf(object);
                     for (let i = 0; i < keys.length && total <= limit; i++) {
                         const key = keys[i]!;
                         total += 2 * key.length + 8;
                         stack[stack.length] = (object as Record<string, unknown>)[key];
                     }
+                    if (total - start < slots) total = start + slots;
                     continue;
                 }
                 const bytes = brand(bufferBytes, object);
@@ -200,7 +222,11 @@ export function createSizeOf(): SizeOf {
                     continue;
                 }
                 if (typeof brand(blobSize, object) === 'number') {
-                    total += 64;
+                    const type = brand(blobType, object);
+                    if (typeof type !== 'string') return unknown(object); // a field the table cannot read: refused, never free
+                    total += 64 + 2 * type.length + 8;
+                    const name = brand(fileName, object);
+                    if (typeof name === 'string') total += 2 * name.length + 8 + 8; // a File: its name, and lastModified
                     continue;
                 }
                 const primitive = wrapped(object, limit);
