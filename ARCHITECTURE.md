@@ -307,6 +307,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/in-sandbox-files.ts` | The guest side of the registered files, `sandboxFiles`, and of the guest writes |
 | `src/lib/in-sandbox-script.ts` | The guest bootstrap of every mode |
 | `src/lib/in-sandbox-view.ts` | Strict mode's view and worker prelude |
+| `src/lib/inherited-context.ts` | The host page's context, as data |
 | `src/lib/lifecycle-transitions.ts` | The transitions the lifecycle reducer can make |
 | `src/lib/lifecycle.ts` | The lifecycle of `<web-sandbox>` as one pure reducer, and the executor that applies its effects |
 | `src/lib/limits.ts` | The limits registry: every numeric bound the docs state, once, with its value, what it bounds and where it is enforced |
