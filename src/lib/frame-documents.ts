@@ -34,6 +34,10 @@ export const WRAPPER_CSP = "frame-src 'none'";
  * and WebKit baseURI and import.meta.url read about:blank; `<img src="x.png">` sends nothing.
  * Relative references to REGISTERED files are resolved by the host before the guest exists
  * (markup-references.ts); every other relative URL still fails closed here.
+ *
+ * The host page's own `base-uri` can refuse this element (the frames inherit its policy), which leaves the host page's
+ * URL as the guest's base. Every bootstrap reads its base URL first (environment-check.ts, S74) and stays inert on
+ * anything but this value; the element then ends the sandbox.
  */
 export const WRAPPER_BASE = 'about:blank';
 
