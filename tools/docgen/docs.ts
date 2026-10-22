@@ -11,6 +11,7 @@ import { config } from './extractors/config';
 import { cookieFacts } from './extractors/cookie-facts';
 import { csp } from './extractors/csp';
 import { frames } from './extractors/frames';
+import { inheritedContext } from './extractors/inherited-context';
 import { lifecycle } from './extractors/lifecycle';
 import { limits } from './extractors/limits';
 import type { Extractor } from './extractors/markdown';
@@ -18,7 +19,7 @@ import { modules } from './extractors/modules';
 import { reasons } from './extractors/reasons';
 import { surface } from './extractors/surface';
 
-export const EXTRACTORS: readonly Extractor[] = [api, budgets, config, cookieFacts, csp, frames, lifecycle, limits, modules, reasons, surface];
+export const EXTRACTORS: readonly Extractor[] = [api, budgets, config, cookieFacts, csp, frames, inheritedContext, lifecycle, limits, modules, reasons, surface];
 
 export const plugin: Plugin = {
     extractors: {},

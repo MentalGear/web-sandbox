@@ -7,7 +7,8 @@
  * the fix adds the row (CONTRIBUTING.md, "Fixing a finding").
  *
  * Values first: this table is the one list. `test/unit/inherited-context.test.ts` fails on a row that names no test
- * file that exists, and a row of the environment check (environment-check.ts) that no row points to.
+ * file that exists, and a row of the environment check (environment-check.ts) that no row points to. docs/THREAT-MODEL.md
+ * renders it (the generated region `inherited-context`, tools/docgen/extractors/inherited-context.ts).
  *
  * Internal: not exported from the package.
  */
