@@ -47,7 +47,7 @@ frozen ([S49](BACKLOG.md#s49)).
 
 ## Trust boundaries
 
-<!-- describes: realms, channels sig:88e149ab -->
+<!-- describes: realms, channels sig:acafb441 -->
 
 The realms and the channels between them are generated from the code in [ARCHITECTURE.md](../ARCHITECTURE.md#modes-and-realms)
 (which realm runs guest code, which library functions are stringified into it) and
@@ -59,7 +59,8 @@ The boundaries those tables cross:
    opaque origin of its own (a worker has its document's), cross-origin to the host page and to every other sandbox. What crosses is the
    library's ports, the one announcement (cooperative and worker mode) or `INIT_VIEW` (strict mode), `BRIDGE_INIT` to the
    fetch bridge's frame (with `fetchBridge`, which the guest has no handle on), and, in cooperative mode only, whatever
-   the guest posts to the host window.
+   the guest posts to the host window, and a bootstrap's portless refusal when its document is not the one the library
+   built (`ENVIRONMENT_REFUSED`, which ends the sandbox).
 2. **The wrapper and what it holds.** The element's frame holds a wrapper document of the library's: policy
    `frame-src 'none'`, base `about:blank`, `no-referrer`, no script. The guest frame or the strict view inside it cannot
    navigate itself anywhere ([research 14](research/14_self_navigation/README.md)).
@@ -129,7 +130,7 @@ are governed by the policy but not logged: only the bridge's requests are `fetch
 
 ### Channel integrity
 
-<!-- describes: frames sig:c1c7 -->
+<!-- describes: frames sig:e118 -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |

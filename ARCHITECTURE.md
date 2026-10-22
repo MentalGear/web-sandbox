@@ -13,7 +13,7 @@ section has been read (see [CONTRIBUTING](CONTRIBUTING.md#generated-docs-and-the
 
 ## Modes and realms
 
-<!-- describes: realms sig:88e1 -->
+<!-- describes: realms sig:acaf -->
 
 Guest content never runs in the host page's realm. The element builds a **wrapper** frame it owns (`frame-src 'none'`,
 an inert base URL, no referrer) and puts the guest inside it, in a frame with an opaque origin and a Content-Security-Policy
@@ -29,6 +29,11 @@ In every mode, with `fetchBridge`, the element adds one more frame of its own be
 hidden, with an opaque origin and no guest code, which makes each request the host decided, so no Service Worker or
 `fetch` wrapper of the host page applies to it ([ADR-006](docs/ADR-006-fetch-bridge.md)).
 
+Every bootstrap that runs in a document of the library's (the view's and the bridge frame's, the cooperative guest's,
+worker mode's frame's) first checks that the document is the one the library built: an opaque origin, `about:srcdoc`,
+the base `about:blank` (`src/lib/environment-check.ts`, S74). If a check fails the bootstrap stays inert, tells the host
+page, and the element ends the sandbox with the reason of that check.
+
 Each realm is declared once, with the functions the library stringifies into it (a realm cannot import from the host's
 bundle, so those functions close over nothing, and the tests scan their text).
 
@@ -37,12 +42,12 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | :--- | :--- | :--- | :--- | :--- |
 | `host` | The host page's window: the element, its listeners, and the host end of every port. | no | — | `announcement`, `logic-port`, `view-port`, `view-init`, `bridge-init`, `bridge-port` |
 | `wrapper` | The sandbox frame's document (frame-documents.ts): it holds the guest frame or the strict view, and runs no script. | no | — | — |
-| `cooperative` | Cooperative mode's guest document: the bootstrap, then the guest's markup and scripts. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `inSandboxImportMap`, `inSandboxMarkup` | `announcement`, `logic-port` |
-| `worker-frame` | Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup. | no | `workerBootstrap` | `announcement`, `worker` |
+| `cooperative` | Cooperative mode's guest document: the bootstrap, then the guest's markup and scripts. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `inSandboxImportMap`, `inSandboxMarkup`, `checkSandboxEnvironment` | `announcement`, `logic-port` |
+| `worker-frame` | Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup. | no | `workerBootstrap`, `checkSandboxEnvironment` | `announcement`, `worker` |
 | `worker` | Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeWebAssembly` | `logic-port`, `worker` |
-| `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound` | `view-init`, `view-port`, `render-port`, `worker` |
+| `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound`, `checkSandboxEnvironment` | `announcement`, `view-init`, `view-port`, `render-port`, `worker` |
 | `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap and the prelude, then the guest's entry. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `assertEntryScoped`, `inStrictWorker` | `logic-port`, `render-port`, `worker` |
-| `bridge-frame` | The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it. | no | `inBridgeFrame` | `bridge-init`, `bridge-port` |
+| `bridge-frame` | The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it. | no | `checkSandboxEnvironment`, `inBridgeFrame` | `announcement`, `bridge-init`, `bridge-port` |
 <!-- generated:end -->
 
 <!-- generated:begin stringified -->
@@ -63,12 +68,13 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `sanitizeRender` | `src/lib/in-sandbox-view.ts` | `view` |
 | `viewBudget` | `src/lib/in-sandbox-view.ts` | `view` |
 | `cssLoadBound` | `src/lib/in-sandbox-view.ts` | `view` |
+| `checkSandboxEnvironment` | `src/lib/environment-check.ts` | `cooperative`, `worker-frame`, `view`, `bridge-frame` |
 | `inBridgeFrame` | `src/lib/in-bridge-frame.ts` | `bridge-frame` |
 <!-- generated:end -->
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:88e15a37377249d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:acaf5a37377249d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
@@ -82,7 +88,7 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Channels and frames
 
-<!-- describes: channels, frames sig:49abc1c7 -->
+<!-- describes: channels, frames sig:b441e118 -->
 
 Realms talk on channels, and every message on them is a frame of a declared type. A frame is declared once, with the
 channels it may cross, the realms at its ends, and for each field what bounds it. What a frame carries out of a guest
@@ -102,7 +108,7 @@ How a field is bounded:
 <!-- generated:begin channels -->
 | Channel | Kind | Spoken in | What it is for | Frame types |
 | :--- | :--- | :--- | :--- | :--- |
-| `announcement` | window message | `host`, `cooperative`, `worker-frame` | The guest frame's one announcement to the host page's window: the logic port, or worker mode's refusal. | 1 |
+| `announcement` | window message | `host`, `cooperative`, `worker-frame`, `view`, `bridge-frame` | A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), and any bootstrap's refusal of an environment other than the one built. | 2 |
 | `logic-port` | MessagePort | `host`, `cooperative`, `worker`, `strict-worker` | The host and the guest: calls both ways, execute(), liveness, and the guest bootstrap's lines and reports. | 9 |
 | `view-port` | MessagePort | `host`, `view` | Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness. | 14 |
 | `render-port` | MessagePort | `view`, `strict-worker` | Strict mode: the view and the guest's worker; the host is not on this path. | 7 |
@@ -116,6 +122,7 @@ How a field is bounded:
 | Frame | Route | Fields (what bounds each) | Purpose |
 | :--- | :--- | :--- | :--- |
 | `SANDBOX_PORT` | `announcement`: cooperative, worker-frame → host | `refused` (constant) | The guest frame's announcement: the logic port, transferred; or why worker mode's worker could not start. |
+| `ENVIRONMENT_REFUSED` | `announcement`: cooperative, worker-frame, view, bridge-frame → host | `refused` (constant) | A bootstrap found its document other than the one the library built (environment-check.ts) and stayed inert: the sandbox ends with the reason of the check that failed. No port. |
 | `INIT_PORT` | `worker`: worker-frame → worker | — | Worker mode's frame hands its worker the logic port. |
 | `WORKER_STARTED` | `worker`: worker → worker-frame | — | Worker mode's worker attached its port: the frame may announce it. |
 | `INIT_VIEW` | `view-init`: host → view | `workerSource` (host), `entryDone` (host), `viewFiles` (host), `html` (host), `autoResize` (host), `allowAnimations` (host), `allowAutoplay` (host), `origins` (host) | The host hands the view the logic and view ports, at the wrapper's load, with what the build shows. |
@@ -289,6 +296,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/css-references.ts` | URL references in CSS |
 | `src/lib/egress.ts` | The egress table |
 | `src/lib/element-events.ts` | The element's events |
+| `src/lib/environment-check.ts` | The environment check |
 | `src/lib/environment.ts` | The resources of one environment, declared once |
 | `src/lib/fetch-bridge.ts` | The host-mediated fetch bridge, host side |
 | `src/lib/files.ts` | The host side of file delivery: path validation, the MIME table and the store that lives on the element |

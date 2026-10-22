@@ -123,6 +123,9 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['PONG', 'type', "'PONG'"],
     ['PONG', 'n', 'n'],
     ['WORKER_STARTED', 'type', "'WORKER_STARTED'"],
+    // environment-check.ts, checkSandboxEnvironment: the first statement of every bootstrap that runs in a document
+    ['ENVIRONMENT_REFUSED', 'type', "'ENVIRONMENT_REFUSED'"],
+    ['ENVIRONMENT_REFUSED', 'refused', 'id'],
     // worker-bootstrap.ts, workerBootstrap: worker mode's frame
     ['SANDBOX_PORT', 'refused', 'refused'],
     ['INIT_PORT', 'type', "'INIT_PORT'"],
@@ -371,7 +374,7 @@ describe("the fetch bridge's requests are made by its frame, and only there (BD1
         expect(BRIDGE_FRAME_SANDBOX).toBe('allow-scripts');
         expect(read('src/lib/bridge-frame.ts')).toContain("iframe.setAttribute('sandbox', BRIDGE_FRAME_SANDBOX);");
         // the frame's realm, its two channels and its frames are rows of the tables the docs are made from
-        expect(REALMS['bridge-frame'].channels).toEqual(['bridge-init', 'bridge-port']);
+        expect(REALMS['bridge-frame'].channels).toEqual(['announcement', 'bridge-init', 'bridge-port']);
         expect(Object.entries(FRAMES).filter(([, row]) => row.routes.some(route => route.channel === 'bridge-port')).map(([type]) => type).sort())
             .toEqual(['BRIDGE_ABORT', 'BRIDGE_CHUNK', 'BRIDGE_END', 'BRIDGE_ERROR', 'BRIDGE_FETCH', 'BRIDGE_HEAD', 'BRIDGE_PULL', 'BRIDGE_READY']);
     });
