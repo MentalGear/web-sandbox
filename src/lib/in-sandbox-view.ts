@@ -1,5 +1,6 @@
 import { inSandboxFiles } from './in-sandbox-files';
 import { BRIDGE_FRAME_OPTIONS, inBridgeFrame } from './in-bridge-frame';
+import { checkSandboxEnvironment, ENVIRONMENT_EXPECTED } from './environment-check';
 import { assertHashableScript, scriptHashSource } from './csp/script-hash';
 import { escapeAttribute } from './frame-documents';
 import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './markup-references';
@@ -2929,6 +2930,16 @@ let cachedHash: string | null = null;
 export const BRIDGE_ROLE = 'fetch-bridge';
 
 /**
+ * The environment gate (S74, environment-check.ts): `body` wrapped so that it runs only in the document the library
+ * built. The gate is the one statement of the text it starts: the check first, given the expected values as one literal,
+ * `host` (the expression for the host page's window, which a refusal is posted to) and whether to stop the document's
+ * parser on a refusal; everything else of the bootstrap is inside the block.
+ */
+export function environmentGate(host: string, stopParsing: boolean, body: string): string {
+    return `if ((${checkSandboxEnvironment.toString()})(${JSON.stringify(ENVIRONMENT_EXPECTED)}, ${host}, ${stopParsing}) === null) {${body}}`;
+}
+
+/**
  * The bootstrap's text for `options`, built from the functions it runs (the tests build it with other options): strict
  * mode's view, or the fetch bridge's frame where its script element has the bridge's role (BRIDGE_ROLE).
  */
@@ -2936,7 +2947,10 @@ export function viewBootstrapSource(options: ViewOptions): string {
     const script = 'var s = document.currentScript;';
     const bridge = `(${inBridgeFrame.toString()})(${JSON.stringify(BRIDGE_FRAME_OPTIONS).replaceAll('<', '\\u003c')});`;
     const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')});`;
-    return `(function () {${script} if (s && s.getAttribute('data-role') === '${BRIDGE_ROLE}') {${bridge}} else {${view}}})();`;
+    // The gate first (environment-check.ts): a refusal goes to the host page's window, which is the bridge frame's parent and
+    // the view's grandparent.
+    const host = `(document.currentScript && document.currentScript.getAttribute('data-role') === '${BRIDGE_ROLE}' ? parent : parent.parent)`;
+    return `(function () {${environmentGate(host, false, `${script} if (s && s.getAttribute('data-role') === '${BRIDGE_ROLE}') {${bridge}} else {${view}}`)}})();`;
 }
 
 /**

@@ -32,6 +32,11 @@ export const TERMINATION_REASONS = {
     // list; Trusted Types; COEP; R1:R3-1): each reason of a refusal names the policy, so the embedder knows what to allow.
     workerRefused: { text: `the sandbox's worker could not be loaded: the host page's policy refuses blob: workers (worker-src; WebKit also under Cross-Origin-Embedder-Policy; ${HOST_PAGE_POLICY})`, decidedBy: 'host' },
     trustedTypes: { text: `the host page's Trusted Types policy does not allow the policy name '${TRUSTED_TYPES_POLICY}' (trusted-types; ${HOST_PAGE_POLICY})`, decidedBy: 'host' },
+    // The environment check (environment-check.ts, S74): a bootstrap found its document different from the one the library
+    // built, stayed inert, and said so; one reason for each row of its table (ENVIRONMENT_CHECKS).
+    environmentOrigin: { text: "the sandbox document's origin is not opaque: it is not running in the frame the library built", decidedBy: 'host' },
+    environmentUrl: { text: 'the sandbox document is not an about:srcdoc document: it is not the document the library built', decidedBy: 'host' },
+    environmentBase: { text: `the sandbox document's base URL is not about:blank: the host page's Content-Security-Policy must allow the library's <base> (base-uri must include about: or be omitted; ${HOST_PAGE_POLICY})`, decidedBy: 'host' },
     entryNotRegistered: { text: 'the guest entry "…" is not a registered JavaScript file', decidedBy: 'host' },
     viewLost: { text: 'the sandbox view stopped responding', decidedBy: 'host' },
     viewOverrun: { text: `the view spent more than ${OVERRUN_MS} ms on one operation twice within ${OVERRUN_MINUTES} minutes`, decidedBy: 'host' },
@@ -56,6 +61,9 @@ export const reasonCauses = () => ({
     startupBlocked: "The frame loaded but the library's startup script (strict mode's view bootstrap, cooperative and worker mode's bootstrap) never checked in: the host page's policy refused it. See [Host page policy](#host-page-policy).",
     workerRefused: "Strict and worker mode: the worker's script could not be loaded at all; nothing of the guest's ran. Worker mode is never `ready` then.",
     trustedTypes: `The host page enforces Trusted Types and its \`trusted-types\` directive does not name \`${TRUSTED_TYPES_POLICY}\`, also when the host page's own default policy takes the element's strings (the view and worker mode's frame need the policy themselves).`,
+    environmentOrigin: "A bootstrap of the library's (strict mode's view, the cooperative guest's document, worker mode's frame, the fetch bridge's frame) read an origin other than `'null'`: its document is not in a frame the library sandboxed as built. It stayed inert, so nothing of the guest's ran.",
+    environmentUrl: "A bootstrap of the library's read a document URL other than `about:srcdoc`: its document is not the srcdoc the library wrote. It stayed inert, so nothing of the guest's ran.",
+    environmentBase: "A bootstrap of the library's read a base URL other than `about:blank`: the host page's `base-uri` refused the `<base>` the library's wrapper sets, so the sandbox would have seen the host page's URL. It stayed inert, so nothing of the guest's ran. Allow `about:` in `base-uri`, or omit the directive (see [Host page policy](#host-page-policy)).",
     entryNotRegistered: 'Strict mode: `entry` names no registered JavaScript file.',
     viewLost: 'Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on).',
     viewOverrun: `Strict mode: an operation of the view (a render, \`text()\` or \`set()\` applied, with its layout and the rendering update that showed it) took longer than ${OVERRUN_MS} ms, measured as the view's time budget measures it, and another one had, at most ${OVERRUN_MINUTES} minutes before it. The first such operation only logs a \`warn\` line (see [\`sandbox-log\`](#sandbox-log--sandboxlog)); see [\`sandboxView\`](#sandboxview-strict-mode).`,
@@ -96,7 +104,7 @@ export type HostLineId = keyof typeof HOST_LINES;
 export const HOST_LINE_OCCASIONS = {
     executionTimeout: "workerExecutionTimeout: the event loop was still busy past an execute()'s deadline; the termination follows",
     entryFailed: "strict mode: the entry failed to start; the entry's own error text follows as a guest line, then the termination",
-    refusedByHostPage: "the host page's policy refused a frame of the library's: … is the termination's reason, which follows",
+    refusedByHostPage: "the host page's policy refused a frame of the library's, or a bootstrap of the library found its document not the one the library built: … is the termination's reason, which follows",
     logLimit: 'once per environment, when the element first drops guest lines past LOG_EVENTS_PER_SECOND',
     viewFirstOverrun: "strict mode, once per environment: the view's first overrun (VIEW_FIRST_OVERRUN)",
     viewTextDropped: 'strict mode, once per environment: the view dropped a guest error text past its window (GUEST_TEXT_DROPPED)',

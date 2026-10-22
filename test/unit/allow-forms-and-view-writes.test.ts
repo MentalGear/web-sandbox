@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, UNSAFE_SANDBOX_FLAGS } from '@src/csp-directives';
+import { runBootstrap } from './sandbox-environment';
 
 /**
  * The owner's decisions on open findings, each reproduced here first where library logic decides: R1:R2-2 (`allow-forms`
@@ -224,7 +225,7 @@ describe('R4-4: the strict view shows raster-image guest writes, minted by the v
                 onerror: unknown = null;
                 postMessage(_message: unknown, transfer: MessagePort[]) { workers.push(transfer); }
             };
-            new Function(viewBootstrapText())();
+            runBootstrap(viewBootstrapText());
             const logic = new MessageChannel(), view = new MessageChannel();
             window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: files, html: '' }, source: window, ports: [logic.port1, view.port1] }));
             const render = workers[0]![1]!;

@@ -71,6 +71,7 @@ const NONE = "'none'";
 const UNSAFE_INLINE = "'unsafe-inline'";
 const UNSAFE_EVAL = "'unsafe-eval'";
 const BLOB = 'blob:';
+const ABOUT = 'about:'; // the scheme of the library's one base URL, about:blank (WRAPPER_BASE)
 const HASH_SOURCE = /^'sha256-[A-Za-z0-9+/]{43}='$/;
 
 // The directives that are the same for every input and every mode.
@@ -120,7 +121,9 @@ export function strictViewPolicy(input: PolicyInput & { bootstrapHash: string })
  * The fetch bridge's frame (bridge-frame.ts; ADR-006): the library's bootstrap by its hash, and connections to the
  * origins of `fetchBridge.allow` only, so the frame can reach nothing the host's allowlist did not admit even if the
  * host's own check were wrong. Everything else 'none'. No upgrade-insecure-requests: a listed plain-http origin is
- * reached as listed, as the host's allowlist admits it.
+ * reached as listed, as the host's allowlist admits it. `base-uri` admits `about:` alone: the document's one `<base>` is
+ * the library's own, `about:blank` (frame-documents.ts, buildBridgeDocument), which its bootstrap's environment check
+ * reads (environment-check.ts, S74); no markup of anyone else's is in the document.
  */
 export function bridgeFramePolicy(input: { allow: readonly Origin[]; bootstrapHash: string }): string {
     if (!HASH_SOURCE.test(input.bootstrapHash)) throw new Error('[Sandbox] the bridge frame policy needs the bootstrap as one sha256 hash source.');
@@ -139,7 +142,8 @@ export function bridgeFramePolicy(input: { allow: readonly Origin[]; bootstrapHa
         ['media-src', []],
         ['connect-src', connect],
         ['worker-src', []],
-        ...FIXED.filter(([name]) => name !== 'worker-src'),
+        ...FIXED.filter(([name]) => name !== 'worker-src' && name !== 'base-uri'),
+        ['base-uri', [ABOUT]],
     ], false);
 }
 

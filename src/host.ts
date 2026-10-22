@@ -34,8 +34,9 @@ import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./l
 import { elementEvent } from "./lib/element-events";
 import { detachEnvironment, releaseEnvironment, type EnvironmentFields } from "./lib/environment";
 import { hostLine, reasonText } from "./lib/reasons";
+import { ENVIRONMENT_CHECKS, ENVIRONMENT_REFUSED_TYPE } from "./lib/environment-check";
 import { INITIAL_LIFECYCLE, runNotices, step as runStep, type BuildContext, type Generation, type LcInput, type LcState, type LifecycleHost, type Notice } from "./lib/lifecycle";
-import { assertEntryScoped, buildViewDocument, entryDoneName, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
+import { assertEntryScoped, buildViewDocument, entryDoneName, environmentGate, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
 /**
  * The configuration `setConfig()` takes: a union keyed by `mode`.
@@ -435,6 +436,12 @@ const WORKER_FRAME_REFUSALS: Readonly<Record<string, string>> = Object.freeze(Ob
     'trusted-types': reasonText('trustedTypes'),
     'failed': reasonText('buildFailed', 'Error'),
 }));
+
+// The reason each environment check ends the build with (environment-check.ts, S74): the element's own table, by the
+// check's id; what a bootstrap posts names a row, never a text.
+const ENVIRONMENT_REFUSALS: Readonly<Record<string, string>> = Object.freeze(Object.assign(Object.create(null), Object.fromEntries(
+    Object.entries(ENVIRONMENT_CHECKS).map(([id, row]) => [id, reasonText(row.reason)]),
+)));
 
 // Plain data, compared as data (R1:R3-7): the same primitives, arrays and plain objects, key by key. Anything else (a
 // Date, a Map, a typed array) never compares equal, so a config holding one always rebuilds.
@@ -1375,17 +1382,36 @@ export class WebSandbox extends ElementBase {
      * What the announcement is (from the guest frame's window, trusted, with exactly one port or worker mode's refusal)
      * is read here; what it does is the reducer's (`announced`): which one is accepted, and whether the build expects one,
      * are the build's progress there, and so is the window it came from, which the wrapper's load must still hold.
+     *
+     * The same listener hears the other portless message of the library's frames: a bootstrap's refusal of a document
+     * that is not the one the library built (ENVIRONMENT_REFUSED, environment-check.ts; S74), in every mode and from the
+     * fetch bridge's frame too. It ends the environment with the reason of the check that failed (`bridge` is the bridge
+     * frame, or null; `announces` is false in strict mode, whose view takes no announcement).
      */
-    private _listenForAnnouncement(iframe: HTMLIFrameElement) {
+    private _listenForAnnouncement(iframe: HTMLIFrameElement, bridge: HTMLIFrameElement | null, announces: boolean) {
         const host = window;
         // The environment this listener belongs to: installed by its build, removed by its teardown (_stopListening).
         // Its input carries it, so one that a teardown made stale is dropped (S65).
         const gen = this._lc.gen;
         const onMessage = (event: MessageEvent) => {
-            const guestWindow = guestWindowOf(iframe);
-            if (!guestWindow || event.source !== guestWindow) return;
             const data = event.data;
-            if (!data || typeof data !== 'object' || data.type !== ANNOUNCEMENT_TYPE) return;
+            if (!data || typeof data !== 'object') return;
+            const guestWindow = guestWindowOf(iframe);
+            // A bootstrap that found its document other than the one the library built (environment-check.ts, S74) stayed
+            // inert and says so, with no port: from the guest frame's window (the view, the cooperative guest, worker mode's
+            // frame) or the fetch bridge's frame, in every mode. The reason is the element's own, by the check's id; a guest
+            // that forges the message can only end its own environment.
+            if (data.type === ENVIRONMENT_REFUSED_TYPE) {
+                const source = event.source;
+                const reason = ENVIRONMENT_REFUSALS[data.refused as string];
+                if (!event.isTrusted || !source || reason === undefined || (source !== guestWindow && source !== bridge?.contentWindow)) return;
+                event.stopImmediatePropagation();
+                this._refusedByHostPage(reason, gen);
+                return;
+            }
+            // Strict mode's view checks in on its own port instead (R1:R3-1): there is no announcement to take.
+            if (!announces || !guestWindow || event.source !== guestWindow) return;
+            if (data.type !== ANNOUNCEMENT_TYPE) return;
             event.stopImmediatePropagation(); // the port is the element's: no other listener on this window sees it
             // Worker mode's frame announces a worker that could not start as its one announcement, with no port (R2:C-5,
             // worker-bootstrap.ts): the build ends with the reason strict mode gives for the same refusal,
@@ -1898,6 +1924,12 @@ export class WebSandbox extends ElementBase {
         return writes ? `{const comms = ${comms};${last}}` : `${comms};${last}`;
     }
 
+    // The cooperative guest's bootstrap, behind the environment gate (environment-check.ts, S74): the check is its first
+    // statement, and on a refusal the document's parser stops, so the guest markup that follows never runs.
+    private _getCooperativeBootstrapScript(files: FileSnapshotEntry[], plan: GuestMarkupPlan) {
+        return environmentGate('parent.parent', true, this._getSandboxCommsScript('cooperative', files, plan));
+    }
+
     private _getWorkerBootstrapScript(files: FileSnapshotEntry[]) {
         // the worker keeps only the allowlisted globals (worker-globals.ts), then runs the comms script and builds its
         // own blobs and sandboxFiles from the same literal; the frame only spawns it and forwards the port
@@ -1907,7 +1939,7 @@ export class WebSandbox extends ElementBase {
         // which it deleted (R4:M-1), and only the comms script is given it, for its one WORKER_STARTED.
         const noWasm = this._config.scriptUnsafe === true ? '' : `(${removeWebAssembly.toString()})(g);`;
         const workerSource = `(function (g, postToFrame) {${noWasm}${this._getSandboxCommsScript('worker', files, NO_MARKUP_PLAN, 'postToFrame')}})(this, ${workerGlobalsCall('this')});`;
-        return `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)}, ${toInlineScriptLiteral(TRUSTED_TYPES_POLICY)});`;
+        return environmentGate('parent.parent', false, `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)}, ${toInlineScriptLiteral(TRUSTED_TYPES_POLICY)});`);
     }
 
     private _isPermission(capability: string): boolean {
@@ -2034,7 +2066,7 @@ export class WebSandbox extends ElementBase {
             const plan = this._getMarkupPlan(html, files, sandboxFlags);
             guestDocument = buildGuestDocument({
                 csp: policy,
-                bootstrapScript: this._getSandboxCommsScript('cooperative', files, plan),
+                bootstrapScript: this._getCooperativeBootstrapScript(files, plan),
                 content: plan.parts ? '' : html,
                 bootstrapWritesContent: plan.parts !== null,
             });
@@ -2112,8 +2144,9 @@ export class WebSandbox extends ElementBase {
         this._strictInit = prepared.strictInit;
         iframe.onload = this._frameLoadHandler(iframe);
         // The guest announces its port from its first statement (BR:CB1), so the listener is in place before the frame is
-        // inserted. Strict mode's view checks in on its own port instead (R1:R3-1).
-        if (prepared.strictInit === null) this._listenForAnnouncement(iframe);
+        // inserted. Strict mode's view checks in on its own port instead (R1:R3-1); every mode's bootstraps may refuse an
+        // environment other than the one built (environment-check.ts), the fetch bridge's frame included.
+        this._listenForAnnouncement(iframe, prepared.bridgeFrame, prepared.strictInit === null);
         this.shadowRoot!.appendChild(iframe);
         this._startFetchBridge(prepared.bridgeFrame); // its frame after the wrapper, which stays the shadow root's first
     }

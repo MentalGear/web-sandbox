@@ -18,7 +18,7 @@ export interface ChannelRow {
 }
 
 export const CHANNELS = {
-    'announcement': { kind: 'window message', summary: "The guest frame's one announcement to the host page's window: the logic port, or worker mode's refusal." },
+    'announcement': { kind: 'window message', summary: "A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), and any bootstrap's refusal of an environment other than the one built." },
     'logic-port': { kind: 'MessagePort', summary: 'The host and the guest: calls both ways, execute(), liveness, and the guest bootstrap\'s lines and reports.' },
     'view-port': { kind: 'MessagePort', summary: "Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness." },
     'render-port': { kind: 'MessagePort', summary: "Strict mode: the view and the guest's worker; the host is not on this path." },
@@ -72,6 +72,11 @@ export const FRAMES = {
         purpose: "The guest frame's announcement: the logic port, transferred; or why worker mode's worker could not start.",
         routes: [{ channel: 'announcement', from: ['cooperative', 'worker-frame'], to: ['host'] }],
         fields: { refused: { bound: 'constant', how: "worker mode's frame only: one of worker, trusted-types, failed" } },
+    },
+    ENVIRONMENT_REFUSED: {
+        purpose: "A bootstrap found its document other than the one the library built (environment-check.ts) and stayed inert: the sandbox ends with the reason of the check that failed. No port.",
+        routes: [{ channel: 'announcement', from: ['cooperative', 'worker-frame', 'view', 'bridge-frame'], to: ['host'] }],
+        fields: { refused: { bound: 'constant', how: "one of the environment checks' ids (ENVIRONMENT_CHECKS: origin, url, base); the element takes its reason from its own table" } },
     },
     INIT_PORT: {
         purpose: "Worker mode's frame hands its worker the logic port.",

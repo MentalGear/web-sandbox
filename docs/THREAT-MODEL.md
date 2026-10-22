@@ -47,7 +47,7 @@ frozen ([S49](BACKLOG.md#s49)).
 
 ## Trust boundaries
 
-<!-- describes: realms, channels sig:88e149ab -->
+<!-- describes: realms, channels sig:acafb441 -->
 
 The realms and the channels between them are generated from the code in [ARCHITECTURE.md](../ARCHITECTURE.md#modes-and-realms)
 (which realm runs guest code, which library functions are stringified into it) and
@@ -59,7 +59,8 @@ The boundaries those tables cross:
    opaque origin of its own (a worker has its document's), cross-origin to the host page and to every other sandbox. What crosses is the
    library's ports, the one announcement (cooperative and worker mode) or `INIT_VIEW` (strict mode), `BRIDGE_INIT` to the
    fetch bridge's frame (with `fetchBridge`, which the guest has no handle on), and, in cooperative mode only, whatever
-   the guest posts to the host window.
+   the guest posts to the host window, and a bootstrap's portless refusal when its document is not the one the library
+   built (`ENVIRONMENT_REFUSED`, which ends the sandbox).
 2. **The wrapper and what it holds.** The element's frame holds a wrapper document of the library's: policy
    `frame-src 'none'`, base `about:blank`, `no-referrer`, no script. The guest frame or the strict view inside it cannot
    navigate itself anywhere ([research 14](research/14_self_navigation/README.md)).
@@ -102,6 +103,7 @@ Specs under `test/e2e/` and `docs/research/` run on Chromium, Firefox and WebKit
 | No popups unless the embedder opts in | `allow-popups` is an unsafe capability (cooperative and worker mode only, with a warning); strict mode takes none | `UNSAFE_SANDBOX_FLAGS`; `CONFIG_SCHEMA.unsafeCapabilities` (`src/lib/config-schema.ts`) | research [13](research/13_popup_exfiltration/README.md) reproduction; `test/e2e/hard-security.spec.ts` | [research 13](research/13_popup_exfiltration/README.md) |
 | No pointer lock unless the embedder opts in | `allow-pointer-lock` is an unsafe capability like `fullscreen` (cooperative and worker mode only, with a warning; dropped from `capabilities`, and from `unsafeCapabilities` in strict mode): a guest holding the lock can hide the cursor and capture relative input, so it can draw a cursor of its own over fake host UI | `UNSAFE_SANDBOX_FLAGS`; `CONFIG_SCHEMA.capabilities`, `CONFIG_SCHEMA.unsafeCapabilities` (`src/lib/config-schema.ts`) | `test/unit/config-schema.test.ts`; `test/e2e/pointer-lock.spec.ts` | the UI-spoofing reasoning of `fullscreen` ([README](../README.md#capabilities)) |
 | The host page's URL is not readable | The wrapper's base is `about:blank` and both frames are `no-referrer`; strict: the renderer forces `referrerpolicy="no-referrer"`, and the worker's location is its own `blob:` URL | `WRAPPER_BASE`, `FRAME_REFERRER_POLICY` (`src/lib/frame-documents.ts`); `sanitizeRender` | `test/e2e/host-url.spec.ts` | [S15](archive/backlog/BACKLOG-done.md#s15); cooperative residuals [S17](archive/backlog/BACKLOG-done.md#s17), [S18](archive/backlog/BACKLOG-done.md#s18) |
+| A library bootstrap runs only in the document the library built | The first statement of each bootstrap (the hashed view and bridge bootstrap, the cooperative guest's, worker mode's frame's) checks the document's origin (`self.origin` is `'null'`), URL (`about:srcdoc`) and base URL (`about:blank`). On a difference it registers and runs nothing, posts a portless `ENVIRONMENT_REFUSED`, stops the cooperative guest's parser, and the element ends the sandbox with the reason of that row (taken from its own table, never from the message). A host page whose `base-uri` refuses the wrapper's `<base>` is caught this way (the guest would otherwise read the host page's URL), and so is a copy of a bootstrap run anywhere else | `ENVIRONMENT_CHECKS`, `checkSandboxEnvironment` (`src/lib/environment-check.ts`); `environmentGate` (`src/lib/in-sandbox-view.ts`); `_listenForAnnouncement` (`src/host.ts`) | `test/unit/environment-gate.test.ts` (the check is each bootstrap's first and only statement; each row leaves each bootstrap inert); `test/unit/environment-check.test.ts`; `test/e2e/environment-check.spec.ts` (`base-uri` in every mode; copies outside a sandbox document) | [S74](BACKLOG.md#s74) |
 | Strict: no guest script runs in any document | The view's `script-src` is the bootstrap's hash with `script-src-attr 'none'`; an allowlist renderer drops scripts, handlers, frames, `meta`, `base`, templates; markup is moved, never cloned | `strictViewPolicy` (`src/lib/csp/csp-generator.ts`); `sanitizeRender`, `RENDER_ELEMENTS`, `RENDER_ATTRIBUTES` | `test/e2e/strict.spec.ts` ("G1"); `test/e2e/strict-renderer.spec.ts`; `src/lib/in-sandbox-view.test.ts` | `ADR-005#the-renderer`; [research 15](research/15_strict_mode/README.md) |
 | Strict: nothing the view shows opens as a script-running document | The view mints URLs only for `VIEW_FILE_TYPES`; `data:` is not an origin, so no image, font or media loads from it | `VIEW_FILE_TYPES` (`src/lib/in-sandbox-view.ts`); `src/lib/load-kinds.ts` | `test/e2e/strict-renderer.spec.ts` ("ST1"); `test/unit/strict.test.ts` | [BR:ST1](archive/reviews/BROAD-REVIEW-2026-10-14.md#br-st1) |
 | One sandbox's files reach neither the host page nor another sandbox | Files are `blob:` URLs minted in the guest's own realm, which resolve nowhere else | `inSandboxFiles` (`src/lib/in-sandbox-files.ts`) | `test/e2e/files.spec.ts`; `test/e2e/blob-delivery.spec.ts` | [ADR-004](ADR-004-files-as-blob-urls.md) |
@@ -129,7 +131,7 @@ are governed by the policy but not logged: only the bridge's requests are `fetch
 
 ### Channel integrity
 
-<!-- describes: frames sig:c1c7 -->
+<!-- describes: frames sig:e118 -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |

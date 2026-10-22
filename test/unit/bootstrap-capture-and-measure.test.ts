@@ -10,6 +10,7 @@ import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES, LOG_MAX_STRING } from '@src/lib/sandbox-log';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 import { stringifiedFor } from './stringified';
+import { runBootstrap } from './sandbox-environment';
 
 const CAPTURED = await stringifiedFor('capture');
 
@@ -341,7 +342,7 @@ describe('C-4: a view operation costs what it changes, not the size of the whole
         Object.defineProperty(Element.prototype, 'outerHTML', { ...outer, get() { const text = outer.get!.call(this); serialized += text.length; return text; } });
         try {
             const options = { ...VIEW_OPTIONS, renderRate: 1e12 }; // the rate is not what this measures
-            new Function(viewBootstrapSource(options))();
+            runBootstrap(viewBootstrapSource(options));
             const a = new MessageChannel(), b = new MessageChannel();
             window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<div id="b0"></div><div id="b1"></div><div id="b2"></div><input id="in"><p id="t"></p>' }, source: window, ports: [a.port1, b.port1] }));
             const render = workers[0]!.transfer[1]!;

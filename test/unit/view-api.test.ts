@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { runBootstrap } from './sandbox-environment';
 
 /**
  * R1:R4-5, the owner's decision on an open finding:
@@ -172,7 +173,7 @@ describe('R4-5: the view applies text and set: text is assigned, never parsed; v
             postMessage(_message: unknown, transfer: MessagePort[]) { workers.push(transfer); }
         };
         const options = maxCharacters ? { ...VIEW_OPTIONS, render: { ...VIEW_OPTIONS.render, maxCharacters } } : VIEW_OPTIONS;
-        new Function(viewBootstrapSource(options))();
+        runBootstrap(viewBootstrapSource(options));
         const logic = new MessageChannel(), view = new MessageChannel();
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html }, source: window, ports: [logic.port1, view.port1] }));
         const render = workers[0]![1]!;

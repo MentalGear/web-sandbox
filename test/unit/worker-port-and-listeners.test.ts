@@ -15,6 +15,7 @@ import { createFetchBridge, toFetchPolicy, type FetchRecord } from '@src/lib/fet
 import { LOG_EVENTS_PER_SECOND } from '@src/lib/sandbox-log';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { stringifiedFor } from './stringified';
+import { runBootstrap } from './sandbox-environment';
 
 const TYPEOF_SCANNED = await stringifiedFor('typeofRead');
 
@@ -384,7 +385,7 @@ describe("M-5: the view's guest-error rate limit says so the first time it drops
             transfer: MessagePort[] = [];
             postMessage(_message: unknown, transfer: MessagePort[]) { this.transfer = transfer; }
         };
-        new Function(viewBootstrapSource(VIEW_OPTIONS))();
+        runBootstrap(viewBootstrapSource(VIEW_OPTIONS));
         const logic = new MessageChannel(), view = new MessageChannel();
         const toHost: any[] = [];
         view.port2.onmessage = (event) => toHost.push(event.data);
