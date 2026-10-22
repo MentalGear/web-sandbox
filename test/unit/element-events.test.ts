@@ -89,6 +89,56 @@ describe('one constructor for every event the element dispatches', () => {
     });
 });
 
+describe("freezeDeep's walk is bounded by what a detail holds: own keys, never an array's length (S77)", () => {
+    // A Proxy of the array records what the walk asks of it: the keys it lists and every property it reads.
+    const watched = (target: unknown[]) => {
+        const reads: string[] = [];
+        let listed = 0;
+        const proxy = new Proxy(target, {
+            ownKeys(t) { listed++; return Reflect.ownKeys(t); },
+            get(t, key, receiver) { reads.push(String(key)); return Reflect.get(t, key, receiver); },
+        });
+        return { proxy, reads, listed: () => listed };
+    };
+
+    it('a sparse array of 2**32 - 1 slots with one member: the member is frozen, and the walk reads that member and nothing else', () => {
+        const member = { deep: [1] };
+        const sparse: unknown[] = [];
+        sparse.length = 2 ** 32 - 1;
+        sparse[5] = member;
+        const { proxy, reads, listed } = watched(sparse);
+        freezeDeep({ args: [proxy] });
+        expect(reads).toEqual(['5']);
+        expect(listed()).toBeGreaterThan(0);
+        expect(Object.isFrozen(member)).toBe(true);
+        expect(Object.isFrozen(member.deep)).toBe(true);
+    });
+
+    it('the same sparse array, unwrapped, is frozen in a bounded walk: it is frozen, its length is intact', () => {
+        const sparse: unknown[] = [];
+        sparse.length = 2 ** 32 - 1;
+        sparse[2 ** 31] = { far: true };
+        expect(freezeDeep(sparse)).toBe(sparse);
+        expect(Object.isFrozen(sparse)).toBe(true);
+        expect(Object.isFrozen(sparse[2 ** 31])).toBe(true);
+        expect(sparse.length).toBe(2 ** 32 - 1);
+    });
+
+    it('an array with holes, with named properties and nested arrays: every own member is frozen, a hole is not made one', () => {
+        const inner = { x: 1 };
+        const array: unknown[] & { extra?: unknown } = [inner, , [inner, { y: 2 }]];
+        array.extra = { named: [3] };
+        freezeDeep(array);
+        expect(Object.isFrozen(array)).toBe(true);
+        expect(Object.isFrozen(inner)).toBe(true);
+        expect(Object.isFrozen(array[2])).toBe(true);
+        expect(Object.isFrozen((array[2] as unknown[])[1])).toBe(true);
+        expect(Object.isFrozen(array.extra)).toBe(true);
+        expect(Object.isFrozen((array.extra as { named: unknown[] }).named)).toBe(true);
+        expect(1 in array).toBe(false);
+    });
+});
+
 describe('the details the element dispatches are frozen, every one', () => {
     it('ready, terminated, fileschanged, sandbox-log, violation and fileswritten: a listener reads a frozen detail, deeply', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});

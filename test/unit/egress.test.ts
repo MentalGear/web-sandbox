@@ -191,6 +191,64 @@ describe('what each listener does (5:N-1)', () => {
             expect(sent.filter(frame => frame.type === 'UNCAUGHT_PAST_BUDGET')).toHaveLength(1);
         });
 
+        // S78: what the browser makes a costly report of is its own class of the object, never what the object says of itself
+        const identities: [string, () => unknown][] = [
+            ['an Error with its own Symbol.toStringTag', () => Object.defineProperty(new Error('x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1)), Symbol.toStringTag, { value: 'X' })],
+            ['an Error whose DOMException-like tag is a getter that throws', () => Object.defineProperty(new Error('x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1)), Symbol.toStringTag, { get() { throw new Error('no'); } })],
+            ['a plain object with a name and a message', () => ({ name: 'N', message: 'x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1) })],
+            ['an object tagged as an Error that is not one', () => ({ [Symbol.toStringTag]: 'Error', message: 'x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1) })],
+            ['a function with a long name', () => Object.defineProperty(() => 1, 'name', { value: 'n'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1) })],
+            ['an Error whose message is a String object', () => Object.defineProperty(new Error('s'), 'message', { value: new String('x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1)) })],
+            ['a DOMException', () => new DOMException('x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1), 'AbortError')],
+            ['a DOMException tagged by defineProperty', () => Object.defineProperty(new DOMException('x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1), 'AbortError'), Symbol.toStringTag, { value: 'X' })],
+            ['a subclass of Error', () => new (class Failure extends Error {})('x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1))],
+            ['a Proxy of an Error', () => new Proxy(new Error('x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1)), {})],
+            ['an array that carries a message', () => Object.assign([1], { message: 'x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1) })],
+            ['an Error whose name and message share the characters', () => Object.assign(new Error('m'), { name: 'n'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND / 2), message: 'm'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND / 2 + 1) })],
+        ];
+        for (const [label, make] of identities) {
+            it(`${mode} mode: ${label} is counted by its name and message, and ends the sandbox past the characters budget`, async () => {
+                const { on, sent } = bootstrap(mode);
+                for (const listener of on('unhandledrejection')) listener(new RejectionEventLike({ reason: make() }));
+                await new Promise(resolve => setTimeout(resolve, 5));
+                expect(sent.filter(frame => frame.type === 'UNCAUGHT_PAST_BUDGET')).toHaveLength(1);
+            });
+        }
+
+        it(`${mode} mode: Error.prototype tagged by the guest changes nothing: every error is still counted by its characters`, async () => {
+            const tag = Object.getOwnPropertyDescriptor(Error.prototype, Symbol.toStringTag);
+            Object.defineProperty(Error.prototype, Symbol.toStringTag, { configurable: true, value: 'X' });
+            try {
+                const { on, sent } = bootstrap(mode);
+                for (const listener of on('unhandledrejection')) listener(new RejectionEventLike({ reason: new Error('x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1)) }));
+                await new Promise(resolve => setTimeout(resolve, 5));
+                expect(sent.filter(frame => frame.type === 'UNCAUGHT_PAST_BUDGET')).toHaveLength(1);
+            } finally {
+                if (tag) Object.defineProperty(Error.prototype, Symbol.toStringTag, tag);
+                else delete (Error.prototype as any)[Symbol.toStringTag];
+            }
+        });
+
+        it(`${mode} mode: the characters of a report are decided before, and apart from, how the object identifies itself`, () => {
+            const source = read('src/lib/in-sandbox-script.ts');
+            const report = source.slice(source.indexOf('const reportOf = '), source.indexOf('const errorText = '));
+            expect(report).toContain('const characters = ');
+            expect(report.indexOf('const characters = ')).toBeLessThan(report.indexOf('isErrorLike('));
+        });
+
+        it(`${mode} mode: a rejection with neither name nor message, a number or null costs nothing, and its line is as before`, async () => {
+            const { on, sent } = bootstrap(mode);
+            for (const reason of [{}, 42, null, undefined, Symbol('s'), [1, 2], new Map()]) {
+                for (const listener of on('unhandledrejection')) listener(new RejectionEventLike({ reason }));
+            }
+            await new Promise(resolve => setTimeout(resolve, 5));
+            expect(sent.filter(frame => frame.type === 'UNCAUGHT_PAST_BUDGET')).toEqual([]);
+            expect(sent.filter(frame => frame.type === 'LOG').map(frame => frame.args[0]).filter(line => line.startsWith('Uncaught'))).toEqual([
+                'Uncaught (in promise) [object Object]', 'Uncaught (in promise) 42', 'Uncaught (in promise) null', 'Uncaught (in promise) undefined',
+                'Uncaught (in promise) Symbol(s)', 'Uncaught (in promise) [object Array]', 'Uncaught (in promise) [object Map]',
+            ]);
+        });
+
         it(`${mode} mode: within the budget, nothing is said, and a getter's answer is what is counted (the browser does not call it: counted all the same, the safe side)`, async () => {
             const { on, sent } = bootstrap(mode);
             let reads = 0;

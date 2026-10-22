@@ -1,0 +1,140 @@
+// @vitest-environment node
+import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
+import { createSizeOf } from '@src/lib/structured-size';
+import { LOG_MAX_BYTES } from '@src/lib/sandbox-log';
+
+/**
+ * The byte measure counts what is delivered (S77, class P): for every kind a sender may post, the measured size of its
+ * snapshot is at least the size of what the receiver is handed. The values here are measured as built: they hold no
+ * getter and no Proxy, which is what a snapshot is, and Node's structuredClone turns a File into a Blob without its name,
+ * so it cannot stand for the browsers' clone. test/e2e/exact-budget.spec.ts runs the same property on the clones and
+ * message channels of Chromium, Firefox and WebKit. The node environment, because its Blob and File are the platform's.
+ *
+ * "Delivered" is stated here, apart from the measure, as the size of each kind's fields in the units the budgets use:
+ * two bytes a UTF-16 code unit of a string, 8 a number, and 8 a slot of an array (a sparse array's receiver walks every
+ * slot, however few hold an element).
+ */
+
+const sizeOf = createSizeOf();
+
+// The kinds of the closed set that carry a string, a number or a length beyond what their own keys show.
+type Leaf = { label: string; value: unknown; delivered: number };
+
+const stringBytes = (text: string) => 2 * text.length + 8;
+const file = (name: string, type: string, lastModified: number) => new File(['x'], name, { type, lastModified });
+const sparse = (length: number, ...at: number[]) => {
+    const array: unknown[] = [];
+    array.length = length;
+    for (const index of at) array[index] = 1;
+    return array;
+};
+
+// a Blob's or a File's type is a lowercase ASCII string without control characters (anything else is dropped to '')
+const typeText = fc.stringMatching(/^[a-z]{1,8}\/[a-z0-9;=.+-]{0,200}$/);
+const bigText = fc.oneof(fc.string({ maxLength: 64 }), fc.integer({ min: 0, max: 200000 }).map(n => 'n'.repeat(n)));
+
+const leaf: fc.Arbitrary<Leaf> = fc.oneof(
+    fc.tuple(bigText, typeText, fc.integer({ min: 0, max: 2 ** 40 })).map(([name, type, modified]): Leaf => {
+        const value = file(name, type, modified);
+        return { label: 'File', value, delivered: stringBytes(value.name) + stringBytes(value.type) + 8 };
+    }),
+    typeText.map((type): Leaf => {
+        const value = new Blob(['x'], { type });
+        return { label: 'Blob', value, delivered: stringBytes(value.type) };
+    }),
+    fc.integer({ min: 0, max: 2 ** 32 - 1 }).chain(length => fc.array(fc.integer({ min: 0, max: Math.max(0, length - 1) }), { maxLength: 6 }).map((at): Leaf => {
+        const value = sparse(length, ...(length > 0 ? at : []));
+        return { label: 'sparse array', value, delivered: 8 * length };
+    })),
+    fc.array(fc.nat(), { maxLength: 50 }).map((value): Leaf => ({ label: 'array', value, delivered: 8 * value.length })),
+    bigText.map((value): Leaf => ({ label: 'string', value, delivered: stringBytes(value) })),
+    fc.uint8Array({ maxLength: 4096 }).map((value): Leaf => ({ label: 'Uint8Array', value, delivered: value.byteLength })),
+    fc.constantFrom<Leaf>(
+        { label: 'number', value: 1.5, delivered: 8 },
+        { label: 'Date', value: new Date(0), delivered: 8 },
+        { label: 'RegExp', value: /a+/gi, delivered: stringBytes('a+') },
+        { label: 'Map', value: new Map([['k', 'v']]), delivered: stringBytes('k') + stringBytes('v') },
+        { label: 'Set', value: new Set(['v']), delivered: stringBytes('v') },
+    ),
+);
+
+// a leaf alone, or inside an array, an object, a Map's value or a Set
+const placed = leaf.chain(({ value, delivered, label }) => fc.constantFrom<Leaf>(
+    { label, value, delivered },
+    { label: `[${label}]`, value: [value], delivered: delivered + 8 },
+    { label: `{${label}}`, value: { k: value }, delivered: delivered + stringBytes('k') },
+    { label: `Map<${label}>`, value: new Map([['k', value]]), delivered },
+    { label: `Set<${label}>`, value: new Set([value]), delivered },
+));
+
+describe('the measure counts at least what is delivered, for every supported kind (S77)', () => {
+    it('any value of the closed set, alone or inside another: the snapshot measures at least its delivered size, and the walk never throws', () => {
+        fc.assert(fc.property(placed, ({ value, delivered }) => {
+            return sizeOf(value, Infinity) >= delivered;
+        }), { numRuns: 600 });
+    });
+
+    it('a large File name or Blob type is past a limit like the string of the same length, though it holds no bytes', () => {
+        const name = 'x'.repeat(2 ** 22);
+        expect(sizeOf(file(name, '', 0), LOG_MAX_BYTES)).toBeGreaterThan(LOG_MAX_BYTES);
+        expect(sizeOf(file(name, '', 0), Infinity)).toBeGreaterThanOrEqual(sizeOf(name, Infinity));
+        const type = 'a/' + 'b'.repeat(2 ** 22);
+        expect(sizeOf(new Blob([], { type }), LOG_MAX_BYTES)).toBeGreaterThan(LOG_MAX_BYTES);
+        // the controls: a File and a Blob of ordinary names and types are within it
+        expect(sizeOf(file('photo.png', 'image/png', 1), LOG_MAX_BYTES)).toBeLessThan(1024);
+        expect(sizeOf(new Blob(['x'], { type: 'text/plain' }), LOG_MAX_BYTES)).toBeLessThan(1024);
+    });
+
+    it('a sparse array is charged by its length: 2**32 - 1 slots with one element are past every limit, and the walk answers without listing its keys', () => {
+        const wide = sparse(2 ** 32 - 1, 5);
+        expect(sizeOf(wide, LOG_MAX_BYTES)).toBeGreaterThan(LOG_MAX_BYTES);
+        expect(sizeOf(wide, Infinity)).toBeGreaterThanOrEqual(8 * (2 ** 32 - 1));
+        expect(sizeOf([wide, 'next'], 1024)).toBeGreaterThan(1024);
+        // the bound where length alone exceeds LOG_MAX_BYTES: about 131 000 slots
+        expect(sizeOf(sparse(Math.floor(LOG_MAX_BYTES / 8) + 1), LOG_MAX_BYTES)).toBeGreaterThan(LOG_MAX_BYTES);
+        expect(sizeOf(sparse(1000, 3), LOG_MAX_BYTES)).toBeGreaterThanOrEqual(8000);
+        expect(sizeOf(sparse(1000, 3), LOG_MAX_BYTES)).toBeLessThan(LOG_MAX_BYTES);
+        // a dense array is charged as before: by its elements
+        expect(sizeOf([1, 2, 3], Infinity)).toBe(16 + 3 * (2 * 1 + 8 + 8));
+    });
+});
+
+// The structural half (S77, fix 3): every string-valued property a Blob and a File expose is counted by the measure or
+// declared not serialized, so a field a future engine adds, or a kind with a field nobody counted, fails here.
+describe('the Blob and File fields: every string-valued getter is counted or declared not serialized', () => {
+    const COUNTED: Record<string, string> = { type: 'Blob', name: 'File' };
+    const NOT_SERIALIZED = ['webkitRelativePath']; // the HTML spec's serialization of a File does not carry it
+    const stringGetters = (instance: object): string[] => {
+        const names = new Set<string>();
+        for (let proto = Object.getPrototypeOf(instance); proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
+            for (const name of Object.getOwnPropertyNames(proto)) {
+                const descriptor = Object.getOwnPropertyDescriptor(proto, name)!;
+                if (!descriptor.get) continue;
+                try {
+                    if (typeof descriptor.get.call(instance) === 'string') names.add(name);
+                } catch {
+                    // not a getter of this instance
+                }
+            }
+        }
+        return [...names];
+    };
+
+    for (const [kind, make] of [['Blob', () => new Blob(['x'], { type: 'text/plain' })], ['File', () => file('f.txt', 'text/plain', 1)]] as const) {
+        it(`${kind}: its string-valued getters are counted or declared`, () => {
+            const found = stringGetters(make());
+            expect(found.length).toBeGreaterThan(0);
+            for (const name of found) expect(Object.keys(COUNTED).includes(name) || NOT_SERIALIZED.includes(name), `${kind}.${name}`).toBe(true);
+        });
+
+        it(`${kind}: each counted field moves the measure by its own length`, () => {
+            const long = 'a'.repeat(1 << 20);
+            const type = 'text/' + long;
+            const value = kind === 'Blob' ? new Blob(['x'], { type }) : new File(['x'], long, { type });
+            const bytes = sizeOf(value, Infinity);
+            expect(bytes).toBeGreaterThanOrEqual(2 * value.type.length);
+            if (kind === 'File') expect(bytes).toBeGreaterThanOrEqual(2 * value.type.length + 2 * (value as File).name.length);
+        });
+    }
+});
