@@ -333,31 +333,136 @@ function frameLiteralsInSource(): { posted: Set<string>; compared: Set<string>; 
     return { posted, compared, all };
 }
 
+// The global objects: a computed member of one (`globalThis['fe' + 'tch']`) names a global the scan cannot read.
+const GLOBAL_OBJECTS = new Set(['globalThis', 'self', 'window']);
+// The host-side modules of the bridge: no other request API is named there either, whatever the global it hangs on.
+const HOST_BRIDGE_MODULES = new Set(['src/lib/fetch-bridge.ts', 'src/lib/bridge-frame.ts']);
+const REQUEST_APIS = new Set(['sendBeacon', 'XMLHttpRequest', 'WebSocket', 'EventSource']);
+
+/**
+ * Where `text` (the source of `file`) names a way to make a request that the bridge's chokepoint does not own (class
+ * E-net, BD1:ISO-1): the platform's `fetch` as a name, a read, a destructured alias (`const { fetch: x } = globalThis`)
+ * or a call; a computed member of `globalThis`, `self` or `window`; `Reflect.get` and `getOwnPropertyDescriptor` of one;
+ * and, in the bridge's host-side modules, `sendBeacon`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `new Image`,
+ * `new Function`, `eval` and `import()`. The bodies in `allowed` (the two realm functions) may name `fetch` and are counted.
+ */
+function platformRequestUses(file: string, text: string, allowed: [number, number][]): { found: string[]; inRealms: number } {
+    const tokens = tokenize(text);
+    const found: string[] = [];
+    let inRealms = 0;
+    const inAllowed = (i: number) => allowed.some(([open, close]) => i > open && i < close);
+    // the token after `globalThis` and the `as any)` or `)` of a cast around it
+    const pastCast = (from: number): number => {
+        let j = from;
+        while (tokens[j]?.kind === SyntaxKind.AsKeyword) j += 2;
+        if (j > from && tokens[j]?.kind === SyntaxKind.CloseParenToken) j++;
+        return j;
+    };
+    // the closing brace of the braces that hold token `at`
+    const closeOf = (at: number): number => {
+        let depth = 0;
+        for (let j = at; j < tokens.length; j++) {
+            const kind = tokens[j]!.kind;
+            if (kind === SyntaxKind.OpenBraceToken) depth++;
+            if (kind === SyntaxKind.CloseBraceToken && depth-- === 0) return j;
+        }
+        return tokens.length - 1;
+    };
+    // whether the braces that end at `from - 1` are a pattern: `= …` follows, or a parameter's `): Type) =>`
+    const bindsAPattern = (from: number): boolean => {
+        const STOPS = new Set([SyntaxKind.SemicolonToken, SyntaxKind.CommaToken, SyntaxKind.OpenBraceToken, SyntaxKind.CloseBraceToken, SyntaxKind.OpenParenToken, SyntaxKind.DotToken]);
+        for (let j = from; j < Math.min(from + 8, tokens.length) && !STOPS.has(tokens[j]!.kind); j++) {
+            if (tokens[j]!.kind === SyntaxKind.EqualsToken || tokens[j]!.kind === SyntaxKind.EqualsGreaterThanToken) return true;
+        }
+        return false;
+    };
+    for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i]!;
+        if (token.kind !== SyntaxKind.Identifier && token.kind !== SyntaxKind.ImportKeyword) continue;
+        const before = tokens[i - 1]?.kind;
+        const afterDot = before === SyntaxKind.DotToken || before === SyntaxKind.QuestionDotToken;
+        const next = tokens[i + 1]?.kind;
+        const say = (what: string) => found.push(`${file}: ${what} at ${token.start}`);
+        if (token.text === 'fetch') {
+            // A property key (`fetch: …` in a literal or a type) names no fetch; a read, a call, `x.fetch`, a shorthand
+            // `{ fetch }` and a key of a destructuring pattern (`{ fetch: x } = …`, `({ fetch: x }) => …`) do.
+            if (!afterDot && next === SyntaxKind.ColonToken) {
+                if (!bindsAPattern(closeOf(i) + 1)) continue;
+            }
+            if (inAllowed(i)) inRealms++;
+            else say('fetch');
+            continue;
+        }
+        if (inAllowed(i)) continue;
+        if (GLOBAL_OBJECTS.has(token.text) && !afterDot) {
+            const j = pastCast(i + 1);
+            if (tokens[j]?.kind === SyntaxKind.OpenBracketToken || (tokens[j]?.kind === SyntaxKind.QuestionDotToken && tokens[j + 1]?.kind === SyntaxKind.OpenBracketToken)) say(`computed member of ${token.text}`);
+        }
+        if (token.text === 'Reflect' && next === SyntaxKind.DotToken && ['get', 'getOwnPropertyDescriptor'].includes(tokens[i + 2]?.text ?? '') && tokens[i + 3]?.kind === SyntaxKind.OpenParenToken) say(`Reflect.${tokens[i + 2]!.text}`);
+        if (token.text === 'getOwnPropertyDescriptor' && tokens[i + 1]?.kind === SyntaxKind.OpenParenToken && GLOBAL_OBJECTS.has(tokens[i + 2]?.text ?? '')) say('getOwnPropertyDescriptor of a global object');
+        if (!HOST_BRIDGE_MODULES.has(file)) continue;
+        if (REQUEST_APIS.has(token.text)) say(token.text);
+        if (before === SyntaxKind.NewKeyword && (token.text === 'Image' || token.text === 'Function')) say(`new ${token.text}`);
+        if (token.text === 'eval' && next === SyntaxKind.OpenParenToken) say('eval');
+        if (token.kind === SyntaxKind.ImportKeyword && next === SyntaxKind.OpenParenToken) say('import()');
+    }
+    return { found: [...new Set(found)], inRealms };
+}
+
 describe("the fetch bridge's requests are made by its frame, and only there (BD1:ISO-1, class E-net)", () => {
     // The functions stringified into a realm that may name the platform's fetch: the guest bootstrap, which guards the
     // guest's own fetch (keepalive), and the bridge's frame, which makes every bridge request.
     const MAY_FETCH: readonly [string, string][] = [['src/lib/in-sandbox-script.ts', 'inSandboxScript'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame']];
     const unixOf = (file: string) => file.split(path.sep).join('/');
 
-    it("no code of src/ names the platform's fetch outside those two realm functions: the host never makes a bridge request itself", () => {
+    it("no code of src/ names the platform's fetch outside those two realm functions, and the bridge's host-side modules name no other request API: the host never makes a bridge request itself", () => {
         const found: string[] = [];
         let inRealms = 0;
         for (const file of sourceFiles('src')) {
-            const tokens = tokenize(read(file));
             const unix = unixOf(file);
-            const allowed = MAY_FETCH.filter(([module]) => module === unix).map(([, name]) => bodyOf(tokens, name));
-            for (let i = 0; i < tokens.length; i++) {
-                const token = tokens[i]!;
-                if (token.kind !== SyntaxKind.Identifier || token.text !== 'fetch') continue;
-                // a property key (`fetch: …` in a literal) names no fetch; a read, a call or `x.fetch` does
-                const afterDot = tokens[i - 1]?.kind === SyntaxKind.DotToken || tokens[i - 1]?.kind === SyntaxKind.QuestionDotToken;
-                if (!afterDot && tokens[i + 1]?.kind === SyntaxKind.ColonToken) continue;
-                if (allowed.some(([open, close]) => i > open && i < close)) inRealms++;
-                else found.push(`${unix}: fetch at ${token.start}`);
-            }
+            const text = read(file);
+            const tokens = tokenize(text);
+            const uses = platformRequestUses(unix, text, MAY_FETCH.filter(([module]) => module === unix).map(([, name]) => bodyOf(tokens, name)));
+            found.push(...uses.found);
+            inRealms += uses.inRealms;
         }
         expect(found).toEqual([]);
         expect(inRealms).toBeGreaterThanOrEqual(2); // positive control: the scan sees the two that do
+    });
+
+    it("and that scan flags each way a host request to the target could be spelled, in the bridge's host-side modules", () => {
+        const file = 'src/lib/fetch-bridge.ts';
+        const source = read(file);
+        const anchor = "export const FETCH_METHOD = 'sandbox:fetch';";
+        expect(source.split(anchor)).toHaveLength(2);
+        const none: [number, number][] = [];
+        expect(platformRequestUses(file, source, none).found).toEqual([]);
+        const spellings: Record<string, string> = {
+            'a property read': "void (globalThis as any).fetch;",
+            'an alias at module scope, the name built from parts': "const early = (globalThis as any)['fe' + 'tch']?.bind(globalThis);",
+            'a computed member in double quotes': 'void globalThis["fetch"];',
+            'a computed member through self': "void self?.['fe' + 'tch'];",
+            'a computed member of window': "void window['fetch'];",
+            'a destructured alias': 'const { fetch: hostFetch } = globalThis as any;',
+            'a destructured shorthand': 'const { fetch } = globalThis as any;',
+            'a destructured parameter': 'void (({ fetch: f }: any) => f)(globalThis);',
+            'Reflect.get': "void Reflect.get(globalThis, 'fetch');",
+            'a property descriptor': "void Object.getOwnPropertyDescriptor(globalThis, 'fetch');",
+            'sendBeacon': "void navigator.sendBeacon('https://a.example/', 'x');",
+            'XMLHttpRequest': 'void new XMLHttpRequest();',
+            'WebSocket': "void new WebSocket('wss://a.example/');",
+            'EventSource': "void new EventSource('https://a.example/');",
+            'an image': "void (new Image().src = 'https://a.example/');",
+            'new Function': "void new Function('return 1');",
+            'eval': "void eval('1');",
+            'a dynamic import': "void import('https://a.example/x.js');",
+        };
+        for (const [spelling, mutant] of Object.entries(spellings)) {
+            expect(platformRequestUses(file, source.replace(anchor, `${anchor}\n${mutant}`), none).found.length, spelling).toBeGreaterThan(0);
+        }
+        // a key of a literal or a type names nothing, and the other modules may name the request APIs the host-side ones may not
+        expect(platformRequestUses(file, source.replace(anchor, `${anchor}\nconst table = { fetch: 1 }; type Events = { fetch: number };`), none).found).toEqual([]);
+        expect(platformRequestUses('src/lib/limits.ts', 'void new WebSocket("wss://a.example/");', none).found).toEqual([]);
     });
 
     it("the bridge's one transport is its frame's, and the frame is built only by the frame builder, sandboxed to scripts alone", () => {
@@ -493,6 +598,31 @@ describe('every string a frame carries out of a guest realm or the view is cut, 
         }
         // and a frame of a known type, written in the usual way, is not reported
         expect(unreadablePosts(source.replace(anchor, `${anchor} post({ type: 'PONG', n: 1 }); post(held ? { type: 'PONG', n } : { type: 'LOG', level: 'info', args: [] });`), 'inSandboxScript').unreadable).toEqual([]);
+    });
+
+    it("the bridge's frame is inside the same scan from both ends: the frame's posts (inBridgeFrame, stringified) and the host's posts to it (createBridgeFrame)", () => {
+        const ENDS: [string, string, string][] = [
+            ['src/lib/in-bridge-frame.ts', 'inBridgeFrame', "post({ type: 'BRIDGE_READY' }, []);"],
+            ['src/lib/bridge-frame.ts', 'createBridgeFrame', "target.postMessage({ type: 'BRIDGE_INIT', maxBytes: setup.maxBytes }, '*', [channel.port2]);"],
+        ];
+        const mutants: Record<string, string> = {
+            'a lower-case type': "post({ type: 'debug', payload: String(id) }, []);",
+            'a frame with no type': "post({ kind: 'DEBUG', payload: String(id) }, []);",
+            'a frame in a variable': "const dbg = { type: 'BRIDGE_END', id }; post(dbg, []);",
+            'a type from a variable': "const t = 'DEBUG'; post({ type: t, id }, []);",
+        };
+        for (const [file, name, anchor] of ENDS) {
+            const source = read(file);
+            expect(source.split(anchor), file).toHaveLength(2);
+            const clean = unreadablePosts(source, name);
+            expect(clean.unreadable, file).toEqual([]);
+            expect(clean.posts, `${file}: positive control`).toBeGreaterThanOrEqual(2);
+            for (const [shape, mutant] of Object.entries(mutants)) {
+                // the host's poster is `postMessage`: the same shapes, posted through it
+                const text = name === 'createBridgeFrame' ? mutant.replace(/\bpost\(/g, 'port.postMessage(') : mutant;
+                expect(unreadablePosts(source.replace(anchor, `${anchor} ${text}`), name).unreadable.length, `${file}: ${shape}`).toBeGreaterThan(0);
+            }
+        }
     });
 
     it('every field a guest realm or the view posts has a bound of the five kinds: only a frame the host alone sends carries a value of the host\'s', () => {

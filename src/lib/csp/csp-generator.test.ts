@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cooperativePolicy, fileKinds, KIND_DIRECTIVES, strictViewPolicy, type PolicyInput } from './csp-generator';
+import { bridgeFramePolicy, cooperativePolicy, fileKinds, KIND_DIRECTIVES, strictViewPolicy, type PolicyInput } from './csp-generator';
 import { NO_ORIGINS, ORIGIN_KINDS, parseOrigins, type OriginKind, type OriginPolicy } from './origins';
 import { ORIGIN_PATTERN } from '../origin';
 import { parseLikeABrowser, prng, randomInjection } from '../../../test/unit/policy-helpers';
@@ -63,6 +63,28 @@ describe('the templates: golden policies', () => {
     it('strict never reads `scripts`, whatever the policy holds there', () => {
         const forced = { ...NO_ORIGINS, scripts: ['https://cdn.example'] } as unknown as OriginPolicy;
         expect(strictViewPolicy({ ...input({ origins: forced, fileKinds: new Set(['scripts' as const]) }), bootstrapHash: HASH })).toBe(STRICT_DEFAULT);
+    });
+});
+
+describe("the fetch bridge's frame policy (THREAT-MODEL, the bridge frame's row; ADR-006)", () => {
+    const FRAME_DIRECTIVES = (connect: string) => `default-src 'none'; script-src ${HASH}; script-src-attr 'none'; style-src 'none'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src ${connect}; worker-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'`;
+    const policy = (allow: string[], bootstrapHash = HASH) => bridgeFramePolicy({ allow: allow as never, bootstrapHash });
+
+    it("is the bootstrap's hash, connect-src the allowlist's origins, and every other directive 'none', with no upgrade-insecure-requests", () => {
+        expect(policy([])).toBe(FRAME_DIRECTIVES("'none'"));
+        expect(policy(['https://api.example', 'http://localhost:5173'])).toBe(FRAME_DIRECTIVES('https://api.example http://localhost:5173'));
+    });
+
+    it('takes only origins: a cast that carries a source expression in is refused', () => {
+        for (const bad of ["'self'", "'unsafe-inline'", '*', 'https:', 'data:', 'https://a.example; script-src *', 'https://a.example\n', 'https://a.example/path', 'https://*.example', '', 7, { toString: () => 'https://a.example' }]) {
+            expect(() => policy([bad as string]), String(bad)).toThrow(/not an origin for connect-src/);
+        }
+    });
+
+    it('needs one sha256 hash source for its script', () => {
+        for (const bad of ['', "'unsafe-inline'", "'sha256-x'", `${HASH}; script-src *`, `${HASH} 'unsafe-inline'`, `${HASH} ${HASH}`]) {
+            expect(() => policy([], bad), bad).toThrow(/sha256 hash source/);
+        }
     });
 });
 
