@@ -6,6 +6,7 @@ import { inSandboxFiles } from './in-sandbox-files';
 import { VIOLATION_EVENT_LIMIT, VIOLATION_MAX_STRING } from './violation';
 import { mimeTypeFor } from './files';
 import { scalingRatio, type ScalingSize } from '../../test/unit/scaling';
+import { runBootstrap } from '../../test/unit/sandbox-environment';
 
 // the renderer with every switch on (RenderSwitches): the tests that do not test a switch keep what the switches govern
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
@@ -210,8 +211,8 @@ describe('the view bootstrap', () => {
             postMessage(message: unknown, transfer: unknown[]) { constructed[constructed.length - 1]!.posted.push([message, transfer.length]); }
         };
         const text = viewBootstrapText();
-        new Function(text)();
-        new Function(text)(); // a copy that runs again in the same document returns at once
+        runBootstrap(text);
+        runBootstrap(text); // a copy that runs again in the same document returns at once
         expect((globalThis as any).__sandboxViewRuns).toBe(2);
 
         const send = (init: MessageEventInit) => window.dispatchEvent(new MessageEvent('message', init));
@@ -243,7 +244,7 @@ describe('the view bootstrap', () => {
         const revoked: string[] = [];
         const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation((url: string) => { revoked.push(url); });
         try {
-            new Function(viewBootstrapText())();
+            runBootstrap(viewBootstrapText());
             const a = new MessageChannel(), b = new MessageChannel();
             window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '' }, source: window, ports: [a.port1, b.port1] }));
             expect(workers).toHaveLength(1);
@@ -520,7 +521,7 @@ describe('the view bootstrap: budgets (broad review ST2, ST3)', () => {
             postMessage(_message: unknown, transfer: MessagePort[]) { workers[workers.length - 1]!.transfer = transfer; }
         };
         const options = { ...VIEW_OPTIONS, render: { ...VIEW_OPTIONS.render, maxElements } };
-        new Function(maxElements === VIEW_MAX_ELEMENTS ? viewBootstrapText() : viewBootstrapSource(options))();
+        runBootstrap(maxElements === VIEW_MAX_ELEMENTS ? viewBootstrapText() : viewBootstrapSource(options));
         const a = new MessageChannel(), b = new MessageChannel();
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<div id="a"></div><div id="b"></div>' }, source: window, ports: [a.port1, b.port1] }));
         const render = workers[0]!.transfer[1]!;

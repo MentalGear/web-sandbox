@@ -10,6 +10,7 @@ import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_EVENTS_PER_SECOND, LOG_MAX_BYTES } from '@src/lib/sandbox-log';
 import { createFetchBridge, toFetchPolicy, type FetchRecord } from '@src/lib/fetch-bridge';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
+import { runBootstrap } from './sandbox-environment';
 
 /**
  * Findings of R3 where the library's own logic decides, each reproduced here first against the code it names.
@@ -514,7 +515,7 @@ describe('C-4: the strict view bounds the guest error texts it relays before pos
             transfer: MessagePort[] = [];
             postMessage(_message: unknown, transfer: MessagePort[]) { this.transfer = transfer; }
         };
-        new Function(viewBootstrapSource(VIEW_OPTIONS))();
+        runBootstrap(viewBootstrapSource(VIEW_OPTIONS));
         const logic = new MessageChannel(), view = new MessageChannel();
         const toHost: any[] = [];
         view.port2.onmessage = (event) => toHost.push(event.data);
@@ -693,7 +694,7 @@ describe("C-2 and M-5: the view's time budget charges only the rendering it meas
             transfer: MessagePort[] = [];
             postMessage(_message: unknown, transfer: MessagePort[]) { this.transfer = transfer; }
         };
-        new Function(viewBootstrapSource(VIEW_OPTIONS))();
+        runBootstrap(viewBootstrapSource(VIEW_OPTIONS));
         const logic = new MessageChannel(), view = new MessageChannel();
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<p id="a">0</p>', allowAnimations: true }, source: window, ports: [logic.port1, view.port1] }));
         const render = workers[0]!.transfer[1]!;
