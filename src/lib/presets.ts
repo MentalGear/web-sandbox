@@ -367,7 +367,8 @@ console.log('TEST_DONE');`,
         console.log("PWN_INFO: Popup opened (as expected via allow-popups).");
         console.log("If the filter worked, this new window is STILL sandboxed: the page in it has an opaque origin.");
     } else {
-        console.log("PWN_FAILURE: Popup was blocked by the browser's popup blocker. Please allow popups and run again.");
+        // Chromium opens it without a handle: the sandbox's frame is credentialless, so its popups have no opener
+        console.log("PWN_INFO: window.open() returned no window: the browser's popup blocker stopped it, or (Chromium) the popup opened without an opener. Look for a new tab, or allow popups for this site and run again.");
     }
     console.log('TEST_DONE');
 })();`,

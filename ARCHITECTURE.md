@@ -292,6 +292,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/bridge-frame.ts` | The fetch bridge's frame, host side |
 | `src/lib/capabilities.ts` | Filtering of the capabilities an embedder lists: the allowed ones are kept, every other one dropped with a warning |
 | `src/lib/config-schema.ts` | The config schema |
+| `src/lib/cookie-facts.ts` | Which cookies each engine sends with a request of the sandbox, as one table |
 | `src/lib/css-references.ts` | URL references in CSS |
 | `src/lib/egress.ts` | The egress table |
 | `src/lib/element-events.ts` | The element's events |
@@ -302,11 +303,13 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/frame-documents.ts` | Builds the documents the sandbox is made of |
 | `src/lib/frames.ts` | The frame table |
 | `src/lib/guest-writes.ts` | Guest writes, host side: the overlay of one environment |
+| `src/lib/host-site.ts` | The host page's site for cookies: which hosts get the host site's cookies with a request of the sandbox |
 | `src/lib/import-map.ts` | The guest's own import maps |
 | `src/lib/in-bridge-frame.ts` | The fetch bridge's frame, frame side: the only code that performs a request of the bridge |
 | `src/lib/in-sandbox-files.ts` | The guest side of the registered files, `sandboxFiles`, and of the guest writes |
 | `src/lib/in-sandbox-script.ts` | The guest bootstrap of every mode |
 | `src/lib/in-sandbox-view.ts` | Strict mode's view and worker prelude |
+| `src/lib/inherited-context.ts` | The host page's context, as data |
 | `src/lib/lifecycle-transitions.ts` | The transitions the lifecycle reducer can make |
 | `src/lib/lifecycle.ts` | The lifecycle of `<web-sandbox>` as one pure reducer, and the executor that applies its effects |
 | `src/lib/limits.ts` | The limits registry: every numeric bound the docs state, once, with its value, what it bounds and where it is enforced |

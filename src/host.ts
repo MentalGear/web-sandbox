@@ -26,9 +26,10 @@ import { createLogLimiter, LOG_MAX_BYTES, LOG_OWN_LINES, toLogDetail, type Sandb
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
 import { BRIDGE_FRAME_REFUSED, createBridgeFrame, prepareBridgeFrame, type BridgeFrame } from "./lib/bridge-frame";
-import { buildGuestDocument, buildWrapperDocument, FRAME_REFERRER_POLICY, permissionAttributes, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
+import { buildGuestDocument, buildWrapperDocument, permissionAttributes, setWrapperFrameIsolation, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
+import { hostRegistrableDomain } from "./lib/host-site";
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
@@ -263,6 +264,10 @@ export interface SandboxConfigOptions {
      * Capabilities that act outside the frame, from {@link UNSAFE_CAPABILITIES} (popups, modals, downloads, forms,
      * presentation, pointer lock, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;
      * dropped with a warning in strict mode.
+     *
+     * @remarks
+     * On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups` lets the guest open has no
+     * opener: the guest's `window.open()` returns `null`, though the page opens.
      *
      * @defaultValue `[]`
      */
@@ -860,7 +865,7 @@ export class WebSandbox extends ElementBase {
     // element and message (the same config is set again and again: the playground applies it on every edit), those of
     // a refused config too, up to what refused it; only a config that passed every check is stored, last (FR:F6).
     private _applyConfig(copy: unknown) {
-        const { value, warnings, refusal } = normaliseConfig(copy, { hostOrigin: globalThis.location?.origin ?? '' });
+        const { value, warnings, refusal } = normaliseConfig(copy, { hostOrigin: globalThis.location?.origin ?? "", hostSite: () => hostRegistrableDomain() });
         for (const message of warnings) this._warnConfig(message);
         if (value === null) throw refusal;
         this._config = value.config;
@@ -2074,8 +2079,9 @@ export class WebSandbox extends ElementBase {
 
         const iframe = document.createElement("iframe");
         iframe.setAttribute("sandbox", sandboxFlags);
-        // the wrapper's own document.referrer is never the host page (S15; the guest's is set in the wrapper)
-        iframe.setAttribute("referrerpolicy", FRAME_REFERRER_POLICY);
+        // the wrapper's own document.referrer is never the host page (S15; the guest's is set in the wrapper), and on Chromium
+        // none of its requests carries a cookie (S74)
+        setWrapperFrameIsolation(iframe);
         for (const [name, value] of Object.entries(permissionAttributes(permissions))) {
             iframe.setAttribute(name, value);
         }
@@ -2120,7 +2126,7 @@ export class WebSandbox extends ElementBase {
 
         const iframe = document.createElement("iframe");
         iframe.setAttribute("sandbox", sandboxFlags);
-        iframe.setAttribute("referrerpolicy", FRAME_REFERRER_POLICY);
+        setWrapperFrameIsolation(iframe);
         iframe.style.cssText = "width:100%;height:100%;border:none";
         setLibrarySrcdoc(iframe, buildWrapperDocument(view, sandboxFlags, []));
         return { iframe, built, strictInit, bridgeFrame: this._prepareBridgeFrame() };

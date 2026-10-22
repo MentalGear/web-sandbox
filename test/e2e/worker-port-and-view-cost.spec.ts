@@ -324,10 +324,12 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
     // statement's (a) for a flood that loads (docs/API.md, "The view's cost to the host page": TIME_SHARE + LOAD_SHARE,
     // 40%), without view-bound's 10-point margin. One window on each side reads a loaded machine's load as the view's
     // (T7).
+    // the e2e server by its address: strict mode drops an origin on the host page's site, which `localhost` is
+    const LOOPBACK = `http://127.0.0.1:${new URL(ORIGIN).port}`;
     for (const [name, prefix, config, perRender] of [
         ['a refused source', 'https://r.example/', {}, 6500],
         ['an admitted origin', 'https://a.example/', { origins: { images: ['https://a.example'] } }, VIEW_MAX_URLS],
-        ['an admitted loopback origin', `${ORIGIN}/test/e2e/pixel.png?`, { origins: { images: [ORIGIN] } }, VIEW_MAX_URLS],
+        ['an admitted loopback origin', `${LOOPBACK}/test/e2e/pixel.png?`, { origins: { images: [LOOPBACK] } }, VIEW_MAX_URLS],
     ] as const) {
         test(`${name}: a flood of renders of ${perRender} <img> leaves the host page about its share`, async ({ sandbox, page, browserName }) => {
             test.setTimeout(90000);
