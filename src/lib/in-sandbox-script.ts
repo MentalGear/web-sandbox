@@ -140,6 +140,7 @@ export function inSandboxScript(
     const domExceptionName = domExceptionPrototype ? getOwn(domExceptionPrototype, 'name')?.get ?? null : null;
     const domExceptionMessage = domExceptionPrototype ? getOwn(domExceptionPrototype, 'message')?.get ?? null : null;
     const symbolText = Symbol.prototype.toString;
+    const stringValueOf = String.prototype.valueOf;
     const slice = String.prototype.slice;
     const startsWith = String.prototype.startsWith;
     const clock = g.performance;
@@ -661,29 +662,41 @@ export function inSandboxScript(
     };
     // A thrown or rejected value as it is reported: its text, an error's "name: message", anything else by kind (a
     // primitive as itself); and how many characters the browser reads of it to make its own report, which the budget of
-    // uncaught errors counts (egress.ts, UNCAUGHT_CHARACTERS_PER_SECOND): a string's, or an error's name and message.
-    // Firefox reports every rejection of a worker to the host page's thread, and the cost follows the
-    // characters of the error's message and name (a stack, a toString or a getter cost nothing, since the browser reads
-    // data properties only). Each is read once here, and a getter's answer is counted too: more than the browser reads,
-    // never less (research 18: a model of the browser may only err toward refusing).
-    const lengthOf = (value: unknown) => (typeof value === 'string' ? value.length : 0);
+    // uncaught errors counts (egress.ts, UNCAUGHT_CHARACTERS_PER_SECOND): a string's, or the name and message of any
+    // object or function. Firefox reports every rejection of a worker to the host page's thread, and the cost follows the
+    // characters of an error's message and name (a stack, a toString or a getter cost nothing, since the browser reads
+    // data properties only). Which objects the browser takes for errors is its own internal class, never what the object
+    // says of itself (Symbol.toStringTag is the guest's to set, S78): so every object's name and message are counted, more
+    // than the browser reads, never less (research 18: a model of the browser may only err toward refusing). Each is read
+    // once here, and a getter's answer is counted too; a String object counts as its string.
+    const lengthOf = (value: unknown): number => {
+        if (typeof value === 'string') return value.length;
+        if (typeof value !== 'object' || value === null) return 0;
+        try {
+            const text = apply(stringValueOf, value, []);
+            return typeof text === 'string' ? text.length : 0;
+        } catch {
+            return 0;
+        }
+    };
     const reportOf = (value: unknown): { text: string; characters: number } => {
         if (typeof value === 'string') return { text: cut(value), characters: value.length };
-        if (isErrorLike(value)) {
-            let name: unknown;
-            let message: unknown;
-            try {
-                name = (value as { name?: unknown }).name;
-                message = (value as { message?: unknown }).message;
-            } catch {
-                // a getter that throws: what was read so far
-            }
-            const nameText = textOf(name);
-            const messageText = textOf(message);
-            return { text: nameText ? (messageText ? nameText + ': ' + messageText : nameText) : messageText, characters: lengthOf(name) + lengthOf(message) };
+        if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+            return { text: typeof value === 'symbol' ? describe(value) : '' + (value as string), characters: 0 };
         }
-        if (value === null || (typeof value !== 'object' && typeof value !== 'function' && typeof value !== 'symbol')) return { text: '' + (value as string), characters: 0 };
-        return { text: describe(value), characters: 0 };
+        let name: unknown;
+        let message: unknown;
+        try {
+            name = (value as { name?: unknown }).name;
+            message = (value as { message?: unknown }).message;
+        } catch {
+            // a getter that throws: what was read so far
+        }
+        const characters = lengthOf(name) + lengthOf(message);
+        if (!isErrorLike(value)) return { text: describe(value), characters };
+        const nameText = textOf(name);
+        const messageText = textOf(message);
+        return { text: nameText ? (messageText ? nameText + ': ' + messageText : nameText) : messageText, characters };
     };
     const errorText = (value: unknown): string => reportOf(value).text;
     // "Uncaught …" once: Chromium's ErrorEvent message already starts with it, Firefox's and WebKit's do not.
