@@ -110,8 +110,11 @@ embedder also allows direct connections.
    - **The frame.** One per environment, hidden in the element's shadow root after the wrapper, so the guest has no handle
      on it; `sandbox="allow-scripts"` only, never `allow-same-origin`, so its origin is opaque; a `srcdoc` document the frame
      builder writes (`buildBridgeDocument`, `src/lib/frame-documents.ts`) with its own policy (`bridgeFramePolicy`: the
-     bootstrap by its hash, `connect-src` the allowlist's origins only, everything else `'none'`), so the frame can reach
-     nothing the allowlist does not name even if the host's check were wrong. Built with the environment and removed by its
+     bootstrap by its hash, `connect-src` the allowlist's origins only, everything else `'none'` but `base-uri`, which
+     admits `about:` for the document's one `<base href="about:blank">`), so the frame can reach
+     nothing the allowlist does not name even if the host's check were wrong. Its bootstrap first checks its environment
+     like every other (`src/lib/environment-check.ts`, S74): a frame whose base is not `about:blank` (a host page's
+     `base-uri` refused it) stays inert, and the element ends the sandbox. Built with the environment and removed by its
      teardown: removal ends its fetches, and every request it held is `aborted` (LM-1 unchanged: `record()` stays the one
      place an outcome becomes final).
    - **Why an opaque origin.** No Service Worker controls an opaque origin, so the host page's worker never answers a bridge
