@@ -25,18 +25,20 @@ const A_EXAMPLE = /^https?:\/\/a\.example(:\d+)?\//;
 test.describe('N-3 (class B): the renderer keeps a URL only where every engine admits it', () => {
     test('exact origins are kept; an http: image of a listed https: origin too (port 80 or 443); http: media of one, https: of a listed http: loopback origin, and an http: image of a listed https: loopback origin are dropped and reported', async ({ sandbox, page, browserName }) => {
         await page.route(A_EXAMPLE, route => route.fulfill({ body: PNG, contentType: 'image/png' }));
+        // loopback hosts that are not on the host page's site (strict mode drops an origin of its site): 127.0.0.1, not localhost
         const port = new URL(ORIGIN).port;
+        const other = Number(port) + 1;
         await mountEntry(sandbox, `sandboxView.render('<img id="a" src="https://a.example/1.png"><img id="b" src="http://a.example/2.png"><img id="c" src="http://a.example:443/3.png">'
             + '<video id="v" src="http://a.example/v.mp4"></video><video id="w" src="https://a.example/w.mp4"></video>'
-            + '<img id="l" src="https://localhost:${port}/l.png"><img id="m" src="${ORIGIN}/test/e2e/pixel.png"><img id="u" src="http://127.0.0.1:${port}/u.png">');`,
-            { origins: { images: ['https://a.example', ORIGIN, `https://127.0.0.1:${port}`], media: ['https://a.example'] } });
+            + '<img id="l" src="https://127.0.0.1:${port}/l.png"><img id="m" src="http://127.0.0.1:${port}/test/e2e/pixel.png"><img id="u" src="http://127.0.0.1:${other}/u.png">');`,
+            { origins: { images: ['https://a.example', `http://127.0.0.1:${port}`, `https://127.0.0.1:${other}`], media: ['https://a.example'] } });
         await waitInView(page, browserName, `!!document.getElementById('u')`);
         const kept = await inView(page, browserName, `['a', 'b', 'c', 'v', 'w', 'l', 'm', 'u'].map(id => document.getElementById(id).getAttribute('src'))`);
         // v, l and u are dropped by the renderer: Chromium (all three) and WebKit (v) refuse them
-        expect(kept).toEqual(['https://a.example/1.png', 'http://a.example/2.png', 'http://a.example:443/3.png', null, 'https://a.example/w.mp4', null, `${ORIGIN}/test/e2e/pixel.png`, null]);
+        expect(kept).toEqual(['https://a.example/1.png', 'http://a.example/2.png', 'http://a.example:443/3.png', null, 'https://a.example/w.mp4', null, `http://127.0.0.1:${port}/test/e2e/pixel.png`, null]);
         await page.waitForTimeout(500);
         const reported = (await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI}`).sort();
-        expect(reported).toEqual([`img-src http://127.0.0.1:${port}/u.png`, `img-src https://localhost:${port}/l.png`, 'media-src http://a.example/v.mp4'].sort());
+        expect(reported).toEqual([`img-src http://127.0.0.1:${other}/u.png`, `img-src https://127.0.0.1:${port}/l.png`, 'media-src http://a.example/v.mp4'].sort());
     });
 });
 

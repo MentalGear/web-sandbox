@@ -275,9 +275,11 @@ test('worker mode: the worker sees only its own blob: URL, and its requests carr
 
 // ---- 4. strict mode ----------------------------------------------------------------------------------------
 
-test('strict mode: the worker sees only its own blob: URL; no request from the worker or from rendered markup carries a Referer or the host origin, cross-site or same-site, even when the markup asks for unsafe-url (control: the host page)', async ({ sandbox, browserName }) => {
+test('strict mode: the worker sees only its own blob: URL; no request from the worker or from rendered markup carries a Referer or the host origin, even when the markup asks for unsafe-url, and a same-site listener is dropped from the policy (control: the host page)', async ({ sandbox, browserName }) => {
     const prefix = `t${++run}strict`;
     const targets = { cross: REC, same: REC_SAME_SITE };
+    // the same-site listener is listed too: strict mode drops it from the policy (S74), so nothing of the worker's or the
+    // view's reaches it, with or without a referrer (the host page's own control below does)
     expect(await sandbox.mount({ mode: 'strict', origins: { images: [REC, REC_SAME_SITE], connect: [REC, REC_SAME_SITE] } })).toBe('ready');
 
     const worker = await sandbox.inGuest(`
@@ -287,7 +289,7 @@ test('strict mode: the worker sees only its own blob: URL; no request from the w
         }
         return r;
     `);
-    expect(worker).toMatchObject({ origin: 'null', names: [], 'fetch-cross': 'loaded', 'fetch-same': 'loaded' });
+    expect(worker).toMatchObject({ origin: 'null', names: [], 'fetch-cross': 'loaded', 'fetch-same': 'error' });
     expect(worker.href).toMatch(/^blob:null\/[0-9a-f-]+$/);
     expect(revealsHostUrl(worker)).toBe(false);
 
@@ -303,11 +305,12 @@ test('strict mode: the worker sees only its own blob: URL; no request from the w
         `<a ping="${origin}/r?id=${prefix}-ping-${site}" href="${origin}/r?id=${prefix}-link-${site}">x</a>`,
     ].join('');
     await sandbox.run(`sandboxView.render(${JSON.stringify(Object.entries(targets).map(([site, origin]) => markup(site, origin)).join(''))})`);
-    const expected = Object.keys(targets).flatMap(site => [...kinds.filter(k => k !== 'frame').map(k => `${prefix}-${k}-${site}`), `${prefix}-fetch-${site}`]);
+    const expected = ['cross'].flatMap(site => [...kinds.filter(k => k !== 'frame').map(k => `${prefix}-${k}-${site}`), `${prefix}-fetch-${site}`]);
     const seen = await referers(expected);
     await sandbox.page.waitForTimeout(500);
     // the frame and the ping never exist (A1), so they never request anything
     expect(hits.filter(h => /-(frame|ping|link)-/.test(h.id) && h.id.startsWith(prefix))).toEqual([]);
+    expect(hits.filter(h => h.id.startsWith(prefix) && h.id.endsWith('-same')), 'nothing reached the same-site listener').toEqual([]);
     expect(Object.values(seen)).toEqual(expected.map(() => null));
     // no Origin header naming the host either: none on the images; 'null' (the opaque origin) on the worker's fetch
     for (const id of expected) {

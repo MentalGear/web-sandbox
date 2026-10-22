@@ -118,7 +118,7 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 | `mode` | `'strict' \| 'cooperative' \| 'worker'` | `'strict'` | — | Where guest code runs; see [Modes](#modes). Any other value starts no environment: the sandbox terminates with the reason `unknown mode …` until a valid mode is configured. `'iframe'` was renamed `'cooperative'`: refused the same way, and the reason says so. |
 | `html` | `string` | `''` | strict, cooperative | The initial view (strict mode) or the guest document (cooperative mode). In strict mode its `<script>` elements and `on…` handler attributes never run, and markup that holds any warns once per element: ``strict mode (the default) runs no script in `html`; …``. Empty means `<div id="root"></div>`. Ignored in worker mode. Also set by [`load()`](#loadhtml). |
 | `capabilities` | `SafeCapability[]` | `[]` | all | Sandbox flags that keep the guest inside the frame: `allow-orientation-lock`, `allow-scripts`. Anything else is dropped with a warning. Worker mode always adds `allow-scripts`; strict mode always has `allow-scripts allow-forms` (listing either there changes nothing). |
-| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-downloads`, `allow-forms`, `allow-modals`, `allow-pointer-lock`, `allow-popups`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `allow-pointer-lock` and `fullscreen` let a guest hide the cursor, capture relative input or draw over the whole screen, so each can imitate host or browser UI. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). |
+| `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-downloads`, `allow-forms`, `allow-modals`, `allow-pointer-lock`, `allow-popups`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `allow-pointer-lock` and `fullscreen` let a guest hide the cursor, capture relative input or draw over the whole screen, so each can imitate host or browser UI. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups` lets the guest open has no opener: the guest's `window.open()` returns `null`, though the page opens. |
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
 | `origins` | `SandboxOrigins` | none | all (strict: no `scripts`) | The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. See [below](#origins). |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
@@ -134,7 +134,7 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 
 ### `origins`
 
-<!-- describes: origins, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d2625d10c742493659f5 -->
+<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d26227975d10c742493659f5 -->
 The guest's policy is one fixed template per mode. `origins` adds exact origins to six of its directives, one list per
 kind of load, and can change nothing else:
 
@@ -164,18 +164,38 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 - **Anything else is dropped** with one warning per entry: `https:` and other schemes, `*` and `*.example.com`,
   `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
   narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
-- **An origin that reaches the host page's site or the user's machine warns**, in every mode, once per kind: the warning
-  names the kind, each such origin and why. That covers the host page's own origin on any scheme or port, a
-  subdomain or a parent of the host page's host (`api.example.com` and `example.com` for a page on `app.example.com`),
-  and a loopback, private or link-local host (`localhost`, `127.0.0.1`, `10.x`, `192.168.x`, `169.254.x`) or a name that is private by
-  convention (a single label such as `intranet`, and `*.local`, `*.internal` such as `host.docker.internal`, `*.lan`,
-  `*.home.arpa`, `*.localdomain`, `*.corp`, `*.home`, `*.intranet`). Firefox and
-  WebKit attach the host site's `SameSite=None` cookies to a guest request to a same-site origin, so prefer
-  [`fetchBridge`](#fetchbridge), which sends no credentials. The entry is kept; the warning is the only effect. The
-  same-site check compares names and uses no public-suffix list: a sibling (`a.example.com` for a page on
-  `b.example.com`) is not recognised, though a cookie set with `Domain=example.com` reaches it, and a public suffix
-  above the host page counts as its parent. A name that only resolves to a private address, and is not private by convention, is
-  not recognised either.
+- **An origin on the host page's site is dropped in strict mode, and kept with a warning in cooperative and worker
+  mode**, once per kind: the warning names the kind and each such origin. A request of the sandbox to it can carry the
+  host site's cookies, as the [table below](#cookies-by-engine) says, so prefer [`fetchBridge`](#fetchbridge) for an API
+  that knows the user: it sends no credentials in any engine.
+- **The host page's site is the browser's registrable domain of the page's host**: `example.com` for `app.example.com`,
+  `example.co.uk` for `www.example.co.uk`, and `user.github.io` for itself. On it are the host page's own origin on any
+  scheme or port, its subdomains, its parents down to that domain and its siblings (`api.example.com` for a page on
+  `app.example.com`); a public suffix (`co.uk`) is not. The element asks the browser, once per host name and only for an
+  entry that could be on the site, with a cookie-domain probe: it sets a test cookie for each parent domain of the host
+  (`Domain=co.uk`, `Domain=example.co.uk`), keeps the first the browser accepts, and removes the cookie at once, so the
+  library bundles no public-suffix list. An IP address and a name with no dot are their own site, with no cookie set.
+  Where the probe cannot run (cookies blocked, a page with no cookie jar), the check is by name alone: the page's own
+  host and the names above and below it, so a sibling is not recognised there, and a public suffix above the page
+  counts as its parent.
+- **A loopback, private or link-local host warns**, in every mode, once per kind, and is kept: `localhost`, `127.0.0.1`,
+  `10.x`, `192.168.x`, `169.254.x`, or a name that is private by convention (a single label such as `intranet`, and
+  `*.local`, `*.internal` such as `host.docker.internal`, `*.lan`, `*.home.arpa`, `*.localdomain`, `*.corp`, `*.home`,
+  `*.intranet`). It is the user's own machine or network, which the guest then reaches. A name that only resolves to a
+  private address, and is not private by convention, is not recognised.
+
+<a id="cookies-by-engine"></a>
+The cookies the browser sends with a request of the sandbox, by engine (the warning above is written from the same table;
+every wrapper frame is `credentialless`, which only some engines honour):
+
+<!-- generated:begin cookie-facts -->
+| Engine | To an origin on the host page's site | To an origin on another site | Narrower with | Found by |
+| :--- | :--- | :--- | :--- | :--- |
+| Chromium (the sandbox's frame is credentialless) | none | none | — | test/e2e/cookies.spec.ts: a listener of the same site and one of another, fetch with credentials, a no-cors POST and an image, in every mode; the same requests from a frame without the attribute carry the cookie |
+| Firefox | `SameSite=None` | `SameSite=None` | Total Cookie Protection, Firefox's default: none to the host page's site, none to another | S74 board, 2026-10-21, Playwright's Firefox (cookieBehavior 4): a SameSite=None cookie in every mode, Lax and Strict none; with cookieBehavior 5 none |
+| WebKit | `SameSite=None, Lax and Strict` | `SameSite=None` | Safari, which blocks third-party cookies (not measured): `SameSite=None, Lax and Strict` to the host page's site, none to another | S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode |
+<!-- generated:end -->
+
 - **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used.
 - **Strict mode has no `scripts`**: a type error in TypeScript (`SandboxConfig` is a union keyed by `mode`), and dropped
   with one warning at run time, for a config from JSON. With a mode chosen at run time, type `origins` as
@@ -1234,7 +1254,7 @@ a mode. [ADR-005](ADR-005-strict-mode.md)
 process apart from the page's, which the page's other sandboxes can share): there the view's cost is the bound stated in [The view's cost to the host page](#the-views-cost-to-the-host-page),
 and what it lists as outside it. Cooperative mode is no better there. Also
 CSS within what the policy allows, the worker's `violation` reports (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the host site's
-cookies on requests to allowed same-site origins (every mode).
+cookies on requests to allowed same-site origins in some engines (cooperative and worker mode; strict mode drops such an origin; [by engine](#cookies-by-engine)).
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;
