@@ -171,8 +171,8 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     it dropped past its per-second window) and
     `'guest'` for everything from the guest, whatever it claims. Guest lines carry the guest's `console` calls (every
     method), uncaught errors and unhandled rejections (`Uncaught …`), in every mode (in worker and strict mode they are
-    cancelled once relayed, and more than 1000 of them, or 1 Mi characters of them, in one second end the sandbox; on
-    Firefox the characters of a reason the guest tagged with `Symbol.toStringTag` are not counted, [S78](docs/BACKLOG.md#s78));
+    cancelled once relayed, and more than 1000 of them, or 1 Mi characters of the names and messages of them, in one second end the sandbox;
+    whatever the reason says it is, its `name` and `message` are counted);
     the guest's console never throws:
     a function, a DOM node or anything else structured clone refuses arrives as a string naming its kind, an `Error`
     (also inside an object, an array or `Promise.allSettled`'s results) as `{ name, message, stack }`. Bounded in the
@@ -328,7 +328,7 @@ In cooperative mode the same code can sit in a `<script>` of the guest's markup.
     `ARGS_NOT_TRANSFERABLE`, which is not worth retrying.
 *   **Every message is bounded as a whole**: a method name is at most 256 characters, an error message at most
     65536 (cut, with a marker), and arguments or a result at most 33 MiB (`RPC_MAX_BYTES`), measured on both sides (the
-    measure does not count a `File`'s name or a sparse array's `length`: [S77](docs/BACKLOG.md#s77)).
+    measure counts what a clone delivers: a `File`'s name, a `Blob`'s type, a sparse array's `length`).
 *   **No `scriptUnsafe` needed.** `call()` runs a function the other side registered and never
     evaluates code. A worker-mode guest has no markup, though, so it can only expose methods
     through `execute()`, which does need `scriptUnsafe`.
@@ -640,10 +640,7 @@ What remains for the default:
     Chromium's `<img>`, WebKit's 250 000-character textarea), memory, `:hover` restyles while the user's pointer moves,
     and Firefox's cost of unhandled rejections.
 
-    Open gaps in the bounds above, backlogged and not mitigated now (owner, 2026-10-21): the byte measure counts a
-    `File`'s name and a `Blob`'s type as 64 bytes and a sparse array by its present elements, so those pass the byte
-    budgets and can stall or fill the host page ([S77](docs/BACKLOG.md#s77), high); on Firefox a rejection reason the guest
-    tagged with `Symbol.toStringTag` is not charged to the characters budget ([S78](docs/BACKLOG.md#s78), high); on
+    One gap is open in the bounds above, backlogged and not mitigated now (owner, 2026-10-21): on
     desktop Chromium one documented stall over about 5 s ends the sandbox ([S79](docs/BACKLOG.md#s79)), and because all the
     sandboxed frames of the page can share the view's process, one sandbox's loop or stall can end another's view too
     ([research 16](docs/research/16_view_isolation/README.md)). `terminate()` ends

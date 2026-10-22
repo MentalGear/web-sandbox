@@ -41,7 +41,7 @@ export const BACKLOG_ARCHIVE_FILE = 'docs/archive/backlog/BACKLOG-done.md';
  * (test/unit/doc-links.test.ts) compares the list with the anchors of docs/BACKLOG.md.
  */
 export const OPEN_BACKLOG_ITEMS: readonly string[] = [
-    'S8', 'S25', 'S36', 'S44', 'S49', 'S60', 'S69', 'S70', 'S74', 'S76', 'S77', 'S78', 'S79', 'S80', 'S81', 'S82', 'BL:D1', 'BL:H5',
+    'S8', 'S25', 'S36', 'S44', 'S49', 'S60', 'S69', 'S70', 'S74', 'S76', 'S79', 'S80', 'S81', 'S82', 'BL:D1', 'BL:H5',
 ];
 
 /** The file that holds a backlog item: the backlog while it is open, the archive once it is done. */

@@ -48,6 +48,9 @@ test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the ho
     // past the budget the sandbox ends.
     const FLOODS: Record<string, string> = {
         'rejections of 16 Mi characters': FOR_5_SECONDS(`const big = 'x'.repeat(2 ** 24);`, `() => { Promise.reject(new Error(big)); }`),
+        // S78: which objects the browser reports at a cost is its own class of them, never a tag the guest sets
+        'rejections of 16 Mi characters, each error tagged by the guest with Symbol.toStringTag': FOR_5_SECONDS(`const big = 'x'.repeat(2 ** 24);`, `() => { Promise.reject(Object.defineProperty(new Error(big), Symbol.toStringTag, { value: 'X' })); }`),
+        'rejections of 16 Mi characters, Error.prototype tagged by the guest': FOR_5_SECONDS(`const big = 'x'.repeat(2 ** 24); Error.prototype[Symbol.toStringTag] = 'X';`, `() => { Promise.reject(new Error(big)); }`),
         'small rejections, 100 per tick': FOR_5_SECONDS('', `() => { for (let i = 0; i < 100; i++) Promise.reject(new Error('x')); }`),
         'small rejections handled a tick later (rejectionhandled), 100 per tick': FOR_5_SECONDS('', `() => { for (let i = 0; i < 100; i++) { const p = Promise.reject(new Error('x')); setTimeout(() => p.catch(() => {}), 0); } }`),
         // errors, which the worker cancels once relayed (R4:M-1), count against the same budget

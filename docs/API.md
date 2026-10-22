@@ -687,18 +687,16 @@ handlers and of worker mode's worker: they arrive as `Uncaught Script error.`, a
 
 The bounds: `LOG_MAX_ARGS` and `LOG_MAX_STRING` bound the strings; `LOG_MAX_BYTES` bounds all arguments of a line
 together (a typed array, an object of 100 000 keys), measured as [`call()`](#callmethod-args)
-measures a message, **except** that the measure counts a `File` or a `Blob` as 64 bytes though a clone carries the
-`File`'s `name` (and the `Blob`'s `type` on Firefox and WebKit) whole, and a sparse array by its present elements, not
-its `length` ([S77](BACKLOG.md#s77), open, high): an argument past what is left of it is a string saying so (`[Uint8Array: past the log line's byte
+measures a message, counting every field a clone delivers ([what the byte measure counts](#limits): a `File`'s `name`, a
+`Blob`'s `type`, a sparse array's `length`): an argument past what is left of it is a string saying so (`[Uint8Array: past the log line's byte
 budget (1048576)]`), and one holding a value the measure does not know (an `ImageData`) a string naming it
 (`[unsupported value: ImageData]`); when even that string would not fit, the line ends with one string saying how many
 arguments it dropped (`[Sandbox] 3 more argument(s) past the log line's byte budget (1048576)`), so a line never
 measures past `LOG_MAX_BYTES` where it arrives. An `Error` anywhere in an argument (in an object, an array, a `Map`, a `Set`,
 `Promise.allSettled`'s results; within 64 levels and 10 000 objects) is sent as `{ name, message, stack }` first.
 The guest applies them before a line is posted, and sends at most `LOG_EVENTS_PER_SECOND` lines and 4 MiB in any one-second window (one `warn` line when it
-starts dropping), so a flood of values the measure counts truly does not reach the host page's thread; a flood of long `File` names does on Firefox,
-and one line holding a sparse array of a large `length` holds it for as long as the library's own walk of that `length`
-takes (a minute or more in Chromium), until the lines queued are processed and `terminate()` can run (S77). In cooperative mode the browser's own console gets a
+starts dropping), so a flood of values does not reach the host page's thread, a long `File` name or a sparse array of a large `length` included
+(both cross as the placeholder). In cooperative mode the browser's own console gets a
 dropped line not at all and a cut line cut; in worker and strict mode it gets none (the worker's console is not a sink:
 `sandbox-log` is). The element measures every line again on receipt, and dispatches at most `LOG_EVENTS_PER_SECOND`
 guest lines in any one-second window per environment (one warning); the relay's own lines (`<mode> Ready` and its
@@ -1303,11 +1301,16 @@ in strict mode.
 
 The same limits by channel of guest activity, each with the test that checks it: [Budgets](#budgets).
 
-**Where a byte limit does not hold yet** ([S77](BACKLOG.md#s77), open, high; backlogged, not mitigated now: owner,
-2026-10-21). The byte limits above (a log line, an RPC message, the arguments of calls running at once) are measured
-with the one measure of `call()`, which counts a `File` or a `Blob` as 64 bytes and an array by its present elements;
-a `File`'s `name` (and a `Blob`'s `type` on Firefox and WebKit) and a sparse array's `length` pass them. The bytes of
-calls running at once are therefore capped for what the measure counts, not for a `File`'s name.
+**What the byte measure counts.** The byte limits above (a log line, an RPC message, the arguments of calls running at
+once) are measured with the one measure of `call()`, on the snapshot a sender posts, which is the only form of a value that
+leaves a sandbox. It is a closed set of kinds, and counts every field the receiver is handed: a string two bytes a code
+unit plus 8, a `BigInt` its digits, any other primitive 8; a plain object, a `Map` and a `Set` their keys and entries;
+an array the more of its `length` times 8 and its keys, so a sparse array of 2**32 - 1 slots is past every limit; a typed
+array or a `DataView` its whole buffer, once; a `Blob` 64 plus its `type` like a string; a `File` that plus its `name`
+like a string and 8 for `lastModified`. Any other kind (an `Error`, an `ImageData`, a `SharedArrayBuffer`) is refused as
+unsupported. The library's own walks of a delivered value follow its own keys, never an array's `length`. Chromium keeps
+a `Blob`'s `type` only up to a length its engine chooses (100 000 characters were dropped); Firefox and WebKit keep it
+whole, and the measure counts what arrives.
 
 ---
 
@@ -1344,17 +1347,9 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Cooperative: the guest's own document | none: the guest runs on the host page's thread wherever the engine puts its frame there | none | none: one loop can freeze the host page ([Modes](#modes)) | unbounded: a cooperative-mode limit | README (cooperative-mode limits) |
 <!-- generated:end -->
 
-**Where the table's bounds do not hold yet** (backlogged, not mitigated now: owner, 2026-10-21; both stay rated high).
-- **Bytes** ([S77](BACKLOG.md#s77)): the byte columns of the log lines, calls and answers rows, and the in-flight cap,
-  rest on one measure that counts a `File` or a `Blob` as 64 bytes and a sparse array by its present elements. A `File`'s
-  `name` crosses every one of them whole, and a sparse array's `length` is walked by the library's own `freezeDeep` on the
-  host page's thread for each `sandbox-log` line. "None beyond the count and the bytes" is therefore not true of those
-  rows for these values.
-- **Characters** ([S78](BACKLOG.md#s78)): on Firefox, the second row's character budget does not count a rejection
-  reason whose `Symbol.toStringTag` the guest set, so only its count (`UNCAUGHT_PER_SECOND`) bounds those, and the host
-  page's thread stalls for seconds a second while the sandbox stays `ready`.
-- **`terminate()`** ends either flood, but only after the reports already queued are processed; and where the view shares
-  the host page's thread it cannot run during a stall of the view ([(b)](#b-the-single-operation-bound)).
+**What `terminate()` waits for.** It ends any flood, but only after the reports already queued are processed (a queue the
+counts and bytes above bound); and where the view shares the host page's thread it cannot run during a stall of the view
+([(b)](#b-the-single-operation-bound)).
 
 <!-- describes: budgets sig:6872 -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
@@ -1505,7 +1500,7 @@ The first three rows are (a)'s and (b)'s; the rest bound what the view's meter c
 | `LOG_EVENTS_PER_SECOND` | 1000 | The guest's error texts the view posts to the host page per second (GUEST_ERROR and GUEST_UNCAUGHT frames, each cut to 2048 characters before posting). |
 | `VIOLATION_EVENT_LIMIT` | 100 | `violation` events the host page dispatches from the view, per directive; every refusal is charged to `VIEW_URLS_PER_SECOND` all the same. |
 | `UNCAUGHT_PER_SECOND` | 1000 | Uncaught errors and unhandled rejections of the guest's worker per second, which Firefox reports on the view's thread; past it the sandbox ends. |
-| `UNCAUGHT_CHARACTERS_PER_SECOND` | 1048576 | Their characters per second; past it the sandbox ends (not counted for a reason the guest tagged with `Symbol.toStringTag` on Firefox: [S78](BACKLOG.md#s78)). |
+| `UNCAUGHT_CHARACTERS_PER_SECOND` | 1048576 | Their characters per second; past it the sandbox ends (the `name` and `message` of any object are counted, whatever it says it is). |
 
 The call budgets (`callLimits`) and the worker's log budget do not touch the view: calls and log lines go between the
 host page and the worker over the logic port, never through the view.
@@ -1520,9 +1515,9 @@ This list is closed: a cost of the view not listed here and not inside (a) or (b
 | What else runs on its own, which `allowAnimations: false` does not stop: animated images, indeterminate `<progress>`, autoplaying media with `allowAutoplay: true` | 2 000 animated PNGs: WebKit 39% (+22 points), Firefox 12%; 5 000 `<progress>`: up to +4 points; 20 looping videos: up to +6 points | research 16 |
 | Relayout after image decodes or font swaps: the browser's work after the frame the meter measured; only the load rate and the caps of (c) bound it | One render of 1 000 admitted images without dimensions above 15 000 paragraphs, the responses spread over 2 s, so that each arrival lays the paragraphs out again: over the 3 s after it, Chromium 40%, Firefox 22%, WebKit 37% busy, longest gap 226, 55 and 289 ms (the loads themselves included; (a)'s flood of images with dimensions, 3–8%). One `@font-face` swap over 15 000 paragraphs: 2%, 5% and 23% busy over the 3 s around it, longest gap 31, 54 and 214 ms. | [review round 5](archive/reviews/REVIEW-ROUND-5-2026-10-19.md), "What remains"; `test/e2e/view-bound.spec.ts` (d), on demand |
 | The documented single-operation stalls, each one operation's own cost: CSS filters, bidirectional text, small CSS changes over many elements, selectors whose matching grows faster than the elements, `<img>` in Chromium, and WebKit's first value of a 250 000-character textarea | 10 `blur()`s on 1 000 elements: WebKit 3.7 s (100 on 1 000: over 180 s); 240 000 characters of bidirectional text in one paragraph: tens of seconds in Chromium and WebKit; a 31-character `text()` into a `<style>` over 46 000 elements: Firefox 7 s; a rule whose `:has()` looks at every later sibling, over 24 000 elements: Chromium 4.2 s, Firefox 8.9–9.2 s, WebKit 7.1–8.6 s; 6 500 `<img alt>`: Chromium 1.9–2.6 s, Firefox and WebKit about 150 ms (an example, measured 2026-10-18); the first `set()` of a 250 000-character textarea: WebKit over 2 s, an overrun the sandbox survives. Past `VIEW_MAX_OPERATION_MS` each is an overrun, after the stall: charged in full, and the second within `VIEW_OVERRUN_WINDOW_MS` ends the sandbox ((b)). | [broad review](archive/reviews/BROAD-REVIEW-2026-10-14.md), review rounds [1](archive/reviews/REVIEW-ROUND-1-2026-10-15.md), [4](archive/reviews/REVIEW-ROUND-4-2026-10-18.md) and [5](archive/reviews/REVIEW-ROUND-5-2026-10-19.md) |
-| Memory: not bounded | No budget counts it. The caps of (c) bound what the document holds, not what that costs in memory (decoded images, the caches of up to `VIEW_MAX_DISTINCT_URLS` URLs, layout structures), nor a `File`'s name that the byte measure does not count ([S77](BACKLOG.md#s77): on Chromium, 8 calls held 1 GiB against the 64 MiB cap of arguments running at once, and the host renderer grew by about 2 GiB); measured otherwise only where it ended a run: a flood of large rejections took Firefox's content process to 7 GB before the uncaught budget ended such floods | [review round 5](archive/reviews/REVIEW-ROUND-5-2026-10-19.md), N-1 |
+| Memory: not bounded | No budget counts it. The caps of (c) bound what the document holds, not what that costs in memory (decoded images, the caches of up to `VIEW_MAX_DISTINCT_URLS` URLs, layout structures); measured only where it ended a run: a flood of large rejections took Firefox's content process to 7 GB before the uncaught budget ended such floods | [review round 5](archive/reviews/REVIEW-ROUND-5-2026-10-19.md), N-1 |
 | `:hover` restyles driven by the user's pointer over many elements | 80–100% busy while the pointer moves (5 000 elements under a `:hover ~` rule) | research 16 |
-| Firefox's cost of the worker's unhandled rejections, which it reports on the view's thread, cancelled or not | Within `UNCAUGHT_PER_SECOND`: 1 000 cancelled a second idle, 1 000 handled a tick later 4–7% busy, 1 Mi characters a second 6%; one rejection of 16 Mi characters about 0.5 s, after which the sandbox ends. A relay worker does not change it. **Not for a reason whose `Symbol.toStringTag` the guest set** ([S78](BACKLOG.md#s78), open, high): its characters are not counted, so only `UNCAUGHT_PER_SECOND` bounds it, and a 4 s flood of 16 Mi-character rejections stalled Firefox's host page for 18.9 s (longest 7.6 s) with the sandbox `ready` (measured 2026-10-21). | `src/lib/egress.ts`; [research 19](research/19_relay_worker/README.md) |
+| Firefox's cost of the worker's unhandled rejections, which it reports on the view's thread, cancelled or not | Within `UNCAUGHT_PER_SECOND`: 1 000 cancelled a second idle, 1 000 handled a tick later 4–7% busy, 1 Mi characters a second 6%; one rejection of 16 Mi characters about 0.5 s, after which the sandbox ends. A relay worker does not change it. The characters of every object's `name` and `message` count, whatever its `Symbol.toStringTag` says. | `src/lib/egress.ts`; [research 19](research/19_relay_worker/README.md) |
 
 Outside the statement altogether, as everywhere: cooperative mode, whose guest runs in a frame that can freeze the host
 page with one loop where it shares its thread ([Modes](#modes)).

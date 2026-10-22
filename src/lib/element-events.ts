@@ -37,7 +37,9 @@ export type ElementEventType = keyof typeof ELEMENT_EVENTS;
 /**
  * `value` frozen, with every object reachable from it that can be (above); returns `value`. A detail is the library's
  * own object or a structured clone (a guest's log arguments), so every property is a data property: its values are read
- * with Object.values, which runs no getter on such an object.
+ * with Object.values, which runs no getter on such an object. The walk follows own keys, an array's included, never its
+ * `length`: a sparse array of 2**32 - 1 slots holds as many members as it has keys, the count the byte measure charged
+ * (structured-size.ts, S77).
  */
 export function freezeDeep<T>(value: T): T {
     if (value === null || typeof value !== 'object') return value;
@@ -52,9 +54,7 @@ export function freezeDeep<T>(value: T): T {
         seen.add(object);
         // a typed array's or a DataView's bytes cannot be frozen (Object.freeze throws on a non-empty one), nor read here
         if (ArrayBuffer.isView(object)) continue;
-        if (Array.isArray(object)) {
-            for (let i = 0; i < object.length; i++) keep(object[i]);
-        } else if (object instanceof Map) {
+        if (object instanceof Map) {
             object.forEach((member, key) => {
                 keep(key);
                 keep(member);
