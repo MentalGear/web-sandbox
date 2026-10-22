@@ -83,7 +83,11 @@ const animationsInView = (page: Page, browserName: string) =>
 test.describe('allowAnimations', () => {
     test('positive control, the default (true): the vectors animate in the view', async ({ sandbox, page, browserName }) => {
         await mountVectors(sandbox, {});
-        await waitInView(page, browserName, `document.querySelectorAll('.linked, .imported').length === 2 && document.getAnimations().length > 16`, 10000);
+        // The linked stylesheet (and the one it @imports) loads after the markup: the elements are there, and the inline
+        // vectors already animate (21 of the 23), while the sheets' animations are not yet. So wait for what is asserted
+        // below, the animations of the linked and of the imported element, not for their elements and a count that the
+        // inline vectors reach alone.
+        await waitInView(page, browserName, `document.querySelectorAll('.linked, .imported').length === 2 && document.getAnimations().length > 16 && ['linked', 'imported'].every(name => document.getAnimations().some(a => a.effect && a.effect.target && a.effect.target.className === name))`, 10000);
         const running = await animationsInView(page, browserName) as string[];
         console.log(`MEASURED ${browserName} allowAnimations default: ${running.length} animations: ${running.join(', ')}`);
         for (const expected of ['unlayered', 'named', 'anonymous', 'linked', 'imported', 'property', 'scrolled', '::before', '::after', '::marker', 'rect', 'circle', ' mi']) {
