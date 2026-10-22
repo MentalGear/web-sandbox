@@ -292,6 +292,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/bridge-frame.ts` | The fetch bridge's frame, host side |
 | `src/lib/capabilities.ts` | Filtering of the capabilities an embedder lists: the allowed ones are kept, every other one dropped with a warning |
 | `src/lib/config-schema.ts` | The config schema |
+| `src/lib/cookie-facts.ts` | Which cookies each engine sends with a request of the sandbox, as one table |
 | `src/lib/css-references.ts` | URL references in CSS |
 | `src/lib/egress.ts` | The egress table |
 | `src/lib/element-events.ts` | The element's events |

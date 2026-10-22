@@ -11,6 +11,7 @@
  *
  * Internal: not exported from the package.
  */
+import { COOKIE_ENGINE_FACTS, COOKIE_ENGINES } from './cookie-facts';
 import type { EnvironmentCheckId } from './environment-check';
 
 /** The engines the e2e suite runs on. */
@@ -48,6 +49,9 @@ export interface InheritedContextRow {
 }
 
 const ALL = CONTEXT_ENGINES;
+
+// the engines whose cookie facts say they honour the wrapper's `credentialless` attribute (cookie-facts.ts)
+const CREDENTIALLESS_ENGINES = COOKIE_ENGINES.filter(engine => COOKIE_ENGINE_FACTS[engine].credentialless).map(engine => COOKIE_ENGINE_FACTS[engine].name).join(', ');
 
 export const INHERITED_CONTEXT = {
     cspScript: {
@@ -143,10 +147,10 @@ export const INHERITED_CONTEXT = {
     cookies: {
         channel: "The host site's cookies: a request of a sandbox document is made for the host page's site, so a cookie the browser attaches by site (SameSite=None; on some engines Lax and Strict) rides on it",
         inheritedBy: "every mode: the guest's own requests (`fetch`, subresources, WebSocket) to a listed origin; the fetch bridge sends none",
-        how: "The wrapper iframe is `credentialless` in every mode: on Chromium it, and everything nested in it, has an empty cookie jar, so no request of the sandbox carries a cookie (its popups open without an opener). Firefox and WebKit ignore the attribute: an `origins` entry on the host page's site is dropped in strict mode and kept with a warning in cooperative and worker mode (once per kind), where the site is the browser's registrable domain of the page's host, found by a cookie-domain probe (host-site.ts) and, where the probe cannot run, by name. The fetch bridge (`credentials: 'omit'`) is the way to reach an API that knows the user",
+        how: `The wrapper iframe is \`credentialless\` in every mode: where the engine honours it (${CREDENTIALLESS_ENGINES}) it, and everything nested in it, has an empty cookie jar, so no request of the sandbox carries a cookie (its popups open without an opener). Elsewhere an \`origins\` entry on the host page's site is dropped in strict mode and kept with a warning in cooperative and worker mode (once per kind), where the site is the browser's registrable domain of the page's host, found by a cookie-domain probe (host-site.ts) and, where the probe cannot run, by name. The fetch bridge (\`credentials: 'omit'\`) is the way to reach an API that knows the user. What each engine sends: cookie-facts.ts`,
         by: ['credentialless', 'refuse', 'warn', 'documented'],
         engines: ALL,
-        tests: ['test/e2e/cookies.spec.ts', 'test/e2e/host-site.spec.ts', 'test/unit/host-site.test.ts', 'test/unit/host.test.ts', 'test/unit/config-schema.test.ts', 'test/unit/host-origin-wiring.test.ts', 'test/e2e/fetch-bridge.spec.ts'],
+        tests: ['test/e2e/cookies.spec.ts', 'test/e2e/host-site.spec.ts', 'test/unit/cookie-facts.test.ts', 'test/unit/host-site.test.ts', 'test/unit/host.test.ts', 'test/unit/config-schema.test.ts', 'test/unit/host-origin-wiring.test.ts', 'test/e2e/fetch-bridge.spec.ts'],
     },
     serviceWorker: {
         channel: "The host page's Service Worker (a cache-first one answers from the app's cache)",

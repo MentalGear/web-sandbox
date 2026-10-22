@@ -271,9 +271,9 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
 - **A same-site origin** listed in `origins` (on the host page's site as the browser decides it: the page's own origin,
   its subdomains, its parents and its siblings) is dropped in strict mode, and kept with a warning in cooperative and
   worker mode, once per kind (`limitHostReach`, `src/lib/config-schema.ts`). A request to it can carry the host site's
-  cookies in Firefox and WebKit; Chromium sends none, because the wrapper frame is credentialless. Reach an API that
-  knows the user with `fetchBridge`, which sends no credentials in any engine. A loopback, private or link-local origin
-  is kept in every mode, with a warning once per kind.
+  cookies in some engines, which the [table below](#cookies-by-engine) lists. Reach an API that knows the user with
+  `fetchBridge`, which sends no credentials in any engine. A loopback, private or link-local origin is kept in every
+  mode, with a warning once per kind.
 
 ### Engine differences that change a guarantee
 
@@ -284,9 +284,20 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
 | Firefox | Reports a worker's unhandled rejections on the host page's thread, cancelled or not; lets a worker's `EventSource` and `FontFace` past the policy | The uncaught budget; the worker allowlist leaves both out |
 | WebKit | Compiles `WebAssembly` without `'unsafe-eval'`; raises no violation reports in workers; refuses the view's `blob:` worker under COEP `require-corp`; sends the full host URL to same-site origins and shows it to frames the guest creates (cooperative) | `WebAssembly` deleted unless `scriptUnsafe`; worker reports are per engine; strict mode does not start under COEP; [S17](archive/backlog/BACKLOG-done.md#s17) and [S18](archive/backlog/BACKLOG-done.md#s18) are cooperative limits |
 | Chromium, WebKit | Show the host origin in `location.ancestorOrigins` (cooperative) | A cooperative limit ([S15](archive/backlog/BACKLOG-done.md#s15)) |
-| Firefox, WebKit | Attach the host site's cookies to guest requests to same-site origins (Firefox `SameSite=None`, none under its Total Cookie Protection; WebKit all three values) | Strict mode drops a same-site origin from `origins`; cooperative and worker mode warn; reach the API with `fetchBridge` |
-| Chromium | Honours `credentialless`: the wrapper frame and what it nests send no cookie. A popup opened with `allow-popups` has no opener | None for cookies; `window.open()` returns `null` there |
+| Chromium | Honours `credentialless` on the wrapper frame: a popup opened with `allow-popups` has no opener | `window.open()` returns `null` there, though the page opens |
 | Firefox (146, as Playwright runs it) | Has no Trusted Types (`typeof trustedTypes` is `undefined`) | The host page's requirement has no effect there; a Firefox that ships them is governed like the other engines |
+
+<a id="cookies-by-engine"></a>
+**Cookies on a request of the sandbox, by engine.** Every wrapper frame is `credentialless`; the engines that do not
+honour it send what the table says (the `origins` warning is written from the same table):
+
+<!-- generated:begin cookie-facts -->
+| Engine | To an origin on the host page's site | To an origin on another site | Narrower with | Found by |
+| :--- | :--- | :--- | :--- | :--- |
+| Chromium (the sandbox's frame is credentialless) | none | none | — | test/e2e/cookies.spec.ts: a listener of the same site and one of another, fetch with credentials, a no-cors POST and an image, in every mode; the same requests from a frame without the attribute carry the cookie |
+| Firefox | `SameSite=None` | `SameSite=None` | Total Cookie Protection, Firefox's default: none to the host page's site, none to another | S74 board, 2026-10-21, Playwright's Firefox (cookieBehavior 4): a SameSite=None cookie in every mode, Lax and Strict none; with cookieBehavior 5 none |
+| WebKit | `SameSite=None, Lax and Strict` | `SameSite=None` | Safari, which blocks third-party cookies (not measured): `SameSite=None, Lax and Strict` to the host page's site, none to another | S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode |
+<!-- generated:end -->
 
 ## Accepted risks and open items
 

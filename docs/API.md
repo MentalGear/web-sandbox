@@ -134,7 +134,7 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 
 ### `origins`
 
-<!-- describes: origins, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d2625d10c742493659f5 -->
+<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d26227975d10c742493659f5 -->
 The guest's policy is one fixed template per mode. `origins` adds exact origins to six of its directives, one list per
 kind of load, and can change nothing else:
 
@@ -165,10 +165,9 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
   narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
 - **An origin on the host page's site is dropped in strict mode, and kept with a warning in cooperative and worker
-  mode**, once per kind: the warning names the kind and each such origin. A request to it can carry the host site's
-  cookies in some engines (Chromium sends none, because the sandbox's frame is credentialless there; Firefox sends its
-  `SameSite=None` cookies; WebKit sends `None`, `Lax` and `Strict` ones), so prefer [`fetchBridge`](#fetchbridge),
-  which sends no credentials in any engine, for an API that knows the user.
+  mode**, once per kind: the warning names the kind and each such origin. A request of the sandbox to it can carry the
+  host site's cookies, as the [table below](#cookies-by-engine) says, so prefer [`fetchBridge`](#fetchbridge) for an API
+  that knows the user: it sends no credentials in any engine.
 - **The host page's site is the browser's registrable domain of the page's host**: `example.com` for `app.example.com`,
   `example.co.uk` for `www.example.co.uk`, and `user.github.io` for itself. On it are the host page's own origin on any
   scheme or port, its subdomains, its parents down to that domain and its siblings (`api.example.com` for a page on
@@ -184,6 +183,19 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   `*.local`, `*.internal` such as `host.docker.internal`, `*.lan`, `*.home.arpa`, `*.localdomain`, `*.corp`, `*.home`,
   `*.intranet`). It is the user's own machine or network, which the guest then reaches. A name that only resolves to a
   private address, and is not private by convention, is not recognised.
+
+<a id="cookies-by-engine"></a>
+The cookies the browser sends with a request of the sandbox, by engine (the warning above is written from the same table;
+every wrapper frame is `credentialless`, which only some engines honour):
+
+<!-- generated:begin cookie-facts -->
+| Engine | To an origin on the host page's site | To an origin on another site | Narrower with | Found by |
+| :--- | :--- | :--- | :--- | :--- |
+| Chromium (the sandbox's frame is credentialless) | none | none | — | test/e2e/cookies.spec.ts: a listener of the same site and one of another, fetch with credentials, a no-cors POST and an image, in every mode; the same requests from a frame without the attribute carry the cookie |
+| Firefox | `SameSite=None` | `SameSite=None` | Total Cookie Protection, Firefox's default: none to the host page's site, none to another | S74 board, 2026-10-21, Playwright's Firefox (cookieBehavior 4): a SameSite=None cookie in every mode, Lax and Strict none; with cookieBehavior 5 none |
+| WebKit | `SameSite=None, Lax and Strict` | `SameSite=None` | Safari, which blocks third-party cookies (not measured): `SameSite=None, Lax and Strict` to the host page's site, none to another | S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode |
+<!-- generated:end -->
+
 - **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used.
 - **Strict mode has no `scripts`**: a type error in TypeScript (`SandboxConfig` is a union keyed by `mode`), and dropped
   with one warning at run time, for a config from JSON. With a mode chosen at run time, type `origins` as
@@ -1242,7 +1254,7 @@ a mode. [ADR-005](ADR-005-strict-mode.md)
 process apart from the page's, which the page's other sandboxes can share): there the view's cost is the bound stated in [The view's cost to the host page](#the-views-cost-to-the-host-page),
 and what it lists as outside it. Cooperative mode is no better there. Also
 CSS within what the policy allows, the worker's `violation` reports (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the host site's
-cookies on requests to allowed same-site origins (cooperative and worker mode; strict mode drops such an origin; Firefox and WebKit).
+cookies on requests to allowed same-site origins in some engines (cooperative and worker mode; strict mode drops such an origin; [by engine](#cookies-by-engine)).
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;

@@ -25,6 +25,7 @@
 import type { CallLimits } from '../host';
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, type SafeCapability, type UnsafeCapability } from '../csp-directives';
 import { filterCapabilities } from './capabilities';
+import { sameSiteCookieClause } from './cookie-facts';
 import { NO_ORIGINS, ORIGIN_KINDS, parseOrigins, shown, type OriginPolicy } from './csp/origins';
 import { isPrivateHost, toFetchPolicy, type FetchPolicy } from './fetch-bridge';
 import { sharesHostSite, type Origin } from './origin';
@@ -307,8 +308,8 @@ export function limitHostReach(policy: OriginPolicy, context: NormaliseContext, 
     return dropped ? (Object.freeze(kept) as OriginPolicy) : policy;
 }
 
-// What the warnings say of the host site's cookies.
-const SITE_COOKIES = "a guest request to the host page's site can carry the host site's cookies (SameSite=None ones in Firefox, and with Lax and Strict in WebKit; Chromium sends none, the sandbox's frame is credentialless there)";
+// What the warnings say of the host site's cookies: one sentence, rendered from the engine facts (cookie-facts.ts).
+const SITE_COOKIES = sameSiteCookieClause();
 
 /**
  * The schema: every option of SandboxConfig, in the order its rules run. The warnings come in that order: the values

@@ -8,6 +8,7 @@ import { run } from './run';
 import { api } from './extractors/api';
 import { budgets } from './extractors/budgets';
 import { config } from './extractors/config';
+import { cookieFacts } from './extractors/cookie-facts';
 import { csp } from './extractors/csp';
 import { frames } from './extractors/frames';
 import { lifecycle } from './extractors/lifecycle';
@@ -17,7 +18,7 @@ import { modules } from './extractors/modules';
 import { reasons } from './extractors/reasons';
 import { surface } from './extractors/surface';
 
-export const EXTRACTORS: readonly Extractor[] = [api, budgets, config, csp, frames, lifecycle, limits, modules, reasons, surface];
+export const EXTRACTORS: readonly Extractor[] = [api, budgets, config, cookieFacts, csp, frames, lifecycle, limits, modules, reasons, surface];
 
 export const plugin: Plugin = {
     extractors: {},
