@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { buildGuestDocument, buildWrapperDocument, escapeAttribute, toInlineScriptLiteral } from '@src/lib/frame-documents';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
+import { environmentGate } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from '@src/lib/in-sandbox-files';
 import { rewriteMarkupReferences } from '@src/lib/markup-references';
 import { mimeTypeFor } from '@src/lib/files';
@@ -19,6 +20,16 @@ const typesOf = (paths: string[]) => new Map(paths.map(path => [path, mimeTypeFo
  */
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
+// The bootstraps stand behind the environment gate (S74, environment-check.ts): `gated` is the text the element writes for a
+// body, `ungated` the body of a bootstrap it wrote, after the gate's own text is checked. The cooperative guest's gate stops
+// the document's parser on a refusal; worker mode's frame has no markup to stop.
+const gated = (body: string, stopParsing = true) => environmentGate('parent.parent', stopParsing, body);
+const ungated = (script: string, stopParsing = true) => {
+    const open = gated('', stopParsing).slice(0, -1);
+    expect(script.startsWith(open)).toBe(true);
+    expect(script.endsWith('}')).toBe(true);
+    return script.slice(open.length, -1);
+};
 // The features every bootstrap is given: the default call budget (R3:M-2; docs/API.md, Limits), the egress
 // table's listeners for its mode, and in worker mode the budget of uncaught errors (R5:N-1; egress.ts).
 const FEATURES = (mode: string) => toInlineScriptLiteral({ callBudget: { calls: 1000, bytes: 67108864 }, listeners: bootstrapListeners(mode as EgressMode), ...(mode === 'worker' ? { uncaught: UNCAUGHT_BUDGET } : {}) });
@@ -68,7 +79,7 @@ describe('with no files: the policy is unchanged, and the document differs only 
         expect(policyOf(el)).toBe(DEFAULT_POLICY);
         // blob: only in worker-src
         expect(policyOf(el).split(';').map(d => d.trim()).filter(d => d.includes('blob:'))).toEqual(['worker-src blob:']);
-        const guest = buildGuestDocument({ csp: DEFAULT_POLICY, bootstrapScript: comms(false, 'cooperative') + EMPTY_FILES, content: '<div id="root"></div>' });
+        const guest = buildGuestDocument({ csp: DEFAULT_POLICY, bootstrapScript: gated(comms(false, 'cooperative') + EMPTY_FILES), content: '<div id="root"></div>' });
         expect(wrapperOf(el)).toBe(buildWrapperDocument(guest, ''));
     });
 
@@ -79,7 +90,7 @@ describe('with no files: the policy is unchanged, and the document differs only 
         // in a function whose second argument is the postMessage the allowlist took (R4:M-1)
         const globals = `(${keepOnlyWorkerGlobals.toString()})(this, ${toInlineScriptLiteral(WORKER_GLOBALS)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)})`;
         const source = `(function (g, postToFrame) {${comms(true, 'worker', 'postToFrame')}${EMPTY_FILES}})(this, ${globals});`;
-        const bootstrap = `(${workerBootstrap.toString()})(${JSON.stringify(source).replaceAll('<', '\\u003c')}, "web-sandbox");`; // the Trusted Types policy name (R1:R3-1)
+        const bootstrap = gated(`(${workerBootstrap.toString()})(${JSON.stringify(source).replaceAll('<', '\\u003c')}, "web-sandbox");`, false); // the Trusted Types policy name (R1:R3-1)
         expect(wrapperOf(el)).toBe(buildWrapperDocument(buildGuestDocument({ csp: UNSAFE_POLICY, bootstrapScript: bootstrap, content: '' }), 'allow-scripts'));
     });
 
@@ -156,7 +167,7 @@ describe('the guest document', () => {
 
     it('carries exactly one literal: the snapshot, sorted, as [path, type, base64]', async () => {
         const el = await mount(undefined, { 'b.txt': 'B', 'a/x.svg': '<svg/>', 'c.bin': new Uint8Array([0, 255]) });
-        const script = parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
+        const script = ungated(parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!);
         const call = `(${inSandboxFiles.toString()})(`;
         expect(script.split(call)).toHaveLength(2);
         const literal = script.slice(script.indexOf(call) + call.length, -2);
@@ -169,7 +180,7 @@ describe('the guest document', () => {
 
     it('worker mode puts the same literal into the worker source, not into the frame', async () => {
         const el = await mount({ mode: 'worker' }, { 'w.js': 'self.ok = 1' });
-        const frameScript = parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
+        const frameScript = ungated(parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!, false);
         expect(frameScript.startsWith(`(${workerBootstrap.toString()})(`)).toBe(true);
         const workerSource: string = JSON.parse(frameScript.slice(`(${workerBootstrap.toString()})(`.length, -', "web-sandbox");'.length));
         expect(workerSource).toContain(`(${inSandboxFiles.toString()})(${JSON.stringify([['w.js', 'text/javascript', btoa('self.ok = 1')]])});`);
@@ -256,7 +267,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
     // FILES has one JavaScript file, so the bootstrap also registers the import map (module graph)
     const filesStep = (el: any) => `(${inSandboxImportMap.toString()})((${inSandboxFiles.toString()})(${snapshotLiteral(el)}), ["app.js"], null)`;
     const comms = (mode = 'cooperative') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()}, ${FEATURES(mode)}, ${createSizeOf.toString()}, null);`;
-    const bootstrapScriptOf = (el: HTMLElement) => parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
+    const bootstrapScriptOf = (el: HTMLElement) => ungated(parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!);
 
     it.each([
         ['markup without references', '<p>no files named</p><img src="https://cdn.example/x.png">'],
@@ -266,7 +277,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
         ['a reference inside <template>', '<template><img src="logo.svg"></template>'],
     ])('no match (%s): the guest document is byte for byte the one built without the rewrite', async (_, html) => {
         const el = await mount({ ...SCRIPTS, html }, FILES);
-        const guest = buildGuestDocument({ csp: policyOf(el), bootstrapScript: comms() + `${filesStep(el)};`, content: html });
+        const guest = buildGuestDocument({ csp: policyOf(el), bootstrapScript: gated(comms() + `${filesStep(el)};`), content: html });
         expect(wrapperOf(el)).toBe(buildWrapperDocument(guest, 'allow-scripts'));
         expect(guestDocumentOf(el)).not.toContain(inSandboxMarkup.toString());
     });
@@ -276,7 +287,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
         const el = await mount({ ...SCRIPTS, html }, FILES);
         const parts = rewriteMarkupReferences(html, typesOf(Object.keys(FILES)), NONCE)!;
         expect(parts.filter((_, i) => i % 2 === 1)).toEqual(['logo.svg', 'app.js', 'img/x.svg']);
-        const bootstrap = comms() + `(${inSandboxMarkup.toString()})(${filesStep(el)}, ${toInlineScriptLiteral(parts)});`;
+        const bootstrap = gated(comms() + `(${inSandboxMarkup.toString()})(${filesStep(el)}, ${toInlineScriptLiteral(parts)});`);
         expect(guestDocumentOf(el)).toBe(`<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="${escapeAttribute(policyOf(el))}">${DNS_PREFETCH_OFF}<script>${bootstrap}</script>`);
         expect(wrapperOf(el)).toBe(buildWrapperDocument(guestDocumentOf(el), 'allow-scripts'));
     });
@@ -347,7 +358,7 @@ describe('markup references (PR2): guest markup that names a registered file is 
         // what the guest parser sees after the write: the written markup follows the bootstrap script
         // (any nonce but the host's gives the host's parts; the corpus forges NONCE, which the host never draws)
         const parts = rewriteMarkupReferences(html, typesOf(Object.keys(FILES)), 'f'.repeat(32))!;
-        expect(script!.textContent!.endsWith(`, ${toInlineScriptLiteral(parts)});`)).toBe(true);
+        expect(script!.textContent!.endsWith(`, ${toInlineScriptLiteral(parts)});}`)).toBe(true);
         const written = parse(guest + parts.map((part, i) => (i % 2 === 0 ? part : `blob:null/${i}`)).join(''));
         const [writtenMeta, writtenScript] = securityChildren(written);
         expect(writtenMeta?.getAttribute('content')).toBe(policyOf(el));
@@ -361,7 +372,7 @@ describe('module graph (PR3): one import map, registered by the bootstrap, only 
     const comms = (mode = 'cooperative') => `(${inSandboxScript.toString()})(false, '${mode}', console, ${createBroker.toString()}, ${FEATURES(mode)}, ${createSizeOf.toString()}, null);`;
     const filesCall = (el: any) => `(${inSandboxFiles.toString()})(${toInlineScriptLiteral(el._files.snapshot())})`;
     const mapCall = (el: any, paths: string[], guest: string | null) => `(${inSandboxImportMap.toString()})(${filesCall(el)}, ${toInlineScriptLiteral(paths)}, ${toInlineScriptLiteral(guest)})`;
-    const bootstrapScriptOf = (el: HTMLElement) => parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
+    const bootstrapScriptOf = (el: HTMLElement) => ungated(parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!);
     // the arguments of the bootstrap's last call: [files step, parts]
     const writtenParts = (el: HTMLElement): string[] => {
         const script = bootstrapScriptOf(el);
@@ -372,7 +383,7 @@ describe('module graph (PR3): one import map, registered by the bootstrap, only 
     it('no JavaScript file: no import map, and a guest import map stays in the markup as written (as before)', async () => {
         const html = `${GUEST_MAP}<p>x</p>`;
         const el = await mount({ ...SCRIPTS, html }, { 'style.css': 'p {}', 'data.json': '{}' });
-        const guest = buildGuestDocument({ csp: policyOf(el), bootstrapScript: comms() + `${filesCall(el)};`, content: html });
+        const guest = buildGuestDocument({ csp: policyOf(el), bootstrapScript: gated(comms() + `${filesCall(el)};`), content: html });
         expect(guestDocumentOf(el)).toBe(guest);
         expect(guestDocumentOf(el)).not.toContain('inSandboxImportMap');
     });
@@ -389,7 +400,7 @@ describe('module graph (PR3): one import map, registered by the bootstrap, only 
         const el = await mount({ ...SCRIPTS, html }, {
             'b.js': "import './a.mjs';", 'a.mjs': 'export {}', 'x.txt': { content: 'import "./a.mjs"', type: 'application/javascript' }, 'style.css': '', 'n.js': { content: '', type: 'text/plain' },
         });
-        const guest = buildGuestDocument({ csp: policyOf(el), bootstrapScript: comms() + `${mapCall(el, ['a.mjs', 'b.js', 'x.txt'], null)};`, content: html });
+        const guest = buildGuestDocument({ csp: policyOf(el), bootstrapScript: gated(comms() + `${mapCall(el, ['a.mjs', 'b.js', 'x.txt'], null)};`), content: html });
         expect(guestDocumentOf(el)).toBe(guest);
     });
 
@@ -438,7 +449,7 @@ describe('module graph (PR3): one import map, registered by the bootstrap, only 
 
     it('worker mode: no import map (import maps do not apply to workers); the snapshot still carries the rewrite', async () => {
         const el = await mount({ mode: 'worker', html: '<script type="module">import "./a.js"</script>' }, { 'm.js': "import './a.js';" });
-        const frameScript = parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
+        const frameScript = ungated(parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!, false);
         const workerSource: string = JSON.parse(frameScript.slice(`(${workerBootstrap.toString()})(`.length, -', "web-sandbox");'.length));
         expect(workerSource).not.toContain('importmap');
         expect(workerSource).toContain(`${filesCall(el)};`);
@@ -482,7 +493,7 @@ describe('module graph (PR3): one import map, registered by the bootstrap, only 
 describe('CSS references and srcset (PR4)', () => {
     const SCRIPTS = { capabilities: ['allow-scripts'] };
     const FILES = { 'logo.svg': '<svg/>', 'style.css': '@import "base.css"; a { b: url(logo.svg) }', 'base.css': 'p { color: red }' };
-    const bootstrapScriptOf = (el: HTMLElement) => parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!;
+    const bootstrapScriptOf = (el: HTMLElement) => ungated(parse(guestDocumentOf(el)).head.querySelector('script')!.textContent!);
 
     it('the snapshot literal carries each stylesheet after the files it names, with its slots; the policy is what the file types alone give', async () => {
         const el = await mount({ ...SCRIPTS, html: '<p>x</p>' }, FILES);
@@ -544,7 +555,7 @@ describe('CSS references and srcset (PR4)', () => {
 
         // what the guest parser sees after the write, with each slot filled as the bootstrap fills it
         const parts = rewriteMarkupReferences(html, typesOf([...Object.keys(FILES), 'evil.css']), 'f'.repeat(32))!;
-        expect(script!.textContent!.endsWith(`, ${toInlineScriptLiteral(parts)});`)).toBe(true);
+        expect(script!.textContent!.endsWith(`, ${toInlineScriptLiteral(parts)});}`)).toBe(true);
         const filled = parts.map((part, i) => (i % 2 === 0 ? part : `blob:null/${i}`)).join('');
         const written = parse(guest + filled);
         const [writtenMeta, writtenScript] = securityChildren(written);

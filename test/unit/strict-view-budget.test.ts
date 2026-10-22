@@ -5,6 +5,7 @@ import { hostLine, reasonText } from '@src/lib/reasons';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { vi } from 'vitest';
+import { runBootstrap } from './sandbox-environment';
 
 /**
  * The strict view's findings of R5 (unit): the library's own logic where no browser decides. The engines' side is in test/e2e/strict-view-budget.spec.ts.
@@ -420,7 +421,7 @@ describe('M-4 (class P): one view loads at most VIEW_MAX_DISTINCT_URLS distinct 
             Object.assign(globalThis, real);
             stopTimers = () => {};
         };
-        new Function(viewBootstrapSource(options))();
+        runBootstrap(viewBootstrapSource(options));
         const logic = new MessageChannel(), view = new MessageChannel();
         const html = '<div id="a"></div><div id="b"></div>';
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html, allowAnimations: true, origins: { images: ['https://a.example'] } }, source: window, ports: [logic.port1, view.port1] }));

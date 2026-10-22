@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { inSandboxView, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_STILL_STYLE, viewBootstrapSource, type RenderSwitches } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
+import { runBootstrap } from './sandbox-environment';
 
 /**
  * The strict view's two switches, `allowAnimations` (default true) and `allowAutoplay` (default false), where the
@@ -108,7 +109,7 @@ describe('the view bootstrap: the switches from INIT_VIEW', () => {
             onerror: unknown = null;
             postMessage() {}
         };
-        new Function(viewBootstrapSource(VIEW_OPTIONS))();
+        runBootstrap(viewBootstrapSource(VIEW_OPTIONS));
         const logic = new MessageChannel(), view = new MessageChannel();
         const toHost: any[] = [];
         view.port2.onmessage = (event) => toHost.push(event.data);

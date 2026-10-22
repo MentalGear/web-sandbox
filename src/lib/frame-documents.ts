@@ -34,6 +34,10 @@ export const WRAPPER_CSP = "frame-src 'none'";
  * and WebKit baseURI and import.meta.url read about:blank; `<img src="x.png">` sends nothing.
  * Relative references to REGISTERED files are resolved by the host before the guest exists
  * (markup-references.ts); every other relative URL still fails closed here.
+ *
+ * The host page's own `base-uri` can refuse this element (the frames inherit its policy), which leaves the host page's
+ * URL as the guest's base. Every bootstrap reads its base URL first (environment-check.ts, S74) and stays inert on
+ * anything but this value; the element then ends the sandbox.
  */
 export const WRAPPER_BASE = 'about:blank';
 
@@ -187,10 +191,12 @@ export const BRIDGE_FRAME_SANDBOX = 'allow-scripts';
 /**
  * Builds the fetch bridge's frame document (BD1:ISO-1; bridge-frame.ts): its policy (bridgeFramePolicy), no referrer,
  * and the library's hashed bootstrap in a script element with the bridge's role (`role`, in-sandbox-view.ts,
- * BRIDGE_ROLE), which runs the bridge's frame there. Nothing else: no guest byte, no markup, no style.
+ * BRIDGE_ROLE), which runs the bridge's frame there. Nothing else: no guest byte, no markup, no style. Its base is the
+ * wrapper's (WRAPPER_BASE): a srcdoc takes the host page's URL as its base otherwise, and the bootstrap's environment
+ * check (environment-check.ts, S74) reads about:blank there as in every document of the library's.
  */
 export function buildBridgeDocument(csp: string, bootstrap: string, role: string): string {
     if (!csp.startsWith(BRIDGE_POLICY_START)) throw new Error('[Sandbox] the bridge frame document needs the bridge frame policy');
     assertHashableScript(bootstrap);
-    return `${BRIDGE_PREFIX}${escapeAttribute(csp.slice(BRIDGE_POLICY_START.length))}"><meta name="referrer" content="${FRAME_REFERRER_POLICY}"><script data-role="${escapeAttribute(role)}">${bootstrap}</script></head><body></body></html>`;
+    return `${BRIDGE_PREFIX}${escapeAttribute(csp.slice(BRIDGE_POLICY_START.length))}"><meta name="referrer" content="${FRAME_REFERRER_POLICY}"><base href="${WRAPPER_BASE}"><script data-role="${escapeAttribute(role)}">${bootstrap}</script></head><body></body></html>`;
 }

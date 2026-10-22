@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { inStrictWorker, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
+import { runBootstrap } from './sandbox-environment';
 
 /**
  * S75 (class B, a browser decision re-derived): which of the Worker object's errors are the strict entry's own
@@ -32,7 +33,7 @@ describe("S75: the view tells the entry's errors from later ones by the marker e
             transfer: MessagePort[] = [];
             postMessage(_message: unknown, transfer: MessagePort[]) { this.transfer = transfer; }
         };
-        new Function(viewBootstrapSource(VIEW_OPTIONS))();
+        runBootstrap(viewBootstrapSource(VIEW_OPTIONS));
         const logic = new MessageChannel(), view = new MessageChannel();
         const toHost: any[] = [];
         view.port2.onmessage = (event) => toHost.push(event.data);
@@ -111,7 +112,7 @@ describe("S75: the view tells the entry's errors from later ones by the marker e
             transfer: MessagePort[] = [];
             postMessage(_message: unknown, transfer: MessagePort[]) { this.transfer = transfer; }
         };
-        new Function(viewBootstrapSource(VIEW_OPTIONS))();
+        runBootstrap(viewBootstrapSource(VIEW_OPTIONS));
         const logic = new MessageChannel(), view = new MessageChannel();
         const toHost: any[] = [];
         view.port2.onmessage = (event) => toHost.push(event.data);

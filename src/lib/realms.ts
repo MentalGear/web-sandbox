@@ -61,7 +61,7 @@ export const REALMS = {
         summary: "Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code.",
         guestCode: false,
         builder: 'src/lib/in-sandbox-view.ts, viewBootstrapSource',
-        channels: ['view-init', 'view-port', 'render-port', 'worker'],
+        channels: ['announcement', 'view-init', 'view-port', 'render-port', 'worker'],
         egress: 'view',
     },
     'strict-worker': {
@@ -75,7 +75,7 @@ export const REALMS = {
         summary: "The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it.",
         guestCode: false,
         builder: 'src/lib/in-sandbox-view.ts, viewBootstrapSource',
-        channels: ['bridge-init', 'bridge-port'],
+        channels: ['announcement', 'bridge-init', 'bridge-port'],
         egress: 'bridge-frame',
     },
 } as const satisfies Record<string, RealmRow>;
@@ -122,6 +122,7 @@ export const STRINGIFIED = {
     sanitizeRender: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     viewBudget: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     cssLoadBound: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
+    checkSandboxEnvironment: { module: 'src/lib/environment-check.ts', realms: ['cooperative', 'worker-frame', 'view', 'bridge-frame'], capture: RUNS_FIRST, readOnce: true, typeofRead: true },
     inBridgeFrame: { module: 'src/lib/in-bridge-frame.ts', realms: ['bridge-frame'], capture: NO_GUEST, readOnce: true, typeofRead: true },
 } as const satisfies Record<string, StringifiedRow>;
 
