@@ -252,7 +252,8 @@ them); the sandbox logs a warning for each one enabled. A popup, for example, is
 governs, so its URL is an exfiltration channel ([research 13](docs/research/13_popup_exfiltration/README.md)). Without
 `allow-popups` guest code opens no window, but in cooperative mode the user still can: a Ctrl-, Shift- or
 middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox, as for any sandboxed
-frame (strict mode's links are inert). `allow-forms` is among them because a submission opened in a new tab that way
+frame (strict mode's links are inert). On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups`
+lets the guest open has no opener: the guest's `window.open()` returns `null`, though the page opens. `allow-forms` is among them because a submission opened in a new tab that way
 is not checked against `form-action` in Chromium. Strict mode's view always has `allow-scripts allow-forms`: no guest
 script runs there, and it cancels every submit.
 

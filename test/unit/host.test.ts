@@ -109,6 +109,18 @@ describe('the guest policy built by the element: `origins` (ADR-007)', () => {
       el.remove();
     }
   });
+
+  it("the wrapper iframe is credentialless in every mode (S74): Chromium gives it and what it nests an empty cookie jar; the other engines ignore the attribute", async () => {
+    for (const mode of ['strict', 'cooperative', 'worker']) {
+      const el = await mount({ mode });
+      el.reset();
+      const outer = el.shadowRoot!.querySelector('iframe')!;
+      expect(outer.hasAttribute('credentialless'), mode).toBe(true);
+      expect(outer.getAttribute('credentialless'), mode).toBe('');
+      expect(outer.getAttribute('referrerpolicy'), mode).toBe('no-referrer');
+      el.remove();
+    }
+  });
 });
 
 describe('the scriptUnsafe guard rail (backlog S4)', () => {

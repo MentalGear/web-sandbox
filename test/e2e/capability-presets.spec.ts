@@ -64,7 +64,7 @@ test('alert() shows no dialog without allow-modals; with the explicit opt-in it 
     expect(dialogs).toBe(1);
 });
 
-test('allow-popups-to-escape-sandbox is dropped: a popup the guest opens keeps the sandbox', async ({ sandbox, page, context }) => {
+test('allow-popups-to-escape-sandbox is dropped: a popup the guest opens keeps the sandbox', async ({ sandbox, page, context, browserName }) => {
     const preset = fromPreset('allow-popups-escape');
     const warnings = dropWarnings(page);
     const target = `${ORIGIN}/test/e2e/harness.html?popup`;
@@ -75,7 +75,9 @@ test('allow-popups-to-escape-sandbox is dropped: a popup the guest opens keeps t
 
     const popupPromise = context.waitForEvent('page');
     const logs = await sandbox.runUntilDone(preset.aimedAt(target));
-    expect(logs.find(l => l.startsWith('PWN_INFO: Popup opened'))).toBeDefined();
+    // Chromium: the wrapper frame is credentialless, so its popups open without an opener and window.open() returns null
+    // (S74); the popup is the evidence there, and is checked below
+    expect(logs.find(l => l.startsWith(browserName === 'chromium' ? 'PWN_INFO: window.open() returned no window' : 'PWN_INFO: Popup opened'))).toBeDefined();
     const popup = await popupPromise;
     await popup.waitForURL(target);
     expect(await popup.evaluate(() => window.origin)).toBe('null');

@@ -32,7 +32,7 @@ test('13.1 allow-popups passed as a regular capability is dropped, so no popup l
     expect(warnings.join('\n')).toContain('"allow-popups" is not allowed in "capabilities"');
 });
 
-test('13.2 the explicit unsafeCapabilities opt-in still allows popups — and warns', async ({ sandbox, context, page }) => {
+test('13.2 the explicit unsafeCapabilities opt-in still allows popups — and warns', async ({ sandbox, context, page, browserName }) => {
     let popups = 0;
     context.on('page', () => popups++);
     const warnings: string[] = [];
@@ -42,7 +42,9 @@ test('13.2 the explicit unsafeCapabilities opt-in still allows popups — and wa
     await sandbox.run(openPopup(recorder.blocked));
 
     // Documents the accepted risk of the opt-in: the URL is the exfiltration channel.
-    expect(await sandbox.waitForLog('POPUP ')).toBe('POPUP opened');
+    // Chromium: the wrapper frame is credentialless, so the popup opens without an opener and window.open() returns null
+    // (S74); the page count and the listener below are the evidence there
+    expect(await sandbox.waitForLog('POPUP ')).toBe(browserName === 'chromium' ? 'POPUP refused' : 'POPUP opened');
     await recorder.waitFor('blocked', '/?leak=guest-secret');
     await expect.poll(() => popups).toBe(1);
     expect(warnings.join('\n')).toContain('unsafe capability "allow-popups" is enabled');

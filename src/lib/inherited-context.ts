@@ -143,10 +143,10 @@ export const INHERITED_CONTEXT = {
     cookies: {
         channel: "The host site's cookies: a request of a sandbox document is made for the host page's site, so a cookie the browser attaches by site (SameSite=None; on some engines Lax and Strict) rides on it",
         inheritedBy: "every mode: the guest's own requests (`fetch`, subresources, WebSocket) to a listed origin; the fetch bridge sends none",
-        how: "Documented, with a warning for an `origins` entry on the host page's site (every mode, once per kind); the fetch bridge (`credentials: 'omit'`) is the way to reach an API that knows the user",
-        by: ['warn', 'documented'],
+        how: "The wrapper iframe is `credentialless` in every mode: on Chromium it, and everything nested in it, has an empty cookie jar, so no request of the sandbox carries a cookie (its popups open without an opener). Firefox and WebKit ignore the attribute: an `origins` entry on the host page's site warns (every mode, once per kind), and the fetch bridge (`credentials: 'omit'`) is the way to reach an API that knows the user",
+        by: ['credentialless', 'warn', 'documented'],
         engines: ALL,
-        tests: ['test/unit/config-schema.test.ts', 'test/unit/host-origin-wiring.test.ts', 'test/e2e/fetch-bridge.spec.ts'],
+        tests: ['test/e2e/cookies.spec.ts', 'test/unit/host.test.ts', 'test/unit/config-schema.test.ts', 'test/unit/host-origin-wiring.test.ts', 'test/e2e/fetch-bridge.spec.ts'],
     },
     serviceWorker: {
         channel: "The host page's Service Worker (a cache-first one answers from the app's cache)",

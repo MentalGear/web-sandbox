@@ -51,6 +51,25 @@ export const WRAPPER_BASE = 'about:blank';
 export const FRAME_REFERRER_POLICY = 'no-referrer';
 
 /**
+ * The attribute that makes the wrapper iframe credentialless (S74, class A, `INHERITED_CONTEXT.cookies`). Chromium loads
+ * a credentialless frame, and every frame and worker nested in it, with an empty, ephemeral cookie jar and storage: no
+ * request of the sandbox carries a cookie of the host site's or of the site it is made to, whatever its SameSite value,
+ * its kind (fetch, `no-cors`, an image, a stylesheet, a WebSocket) or its destination. Firefox and WebKit have no such
+ * attribute and ignore it (cookie-facts.ts says what they send). The frame's popups open `noopener`: the guest's
+ * `window.open()` returns null, and the page it opens cannot reach back to the guest.
+ */
+export const FRAME_CREDENTIALLESS = 'credentialless';
+
+/**
+ * The attributes both wrapper iframes (strict, and cooperative or worker mode) carry besides `sandbox` and the
+ * permissions: the referrer policy (FRAME_REFERRER_POLICY) and FRAME_CREDENTIALLESS.
+ */
+export function setWrapperFrameIsolation(iframe: HTMLIFrameElement): void {
+    iframe.setAttribute('referrerpolicy', FRAME_REFERRER_POLICY);
+    iframe.setAttribute(FRAME_CREDENTIALLESS, '');
+}
+
+/**
  * Escapes a value for use inside a double-quoted HTML attribute.
  */
 export function escapeAttribute(value: string): string {

@@ -1908,7 +1908,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#unsafeCapabilities:member",
-              "docComment": "/**\n * Capabilities that act outside the frame, from {@link UNSAFE_CAPABILITIES} (popups, modals, downloads, forms,\n * presentation, pointer lock, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;\n * dropped with a warning in strict mode.\n *\n * @defaultValue `[]`\n */\n",
+              "docComment": "/**\n * Capabilities that act outside the frame, from {@link UNSAFE_CAPABILITIES} (popups, modals, downloads, forms,\n * presentation, pointer lock, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;\n * dropped with a warning in strict mode.\n *\n * @remarks\n *\n * On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups` lets the guest open has no\n * opener: the guest's `window.open()` returns `null`, though the page opens.\n *\n * @defaultValue `[]`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
