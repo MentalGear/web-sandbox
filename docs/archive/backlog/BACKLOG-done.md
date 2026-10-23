@@ -1934,7 +1934,7 @@ before its keys are listed). A kind outside the allow-list measures `Infinity`, 
 arrays included. Tests: `test/unit/measure-delivered.test.ts` (a property over every supported kind, alone and nested;
 the string-valued getters of `Blob` and `File` enumerated), `test/unit/element-events.test.ts` (the bounded walk) and
 `test/e2e/exact-budget.spec.ts` (the property on each engine's clone and message channel; a File name, a Blob type and a
-sparse array against the log, call and result budgets). P2-LIM-3 (the fetch result's head) is not part of this fix: it is
+sparse array against the log, call and result budgets). BD2:LIM-3 (the fetch result's head) is not part of this fix: it is
 in [S82](../../BACKLOG.md#s82).
 
 ### <a id="s78"></a>S78 · A tagged rejection reason evades the uncaught-characters budget on Firefox — ✅ **done** (P2 · S · **high**)
