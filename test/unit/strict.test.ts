@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { viewBootstrapHash, viewBootstrapText } from '@src/lib/in-sandbox-view';
+import { STRICT_WORKER_GLOBALS, WORKER_GLOBALS } from '@src/lib/worker-globals';
 
 /**
  * Strict mode on the host (ADR-005): the documents the element builds, read back from the wrapper's srcdoc.
@@ -130,6 +131,14 @@ describe('review C2: the worker source runs the entry in its own scope, after th
         const source: string = el._strictInit?.workerSource ?? el._getStrictWorkerSource([], 'function Worker() {} var x = 1;');
         expect(source.startsWith('(function (g) {(function assertEntryScoped(')).toBe(true);
         expect(source).toMatch(/\}\)\(this\);\n\(function \(\) \{\nfunction Worker\(\) \{\} var x = 1;\n\}\)\.call\(this\);\n__sandboxEntryRan_[0-9a-f]{32}\(\);\n$/);
+    });
+
+    it("the allowlist the strict worker keeps is STRICT_WORKER_GLOBALS: no importScripts (S74)", async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await mount({ mode: 'strict' });
+        const source: string = el._getStrictWorkerSource([], 'void 0');
+        expect(source).toContain(`(g, ${JSON.stringify(STRICT_WORKER_GLOBALS)}, `);
+        expect(source).not.toContain(`(g, ${JSON.stringify(WORKER_GLOBALS)}, `);
     });
 
     it('broad review ST4: the marker the line after the entry calls has a name drawn per build, which the prelude defines', async () => {

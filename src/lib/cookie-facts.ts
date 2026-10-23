@@ -4,11 +4,13 @@
  * README and the tables of docs/API.md and docs/THREAT-MODEL.md are rendered from it, so no engine is named anywhere else:
  * `test/unit/cookie-facts.test.ts` fails on a document that says what an engine sends outside a generated region.
  *
- * What a row says: the SameSite values of the cookies an engine attaches to a request that a sandbox document or its
- * worker makes (a `fetch`, a `no-cors` request, an image, a stylesheet, a WebSocket handshake) to a listed origin on the
- * host page's site (`sameSite`) or on another site (`crossSite`). The wrapper iframe is `credentialless`
- * (frame-documents.ts), which only Chromium honours. The fetch bridge sends no cookie in any engine
- * (`credentials: 'omit'`), and is not in the table.
+ * What a row says: the SameSite values of the cookies an engine attaches to a request of a sandbox document or its worker
+ * that the library cannot strip (a WebSocket handshake; a load of the guest's markup or CSS: an image, a stylesheet, a
+ * font, media; in cooperative mode also `EventSource` and `sendBeacon()`) to a listed origin on the host page's site
+ * (`sameSite`) or on another site (`crossSite`). The wrapper iframe is `credentialless` (frame-documents.ts), which only
+ * Chromium honours. `fetch()` and `XMLHttpRequest` carry no cookie in any engine: the bootstrap's request gate sends
+ * every fetch with `credentials: 'omit'` and keeps `withCredentials` false (in-sandbox-script.ts, S74). The fetch bridge
+ * sends none either (`credentials: 'omit'`). Neither is in the table.
  *
  * Internal: not exported from the package.
  */
@@ -54,14 +56,14 @@ export const COOKIE_ENGINE_FACTS = {
         credentialless: false,
         sends: { sameSite: ['None'], crossSite: ['None'] },
         protectedBy: { configuration: "Total Cookie Protection, Firefox's default", measured: true, sends: { sameSite: [], crossSite: [] } },
-        measured: "S74 board, 2026-10-21, Playwright's Firefox (cookieBehavior 4): a SameSite=None cookie in every mode, Lax and Strict none; with cookieBehavior 5 none",
+        measured: "S74 board, 2026-10-21, Playwright's Firefox (cookieBehavior 4): a SameSite=None cookie in every mode, Lax and Strict none; with cookieBehavior 5 none. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23",
     },
     webkit: {
         name: 'WebKit',
         credentialless: false,
         sends: { sameSite: ['None', 'Lax', 'Strict'], crossSite: ['None'] },
         protectedBy: { configuration: 'Safari, which blocks third-party cookies', measured: false, sends: { sameSite: ['None', 'Lax', 'Strict'], crossSite: [] } },
-        measured: "S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode",
+        measured: "S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23",
     },
 } as const satisfies Record<CookieEngine, CookieEngineFacts>;
 
@@ -93,8 +95,8 @@ export const engineClauses = (reach: Reach, code?: (text: string) => string, cre
 
 /** What the warning says of the host site's cookies on a request to an origin on the host page's site. */
 export const sameSiteCookieClause = (code?: (text: string) => string): string =>
-    `a guest request to the host page's site can carry the host site's cookies (${engineClauses('sameSite', code)})`;
+    `a guest's WebSocket handshake, or a load of its markup or CSS, to the host page's site can carry the host site's cookies (${engineClauses('sameSite', code)}; fetch() and XMLHttpRequest carry none)`;
 
 /** The sentence the README states: both kinds of origin, every engine. */
 export const cookieSentence = (code: (text: string) => string): string =>
-    `A request of the sandbox to an origin on the host page's site carries these cookies: ${engineClauses('sameSite', code)}. To an origin on another site it carries that site's own cookies: ${engineClauses('crossSite', code, false)}. The fetch bridge sends none in any engine.`;
+    `${code('fetch()')} and ${code('XMLHttpRequest')} of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (a WebSocket handshake, or a load of the guest's markup or CSS) to an origin on the host page's site carries these cookies: ${engineClauses('sameSite', code)}. To an origin on another site it carries that site's own cookies: ${engineClauses('crossSite', code, false)}. The fetch bridge sends none in any engine.`;

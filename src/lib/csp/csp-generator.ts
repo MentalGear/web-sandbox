@@ -154,8 +154,17 @@ const fetchDirectives = (input: PolicyInput): Directive[] => [
     ['img-src', sourcesOf(input, 'images')],
     ['font-src', sourcesOf(input, 'fonts')],
     ['media-src', sourcesOf(input, 'media')],
-    ['connect-src', sourcesOf(input, 'connect')],
+    ['connect-src', connectSources(input)],
 ];
+
+/**
+ * The sources of the policy's connect-src, exactly as both templates write them: the listed connect origins, then `blob:`
+ * where the build's files need it. The guest bootstrap's request gate (in-sandbox-script.ts, `features.connect`) admits
+ * these and nothing else, so the gate and the browser's policy read one list (S74).
+ */
+export function connectSources(input: PolicyInput): string[] {
+    return sourcesOf(input, 'connect');
+}
 
 /** A kind's origins, each checked against ORIGIN_PATTERN again (a cast cannot carry a source in), then blob: if its files need it. */
 function sourcesOf(input: PolicyInput, kind: OriginKind): string[] {

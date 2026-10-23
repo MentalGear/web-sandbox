@@ -4,7 +4,8 @@
  * The guest bootstrap (in-sandbox-script.ts) listens for securitypolicyviolation before any guest code
  * runs and forwards each one over the port as a VIOLATION frame; the host turns it into a 'violation'
  * event on the element. A <meta> policy cannot use report-uri / report-to (S7), so this is the only
- * reporting route.
+ * reporting route. The bootstrap's request gate (S74) reports the fetch(), XMLHttpRequest and WebSocket requests it
+ * refuses itself, as VIOLATION frames of the same shape on every engine, marked by their sourceFile (GATE_SOURCE_FILE).
  *
  * What a report is worth: every field comes from the guest's realm. The guest's end of the port never reaches guest
  * code (CAPTURE_POINT, ADR-002#the-channel), but the bootstrap shares its realm with guest code, which can bend what
@@ -20,9 +21,14 @@
  *
  * @remarks
  * A report is evidence that the guest attempted something the policy refused, never a host fact: guest code can suppress
- * its own reports, a frame the guest creates reports to itself, and worker reports depend on the engine (WebKit raises
- * none in workers). At most {@link VIOLATION_EVENT_LIMIT} events per environment; in strict mode per `source`, and for the
- * view per directive, so refused loads of one kind never hide a report of another. See ADR-005.
+ * its own reports, and a frame the guest creates reports to itself. A `fetch()`, `XMLHttpRequest` or `WebSocket` request
+ * of the guest's realm to an origin `origins.connect` does not list is refused by the library's request gate before the
+ * browser sees it, and reported by the gate in every mode and on every engine, with the same fields: `directive`
+ * `'connect-src'`, `blockedURI` the URL without credentials or fragment, `sourceFile` `'web-sandbox:request-gate'`, no
+ * line or column (in strict mode `source` `'logic'`). Reports the browser raises itself depend on the engine in workers
+ * (WebKit raises none there), so what remains of them there, such as a redirect the browser refuses, is per engine. At
+ * most {@link VIOLATION_EVENT_LIMIT} events per environment; in strict mode per `source`, and for the view per directive,
+ * so refused loads of one kind never hide a report of another. See ADR-005.
  */
 export interface SandboxViolation {
     /** The effective directive that refused the load, e.g. `'connect-src'` or `'img-src'`. */
@@ -34,9 +40,10 @@ export interface SandboxViolation {
      */
     blockedURI: string;
     /**
-     * Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like). At most 2048
-     * characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
-     * `eval` or template sink.
+     * Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like), or
+     * `'web-sandbox:request-gate'` for a request the library's request gate refused. At most 2048 characters.
+     * Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template
+     * sink.
      */
     sourceFile?: string;
     /** The line of the refused code, a positive integer, when the browser gives one. */
@@ -46,9 +53,9 @@ export interface SandboxViolation {
     /**
      * Strict mode only (ADR-005): which document's report this is, set by the element from the port it arrived on, never
      * read from the report. `'view'` is the view document, which runs no guest code, so its reports are the library's own
-     * and complete up to the cap. `'logic'` is the worker, whose reports guest code can forge or suppress like any
-     * cooperative-mode report, and which depend on the engine (WebKit raises none in workers; Firefox raises the worker's
-     * `importScripts()` refusals in the view, so those arrive as `'view'`).
+     * and complete up to the cap. `'logic'` is the worker: the request gate's reports, the same on every engine, and the
+     * browser's own worker reports, which guest code can forge or suppress like any cooperative-mode report and which
+     * depend on the engine (WebKit raises none in workers).
      */
     source?: 'view' | 'logic';
 }
@@ -70,6 +77,12 @@ export const VIOLATION_DIRECTIVES: readonly string[] = [
     'img-src', 'font-src', 'connect-src', 'media-src', 'object-src', 'frame-src', 'child-src', 'worker-src',
     'manifest-src', 'base-uri', 'form-action', 'frame-ancestors',
 ];
+
+/**
+ * The `sourceFile` of a report of the request gate (in-sandbox-script.ts): a request of the guest's realm that the gate
+ * refused, before the browser saw it. Not a URL, so no report of the browser's carries it.
+ */
+export const GATE_SOURCE_FILE = 'web-sandbox:request-gate';
 
 /** Longest string of a report the host keeps (blockedURI, sourceFile); a longer one is cut on receipt. */
 export const VIOLATION_MAX_STRING = 2048;

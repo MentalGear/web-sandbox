@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
+import { keepOnlyWorkerGlobals, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from './worker-globals';
 
 /**
  * The worker globals allowlist (VR:V1), on a stand-in global shaped like a worker's
@@ -55,5 +55,13 @@ describe('V1: the worker keeps only the allowlisted globals', () => {
         const listed = [...WORKER_GLOBALS, ...WORKER_NAVIGATOR_MEMBERS.map(name => `navigator.${name}`)];
         expect(NETWORK.filter(name => listed.includes(name))).toEqual(['fetch', 'XMLHttpRequest', 'WebSocket', 'importScripts']);
         expect(new Set(WORKER_GLOBALS).size).toBe(WORKER_GLOBALS.length);
+    });
+
+    it("strict mode's list is the same without importScripts (its script-src is the view's hash, so importScripts() could load nothing), and the worker then has none", () => {
+        expect(STRICT_WORKER_GLOBALS).toEqual(WORKER_GLOBALS.filter(name => name !== 'importScripts'));
+        const { g, scope } = standInWorker();
+        new Function(`return (${keepOnlyWorkerGlobals.toString()})`)()(g, STRICT_WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS);
+        expect(Object.getOwnPropertyNames(scope).sort()).toEqual(['constructor', 'fetch', 'navigator', 'setTimeout']);
+        expect('importScripts' in g).toBe(false);
     });
 });
