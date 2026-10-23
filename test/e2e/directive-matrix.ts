@@ -136,12 +136,19 @@ export const DIRECTIVE_CASES = {
 /** Headers of the page that reach the sandbox besides the policy list. */
 export const HEADER_CASES = [
     { header: 'cross-origin-embedder-policy', value: 'require-corp', row: 'coep', outcome: works(), engines: { webkit: ends('workerRefused') }, note: "WebKit refuses the view's blob: worker under require-corp" },
-    { header: 'cross-origin-embedder-policy', value: 'credentialless', row: 'coep', outcome: works() },
-    { header: 'cross-origin-opener-policy', value: 'same-origin', row: 'coep', outcome: works() },
+    { header: 'cross-origin-embedder-policy', value: 'credentialless', row: 'coep', outcome: works(), note: 'alone it does not make the page cross-origin isolated' },
+    { header: 'cross-origin-opener-policy', value: 'same-origin', row: 'coep', outcome: works(), note: 'alone it does not make the page cross-origin isolated' },
+    // COOP and COEP together can make the host page cross-origin isolated, which is not supported on any engine
+    // (docs/API.md#host-page-policy): the element refuses to build on an isolated host page (host.ts, `_buildRefusal`), before
+    // any frame exists, with `environmentIsolated`. The outcome follows the page's isolation, never the engine: the spec reads
+    // `crossOriginIsolated` of the page and requires the sandbox to end exactly when it is true. Which pairs isolate the page is
+    // the engine's (observed): COOP with `require-corp` everywhere; with `credentialless` in Chromium and Firefox, not in WebKit.
+    { header: 'cross-origin-embedder-policy', value: 'require-corp', also: { 'cross-origin-opener-policy': 'same-origin' }, row: 'coep', outcome: ends('environmentIsolated'), note: 'with COOP same-origin: the page is cross-origin isolated on every engine' },
+    { header: 'cross-origin-embedder-policy', value: 'credentialless', also: { 'cross-origin-opener-policy': 'same-origin' }, row: 'coep', outcome: ends('environmentIsolated'), engines: { webkit: works() }, note: 'with COOP same-origin: isolated in Chromium and Firefox; WebKit does not isolate a page under credentialless (observed), so the sandbox works there' },
     { header: 'referrer-policy', value: 'unsafe-url', row: 'referrer', outcome: works(), note: 'the frames carry their own no-referrer' },
     { header: 'referrer-policy', value: 'no-referrer', row: 'referrer', outcome: works() },
     { header: 'permissions-policy', value: 'fullscreen=(), clipboard-write=(), autoplay=()', row: 'permissionsPolicy', outcome: works() },
-] as const satisfies readonly (MatrixCase & { header: 'cross-origin-embedder-policy' | 'cross-origin-opener-policy' | 'referrer-policy' | 'permissions-policy' })[];
+] as const satisfies readonly (MatrixCase & { header: 'cross-origin-embedder-policy' | 'cross-origin-opener-policy' | 'referrer-policy' | 'permissions-policy'; also?: { readonly 'cross-origin-opener-policy': 'same-origin' } })[];
 
 /** The outcome of a case on an engine. */
 export const outcomeOn = (matrixCase: MatrixCase, engine: MatrixEngine): Outcome => matrixCase.engines?.[engine] ?? matrixCase.outcome;

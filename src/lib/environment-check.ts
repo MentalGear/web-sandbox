@@ -2,8 +2,8 @@
  * The environment check (S74, class B): the first statement of every bootstrap that runs inside a sandbox document
  * (the hashed view and bridge bootstrap, the cooperative guest's, worker mode's frame's) confirms that the document is
  * the one the library built. The library predicts three facts of its documents (the wrapper's inert base URL, the frames'
- * opaque origin, the srcdoc load); the host page's policy and the browser decide them. A bootstrap that finds one
- * different stays inert: it registers nothing, runs no guest code, tells the host page (a portless refusal, below) and
+ * opaque origin, the srcdoc load) and requires a fourth (the document is not cross-origin isolated); the host page's policy
+ * and the browser decide them. A bootstrap that finds one different stays inert: it registers nothing, runs no guest code, tells the host page (a portless refusal, below) and
  * the element ends the sandbox with the row's reason. A copy of the bootstrap anywhere else (the host page, a frame
  * the library did not build) finds the origin or the URL different and does nothing.
  *
@@ -46,6 +46,12 @@ export const ENVIRONMENT_CHECKS = {
         expected: 'about:blank',
         reason: 'environmentBase',
     },
+    isolated: {
+        checks: "whether the document is cross-origin isolated (`crossOriginIsolated`, read as `=== true`)",
+        why: "a guest never runs cross-origin isolated (owner decision, 2026-10-23): isolation unlocks `SharedArrayBuffer`, precise timers and other powers the library's policies do not account for, and the host page's COOP and COEP headers are what make it isolated (whether its opaque-origin frames read isolated is the engine's), so a host page that sets both is not one a sandbox runs in. The element reads the same value of the host page before it creates a frame (host.ts, `_buildRefusal`): the outcome is the same on every engine, and this row is defence in depth",
+        expected: 'false',
+        reason: 'environmentIsolated',
+    },
 } as const satisfies Record<string, EnvironmentCheckRow>;
 
 export type EnvironmentCheckId = keyof typeof ENVIRONMENT_CHECKS;
@@ -57,6 +63,7 @@ export const ENVIRONMENT_EXPECTED: EnvironmentExpectation = {
     origin: ENVIRONMENT_CHECKS.origin.expected,
     url: ENVIRONMENT_CHECKS.url.expected,
     base: ENVIRONMENT_CHECKS.base.expected,
+    isolated: ENVIRONMENT_CHECKS.isolated.expected,
 };
 
 /**
@@ -76,7 +83,7 @@ export const ENVIRONMENT_REFUSED_TYPE = 'ENVIRONMENT_REFUSED' satisfies FrameTyp
  * every row holds, and the bootstrap goes on.
  */
 export function checkSandboxEnvironment(expected: EnvironmentExpectation, host: Window | null, stopParsing: boolean): EnvironmentCheckId | null {
-    const actual: Record<EnvironmentCheckId, string> = { origin: self.origin, url: location.href, base: document.baseURI };
+    const actual: Record<EnvironmentCheckId, string> = { origin: self.origin, url: location.href, base: document.baseURI, isolated: String(self.crossOriginIsolated === true) };
     // A document that reads the opaque origin and the srcdoc URL is a frame of the library's (or poses as one); its parser
     // is the library's to stop. Any other document is not.
     const frame = actual.origin === expected.origin && actual.url === expected.url;

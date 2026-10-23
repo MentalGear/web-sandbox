@@ -49,6 +49,10 @@ async function runCase(
     expect(hitsNamed((await host.hits(true)).api, 'matrix-control'), 'the test server records a request').toHaveLength(1);
 
     const guest = guestBattery({ direct: { 'matrix-direct': host.api('matrix-direct') }, bridge: { 'matrix-bridge': host.api('matrix-bridge') } });
+    // the outcome follows the host page's isolation, on every engine: it ends with the isolation reason exactly when the page reads
+    // `crossOriginIsolated` true
+    const pageIsolated = await page.evaluate(() => self.crossOriginIsolated);
+    expect(pageIsolated, covering(row, `${label}: the sandbox ends with the isolation reason exactly when the host page is cross-origin isolated`)).toBe(outcome.kind === 'terminates' && outcome.reason === 'environmentIsolated');
     const events = await host.embed('strict', { fetchBridge: { allow: [ORIGIN] }, guest });
     const eventsNow = () => page.evaluate(() => (window as any).sandboxEvents as { type: string; reason: string | null }[]);
 
@@ -113,8 +117,10 @@ test.describe('directive matrix: CSP directives', () => {
 
 test.describe('directive matrix: headers of the host page', () => {
     for (const headerCase of HEADER_CASES) {
-        test(`${headerCase.header}: ${headerCase.value}`, async ({ sandbox, page, browserName }) => {
-            await runCase({ sandbox, page, browserName }, headerCase, `${headerCase.header}: ${headerCase.value} (${browserName})`, { directives: matrixBase, headers: { [headerCase.header]: headerCase.value } });
+        const also: { readonly 'cross-origin-opener-policy'?: 'same-origin' } = 'also' in headerCase ? headerCase.also : {};
+        const named = [`${headerCase.header}: ${headerCase.value}`, ...Object.entries(also).map(([header, value]) => `${header}: ${value}`)].join(' + ');
+        test(named, async ({ sandbox, page, browserName }) => {
+            await runCase({ sandbox, page, browserName }, headerCase, `${named} (${browserName})`, { directives: matrixBase, headers: { [headerCase.header]: headerCase.value, ...also } });
         });
     }
 });
