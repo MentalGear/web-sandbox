@@ -10,7 +10,7 @@ import { FETCH_ERROR_CODES } from '../../../src/lib/fetch-bridge';
 import { RPC_ERROR_CODES } from '../../../src/lib/rpc';
 import { ORIGIN_KINDS } from '../../../src/lib/csp/origins';
 import { KIND_DIRECTIVES } from '../../../src/lib/csp/csp-generator';
-import { WORKER_GLOBALS } from '../../../src/lib/worker-globals';
+import { STRICT_WORKER_GLOBALS, WORKER_GLOBALS } from '../../../src/lib/worker-globals';
 import { signatureOf } from '../engine';
 import type { Extractor } from './markdown';
 
@@ -24,6 +24,6 @@ export const surface: Extractor = {
         { id: 'codes:fetch', signature: signatureOf(FETCH_ERROR_CODES), render: none },
         { id: 'codes:files', signature: signatureOf(FILE_ERROR_CODES), render: none },
         { id: 'origins', signature: signatureOf(ORIGIN_KINDS.map(kind => [kind, KIND_DIRECTIVES[kind]])), render: none },
-        { id: 'worker-globals', signature: signatureOf(WORKER_GLOBALS), render: none },
+        { id: 'worker-globals', signature: signatureOf([WORKER_GLOBALS, STRICT_WORKER_GLOBALS]), render: none },
     ],
 };

