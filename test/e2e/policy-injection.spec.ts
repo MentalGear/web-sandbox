@@ -96,7 +96,6 @@ test.describe('A3 class: registered files load under the directive of their kind
             'base-uri': "'none'",
             'form-action': "'none'",
             'manifest-src': "'none'",
-            'upgrade-insecure-requests': '',
         });
     });
 

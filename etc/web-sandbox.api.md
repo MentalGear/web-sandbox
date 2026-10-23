@@ -169,6 +169,7 @@ export interface SandboxConfigOptions {
     entry?: string;
     fetchBridge?: FetchBridgeConfig;
     guestWrites?: boolean;
+    hostContentSecurityPolicy?: string | false;
     html?: string;
     scriptUnsafe?: boolean;
     unsafeCapabilities?: UnsafeCapability[];

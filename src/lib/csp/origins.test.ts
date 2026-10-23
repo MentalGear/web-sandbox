@@ -13,8 +13,8 @@ const parse = (input: unknown, mode: unknown = 'cooperative') => {
 
 describe('parseOrigins: `origins` parsed once, at the boundary (ADR-007)', () => {
     it('keeps exact origins per kind, canonical and without duplicates; every kind is present', () => {
-        const { policy, warnings } = parse({ images: ['https://img.example', 'HTTPS://IMG.example:443/'], connect: ['wss://ws.example', 'http://localhost:3000'] });
-        expect(policy).toEqual({ scripts: [], styles: [], images: ['https://img.example'], fonts: [], media: [], connect: ['wss://ws.example', 'http://localhost:3000'] });
+        const { policy, warnings } = parse({ images: ['https://img.example', 'HTTPS://IMG.example:443/'], connect: ['https://ws.example', 'wss://ws.example', 'http://localhost:3000'] });
+        expect(policy).toEqual({ scripts: [], styles: [], images: ['https://img.example'], fonts: [], media: [], connect: ['https://ws.example', 'wss://ws.example', 'http://localhost:3000'] });
         expect(warnings).toEqual([]);
     });
 
@@ -42,9 +42,29 @@ describe('parseOrigins: `origins` parsed once, at the boundary (ADR-007)', () =>
     });
 
     it('wss: only for connect', () => {
-        const { policy, warnings } = parse({ connect: ['wss://a.example'], images: ['wss://a.example'] });
-        expect([policy.connect, policy.images]).toEqual([['wss://a.example'], []]);
+        const { policy, warnings } = parse({ connect: ['https://a.example', 'wss://a.example'], images: ['wss://a.example'] });
+        expect([policy.connect, policy.images]).toEqual([['https://a.example', 'wss://a.example'], []]);
         expect(warnings).toEqual([expect.stringContaining('origins.images entry "wss://a.example"')]);
+    });
+
+    it('a wss:// entry is kept only beside its https:// twin (same host and port); otherwise it is dropped with one warning that names the twin, in every mode', () => {
+        for (const mode of ['strict', 'cooperative', 'worker']) {
+            const alone = parse({ connect: ['wss://a.example'] }, mode);
+            expect(alone.policy.connect, mode).toEqual([]);
+            expect(alone.warnings, mode).toEqual(['[Sandbox] origins.connect entry "wss://a.example" was dropped: it needs "https://a.example" listed as well. Some engines let a wss:// entry admit https:// requests and others do not, so the library admits the pair on every engine, or neither (see docs/API.md#origins).']);
+            const pair = parse({ connect: ['wss://a.example:8443', 'https://a.example:8443', 'WSS://B.example:443/', 'https://b.example'] }, mode);
+            expect(pair.policy.connect, mode).toEqual(['wss://a.example:8443', 'https://a.example:8443', 'wss://b.example', 'https://b.example']);
+            expect(pair.warnings, mode).toEqual([]);
+        }
+        const elsewhere = parse({ connect: ['https://a.example', 'wss://a.example:8443', 'wss://b.example', 'https://b.example:8443', 'http://localhost:3000', 'wss://localhost:3000'] });
+        expect(elsewhere.policy.connect).toEqual(['https://a.example', 'https://b.example:8443', 'http://localhost:3000']);
+        expect(elsewhere.warnings).toHaveLength(3);
+        expect(elsewhere.warnings.map(message => /needs "([^"]+)"/.exec(message)![1])).toEqual(['https://a.example:8443', 'https://b.example', 'https://localhost:3000']);
+    });
+
+    it('the twin rule is for connect: another kind never lists a wss:// origin, so nothing else is paired', () => {
+        const { policy } = parse({ images: ['https://a.example'], connect: ['https://a.example'] });
+        expect([policy.images, policy.connect]).toEqual([['https://a.example'], ['https://a.example']]);
     });
 
     it('drops a key that is not a kind, with one warning, whatever its value', () => {

@@ -21,7 +21,8 @@ test('WebSocket Bypass - Mitigated', async ({ sandbox }) => {
 });
 
 test('positive control: a WebSocket to an allowlisted origin opens and the listener sees the handshake', async ({ sandbox }) => {
-    await sandbox.mount({ ...preset.rules, origins: { connect: [wss(recorder.allowed)] } });
+    // (a wss:// entry is kept only beside its https:// twin: docs/API.md#origins)
+    await sandbox.mount({ ...preset.rules, origins: { connect: [recorder.allowed, wss(recorder.allowed)] } });
 
     const logs = await sandbox.runUntilDone(payload(recorder.allowed));
 

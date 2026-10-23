@@ -65,7 +65,7 @@ afterEach(() => {
 });
 
 // The cooperative guest policy with nothing configured, and with scriptUnsafe, with no files (the template, ADR-007). Pinned literally.
-const DEFAULT_POLICY = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests";
+const DEFAULT_POLICY = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'";
 const UNSAFE_POLICY = DEFAULT_POLICY.replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' 'unsafe-eval'");
 
 describe('with no files: the policy is unchanged, and the document differs only by the empty files bootstrap', () => {

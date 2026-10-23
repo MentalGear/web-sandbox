@@ -120,9 +120,20 @@ sandbox.setConfig({
 });
 ```
 
-An entry is one origin (`https://host[:port]`, `wss://` for `connect`, plain `http://` only for `localhost` and
-`127.0.0.1`); a scheme, wildcard, keyword, `data:` or path is dropped with a warning. Strict mode takes no `scripts`,
-so `scripts` needs `mode: 'cooperative'` or `'worker'` ([API](docs/API.md#origins), [ADR-007](docs/ADR-007-typed-origins.md)).
+An entry is one origin (`https://host[:port]`, `wss://` for `connect` beside its `https://` twin, plain `http://` only for
+`localhost` and `127.0.0.1`); a scheme, wildcard, keyword, `data:` or path is dropped with a warning, and so is a
+`wss://` entry without its `https://` twin. Strict mode takes no `scripts`, so `scripts` needs `mode: 'cooperative'` or
+`'worker'` ([API](docs/API.md#origins), [ADR-007](docs/ADR-007-typed-origins.md)).
+
+**Your page's `connect-src` applies to `origins.connect` and `fetchBridge.allow`, the same on every engine.** An origin
+it does not admit by scheme and host (`'self'` admits nothing) is dropped with a warning. `hostContentSecurityPolicy`
+gives the library the policy as text, or `false` to skip; left out, the library reads it once per page, when a build
+first lists a connect origin, by one deliberate violation in a hidden frame that reaches neither the network nor the DNS
+(it costs a console error and, when a policy refuses it, a CSP report; [API](docs/API.md#your-connect-src)).
+
+<!-- generated:begin connect-sentence -->
+Without the library's own rules the engines disagree: a `'self'` source of the host page's `connect-src` admits origins it does not name in WebKit only, a `wss://host` source also admits `https://host` requests in WebKit only, and a host written without a scheme is read differently by each. The library applies the page's policy and these two rules itself, so `origins.connect` and `fetchBridge.allow` mean the same everywhere.
+<!-- generated:end -->
 
 **API reference**: [`docs/API.md`](docs/API.md) lists every option, method, event, refusal code, guest global
 and limit. The sections below walk through each feature.
@@ -361,7 +372,7 @@ sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.u
     with a path, query or wildcard is dropped with a warning. Anything else is refused before a request is
     made, including the host page's own origin and loopback, private and link-local hosts (`localhost`,
     `127.0.0.1`, `10.x`, `192.168.x`, `[::1]`, …) and names private by convention (`printer.local`,
-    `host.docker.internal`, a single label such as `intranet`) unless you list them. A listed public name that resolves to
+    `host.docker.internal`, a single label such as `intranet`) unless you list them (a private host is kept only when the host page is itself on one). A listed public name that resolves to
     a private address (DNS rebinding) cannot be detected from a page.
 *   **No host authority.** Requests never carry cookies or other credentials (`credentials: 'omit'`) nor a
     `Referer`, and never follow redirects. Your page's `fetch` never makes them: its Service Worker never answers
@@ -654,11 +665,11 @@ What remains for the default:
 *   **Worker `violation` reports** (`source: 'logic'`): per engine (WebKit raises none in workers) and influenced by
     guest code. The view's reports are complete and unforgeable up to the cap.
 *   **A worker that closes itself** is noticed only by the watchdog; **memory** is not bounded.
-*   **Cookies**: the sandbox's frame is credentialless, which only some engines honour. Strict mode drops an `origins`
-    entry on the host page's site from every kind, with a warning; cooperative and worker mode keep it and warn. The site
-    is the browser's registrable domain of the page's host (`example.com` for `app.example.com`), so a sibling subdomain
-    is on it. A loopback, private or link-local host is kept and warns in every mode. Prefer the fetch bridge, which
-    sends no credentials. By engine ([the table](docs/API.md#cookies-by-engine)):
+*   **Cookies**: the sandbox's frame is credentialless, which only some engines honour. Every mode drops an `origins`
+    entry on the host page's site from every kind, with a warning. The site is the browser's registrable domain of the
+    page's host (`example.com` for `app.example.com`), so a sibling subdomain is on it. A loopback, private or link-local
+    host is kept, with a warning, only when the host page is itself on one, and dropped otherwise. Use the fetch bridge for
+    an API that knows the user: it sends no credentials. What the engines would send ([the table](docs/API.md#cookies-by-engine)):
 
 <!-- generated:begin cookie-sentence -->
 A request of the sandbox to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine.
@@ -690,7 +701,9 @@ the default. Measured per engine and asserted by tests; worker mode shares the r
     tab past `form-action`.
 *   **Trusted Types**: under a host page's `require-trusted-types-for 'script'` the guest inherits the requirement, so
     its own scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too
-    (strict mode renders as usual: its view assigns through its own policy; in every mode `execute()` is refused).
+    (strict mode renders as usual: its view assigns through its own policy; in every mode `execute()` is refused). A browser
+    without Trusted Types applies a page's requirement only from `hostContentSecurityPolicy`
+    ([API.md](docs/API.md#trusted-types-without-the-browser)).
 *   **Session history**: the guest's fragment navigations add entries to the tab's history (the back button walks
     them first), and in Chromium so does a navigation the wrapper refuses.
 *   **Guest-only stalls**: a guest that never finishes its document stays `ready`, and its calls time out; Firefox

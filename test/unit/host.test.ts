@@ -22,7 +22,7 @@ describe('WebSandbox Security Configuration', () => {
     });
   });
 });
-const COOPERATIVE_DEFAULT = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests";
+const COOPERATIVE_DEFAULT = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'";
 
 // The guest CSP sits in the guest srcdoc, which sits (attribute-escaped) in the wrapper's srcdoc.
 const frames = (el: HTMLElement) => {
@@ -54,12 +54,12 @@ describe('the guest policy built by the element: `origins` (ADR-007)', () => {
 
   it('each kind fills its directive and no other, in cooperative and worker mode, across reset()', async () => {
     for (const mode of ['cooperative', 'worker']) {
-      const el = await mount({ mode, origins: { scripts: ['https://cdn.example'], images: ['https://img.example'], connect: ['https://api.example', 'wss://ws.example'] } });
+      const el = await mount({ mode, origins: { scripts: ['https://cdn.example'], images: ['https://img.example'], connect: ['https://api.example', 'https://ws.example', 'wss://ws.example'] } });
       el.reset();
       expect(frames(el).policy, mode).toBe(COOPERATIVE_DEFAULT
         .replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' https://cdn.example")
         .replace("img-src 'none'", 'img-src https://img.example')
-        .replace("connect-src 'none'", 'connect-src https://api.example wss://ws.example'));
+        .replace("connect-src 'none'", 'connect-src https://api.example https://ws.example wss://ws.example'));
       el.remove();
     }
   });
@@ -120,6 +120,67 @@ describe('the guest policy built by the element: `origins` (ADR-007)', () => {
       expect(outer.getAttribute('referrerpolicy'), mode).toBe('no-referrer');
       el.remove();
     }
+  });
+});
+
+describe("the host page's policy applied to the connect lists (hostContentSecurityPolicy; src/lib/csp/host-connect.ts)", () => {
+  const bridgePolicy = (el: HTMLElement) => {
+    const bridge = el.shadowRoot!.querySelectorAll('iframe')[1]!;
+    return new DOMParser().parseFromString(bridge.srcdoc, 'text/html').querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')!;
+  };
+  const dropped = (warn: { mock: { calls: unknown[][] } }) => warn.mock.calls.map(c => String(c[0])).filter(m => /^\[Sandbox\] (origins\.connect|fetchBridge\.allow) dropped /.test(m));
+  const CONFIG = { origins: { connect: ['https://api.example', 'https://ws.example', 'wss://ws.example', 'http://127.0.0.1:3001'] }, fetchBridge: { allow: ['https://api.example', 'https://other.example'] } };
+
+  it("a string drops, in cooperative, worker and strict mode, each origin it refuses from the guest policy and the bridge frame's, with one warning per list across resets", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const mode of ['cooperative', 'worker', 'strict']) {
+      warn.mockClear();
+      const el = await mount({ mode, ...CONFIG, hostContentSecurityPolicy: 'connect-src https://api.example' });
+      el.reset();
+      el.setConfig({ mode, ...CONFIG, hostContentSecurityPolicy: 'connect-src https://api.example', html: '<p>again</p>' });
+      const connect = /connect-src ([^;]*);/.exec(mode === 'strict' ? el.shadowRoot!.querySelector('iframe')!.srcdoc : frames(el).policy)![1];
+      expect(connect, mode).toMatch(/^https:\/\/api\.example/);
+      expect(connect, mode).not.toMatch(/ws\.example|127\.0\.0\.1/);
+      expect(bridgePolicy(el), mode).toContain('connect-src https://api.example;');
+      expect(dropped(warn), mode).toHaveLength(2);
+      expect(dropped(warn)[0], mode).toContain('origins.connect dropped https://ws.example, wss://ws.example, http://127.0.0.1:3001');
+      expect(dropped(warn)[1], mode).toContain('fetchBridge.allow dropped');
+      el.remove();
+    }
+    warn.mockRestore();
+  });
+
+  it('false skips it, a policy that refuses nothing keeps every origin, and a page that was not read (jsdom has no frame to read from) narrows nothing and says nothing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const hostContentSecurityPolicy of [false, 'connect-src *', "img-src 'none'", '', undefined]) {
+      warn.mockClear();
+      const el = await mount({ mode: 'cooperative', ...CONFIG, hostContentSecurityPolicy });
+      expect(frames(el).policy, String(hostContentSecurityPolicy)).toContain('connect-src https://api.example https://ws.example wss://ws.example http://127.0.0.1:3001;');
+      expect(bridgePolicy(el), String(hostContentSecurityPolicy)).toContain('connect-src https://api.example https://other.example;');
+      expect(dropped(warn), String(hostContentSecurityPolicy)).toEqual([]);
+      expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('could not be read')), String(hostContentSecurityPolicy)).toEqual([]);
+      el.remove();
+    }
+    warn.mockRestore();
+  });
+
+  it("a policy that drops every https origin leaves the bridge on, with an allowlist of nothing: the sandbox runs", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], fetchBridge: { allow: ['https://api.example'] }, hostContentSecurityPolicy: "connect-src 'none'" });
+    expect(bridgePolicy(el)).toContain("connect-src 'none';");
+    expect(el.state).toBe('loading');
+    el.remove();
+    warn.mockRestore();
+  });
+
+  it('the configured lists are kept as they are: dropping is per build, so a later config without the option reads the lists whole', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const el = await mount({ mode: 'cooperative', ...CONFIG, hostContentSecurityPolicy: "connect-src 'none'" });
+    expect(frames(el).policy).toContain("connect-src 'none';");
+    el.setConfig({ mode: 'cooperative', ...CONFIG });
+    expect(frames(el).policy).toContain('connect-src https://api.example https://ws.example wss://ws.example http://127.0.0.1:3001;');
+    el.remove();
+    warn.mockRestore();
   });
 });
 

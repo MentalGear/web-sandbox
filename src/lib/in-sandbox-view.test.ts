@@ -454,7 +454,7 @@ describe('broad review 2026-10-14: the renderer is an allowlist', () => {
             '<img id="set-ok" srcset="https://x.example/a.png 1x, https://x.example/b,c.png 2x"><img id="set-data" srcset="https://x.example/a.png 1x,data:image/svg+xml,x 2x"><img id="set-js" srcset=" javascript:x 1x">',
         ].join(''), files, { images: ['https://x.example'], media: ['https://x.example'] });
         const src = (id: string, name = 'src') => fragment.getElementById(id)!.getAttribute(name);
-        expect(['https', 'http', 'relative', 'file'].map(id => src(id))).toEqual(['https://x.example/i.png', 'HTTP://x.example/i.png', 'nope.png', 'blob:null/minted']);
+        expect(['https', 'http', 'relative', 'file'].map(id => src(id))).toEqual(['https://x.example/i.png', null, 'nope.png', 'blob:null/minted']); // (the http: form of a listed https: origin is refused by every engine: no policy upgrades it)
         expect(['data', 'js', 'blob', 'other', 'audio', 'source'].map(id => src(id))).toEqual(Array(6).fill(null));
         expect([src('poster', 'poster'), src('source', 'srcset'), src('set-ok', 'srcset'), src('set-data', 'srcset'), src('set-js', 'srcset')])
             .toEqual([null, 'https://x.example/a.png 1x,https://x.example/b.png 2x', 'https://x.example/a.png 1x, https://x.example/b,c.png 2x', null, null]);

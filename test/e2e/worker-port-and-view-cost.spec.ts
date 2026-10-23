@@ -305,13 +305,13 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
         expect(violations.filter(v => v.directive === 'media-src')).toHaveLength(1);
     });
 
-    test('an admitted origin, and a relative URL, are kept; an http: URL of an admitted https: origin too (the policy upgrades it)', async ({ sandbox, page, browserName }) => {
+    test('an admitted origin, and a relative URL, are kept; an http: URL of an admitted https: origin is dropped and reported (no policy upgrades it)', async ({ sandbox, page, browserName }) => {
         await page.route(/^https?:\/\/a\.example(:\d+)?\//, route => route.fulfill({ body: PNG, contentType: 'image/png' })); // never the network
         await mountEntry(sandbox, `sandboxView.render('<img id="a" src="https://a.example/1.png"><img id="b" src="http://a.example/2.png"><img id="c" src="x.png"><img id="d" src="https://a.example:8443/3.png">');`, { origins: { images: ['https://a.example'] } });
         await waitInView(page, browserName, `!!document.getElementById('d')`);
-        expect(await inView(page, browserName, `['a', 'b', 'c', 'd'].map(id => document.getElementById(id).getAttribute('src'))`)).toEqual(['https://a.example/1.png', 'http://a.example/2.png', 'x.png', null]);
+        expect(await inView(page, browserName, `['a', 'b', 'c', 'd'].map(id => document.getElementById(id).getAttribute('src'))`)).toEqual(['https://a.example/1.png', null, 'x.png', null]);
         await page.waitForTimeout(300);
-        expect((await sandbox.violations()).map(v => [v.directive, v.blockedURI])).toEqual([['img-src', 'https://a.example:8443/3.png']]);
+        expect((await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI}`).sort()).toEqual(['img-src http://a.example/2.png', 'img-src https://a.example:8443/3.png']);
     });
 
     // A refused source: 6500 <img> per render (R4:M-2), 21–45% busy when each was left to the browser to refuse. An

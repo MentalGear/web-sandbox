@@ -22,6 +22,9 @@ import { BRIDGE_PREFIX, WRAPPER_PREFIX } from './frame-documents';
  */
 export const TRUSTED_TYPES_POLICY = 'web-sandbox';
 
+/** Whether this browser has Trusted Types, and so applies the host page's directives itself. */
+export const browserHasTrustedTypes = (): boolean => 'trustedTypes' in globalThis;
+
 /** The host page's trusted-types directive refused the policy name. */
 export class TrustedTypesRefusal extends Error {
     override name = 'TrustedTypesRefusal';

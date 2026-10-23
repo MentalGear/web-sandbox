@@ -15,7 +15,10 @@ if (new URLSearchParams(location.search).has('tt-default')) {
         if (typeof hook === 'function') hook();
         return input;
     };
-    (window as any).trustedTypes?.createPolicy('default', { createHTML: pass, createScript: pass, createScriptURL: pass });
+    // (a page whose `trusted-types` list does not name `default` makes none: createPolicy throws, and the page goes on without one)
+    try {
+        (window as any).trustedTypes?.createPolicy('default', { createHTML: pass, createScript: pass, createScriptURL: pass });
+    } catch { /* refused by the page's own list */ }
 }
 
 defineWebSandbox();

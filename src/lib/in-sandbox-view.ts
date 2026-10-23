@@ -746,13 +746,10 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     // you list), never keeps one the browser then refuses. Nothing is bounded by it either: what the browser refuses is
     // charged where the view observes it (inSandboxView, the URL budget). A URL is kept when:
     //   - its scheme, host and port, read by the URL parser, are exactly those of an origin the policy lists for that
-    //     kind (context.origins, the parsed `origins`, canonical as origin.ts makes them); or
-    //   - it is an image's http: URL whose upgrade is such an https: origin, on a host that is not a loopback one: the
-    //     policy's upgrade-insecure-requests turns an image's http: URL into https: (port 80 into 443) before the check in
-    //     every engine (measured), but Chromium's not for a loopback host. For other kinds of load Chromium and WebKit
-    //     do not (they refuse an http: media URL of an https: origin), so none is kept.
-    // The forms CSP itself would also match are not relied on: an http: source matching an https: URL fails for a
-    // loopback host in Chromium. Anything dropped is reported by the view, as a violation of the kind's directive.
+    //     kind (context.origins, the parsed `origins`, canonical as origin.ts makes them).
+    // The policy carries no upgrade-insecure-requests, so an http: URL of a listed https: origin is refused by every engine
+    // and is not kept. The forms CSP itself would also match are not relied on: an http: source matching an https: URL
+    // fails for a loopback host in Chromium. Anything dropped is reported by the view, as a violation of the kind's directive.
     // A URL that does not parse loads nothing and is kept, as a relative one is.
     const ruleOf = (kind: string): KindRule | null => (call(own, rules.kinds, [kind]) ? rules.kinds[kind]! : null);
     const admittedOrigins = (kind: string): readonly string[] => {
@@ -765,9 +762,6 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     };
     // The URL a refusal names, as every engine reports it (without credentials or fragment), or null when the
     // policy admits it (or it does not parse).
-    // Hosts an engine may take as potentially trustworthy, which Chromium does not upgrade (it refuses the http: image of
-    // a listed https://localhost or https://127.0.0.1): no upgrade is assumed for them.
-    const LOOPBACK = /^(localhost|.*\.localhost|127\.\d+\.\d+\.\d+|\[::1\])$/;
     const refusedUrl = (value: string, kind: string): string | null => {
         let url: URL;
         try {
@@ -776,11 +770,9 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             return null;
         }
         const exact = url.protocol + '//' + url.hostname + (url.port ? ':' + url.port : '');
-        // the image upgrade: http: becomes https:, and the port of http (80, which the parser leaves out) becomes 443's
-        const upgraded = kind === 'image' && url.protocol === 'http:' && !LOOPBACK.test(url.hostname) ? 'https://' + url.hostname + (url.port && url.port !== '443' ? ':' + url.port : '') : null;
         const origins = admittedOrigins(kind);
         for (let i = 0; i < origins.length; i++) {
-            if (origins[i] === exact || origins[i] === upgraded) return null;
+            if (origins[i] === exact) return null;
         }
         url.username = '';
         url.password = '';

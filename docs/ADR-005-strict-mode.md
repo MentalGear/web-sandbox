@@ -104,8 +104,7 @@ creates the render port, spawns the worker from a `blob:` URL (`worker-src blob:
 - **G4 — egress is the policy, and nothing navigates.** The worker inherits the view policy exactly (`connect-src` governs
   it), and requests only through the four globals of its allowlist that the policy governs on every engine; the view's
   loads are governed by `img-src`, `style-src`, `font-src`, `media-src`, and a URL in rendered markup is kept only where
-  every engine's policy check admits it (its exact origin is listed, or it is an image's `http:` URL whose `https:` upgrade
-  is, off a loopback host), else dropped by the renderer before the browser sees it and, an `http(s)` one, reported as a
+  every engine's policy check admits it (its exact origin is listed), else dropped by the renderer before the browser sees it and, an `http(s)` one, reported as a
   violation. The ones it keeps are bounded in number (`VIEW_MAX_URLS`), and every load is charged before the browser can
   start it (a kept URL attribute when it is rendered, what applied CSS can load, counted from its text, when it is applied;
   S73) and otherwise as the browser reports it (resource timing, CSS-borne loads included, and violations), per second
@@ -168,7 +167,7 @@ every directive explicit:
 ```
 default-src 'none'; script-src 'sha256-<B>' ['unsafe-eval']; script-src-attr 'none'; style-src 'unsafe-inline' …;
 img-src …; font-src …; media-src …; connect-src …; worker-src blob:; frame-src 'none'; object-src 'none';
-base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests
+base-uri 'none'; form-action 'none'; manifest-src 'none'
 ```
 
 The embedder's `origins` fill `style-src`, `img-src`, `font-src`, `media-src` and `connect-src` only, and `blob:` is added per
