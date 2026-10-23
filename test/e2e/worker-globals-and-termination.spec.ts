@@ -87,6 +87,39 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         });
     }
 
+    // The allowlist is a ceiling, not a promise: a name an engine does not have is simply not there. Which allowlisted names
+    // (and navigator members) each engine lacks is measured here, exactly, in both modes (the engine versions of the suite).
+    // SharedArrayBuffer is absent on all three (the page is not cross-origin isolated, which the library requires), and
+    // importScripts is absent in strict mode on all three by design: neither is an engine difference.
+    // Chromium's secure-context-only names are absent because its opaque-origin (blob:null) worker is not a secure context.
+    const ABSENT_GLOBALS: Record<string, string[]> = {
+        // ledger: worker-global-set
+        chromium: ['InternalError', 'onoffline', 'ononline', 'CryptoKey', 'SubtleCrypto', 'StorageManager', 'Lock', 'LockManager', 'AudioDecoder', 'AudioEncoder', 'VideoDecoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrack', 'ImageTrackList'],
+        firefox: ['SecurityPolicyViolationEvent', 'QuotaExceededError', 'IDBRecord', 'WebGLObject'],
+        webkit: ['Temporal', 'SuppressedError', 'InternalError', 'DisposableStack', 'AsyncDisposableStack', 'onlanguagechange', 'scheduler', 'QuotaExceededError', 'IDBRecord', 'StorageManager', 'Scheduler', 'TaskController', 'TaskSignal', 'TaskPriorityChangeEvent', 'WebGLObject', 'ImageDecoder', 'ImageTrack', 'ImageTrackList'],
+    };
+    const ABSENT_NAVIGATOR_MEMBERS: Record<string, string[]> = {
+        // ledger: worker-global-set
+        chromium: ['deviceMemory', 'globalPrivacyControl', 'storage', 'locks', 'gpu'],
+        firefox: ['deviceMemory', 'gpu'],
+        webkit: ['deviceMemory', 'globalPrivacyControl', 'storage', 'gpu'],
+    };
+    for (const mode of ['worker', 'strict'] as const) {
+        test(`${mode} mode: the allowlisted globals and navigator members an engine does not have are exactly the ones the ledger states (worker-global-set); nothing outside the allowlist is present`, async ({ sandbox, browserName }) => {
+            expect(await sandbox.mount({ mode })).toBe('ready');
+            const seen = await sandbox.inGuest(`
+                const names = new Set(Object.getOwnPropertyNames(globalThis));
+                for (let p = Object.getPrototypeOf(globalThis); p && p !== EventTarget.prototype; p = Object.getPrototypeOf(p)) Object.getOwnPropertyNames(p).forEach((n) => names.add(n));
+                return { names: [...names], navigatorMembers: Object.getOwnPropertyNames(Object.getPrototypeOf(navigator)) };
+            `);
+            const have = new Set<string>(seen.names);
+            // ledger: worker-global-set
+            const expectedAbsentGlobals = [...ABSENT_GLOBALS[browserName]!, 'SharedArrayBuffer', ...(mode === 'strict' ? ['importScripts'] : [])].sort();
+            expect(WORKER_GLOBALS.filter(name => !have.has(name)).sort()).toEqual(expectedAbsentGlobals);
+            expect(WORKER_NAVIGATOR_MEMBERS.filter(name => !seen.navigatorMembers.includes(name)).sort()).toEqual([...ABSENT_NAVIGATOR_MEMBERS[browserName]!].sort());
+        });
+    }
+
     test('positive control of the evidence: an EventSource the policy allows reaches the allowed listener (cooperative mode, the document)', async ({ sandbox }) => {
         expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         await sandbox.run(`new EventSource('${recorder.allowed}/es-allowed?x=1');`);

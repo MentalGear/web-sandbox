@@ -80,6 +80,22 @@ export const ENGINE_DIFFERENCES = {
         why: "WebKit raises no violation event in workers, and Firefox routes `importScripts` refusals to the creating document. Reports from the guest's realm are claims, and the refusal itself is the same on every engine",
         tests: [`${E2E}violations.spec.ts`, `${E2E}worker-security.spec.ts`, `${E2E}blob-delivery.spec.ts`],
     },
+    'entry-parse-detail': {
+        what: "The guest line for a strict entry that does not parse (the reason, the host line and the state are the same on every engine)",
+        chromium: "`Uncaught SyntaxError: <the engine's message>`",
+        firefox: "`Uncaught the entry did not parse (this browser gives no detail)`: its error event carries no message, and the library tells the unparsed entry from a refused worker with a one-statement probe worker and states the placeholder",
+        webkit: "`Uncaught SyntaxError: <the engine's message>`",
+        why: "Firefox gives a worker's syntax error no message or line. The library cannot recover what the engine withholds; the message of an engine that gives one is the guest's error text, relayed as a guest line, and no line or column is part of the API on any engine",
+        tests: [`${E2E}strict.spec.ts`],
+    },
+    'worker-global-set': {
+        what: "Which of the allowlisted globals (`WORKER_GLOBALS`) and navigator members (`WORKER_NAVIGATOR_MEMBERS`) the guest worker has: a name an engine does not offer is not there (worker and strict mode alike; `SharedArrayBuffer`, absent without cross-origin isolation, and strict mode's missing `importScripts` are the same on every engine)",
+        chromium: "Lacks `InternalError`, `onoffline`, `ononline`, and, because its opaque-origin worker is not a secure context, `CryptoKey`, `SubtleCrypto`, `StorageManager`, `Lock`, `LockManager`, the WebCodecs coders and image decoder (`AudioDecoder`, `AudioEncoder`, `VideoDecoder`, `VideoEncoder`, `ImageDecoder`, `ImageTrack`, `ImageTrackList`) and the navigator's `deviceMemory`, `globalPrivacyControl`, `storage`, `locks`, `gpu`",
+        firefox: "Lacks `SecurityPolicyViolationEvent`, `QuotaExceededError`, `IDBRecord`, `WebGLObject` and the navigator's `deviceMemory`, `gpu`",
+        webkit: "Lacks `Temporal`, `SuppressedError`, `InternalError`, `DisposableStack`, `AsyncDisposableStack`, `onlanguagechange`, `scheduler`, `Scheduler`, `TaskController`, `TaskSignal`, `TaskPriorityChangeEvent`, `QuotaExceededError`, `IDBRecord`, `StorageManager`, `WebGLObject`, `ImageDecoder`, `ImageTrack`, `ImageTrackList` and the navigator's `deviceMemory`, `globalPrivacyControl`, `storage`, `gpu`",
+        why: "Which APIs an engine ships (and, for secure-context-only ones, whether it counts a `blob:` worker of an opaque origin as secure). The library only deletes names off the allowlist, so an absent name is absent and none is added; no name that can make a request or open a channel differs (the four request makers are present on every engine, `importScripts` in worker mode)",
+        tests: [`${E2E}worker-globals-and-termination.spec.ts`],
+    },
     'worker-eventsource-fontface': {
         what: "A worker the guest makes in cooperative mode: its `EventSource` and `FontFace` against the policy",
         chromium: "Refused by the policy",
