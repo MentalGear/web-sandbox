@@ -63,32 +63,25 @@ test('a page whose cookies are blocked gets null: the caller keeps its name chec
     expect(result).toEqual({ blocked: null, address: '127.0.0.1', none: null });
 });
 
-test.describe("an origin on the host page's site: strict mode drops it, cooperative and worker mode keep it and warn", () => {
-    // the harness page and its own origin: the same site, in every engine
+test.describe("an origin on the host page's site is dropped in every mode, with one warning", () => {
+    // the harness page and its own origin: the same site, in every engine. A same-site request would carry the host site's
+    // cookies in some engines (cookie-facts.ts), so no mode admits one: the policy lists nothing and the request is refused.
     const request = `try { await fetch(${JSON.stringify(`${ORIGIN}/test/e2e/pixel.png`)}); } catch (e) {} return 'sent';`;
     const connectViolations = async (sandbox: SandboxDriver) => {
         await sandbox.page.waitForTimeout(500);
         return (await sandbox.violations()).filter(v => v.directive === 'connect-src' && v.blockedURI.includes('/test/e2e/pixel.png'));
     };
 
-    test('strict: the origin is dropped with one warning and the guest request is refused by connect-src (WebKit raises no violation reports in workers)', async ({ sandbox, page, browserName }) => {
-        const warnings: string[] = [];
-        page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
-        expect(await sandbox.mount({ mode: 'strict', origins: { connect: [ORIGIN] } })).toBe('ready');
-        expect(await sandbox.inGuest(request)).toBe('sent');
-        // the strict guest's fetch runs in a worker, whose reports WebKit does not raise: there the warning is the evidence
-        if (browserName !== 'webkit') expect((await connectViolations(sandbox)).length).toBeGreaterThan(0);
-        expect(warnings.filter(text => text.includes(`origins.connect dropped ${ORIGIN} (the host page's own origin`))).toHaveLength(1);
-    });
-
-    for (const mode of ['cooperative', 'worker'] as const) {
-        test(`${mode}: the origin is kept with one warning and the policy admits the request`, async ({ sandbox, page }) => {
+    for (const mode of ['strict', 'cooperative', 'worker'] as const) {
+        test(`${mode}: the origin is dropped with one warning and the guest request is refused by connect-src${mode === 'strict' ? ' (WebKit raises no violation reports in workers)' : ''}`, async ({ sandbox, page, browserName }) => {
             const warnings: string[] = [];
             page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
             expect(await sandbox.mount({ mode, origins: { connect: [ORIGIN] } })).toBe('ready');
             expect(await sandbox.inGuest(request)).toBe('sent');
-            expect(await connectViolations(sandbox)).toEqual([]);
-            expect(warnings.filter(text => text.includes(`origins.connect lists ${ORIGIN} (the host page's own origin`))).toHaveLength(1);
+            // a strict or worker guest's fetch runs in a worker, whose reports WebKit does not raise: there the warning is the evidence
+            if (mode === 'cooperative' || browserName !== 'webkit') expect((await connectViolations(sandbox)).length).toBeGreaterThan(0);
+            expect(warnings.filter(text => text.includes(`origins.connect dropped ${ORIGIN} (the host page's own origin`))).toHaveLength(1);
+            expect(warnings.filter(text => text.includes(`origins.connect lists ${ORIGIN}`))).toEqual([]);
         });
     }
 });

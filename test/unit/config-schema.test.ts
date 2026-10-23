@@ -351,56 +351,54 @@ describe("the config schema, which docs/API.md's Configuration table is generate
     });
 });
 
-// `origins`: what a listed origin reaches beyond the internet at large is said in every mode, once per kind
-// (limitHostReach, the one pass over the parsed policy). The kinds are the schema's own (ORIGIN_KINDS). Strict mode drops
-// an origin on the host page's site; cooperative and worker mode keep it and warn; a loopback host is kept and warns.
+// `origins`: what a listed origin reaches beyond the internet at large is decided in every mode, once per kind
+// (limitHostReach, the one pass over the parsed policy). The kinds are the schema's own (ORIGIN_KINDS). Every mode drops an
+// origin on the host page's site; a loopback, private or link-local host is kept, with a warning, only when the host page is
+// itself on one, and dropped, with a warning, otherwise.
 describe('origins: the host page\'s site and loopback hosts, in every mode, once per kind', () => {
     const PAGE = 'https://app.example:8443';
+    const LOCAL_PAGE = 'http://localhost:3000';
     const SAID = /^\[Sandbox\] origins\.\w+ (lists|dropped) /;
     const said = (mode: SandboxMode, origins: Record<string, string[]>, context: NormaliseContext = { hostOrigin: PAGE }) => normaliseConfig({ mode, origins }, context).warnings.filter(message => SAID.test(message));
     const kept = (mode: SandboxMode, origins: Record<string, string[]>, context: NormaliseContext = { hostOrigin: PAGE }) => normaliseConfig({ mode, origins }, context).value!.origins;
     // strict mode drops `scripts`, so no origin of that kind is left to warn about there
     const kindsIn = (mode: SandboxMode) => ORIGIN_KINDS.filter(kind => !(kind === 'scripts' && mode === 'strict'));
-    const WARN_MODES = SANDBOX_MODES.filter(mode => mode !== 'strict');
 
-    it.each(WARN_MODES)('%s: every kind warns for the host origin, for a host of its site and for loopback, one warning naming kind, origin and why, and keeps them', (mode) => {
+    it.each(SANDBOX_MODES)('%s: every kind drops the host origin and a host of its site with one warning, and leaves the rest', (mode) => {
         for (const kind of kindsIn(mode)) {
-            const hostOrigin = said(mode, { [kind]: [PAGE] });
-            expect(hostOrigin, `${kind} host origin`).toHaveLength(1);
-            expect(hostOrigin[0]).toContain(`origins.${kind} lists ${PAGE} (the host page's own origin)`);
-            expect(hostOrigin[0]).toContain("carry the host site's cookies");
-            expect(hostOrigin[0]).toContain('fetch bridge');
-            expect(kept(mode, { [kind]: [PAGE] })[kind]).toEqual([PAGE]);
-            const loopback = said(mode, { [kind]: ['http://localhost:5173', 'http://127.0.0.1:9000'] });
-            expect(loopback, `${kind} loopback`).toHaveLength(1);
-            expect(loopback[0]).toContain(`origins.${kind} lists http://localhost:5173 (a loopback, private or link-local host), http://127.0.0.1:9000 (a loopback, private or link-local host)`);
-            const site = said(mode, { [kind]: ['https://api.app.example', 'https://example', 'https://other.example'] });
-            expect(site, `${kind} site`).toHaveLength(1);
-            // a single label is private by name too (isPrivateHost): one entry, both reasons
-            expect(site[0]).toContain(`origins.${kind} lists https://api.app.example (on the host page's site), https://example (on the host page's site, a loopback, private or link-local host):`);
-            expect(site[0]).not.toContain('other.example');
-            expect(kept(mode, { [kind]: ['https://api.app.example', 'https://example', 'https://other.example'] })[kind]).toEqual(['https://api.app.example', 'https://example', 'https://other.example']);
-        }
-    });
-
-    it('strict: every kind drops the host origin and a host of its site with one warning, keeps a loopback host with its own warning, and leaves the rest', () => {
-        for (const kind of kindsIn('strict')) {
-            const dropped = said('strict', { [kind]: [PAGE, 'https://api.app.example', 'https://other.example'] });
+            const dropped = said(mode, { [kind]: [PAGE, 'https://api.app.example', 'https://other.example'] });
             expect(dropped, `${kind} site`).toHaveLength(1);
             expect(dropped[0]).toContain(`origins.${kind} dropped ${PAGE} (the host page's own origin), https://api.app.example (on the host page's site):`);
             expect(dropped[0]).toContain("carry the host site's cookies");
-            expect(dropped[0]).toContain('strict mode admits no origin on the host page\'s site');
+            expect(dropped[0]).toContain("admits no origin on the host page's site, in any mode");
             expect(dropped[0]).toContain('fetch bridge');
             expect(dropped[0]).not.toContain('other.example');
-            expect(kept('strict', { [kind]: [PAGE, 'https://api.app.example', 'https://other.example'] })[kind]).toEqual(['https://other.example']);
-            // a loopback host is not on the host page's site: kept, and it warns as it does in every mode
-            const loopback = said('strict', { [kind]: ['http://localhost:5173'] });
-            expect(loopback, `${kind} loopback`).toEqual([expect.stringContaining(`origins.${kind} lists http://localhost:5173 (a loopback, private or link-local host)`)]);
-            expect(kept('strict', { [kind]: ['http://localhost:5173'] })[kind]).toEqual(['http://localhost:5173']);
-            // both reasons: dropped for the site, and the entry says it is also a private host
-            expect(said('strict', { [kind]: ['https://example'] })).toEqual([expect.stringContaining(`origins.${kind} dropped https://example (on the host page's site, a loopback, private or link-local host):`)]);
-            expect(kept('strict', { [kind]: ['https://example'] })[kind]).toEqual([]);
+            expect(kept(mode, { [kind]: [PAGE, 'https://api.app.example', 'https://other.example'] })[kind]).toEqual(['https://other.example']);
+            // a single label is private by name too (isPrivateHost): dropped for the site, and the entry says it is also a private host
+            expect(said(mode, { [kind]: ['https://example'] })).toEqual([expect.stringContaining(`origins.${kind} dropped https://example (on the host page's site, a loopback, private or link-local host):`)]);
+            expect(kept(mode, { [kind]: ['https://example'] })[kind]).toEqual([]);
         }
+    });
+
+    it.each(SANDBOX_MODES)('%s: a loopback, private or link-local host is dropped, with one warning, from a host page that is not on one', (mode) => {
+        for (const kind of kindsIn(mode)) {
+            const entries = ['http://localhost:5173', 'http://127.0.0.1:9000', 'https://10.0.0.5', 'https://printer', 'https://other.example'];
+            const result = said(mode, { [kind]: entries });
+            expect(result, `${kind} loopback`).toEqual([expect.stringContaining(`origins.${kind} dropped http://localhost:5173 (a loopback, private or link-local host), http://127.0.0.1:9000 (a loopback, private or link-local host), https://10.0.0.5 (a loopback, private or link-local host), https://printer (a loopback, private or link-local host): the host page is not on one`)]);
+            expect(kept(mode, { [kind]: entries })[kind], kind).toEqual(['https://other.example']);
+        }
+    });
+
+    it.each(SANDBOX_MODES)('%s: from a host page that is on one, a loopback host is kept, with one warning; the page\'s own site is still dropped', (mode) => {
+        const context: NormaliseContext = { hostOrigin: LOCAL_PAGE };
+        for (const kind of kindsIn(mode)) {
+            const loopback = said(mode, { [kind]: ['http://127.0.0.1:9000', 'https://10.0.0.5'] }, context);
+            expect(loopback, `${kind} loopback`).toEqual([expect.stringContaining(`origins.${kind} lists http://127.0.0.1:9000 (a loopback, private or link-local host), https://10.0.0.5 (a loopback, private or link-local host):`)]);
+            expect(kept(mode, { [kind]: ['http://127.0.0.1:9000', 'https://10.0.0.5'] }, context)[kind], kind).toEqual(['http://127.0.0.1:9000', 'https://10.0.0.5']);
+            expect(kept(mode, { [kind]: [LOCAL_PAGE, 'http://localhost:5173'] }, context)[kind], `${kind} the page's site`).toEqual([]);
+        }
+        // a page of unknown origin is not on one
+        expect(kept('cooperative', { images: ['http://127.0.0.1:9000'] }, { hostOrigin: '' }).images).toEqual([]);
     });
 
     it('strict is the default mode: a config that names none drops the host origin; the dropped policy is frozen, and an untouched one is the parsed one', () => {
@@ -418,22 +416,24 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
     it('a kind that lists nothing of the kind is silent; a kind is named once however many entries it lists; other kinds are not named', () => {
         expect(said('cooperative', { connect: ['https://api.other.example'], images: ['https://img.other.example'] })).toEqual([]);
         const both = said('cooperative', { images: [PAGE, 'https://api.app.example', 'http://localhost:1'], fonts: [PAGE] });
-        expect(both).toHaveLength(2);
-        expect(both[0]).toContain('origins.images lists');
-        expect(both[0]).not.toContain('origins.fonts');
+        expect(both).toHaveLength(3); // images: the site, then the loopback host; fonts: the site
+        expect(both.filter(message => message.includes('origins.images'))).toHaveLength(2);
+        expect(both.filter(message => message.includes('origins.fonts'))).toHaveLength(1);
         expect(said('cooperative', { connect: [PAGE] }, { hostOrigin: '' })).toEqual([]);
         expect(kept('strict', { connect: [PAGE] }, { hostOrigin: '' }).connect).toEqual([PAGE]);
     });
 
     it('by name alone: same host with another scheme or port, a subdomain and a parent are on the site; a sibling, an IP address and a lookalike are not', () => {
         for (const mode of SANDBOX_MODES) {
-            const onSite = (origin: string) => said(mode, { connect: [origin] }).length === 1 && kept(mode, { connect: [origin] }).connect.length === (mode === 'strict' ? 0 : 1);
+            const onSite = (origin: string) => said(mode, { connect: [origin] }).length === 1 && kept(mode, { connect: [origin] }).connect.length === 0;
             for (const origin of ['https://app.example', 'https://app.example:1', 'https://x.app.example', 'https://example']) expect(onSite(origin), `${mode} ${origin}`).toBe(true);
             // a wss:// origin is listed beside its https:// twin (origins.ts), and the pair is on the site as one origin is
             const pair = { connect: ['https://app.example', 'wss://app.example'] };
             expect(said(mode, pair), `${mode} the pair`).toHaveLength(1);
-            expect(kept(mode, pair).connect, `${mode} the pair`).toHaveLength(mode === 'strict' ? 0 : 2);
-            for (const origin of ['https://sibling.example', 'https://notapp.example', 'https://app.example.evil', 'https://203.0.113.7']) expect(said(mode, { connect: [origin] }), `${mode} ${origin}`).toEqual([]);
+            expect(kept(mode, pair).connect, `${mode} the pair`).toHaveLength(0);
+            for (const origin of ['https://sibling.example', 'https://notapp.example', 'https://app.example.evil']) expect(said(mode, { connect: [origin] }), `${mode} ${origin}`).toEqual([]);
+            // an address is its own site, and a private one: dropped from this page for that
+            expect(said(mode, { connect: ['https://203.0.113.7'] }), `${mode} an address`).toEqual([]);
         }
     });
 
@@ -442,11 +442,10 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
         const context = (site: string | null): NormaliseContext => ({ hostOrigin: SITE_PAGE, hostSite: () => site });
 
         it.each(SANDBOX_MODES)('%s: a sibling, its subdomain and the registrable domain are on the site; a public suffix and a name of another site are not', (mode) => {
-            const dropsIt = mode === 'strict';
             for (const origin of ['https://api.example.co.uk', 'https://deep.api.example.co.uk', 'https://example.co.uk', 'https://app.example.co.uk:8080']) {
                 const result = said(mode, { connect: [origin] }, context('example.co.uk'));
-                expect(result, `${mode} ${origin}`).toEqual([expect.stringContaining(dropsIt ? `origins.connect dropped ${origin} (on the host page's site)` : `origins.connect lists ${origin} (on the host page's site)`)]);
-                expect(kept(mode, { connect: [origin] }, context('example.co.uk')).connect, `${mode} ${origin}`).toEqual(dropsIt ? [] : [origin]);
+                expect(result, `${mode} ${origin}`).toEqual([expect.stringContaining(`origins.connect dropped ${origin} (on the host page's site)`)]);
+                expect(kept(mode, { connect: [origin] }, context('example.co.uk')).connect, `${mode} ${origin}`).toEqual([]);
             }
             for (const origin of ['https://co.uk', 'https://other.co.uk', 'https://example.com', 'https://evilexample.co.uk']) {
                 expect(said(mode, { connect: [origin] }, context('example.co.uk')), `${mode} ${origin}`).toEqual([]);
@@ -456,9 +455,11 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
 
         it('where the browser cannot be asked (null), or the context has no probe, the name check decides: a sibling is not recognised', () => {
             for (const given of [context(null), { hostOrigin: SITE_PAGE }]) {
-                expect(said('cooperative', { connect: ['https://api.example.co.uk'] }, given)).toEqual([]);
-                expect(said('cooperative', { connect: ['https://sub.app.example.co.uk'] }, given)).toHaveLength(1);
-                expect(kept('strict', { connect: ['https://api.example.co.uk'] }, given).connect).toEqual(['https://api.example.co.uk']);
+                for (const mode of SANDBOX_MODES) {
+                    expect(said(mode, { connect: ['https://api.example.co.uk'] }, given), mode).toEqual([]);
+                    expect(said(mode, { connect: ['https://sub.app.example.co.uk'] }, given), mode).toHaveLength(1);
+                    expect(kept(mode, { connect: ['https://api.example.co.uk'] }, given).connect, mode).toEqual(['https://api.example.co.uk']);
+                }
             }
         });
 
@@ -470,6 +471,19 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
             normaliseConfig({ mode: 'cooperative', origins: { connect: ['https://api.example.co.uk'] } }, counting);
             expect(asked).toBe(1);
         });
+    });
+
+    it('fetchBridge.allow: a loopback, private or link-local host is dropped with one warning from a host page that is not on one, kept with a warning from one that is; the host page\'s own origin is still honoured', () => {
+        const allow = ['https://api.example', 'http://127.0.0.1:8080', 'https://10.0.0.5'];
+        const publicPage = normaliseConfig({ fetchBridge: { allow } }, { hostOrigin: PAGE });
+        expect(publicPage.value!.fetchPolicy!.allow).toEqual(['https://api.example']);
+        expect(publicPage.warnings.filter(message => message.startsWith('[Sandbox] fetchBridge.allow dropped'))).toHaveLength(2);
+        const localPage = normaliseConfig({ fetchBridge: { allow } }, { hostOrigin: LOCAL_PAGE });
+        expect(localPage.value!.fetchPolicy!.allow).toEqual(allow);
+        expect(localPage.warnings.filter(message => message.startsWith('[Sandbox] fetchBridge.allow lists'))).toHaveLength(2);
+        const own = normaliseConfig({ fetchBridge: { allow: [PAGE] } }, { hostOrigin: PAGE });
+        expect(own.value!.fetchPolicy!.allow).toEqual([PAGE]);
+        expect(own.warnings).toEqual([expect.stringContaining("lists the host page's own origin")]);
     });
 });
 

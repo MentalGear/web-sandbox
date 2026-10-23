@@ -665,11 +665,11 @@ What remains for the default:
 *   **Worker `violation` reports** (`source: 'logic'`): per engine (WebKit raises none in workers) and influenced by
     guest code. The view's reports are complete and unforgeable up to the cap.
 *   **A worker that closes itself** is noticed only by the watchdog; **memory** is not bounded.
-*   **Cookies**: the sandbox's frame is credentialless, which only some engines honour. Strict mode drops an `origins`
-    entry on the host page's site from every kind, with a warning; cooperative and worker mode keep it and warn. The site
-    is the browser's registrable domain of the page's host (`example.com` for `app.example.com`), so a sibling subdomain
-    is on it. A loopback, private or link-local host is kept and warns in every mode. Prefer the fetch bridge, which
-    sends no credentials. By engine ([the table](docs/API.md#cookies-by-engine)):
+*   **Cookies**: the sandbox's frame is credentialless, which only some engines honour. Every mode drops an `origins`
+    entry on the host page's site from every kind, with a warning. The site is the browser's registrable domain of the
+    page's host (`example.com` for `app.example.com`), so a sibling subdomain is on it. A loopback, private or link-local
+    host is kept, with a warning, only when the host page is itself on one, and dropped otherwise. Use the fetch bridge for
+    an API that knows the user: it sends no credentials. What the engines would send ([the table](docs/API.md#cookies-by-engine)):
 
 <!-- generated:begin cookie-sentence -->
 A request of the sandbox to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine.

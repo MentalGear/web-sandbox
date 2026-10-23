@@ -171,10 +171,9 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 - **Anything else is dropped** with one warning per entry: `https:` and other schemes, `*` and `*.example.com`,
   `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
   narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
-- **An origin on the host page's site is dropped in strict mode, and kept with a warning in cooperative and worker
-  mode**, once per kind: the warning names the kind and each such origin. A request of the sandbox to it can carry the
-  host site's cookies, as the [table below](#cookies-by-engine) says, so prefer [`fetchBridge`](#fetchbridge) for an API
-  that knows the user: it sends no credentials in any engine.
+- **An origin on the host page's site is dropped in every mode**, with one warning per kind that names the kind and each
+  such origin. A request of the sandbox to it can carry the host site's cookies, as the [table below](#cookies-by-engine)
+  says, so use [`fetchBridge`](#fetchbridge) for an API that knows the user: it sends no credentials in any engine.
 - **The host page's site is the browser's registrable domain of the page's host**: `example.com` for `app.example.com`,
   `example.co.uk` for `www.example.co.uk`, and `user.github.io` for itself. On it are the host page's own origin on any
   scheme or port, its subdomains, its parents down to that domain and its siblings (`api.example.com` for a page on
@@ -185,15 +184,17 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   Where the probe cannot run (cookies blocked, a page with no cookie jar), the check is by name alone: the page's own
   host and the names above and below it, so a sibling is not recognised there, and a public suffix above the page
   counts as its parent.
-- **A loopback, private or link-local host warns**, in every mode, once per kind, and is kept: `localhost`, `127.0.0.1`,
+- **A loopback, private or link-local host is kept only when the host page is itself on one**: `localhost`, `127.0.0.1`,
   `10.x`, `192.168.x`, `169.254.x`, or a name that is private by convention (a single label such as `intranet`, and
   `*.local`, `*.internal` such as `host.docker.internal`, `*.lan`, `*.home.arpa`, `*.localdomain`, `*.corp`, `*.home`,
-  `*.intranet`). It is the user's own machine or network, which the guest then reaches. A name that only resolves to a
-  private address, and is not private by convention, is not recognised.
+  `*.intranet`). It is the user's own machine or network, which the guest then reaches, and the engines differ on whether
+  a page of the public web may do that, so on any other page such an entry (in `origins` and in `fetchBridge.allow`) is
+  dropped with one warning per kind. On a page that is on one it is kept, with that warning, in every mode. A name that
+  only resolves to a private address, and is not private by convention, is not recognised.
 
 <a id="cookies-by-engine"></a>
-The cookies the browser sends with a request of the sandbox, by engine (the warning above is written from the same table;
-every wrapper frame is `credentialless`, which only some engines honour):
+The cookies the browser would send with a request of the sandbox, by engine (why an origin on the host page's site is
+dropped; the warning is written from the same table; every wrapper frame is `credentialless`, which only some engines honour):
 
 <!-- generated:begin cookie-facts -->
 | Engine | To an origin on the host page's site | To an origin on another site | Narrower with | Found by |
@@ -1261,7 +1262,7 @@ a mode. [ADR-005](ADR-005-strict-mode.md)
 process apart from the page's, which the page's other sandboxes can share): there the view's cost is the bound stated in [The view's cost to the host page](#the-views-cost-to-the-host-page),
 and what it lists as outside it. Cooperative mode is no better there. Also
 CSS within what the policy allows, the worker's `violation` reports (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the host site's
-cookies on requests to allowed same-site origins in some engines (cooperative and worker mode; strict mode drops such an origin; [by engine](#cookies-by-engine)).
+cookies on requests to a same-site origin in some engines (no mode admits one, so none is sent; [by engine](#cookies-by-engine)).
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;

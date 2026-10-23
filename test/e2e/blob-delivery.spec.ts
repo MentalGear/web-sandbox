@@ -1,4 +1,4 @@
-import { test, expect, HARNESS, ORIGIN, type SandboxDriver } from './fixture';
+import { test, expect, HARNESS, OFFSITE_ORIGIN, ORIGIN, type SandboxDriver } from './fixture';
 import type { SandboxConfig } from '@src/host';
 import type { OriginKind } from '@src/lib/csp/origins';
 import { useRecorder, wss } from './recorder';
@@ -639,8 +639,8 @@ test.describe("5a. the guest policy never contains 'self'", () => {
     test("a configured 'self' is dropped with one warning; the explicit origin stays and other origins are refused", async ({ sandbox, page }) => {
         // No host-origin load here: whether the allowlisted http://localhost loads is not what this asserts.
         const warnings = collectWarnings(page);
-        const { policy, violations, ...outcome } = await scriptSourceOutcome(sandbox, false, { scripts: ["'self'", ORIGIN] });
-        expect(policy).toContain(`script-src 'unsafe-inline' ${ORIGIN};`);
+        const { policy, violations, ...outcome } = await scriptSourceOutcome(sandbox, false, { scripts: ["'self'", OFFSITE_ORIGIN] });
+        expect(policy).toContain(`script-src 'unsafe-inline' ${OFFSITE_ORIGIN};`);
         expect(policy.toLowerCase()).not.toContain("'self'");
         expect(outcome).toEqual({ reached: [], ...REFUSED_ATTACKER });
         expect(violations).toEqual(ATTACKER_VIOLATIONS);

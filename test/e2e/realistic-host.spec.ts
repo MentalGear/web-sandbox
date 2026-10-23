@@ -1,9 +1,8 @@
 import { test, expect, ORIGIN } from './fixture';
-import { COOKIE_ENGINE_FACTS } from '@src/lib/cookie-facts';
 import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { waitInView, inFrames } from './strict-view';
 import {
-    RealisticHost, covering, guestBattery, startSiblingApi, cookieNames, hitsNamed, HOST_COOKIE_BY_SAME_SITE, HOST_COOKIES, HOST_TOKEN,
+    RealisticHost, covering, guestBattery, startSiblingApi, cookieNames, hitsNamed, HOST_COOKIES, HOST_TOKEN,
     type Directives,
 } from './realistic-host';
 import type { Page } from '@playwright/test';
@@ -36,10 +35,6 @@ const allowing = (...origins: string[]) => (base: Directives): Directives => ({
     'connect-src': [...base['connect-src']!, ...origins],
     'img-src': [...base['img-src']!, ...origins],
 });
-
-/** The SameSite cookies an engine sends to an origin on the host page's site (src/lib/cookie-facts.ts). */
-const sentToSameSite = (browserName: 'chromium' | 'firefox' | 'webkit') =>
-    COOKIE_ENGINE_FACTS[browserName].sends.sameSite.map(value => HOST_COOKIE_BY_SAME_SITE[value]).sort();
 
 /** Heights of the wrapper and of the frame inside it, read from outside. */
 async function frameHeights(page: Page, browserName: string): Promise<number[]> {
@@ -263,7 +258,7 @@ test.describe('cooperative mode', () => {
         expect(String(guest.topNav), covering('uiSurfaces', 'and threw in the guest')).toMatch(/^ERR /);
     });
 
-    test('the network battery: the guest, its images and the bridge carry no host cookie in Chromium; elsewhere what cookie-facts.ts says, and never the Authorization header, a Referer or the Service Worker', async ({ sandbox, browserName }) => {
+    test('the network battery: the guest, its images and the bridge carry no host cookie, the host page site is not reachable, and never the Authorization header, a Referer or the Service Worker', async ({ sandbox, browserName }) => {
         const sibling = await startSiblingApi();
         try {
             const host = await RealisticHost.open(sandbox, { mode: 'cooperative', directives: allowing(ORIGIN, sibling.sameSite, sibling.crossSite) });
@@ -286,13 +281,9 @@ test.describe('cooperative mode', () => {
             const guest = await host.guestResult();
             const hits = await host.hits();
 
-            // an origin on the host page's site is kept in cooperative mode (with a warning); what rides on the request is the engine's
-            const expected = sentToSameSite(browserName);
+            // an origin on the host page's site is dropped in every mode (with a warning): the guest's fetch, no-cors POST and image to it are refused
             const sameSiteHits = [...sibling.named('same'), ...sibling.named('same.svg')];
-            expect(sameSiteHits.length, covering('cookies', 'the requests to the host page\'s site arrived (fetch, no-cors POST, image)')).toBe(3);
-            for (const hit of sameSiteHits) {
-                expect(cookieNames(hit.headers.cookie), covering('cookies', `${browserName}: a request to the host page's site carries ${expected.length === 0 ? 'none of the host cookies' : expected.join(', ')} (cookie-facts.ts) — ${hit.method} ${hit.name}`)).toEqual(expected);
-            }
+            expect(sameSiteHits, covering('cookies', "no request of the guest reaches the host page's site: the origin is dropped, so no engine's cookie rule applies")).toEqual([]);
             const crossSiteHits = [...sibling.named('cross'), ...sibling.named('cross.svg')];
             expect(crossSiteHits.length, covering('cookies', 'the requests to another site arrived')).toBe(3);
             for (const hit of crossSiteHits) expect(hit.headers.cookie, covering('cookies', `another site gets none of the host's cookies — ${hit.method} ${hit.name}`)).toBeUndefined();
@@ -355,11 +346,7 @@ test.describe('worker mode', () => {
             const guest = await host.guestResult();
             const hits = await host.hits();
 
-            const expected = sentToSameSite(browserName);
-            for (const hit of [...sibling.named('same')]) {
-                expect(cookieNames(hit.headers.cookie), covering('cookies', `${browserName}: the worker's request to the host page's site carries ${expected.length === 0 ? 'none of the host cookies' : expected.join(', ')} (cookie-facts.ts) — ${hit.method}`)).toEqual(expected);
-            }
-            expect(sibling.named('same').length, covering('cookies', 'the worker reached the host page\'s site (the positive control of the cookie facts)')).toBe(2);
+            expect(sibling.named('same'), covering('cookies', "the worker's requests to the host page's site are refused: the origin is dropped")).toEqual([]);
             for (const hit of sibling.named('cross')) expect(hit.headers.cookie, covering('cookies', 'another site gets none of the host cookies')).toBeUndefined();
             for (const hit of [...sibling.hits, ...hits.api]) {
                 expect(hit.headers.authorization, covering('hostRealmGlobals', `${hit.name}: no Authorization header`)).toBeUndefined();

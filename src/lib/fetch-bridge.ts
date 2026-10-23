@@ -254,13 +254,22 @@ const boundedInteger = (value: unknown, fallback: number, max: number): number =
 export const FETCH_ORIGIN_RULES: OriginRules = { anyHost: ['https:', 'http:'], loopbackOnly: [] };
 
 /**
+ * Why a loopback, private or link-local origin is dropped from a host page that is not itself on one: the engines
+ * disagree on whether a page of the public web may reach the user's own machine or network (Local Network Access asks
+ * permission in one, another reaches it, and a sandboxed frame of a third is not held back by mixed-content blocking), so
+ * the library keeps such an entry only for a host page that is itself on a loopback, private or link-local host.
+ */
+export const PRIVATE_NETWORK_REASON = "the host page is not on one, and engines differ on whether a page of the public web may reach the user's own machine or network; the library keeps such an origin only for a host page that is itself on a loopback, private or link-local host";
+
+/**
  * Validates a `fetchBridge` config into a policy, or returns null when there is none to apply (not an
  * object). Entries that cannot be used are dropped and reported through `warn`; an empty allowlist is a
  * valid policy that refuses everything. A list field that is not a list is dropped with a warning, as a whole: `allow`
  * then admits nothing, `methods` and `headers` keep their defaults. Every value shown in a warning is clamped
  * (`shown`, R1:R1-3: JSON.stringify of a BigInt or a cyclic entry would throw and refuse the whole config).
- * An allowlist that names the host page's own origin (`hostOrigin`) or a loopback, private or link-local host is
- * honoured, as configured, with one warning each (R1:R3-5): it lets the guest reach what the bridge otherwise refuses.
+ * An allowlist that names the host page's own origin (`hostOrigin`) is honoured, as configured, with one warning
+ * (R1:R3-5): it lets the guest reach what the bridge otherwise refuses. A loopback, private or link-local host is kept,
+ * with a warning, only when the host page is itself on one, and dropped, with a warning, otherwise (PRIVATE_NETWORK_REASON).
  */
 export function toFetchPolicy(config: unknown, warn: (message: string) => void, hostOrigin = ''): FetchPolicy | null {
     if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
@@ -273,6 +282,7 @@ export function toFetchPolicy(config: unknown, warn: (message: string) => void, 
         return fallback;
     };
 
+    const hostIsPrivate = isPrivateOrigin(hostOrigin);
     const allow = new Set<Origin>();
     for (const entry of listOf('allow', [])) {
         const origin = parseOrigin(entry, FETCH_ORIGIN_RULES);
@@ -281,7 +291,13 @@ export function toFetchPolicy(config: unknown, warn: (message: string) => void, 
             continue;
         }
         if (origin === hostOrigin) warn(`[Sandbox] fetchBridge.allow lists the host page's own origin (${origin}): the guest can send requests to it through the bridge (without credentials).`);
-        else if (isPrivateHost(new URL(origin).hostname)) warn(`[Sandbox] fetchBridge.allow lists ${origin}, a loopback, private or link-local host: the guest can reach it through the bridge.`);
+        else if (isPrivateHost(new URL(origin).hostname)) {
+            if (!hostIsPrivate) {
+                warn(`[Sandbox] fetchBridge.allow dropped ${origin}, a loopback, private or link-local host: ${PRIVATE_NETWORK_REASON}.`);
+                continue;
+            }
+            warn(`[Sandbox] fetchBridge.allow lists ${origin}, a loopback, private or link-local host: the guest can reach it through the bridge.`);
+        }
         allow.add(origin);
     }
 
@@ -402,6 +418,15 @@ export function isPrivateHost(hostname: string): boolean {
     if (octets !== null) return isPrivateIPv4(octets);
     if (!host.includes('.')) return true; // a single label
     return PRIVATE_NAME_SUFFIXES.some(({ suffix }) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
+/** Whether an origin's host is one `isPrivateHost` recognises; false for a string that is not an origin (a page of unknown origin is not private). */
+export function isPrivateOrigin(origin: string): boolean {
+    try {
+        return isPrivateHost(new URL(origin).hostname);
+    } catch {
+        return false;
+    }
 }
 
 /** A request the bridge will make: every field validated. */

@@ -26,10 +26,11 @@ import { defineData, ownField } from "../utils";
  * percent-encoded host), and a key that is not a kind is dropped too. Dropping only narrows: a kind with no origin left
  * admits none. An `origins` that is not an object, or a kind that is not a list, cannot be read and refuses the whole
  * config. An origin on the host page's site (the registrable domain of its host as the browser decides it: the page's
- * own origin on any scheme or port, its subdomains, its parents and its siblings) is dropped in strict mode, and kept
- * in cooperative and worker mode, with one warning per kind: some engines send the host site's cookies with a guest
- * request to it. A loopback, private or link-local host is kept, with one warning per kind in every mode: it reaches
- * the user's own machine or network. The fetch bridge sends no credentials. Registered files add `blob:` to the
+ * own origin on any scheme or port, its subdomains, its parents and its siblings) is dropped in every mode, with one
+ * warning per kind: some engines send the host site's cookies with a guest request to it. A loopback, private or
+ * link-local host reaches the user's own machine or network, and engines differ on whether a page of the public web may
+ * do that: it is kept, with one warning per kind, only when the host page is itself on one, and dropped, with a warning,
+ * otherwise. The fetch bridge sends no credentials. Registered files add `blob:` to the
  * directive of each kind of load their type is for, whatever is listed here. See ADR-007.
  *
  * @defaultValue none

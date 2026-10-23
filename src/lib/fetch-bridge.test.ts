@@ -3,12 +3,14 @@ import { normaliseConfig } from './config-schema';
 import { createFetchBridge, FETCH_ERROR_CODES, FETCH_ORIGIN_RULES, FETCH_OUTCOMES, isPrivateHost, PRIVATE_NAME_SUFFIXES, toFetchPolicy, validateRequest, type FetchPolicy, type FetchRecord } from './fetch-bridge';
 
 const HOST = 'https://host.example';
+// a host page that is itself on a loopback host: a loopback, private or link-local entry is kept only for one (PRIVATE_NETWORK_REASON)
+const LOCAL_PAGE = 'http://localhost:3000';
 const policy = (overrides: Record<string, unknown> = {}): FetchPolicy => toFetchPolicy({ allow: ['https://api.example'], ...overrides }, () => {})!;
 const refusalCode = (value: unknown) => (value instanceof Error ? (value as any).code : 'accepted');
 
 describe('the fetch bridge config (backlog B5)', () => {
     it('allow takes exact origins only, through the one origin parser (origin.ts)', () => {
-        const allowed = (entry: unknown) => toFetchPolicy({ allow: [entry] }, () => {})!.allow[0] ?? null;
+        const allowed = (entry: unknown) => toFetchPolicy({ allow: [entry] }, () => {}, LOCAL_PAGE)!.allow[0] ?? null;
         expect(allowed('https://api.example')).toBe('https://api.example');
         expect(allowed('https://API.example:443/')).toBe('https://api.example');
         expect(allowed('http://localhost:8080')).toBe('http://localhost:8080');
@@ -78,16 +80,22 @@ describe('isPrivateHost: the names that are private by convention (PRIVATE_NAME_
             expect(isPrivateHost(hostOf(url)), url).toBe(false);
         }
     });
-    it('both call sites use it: the bridge refuses an unlisted one with the private-host reason, and an allow entry and an origins entry warn', () => {
+    it('both call sites use it: the bridge refuses an unlisted one with the private-host reason; from a page on one an allow entry and an origins entry warn and are kept, from any other they are dropped with a warning', () => {
         for (const origin of ['https://printer.local', 'https://host.docker.internal', 'https://nas.home.arpa', 'https://intranet']) {
             const refused = validateRequest({ url: `${origin}/x` }, policy(), HOST);
             expect(refusalCode(refused), origin).toBe('FETCH_NOT_ALLOWED');
             expect((refused as any).reason, origin).toBe('a loopback, private or link-local host, which is not in fetchBridge.allow');
             const warnings: string[] = [];
-            toFetchPolicy({ allow: [origin] }, (message) => warnings.push(message));
+            toFetchPolicy({ allow: [origin] }, (message) => warnings.push(message), LOCAL_PAGE);
             expect(warnings, origin).toEqual([expect.stringContaining(`fetchBridge.allow lists ${origin}, a loopback, private or link-local host`)]);
-            const reach = normaliseConfig({ mode: 'cooperative', origins: { connect: [origin] } }, { hostOrigin: HOST }).warnings.filter(message => message.includes(' lists '));
+            const reach = normaliseConfig({ mode: 'cooperative', origins: { connect: [origin] } }, { hostOrigin: LOCAL_PAGE }).warnings.filter(message => message.includes(' lists '));
             expect(reach, origin).toEqual([expect.stringContaining(`origins.connect lists ${origin} (a loopback, private or link-local host)`)]);
+            const away: string[] = [];
+            expect(toFetchPolicy({ allow: [origin] }, (message) => away.push(message), HOST)!.allow, origin).toEqual([]);
+            expect(away, origin).toEqual([expect.stringContaining(`fetchBridge.allow dropped ${origin}, a loopback, private or link-local host`)]);
+            const dropped = normaliseConfig({ mode: 'cooperative', origins: { connect: [origin] } }, { hostOrigin: HOST });
+            expect(dropped.value!.origins.connect, origin).toEqual([]);
+            expect(dropped.warnings.filter(message => message.includes(' dropped ')), origin).toEqual([expect.stringContaining(`origins.connect dropped ${origin} (a loopback, private or link-local host)`)]);
         }
         const none = normaliseConfig({ mode: 'cooperative', origins: { connect: ['https://api.example'] } }, { hostOrigin: HOST }).warnings.filter(message => message.includes(' lists '));
         expect(none).toEqual([]);
@@ -127,7 +135,7 @@ describe('validateRequest (backlog B5)', () => {
     });
 
     it('allows what the policy lists: the host origin, a loopback origin, extra methods and headers', () => {
-        const p = policy({ allow: [HOST, 'http://127.0.0.1:8080'], methods: ['GET', 'DELETE'], headers: ['authorization'] });
+        const p = toFetchPolicy({ allow: [HOST, 'http://127.0.0.1:8080'], methods: ['GET', 'DELETE'], headers: ['authorization'] }, () => {}, LOCAL_PAGE)!;
         expect(refusalCode(validateRequest({ url: `${HOST}/x` }, p, HOST))).toBe('accepted');
         expect(refusalCode(validateRequest({ url: 'http://127.1:8080/x', method: 'DELETE', headers: [['Authorization', 'Bearer t']] }, p, HOST))).toBe('accepted');
     });

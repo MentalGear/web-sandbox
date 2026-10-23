@@ -76,7 +76,7 @@ test('every mode: the wrapper iframe carries the credentialless attribute, and t
 test.describe('Chromium: no request of the sandbox carries a cookie', () => {
     test.skip(({ browserName }) => browserName !== 'chromium', 'credentialless frames are a Chromium feature; the other engines are in cookie-facts.ts');
 
-    test('a same-site listed origin gets none of the host site\'s cookies, in cooperative and worker mode, by fetch, no-cors POST and image', async ({ sandbox, context }) => {
+    test('a same-site origin is dropped in every mode, so nothing reaches it and no cookie of the host site can', async ({ sandbox, context }) => {
         const listener = await sameSiteListener();
         try {
             await context.addCookies(cookiesFor('localhost'));
@@ -86,15 +86,12 @@ test.describe('Chromium: no request of the sandbox carries a cookie', () => {
             for (const hit of hitsOf(listener.hits, 'control')) expect(hit.cookie, hit.path).toContain('ws_none=1');
 
             const origins = { connect: [listener.origin], images: [listener.origin] };
-            expect(await sandbox.mount({ mode: 'cooperative', origins })).toBe('ready');
-            expect(await sandbox.inGuest(requests(listener.origin, 'cooperative', true))).toBe('sent');
-            expect(kinds(hitsOf(listener.hits, 'cooperative'))).toEqual(ALL_KINDS);
-
-            expect(await sandbox.mount({ mode: 'worker', origins })).toBe('ready');
-            expect(await sandbox.inGuest(requests(listener.origin, 'worker', false))).toBe('sent');
-            expect(kinds(hitsOf(listener.hits, 'worker'))).toEqual(['include', 'nocors']);
-
-            for (const hit of [...hitsOf(listener.hits, 'cooperative'), ...hitsOf(listener.hits, 'worker')]) expect(hit.cookie, hit.path).toBeUndefined();
+            for (const mode of ['strict', 'cooperative', 'worker'] as const) {
+                expect(await sandbox.mount({ mode, origins }), mode).toBe('ready');
+                expect(await sandbox.inGuest(requests(listener.origin, mode, mode === 'cooperative')), mode).toBe('sent');
+                await sandbox.page.waitForTimeout(300);
+                expect(hitsOf(listener.hits, mode), mode).toEqual([]);
+            }
         } finally {
             await listener.stop();
         }
