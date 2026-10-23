@@ -293,16 +293,18 @@ export interface SandboxConfigOptions {
      */
     entry?: string;
     /**
-     * Strict mode only: whether CSS animations and transitions run in the view. `true` or left out keeps them; any
-     * other value turns them off, with one warning when it is not a boolean. Ignored with a warning in other modes.
+     * Strict mode only: whether CSS animations and transitions run in the view. Only a literal `true` keeps them; left
+     * out, `false` or any other value (with one warning when it is not a boolean) removes them. Ignored with a warning
+     * in other modes.
      *
      * @remarks
      * While `true`, animations run on the host page's main thread wherever the browser runs the view there, and the
      * view's time budget does not bound them: a guest can keep the page busy for as long as they run. `false` removes
-     * them (elements show their end state), which restores the bound. With `false`, a host page whose `style-src`
-     * refuses inline styles must allow the view's stylesheet by its hash (docs/API.md#host-page-policy).
+     * them (elements show their end state), which keeps the default configuration inside the documented bound on every
+     * engine. While `false`, a host page whose `style-src` refuses inline styles must allow the view's stylesheet by
+     * its hash (docs/API.md#host-page-policy).
      *
-     * @defaultValue `true`
+     * @defaultValue `false`
      */
     allowAnimations?: boolean;
     /**
@@ -2205,7 +2207,7 @@ export class WebSandbox extends ElementBase {
             viewFiles: files.filter(candidate => isViewFileType(candidate[1])), // never a type that opens as a document (BR:ST1)
             html,
             autoResize: this._autoResizeEnabled(),
-            allowAnimations: this._config.allowAnimations !== false,
+            allowAnimations: this._config.allowAnimations === true,
             allowAutoplay: this._config.allowAutoplay === true,
             origins: { images: [...this._origins.images], media: [...this._origins.media] },
         };

@@ -108,7 +108,8 @@ test.describe('G1 rendered markup', () => {
             handlers: Array.from(document.body.querySelectorAll('*')).filter(e => e.getAttributeNames().some(n => n.toLowerCase().startsWith('on'))).length,
             url: location.href,
         })`);
-        expect(view).toEqual({ removed: [], head: ['meta', 'meta', 'script'], shadowRoots: 0, kept: ['img-handler', 'jslink', 'allowed'], handlers: 0, url: 'about:srcdoc' });
+        // (the head's first element is the still stylesheet: the default allowAnimations is false)
+        expect(view).toEqual({ removed: [], head: ['style', 'meta', 'meta', 'script'], shadowRoots: 0, kept: ['img-handler', 'jslink', 'allowed'], handlers: 0, url: 'about:srcdoc' });
 
         // the refusals the view raised arrived, labelled 'view' (A6): the image from the blocked origin
         await sandbox.waitForViolation('img-src', recorder.blocked);

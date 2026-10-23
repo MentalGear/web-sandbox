@@ -233,9 +233,10 @@ test.describe('host page policy', () => {
         }
     });
 
+    // The wrapper's warning only: the default `allowAnimations: false` has its own (view-switches.spec.ts).
     test(`style-src 'self': the frame is 150 px high and the element warns once, naming the hash; with ${WRAPPER_STYLE_HASH} it fills the element, no warning`, async ({ sandbox, page, browserName }) => {
         const warnings: string[] = [];
-        page.on('console', (message) => { if (message.type() === 'warning' && message.text().includes('style-src')) warnings.push(message.text()); });
+        page.on('console', (message) => { if (message.type() === 'warning' && message.text().includes('style-src') && !message.text().includes('stops animations')) warnings.push(message.text()); });
         await openWithPolicy(page, { csp: "style-src 'self'" });
         expect(await strictEntry(sandbox)).toEqual([{ type: 'ready', reason: null }]);
         expect(await frameHeights(page, browserName)).toEqual([300, 150]);
