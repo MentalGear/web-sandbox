@@ -71,10 +71,11 @@ test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the ho
                 // no documented share (docs/API.md lists Firefox's cost within the budget, 4–7%, as outside the view's
                 // bound): the spec's own 10% stands
                 expect(ended || share.busy < 0.1, 'near idle, or ended with the reason').toBe(true);
-                // a flood this fast is past the budget: the sandbox ends, and says why. Except WebKit's uncaught errors of
-                // 16 Mi characters: WebKit mutes a worker's errors ("Script error.", no error object), so their characters are
-                // not there to count, and it raises fewer than the count budget (its host page stayed idle: measured 2-5%)
-                if (browserName === 'webkit' && name === 'uncaught errors of 16 Mi characters') return;
+                // a flood this fast is past the budget: the sandbox ends, and says why. Strict mode counts the characters of
+                // WebKit's muted errors ("Script error." in the worker) in the view, where their text is. Worker mode's worker
+                // has no such view: WebKit's uncaught errors of 16 Mi characters are 13 characters each there, and it raises fewer
+                // than the count budget (its host page stayed idle: measured 2-5%). Ledger row webkit-muted-worker-errors.
+                if (browserName === 'webkit' && mode === 'worker' && name === 'uncaught errors of 16 Mi characters') return;
                 expect(reasons).toEqual([expect.stringMatching(UNCAUGHT_REASON)]);
             });
         }

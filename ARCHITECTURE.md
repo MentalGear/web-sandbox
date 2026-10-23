@@ -74,7 +74,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:acaf5a37377249d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:acaff2f6377249d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
@@ -88,7 +88,7 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Channels and frames
 
-<!-- describes: channels, frames sig:b441e118 -->
+<!-- describes: channels, frames sig:c20484f0 -->
 
 Realms talk on channels, and every message on them is a frame of a declared type. A frame is declared once, with the
 channels it may cross, the realms at its ends, and for each field what bounds it. What a frame carries out of a guest
@@ -110,7 +110,7 @@ How a field is bounded:
 | :--- | :--- | :--- | :--- | :--- |
 | `announcement` | window message | `host`, `cooperative`, `worker-frame`, `view`, `bridge-frame` | A library frame's message to the host page's window, before any port: the guest frame's one announcement (the logic port, or worker mode's refusal), and any bootstrap's refusal of an environment other than the one built. | 2 |
 | `logic-port` | MessagePort | `host`, `cooperative`, `worker`, `strict-worker` | The host and the guest: calls both ways, execute(), liveness, and the guest bootstrap's lines and reports. | 9 |
-| `view-port` | MessagePort | `host`, `view` | Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness. | 14 |
+| `view-port` | MessagePort | `host`, `view` | Strict mode: the host and the view, which runs no guest code; the view's check-in, reports and liveness. | 15 |
 | `render-port` | MessagePort | `view`, `strict-worker` | Strict mode: the view and the guest's worker; the host is not on this path. | 7 |
 | `view-init` | window message | `host`, `view` | Strict mode: the host hands the view its two ports, once per build. | 1 |
 | `worker` | worker message | `worker-frame`, `worker`, `view`, `strict-worker` | A frame and the worker it spawned: the worker gets its ports, and worker mode's worker says it started. | 3 |
@@ -135,7 +135,7 @@ How a field is bounded:
 | `LOG` | `logic-port`: cooperative, worker, strict-worker → host | `level` (constant), `args` (measured), `own` (not a string) | A console line of the guest's, or one of the relay's own (`own`): sandbox-log. |
 | `VIOLATION` | `logic-port`: cooperative, worker, strict-worker → host<br>`view-port`: view → host | `directive` (cut), `blockedURI` (cut), `sourceFile` (cut), `lineNumber` (not a string), `columnNumber` (not a string) | A Content-Security-Policy violation report: violation. Labelled by the port it arrived on in strict mode. |
 | `RESIZE` | `logic-port`: cooperative → host<br>`view-port`: view → host | `height` (not a string) | The content's height, for autoResize: from cooperative mode's bootstrap, or strict mode's view. |
-| `UNCAUGHT_PAST_BUDGET` | `logic-port`: worker, strict-worker → host | — | The guest raised more uncaught errors and rejections in a second than their budget: the sandbox ends. |
+| `UNCAUGHT_PAST_BUDGET` | `logic-port`: worker, strict-worker → host<br>`view-port`: view → host | — | The guest raised more uncaught errors and rejections in a second than their budget: the sandbox ends. |
 | `VIEW_READY` | `view-port`: view → host | `width` (not a string), `height` (not a string), `stillStyleRefused` (not a string) | The view's check-in, its first frame: the strict build is ready. |
 | `VIEW_PING` | `view-port`: host → view | `n` (not a string) | The view's liveness probe (VIEW_LIVENESS_TIMEOUT_MS). |
 | `VIEW_PONG` | `view-port`: view → host | `n` (not a string) | The view's answer to a VIEW_PING. |

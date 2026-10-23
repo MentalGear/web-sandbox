@@ -61,9 +61,8 @@ test.describe('G1 rendered markup', () => {
             `<details open ontoggle="${M('ontoggle')}"><summary>s</summary></details>`,
             `<a id="jslink" href="javascript:${M('javascript-link')}" style="${at(0, 0)}">js</a>`,
             // the hash-admitted bootstrap, verbatim, as HTML and SVG script and inside a frame
-            `<script>${bootstrap}</script>`,
-            `<svg><script>${bootstrap}</script></svg>`,
-            `<iframe ${srcdoc(`<script>${bootstrap}</script>`)}></iframe>`,
+            // (rendered into these holders below: three copies in one render would pass VIEW_RENDER_MAX_LENGTH)
+            '<div id="bootstrap-html"></div><div id="bootstrap-svg"></div><div id="bootstrap-frame"></div>',
             // nested browsing contexts, any depth and namespace
             `<iframe ${srcdoc(`<script>${M('frame-inline')}</script><iframe ${srcdoc(`<script>${M('grandchild')}</script>`)}></iframe>`)}></iframe>`,
             `<iframe src="javascript:${M('javascript-frame')}"></iframe>`,
@@ -86,6 +85,9 @@ test.describe('G1 rendered markup', () => {
             `<img id="allowed" src="${recorder.allowed}/rendered.svg">`,
         ].join('');
         await render(sandbox, browserName, corpus);
+        await render(sandbox, browserName, `<script>${bootstrap}</script>`, 'done-html', 'bootstrap-html');
+        await render(sandbox, browserName, `<svg><script>${bootstrap}</script></svg>`, 'done-svg', 'bootstrap-svg');
+        await render(sandbox, browserName, `<iframe ${srcdoc(`<script>${bootstrap}</script>`)}></iframe>`, 'done-frame', 'bootstrap-frame');
         await recorder.waitFor('allowed', '/rendered.svg');
         await page.waitForTimeout(800);
         await clickInSandbox(page, 20, 20); // the javascript: link: a trusted click

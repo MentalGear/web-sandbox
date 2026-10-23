@@ -1614,6 +1614,12 @@ export class WebSandbox extends ElementBase {
             this._dispatchGuestLog({ level: 'error', args: [viewErrorLine(data.message)] });
             return;
         }
+        if (data?.type === 'UNCAUGHT_PAST_BUDGET') {
+            // The uncaught errors that only the view could see (WebKit mutes them in the worker: in-sandbox-view.ts,
+            // countUncaught) passed UNCAUGHT_CHARACTERS_PER_SECOND in a second, counted by the view as the worker counts the rest.
+            step(this, { t: 'terminate', reason: reasonText('uncaughtBudget'), gen });
+            return;
+        }
         if (data?.type === 'GUEST_TEXT_DROPPED') {
             // The view dropped a guest error text past its per-second window (R4:M-5): said once per
             // environment, as the console relay says its own drops, in a line of the relay's (not counted in the window).
