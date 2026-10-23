@@ -35,7 +35,7 @@ const STRICT_FIXED_VALUES = (hash: string): Record<string, string[]> => ({
     'default-src': ["'none'"], 'script-src': [hash], 'script-src-attr': ["'none'"], 'base-uri': ["'none'"], 'form-action': ["'none'"],
     'worker-src': ['blob:'], 'frame-src': ["'none'"], 'object-src': ["'none'"], 'manifest-src': ["'none'"],
 });
-const COOPERATIVE_NAMES = ['default-src', 'script-src', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'frame-src', 'object-src', 'base-uri', 'form-action', 'manifest-src', 'upgrade-insecure-requests'];
+const COOPERATIVE_NAMES = ['default-src', 'script-src', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'frame-src', 'object-src', 'base-uri', 'form-action', 'manifest-src'];
 // what a configurable directive may hold besides origins: the library's own sources
 const LIBRARY_SOURCES = new Set(["'unsafe-inline'", "'none'", 'blob:']);
 

@@ -21,8 +21,8 @@ import { expect, test } from './fixture';
  * only evidence once ALLOWED has shown, in the same spec file, that the same kind of load does arrive:
  * every file that uses the recorder carries such a positive control.
  *
- * Both are HTTPS on 127.0.0.1 (upgrade-insecure-requests is always on, and WebKit upgrades even a
- * loopback http: URL), with a certificate made per run; specs that use it set ignoreHTTPSErrors.
+ * Both are HTTPS on 127.0.0.1 (a listed https: origin is a different origin from the plain-http test server), with a
+ * certificate made per run; specs that use it set ignoreHTTPSErrors.
  * Responses are permissive (CORS *) and typed by extension, so a load that arrives also succeeds and the
  * guest's own outcome agrees with the listener. A `.js` file counts its runs in globalThis.__recorderRan.
  *

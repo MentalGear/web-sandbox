@@ -439,16 +439,17 @@ describe('M-2: the renderer drops every URL the view policy refuses, reports it,
             '<img id="up" src="http://a.example/5.png"><img id="rel" src="r.png"><audio id="au" src="https://a.example/a.mp3"></audio>',
         ].join(''), { images: ['https://a.example'], media: ['https://b.example'] });
         expect([['a', 'src'], ['b', 'src'], ['c', 'srcset'], ['v', 'src'], ['v', 'poster'], ['vs', 'src'], ['t', 'src'], ['ps', 'srcset'], ['loose', 'src'], ['up', 'src'], ['rel', 'src'], ['au', 'src']].map(([id, name]) => attribute(fragment, id!, name!))).toEqual([
-            'https://a.example/1.png', null, null, 'https://b.example/v.mp4', 'https://a.example/p.png', null, 'https://b.example/t.vtt', null, 'https://b.example/l.mp4', 'http://a.example/5.png', 'r.png', null,
+            'https://a.example/1.png', null, null, 'https://b.example/v.mp4', 'https://a.example/p.png', null, 'https://b.example/t.vtt', null, 'https://b.example/l.mp4', null, 'r.png', null,
         ]);
         expect(context.refused).toEqual([
             ['img-src', 'https://b.example:8443/2.png?q'],
             ['img-src', 'https://b.example/4.png'],
             ['media-src', 'https://a.example/s.mp4'],
             ['img-src', 'https://b.example/p.png'],
+            ['img-src', 'http://a.example/5.png'],
             ['media-src', 'https://a.example/a.mp3'],
         ]);
-        expect(context.urls).toBe(7); // a, v src, v poster, t, loose (a <source> outside media loads nothing), up, rel
+        expect(context.urls).toBe(6); // a, v src, v poster, t, loose (a <source> outside media loads nothing), rel (up is the http: form of a listed https: origin: refused, not kept)
     });
 
     it("a fragment's top-level <source> loads by the target it goes into", () => {

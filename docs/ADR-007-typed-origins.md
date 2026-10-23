@@ -40,8 +40,7 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['h
    font-src <fonts> [blob:]                           font-src <fonts> [blob:]
    media-src <media> [blob:]                          media-src <media> [blob:]
    connect-src <connect> [blob:]                      connect-src <connect> [blob:]
-   worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none';
-   upgrade-insecure-requests                          (both)
+   worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'  (both)
    ```
 
    `blob:` is added per kind for the registered files of the build only, from the one load-kind table (`load-kinds.ts`,
@@ -63,12 +62,20 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['h
    (`private: true`), so there is no consumer to migrate silently, and no adapter: one would have to decide which raw sources
    are origins, the guard-rail problem again.
 
+6. **The host page's `connect-src` narrows `connect` and `fetchBridge.allow` in the library, not in the browser.** A
+   sandbox frame copies its parent's policy list, which can only narrow its own, but the engines differ on what some
+   sources admit there (docs/API.md#connect-src-by-engine). So the lists are cut by the page's policy before the guest's
+   and the bridge's policies are written, the same on every engine: the policy is the embedder's (`hostContentSecurityPolicy`)
+   or read once per page by a deliberate violation that reaches neither the network nor the DNS, and a parser of
+   `connect-src` alone keeps an origin only where every engine admits it (docs/API.md#your-connect-src). The parser
+   only narrows: a source it does not understand admits nothing, `'self'` among them.
+
 ### The accepted grammar, and why
 
 | Accepted | Why |
 | :--- | :--- |
-| `https://host[:port]` | the one scheme a guest load may use; `upgrade-insecure-requests` is always on |
-| `wss://host[:port]`, in `connect` only | WebSocket; meaningless for any other kind. A scheme is matched as written: `https://host` does not admit `wss://host` (Chromium 145, Firefox 146, WebKit 26), and WebKit lets a `wss://host` entry admit `https://host` requests too |
+| `https://host[:port]` | the one scheme a guest load may use. No policy carries `upgrade-insecure-requests`: the engines disagree on what it does to the `http:` form of a listed `https:` origin (refuse, upgrade, send in cleartext), so every engine refuses that form |
+| `wss://host[:port]`, in `connect` only, beside `https://host[:port]` | WebSocket; meaningless for any other kind. A scheme is matched as written, and the engines disagree on a `wss://host` source alone (docs/API.md#connect-src-by-engine), so an entry without its `https://` twin is dropped with a warning and the pair admits `fetch()` and `WebSocket` on every engine |
 | `http://localhost[:port]`, `http://127.0.0.1[:port]` | local development. Loopback only: a plain-http public origin is a network attacker's |
 
 Refused, each dropped with a warning: scheme-wide sources (`https:`), wildcards (`*`, `*.example.com`, `:*`), every keyword

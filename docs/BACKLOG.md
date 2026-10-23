@@ -371,6 +371,13 @@ running a two-sandbox spec. Until then the docs state that every sandbox of the 
 
 **Until then** API.md "(b) The single-operation bound" and THREAT-MODEL.md state it.
 
+**Design constraint for a fix (owner, 2026-10-23).** The host decides liveness; nothing the view reports can extend a
+deadline indefinitely, since the view's thread is busy with renders the guest asks for. A design that meets it uses
+only what the host knows itself: while the host has a render in flight to its view, the per-operation rule applies
+instead of the ping; one registry on the host page, shared by every sandbox, records a render in flight anywhere on
+the page, so another sandbox's stall is told apart; and the host's own hard cap always holds. Availability-only and
+failing closed, so it stays here until the owner picks it up.
+
 ### <a id="s80"></a>S80 · The event-read scan was never built; the guest's event getters are unguarded by any test — ⏳ **open** (P2 · S · medium)
 
 *S74 board BD1:TST-1, medium; class G with E-cpu.* Reverting R5:N-2 and R5:N-6 (the bootstrap's `error` and

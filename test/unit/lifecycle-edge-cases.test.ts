@@ -99,6 +99,7 @@ describe('L-2: a delay of 2^31 ms or more waits; Infinity is off', () => {
             'src/lib/long-timer.ts': 'the helper itself',
             'src/lib/auto-resize.ts': 'at most AUTO_RESIZE_MIN_INTERVAL_MS, a constant',
             'src/lib/in-sandbox-view.ts': "the view's own rate arithmetic: at most the time its budget takes to cover one flush",
+            'src/lib/host-csp.ts': 'READ_TIMEOUT_MS and SETTLE_MS, constants of the read of the host page\'s policy',
         };
         const files = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
             const path = join(directory, entry.name);

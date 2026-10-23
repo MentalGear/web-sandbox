@@ -53,7 +53,7 @@ async function runCase(
     // `crossOriginIsolated` true
     const pageIsolated = await page.evaluate(() => self.crossOriginIsolated);
     expect(pageIsolated, covering(row, `${label}: the sandbox ends with the isolation reason exactly when the host page is cross-origin isolated`)).toBe(outcome.kind === 'terminates' && outcome.reason === 'environmentIsolated');
-    const events = await host.embed('strict', { fetchBridge: { allow: [ORIGIN] }, guest });
+    const events = await host.embed('strict', { fetchBridge: { allow: [ORIGIN] }, guest, ...(matrixCase.givesPolicy ? { config: { hostContentSecurityPolicy: host.csp } } : {}) });
     const eventsNow = () => page.evaluate(() => (window as any).sandboxEvents as { type: string; reason: string | null }[]);
 
     if (outcome.kind === 'terminates') {

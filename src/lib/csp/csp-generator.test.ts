@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { bridgeFramePolicy, cooperativePolicy, fileKinds, KIND_DIRECTIVES, strictViewPolicy, type PolicyInput } from './csp-generator';
 import { NO_ORIGINS, ORIGIN_KINDS, parseOrigins, type OriginKind, type OriginPolicy } from './origins';
-import { ORIGIN_PATTERN } from '../origin';
+import { ORIGIN_PATTERN, type Origin } from '../origin';
 import { parseLikeABrowser, prng, randomInjection } from '../../../test/unit/policy-helpers';
 
 /**
@@ -15,11 +15,11 @@ const input = (overrides: Partial<PolicyInput> = {}): PolicyInput => ({ origins:
 const origins = (config: Record<string, unknown>, mode = 'cooperative') => parseOrigins(config, mode, () => {});
 const ALL = origins({
     scripts: ['https://cdn.example'], styles: ['https://css.example'], images: ['https://img.example', 'http://localhost:5173'],
-    fonts: ['https://fonts.example'], media: ['https://media.example:8443'], connect: ['https://api.example', 'wss://ws.example'],
+    fonts: ['https://fonts.example'], media: ['https://media.example:8443'], connect: ['https://api.example', 'https://ws.example', 'wss://ws.example'],
 });
 
-const COOPERATIVE_DEFAULT = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests";
-const STRICT_DEFAULT = `default-src 'none'; script-src ${HASH}; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests`;
+const COOPERATIVE_DEFAULT = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'";
+const STRICT_DEFAULT = `default-src 'none'; script-src ${HASH}; script-src-attr 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'`;
 
 describe('the templates: golden policies', () => {
     it('cooperative (cooperative and worker mode): every directive emitted, nothing admitted beyond the inline bootstrap and inline styles', () => {
@@ -30,8 +30,8 @@ describe('the templates: golden policies', () => {
         expect(cooperativePolicy(input({ origins: ALL, fileKinds: new Set(ORIGIN_KINDS), scriptUnsafe: true }))).toBe(
             "default-src 'none'; script-src 'unsafe-inline' https://cdn.example blob: 'unsafe-eval'; style-src 'unsafe-inline' https://css.example blob:; "
             + "img-src https://img.example http://localhost:5173 blob:; font-src https://fonts.example blob:; media-src https://media.example:8443 blob:; "
-            + "connect-src https://api.example wss://ws.example blob:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; "
-            + "form-action 'none'; manifest-src 'none'; upgrade-insecure-requests");
+            + "connect-src https://api.example https://ws.example wss://ws.example blob:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; "
+            + "form-action 'none'; manifest-src 'none'");
     });
 
     it('strict view, the default: the bootstrap by its hash, no handler attribute', () => {
@@ -42,8 +42,8 @@ describe('the templates: golden policies', () => {
         expect(strictViewPolicy({ ...input({ origins: ALL, fileKinds: new Set(ORIGIN_KINDS), scriptUnsafe: true }), bootstrapHash: HASH })).toBe(
             `default-src 'none'; script-src ${HASH} 'unsafe-eval'; script-src-attr 'none'; style-src 'unsafe-inline' https://css.example blob:; `
             + "img-src https://img.example http://localhost:5173 blob:; font-src https://fonts.example blob:; media-src https://media.example:8443 blob:; "
-            + "connect-src https://api.example wss://ws.example blob:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; "
-            + "form-action 'none'; manifest-src 'none'; upgrade-insecure-requests");
+            + "connect-src https://api.example https://ws.example wss://ws.example blob:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; "
+            + "form-action 'none'; manifest-src 'none'");
     });
 
     it('a strict view needs one sha256 hash source', () => {
@@ -112,8 +112,8 @@ describe('fileKinds: blob: for exactly the kinds of load a registered type is fo
 });
 
 describe('properties over any `origins` input', () => {
-    const COOPERATIVE_NAMES = ['default-src', 'script-src', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'frame-src', 'object-src', 'base-uri', 'form-action', 'manifest-src', 'upgrade-insecure-requests'];
-    const STRICT_NAMES = ['default-src', 'script-src', 'script-src-attr', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'frame-src', 'object-src', 'base-uri', 'form-action', 'manifest-src', 'upgrade-insecure-requests'];
+    const COOPERATIVE_NAMES = ['default-src', 'script-src', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'frame-src', 'object-src', 'base-uri', 'form-action', 'manifest-src'];
+    const STRICT_NAMES = ['default-src', 'script-src', 'script-src-attr', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src', 'worker-src', 'frame-src', 'object-src', 'base-uri', 'form-action', 'manifest-src'];
     // what each directive holds besides origins and blob:, per template
     const LIBRARY_SOURCES: Record<string, string[]> = { 'script-src': ["'unsafe-inline'", "'unsafe-eval'", HASH], 'style-src': ["'unsafe-inline'"] };
     const CONFIGURABLE = new Set(Object.values(KIND_DIRECTIVES) as string[]);
@@ -189,5 +189,16 @@ describe('properties over any `origins` input', () => {
                 for (const [name, tokens] of directives) expect(tokens.includes("'unsafe-eval'"), name).toBe(scriptUnsafe && name === 'script-src');
             }
         }
+    });
+});
+
+describe('no template upgrades insecure requests: the engines disagree on what it does, so none carries it', () => {
+    it('neither guest template, with or without origins, nor the bridge frame, names upgrade-insecure-requests', () => {
+        const policies = [
+            cooperativePolicy(input()), cooperativePolicy(input({ origins: ALL, fileKinds: new Set(ORIGIN_KINDS), scriptUnsafe: true })),
+            strictViewPolicy({ ...input(), bootstrapHash: HASH }), strictViewPolicy({ ...input({ origins: ALL, fileKinds: new Set(ORIGIN_KINDS) }), bootstrapHash: HASH }),
+            bridgeFramePolicy({ allow: ['https://api.example' as Origin], bootstrapHash: HASH }),
+        ];
+        for (const policy of policies) expect(policy).not.toMatch(/upgrade-insecure-requests/i);
     });
 });

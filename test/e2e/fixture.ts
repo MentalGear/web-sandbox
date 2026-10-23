@@ -3,11 +3,14 @@ import type { SandboxConfig, SandboxConfigOptions } from '@src/host';
 import type { SandboxOrigins } from '@src/lib/csp/origins';
 import type { SandboxViolation } from '@src/lib/violation';
 import type { FetchRecord } from '@src/lib/fetch-bridge';
-import { E2E_ORIGIN } from './server';
+import { E2E_ORIGIN, E2E_PORT } from './server';
 
 // The e2e server's origin: the one serving this checkout (server.ts; 4444 in CI, a port of the checkout's own locally).
 export const ORIGIN = E2E_ORIGIN;
 export const HARNESS = `${ORIGIN}/test/e2e/harness.html`;
+// The same server by its address: another site from the harness page's (an IP address is its own site), on a loopback host
+// like the page, so a config may list it in every mode. `ORIGIN` itself is the host page's own site, which no mode admits.
+export const OFFSITE_ORIGIN = `http://127.0.0.1:${E2E_PORT}`;
 
 // What the specs need to run anything at all: scripts in the frame and execute(), in cooperative mode (the mode most
 // specs were written for; a spec for another mode names it).

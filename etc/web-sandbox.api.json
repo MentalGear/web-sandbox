@@ -636,7 +636,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!FetchBridgeConfig#allow:member",
-              "docComment": "/**\n * The exact origins the guest may reach: scheme, host and optional port, like `https://api.example` or\n * `http://localhost:8080`. An entry with a path, query, fragment, credentials or `*` is dropped with a warning, and so\n * is a value that is not a list. An empty list refuses everything. Listing the host page's own origin or a loopback,\n * private or link-local host works, with one warning each.\n */\n",
+              "docComment": "/**\n * The exact origins the guest may reach: scheme, host and optional port, like `https://api.example` or\n * `http://localhost:8080`. An entry with a path, query, fragment, credentials or `*` is dropped with a warning, and so\n * is a value that is not a list. An empty list refuses everything. Listing the host page's own origin or a loopback,\n * private or link-local host works, with one warning each. The host page's `connect-src` narrows the list on every\n * engine: an origin it does not admit by its scheme and host (`'self'` admits nothing) is dropped with a warning\n * (`hostContentSecurityPolicy`; docs/API.md#host-page-policy).\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1853,6 +1853,33 @@
             },
             {
               "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!SandboxConfigOptions#hostContentSecurityPolicy:member",
+              "docComment": "/**\n * The host page's Content-Security-Policy as text, so that the library drops the origins it refuses from\n * `origins.connect` and `fetchBridge.allow`: a string (one or more policies, as a header or a `<meta>` carries them),\n * or `false` to skip. Left out, the library reads the page's policy once per page load.\n *\n * @remarks\n *\n * A sandbox's frames inherit the host page's policy, which can only narrow theirs, but engines differ on what some of\n * its sources admit in such a frame. So the library applies the page's `connect-src` (else\n * `default-src`) itself, in every engine: each origin in `origins.connect` and `fetchBridge.allow` that a policy\n * refuses is dropped with a warning, before the guest's and the bridge's policies are written. Only `connect-src` is\n * read, and an origin is kept only where every engine admits it: `'self'`, a host written without a scheme, a path\n * and anything the parser does not understand admit nothing (docs/API.md#your-connect-src has the grammar).\n *\n * - A string is the enforced policy, exactly as served; several policies are separated by commas, as in a header. A\n *  Report-Only policy is not passed. The page is then not asked. It is also what a browser without Trusted Types\n *  (Firefox, at the version measured) reads the page's `require-trusted-types-for` and `trusted-types` from: with it,\n *  such a browser ends the build and refuses `execute()` as the others do, and without it nothing is applied there\n *  (docs/API.md#trusted-types-without-the-browser).\n * - `false` skips the narrowing and the read. The browser's own inheritance still narrows where the engine applies it.\n * - Left out, a build that lists a connect origin reads the policy before it starts, once per page load (cached):\n *  the element calls `fetch()` once from a hidden, empty frame to a decoy host that cannot exist, on a port every\n *  engine refuses; the request never leaves the browser and costs no DNS lookup, and the policy that refuses it\n *  reports its own text. Its cost is a console error (two in an engine that logs the refused port, whatever the\n *  policy) and, when a policy refuses the decoy, a CSP report to that policy's `report-uri`. The first such build waits\n *  for it, a few tens of milliseconds. A build with no connect origin never reads.\n *\n * @defaultValue read from the page\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "hostContentSecurityPolicy?: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "string | false"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "hostContentSecurityPolicy",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            },
+            {
+              "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#html:member",
               "docComment": "/**\n * The initial HTML: the initial view in strict mode (its `<script>` elements and event-handler attributes never\n * run, and markup that holds any warns once per element), the guest document in cooperative mode. Ignored in worker\n * mode. `load()` sets it too. Empty means `<div id=\"root\"></div>`. A value that is not a string is\n * dropped with a warning.\n *\n * @defaultValue `''`\n */\n",
               "excerptTokens": [
@@ -2611,7 +2638,7 @@
         {
           "kind": "Interface",
           "canonicalReference": "web-sandbox!SandboxOrigins:interface",
-          "docComment": "/**\n * The `origins` option: the exact origins the guest may load each kind of resource from, one list per kind. It adds\n * origins to six directives of the guest's policy and can change nothing else.\n *\n * @remarks\n *\n * An entry is one exact origin, `https://host[:port]`; in `connect` also `wss://host[:port]`; plain `http://` only for\n * `localhost` and `127.0.0.1`. Case is folded and a default port is dropped. Anything else is dropped with one warning\n * per entry (other schemes, `*`, `'self'` and other keywords, paths, credentials, an IPv6 literal, a non-ASCII or\n * percent-encoded host), and a key that is not a kind is dropped too. Dropping only narrows: a kind with no origin left\n * admits none. An `origins` that is not an object, or a kind that is not a list, cannot be read and refuses the whole\n * config. An origin on the host page's site (the registrable domain of its host as the browser decides it: the page's\n * own origin on any scheme or port, its subdomains, its parents and its siblings) is dropped in strict mode, and kept\n * in cooperative and worker mode, with one warning per kind: some engines send the host site's cookies with a guest\n * request to it. A loopback, private or link-local host is kept, with one warning per kind in every mode: it reaches\n * the user's own machine or network. The fetch bridge sends no credentials. Registered files add `blob:` to the\n * directive of each kind of load their type is for, whatever is listed here. See ADR-007.\n *\n * @defaultValue none\n */\n",
+          "docComment": "/**\n * The `origins` option: the exact origins the guest may load each kind of resource from, one list per kind. It adds\n * origins to six directives of the guest's policy and can change nothing else.\n *\n * @remarks\n *\n * An entry is one exact origin, `https://host[:port]`; in `connect` also `wss://host[:port]`, which is kept only beside\n * its `https://host[:port]` twin (the pair admits both `fetch()` and `WebSocket` on every engine); plain `http://` only\n * for `localhost` and `127.0.0.1`. Case is folded and a default port is dropped. Anything else is dropped with one warning\n * per entry (other schemes, `*`, `'self'` and other keywords, paths, credentials, an IPv6 literal, a non-ASCII or\n * percent-encoded host), and a key that is not a kind is dropped too. Dropping only narrows: a kind with no origin left\n * admits none. An `origins` that is not an object, or a kind that is not a list, cannot be read and refuses the whole\n * config. An origin on the host page's site (the registrable domain of its host as the browser decides it: the page's\n * own origin on any scheme or port, its subdomains, its parents and its siblings) is dropped in every mode, with one\n * warning per kind: some engines send the host site's cookies with a guest request to it. A loopback, private or\n * link-local host reaches the user's own machine or network, and engines differ on whether a page of the public web may\n * do that: it is kept, with one warning per kind, only when the host page is itself on one, and dropped, with a warning,\n * otherwise. The fetch bridge sends no credentials. Registered files add `blob:` to the\n * directive of each kind of load their type is for, whatever is listed here. See ADR-007.\n *\n * @defaultValue none\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -2626,7 +2653,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxOrigins#connect:member",
-              "docComment": "/**\n * fetch(), XMLHttpRequest and WebSocket: connect-src. A WebSocket needs an entry of its own (`wss://host`): an\n * `https://host` entry does not admit it. Cooperative mode's guest document also has EventSource and sendBeacon(),\n * which this list governs; strict and worker mode's worker has neither.\n */\n",
+              "docComment": "/**\n * fetch(), XMLHttpRequest and WebSocket: connect-src. A WebSocket needs an entry of its own (`wss://host`), and that\n * entry is dropped with a warning unless `https://host` is listed too: the pair admits `fetch()` and `WebSocket` to\n * the host on every engine, and `https://host` alone admits `fetch()` only. Cooperative mode's guest document also\n * has EventSource and sendBeacon(), which this list governs; strict and worker mode's worker has neither. The host\n * page's own `connect-src` narrows this list in every engine (`hostContentSecurityPolicy`).\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",

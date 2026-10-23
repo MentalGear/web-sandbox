@@ -28,16 +28,22 @@ describe("the element tells the config the host page's origin (BD1:NEW-1)", () =
         expect(location.origin).toMatch(/^https?:\/\//);
     });
 
-    it("origins.connect naming the host page's own origin warns once", async () => {
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { connect: [location.origin] } });
-        expect(warnings().filter(m => m.includes(' lists ') && m.includes("the host page's own origin"))).toHaveLength(1);
+    it("origins.connect naming the host page's own origin is dropped with one warning, in every mode", async () => {
+        for (const mode of ['strict', 'cooperative', 'worker']) {
+            vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const el = await mount({ mode, capabilities: [], origins: { connect: [location.origin] } });
+            expect(warnings().filter(m => m.includes(' dropped ') && m.includes("the host page's own origin")), mode).toHaveLength(1);
+            expect(el._origins.connect, mode).toEqual([]);
+            vi.restoreAllMocks();
+            document.body.replaceChildren();
+        }
     });
 
-    it("origins.images on a subdomain of the host page warns once: same site", async () => {
+    it("origins.images on a subdomain of the host page is dropped with one warning: same site", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { images: [`https://cdn.${location.hostname}`] } });
-        expect(warnings().filter(m => m.includes('origins.images lists') && m.includes("on the host page's site"))).toHaveLength(1);
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { images: [`https://cdn.${location.hostname}`] } });
+        expect(warnings().filter(m => m.includes('origins.images dropped') && m.includes("on the host page's site"))).toHaveLength(1);
+        expect(el._origins.images).toEqual([]);
     });
 
     it("fetchBridge.allow naming the host page's own origin warns once", async () => {
@@ -73,18 +79,18 @@ describe("the element asks the browser which hosts share the page's site (S74, h
         delete (document as any).cookie;
     });
 
-    it("a sibling subdomain is on the page's site: cooperative mode warns and keeps it, strict mode (the default) drops it", async () => {
+    it("a sibling subdomain is on the page's site: every mode drops it", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         pageAt(HOST);
         const cooperative = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { connect: ['https://api.wiring.co.uk'], images: ['https://co.uk'] } });
-        expect(warnings().filter(m => m.includes("origins.connect lists https://api.wiring.co.uk (on the host page's site)"))).toHaveLength(1);
-        expect(cooperative._origins.connect).toEqual(['https://api.wiring.co.uk']);
+        expect(warnings().filter(m => m.includes("origins.connect dropped https://api.wiring.co.uk (on the host page's site)"))).toHaveLength(1);
+        expect(cooperative._origins.connect).toEqual([]);
         // a public suffix above the page is not on its site, though the name check would have said so
         expect(warnings().filter(m => m.includes('origins.images'))).toEqual([]);
         expect(cooperative._origins.images).toEqual(['https://co.uk']);
 
         const strict = await mount({ origins: { connect: ['https://api.wiring.co.uk'] } });
-        expect(warnings().filter(m => m.includes("origins.connect dropped https://api.wiring.co.uk (on the host page's site)"))).toHaveLength(1);
+        expect(warnings().filter(m => m.includes("origins.connect dropped https://api.wiring.co.uk (on the host page's site)"))).toHaveLength(2);
         expect(strict._origins.connect).toEqual([]);
         expect(document.cookie).toBe('');
     });

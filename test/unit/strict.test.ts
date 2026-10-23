@@ -34,7 +34,7 @@ afterEach(() => {
 const STRICT = (h: string, parts: { script?: string; style?: string; img?: string; font?: string; media?: string; connect?: string } = {}) =>
     `default-src 'none'; script-src ${h}${parts.script ?? ''}; script-src-attr 'none'; style-src 'unsafe-inline'${parts.style ?? ''}; `
     + `img-src ${parts.img ?? "'none'"}; font-src ${parts.font ?? "'none'"}; media-src ${parts.media ?? "'none'"}; connect-src ${parts.connect ?? "'none'"}; `
-    + `worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests`;
+    + `worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'`;
 
 describe('the strict view policy: exact strings', () => {
     it('default config', async () => {

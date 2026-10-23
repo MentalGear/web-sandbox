@@ -598,6 +598,9 @@ export interface LifecycleHost {
     discardWrites(): void;
     applyConfig(): string | null;
     buildContext(): BuildContext;
+    // What the build effect waits for before it prepares anything, or null: the host page's policy, read once per page
+    // (host-csp.ts), which the build narrows the connect origins by. Optional: a host with nothing to wait for has none.
+    buildGate?(): Promise<void> | null;
     // The build effect: prepares the build, and returns what it prepared, which `attach` makes the element's (LM-2).
     build(): unknown;
     attach(prepared: unknown): void;
@@ -737,6 +740,21 @@ function runEffect(host: LifecycleHost, effect: Effect, stampGen: Generation): v
 // output was computed at), and `reduce` drops them once embedder code inside the build built again (LM-2: see `built`
 // and `buildFailed` in reduce).
 function runBuild(host: LifecycleHost, stampGen: Generation): void {
+    // With a gate (`buildGate`), the build starts when the gate opens, once (a build waits for its gate one time), and only
+    // if the environment it was computed for still stands: a teardown meanwhile (terminate(), reset(), removal, a newer
+    // build) drops this one whole, as `runEffects` does between effects. The state stays `loading` with nothing attached,
+    // as it does while the build prepares.
+    const gate = host.buildGate?.() ?? null;
+    if (gate === null) {
+        prepareBuild(host, stampGen);
+        return;
+    }
+    void gate.then(() => {
+        if (!tornDownSince(host, stampGen)) prepareBuild(host, stampGen);
+    });
+}
+
+function prepareBuild(host: LifecycleHost, stampGen: Generation): void {
     let prepared: unknown;
     try {
         prepared = host.build();

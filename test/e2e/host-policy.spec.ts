@@ -156,20 +156,27 @@ test.describe('host page policy', () => {
             await sandbox.waitForLog('COOPERATIVE RAN');
             await quiet(`${csp}, cooperative`);
 
-            // strict: renders (the view's template sink) and the bridge's frame (a second srcdoc), with markup the host reads inert
+            // strict: renders (the view's template sink) and the bridge's frame (a second srcdoc), with markup the host reads inert.
+            // (The bridge's origin would make the build read the page's policy: a deliberate violation with a console line of its
+            // own, whose cost is test/e2e/connect-uniform.spec.ts's; `hostContentSecurityPolicy: false` skips it.)
             await sandbox.registerFiles({ 'main.js': `let i = 0; const timer = setInterval(() => { sandboxView.render('<p id="r' + i + '">' + i + '</p>'); if (++i === ${RENDERS}) { clearInterval(timer); console.log('RENDERED'); } }, 20);` });
-            expect(await configure(sandbox, { entry: 'main.js', html: '<p>x</p><script>1</script>', fetchBridge: { allow: ['https://api.example'] } }), csp).toEqual([{ type: 'ready', reason: null }]);
+            expect(await configure(sandbox, { entry: 'main.js', html: '<p>x</p><script>1</script>', fetchBridge: { allow: ['https://api.example'] }, hostContentSecurityPolicy: false }), csp).toEqual([{ type: 'ready', reason: null }]);
             await sandbox.waitForLog('RENDERED');
             await waitInView(page, browserName, `!!document.getElementById('r${RENDERS - 1}')`);
             await quiet(`${csp}, strict`);
         }
     });
 
-    test("a trusted-types directive that does not name 'web-sandbox': the build ends with the reason naming it (Firefox: no Trusted Types, ready)", async ({ sandbox, page, browserName }) => {
-        await openWithPolicy(page, { csp: "require-trusted-types-for 'script'; trusted-types other" });
+    test("a trusted-types directive that does not name 'web-sandbox': the build ends with the reason naming it (Firefox has no Trusted Types: the same, from hostContentSecurityPolicy; without it, ready)", async ({ sandbox, page, browserName }) => {
+        const csp = "require-trusted-types-for 'script'; trusted-types other";
+        await openWithPolicy(page, { csp });
         const expected = browserName === 'firefox' ? [{ type: 'ready', reason: null }] : [{ type: 'terminated', reason: TRUSTED_TYPES }];
         expect(await strictEntry(sandbox)).toEqual(expected);
         expect(await configure(sandbox, COOPERATIVE)).toEqual(expected);
+        // given the page's policy, every engine ends alike (the rest of the table: trusted-types-uniform.spec.ts)
+        const ended = [{ type: 'terminated', reason: TRUSTED_TYPES }];
+        expect(await configure(sandbox, { entry: 'main.js', hostContentSecurityPolicy: csp })).toEqual(ended);
+        expect(await configure(sandbox, { ...COOPERATIVE, hostContentSecurityPolicy: csp })).toEqual(ended);
     });
 
     test("review round 2, C-5: worker mode under a worker-src without blob: ends with the worker reason and is never ready (before: ready, and call() hung)", async ({ sandbox, page }) => {
