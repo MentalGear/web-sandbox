@@ -48,7 +48,7 @@ export const ENVIRONMENT_CHECKS = {
     },
     isolated: {
         checks: "whether the document is cross-origin isolated (`crossOriginIsolated`, read as `=== true`)",
-        why: "a guest never runs cross-origin isolated (owner decision, 2026-10-23): isolation unlocks `SharedArrayBuffer`, precise timers and other powers the library's policies do not account for, and the host page's COOP and COEP headers are what make its frames isolated (a frame inherits the host page's COEP and an isolated top-level page's agent cluster), so a host page that sets both is not one a sandbox runs in",
+        why: "a guest never runs cross-origin isolated (owner decision, 2026-10-23): isolation unlocks `SharedArrayBuffer`, precise timers and other powers the library's policies do not account for, and the host page's COOP and COEP headers are what make it isolated (whether its opaque-origin frames read isolated is the engine's), so a host page that sets both is not one a sandbox runs in. The element reads the same value of the host page before it creates a frame (host.ts, `_buildRefusal`): the outcome is the same on every engine, and this row is defence in depth",
         expected: 'false',
         reason: 'environmentIsolated',
     },

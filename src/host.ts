@@ -35,7 +35,7 @@ import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./l
 import { elementEvent } from "./lib/element-events";
 import { detachEnvironment, releaseEnvironment, type EnvironmentFields } from "./lib/environment";
 import { hostLine, reasonText } from "./lib/reasons";
-import { ENVIRONMENT_CHECKS, ENVIRONMENT_REFUSED_TYPE } from "./lib/environment-check";
+import { ENVIRONMENT_CHECKS, ENVIRONMENT_EXPECTED, ENVIRONMENT_REFUSED_TYPE } from "./lib/environment-check";
 import { INITIAL_LIFECYCLE, runNotices, step as runStep, type BuildContext, type Generation, type LcInput, type LcState, type LifecycleHost, type Notice } from "./lib/lifecycle";
 import { assertEntryScoped, buildViewDocument, entryDoneName, environmentGate, inStrictWorker, isViewFileType, VIEW_FILE_TYPES, viewBootstrapHash, viewBootstrapText, VIEW_EVENT_TYPES, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_STYLE, VIEW_TARGET_MAX_LENGTH, VIEW_WRITE_TYPES } from "./lib/in-sandbox-view";
 
@@ -1885,6 +1885,10 @@ export class WebSandbox extends ElementBase {
     private _buildRefusal(): string | null {
         const unknownMode = unknownModeReason(this._config.mode);
         if (unknownMode !== null) return unknownMode;
+        // A host page that is cross-origin isolated is not one a sandbox runs in, on any engine (environment-check.ts, the
+        // `isolated` row): refused here, in the host's realm, before any frame exists. The frames' bootstraps read the same row,
+        // as defence in depth: an engine's opaque-origin frames need not read an isolated page's isolation.
+        if (String(window.crossOriginIsolated === true) !== ENVIRONMENT_EXPECTED.isolated) return reasonText(ENVIRONMENT_CHECKS.isolated.reason);
         const entry = this._config.entry;
         if (this._config.mode === 'strict' && typeof entry === 'string' && entry !== '') {
             const file = this._files.list().find(candidate => candidate.path === entry);

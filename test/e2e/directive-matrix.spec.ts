@@ -49,6 +49,10 @@ async function runCase(
     expect(hitsNamed((await host.hits(true)).api, 'matrix-control'), 'the test server records a request').toHaveLength(1);
 
     const guest = guestBattery({ direct: { 'matrix-direct': host.api('matrix-direct') }, bridge: { 'matrix-bridge': host.api('matrix-bridge') } });
+    // the outcome follows the host page's isolation, on every engine: it ends with the isolation reason exactly when the page reads
+    // `crossOriginIsolated` true
+    const pageIsolated = await page.evaluate(() => self.crossOriginIsolated);
+    expect(pageIsolated, covering(row, `${label}: the sandbox ends with the isolation reason exactly when the host page is cross-origin isolated`)).toBe(outcome.kind === 'terminates' && outcome.reason === 'environmentIsolated');
     const events = await host.embed('strict', { fetchBridge: { allow: [ORIGIN] }, guest });
     const eventsNow = () => page.evaluate(() => (window as any).sandboxEvents as { type: string; reason: string | null }[]);
 

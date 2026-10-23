@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { checkSandboxEnvironment, ENVIRONMENT_CHECKS, ENVIRONMENT_EXPECTED, ENVIRONMENT_REFUSED_TYPE, type EnvironmentCheckId } from '@src/lib/environment-check';
+import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { BRIDGE_POLICY_START } from '@src/lib/frame-documents';
 import { prepareBridgeFrame } from '@src/lib/bridge-frame';
 import { BRIDGE_ROLE, environmentGate, viewBootstrapSource, viewBootstrapText, VIEW_OPTIONS } from '@src/lib/in-sandbox-view';
@@ -251,5 +252,40 @@ describe('the element ends the sandbox on a refusal, by its own table', () => {
     it('listens in every mode: a strict build installs the listener too, and announces nothing', () => {
         expect(host).toContain('this._listenForAnnouncement(iframe, prepared.bridgeFrame, prepared.strictInit === null);');
         expect(host).toContain('if (!announces || !guestWindow || event.source !== guestWindow) return;');
+    });
+});
+
+// ---- the element's own check of the host page
+
+describe('the element refuses to build on a cross-origin isolated host page, before any frame exists', () => {
+    afterEach(() => { delete (window as any).crossOriginIsolated; });
+
+    const build = async (config: Record<string, unknown>) => {
+        const { defineWebSandbox } = await import('@src/host');
+        defineWebSandbox();
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = document.createElement('web-sandbox') as any;
+        const events: { type: string; reason: string | null }[] = [];
+        for (const type of ['ready', 'terminated']) el.addEventListener(type, (event: any) => events.push({ type, reason: event.detail?.reason ?? event.reason ?? null }));
+        document.body.appendChild(el);
+        el.setConfig(config);
+        await new Promise(resolve => setTimeout(resolve, 0)); // the element's events are dispatched on a later task
+        return { el, events };
+    };
+
+    it.each([['strict', {}], ['cooperative', COOPERATIVE], ['worker', WORKER]])('%s: a host page that reads crossOriginIsolated === true ends with the isolation reason, and builds no frame', async (_mode, config) => {
+        Object.defineProperty(window, 'crossOriginIsolated', { value: true, configurable: true });
+        const { el, events } = await build(config);
+        expect(el.state).toBe('terminated');
+        expect(events.map(event => event.type)).toEqual(['terminated']);
+        expect(events[0]!.reason).toBe(TERMINATION_REASONS[ENVIRONMENT_CHECKS.isolated.reason].text);
+        expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(0);
+    });
+
+    it.each([undefined, false, 'true', 1])('a host page that reads %s is not isolated: the element builds its frame', async (value) => {
+        if (value !== undefined) Object.defineProperty(window, 'crossOriginIsolated', { value, configurable: true });
+        const { el } = await build(COOPERATIVE);
+        expect(el.state).not.toBe('terminated');
+        expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(1);
     });
 });
