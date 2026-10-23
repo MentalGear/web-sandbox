@@ -18,7 +18,7 @@ import { runBootstrap, type SandboxEnvironmentRecord } from './sandbox-environme
  */
 
 const IDS = Object.keys(ENVIRONMENT_CHECKS) as EnvironmentCheckId[];
-const ANOTHER: Record<EnvironmentCheckId, string> = { origin: 'https://host.example', url: 'https://host.example/page?q=1#f', base: 'https://host.example/page?q=1#f' };
+const ANOTHER: Record<EnvironmentCheckId, string> = { origin: 'https://host.example', url: 'https://host.example/page?q=1#f', base: 'https://host.example/page?q=1#f', isolated: 'true' };
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -51,7 +51,7 @@ function gateOf(text: string, shape: 'script' | 'function'): { problems: string[
     const open = shape === 'function' ? '(function () {' : '';
     const check = `if ((${checkSandboxEnvironment.toString()})(${JSON.stringify(ENVIRONMENT_EXPECTED)}, `;
     const none = (problem: string) => ({ problems: [problem], host: null, stop: null });
-    if (!text.startsWith(open + check)) return none('the check is not the first statement, or is not given the three rows in their order');
+    if (!text.startsWith(open + check)) return none('the check is not the first statement, or is not given the rows in their order');
     const tokens = tokenize(text);
     const first = tokens.findIndex(token => token.start === open.length);
     const closing = (from: number, opens: SyntaxKind, closes: SyntaxKind) => {
@@ -210,7 +210,7 @@ describe('a document that is not the one built leaves each bootstrap inert (S74)
             expect(effects).toEqual([]);
             expect(record.posted).toEqual([{ data: { type: ENVIRONMENT_REFUSED_TYPE, refused: id }, targetOrigin: '*', transferred: 0, via }]);
             // the cooperative guest's document, where it reads like a frame of the library's (an opaque origin, about:srcdoc), is stopped: the guest markup after the bootstrap never runs
-            expect(record.stops).toBe(kind === 'cooperative' && id === 'base' ? 1 : 0);
+            expect(record.stops).toBe(kind === 'cooperative' && (id === 'base' || id === 'isolated') ? 1 : 0);
         });
 
         it('all rows wrong: the first row of the table is the one named', async () => {

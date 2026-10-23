@@ -31,7 +31,7 @@ hidden, with an opaque origin and no guest code, which makes each request the ho
 
 Every bootstrap that runs in a document of the library's (the view's and the bridge frame's, the cooperative guest's,
 worker mode's frame's) first checks that the document is the one the library built: an opaque origin, `about:srcdoc`,
-the base `about:blank` (`src/lib/environment-check.ts`, S74). If a check fails the bootstrap stays inert, tells the host
+the base `about:blank`, and not cross-origin isolated (`src/lib/environment-check.ts`, S74). If a check fails the bootstrap stays inert, tells the host
 page, and the element ends the sandbox with the reason of that check.
 
 Each realm is declared once, with the functions the library stringifies into it (a realm cannot import from the host's

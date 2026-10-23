@@ -136,12 +136,18 @@ export const DIRECTIVE_CASES = {
 /** Headers of the page that reach the sandbox besides the policy list. */
 export const HEADER_CASES = [
     { header: 'cross-origin-embedder-policy', value: 'require-corp', row: 'coep', outcome: works(), engines: { webkit: ends('workerRefused') }, note: "WebKit refuses the view's blob: worker under require-corp" },
-    { header: 'cross-origin-embedder-policy', value: 'credentialless', row: 'coep', outcome: works() },
-    { header: 'cross-origin-opener-policy', value: 'same-origin', row: 'coep', outcome: works() },
+    { header: 'cross-origin-embedder-policy', value: 'credentialless', row: 'coep', outcome: works(), note: 'alone it does not make the page cross-origin isolated' },
+    { header: 'cross-origin-opener-policy', value: 'same-origin', row: 'coep', outcome: works(), note: 'alone it does not make the page cross-origin isolated' },
+    // COOP and COEP together make the host page cross-origin isolated, which is not supported (docs/API.md#host-page-policy): a
+    // guest never runs isolated. Where the library's frames read `crossOriginIsolated === true` (Firefox with either COEP value, WebKit with require-corp; observed) the
+    // isolation row of the environment check ends the sandbox, in strict mode before the view's worker is asked for (so WebKit's
+    // worker reason under require-corp does not show); Chromium reads them as not isolated and the sandbox works.
+    { header: 'cross-origin-embedder-policy', value: 'require-corp', also: { 'cross-origin-opener-policy': 'same-origin' }, row: 'coep', outcome: works(), engines: { firefox: ends('environmentIsolated'), webkit: ends('environmentIsolated') }, note: 'with COOP same-origin: cross-origin isolated' },
+    { header: 'cross-origin-embedder-policy', value: 'credentialless', also: { 'cross-origin-opener-policy': 'same-origin' }, row: 'coep', outcome: works(), engines: { firefox: ends('environmentIsolated') }, note: 'with COOP same-origin: cross-origin isolated in Firefox; WebKit does not isolate the page under credentialless (observed), Chromium reads the frames as not isolated' },
     { header: 'referrer-policy', value: 'unsafe-url', row: 'referrer', outcome: works(), note: 'the frames carry their own no-referrer' },
     { header: 'referrer-policy', value: 'no-referrer', row: 'referrer', outcome: works() },
     { header: 'permissions-policy', value: 'fullscreen=(), clipboard-write=(), autoplay=()', row: 'permissionsPolicy', outcome: works() },
-] as const satisfies readonly (MatrixCase & { header: 'cross-origin-embedder-policy' | 'cross-origin-opener-policy' | 'referrer-policy' | 'permissions-policy' })[];
+] as const satisfies readonly (MatrixCase & { header: 'cross-origin-embedder-policy' | 'cross-origin-opener-policy' | 'referrer-policy' | 'permissions-policy'; also?: { readonly 'cross-origin-opener-policy': 'same-origin' } })[];
 
 /** The outcome of a case on an engine. */
 export const outcomeOn = (matrixCase: MatrixCase, engine: MatrixEngine): Outcome => matrixCase.engines?.[engine] ?? matrixCase.outcome;

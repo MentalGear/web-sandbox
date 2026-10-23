@@ -27,7 +27,6 @@ import type { Page } from '@playwright/test';
 test.use({ ignoreHTTPSErrors: true });
 
 const TERMINATED_BY_HOST = TERMINATION_REASONS.host.text;
-const WORKER_REFUSED = TERMINATION_REASONS.workerRefused.text;
 const READY = [{ type: 'ready', reason: null }];
 const CACHED = 'HOST-CACHED-PRIVATE-DATA';
 
@@ -384,34 +383,36 @@ test.describe('worker mode', () => {
     });
 });
 
-test.describe('cross-origin isolation (COOP same-origin, COEP require-corp)', () => {
-    // docs/API.md#host-page-policy: strict mode works in Chromium and Firefox and WebKit refuses the view's blob: worker
-    // (so does worker mode); cooperative mode works. What the guest inherits of the isolation is not in the docs: this
-    // table is what the engines do today (observed in this spec), kept so a change shows.
-    const GUEST_ISOLATED = {
-        chromium: { strict: false, cooperative: false },
-        firefox: { strict: true, cooperative: true },
-        webkit: { strict: null, cooperative: true },
-    } as const;
+test.describe('cross-origin isolation (COOP same-origin, COEP require-corp): not supported, a guest never runs isolated', () => {
+    // docs/API.md#host-page-policy: COOP and COEP together are not supported. A bootstrap that reads
+    // `crossOriginIsolated === true` stays inert and the element ends the sandbox with `environmentIsolated`
+    // (environment-check.ts, the `isolated` row). What the engines do with the isolated host page, as observed in this spec:
+    //   - Firefox and WebKit: the library's frames are isolated, in every mode. The check is the first statement of each
+    //     bootstrap, so it ends the build before the view's blob: worker is asked for: WebKit's strict and worker mode end with
+    //     this reason, not with the worker reason (the worker is never requested). Nothing of the guest ran.
+    //   - Chromium: the library's frames (opaque origin, sandboxed without allow-same-origin) read `crossOriginIsolated`
+    //     false although the host page is isolated, so the check passes and every mode builds and stays ready; the guest is not
+    //     isolated and has no SharedArrayBuffer.
+    const ISOLATED = TERMINATION_REASONS.environmentIsolated.text;
 
     for (const mode of ['strict', 'cooperative', 'worker'] as const) {
-        test(`${mode} mode on an isolated host: builds as docs/API.md says per engine`, async ({ sandbox, page, browserName }) => {
+        test(`${mode} mode on an isolated host: ends with the isolation reason where the guest's frames are isolated (Firefox, WebKit), builds with a guest that is not isolated in Chromium`, async ({ sandbox, page, browserName }) => {
             const host = await RealisticHost.open(sandbox, { mode, isolation: true, guestCode: mode === 'worker' ? 'execute' : 'none' });
             expect(await page.evaluate(() => self.crossOriginIsolated), 'the host page is cross-origin isolated').toBe(true);
             const events = await host.embed(mode, { guest: "return { isolated: self.crossOriginIsolated, sab: typeof SharedArrayBuffer };" });
-            const refused = browserName === 'webkit' && mode !== 'cooperative';
-            if (refused) {
-                await expect.poll(() => host.page.evaluate(() => (window as any).sandboxEvents.at(-1)), { message: covering('coep', 'WebKit refuses the blob: worker under require-corp') }).toEqual({ type: 'terminated', reason: WORKER_REFUSED });
+            if (browserName !== 'chromium') {
+                await expect.poll(() => host.page.evaluate(() => (window as any).sandboxEvents.at(-1)), { message: covering('coep', `a bootstrap in an isolated document stays inert and the sandbox ends with the isolation reason on ${browserName}`) }).toEqual({ type: 'terminated', reason: ISOLATED });
                 expect(await host.state(), covering('coep', 'and the sandbox is terminated with that reason, never a silent partial state')).toBe('terminated');
-                expect((await host.sandbox.terminations()).map(entry => entry.reason), covering('coep', 'exactly once')).toEqual([WORKER_REFUSED]);
+                expect((await host.sandbox.terminations()).map(entry => entry.reason), covering('coep', 'exactly once')).toEqual([ISOLATED]);
+                await expect(host.guestResult(1500), covering('coep', 'and nothing of the guest ran')).rejects.toThrow();
+                expect(await host.frames(), covering('coep', 'and no frame is left')).toBe(0);
                 return;
             }
-            expect(events, covering('coep', 'Chromium and Firefox build under require-corp, and so does cooperative mode on every engine')).toEqual(READY);
+            expect(events, covering('coep', 'observed: Chromium reads the library\'s frames as not isolated, so every mode builds')).toEqual(READY);
             expect(await host.state(), covering('coep', 'and the sandbox stays ready')).toBe('ready');
             const guest = await host.guestResult();
-            const expected = mode === 'cooperative' ? GUEST_ISOLATED[browserName].cooperative : GUEST_ISOLATED[browserName].strict;
-            expect(guest.isolated, covering('coep', `observed: the guest is${expected ? '' : ' not'} cross-origin isolated on ${browserName} in ${mode} mode`)).toBe(expected);
-            expect(guest.sab, covering('coep', 'and SharedArrayBuffer is there exactly when it is')).toBe(expected ? 'function' : 'undefined');
+            expect(guest.isolated, covering('coep', 'observed: the guest is not cross-origin isolated on chromium')).toBe(false);
+            expect(guest.sab, covering('coep', 'and has no SharedArrayBuffer')).toBe('undefined');
         });
     }
 });

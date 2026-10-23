@@ -115,10 +115,11 @@ export const INHERITED_CONTEXT = {
     coep: {
         channel: "The host page's Cross-Origin-Embedder-Policy and cross-origin isolation (`require-corp`, `credentialless`; COOP)",
         inheritedBy: 'every frame; the strict worker is a `blob:` worker',
-        how: 'Documented. WebKit refuses the view\'s `blob:` worker under `require-corp`, so a strict build there ends with the worker reason; Chromium and Firefox build',
-        by: ['reason', 'documented'],
-        engines: ['webkit'],
-        tests: ['test/e2e/host-policy.spec.ts'],
+        how: 'A guest never runs cross-origin isolated: a bootstrap that reads `crossOriginIsolated === true` stays inert and the element ends the sandbox with the isolation reason (COOP and COEP together are not supported; environment-check.ts). COEP alone does not isolate the page and is documented: WebKit refuses the view\'s `blob:` worker under `require-corp`, so a strict build there ends with the worker reason; Chromium and Firefox build',
+        by: ['check', 'reason', 'documented'],
+        engines: ['chromium', 'firefox', 'webkit'],
+        environmentChecks: ['isolated'],
+        tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/realistic-host.spec.ts', 'test/e2e/directive-matrix.spec.ts', 'test/unit/environment-check.test.ts', 'test/unit/environment-gate.test.ts'],
     },
     referrer: {
         channel: "The host page's URL as a referrer, and the engines' own referrer exceptions for same-site targets",

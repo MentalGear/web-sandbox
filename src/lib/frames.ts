@@ -76,7 +76,7 @@ export const FRAMES = {
     ENVIRONMENT_REFUSED: {
         purpose: "A bootstrap found its document other than the one the library built (environment-check.ts) and stayed inert: the sandbox ends with the reason of the check that failed. No port.",
         routes: [{ channel: 'announcement', from: ['cooperative', 'worker-frame', 'view', 'bridge-frame'], to: ['host'] }],
-        fields: { refused: { bound: 'constant', how: "one of the environment checks' ids (ENVIRONMENT_CHECKS: origin, url, base); the element takes its reason from its own table" } },
+        fields: { refused: { bound: 'constant', how: "one of the environment checks' ids (ENVIRONMENT_CHECKS: origin, url, base, isolated); the element takes its reason from its own table" } },
     },
     INIT_PORT: {
         purpose: "Worker mode's frame hands its worker the logic port.",
