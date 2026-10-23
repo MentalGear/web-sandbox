@@ -1284,6 +1284,7 @@ in strict mode.
 | Guest calls per second, per environment (any one-second window; default of `callLimits.maxPerSecond`) | 1000 | — |
 | Bytes of guest calls per second, per environment (any one-second window; default of `callLimits.maxBytesPerSecond`) | 67108864 (64 MiB) | — |
 | Default call timeout (ms) | 30000 | — |
+| Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget, on every engine) | 4096 | — |
 | Characters of a method name | 256 | — |
 | Characters of an error message a call carries | 65536 | — |
 | Guest log lines per second, per environment | 1000 | `LOG_EVENTS_PER_SECOND` |
@@ -1339,9 +1340,11 @@ unit plus 8, a `BigInt` its digits, any other primitive 8; a plain object, a `Ma
 an array the more of its `length` times 8 and its keys, so a sparse array of 2**32 - 1 slots is past every limit; a typed
 array or a `DataView` its whole buffer, once; a `Blob` 64 plus its `type` like a string; a `File` that plus its `name`
 like a string and 8 for `lastModified`. Any other kind (an `Error`, an `ImageData`, a `SharedArrayBuffer`) is refused as
-unsupported. The library's own walks of a delivered value follow its own keys, never an array's `length`. Chromium keeps
-a `Blob`'s `type` only up to a length its engine chooses (100 000 characters were dropped); Firefox and WebKit keep it
-whole, and the measure counts what arrives.
+unsupported. The library's own walks of a delivered value follow its own keys, never an array's `length`. A `Blob` or
+`File` whose `type` is longer than `BLOB_TYPE_MAX_LENGTH` (4096) characters is over every byte budget, on every
+engine, and is refused as one past the budget: what an engine would keep of a longer type differs (Chromium empties a
+type of 65 536 characters or more when the object is made, Firefox and WebKit keep it whole), so the limit is the
+library's, not the engine's. A type of up to 4096 characters crosses on every engine.
 
 ---
 

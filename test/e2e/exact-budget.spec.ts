@@ -94,33 +94,35 @@ test.describe('S77: the measure counts at least what the browser delivers, for e
     });
 });
 
-// Chromium drops a Blob's type when it is long (measured: kept at 1 000 characters, dropped at 100 000), Firefox and WebKit
-// keep it whole, so there the clone delivers it and here it delivers nothing to count.
-const keepsLongTypes = (sandbox: SandboxDriver) => sandbox.inGuest<boolean>(`return new Blob([], { type: 'a/' + 'b'.repeat(2 ** 25) }).type.length > 2 ** 24`);
+// A Blob or File type past BLOB_TYPE_MAX_LENGTH (4096 characters, limits.ts) is over every byte budget, on every engine. The
+// longest type Chromium keeps is 65 535 characters, so 65 535 is the longest one all three engines build alike.
+const LONG_TYPE = `'a/' + 'b'.repeat(65533)`;
 
 for (const [mode, config] of Object.entries(MODES)) {
     test.describe(`S77: ${mode} mode: an oversized File name or a sparse array meets the existing budgets`, () => {
         test('a log line: a File with a name past LOG_MAX_BYTES and a sparse array arrive as the budget\'s placeholder, and the line after them at once', async ({ sandbox }) => {
             expect(await sandbox.mount(config)).toBe('ready');
-            const typeKept = await keepsLongTypes(sandbox);
             await sandbox.run(`
                 const sparse = []; sparse.length = 2 ** 18; sparse[5] = 1; // 2 MiB at 8 bytes a slot
                 console.log('S77 file', new File([], 'x'.repeat(2 ** 21)));
-                console.log('S77 blob', new Blob([], { type: 'a/' + 'b'.repeat(2 ** 21) }));
+                console.log('S77 blob', new Blob([], { type: ${LONG_TYPE} }));
+                console.log('S77 file type', new File([], 'f', { type: ${LONG_TYPE} }));
+                console.log('S77 blob at the limit', new Blob([], { type: 'a/' + 'b'.repeat(4094) }));
                 console.log('S77 sparse', sparse);
                 console.log('S77 nested', { list: [new File([], 'y'.repeat(2 ** 21))] });
                 console.log('S77 after', new File(['x'], 'photo.png', { type: 'image/png' }).name);`);
             expect(await sandbox.waitForLog(/^S77 file /)).toBe("S77 file [File: past the log line's byte budget (1048576)]");
-            expect(await sandbox.waitForLog(/^S77 blob /)).toBe(typeKept ? "S77 blob [Blob: past the log line's byte budget (1048576)]" : 'S77 blob [object Blob]');
+            expect(await sandbox.waitForLog(/^S77 blob /)).toBe("S77 blob [Blob: past the log line's byte budget (1048576)]");
+            expect(await sandbox.waitForLog(/^S77 file type /)).toBe("S77 file type [File: past the log line's byte budget (1048576)]");
+            expect(await sandbox.waitForLog(/^S77 blob at the limit /)).toBe('S77 blob at the limit [object Blob]');
             expect(await sandbox.waitForLog(/^S77 sparse /)).toBe("S77 sparse [Array: past the log line's byte budget (1048576)]");
             expect(await sandbox.waitForLog(/^S77 nested /)).toMatch(/^S77 nested \[Object: past the log line's byte budget/);
             expect(await sandbox.waitForLog('S77 after photo.png')).toBe('S77 after photo.png');
         });
 
-        test('a call to a host method: past RPC_MAX_BYTES by a File name, a Blob type or a sparse array, the guest\'s own broker refuses it; a small File is delivered', async ({ sandbox }) => {
+        test('a call to a host method: past RPC_MAX_BYTES by a File name or a sparse array, or by a Blob or File type past BLOB_TYPE_MAX_LENGTH, the guest\'s own broker refuses it; a type at the limit and a small File are delivered', async ({ sandbox }) => {
             test.setTimeout(60000);
             expect(await sandbox.mount(config)).toBe('ready');
-            const typeKept = await keepsLongTypes(sandbox);
             await sandbox.exposeHost('sink', '(...args) => args.length');
             await sandbox.exposeHost('nameOf', '(file) => [file.name, file.type, file.lastModified]');
             const outcome = await sandbox.inGuest(`
@@ -128,12 +130,27 @@ for (const [mode, config] of Object.entries(MODES)) {
                 const sparse = []; sparse.length = 2 ** 23; sparse[5] = 1; // 64 MiB at 8 bytes a slot
                 return [
                     await refused(new File([], 'x'.repeat(2 ** 25))),
-                    await refused(new Blob([], { type: 'a/' + 'b'.repeat(2 ** 25) })),
+                    await refused(new Blob([], { type: ${LONG_TYPE} })),
+                    await refused(new File([], 'f', { type: 'a/' + 'b'.repeat(4096) })),
+                    await refused(new Blob([], { type: 'a/' + 'b'.repeat(4094) })),
                     await refused(sparse),
                     await refused({ deep: [sparse] }),
                     await bridge.call('nameOf', new File(['x'], 'photo.png', { type: 'image/png', lastModified: 1234 })),
                 ];`, 30000);
-            expect(outcome).toEqual(['ARGS_NOT_TRANSFERABLE', typeKept ? 'ARGS_NOT_TRANSFERABLE' : 'sent', 'ARGS_NOT_TRANSFERABLE', 'ARGS_NOT_TRANSFERABLE', ['photo.png', 'image/png', 1234]]);
+            expect(outcome).toEqual(['ARGS_NOT_TRANSFERABLE', 'ARGS_NOT_TRANSFERABLE', 'ARGS_NOT_TRANSFERABLE', 'sent', 'ARGS_NOT_TRANSFERABLE', 'ARGS_NOT_TRANSFERABLE', ['photo.png', 'image/png', 1234]]);
+        });
+
+        // A type of 65 536 characters or more: Chromium empties it when the Blob is made, so the guest holds a Blob of no type
+        // and the library has nothing longer to refuse (ledger row blob-type-emptied); Firefox and WebKit keep it whole,
+        // and the type limit refuses it. Either way the library never turns a long type into '' itself.
+        test('a Blob type of 65 536 characters: refused where the engine keeps it, and where the engine emptied it first, what the guest holds is sent', async ({ sandbox, browserName }) => {
+            expect(await sandbox.mount(config)).toBe('ready');
+            await sandbox.exposeHost('typeOf', '(blob) => blob.type.length');
+            const outcome = await sandbox.inGuest(`
+                const blob = new Blob([], { type: 'a/' + 'b'.repeat(65534) });
+                try { return [blob.type.length, await bridge.call('typeOf', blob)]; } catch (error) { return [blob.type.length, error.code]; }`, 30000);
+            // blob-type-emptied
+            expect(outcome).toEqual(browserName === 'chromium' ? [0, 0] : [65536, 'ARGS_NOT_TRANSFERABLE']);
         });
 
         test('a result of the guest\'s method: a File with an oversized name or a sparse array is refused as RESULT_NOT_TRANSFERABLE, and a small one is delivered', async ({ sandbox }) => {

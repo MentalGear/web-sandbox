@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_MAX_BYTES } from '@src/lib/sandbox-log';
+import { LIMITS } from '@src/lib/limits';
 
 /**
  * The byte measure counts what is delivered (S77, class P): for every kind a sender may post, the measured size of its
@@ -84,6 +85,26 @@ describe('the measure counts at least what is delivered, for every supported kin
         // the controls: a File and a Blob of ordinary names and types are within it
         expect(sizeOf(file('photo.png', 'image/png', 1), LOG_MAX_BYTES)).toBeLessThan(1024);
         expect(sizeOf(new Blob(['x'], { type: 'text/plain' }), LOG_MAX_BYTES)).toBeLessThan(1024);
+    });
+
+    it('a Blob or File type past BLOB_TYPE_MAX_LENGTH is over every limit, whatever an engine would keep of it; up to it, it is counted like a string', () => {
+        const max = LIMITS.BLOB_TYPE_MAX_LENGTH.value;
+        const typed = (length: number) => 'a/' + 'b'.repeat(length - 2);
+        for (const make of [(type: string) => new Blob([], { type }), (type: string) => file('f', type, 0)]) {
+            const at = make(typed(max));
+            expect(sizeOf(at, Infinity)).toBeLessThan(2 * max + 1024);
+            expect(sizeOf(at, Infinity)).toBeGreaterThanOrEqual(2 * max);
+            // one character more: Infinity, with a limit far above it, in a Map and in an array
+            for (const over of [make(typed(max + 1)), make(typed(65535)), make(typed(2 ** 20))]) {
+                expect(sizeOf(over, Infinity)).toBe(Infinity);
+                expect(sizeOf(over, 2 ** 30)).toBe(Infinity);
+                expect(sizeOf([new Map([['k', over]])], 2 ** 30)).toBe(Infinity);
+            }
+        }
+        // the refusal says "past the budget", not "unsupported value": the kind is one the measure knows
+        const unsupported = { kind: '' };
+        expect(sizeOf(new Blob([], { type: typed(max + 1) }), 2 ** 30, undefined, unsupported)).toBe(Infinity);
+        expect(unsupported.kind).toBe('');
     });
 
     it('a sparse array is charged by its length: 2**32 - 1 slots with one element are past every limit, and the walk answers without listing its keys', () => {
