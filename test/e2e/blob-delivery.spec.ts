@@ -23,15 +23,16 @@ import { useRecorder, wss } from './recorder';
 // The policy δ needs: blob: for five kinds of load (worker-src always lists it). It is the library's own template
 // (src/lib/csp/csp-generator.ts) with blob: for those kinds, exactly as registered files of those types make it; no
 // config can add blob: (ADR-007). The probes set it on the page's element class without registering files, so that
-// no import map of the library's joins the probes' own (section 3), and a probe's blob: URLs are its own.
+// no import map of the library's joins the probes' own (section 3), and a probe's blob: URLs are its own. They replace
+// what the policy is made from (`_policyInput`), so the request gate, which admits the policy's connect-src sources,
+// reads the same list.
 const DELTA_KINDS: OriginKind[] = ['scripts', 'styles', 'images', 'fonts', 'connect'];
 
 async function withBlob(sandbox: SandboxDriver, kinds: OriginKind[] = DELTA_KINDS) {
     await sandbox.page.evaluate(async (kinds) => {
-        const { cooperativePolicy } = await import('/src/lib/csp/csp-generator.ts' as string);
         const element = customElements.get('web-sandbox')!.prototype as any;
-        element._guestPolicy = function (this: any) {
-            return cooperativePolicy({ origins: this._origins, fileKinds: new Set(kinds), scriptUnsafe: this._config.scriptUnsafe === true });
+        element._policyInput = function (this: any, _files: unknown, origins: unknown) {
+            return { origins, fileKinds: new Set(kinds), scriptUnsafe: this._config.scriptUnsafe === true };
         };
     }, kinds);
 }
@@ -201,7 +202,9 @@ test.describe('1. default CSP: guest-created blob: subresources are refused', ()
             '<link rel=stylesheet>': 'error csp=style-src-elem',
             '<img> (svg)': 'error csp=img-src',
             '@font-face (woff2)': 'error:NetworkError csp=font-src',
-            'fetch()': 'error:TypeError csp=connect-src',
+            // the request gate refuses it before the browser sees it, so the realm raises no event: the gate reports it
+            // to the host (test/e2e/request-gate.spec.ts)
+            'fetch()': 'error:TypeError',
             // worker-src lists blob: by default
             'new Worker() classic': 'ok',
             'new Worker() module': moduleWorker(browserName),
@@ -211,13 +214,14 @@ test.describe('1. default CSP: guest-created blob: subresources are refused', ()
     test('worker mode: importScripts, import() and fetch of a blob are refused; there are no nested workers (independent verification V1)', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ mode: 'worker' })).toBe('ready');
         // Every engine refuses; which violations reach the worker's own securitypolicyviolation
-        // listener differs: Chromium delivers all three, Firefox only fetch's, WebKit none.
+        // listener differs: Chromium delivers both script loads', Firefox and WebKit none. fetch() is the request
+        // gate's to refuse, before the browser sees it: no event in the realm on any engine.
         // ledger: worker-violation-reports
         const csp = (directive: string, engines: string[]) => (engines.includes(browserName) ? ` csp=${directive}` : '');
         expect(await runProbes(sandbox, WORKER_LOADS)).toEqual({
             'importScripts()': 'error:NetworkError' + csp('script-src-elem', ['chromium']),
             'import()': 'error:TypeError' + csp('script-src-elem', ['chromium']),
-            'fetch()': 'error:TypeError' + csp('connect-src', ['chromium', 'firefox']),
+            'fetch()': 'error:TypeError',
             // the worker keeps only the allowlisted globals (src/lib/worker-globals.ts): a nested worker would be a realm
             // the library's prelude never reaches
             'nested Worker classic': 'error:ReferenceError',
@@ -262,7 +266,7 @@ test.describe('2. with blob: added, guest-created blob: subresources load', () =
             '<link rel=stylesheet>': 'error csp=style-src-elem',
             '<img> (svg)': 'error csp=img-src',
             '@font-face (woff2)': 'error:NetworkError csp=font-src',
-            'fetch()': 'error:TypeError csp=connect-src',
+            'fetch()': 'error:TypeError', // the request gate's refusal: no event in the realm
         });
     });
 });
@@ -565,7 +569,9 @@ const outboundAttempts = (target: string) => `
     try { const ws = new WebSocket('${wss(target)}/ws'); ws.onopen = () => report('websocket', 'reached'); ws.onerror = () => report('websocket', 'refused'); } catch (e) { report('websocket', 'refused'); }
 `;
 
-// The violations each engine reports on the host for outboundAttempts(target), in cooperative or worker mode.
+// The violations each engine reports on the host for outboundAttempts(target), in cooperative or worker mode: the
+// fetch and the WebSocket by the library's request gate on every engine; the script loads where the engine raises a
+// report in a worker (Chromium only).
 function outboundViolations(target: string, mode: 'cooperative' | 'worker', browserName: string): string[] {
     const fetch = `connect-src ${target}/fetch`;
     const websocket = `connect-src ${wss(target)}/ws`;
@@ -573,8 +579,7 @@ function outboundViolations(target: string, mode: 'cooperative' | 'worker', brow
     if (mode === 'cooperative') return [fetch, websocket, `img-src ${target}/img.svg`, imported].sort();
     // ledger: worker-violation-reports
     if (browserName === 'chromium') return [fetch, websocket, imported, `script-src-elem ${target}/script.js`].sort();
-    if (browserName === 'firefox') return [fetch, websocket].sort();
-    return []; // WebKit raises no violations in workers
+    return [fetch, websocket].sort();
 }
 
 async function reportedViolations(sandbox: any): Promise<string[]> {

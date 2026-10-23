@@ -37,9 +37,10 @@ const PLATFORM: Record<string, unknown> = { MessagePort: FakePort, MessageEvent:
 const originals: Record<string, unknown> = {};
 
 const reached: Request[] = [];
+const recordingFetch = (request: Request) => { reached.push(request); return Promise.resolve(new Response('ok')); };
 const ORIGINAL_BACK = History.prototype.back; // before any bootstrap of this file ran
 beforeAll(() => {
-    Object.defineProperty(globalThis, 'fetch', { value: (request: Request) => { reached.push(request); return Promise.resolve(new Response('ok')); }, writable: true, configurable: true });
+    Object.defineProperty(globalThis, 'fetch', { value: recordingFetch, writable: true, configurable: true });
 });
 
 const originalAddEventListener = globalThis.addEventListener;
@@ -112,7 +113,9 @@ describe('CB2: the EXECUTE path looks up no global', () => {
 
 describe('PD2: the guest realm\'s fetch refuses keepalive', () => {
     it('keepalive in the init, through a getter that answers twice, or in a Request: refused before the platform\'s fetch; a plain request reaches it (control)', async () => {
-        inSandboxScript(false, 'cooperative', console_(), createBroker);
+        // the gate of an earlier test's bootstrap is still the realm's fetch (not configurable, writable): the platform's again
+        (globalThis as any).fetch = recordingFetch;
+        inSandboxScript(false, 'cooperative', console_(), createBroker, { connect: ['https://a.example'] });
         reached.length = 0;
         // An init whose keepalive getter answers differently on each read: the guard reads it exactly once, through the
         // Request it builds, and sends that Request, so the answer it checked is the request that is made.

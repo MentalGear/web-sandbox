@@ -1,5 +1,6 @@
 import { test, expect } from './fixture';
 import { useRecorder } from './recorder';
+import { GATE_SOURCE_FILE } from '@src/lib/violation';
 
 // Evidence (backlog T5): the load outcome inside the worker, a listener outside the browser that every
 // attempt targets (recorder.ts), and the violation where the engine raises one in a worker. Positive
@@ -18,9 +19,9 @@ test.describe('Worker mode isolation', () => {
         expect(await sandbox.waitForLog('WORKER_CONTEXT')).toBe('WORKER_CONTEXT undefined null');
     });
 
-    // The violation is asserted where the engine raises one in a worker (measured,
-    // test/e2e/violations.spec.ts section 4): Chromium for both, Firefox for fetch only, WebKit for neither.
-    test('blocks fetch to a host that is not allowlisted', async ({ sandbox, browserName }) => {
+    // A refused fetch is reported by the library's request gate on every engine; importScripts() is reported where the
+    // engine raises one in a worker (measured, test/e2e/violations.spec.ts section 4): Chromium only.
+    test('blocks fetch to a host that is not allowlisted', async ({ sandbox }) => {
         await sandbox.run(`
             fetch('${recorder.blocked}/fetch')
                 .then(() => console.log('FETCH_SUCCESS'))
@@ -28,8 +29,7 @@ test.describe('Worker mode isolation', () => {
         `);
 
         expect(await sandbox.waitForLog(/FETCH_(SUCCESS|BLOCKED)/)).toContain('FETCH_BLOCKED');
-        // ledger: worker-violation-reports
-        if (browserName !== 'webkit') expect(await sandbox.waitForViolation('connect-src', `${recorder.blocked}/fetch`)).toBeTruthy();
+        expect((await sandbox.waitForViolation('connect-src', `${recorder.blocked}/fetch`)).sourceFile).toBe(GATE_SOURCE_FILE);
         expect(recorder.paths('blocked')).toEqual([]);
     });
 

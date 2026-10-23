@@ -10,8 +10,9 @@
  * A name that is not listed is gone, whatever it is; a new platform API stays out until someone lists it.
  *
  * The globals that can make a request at all are four, each measured as governed by the policy on Chromium, Firefox
- * and WebKit (test/e2e/worker-globals-and-termination.spec.ts, "V1"): fetch and XMLHttpRequest and WebSocket (connect-src) and
- * importScripts (script-src). Everything else listed makes no request: the language's built-ins, timers, events,
+ * and WebKit (test/e2e/worker-globals-and-termination.spec.ts, "V1"): fetch and XMLHttpRequest and WebSocket (connect-src),
+ * which the bootstrap then replaces with the request gate's (in-sandbox-script.ts, S74), and importScripts (script-src),
+ * which strict mode's worker does not have (STRICT_WORKER_GLOBALS). Everything else listed makes no request: the language's built-ins, timers, events,
  * messaging inside the worker, encoding, streams, crypto, blobs and URLs, IndexedDB, canvas and WebGL on an
  * OffscreenCanvas (no URL), WebCodecs (bytes in, frames out), performance and scheduling. WebAssembly's streaming
  * compilation reads a Response the guest's fetch already made. `Request`, `Response` and `Headers` are values, and
@@ -86,6 +87,14 @@ export const WORKER_GLOBALS: readonly string[] = [
     'AudioData', 'AudioDecoder', 'AudioEncoder', 'EncodedAudioChunk', 'EncodedVideoChunk', 'VideoColorSpace',
     'VideoDecoder', 'VideoEncoder', 'VideoFrame', 'ImageDecoder', 'ImageTrack', 'ImageTrackList',
 ];
+
+/**
+ * Strict mode's worker: {@link WORKER_GLOBALS} without `importScripts`. The strict policy's script-src is the view
+ * bootstrap's hash (ADR-005), so `importScripts()` can never load anything there; it is not offered at all, and with it
+ * goes the one request API whose refusals an engine reported elsewhere (Firefox raises them in the view). The strict
+ * worker requests only through fetch, XMLHttpRequest and WebSocket, which the request gate governs (in-sandbox-script.ts).
+ */
+export const STRICT_WORKER_GLOBALS: readonly string[] = WORKER_GLOBALS.filter(name => name !== 'importScripts');
 
 /** What guest code may find on the worker's navigator (its prototype's members): no `serviceWorker`, no `connection`. */
 export const WORKER_NAVIGATOR_MEMBERS: readonly string[] = [

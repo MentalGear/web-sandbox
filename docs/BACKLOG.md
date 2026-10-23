@@ -433,8 +433,10 @@ a finding").
   × `terminate`, `reset` and `remove` (`test/e2e/worker-globals-and-termination.spec.ts`).
 
 *Isolation*
-- [ ] BD1:ISO-2: the `keepalive` guard is only a shadow on the worker global; the platform's `fetch` stays on
-  `WorkerGlobalScope.prototype`.
+- [x] BD1:ISO-2: the `keepalive` guard is only a shadow on the worker global; the platform's `fetch` stays on
+  `WorkerGlobalScope.prototype`. Done: the request gate (in-sandbox-script.ts) removes every copy of `fetch`,
+  `XMLHttpRequest` and `WebSocket` on the global object's prototype chain before guest code, in every mode
+  (`test/unit/request-gate.test.ts`, `test/e2e/request-gate.spec.ts`).
 - [ ] BD1:ISO-3: cooperative mode: the guest replaces its own document without being ended, and the replacement has none
   of the bootstrap's hardening (a cooperative-mode limit to list, S44).
 - [x] BD1:ISO-4: the `origins.connect` reference is wrong for strict and worker mode and omits what an `https:` entry

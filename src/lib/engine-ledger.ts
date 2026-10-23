@@ -73,12 +73,12 @@ export const ENGINE_DIFFERENCES = {
         tests: [`${E2E}relay-and-rpc-budgets.spec.ts`, `${E2E}error-cost-and-queued-calls.spec.ts`],
     },
     'worker-violation-reports': {
-        what: "`securitypolicyviolation` reports raised inside a worker (`source: 'logic'`) for `fetch` and `importScripts`",
-        chromium: "Both, with `connect-src` and `script-src-elem`",
-        firefox: "`fetch` only; an `importScripts` refusal reaches the creating document (in strict mode, the view's report)",
+        what: "`securitypolicyviolation` reports raised inside a worker (`source: 'logic'`) for `importScripts` (a refused `fetch()`, `XMLHttpRequest` or `WebSocket` is the request gate's own report on every engine)",
+        chromium: "Raises the `importScripts` refusal in the worker (`script-src-elem`)",
+        firefox: "The refusal reaches the creating document (in strict mode, the view's report)",
         webkit: "None",
         why: "WebKit raises no violation event in workers, and Firefox routes `importScripts` refusals to the creating document. Reports from the guest's realm are claims, and the refusal itself is the same on every engine",
-        tests: [`${E2E}violations.spec.ts`, `${E2E}worker-security.spec.ts`, `${E2E}host-site.spec.ts`, `${E2E}blob-delivery.spec.ts`],
+        tests: [`${E2E}violations.spec.ts`, `${E2E}worker-security.spec.ts`, `${E2E}blob-delivery.spec.ts`],
     },
     'worker-eventsource-fontface': {
         what: "A worker the guest makes in cooperative mode: its `EventSource` and `FontFace` against the policy",
@@ -158,7 +158,7 @@ export const ENGINE_DIFFERENCES = {
         firefox: cookie('firefox'),
         webkit: cookie('webkit'),
         why: "Only Chromium honours `credentialless` on the wrapper frame. A same-site entry of `origins` is dropped in every mode; `fetchBridge` sends no cookie on any engine",
-        tests: [`${E2E}cookies.spec.ts`],
+        tests: [`${E2E}cookies.spec.ts`, `${E2E}request-gate.spec.ts`],
     },
     'connect-src': {
         what: "What the host page's `connect-src` sources admit in a sandbox document",
@@ -273,11 +273,11 @@ export const ENGINE_DIFFERENCES = {
         tests: [`${E2E}guest-realm-hardening.spec.ts`],
     },
     'keepalive-fetch': {
-        what: "`fetch` with `keepalive` past `connect-src`",
-        chromium: "The guarded `fetch` refuses it, with a `Request` too",
-        firefox: "A `Request` does not keep `keepalive` (its getter reads false), so it is an ordinary request that `connect-src` refuses; a frame the guest makes still sends its `keepalive` request past `connect-src`",
-        webkit: "The guarded `fetch` refuses it, with a `Request` too",
-        why: "Firefox sends keepalive requests without checking `connect-src` (a platform bug); the guarded `fetch` of the guest realm closes it there, and a frame the guest makes has the platform's `fetch`",
+        what: "`fetch` with `keepalive` from a frame the guest makes (cooperative) past `connect-src`",
+        chromium: "Refused by `connect-src`",
+        firefox: "Sent past `connect-src`",
+        webkit: "Refused by `connect-src`",
+        why: "Firefox sends keepalive requests without checking `connect-src` (a platform bug). The guest realm's own `fetch` is gated and refuses `keepalive` on every engine; a frame the guest makes has the platform's `fetch`",
         tests: [`${E2E}guest-realm-hardening.spec.ts`],
     },
     'preconnect': {

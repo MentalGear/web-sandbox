@@ -4,7 +4,7 @@
  */
 import type { SafeCapability, UnsafeCapability } from "./csp-directives";
 import { UNSAFE_PERMISSIONS } from "./csp-directives";
-import { cooperativePolicy, fileKinds, strictViewPolicy } from "./lib/csp/csp-generator";
+import { connectSources, cooperativePolicy, fileKinds, strictViewPolicy, type PolicyInput } from "./lib/csp/csp-generator";
 import { narrowToHostPolicy, parseHostPolicies, type NarrowedReach } from "./lib/csp/host-connect";
 import { buildRefused, executeRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
 import { hostPolicyReadFailed, knownHostPolicies, whenHostPoliciesKnown } from "./lib/host-csp";
@@ -20,7 +20,7 @@ import { ANNOUNCEMENT_TYPE, inSandboxScript } from "./lib/in-sandbox-script";
 import { createBroker, RESERVED_METHOD_PREFIX, type BudgetRefusal } from "./lib/rpc";
 import { createSizeOf } from "./lib/structured-size";
 import { workerBootstrap } from "./lib/worker-bootstrap";
-import { keepOnlyWorkerGlobals, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
+import { keepOnlyWorkerGlobals, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from "./lib/worker-globals";
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { setLongTimeout, type LongTimeout } from "./lib/long-timer";
 import { createRateLimiter, type RateLimiter } from "./lib/rate-limit";
@@ -547,9 +547,10 @@ function errorName(error: unknown): string {
 // every engine. `global` is the expression for the global object in that source.
 // The call is an expression whose value is the worker's postMessage, which it deleted (worker-globals.ts); strict mode
 // runs it as a statement and keeps nothing of it.
-const workerGlobalsCall = (global: string) =>
-    `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(WORKER_GLOBALS)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)})`;
-const workerGlobalsStatement = (global: string) => `${workerGlobalsCall(global)};`;
+// Strict mode's worker keeps STRICT_WORKER_GLOBALS: no importScripts, which its policy never lets load anything (S74).
+const workerGlobalsCall = (global: string, globals: readonly string[] = WORKER_GLOBALS) =>
+    `(${keepOnlyWorkerGlobals.toString()})(${global}, ${toInlineScriptLiteral(globals)}, ${toInlineScriptLiteral(WORKER_NAVIGATOR_MEMBERS)})`;
+const workerGlobalsStatement = (global: string) => `${workerGlobalsCall(global, STRICT_WORKER_GLOBALS)};`;
 
 // The guest frame's window: the wrapper's frames[0], or null. Read by length first: the wrapper is cross-origin to
 // the host, and reading an index a cross-origin window does not have throws a SecurityError.
@@ -606,6 +607,7 @@ interface BootstrapFeatures {
     callBudget: CallBudget;
     listeners: BootstrapListener[];
     uncaught?: { count: number; characters: number };
+    connect: string[];
 }
 
 // What the host posts to a strict view with its two ports (INIT_VIEW).
@@ -1944,13 +1946,14 @@ export class WebSandbox extends ElementBase {
 
     // `postToFrame` (worker mode): the expression that names the worker's platform postMessage, which the globals
     // allowlist handed over (worker-globals.ts, R4:M-1); the bootstrap's one WORKER_STARTED uses it.
-    private _getSandboxCommsScript(mode: 'cooperative' | 'worker', files: FileSnapshotEntry[], plan: GuestMarkupPlan = NO_MARKUP_PLAN, postToFrame = 'null') {
+    // `connect`: the sources of the guest policy's connect-src (_gateConnect), which the bootstrap's request gate admits.
+    private _getSandboxCommsScript(mode: 'cooperative' | 'worker', files: FileSnapshotEntry[], plan: GuestMarkupPlan = NO_MARKUP_PLAN, postToFrame = 'null', connect: readonly string[] = []) {
         // communication, logs and RPC bridge template that any content running in the sandbox uses.
         // createBroker is stringified in too, so the guest runs the identical dispatcher (see rpc.ts).
         // The features as one literal: the opt-in ones only when on, and the call budget always (R3:M-2).
         // The listeners the bootstrap installs are the egress table's rows for this mode (egress.ts), and worker mode's guest also
         // counts its uncaught errors and rejections against their budget (R5:N-1).
-        const features: BootstrapFeatures = { callBudget: { ...this._callBudget }, listeners: bootstrapListeners(mode) };
+        const features: BootstrapFeatures = { callBudget: { ...this._callBudget }, listeners: bootstrapListeners(mode), connect: [...connect] };
         if (mode === 'worker') features.uncaught = { ...UNCAUGHT_BUDGET };
         if (mode === 'cooperative' && this._autoResizeEnabled()) features.autoResize = true;
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
@@ -1980,11 +1983,11 @@ export class WebSandbox extends ElementBase {
 
     // The cooperative guest's bootstrap, behind the environment gate (environment-check.ts, S74): the check is its first
     // statement, and on a refusal the document's parser stops, so the guest markup that follows never runs.
-    private _getCooperativeBootstrapScript(files: FileSnapshotEntry[], plan: GuestMarkupPlan) {
-        return environmentGate('parent.parent', true, this._getSandboxCommsScript('cooperative', files, plan));
+    private _getCooperativeBootstrapScript(files: FileSnapshotEntry[], plan: GuestMarkupPlan, connect: readonly string[]) {
+        return environmentGate('parent.parent', true, this._getSandboxCommsScript('cooperative', files, plan, 'null', connect));
     }
 
-    private _getWorkerBootstrapScript(files: FileSnapshotEntry[]) {
+    private _getWorkerBootstrapScript(files: FileSnapshotEntry[], connect: readonly string[]) {
         // the worker keeps only the allowlisted globals (worker-globals.ts), then runs the comms script and builds its
         // own blobs and sandboxFiles from the same literal; the frame only spawns it and forwards the port
         // No WebAssembly unless scriptUnsafe (R1:R2-5), as in strict mode: WebKit compiles it without
@@ -1992,7 +1995,7 @@ export class WebSandbox extends ElementBase {
         // The allowlist runs first, as the argument of the function the rest runs in: it returns the worker's postMessage,
         // which it deleted (R4:M-1), and only the comms script is given it, for its one WORKER_STARTED.
         const noWasm = this._config.scriptUnsafe === true ? '' : `(${removeWebAssembly.toString()})(g);`;
-        const workerSource = `(function (g, postToFrame) {${noWasm}${this._getSandboxCommsScript('worker', files, NO_MARKUP_PLAN, 'postToFrame')}})(this, ${workerGlobalsCall('this')});`;
+        const workerSource = `(function (g, postToFrame) {${noWasm}${this._getSandboxCommsScript('worker', files, NO_MARKUP_PLAN, 'postToFrame', connect)}})(this, ${workerGlobalsCall('this')});`;
         return environmentGate('parent.parent', false, `(${workerBootstrap.toString()})(${toInlineScriptLiteral(workerSource)}, ${toInlineScriptLiteral(TRUSTED_TYPES_POLICY)});`);
     }
 
@@ -2029,15 +2032,27 @@ export class WebSandbox extends ElementBase {
     // for the kinds of load this build's files need (the snapshot's types, through the one load-kind table). The one
     // place a guest policy is made; worker mode's worker and strict mode's worker inherit their frame's.
     private _guestPolicy(files: FileSnapshotEntry[], origins: OriginPolicy): string {
+        const input = this._policyInput(files, origins);
+        if (this._config.mode !== 'strict') return cooperativePolicy(input);
+        return strictViewPolicy({ ...input, bootstrapHash: viewBootstrapHash() });
+    }
+
+    // The sources of that policy's connect-src, from the same input: what the bootstrap's request gate admits (S74), so
+    // the gate and the browser read one list.
+    private _gateConnect(files: FileSnapshotEntry[], origins: OriginPolicy): string[] {
+        return connectSources(this._policyInput(files, origins));
+    }
+
+    private _policyInput(files: FileSnapshotEntry[], origins: OriginPolicy): PolicyInput {
         const types = files.map(entry => entry[1]);
         const scriptUnsafe = this._config.scriptUnsafe === true;
-        if (this._config.mode !== 'strict') return cooperativePolicy({ origins, fileKinds: fileKinds(types), scriptUnsafe });
+        if (this._config.mode !== 'strict') return { origins, fileKinds: fileKinds(types), scriptUnsafe };
         // A type the view mints no URL for (isViewFileType, BR:ST1) is only fetched, by the worker.
         const viewTypes = types.map(type => (isViewFileType(type) ? type : FALLBACK_TYPE));
         const kinds = fileKinds(viewTypes);
         // With guest writes the view may mint URLs for raster images during the environment (R1:R4-4): image loads only.
         if (this._config.guestWrites === true) kinds.add(LOAD_KINDS.image.key);
-        return strictViewPolicy({ origins, fileKinds: kinds, scriptUnsafe, bootstrapHash: viewBootstrapHash() });
+        return { origins, fileKinds: kinds, scriptUnsafe };
     }
 
     // The host page's policy applied to the connect origins of this build (host-connect.ts): `origins` and the bridge's
@@ -2152,13 +2167,14 @@ export class WebSandbox extends ElementBase {
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
         const policy = this._guestPolicy(files, reach.origins);
+        const connect = this._gateConnect(files, reach.origins);
 
         // Guest markup is the guest's own: cooperative mode runs it as it is (that is the mode), and strict mode's view cleans
         // it with its allowlist renderer (sanitizeRender), not here.
         let guestDocument: string;
         if (isWorkerMode) {
             // worker mode is headless: no guest markup, so no markup references either
-            guestDocument = buildGuestDocument({ csp: policy, bootstrapScript: this._getWorkerBootstrapScript(files), content: '' });
+            guestDocument = buildGuestDocument({ csp: policy, bootstrapScript: this._getWorkerBootstrapScript(files, connect), content: '' });
         } else {
             const html = this._config.html || '<div id="root"></div>';
             this._warnAboutNoScripts(html, sandboxFlags);
@@ -2166,7 +2182,7 @@ export class WebSandbox extends ElementBase {
             const plan = this._getMarkupPlan(html, files, sandboxFlags);
             guestDocument = buildGuestDocument({
                 csp: policy,
-                bootstrapScript: this._getCooperativeBootstrapScript(files, plan),
+                bootstrapScript: this._getCooperativeBootstrapScript(files, plan, connect),
                 content: plan.parts ? '' : html,
                 bootstrapWritesContent: plan.parts !== null,
             });
@@ -2208,7 +2224,7 @@ export class WebSandbox extends ElementBase {
         const policy = this._guestPolicy(files, reach.origins);
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (BR:ST4)
         const strictInit: StrictInit = {
-            workerSource: this._getStrictWorkerSource(files, entrySource, marker),
+            workerSource: this._getStrictWorkerSource(files, entrySource, marker, this._gateConnect(files, reach.origins)),
             entryDone: marker,
             viewFiles: files.filter(candidate => isViewFileType(candidate[1])), // never a type that opens as a document (BR:ST1)
             html,
@@ -2260,8 +2276,8 @@ export class WebSandbox extends ElementBase {
     // replace a global before the prelude has captured or deleted it; an entry that wants a global assigns it
     // (globalThis.x = …). `this` inside is the global object, as at a script's top level. The scope check
     // (assertEntryScoped) refuses to start a worker whose entry escaped that scope.
-    private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string, marker = entryDoneName()): string {
-        const features: BootstrapFeatures = { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET } };
+    private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string, marker = entryDoneName(), connect: readonly string[] = []): string {
+        const features: BootstrapFeatures = { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [...connect] };
         if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES };

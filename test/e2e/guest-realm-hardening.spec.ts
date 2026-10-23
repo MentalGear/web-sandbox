@@ -234,25 +234,21 @@ test.describe('PD1: no worker loads from data:', () => {
 // ---- PD2 ------------------------------------------------------------------------------------------------
 
 test.describe('PD2: fetch() with keepalive is refused in the guest realm', () => {
-    for (const mode of ['cooperative', 'worker'] as const) {
-        test(`${mode} mode: keepalive to a listener the policy blocks is refused (Firefox sent it before); an ordinary fetch to the allowed one arrives (positive control)`, async ({ sandbox, browserName }) => {
+    for (const mode of ['cooperative', 'worker', 'strict'] as const) {
+        test(`${mode} mode: keepalive is refused, to a listed origin too (Firefox sent it past connect-src before); to a blocked one the request gate refuses it first; an ordinary fetch to the allowed one arrives (positive control)`, async ({ sandbox, browserName }) => {
             expect(await sandbox.mount({ mode, origins: { connect: [recorder.allowed] } })).toBe('ready');
             const outcome = await sandbox.inGuest(`
                 const tryFetch = (url, init) => fetch(url, init).then(() => 'sent', (e) => e.name + ': ' + e.message);
                 return {
                     init: await tryFetch('${recorder.blocked}/pd2-init', { keepalive: true, method: 'POST', body: 'x' }),
                     request: await tryFetch(new Request('${recorder.blocked}/pd2-request', { keepalive: true })),
+                    listed: await tryFetch('${recorder.allowed}/pd2-listed', { keepalive: true, method: 'POST', body: 'x' }),
                     control: await tryFetch('${recorder.allowed}/pd2-control', { method: 'POST', body: 'x' }),
                 };
             `);
-            // measured: Firefox's Request does not keep keepalive (its getter reads false), so that request is an ordinary
-            // one, which connect-src refuses; the listener below is the evidence either way
-            expect(outcome).toEqual({
-                init: 'TypeError: fetch() with keepalive is not available in the sandbox',
-                // ledger: keepalive-fetch
-                request: browserName === 'firefox' ? 'TypeError: NetworkError when attempting to fetch resource.' : 'TypeError: fetch() with keepalive is not available in the sandbox',
-                control: 'sent',
-            });
+            const gate = 'TypeError: fetch() refused by the sandbox: the origin is not in its origins.connect';
+            expect(outcome).toEqual({ init: gate, request: gate, listed: 'TypeError: fetch() with keepalive is not available in the sandbox', control: 'sent' });
+            void browserName;
             await sandbox.page.waitForTimeout(500);
             expect(recorder.paths('blocked')).toEqual([]);
             expect(recorder.paths('allowed')).toEqual(['/pd2-control']);

@@ -239,7 +239,8 @@ test.describe('G2 the worker', () => {
             stringCode: (() => { try { return eval('1 + 1'); } catch (e) { return e.name; } })(),
         }`);
         // scriptUnsafe is on in the baseline config, so eval and WebAssembly stay; the next test turns it off
-        expect(r).toEqual({ names: ['WebAssembly'], createObjectURL: 'undefined', onPrototype: false, href: 'blob:null/UUID', importScripts: 'function', sandboxView: 'object', bridge: 'object', sandboxFiles: 'object', stringCode: 2 });
+        // no importScripts: the strict policy's script-src is the bootstrap's hash, so it could never load anything (S74)
+        expect(r).toEqual({ names: ['WebAssembly'], createObjectURL: 'undefined', onPrototype: false, href: 'blob:null/UUID', importScripts: 'undefined', sandboxView: 'object', bridge: 'object', sandboxFiles: 'object', stringCode: 2 });
     });
 
     test('without scriptUnsafe: no eval, Function or WebAssembly in the worker; an entry reports through the bridge', async ({ sandbox, page }) => {
@@ -257,7 +258,7 @@ test.describe('G2 the worker', () => {
         expect(await page.evaluate(() => (window as any).strictReport)).toEqual({ eval: 'EvalError', fn: 'EvalError', wasm: 'undefined', worker: 'undefined' });
     });
 
-    test('importScripts and fetch obey the inherited policy: refused off the allowlist, fetch allowed to connect-src (positive control)', async ({ sandbox }) => {
+    test('the worker has no importScripts, and fetch obeys connect-src: refused off the list, allowed to it (positive control)', async ({ sandbox }) => {
         expect(await sandbox.mount(strict({ origins: { connect: [recorder.allowed] } }))).toBe('ready');
         const r = await sandbox.inGuest(`
             let imported;
@@ -266,7 +267,7 @@ test.describe('G2 the worker', () => {
             const allowed = await fetch('${recorder.allowed}/fetch').then((r) => r.status, (e) => e.name);
             return { imported, blocked, allowed };
         `);
-        expect(r).toEqual({ imported: 'NetworkError', blocked: 'TypeError', allowed: 200 });
+        expect(r).toEqual({ imported: 'ReferenceError', blocked: 'TypeError', allowed: 200 });
         await recorder.waitFor('allowed', '/fetch');
         expect(recorder.paths('blocked')).toEqual([]);
     });

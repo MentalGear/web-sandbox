@@ -73,14 +73,13 @@ test.describe("an origin on the host page's site is dropped in every mode, with 
     };
 
     for (const mode of ['strict', 'cooperative', 'worker'] as const) {
-        test(`${mode}: the origin is dropped with one warning and the guest request is refused by connect-src${mode === 'strict' ? ' (WebKit raises no violation reports in workers)' : ''}`, async ({ sandbox, page, browserName }) => {
+        test(`${mode}: the origin is dropped with one warning and the guest request is refused and reported`, async ({ sandbox, page }) => {
             const warnings: string[] = [];
             page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
             expect(await sandbox.mount({ mode, origins: { connect: [ORIGIN] } })).toBe('ready');
             expect(await sandbox.inGuest(request)).toBe('sent');
-            // a strict or worker guest's fetch runs in a worker, whose reports WebKit does not raise: there the warning is the evidence
-            // ledger: worker-violation-reports
-            if (mode === 'cooperative' || browserName !== 'webkit') expect((await connectViolations(sandbox)).length).toBeGreaterThan(0);
+            // the request gate refuses and reports it, in every mode and on every engine
+            expect((await connectViolations(sandbox)).length).toBeGreaterThan(0);
             expect(warnings.filter(text => text.includes(`origins.connect dropped ${ORIGIN} (the host page's own origin`))).toHaveLength(1);
             expect(warnings.filter(text => text.includes(`origins.connect lists ${ORIGIN}`))).toEqual([]);
         });

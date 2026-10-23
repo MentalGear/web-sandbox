@@ -1,6 +1,10 @@
-import { test, expect, OFFSITE_ORIGIN, ORIGIN } from './fixture';
+import { test, expect, ORIGIN } from './fixture';
+import { startSiblingApi } from './realistic-host-sibling';
 
-const IMAGE_PATH = '/playground/test-assets/local-image.svg';
+test.use({ ignoreHTTPSErrors: true }); // the test listener's certificate is self-signed
+
+// The listener's .svg answer (realistic-host-sibling.ts).
+const IMAGE_PATH = '/api/local-image.svg';
 const checkImage = (origin: string) => `
     const img = new Image();
     img.onload = () => console.log('IMAGE loaded');
@@ -9,13 +13,20 @@ const checkImage = (origin: string) => `
 `;
 
 test('loads an image from an allowlisted origin', async ({ sandbox }) => {
-    // plain http is an origin only for loopback, as here (ADR-007); no policy upgrades it, so every engine loads it as listed.
-    // (The test server by its address: the harness page's own site, `localhost`, is admitted in no mode.)
-    await sandbox.mount({ origins: { images: [OFFSITE_ORIGIN] } });
+    // Another site than the harness page (an IP address is its own site; the page's own site, `localhost`, is admitted in no
+    // mode), on a listener of this test's own: 127.0.0.1 is served by nothing else, whichever address `localhost` resolves to.
+    // https, as the library's policy upgrades no request and every engine loads it as listed.
+    const listener = await startSiblingApi();
+    try {
+        await sandbox.mount({ origins: { images: [listener.crossSite] } });
 
-    await sandbox.run(checkImage(OFFSITE_ORIGIN));
+        await sandbox.run(checkImage(listener.crossSite));
 
-    expect(await sandbox.waitForLog('IMAGE')).toBe('IMAGE loaded');
+        expect(await sandbox.waitForLog('IMAGE')).toBe('IMAGE loaded');
+        expect(listener.named('local-image.svg'), 'the image came from the allowlisted origin').toHaveLength(1);
+    } finally {
+        await listener.stop();
+    }
 });
 
 test('blocks the same image when the origin is not allowlisted', async ({ sandbox }) => {

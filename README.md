@@ -11,7 +11,7 @@ Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the 
 *   **Secure by default:** [strict mode](#strict-mode), the default, runs guest code only in a worker; the visible
     frame runs no guest script. Every guest runs in an opaque origin: no access to the host origin's storage, Service
     Workers, DOM or scripts. Strict mode admits no `origins` entry on the host page's site (a guest request to one can
-    carry the host site's cookies in some engines; see [Cookies](#limits)). [Cooperative mode](#modes) runs guest script
+    carry the host site's cookies in some engines, except a `fetch()` or `XMLHttpRequest`; see [Cookies](#limits)). [Cooperative mode](#modes) runs guest script
     in a document, for content that cooperates, with the [limits listed below](#limits).
 *   **Unified:** Use the same "Preset" definitions for both manual testing (Playground) and automated regression testing.
 
@@ -196,9 +196,11 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     `sourceFile`, `lineNumber` and `columnNumber` when the browser gives them. It bubbles like
     `sandbox-log`. The guest's bootstrap listens before any guest code runs, but every field comes from
     the guest and guest code can suppress its own reports, so an event is evidence that the guest tried
-    something; no event proves nothing. A frame the guest creates reports to itself, not here, and in
-    worker mode it depends on the engine (WebKit raises none in workers; Firefox none for
-    `importScripts`). At most 100 per environment (`VIOLATION_EVENT_LIMIT`; for the strict view, per directive);
+    something; no event proves nothing. A frame the guest creates reports to itself, not here. A `fetch()`,
+    `XMLHttpRequest` or `WebSocket` to an origin `origins.connect` does not list is refused by the library's request
+    gate and reported by it, the same on every engine and in every mode (`sourceFile: 'web-sandbox:request-gate'`);
+    what the browser reports itself in a worker depends on the engine (WebKit raises none there; Firefox none for
+    worker mode's `importScripts`). At most 100 per environment (`VIOLATION_EVENT_LIMIT`; for the strict view, per directive);
     type `SandboxViolation`. In
     strict mode each report also carries `source`, `'view'` or `'logic'` (see [Strict mode](#strict-mode)).
 *   **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`,
@@ -579,8 +581,9 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     origin exactly (an image's `http:` URL may name a listed `https:` one), else dropped before the browser sees it,
     and an `http(s)` one reported as a `violation`; guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
-    `Referer`); the worker keeps only allowlisted globals, so it can request only through `fetch`, `XMLHttpRequest`,
-    `WebSocket` and `importScripts`, which the policy governs on every engine, and reaches its parent only through
+    `Referer`); the worker keeps only allowlisted globals, so it can request only through `fetch`, `XMLHttpRequest` and
+    `WebSocket`, the library's request gate (each request checked against `origins.connect` and reported when refused,
+    the same on every engine; `fetch` and `XMLHttpRequest` without credentials), and reaches its parent only through
     the library's port (it has no `postMessage` of its own); links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
     the browser's own link actions (copy, open in a new tab, drag) carry no guest URL (open external URLs through
     a method you `expose()`); the watchdog stops a looping guest on every
@@ -619,7 +622,7 @@ defense:
 3.  **CSP First**: The CSP `<meta>` is prepended before any user markup, so it is always the first element of the parsed `<head>`; user content cannot precede or swallow it.
 4.  **Wrapper Frame**: The guest frame is nested in a library-owned frame whose policy is `frame-src 'none'`. That blocks the guest from navigating itself to carry data out in a URL ([research 14](docs/research/14_self_navigation/README.md)).
 5.  **One Channel, Announced by the Bootstrap**: The guest bootstrap's first statement makes the private `MessageChannel`, keeps one end in its closure and posts the other to the host page; the host accepts exactly one such announcement per environment, from the guest frame's own window, and ends the environment on a second (a guest that reloads or rewrites itself). No listener in the guest realm ever carries a port of the library's, and guest code can never reach the bootstrap's end (it uses only primitives captured before guest code runs), so it cannot answer the watchdog for a looping guest. The host hears only the current environment's port. If the wrapper frame ever loads a second document, the sandbox is torn down and fires `terminated`.
-6.  **Worker Inside the Frame**: Worker mode spawns its worker from inside the sandbox frame, so it shares the opaque origin and CSP. The worker keeps only allowlisted globals (`src/lib/worker-globals.ts`, worker and strict mode): it requests only through `fetch`, `XMLHttpRequest`, `WebSocket` and `importScripts`, each governed by the policy on every engine (Firefox sent a worker's `EventSource` and loaded its `FontFace` past the policy), and has no nested workers.
+6.  **Worker Inside the Frame**: Worker mode spawns its worker from inside the sandbox frame, so it shares the opaque origin and CSP. The worker keeps only allowlisted globals (`src/lib/worker-globals.ts`, worker and strict mode): it requests only through `fetch`, `XMLHttpRequest` and `WebSocket`, which are the library's request gate in every mode, and (worker mode) `importScripts`, each governed by the policy on every engine (Firefox sent a worker's `EventSource` and loaded its `FontFace` past the policy), and has no nested workers.
 7.  **Capability Tiers**: Flags that reach outside the frame require the explicit `unsafeCapabilities` opt-in.
 8.  **Allowlisted Calls**: Each side can call only the methods the other side exposed, and an answer reaches only the frame that made the request, never a frame that replaced it.
 9.  **Realm-Bound Files**: Registered files reach the guest as `blob:` URLs created in its own realm, which no other sandbox and not the host page can load. Lookups are exact, `blob:` is allowed only for the registered types, and a reference names a file only for the kind of load its type is for (a text file is never a script).
@@ -662,17 +665,20 @@ What remains for the default:
     thread.
 *   **CSS within what the policy allows**: style-based probing of the view's own content, and loads from the origins
     you allow.
-*   **Worker `violation` reports** (`source: 'logic'`): per engine (WebKit raises none in workers) and influenced by
-    guest code. The view's reports are complete and unforgeable up to the cap.
+*   **Worker `violation` reports** (`source: 'logic'`): the request gate's are the same on every engine; the browser's own
+    worker reports (a redirect it refuses) are per engine (WebKit raises none in workers); all are influenced by guest
+    code. The view's reports are complete and unforgeable up to the cap.
 *   **A worker that closes itself** is noticed only by the watchdog; **memory** is not bounded.
-*   **Cookies**: the sandbox's frame is credentialless, which only some engines honour. Every mode drops an `origins`
+*   **Cookies**: `fetch()` and `XMLHttpRequest` send none, on any engine. The sandbox's frame is credentialless, which
+    only some engines honour, for the rest: a WebSocket handshake (a listed `wss://` server must check `Origin`) and the
+    loads of rendered markup and CSS. Every mode drops an `origins`
     entry on the host page's site from every kind, with a warning. The site is the browser's registrable domain of the
     page's host (`example.com` for `app.example.com`), so a sibling subdomain is on it. A loopback, private or link-local
     host is kept, with a warning, only when the host page is itself on one, and dropped otherwise. Use the fetch bridge for
     an API that knows the user: it sends no credentials. What the engines would send ([the table](docs/API.md#cookies-by-engine)):
 
 <!-- generated:begin cookie-sentence -->
-A request of the sandbox to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine.
+`fetch()` and `XMLHttpRequest` of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (a WebSocket handshake, or a load of the guest's markup or CSS) to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine.
 <!-- generated:end -->
 
 ### Cooperative-mode limits

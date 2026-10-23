@@ -1,6 +1,7 @@
 import { test, expect, type SandboxDriver, type FileSpec } from './fixture';
 import { MAX_TOTAL_BYTES, mimeTypeFor } from '@src/lib/files';
 import { useRecorder, wss } from './recorder';
+import { GATE_SOURCE_FILE } from '@src/lib/violation';
 
 /**
  * Files (ADR-004): the host registers files on the element, every environment build snapshots them
@@ -20,6 +21,10 @@ import { useRecorder, wss } from './recorder';
  *  10. CSS references and srcset: stylesheets and inline styles name files by url() and @import,
  *      srcset by candidate; a reference cycle and every unmatched reference fail closed
  */
+
+/** The request gate's reports on the host, as `directive blockedURI`, sorted. */
+const gateReports = async (sandbox: SandboxDriver) =>
+    (await sandbox.violations()).filter(v => v.sourceFile === GATE_SOURCE_FILE).map(v => `${v.directive} ${v.blockedURI}`).sort();
 
 // The listener outside the browser for the egress tests (sections 4, 9 and 10, backlog T5).
 const recorder = useRecorder();
@@ -291,15 +296,15 @@ test.describe('4. files add no egress', () => {
         expect(r.script).toBe('loaded');
         expect(r.outcomes).toEqual({ fetch: 'refused', import: 'refused', img: 'refused', websocket: 'refused', ownFile: 'reached' });
         // Every refused attempt has its violation, so a request that left and merely failed (DNS, TLS)
-        // would show up as a refusal without one and fail this assertion: the evidence cannot miss it.
+        // would show up as a refusal without one and fail this assertion: the evidence cannot miss it. The fetch and the
+        // WebSocket are the request gate's to refuse, before the browser sees them: their reports are the gate's, on the host.
         expect(r.violations).toEqual([
-            `connect-src ${ATTACKER}/fetch`,
-            `connect-src ${wss(ATTACKER)}/ws`,
             `img-src ${ATTACKER}/bg.svg`,
             `img-src ${ATTACKER}/img.svg`,
             `script-src-elem ${ATTACKER}/import.js`,
             `style-src-elem ${ATTACKER}/import.css`,
         ]);
+        expect(await gateReports(sandbox)).toEqual([`connect-src ${ATTACKER}/fetch`, `connect-src ${wss(ATTACKER)}/ws`]);
         expect(recorder.hits.filter(hit => hit.server === 'blocked')).toEqual([]);
     });
 
@@ -814,12 +819,13 @@ test.describe('9. module graph: relative imports between registered modules reso
         `);
         // positive control for the outcome channel: the graph's own import is reached
         expect(r.outcomes).toEqual({ own: 'reached', import: 'refused', fetch: 'refused', img: 'refused' });
-        // every refusal has its violation, so a request that left and merely failed would show up here
+        // every refusal has its violation, so a request that left and merely failed would show up here (the fetch's is
+        // the request gate's, on the host)
         expect(r.violations).toEqual([
-            `connect-src ${ATTACKER}/f`,
             `img-src ${ATTACKER}/i.svg`,
             `script-src-elem ${ATTACKER}/m.js`,
         ]);
+        expect(await gateReports(sandbox)).toEqual([`connect-src ${ATTACKER}/f`]);
         expect(recorder.paths('blocked')).toEqual([]);
     });
 
