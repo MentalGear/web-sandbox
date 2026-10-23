@@ -297,6 +297,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/css-references.ts` | URL references in CSS |
 | `src/lib/egress.ts` | The egress table |
 | `src/lib/element-events.ts` | The element's events |
+| `src/lib/engine-ledger.ts` | The engine-difference ledger |
 | `src/lib/environment-check.ts` | The environment check |
 | `src/lib/environment.ts` | The resources of one environment, declared once |
 | `src/lib/fetch-bridge.ts` | The host-mediated fetch bridge, host side |

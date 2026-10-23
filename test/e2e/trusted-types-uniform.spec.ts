@@ -85,6 +85,7 @@ test.describe('without hostContentSecurityPolicy', () => {
 
     test('the browser decides where it has Trusted Types; where it has none nothing is applied, though the page asks for it', async ({ sandbox, page, browserName }) => {
         await openWithPolicy(page, POLICY);
+        // ledger: trusted-types
         expect(await outcomes(sandbox), browserName === 'firefox' ? 'Firefox has no Trusted Types, and the read cannot see its directives' : 'the browser applies it').toEqual(browserName === 'firefox' ? ALL_READY : ALL_ENDED);
     });
 
@@ -95,6 +96,7 @@ test.describe('without hostContentSecurityPolicy', () => {
     });
 
     test('the page really does not report its Trusted Types directives in a browser without them (the fact the option stands on)', async ({ page, browserName }) => {
+        // ledger: trusted-types
         test.skip(browserName !== 'firefox', 'only a browser without Trusted Types leaves the directives out');
         await openWithPolicy(page, POLICY);
         const reported = await page.evaluate(async (decoy) => {

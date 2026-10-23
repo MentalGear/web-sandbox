@@ -158,6 +158,7 @@ test.describe('4. worker mode', () => {
         const reported = (await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI}`).sort();
         const expected: Record<string, string[]> = {
             // Chromium raises securitypolicyviolation in workers for both
+            // ledger: worker-violation-reports
             chromium: [`connect-src ${ATTACKER}/worker-fetch`, `script-src-elem ${ATTACKER}/worker-import.js`],
             // Firefox raises it for fetch, not for importScripts
             firefox: [`connect-src ${ATTACKER}/worker-fetch`],
@@ -194,6 +195,7 @@ test.describe('5. strict mode', () => {
         const all = await sandbox.violations();
         const worker = all.filter(v => v.blockedURI.startsWith(`${ATTACKER}/worker`)).map(v => `${v.source} ${v.directive}`).sort();
         expect(worker).toEqual({
+            // ledger: worker-violation-reports
             chromium: ['logic connect-src', 'logic script-src-elem'],
             firefox: ['logic connect-src', 'view script-src-elem'],
             webkit: [],
@@ -201,6 +203,7 @@ test.describe('5. strict mode', () => {
         // the logic port's cap: its first reports, then the flood up to 100, every one labelled logic; the view's
         // report above arrived after it, on its own count
         const flood = all.filter(v => v.blockedURI.startsWith(`${ATTACKER}/flood-`));
+        // ledger: worker-violation-reports
         expect(all.filter(v => v.source === 'logic')).toHaveLength(browserName === 'webkit' ? 0 : 100);
         expect(new Set(flood.map(v => v.source))).toEqual(new Set(browserName === 'webkit' ? [] : ['logic']));
     });

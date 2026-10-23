@@ -19,6 +19,8 @@ import { busyOf, idleBaseline, interleavedShare, IDLE_MS, LOAD_SHARE, LOADED_MS,
  * baseline, the best of N windows on both sides, each loaded window between two baselines taken with the flood paused
  * (./host-share.ts, interleavedShare; it also holds the bound's terms and the margin).
  *
+ * ledger: view-thread (where the view runs differs by engine and environment; the bound is asserted on each)
+ *
  * What the doc lists as outside the bound (allowAnimations: true, relayout after decodes and font swaps, the documented
  * single-operation stalls, memory, :hover restyles, Firefox's cost of unhandled rejections) is not asserted here.
  *

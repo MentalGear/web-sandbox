@@ -100,6 +100,7 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         await sandbox.run(`new Worker(URL.createObjectURL(new Blob([${JSON.stringify(body)}], { type: 'text/javascript' })));`);
         await recorder.waitFor('allowed', '/v1-guest-worker-control'); // the guest's worker runs (positive control)
         await sandbox.page.waitForTimeout(1000);
+        // ledger: worker-eventsource-fontface
         expect(recorder.paths('blocked').sort()).toEqual(browserName === 'firefox' ? ['/v1-guest-worker-es', '/v1-guest-worker-font.woff'] : []);
     });
 });
@@ -211,6 +212,7 @@ test.describe('V3: the user\'s modifier clicks and Enter on a guest link (cooper
     test('cooperative mode without allow-popups: Chromium and Firefox open a new tab at the guest\'s URL, which no policy governs; WebKit opens none (see the control below: a measurement limit)', async ({ sandbox, browserName }) => {
         expect(await sandbox.mount({ html: LINKS(recorder.blocked) })).toBe('ready');
         const results = await userLinkActions(sandbox, () => sandbox.run(`document.getElementById('l').focus()`));
+        // ledger: modifier-click-links
         expect(results).toEqual(linkActionsOpen(browserName !== 'webkit'));
     });
 
@@ -230,6 +232,7 @@ test.describe('V3: the user\'s modifier clicks and Enter on a guest link (cooper
         await page.mouse.click(box.x + 50, box.y + 20);
         await page.keyboard.up('Control');
         await page.waitForTimeout(1500);
+        // ledger: modifier-click-links
         expect([opened, recorder.paths('blocked').includes('/v3-html')]).toEqual(browserName === 'webkit' ? [0, false] : [1, true]);
     });
 
@@ -345,6 +348,7 @@ test.describe('H1 (residual, measured): the guest adds entries to the tab\'s ses
         await sandbox.run(`location.href = 'https://example.invalid/h1-refused';`);
         await page.waitForTimeout(1500);
         expect(page.url()).toBe(url);
+        // ledger: refused-navigation-history
         expect(await page.evaluate(() => history.length) - before).toBe(browserName === 'chromium' ? 1 : 0);
     });
 });

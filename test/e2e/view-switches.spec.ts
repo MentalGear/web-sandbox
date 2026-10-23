@@ -150,6 +150,7 @@ test.describe('allowAnimations', () => {
         test.setTimeout(90000);
         // the animation name the parts compute to, where the engine computes style for them
         const COMPUTED_PARTS: Record<string, [string, string][]> = {
+            // ledger: form-control-parts
             chromium: [['file', '::file-selector-button']],
             firefox: [['file', '::file-selector-button'], ['range', '::-moz-range-thumb']],
             webkit: [],
@@ -182,6 +183,7 @@ test.describe('allowAnimations', () => {
             await page.waitForTimeout(1000);
             if (!allowAnimations) busyFalse = (await loadedShare(page, idle, ANIMATED)).busy;
             computed[String(allowAnimations)] = await partAnimations() as string[];
+            // ledger: form-control-parts
             if (browserName === 'webkit') distinct[String(allowAnimations)] = await pictures();
         }
         console.log(`MEASURED ${browserName} 300 animated form-control parts: busy share against ${idle.count} idle ticks per ${idle.ms} ms, allowAnimations false ${Math.round(busyFalse * 100)}%; computed animation names false ${JSON.stringify(computed.false)}, true ${JSON.stringify(computed.true)}`
@@ -189,6 +191,7 @@ test.describe('allowAnimations', () => {
         // the guarantee
         expect(busyFalse).toBeLessThanOrEqual(MARGIN); // docs/API.md: false brings every vector back to idle
         // the positive control (true), and the same signal with false
+        // ledger: form-control-parts
         if (browserName === 'webkit') {
             expect(distinct.true, 'positive control: the parts animate with true').toBeGreaterThan(1);
             expect(distinct.false).toBe(1);

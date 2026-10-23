@@ -856,6 +856,7 @@ test.describe('10. CSS references and srcset: stylesheets and inline styles name
     // in Firefox. Either way nothing loads and nothing is requested. What such an @import rule exposes
     // as its sheet differs too: a sheet whose rules are unreadable (Chromium), an empty sheet (Firefox),
     // no sheet (WebKit).
+    // ledger: unresolved-import-events
     const UNRESOLVED_IMPORT_EVENT = { chromium: 'error', firefox: 'load', webkit: 'error' } as const;
     const UNRESOLVED_IMPORT_SHEET = { chromium: 'SecurityError', firefox: 0, webkit: 'none' } as const;
     const UNRESOLVED_SRCSET_EVENT = { chromium: 'error', firefox: undefined, webkit: 'error' } as const;
@@ -949,6 +950,7 @@ test.describe('10. CSS references and srcset: stylesheets and inline styles name
         expect(await sandbox.registerFiles({ 'cycle/a.css': A, 'cycle/b.css': B, 'leaf.css': '#leaf { width: 23px; }', 'self.css': SELF })).toBe('ok');
         const boxes = ['ca', 'cb', 'cs', 'leaf'].map(id => `<div id="${id}"></div>`).join('');
         expect(await sandbox.mount({ html: `${PRELUDE}<link id="la" rel="stylesheet" href="cycle/a.css"><link id="lb" rel="stylesheet" href="cycle/b.css"><link id="ls" rel="stylesheet" href="self.css">${boxes}` })).toBe('ready');
+        // ledger: unresolved-import-events
         const r = await inGuest(sandbox, `${LOADED}
             const sheet = (id) => document.getElementById(id).sheet;
             // an import left as written keeps its href, and names nothing in a blob: stylesheet
@@ -970,6 +972,7 @@ test.describe('10. CSS references and srcset: stylesheets and inline styles name
                 violations: await settle([]),
             };
         `);
+        // ledger: unresolved-import-events
         const event = UNRESOLVED_IMPORT_EVENT[browserName];
         expect(r.events).toEqual({ la: event, lb: event, ls: event });
         expect(r.applied).toEqual(['21px', '22px', '24px', '23px']);
@@ -1026,6 +1029,7 @@ test.describe('10. CSS references and srcset: stylesheets and inline styles name
         expect(r.s1).toMatchObject({ complete: true, current: r.urls.bg, size: '7x9' });
         expect(r.s2).toMatchObject({ complete: true, current: r.urls.x, size: '5x3' });
         // the document's load event waits for every image, so 0x0 after it means the load failed
+        // ledger: unresolved-import-events
         expect(r.s3.event).toBe(UNRESOLVED_SRCSET_EVENT[browserName]);
         expect(r.s3).toMatchObject({ size: '0x0', srcset: 'missing.svg 1x, img/bg.svg?v=2 2x' });
         expect(r.violations).toEqual([]);
@@ -1058,6 +1062,7 @@ test.describe('10. CSS references and srcset: stylesheets and inline styles name
                 link: __events.l,
                 srcset: __events.srcset,
                 // the import is left as written and names nothing; the rest of the sheet applies
+                // ledger: unresolved-import-events
                 importLoaded: sheetRules[0].href !== 'missing.css' || imported(sheetRules[0]) !== ${JSON.stringify(UNRESOLVED_IMPORT_SHEET[browserName])},
                 // positive control for the outcome channel: the matched reference names the file's blob: URL
                 ok: [sheetRules[1 + misses.length].style.backgroundImage === cssUrl('logo.svg'), inlineRules[misses.length].style.backgroundImage === cssUrl('logo.svg')],
@@ -1068,6 +1073,7 @@ test.describe('10. CSS references and srcset: stylesheets and inline styles name
             };
         `);
         expect(r).toEqual({
+            // ledger: unresolved-import-events
             link: UNRESOLVED_IMPORT_EVENT[browserName],
             srcset: UNRESOLVED_SRCSET_EVENT[browserName],
             importLoaded: false,

@@ -42,6 +42,7 @@ const UNCAUGHT_REASON = /uncaught errors or unhandled rejections/;
 // baselines (./host-share.ts, interleavedShare): the WITHIN_FLOOD windows and their warm-ups are its 5 s.
 const FOR_5_SECONDS = (setup: string, tick: string) => pausableFlood(setup, tick, 5000);
 
+// ledger: firefox-rejection-reports (Firefox reports every worker rejection on the host page's thread; the budget below ends the sandbox)
 test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the host page a bounded share, or end the sandbox', () => {
     // The reviewers' flood: a rejection of 16 Mi characters per timer tick. Firefox reports each to the host page's
     // thread whether or not it is cancelled (99% busy unbounded, and with the guest cancelling every one);
@@ -74,7 +75,8 @@ test.describe('N-1 (E-cpu): uncaught errors and unhandled rejections cost the ho
                 // a flood this fast is past the budget: the sandbox ends, and says why. Strict mode counts the characters of
                 // WebKit's muted errors ("Script error." in the worker) in the view, where their text is. Worker mode's worker
                 // has no such view: WebKit's uncaught errors of 16 Mi characters are 13 characters each there, and it raises fewer
-                // than the count budget (its host page stayed idle: measured 2-5%). Ledger row webkit-muted-worker-errors.
+                // than the count budget (its host page stayed idle: measured 2-5%).
+                // ledger: webkit-muted-errors
                 if (browserName === 'webkit' && mode === 'worker' && name === 'uncaught errors of 16 Mi characters') return;
                 expect(reasons).toEqual([expect.stringMatching(UNCAUGHT_REASON)]);
             });

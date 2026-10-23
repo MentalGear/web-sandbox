@@ -81,6 +81,7 @@ async function ownRequestControl(host: RealisticHost, name: string, browserName:
     // the application's own request reached the server once, with its cookies and its token (the wrapper added it)
     expect(own[0]!.headers.authorization, "the application's own request carries the user's token").toBe(HOST_TOKEN);
     // (WebKit does not send a Secure cookie to this http test server, though it stores it; a production host is https)
+    // ledger: secure-cookie-over-http
     const secureOnHttp = browserName === 'webkit' ? HOST_COOKIES.filter(cookie => !cookie.attributes.includes('Secure')) : HOST_COOKIES;
     expect(cookieNames(own[0]!.headers.cookie), "the application's own request carries the host cookies").toEqual(secureOnHttp.map(cookie => cookie.name).sort());
     if (worker.controlled) {
@@ -252,6 +253,7 @@ test.describe('cooperative mode', () => {
         // location.ancestorOrigins: the host origin, which is not a secret (documented as a cooperative limit; Firefox has none)
         const ancestors: string[] = guest.ancestors;
         expect(ancestors.filter(origin => origin !== 'null' && origin !== ORIGIN), covering('ancestorOrigins', 'the guest sees at most the host origin and the opaque wrapper')).toEqual([]);
+        // ledger: ancestor-origins
         if (browserName === 'firefox') expect(ancestors, covering('ancestorOrigins', 'Firefox has no ancestorOrigins')).toEqual([]);
         else expect(ancestors, covering('ancestorOrigins', 'the host origin is shown to the guest (documented)')).toEqual(['null', ORIGIN]);
         expect(page.url(), covering('uiSurfaces', "the guest's attempt to navigate the top window did not move the host page")).toContain('/__realistic-host/page?');

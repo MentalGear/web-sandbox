@@ -28,6 +28,7 @@ test.describe('Worker mode isolation', () => {
         `);
 
         expect(await sandbox.waitForLog(/FETCH_(SUCCESS|BLOCKED)/)).toContain('FETCH_BLOCKED');
+        // ledger: worker-violation-reports
         if (browserName !== 'webkit') expect(await sandbox.waitForViolation('connect-src', `${recorder.blocked}/fetch`)).toBeTruthy();
         expect(recorder.paths('blocked')).toEqual([]);
     });
@@ -43,6 +44,7 @@ test.describe('Worker mode isolation', () => {
         `);
 
         expect(await sandbox.waitForLog(/IMPORT_(SUCCESS|BLOCKED)/)).toContain('IMPORT_BLOCKED');
+        // ledger: worker-violation-reports
         if (browserName === 'chromium') expect(await sandbox.waitForViolation('script-src-elem', `${recorder.blocked}/script.js`)).toBeTruthy();
         expect(recorder.paths('blocked')).toEqual([]);
     });

@@ -138,6 +138,7 @@ export const DIRECTIVE_CASES = {
 
 /** Headers of the page that reach the sandbox besides the policy list. */
 export const HEADER_CASES = [
+    // ledger: coep-require-corp
     { header: 'cross-origin-embedder-policy', value: 'require-corp', row: 'coep', outcome: works(), engines: { webkit: ends('workerRefused') }, note: "WebKit refuses the view's blob: worker under require-corp" },
     { header: 'cross-origin-embedder-policy', value: 'credentialless', row: 'coep', outcome: works(), note: 'alone it does not make the page cross-origin isolated' },
     { header: 'cross-origin-opener-policy', value: 'same-origin', row: 'coep', outcome: works(), note: 'alone it does not make the page cross-origin isolated' },
@@ -147,6 +148,7 @@ export const HEADER_CASES = [
     // `crossOriginIsolated` of the page and requires the sandbox to end exactly when it is true. Which pairs isolate the page is
     // the engine's (observed): COOP with `require-corp` everywhere; with `credentialless` in Chromium and Firefox, not in WebKit.
     { header: 'cross-origin-embedder-policy', value: 'require-corp', also: { 'cross-origin-opener-policy': 'same-origin' }, row: 'coep', outcome: ends('environmentIsolated'), note: 'with COOP same-origin: the page is cross-origin isolated on every engine' },
+    // ledger: coop-coep-isolation
     { header: 'cross-origin-embedder-policy', value: 'credentialless', also: { 'cross-origin-opener-policy': 'same-origin' }, row: 'coep', outcome: ends('environmentIsolated'), engines: { webkit: works() }, note: 'with COOP same-origin: isolated in Chromium and Firefox; WebKit does not isolate a page under credentialless (observed), so the sandbox works there' },
     { header: 'referrer-policy', value: 'unsafe-url', row: 'referrer', outcome: works(), note: 'the frames carry their own no-referrer' },
     { header: 'referrer-policy', value: 'no-referrer', row: 'referrer', outcome: works() },

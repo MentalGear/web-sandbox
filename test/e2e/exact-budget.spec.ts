@@ -141,7 +141,7 @@ for (const [mode, config] of Object.entries(MODES)) {
         });
 
         // A type of 65 536 characters or more: Chromium empties it when the Blob is made, so the guest holds a Blob of no type
-        // and the library has nothing longer to refuse (ledger row blob-type-emptied); Firefox and WebKit keep it whole,
+        // and the library has nothing longer to refuse (ledger: blob-type-emptied); Firefox and WebKit keep it whole,
         // and the type limit refuses it. Either way the library never turns a long type into '' itself.
         test('a Blob type of 65 536 characters: refused where the engine keeps it, and where the engine emptied it first, what the guest holds is sent', async ({ sandbox, browserName }) => {
             expect(await sandbox.mount(config)).toBe('ready');
@@ -149,7 +149,7 @@ for (const [mode, config] of Object.entries(MODES)) {
             const outcome = await sandbox.inGuest(`
                 const blob = new Blob([], { type: 'a/' + 'b'.repeat(65534) });
                 try { return [blob.type.length, await bridge.call('typeOf', blob)]; } catch (error) { return [blob.type.length, error.code]; }`, 30000);
-            // blob-type-emptied
+            // ledger: blob-type-emptied
             expect(outcome).toEqual(browserName === 'chromium' ? [0, 0] : [65536, 'ARGS_NOT_TRANSFERABLE']);
         });
 

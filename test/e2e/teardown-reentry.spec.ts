@@ -88,6 +88,7 @@ for (const trigger of ['host terminate()', 'guest-forged second announcement'] a
         expect(report.framesAfterTerminate).toBe(0);
         expect(report.stateAfterTerminate).toBe('terminated');
         expect(report.pingsAfterTerminate).toBe(0); // the old guest is gone as well as the new one
+        // ledger: focus-during-removal
         if (browserName === 'firefox') expect(report.reentered, 'Firefox fires the host window focus inside the removal').toBeGreaterThan(0);
         if (report.reentered) expect(report.settled).toBe('ready'); // the nested build stood
     });

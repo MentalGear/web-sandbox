@@ -113,6 +113,7 @@ test.describe('C2: the entry runs in its own scope', () => {
         await sandbox.registerFiles({ 'main.js': `bridge.call('report2', { Worker: typeof globalThis.Worker, Reflect: typeof globalThis.Reflect, apply: typeof Reflect.apply, WebAssembly: typeof globalThis.WebAssembly, helper: typeof globalThis.helper, sandboxView: typeof sandboxView });` });
         expect(await sandbox.mount(strict({ entry: 'main.js', scriptUnsafe: false }))).toBe('ready');
         await page.waitForFunction(() => (window as any).c2b !== undefined);
+        // ledger: webassembly-unsafe-eval
         expect(await page.evaluate(() => (window as any).c2b)).toEqual({ Worker: 'undefined', Reflect: 'object', apply: 'function', WebAssembly: 'undefined', helper: 'undefined', sandboxView: 'object' });
     });
 
@@ -198,6 +199,7 @@ test.describe('C5: a rendered link stays a link, but its href is one inert const
         // Playwright always links. Chromium's view may be out of process or in the host page's process (BR:ST2), and
         // Playwright links such a frame unreliably (strict-view.ts), so there the role rests on the HTML-AAM facts above
         // (measured with getByRole: 1 there too).
+        // ledger: view-frame-access
         if (browserName !== 'chromium') {
             const view = page.frameLocator('web-sandbox iframe').frameLocator('iframe');
             expect(await view.getByRole('link', { name: 'link' }).count()).toBe(1);

@@ -183,6 +183,7 @@ export async function chromiumViewLinkUrls(page: Page): Promise<string[] | null>
  * page, or only in the frames whose path `only` accepts (the others are listed with 'no-context').
  */
 export async function inFrames<T = unknown>(page: Page, browserName: string, expression: string, only: (path: string) => boolean = () => true): Promise<FrameValue<T>[]> {
+    // ledger: view-frame-access
     if (browserName === 'chromium') return inFramesThroughCdp<T>(page, expression, only);
     const results: FrameValue<T>[] = [];
     for (const frame of page.frames()) {

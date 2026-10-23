@@ -26,7 +26,7 @@ const REGIONS: Record<string, string[]> = {
         'api-fetch-bridge', 'api-call-limits', 'api-exports-values', 'api-exports-types',
     ],
     'docs/ADR-005-strict-mode.md': ['adr005-ports', 'adr005-init-view'],
-    'docs/THREAT-MODEL.md': ['cookie-facts', 'connect-facts', 'inherited-context'],
+    'docs/THREAT-MODEL.md': ['cookie-facts', 'connect-facts', 'inherited-context', 'engine-ledger'],
     'README.md': ['cookie-sentence', 'connect-sentence'],
     'ARCHITECTURE.md': ['realms', 'stringified', 'channels', 'frames', 'lifecycle-states', 'lifecycle-diagram', 'lifecycle-inputs', 'lifecycle-effects', 'module-map'],
 };

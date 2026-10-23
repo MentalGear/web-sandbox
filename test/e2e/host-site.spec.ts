@@ -79,6 +79,7 @@ test.describe("an origin on the host page's site is dropped in every mode, with 
             expect(await sandbox.mount({ mode, origins: { connect: [ORIGIN] } })).toBe('ready');
             expect(await sandbox.inGuest(request)).toBe('sent');
             // a strict or worker guest's fetch runs in a worker, whose reports WebKit does not raise: there the warning is the evidence
+            // ledger: worker-violation-reports
             if (mode === 'cooperative' || browserName !== 'webkit') expect((await connectViolations(sandbox)).length).toBeGreaterThan(0);
             expect(warnings.filter(text => text.includes(`origins.connect dropped ${ORIGIN} (the host page's own origin`))).toHaveLength(1);
             expect(warnings.filter(text => text.includes(`origins.connect lists ${ORIGIN}`))).toEqual([]);
