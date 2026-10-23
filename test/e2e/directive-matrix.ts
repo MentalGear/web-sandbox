@@ -74,7 +74,7 @@ const NO_TRUSTED_TYPES_IN_FIREFOX = { firefox: works() } as const;
 
 /** Directives the matrix cannot run, and why. */
 export const EXCLUDED = {
-    'upgrade-insecure-requests': 'the e2e server is http: the page\'s own subresources would be upgraded to a port that serves no https; the library\'s own policy upgrades insecure requests already (docs/API.md#fetchbridge)',
+    'upgrade-insecure-requests': 'the e2e server is http: the page\'s own subresources would be upgraded to a port that serves no https; the library\'s own policies carry none (docs/API.md#origins), and a host page that sends one is the embedder\'s choice',
     'block-all-mixed-content': 'retired (CSP3 dropped it for upgrade-insecure-requests); engines ignore it',
     'navigate-to': 'retired from CSP3 (never shipped in the engines of the suite)',
     'plugin-types': 'retired (no plugins); engines ignore it',

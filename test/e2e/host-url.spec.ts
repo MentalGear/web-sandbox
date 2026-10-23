@@ -23,8 +23,7 @@ import { test, expect, HARNESS, ORIGIN } from './fixture';
  *     referrer policy that allows it;
  *   - WebKit: a frame the guest creates sees the host page URL without its fragment as document.referrer.
  *
- * Referer is recorded by a local HTTPS server (upgrade-insecure-requests is always on, and WebKit
- * upgrades even a loopback http: URL), with a certificate made per run. Every request a test expects is
+ * Referer is recorded by a local HTTPS server, with a certificate made per run. Every request a test expects is
  * awaited at the server, so a request the evidence missed fails the test instead of passing it. The same
  * server answers as https://127.0.0.1:<port> (cross-site to the harness) and as https://localhost:<port>
  * (same host name as the harness, so same-site but for the scheme).

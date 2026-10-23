@@ -42,7 +42,7 @@ async function mountWithBlob(sandbox: SandboxDriver, config: SandboxConfig = {},
     return sandbox.mount(config);
 }
 
-// An origin no config allowlists; upgrade-insecure-requests is always on, so match any scheme.
+// An origin no config allowlists; matched in any scheme.
 
 // A 304-byte WOFF2 with one glyph ("A", 4 em wide), generated for this spec with fontTools'
 // FontBuilder. The width tells "font applied" apart from "fallback font".
@@ -637,8 +637,7 @@ test.describe("5a. the guest policy never contains 'self'", () => {
     });
 
     test("a configured 'self' is dropped with one warning; the explicit origin stays and other origins are refused", async ({ sandbox, page }) => {
-        // No host-origin load here: whether the allowlisted http://localhost loads is engine-specific
-        // (WebKit upgrades it under upgrade-insecure-requests, research 01), and not what this asserts.
+        // No host-origin load here: whether the allowlisted http://localhost loads is not what this asserts.
         const warnings = collectWarnings(page);
         const { policy, violations, ...outcome } = await scriptSourceOutcome(sandbox, false, { scripts: ["'self'", ORIGIN] });
         expect(policy).toContain(`script-src 'unsafe-inline' ${ORIGIN};`);

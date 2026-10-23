@@ -21,7 +21,7 @@ describe('CONNECT_ENGINE_FACTS', () => {
             const facts = CONNECT_ENGINE_FACTS[engine];
             expect(facts.name, engine).not.toBe('');
             expect(facts.measured, engine).toMatch(/^2026-10-23, Playwright 1\.58\.1/);
-            for (const fact of ['selfAdmitsOtherOrigins', 'upgradedSchemeWithPort', 'wssSourceAdmitsHttps', 'httpUpgradedBeforeMatch', 'decoyRefused', 'decoyLogsWhenAdmitted'] as const) expect(typeof facts[fact], `${engine} ${fact}`).toBe('boolean');
+            for (const fact of ['selfAdmitsOtherOrigins', 'upgradedSchemeWithPort', 'wssSourceAdmitsHttps', 'decoyRefused', 'decoyLogsWhenAdmitted'] as const) expect(typeof facts[fact], `${engine} ${fact}`).toBe('boolean');
             expect(BARE_HOST_READINGS as readonly string[], engine).toContain(facts.bareHostAdmitted);
         }
     });
@@ -31,7 +31,6 @@ describe('CONNECT_ENGINE_FACTS', () => {
         expect(enginesWhere('upgradedSchemeWithPort', false)).toEqual(['Chromium']);
         expect(Object.values(CONNECT_ENGINE_FACTS).map(facts => facts.bareHostAdmitted)).toEqual(['yes, not with a port', 'yes', 'no']);
         expect(enginesWhere('wssSourceAdmitsHttps')).toEqual(['WebKit']);
-        expect(enginesWhere('httpUpgradedBeforeMatch')).toEqual(['Firefox', 'WebKit']);
         expect(enginesWhere('decoyRefused')).toEqual(['Chromium', 'Firefox', 'WebKit']);
         expect(enginesWhere('decoyLogsWhenAdmitted')).toEqual(['Chromium', 'WebKit']);
     });

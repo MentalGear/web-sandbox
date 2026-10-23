@@ -22,7 +22,7 @@ describe('WebSandbox Security Configuration', () => {
     });
   });
 });
-const COOPERATIVE_DEFAULT = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests";
+const COOPERATIVE_DEFAULT = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'";
 
 // The guest CSP sits in the guest srcdoc, which sits (attribute-escaped) in the wrapper's srcdoc.
 const frames = (el: HTMLElement) => {

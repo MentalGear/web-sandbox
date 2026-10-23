@@ -16,9 +16,6 @@
  *    only when no port is written, or `:*`;
  *  - `wssSourceAdmitsHttps`: whether a `wss://h` source also admits an `https://h` request (CSP3's scheme matching); the
  *    library lists a `wss://h` entry only beside `https://h`, so that both admit both in every engine;
- *  - `httpUpgradedBeforeMatch`: whether a guest's `http://h` request to a listed `https://h` is upgraded before it is
- *    matched (`upgrade-insecure-requests`, which every guest policy carries), so that it is admitted. Documented, not
- *    changed: the library never lists plain `http:` for a public host, and a guest uses `https://`;
  *  - `decoyRefused`: the decoy request of the read of the page's policy (host-csp.ts) is refused after the policy's check
  *    and before any DNS lookup or connection;
  *  - `decoyLogsWhenAdmitted`: whether the engine logs a console line for the decoy (its restricted port) when the page's
@@ -41,7 +38,6 @@ export interface ConnectEngineFacts {
     readonly bareHostAdmitted: BareHostReading;
     readonly upgradedSchemeWithPort: boolean;
     readonly wssSourceAdmitsHttps: boolean;
-    readonly httpUpgradedBeforeMatch: boolean;
     readonly decoyRefused: boolean;
     readonly decoyLogsWhenAdmitted: boolean;
     /** How the row was found. */
@@ -58,7 +54,6 @@ export const CONNECT_ENGINE_FACTS = {
         bareHostAdmitted: 'yes, not with a port',
         upgradedSchemeWithPort: false,
         wssSourceAdmitsHttps: false,
-        httpUpgradedBeforeMatch: false,
         decoyRefused: true,
         decoyLogsWhenAdmitted: true,
         measured: `${RESEARCH}, Chromium 145: ${SPEC} (every source of the grammar table against fetch and WebSocket requests of a guest, the page's policy left to the browser; the decoy through a logging proxy)`,
@@ -69,7 +64,6 @@ export const CONNECT_ENGINE_FACTS = {
         bareHostAdmitted: 'yes',
         upgradedSchemeWithPort: true,
         wssSourceAdmitsHttps: false,
-        httpUpgradedBeforeMatch: true,
         decoyRefused: true,
         decoyLogsWhenAdmitted: false,
         measured: `${RESEARCH}, Firefox 146: as Chromium`,
@@ -80,7 +74,6 @@ export const CONNECT_ENGINE_FACTS = {
         bareHostAdmitted: 'no',
         upgradedSchemeWithPort: true,
         wssSourceAdmitsHttps: true,
-        httpUpgradedBeforeMatch: true,
         decoyRefused: true,
         decoyLogsWhenAdmitted: true,
         measured: `${RESEARCH}, WebKit 26: as Chromium`,

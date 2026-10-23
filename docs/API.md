@@ -135,7 +135,7 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 
 ### `origins`
 
-<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d26227975d10c742493659f5 -->
+<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d2622797099fbb86493659f5 -->
 The guest's policy is one fixed template per mode. `origins` adds exact origins to six of its directives, one list per
 kind of load, and can change nothing else:
 
@@ -153,8 +153,9 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 | `scripts` | `script-src` | `<script src>`, modules, `importScripts()`. Not in strict mode. |
 
 - **An entry is one exact origin**, `https://host[:port]`; in `connect` also `wss://host[:port]`; plain `http://` only
-  for `localhost` and `127.0.0.1` (local development: an engine that upgrades insecure requests, as WebKit does, asks
-  over https). Case is folded and a default port dropped. The host must be written as it is meant: no IPv6 literal (a
+  for `localhost` and `127.0.0.1` (local development). A request to the `http:` or `ws:` form of a listed `https:` or `wss:`
+  origin is refused by every engine: no policy of the library carries `upgrade-insecure-requests`, so nothing is upgraded
+  and nothing is sent in cleartext. Case is folded and a default port dropped. The host must be written as it is meant: no IPv6 literal (a
   policy cannot name one), IPv4 shorthand, percent-encoding, non-ASCII name (write its `xn--` form) or trailing dot.
   An `xn--` label is checked by the browser's own URL parser, and engines differ on invalid Punycode: one that an engine
   refuses is dropped there, so write the form your registrar gives.
@@ -220,7 +221,7 @@ origins and no files, cooperative and worker mode get:
 ```
 default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none';
 media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none';
-form-action 'none'; manifest-src 'none'; upgrade-insecure-requests
+form-action 'none'; manifest-src 'none'
 ```
 <!-- generated:end -->
 
@@ -231,7 +232,7 @@ mode's view (its worker inherits it), where `<bootstrap>` is the hash of the lib
 ```
 default-src 'none'; script-src 'sha256-<bootstrap>'; script-src-attr 'none'; style-src 'unsafe-inline';
 img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none';
-object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests
+object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
 ```
 <!-- generated:end -->
 
@@ -1142,9 +1143,8 @@ Never an event handler. `src`, `srcset` and `poster` keep a registered file's pa
 nothing), or an `https:` or `http:` URL of an origin [`origins`](#origins) lists for that load (`images` for `img`,
 `srcset` and `poster`, `media` for `audio`, `video`, their `source` and `track`), never `data:` or `javascript:`. A URL
 the view's policy might refuse is dropped before insertion, so the browser never loads or refuses it: an `https:` or
-`http:` URL is kept only when its scheme, host and port are exactly those of a listed origin, or, for an image, when it
-is an `http:` URL whose `https:` form is (the policy upgrades an image's `http:` URL on every engine; not on a loopback
-host, which Chromium does not upgrade). So write URLs in the form you list them. A dropped `https:` or `http:` URL is
+`http:` URL is kept only when its scheme, host and port are exactly those of a listed origin (an `http:` URL of a listed
+`https:` origin is refused by every engine, so it is dropped). So write URLs in the form you list them. A dropped `https:` or `http:` URL is
 reported as a `violation` with the directive and the URL (without credentials or fragment), within the same cap; a URL
 of any other scheme is dropped without a report (no engine would request it). CSS is not rewritten: a URL a stylesheet
 or a `style` attribute names (`url()`, `image-set()`) is left to the browser, which refuses and reports a refused one. SVG `fill`, `stroke`, `clip-path` and `mask`
@@ -1613,7 +1613,7 @@ policy must allow:
 
 ### Your `connect-src`
 
-<!-- describes: option:hostContentSecurityPolicy, connect-facts, host-source-rules sig:004179a2109d -->
+<!-- describes: option:hostContentSecurityPolicy, connect-facts, host-source-rules sig:00414e4d109d -->
 The engines do not agree on what some sources of your page's `connect-src` admit in a sandbox document
 ([the table below](#connect-src-by-engine)). So the library applies your policy to the two lists that
 open connections, the same on every engine: every origin in `origins.connect` and `fetchBridge.allow` that your
@@ -1674,11 +1674,11 @@ What each engine does without the library's rules, and why they exist (the table
 the rules above):
 
 <!-- generated:begin connect-facts -->
-| Engine | A `'self'` source of your `connect-src` admits an origin it does not name | A host written without a scheme admits the `https://` origin it names | A `http://h:P` source admits `https://h:P` | A `wss://h` source also admits `https://h` | A guest's `http://h` request to a listed `https://h` is admitted | The read's decoy logs a line though your policy admits it | Found by |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| Chromium | no | yes, not with a port | no | no | no | yes | 2026-10-23, Playwright 1.58.1, Chromium 145: test/e2e/connect-uniform.spec.ts (every source of the grammar table against fetch and WebSocket requests of a guest, the page's policy left to the browser; the decoy through a logging proxy) |
-| Firefox | no | yes | yes | no | yes | no | 2026-10-23, Playwright 1.58.1, Firefox 146: as Chromium |
-| WebKit | yes | no | yes | yes | yes | yes | 2026-10-23, Playwright 1.58.1, WebKit 26: as Chromium |
+| Engine | A `'self'` source of your `connect-src` admits an origin it does not name | A host written without a scheme admits the `https://` origin it names | A `http://h:P` source admits `https://h:P` | A `wss://h` source also admits `https://h` | The read's decoy logs a line though your policy admits it | Found by |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Chromium | no | yes, not with a port | no | no | yes | 2026-10-23, Playwright 1.58.1, Chromium 145: test/e2e/connect-uniform.spec.ts (every source of the grammar table against fetch and WebSocket requests of a guest, the page's policy left to the browser; the decoy through a logging proxy) |
+| Firefox | no | yes | yes | no | no | 2026-10-23, Playwright 1.58.1, Firefox 146: as Chromium |
+| WebKit | yes | no | yes | yes | yes | 2026-10-23, Playwright 1.58.1, WebKit 26: as Chromium |
 <!-- generated:end -->
 
 ---

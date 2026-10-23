@@ -19,12 +19,11 @@ import type { OriginKind, OriginPolicy } from "./origins";
  *   font-src <fonts> [blob:]                           font-src <fonts> [blob:]
  *   media-src <media> [blob:]                          media-src <media> [blob:]
  *   connect-src <connect> [blob:]                      connect-src <connect> [blob:]
- *   worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none';
- *   upgrade-insecure-requests                          (the same for both)
+ *   worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
+ *                                                      (the same for both)
  *
  * The fetch bridge's frame has a template of its own (bridgeFramePolicy): default-src 'none', script-src the
- * bootstrap's hash, connect-src the origins of fetchBridge.allow, every other directive 'none', no
- * upgrade-insecure-requests.
+ * bootstrap's hash, connect-src the origins of fetchBridge.allow, every other directive 'none'.
  *
  * Why each fixed part:
  *   - script-src 'unsafe-inline' (cooperative): the library's bootstrap is an inline script, and without it there is
@@ -39,7 +38,10 @@ import type { OriginKind, OriginPolicy } from "./origins";
  *     outside the policy (BR:PD1). frame-src, object-src, base-uri, form-action and manifest-src 'none'
  *     (research 12, S9). No 'self' anywhere: browsers disagree on what it matches for the guest's opaque origin
  *     (S14). No data: anywhere: a data: SVG opened in a new tab runs script (BR:ST1); registered files cover the need.
- *   - upgrade-insecure-requests: a plain-http origin (loopback only) still loads, upgraded where the engine does so.
+ *   - No upgrade-insecure-requests anywhere: the engines disagree on what it does to a request (one upgrades a listed
+ *     https: origin's http: form, one sends it in cleartext, one refuses it), so a policy that carries it admits different
+ *     requests in each. Without it a request matches the policy as written, and every engine refuses the http: or ws: form of a
+ *     listed https: or wss: origin (a plain-http origin, loopback only, is listed as such).
  *   - prefetch-src is not emitted: it is not a CSP Level 3 directive (Chromium warns about it); any engine that
  *     still reads it falls back to default-src 'none'.
  *
@@ -120,8 +122,8 @@ export function strictViewPolicy(input: PolicyInput & { bootstrapHash: string })
 /**
  * The fetch bridge's frame (bridge-frame.ts; ADR-006): the library's bootstrap by its hash, and connections to the
  * origins of `fetchBridge.allow` only, so the frame can reach nothing the host's allowlist did not admit even if the
- * host's own check were wrong. Everything else 'none'. No upgrade-insecure-requests: a listed plain-http origin is
- * reached as listed, as the host's allowlist admits it. `base-uri` admits `about:` alone: the document's one `<base>` is
+ * host's own check were wrong. Everything else 'none'. A listed plain-http origin is reached as listed, as the host's
+ * allowlist admits it. `base-uri` admits `about:` alone: the document's one `<base>` is
  * the library's own, `about:blank` (frame-documents.ts, buildBridgeDocument), which its bootstrap's environment check
  * reads (environment-check.ts, S74); no markup of anyone else's is in the document.
  */
@@ -144,7 +146,7 @@ export function bridgeFramePolicy(input: { allow: readonly Origin[]; bootstrapHa
         ['worker-src', []],
         ...FIXED.filter(([name]) => name !== 'worker-src' && name !== 'base-uri'),
         ['base-uri', [ABOUT]],
-    ], false);
+    ]);
 }
 
 // The four directives both templates fill the same way. Strict mode never reads `scripts`.
@@ -166,9 +168,8 @@ function sourcesOf(input: PolicyInput, kind: OriginKind): string[] {
     return sources;
 }
 
-function format(directives: readonly Directive[], upgrade = true): string {
+function format(directives: readonly Directive[]): string {
     const parts: string[] = [];
     for (const [name, sources] of directives) parts.push(`${name} ${sources.length === 0 ? NONE : sources.join(' ')}`);
-    if (upgrade) parts.push('upgrade-insecure-requests');
     return parts.join('; ');
 }
