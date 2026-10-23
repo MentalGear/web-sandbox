@@ -41,12 +41,12 @@ all, with the realms named as there (`strict-worker` is the guest's worker). `VI
 on, and the render port is the view's and the worker's alone
 ([ADR-002](ADR-002-host-guest-broker.md#strict-mode-renders-bypass-the-host)).
 
-<!-- describes: adr005:ports sig:3633 -->
+<!-- describes: adr005:ports sig:773c -->
 <!-- generated:begin adr005-ports -->
 | Port | Ends | Carries |
 | :--- | :--- | :--- |
 | logic | host ↔ strict-worker | `EXECUTE`, `PING`, `PONG`, `RPC_REQ`, `RPC_RES`, `LOG`, `VIOLATION`, `UNCAUGHT_PAST_BUDGET` |
-| view | host ↔ view | `VIOLATION`, `RESIZE`, `VIEW_READY`, `VIEW_PING`, `VIEW_PONG`, `VIEW_WRITE`, `VIEW_WRITTEN`, `VIEW_FIRST_OVERRUN`, `VIEW_OVERRUN`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `GUEST_TEXT_DROPPED`, `TRUSTED_TYPES_REFUSED`, `WORKER_REFUSED` |
+| view | host ↔ view | `VIOLATION`, `RESIZE`, `UNCAUGHT_PAST_BUDGET`, `VIEW_READY`, `VIEW_PING`, `VIEW_PONG`, `VIEW_WRITE`, `VIEW_WRITTEN`, `VIEW_FIRST_OVERRUN`, `VIEW_OVERRUN`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `GUEST_TEXT_DROPPED`, `TRUSTED_TYPES_REFUSED`, `WORKER_REFUSED` |
 | render | view ↔ strict-worker (the host is not on this path) | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_TEXT`, `VIEW_SET`, `VIEW_LISTEN`, `VIEW_ACK`, `VIEW_EVENT` |
 <!-- generated:end -->
 
@@ -393,11 +393,11 @@ from the first render, has neither problem.
 What runs without the view doing anything is outside the time budget: CSS animations and transitions, scroll-driven
 animations, a pointer moving over `:hover ~` rules, animated images, indeterminate `<progress>`, autoplaying media.
 
-- **`allowAnimations`** (strict mode, default `true`; a literal `false` turns it off, any other non-boolean is `false` with
+- **`allowAnimations`** (strict mode, default `false`; only a literal `true` keeps animations, any other non-boolean is `false` with
   one warning; ignored with a warning in the other modes; part of the equal-config comparison). **While `true`, CSS
   animations and transitions in the view run on the host page's thread wherever the browser runs the view there, and the
-  time budget does not bound them: a guest can keep the host page busy for as long as they run.** `false` removes them, and
-  the bound holds again:
+  time budget does not bound them: a guest can keep the host page busy for as long as they run.** `false`, the default, removes them,
+  and the bound holds on every engine:
   - a stylesheet of the library's (`VIEW_STILL_STYLE`) becomes the view head's first element at `INIT_VIEW`, before anything
     is rendered: one anonymous `@layer` with `animation:none!important;transition:none!important` on `*`. Its text is constant
     (so is its hash); the view appends to the layer, through the CSSOM, a rule of its own for each pseudo-element of

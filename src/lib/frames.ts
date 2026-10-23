@@ -171,7 +171,7 @@ export const FRAMES = {
     },
     UNCAUGHT_PAST_BUDGET: {
         purpose: "The guest raised more uncaught errors and rejections in a second than their budget: the sandbox ends.",
-        routes: [{ channel: 'logic-port', from: ['worker', 'strict-worker'], to: ['host'] }],
+        routes: [{ channel: 'logic-port', from: ['worker', 'strict-worker'], to: ['host'] }, { channel: 'view-port', from: ['view'], to: ['host'] }],
         fields: NONE,
     },
 

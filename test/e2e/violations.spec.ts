@@ -160,6 +160,7 @@ test.describe('4. worker mode', () => {
         const gate = `connect-src ${ATTACKER}/worker-fetch ${GATE_SOURCE_FILE}`;
         expect(reported.filter(line => line.startsWith('connect-src'))).toEqual([gate]);
         // importScripts() is the engine's: Chromium raises it in the worker, Firefox in the frame, WebKit nowhere
+        // ledger: worker-violation-reports
         expect(reported.filter(line => line.startsWith('script-src')).map(line => line.split(' ').slice(0, 2).join(' '))).toEqual(browserName === 'chromium' ? [`script-src-elem ${ATTACKER}/worker-import.js`] : []);
     });
 });

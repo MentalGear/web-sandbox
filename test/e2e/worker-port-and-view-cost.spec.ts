@@ -225,6 +225,7 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
 
 test.describe('C-7: every -webkit- part of the media and form controls is in the still stylesheet (Chromium)', () => {
     test('the user-agent shadow parts, read through the DevTools protocol', async ({ page, browserName }) => {
+        // ledger: view-frame-access
         test.skip(browserName !== 'chromium', 'the DevTools protocol of Chromium');
         await page.setContent(`<video controls width="300" height="150"></video><audio controls></audio>
             <input type="range"><input type="date"><input type="time"><input type="datetime-local"><input type="month"><input type="week">

@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { inStrictWorker, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
+import { UNCAUGHT_CHARACTERS_PER_SECOND } from '@src/lib/egress';
 import { runBootstrap } from './sandbox-environment';
 
 /**
@@ -53,7 +54,11 @@ describe("S75: the view tells the entry's errors from later ones by the marker e
             return toHost.filter(frame => frame.type === 'GUEST_ERROR' || frame.type === 'GUEST_UNCAUGHT').map(frame => `${frame.type} ${frame.message}`);
         };
         const close = () => { render.close(); view.port2.close(); logic.port2.close(); };
-        return { raise, started, verdicts, errors, close };
+        const pastBudget = async () => {
+            await settle();
+            return toHost.filter(frame => frame.type === 'UNCAUGHT_PAST_BUDGET').length;
+        };
+        return { raise, started, verdicts, errors, close, pastBudget };
     };
 
     // The engines' texts for the marker error on the Worker object (Chromium; Firefox and WebKit).
@@ -88,6 +93,39 @@ describe("S75: the view tells the entry's errors from later ones by the marker e
             close();
         });
     }
+
+    // WebKit mutes in the worker the errors of a revoked script and of code compiled from a string ("Script error.", 13 characters
+    // there), so only this document sees their text: it is counted here in the budget of uncaught characters, whole (the
+    // line that is relayed is cut at 2048), as the worker counts the text of every other error it sees (egress.ts).
+    describe('the characters of the uncaught errors that reach the view count in UNCAUGHT_CHARACTERS_PER_SECOND', () => {
+        it('exactly the budget in one second fits; one character more ends the sandbox once, however many errors follow', async () => {
+            const { raise, pastBudget, close } = startView();
+            raise(`Error: ${MARKER}`);
+            raise('x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND - 1));
+            raise('y');
+            expect(await pastBudget()).toBe(0);
+            raise('z');
+            raise('z'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND));
+            expect(await pastBudget()).toBe(1);
+            close();
+        });
+
+        it('one error of the whole budget and a character is past it, its relayed line cut all the same', async () => {
+            const { raise, verdicts, pastBudget, close } = startView();
+            raise(`Error: ${MARKER}`);
+            raise('m'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND + 1));
+            expect(await pastBudget()).toBe(1);
+            expect((await verdicts()).map(line => line.length)).toEqual(['GUEST_UNCAUGHT '.length + 2048]);
+            close();
+        });
+
+        it("the entry's own errors are not counted: they end the sandbox", async () => {
+            const { raise, pastBudget, close } = startView();
+            raise('e'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND * 2)); // before the marker: the entry's, GUEST_ERROR
+            expect(await pastBudget()).toBe(0);
+            close();
+        });
+    });
 
     it("the marker is looked for only until it came: a later error with its text is a later error, logged", async () => {
         const { raise, verdicts, close } = startView();

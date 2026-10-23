@@ -23,10 +23,14 @@
  *   - a Map or a Set: its entries; a Date 16; a RegExp its source like a string (the flags are at most 8 characters);
  *     a String, Number, Boolean or BigInt object like its primitive;
  *   - an ArrayBuffer: its byteLength; a typed array or a DataView: its whole buffer, which clone copies, once per buffer;
- *   - a Blob: 64 (clone copies a handle to its bytes, not the bytes) plus its `type` like a string; a File: a Blob's
+ *   - a Blob: 64 (clone copies a handle to its bytes, not the bytes) plus its `type` like a string, and past
+ *     BLOB_TYPE_MAX_LENGTH characters of type, Infinity (over every limit; see below); a File: a Blob's
  *     fields plus its `name` like a string and 8 for `lastModified`. Each field is read through a getter captured below,
  *     and the table lists every field the clone of that kind carries (a test enumerates the string-valued getters of the
  *     prototypes and fails on one that is neither counted nor declared not serialized).
+ * A Blob or File `type` longer than BLOB_TYPE_MAX_LENGTH is over budget on every engine (limits.ts, LIMITS), whatever
+ * the engine would keep of it: Chromium empties a type of 65 536 characters or more when the Blob is made, the other
+ * engines keep it whole, so measuring what arrives would send the same call on one and refuse it on the others.
  * Anything else measures Infinity, past every limit: an Error (its stack is the engine's to serialize), a platform
  * object (ImageData, ImageBitmap, FileList, CryptoKey, …), a SharedArrayBuffer, a function or a symbol (never in a
  * snapshot), or a value whose reading throws. A sender that wants an error across sends what it needs of it: the console
@@ -82,6 +86,8 @@ export function createSizeOf(): SizeOf {
     const bigintFits = BigInt.asIntN;
     const toTag = Object.prototype.toString;
     const slice = String.prototype.slice;
+    // The longest Blob or File `type`, in characters (LIMITS.BLOB_TYPE_MAX_LENGTH: api-docs.test.ts keeps the value equal).
+    const BLOB_TYPE_MAX_LENGTH = 4096;
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
     const brand = (read: ((this: unknown) => unknown) | null, value: unknown): unknown => {
@@ -224,7 +230,9 @@ export function createSizeOf(): SizeOf {
                 if (typeof brand(blobSize, object) === 'number') {
                     const type = brand(blobType, object);
                     if (typeof type !== 'string') return unknown(object); // a field the table cannot read: refused, never free
-                    total += 64 + 2 * type.length + 8;
+                    const characters = type.length;
+                    if (characters > BLOB_TYPE_MAX_LENGTH) return Infinity; // over budget, not 'unsupported': the kind is known
+                    total += 64 + 2 * characters + 8;
                     const name = brand(fileName, object);
                     if (typeof name === 'string') total += 2 * name.length + 8 + 8; // a File: its name, and lastModified
                     continue;

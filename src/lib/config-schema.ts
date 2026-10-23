@@ -156,7 +156,7 @@ const STRICT_CAPABILITIES = [...SAFE_CAPABILITIES, ...STRICT_VIEW_FLAGS] as cons
 
 // The strict view's two switches: the value each takes when it is left out, and what `false` means, in words. A value
 // that is a boolean is itself; anything else is false, the safe side of both (animations removed, no autoplay).
-const VIEW_SWITCHES = { allowAnimations: true, allowAutoplay: false } as const;
+const VIEW_SWITCHES = { allowAnimations: false, allowAutoplay: false } as const;
 type ViewSwitch = keyof typeof VIEW_SWITCHES;
 const VIEW_SWITCH_OFF: Readonly<Record<ViewSwitch, string>> = {
     allowAnimations: 'animations and transitions are removed from the view',
@@ -379,7 +379,7 @@ export const CONFIG_SCHEMA = {
         ignoredWarning: (_, read) => (read ? '[Sandbox] "entry" is used only in strict mode and was ignored.' : null),
     },
     allowAnimations: {
-        default: VIEW_SWITCHES.allowAnimations, documented: '`true`', modes: ['strict'], ignoredIn: notStrict,
+        default: VIEW_SWITCHES.allowAnimations, documented: '`false`', modes: ['strict'], ignoredIn: notStrict,
         read: viewSwitch('allowAnimations'),
         ignoredWarning: ({ given }) => (given !== undefined ? '[Sandbox] "allowAnimations" is used only in strict mode and was ignored.' : null),
     },

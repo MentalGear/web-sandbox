@@ -189,6 +189,7 @@ const WORKER_LOADS: Probe[] = [
 // Chromium refuses a MODULE worker whose blob: URL was created in an opaque-origin document, under
 // any policy (a bare error event, no CSP violation); a data: module worker and the same blob module
 // worker on a normal origin both start. Firefox and WebKit start it.
+// ledger: module-worker-opaque-blob
 const moduleWorker = (browserName: string) => (browserName === 'chromium' ? 'error' : 'ok');
 
 test.describe('1. default CSP: guest-created blob: subresources are refused', () => {
@@ -215,6 +216,7 @@ test.describe('1. default CSP: guest-created blob: subresources are refused', ()
         // Every engine refuses; which violations reach the worker's own securitypolicyviolation
         // listener differs: Chromium delivers both script loads', Firefox and WebKit none. fetch() is the request
         // gate's to refuse, before the browser sees it: no event in the realm on any engine.
+        // ledger: worker-violation-reports
         const csp = (directive: string, engines: string[]) => (engines.includes(browserName) ? ` csp=${directive}` : '');
         expect(await runProbes(sandbox, WORKER_LOADS)).toEqual({
             'importScripts()': 'error:NetworkError' + csp('script-src-elem', ['chromium']),
@@ -306,6 +308,7 @@ async function runScenario(sandbox: any, body: string, before = ''): Promise<Rec
 
 // Firefox (146) honours only the FIRST import map of a document, and none at all once a module
 // script has been prepared or import() called; Chromium and WebKit merge later maps.
+// ledger: import-map-later
 const laterMapHonoured = (browserName: string) => browserName !== 'firefox';
 
 test.describe('3. module resolution between blob: modules', () => {
@@ -360,6 +363,7 @@ test.describe('3. module resolution between blob: modules', () => {
             __r.importMetaUrl = meta.out.startsWith('blob:null/') ? 'blob:null/<uuid>' : meta.out;
             __r.importMetaResolve = meta.resolved;
         `);
+        // ledger: blob-module-literal-key
         const viaLiteralKey = browserName === 'chromium' ? 'error:TypeError' : 'ok:u';
         expect(r).toEqual({
             relative: viaLiteralKey,
@@ -421,6 +425,7 @@ test.describe('3. module resolution between blob: modules', () => {
             __r.blobUrlSpecifier = await spawn("import { out } from '" + X + "'; postMessage(out);");
         `);
         // Chromium cannot start a blob: module worker from this opaque origin at all (section 1)
+        // ledger: module-worker-opaque-blob
         expect(r).toEqual(browserName === 'chromium'
             ? { bareSpecifier: 'error', blobUrlSpecifier: 'error' }
             : { bareSpecifier: 'error', blobUrlSpecifier: 'ok:x' });
@@ -493,6 +498,7 @@ test.describe('4. blob: URLs do not cross realms', () => {
             'fetch()': 'error:TypeError',
             'XMLHttpRequest': 'error',
             // Chromium's Worker constructor throws on a cross-origin URL; Firefox and WebKit fire error
+            // ledger: cross-origin-worker-errors
             'new Worker()': browserName === 'chromium' ? 'error:SecurityError' : 'error',
         });
         expect((await sandbox.logs()).filter(l => l.includes('HOST_BLOB_RAN'))).toEqual([]);
@@ -507,6 +513,7 @@ test.describe('4. blob: URLs do not cross realms', () => {
             ['fetch()', 'fetch', { url: u.text }],
         ])).toEqual({
             // Firefox reports the cross-origin importScripts as a SecurityError, the others as a network error
+            // ledger: cross-origin-worker-errors
             'importScripts()': browserName === 'firefox' ? 'error:SecurityError' : 'error:NetworkError',
             'import()': 'error:TypeError',
             'fetch()': 'error:TypeError',
@@ -570,6 +577,7 @@ function outboundViolations(target: string, mode: 'cooperative' | 'worker', brow
     const websocket = `connect-src ${wss(target)}/ws`;
     const imported = `script-src-elem ${target}/module.js`;
     if (mode === 'cooperative') return [fetch, websocket, `img-src ${target}/img.svg`, imported].sort();
+    // ledger: worker-violation-reports
     if (browserName === 'chromium') return [fetch, websocket, imported, `script-src-elem ${target}/script.js`].sort();
     return [fetch, websocket].sort();
 }
@@ -760,6 +768,7 @@ test.describe('5. blob: in the policy adds no egress', () => {
             expect(await sandbox.state()).toBe('ready');
 
             await sandbox.run(`console.log('ORIGINAL_DOCUMENT ' + globalThis.__original)`);
+            // ledger: refused-navigation-history
             if (browserName === 'chromium' && name !== 'form submission') {
                 // Chromium commits its error page in place of a frame navigation refused by the wrapper's
                 // frame-src — the same as for an https: target (research 14). The original guest document
@@ -830,6 +839,7 @@ test.describe('6. blob: MIME types', () => {
             'import() text/plain': 'error:TypeError',
             'stylesheet text/css': 'ok',
             // standards-mode stylesheets: Chromium fires load but ignores the sheet; Firefox and WebKit fire error
+            // ledger: blob-mime-checks
             'stylesheet text/plain': browserName === 'chromium' ? 'loaded-not-applied' : 'error',
             // an EMPTY blob type is accepted as a stylesheet by all three engines
             'stylesheet (no type)': 'ok',
@@ -848,6 +858,7 @@ test.describe('6. blob: MIME types', () => {
     test('worker mode: importScripts MIME checking differs by engine; import() is strict everywhere', async ({ sandbox, browserName }) => {
         expect(await mountWithBlob(sandbox, { mode: 'worker' })).toBe('ready');
         // Firefox and WebKit refuse a non-JavaScript type for importScripts (as the HTML spec requires); Chromium runs it
+        // ledger: import-scripts-mime
         const strict = browserName === 'chromium' ? 'ok' : 'error:NetworkError';
         expect(await runProbes(sandbox, [
             ['importScripts text/javascript', 'importScripts', { type: 'text/javascript' }],

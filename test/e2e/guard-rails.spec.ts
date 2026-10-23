@@ -66,6 +66,7 @@ test.describe('S7: directives a <meta> policy discards', () => {
         expect(dropped.sort()).toEqual([...IGNORED].sort());
         // Chromium reports each discarded directive on the console; research 11.1 is this channel's positive
         // control (the same message for a policy built by hand). None reaches it from the sandbox now.
+        // ledger: discarded-directives-console
         if (browserName === 'chromium') expect(discardedByBrowser).toEqual([]);
     });
 });

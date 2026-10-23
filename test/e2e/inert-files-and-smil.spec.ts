@@ -117,6 +117,7 @@ test.describe('W1: a committed inert file is never a script of the next build', 
         const worker = await sandbox.inGuest(`try { importScripts(sandboxFiles.url('p.js')); } catch (e) { return e.name; } return globalThis.__p === 1 ? 'ran' : 'did not run';`);
         expect(await sandbox.mount()).toBe('ready');
         const element = await sandbox.inGuest(`await new Promise(r => { const s = document.createElement('script'); s.src = sandboxFiles.url('p.js'); s.onload = s.onerror = r; document.head.appendChild(s); }); return globalThis.__p === 1 ? 'ran' : 'did not run';`);
+        // ledger: import-scripts-mime
         expect({ worker, element }).toEqual({ worker: browserName === 'chromium' ? 'ran' : 'NetworkError', element: 'ran' });
     });
 });
@@ -152,6 +153,7 @@ test.describe('F1: rendered markup cannot re-animate an attribute the renderer c
             ],
             animations: 0,
         });
+        // ledger: view-frame-access
         if (browserName === 'chromium') {
             const urls = await chromiumViewLinkUrls(page);
             expect(urls).not.toBeNull();

@@ -590,12 +590,12 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
     directive apart, and cannot be forged; the view renders no `blob:` content but registered files and raster-image
     guest writes, decoded only (the worker's own source URL is revoked once its script ran).
-*   **Animations and autoplay (`allowAnimations`, `allowAutoplay`)**: **while `allowAnimations` is `true` (the
-    default), CSS animations and transitions in the view run on your page's main thread wherever the browser runs the
+*   **Animations and autoplay (`allowAnimations`, `allowAutoplay`)**: **while `allowAnimations` is `true` (an
+    opt-in), CSS animations and transitions in the view run on your page's main thread wherever the browser runs the
     view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation; desktop Chromium 127+
     isolates it), and the view's time budget does not bound them: a guest can keep your page 80–98% busy for as long as
-    they run.** Set `allowAnimations: false` to remove animations and transitions from the view (elements show their end
-    state), which restores the bound. `allowAutoplay` is `false` by default: media in the view plays only when the user
+    they run.** Left out, or `false`, the default, removes animations and transitions from the view (elements show their end
+    state), which keeps the bound on every browser. `allowAutoplay` is `false` by default: media in the view plays only when the user
     starts it. [API.md](docs/API.md#allowanimations-and-allowautoplay)
 *   **What it does not**: [below](#what-strict-mode-does-not-cover), with the host page's availability first.
 *   **Programming model**: no inline `<script>`, nested frames or the elements listed in API.md as unavailable (popovers,
@@ -649,7 +649,7 @@ What remains for the default:
     work, plus at most 20 points for the browser's work on the loads it makes; at most one stall past 2 s per 5 minutes
     beyond the first (the second operation past 2 s within 5 minutes ends the sandbox), each that operation's own
     cost, which nothing can interrupt; the rates and caps that bound the rest;
-    and a closed list of what is outside it: animations and transitions while `allowAnimations` is `true` (the default),
+    and a closed list of what is outside it: animations and transitions while `allowAnimations` is `true` (an opt-in),
     animated images, indeterminate `<progress>` and autoplaying media, relayout after image decodes and font swaps, the
     documented single-operation stalls (CSS filters, bidirectional text, small CSS changes over many elements,
     Chromium's `<img>`, WebKit's 250 000-character textarea), memory, `:hover` restyles while the user's pointer moves,

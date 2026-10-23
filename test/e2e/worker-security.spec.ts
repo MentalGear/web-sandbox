@@ -44,6 +44,7 @@ test.describe('Worker mode isolation', () => {
         `);
 
         expect(await sandbox.waitForLog(/IMPORT_(SUCCESS|BLOCKED)/)).toContain('IMPORT_BLOCKED');
+        // ledger: worker-violation-reports
         if (browserName === 'chromium') expect(await sandbox.waitForViolation('script-src-elem', `${recorder.blocked}/script.js`)).toBeTruthy();
         expect(recorder.paths('blocked')).toEqual([]);
     });

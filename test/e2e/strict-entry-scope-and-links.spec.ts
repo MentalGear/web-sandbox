@@ -32,7 +32,8 @@ test.describe('C1: the view renders no blob: content but registered files', () =
     test("the worker's own source URL is revoked once the worker has run its script: the view can no longer fetch it, and referenced from <style> text and a CSS-escaped style attribute (which the renderer does not inspect) it applies no rule and decodes as no image", async ({ sandbox, page, browserName }) => {
         // the entry carries a CSS rule inside a JS comment: lenient CSS parsing of the worker source would apply it
         await sandbox.registerFiles({ 'main.js': '/*\n}#c1 { width: 66px }\n*/ void 0;', 'img/logo.svg': SVG, 'a.css': 'p {}' });
-        expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
+        // allowAnimations: true keeps the style attribute with the escape; by default the renderer removes it whole (it holds a backslash)
+        expect(await sandbox.mount(strict({ entry: 'main.js', allowAnimations: true }))).toBe('ready');
         const workerUrl: string = await sandbox.inGuest('return location.href');
         expect(workerUrl).toMatch(/^blob:/);
         const escaped = 'bl\\6f b:' + workerUrl.slice(5); // "blob:" with a CSS escape, invisible to the attribute check
@@ -112,6 +113,7 @@ test.describe('C2: the entry runs in its own scope', () => {
         await sandbox.registerFiles({ 'main.js': `bridge.call('report2', { Worker: typeof globalThis.Worker, Reflect: typeof globalThis.Reflect, apply: typeof Reflect.apply, WebAssembly: typeof globalThis.WebAssembly, helper: typeof globalThis.helper, sandboxView: typeof sandboxView });` });
         expect(await sandbox.mount(strict({ entry: 'main.js', scriptUnsafe: false }))).toBe('ready');
         await page.waitForFunction(() => (window as any).c2b !== undefined);
+        // ledger: webassembly-unsafe-eval
         expect(await page.evaluate(() => (window as any).c2b)).toEqual({ Worker: 'undefined', Reflect: 'object', apply: 'function', WebAssembly: 'undefined', helper: 'undefined', sandboxView: 'object' });
     });
 
@@ -197,6 +199,7 @@ test.describe('C5: a rendered link stays a link, but its href is one inert const
         // Playwright always links. Chromium's view may be out of process or in the host page's process (BR:ST2), and
         // Playwright links such a frame unreliably (strict-view.ts), so there the role rests on the HTML-AAM facts above
         // (measured with getByRole: 1 there too).
+        // ledger: view-frame-access
         if (browserName !== 'chromium') {
             const view = page.frameLocator('web-sandbox iframe').frameLocator('iframe');
             expect(await view.getByRole('link', { name: 'link' }).count()).toBe(1);

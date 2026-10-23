@@ -129,6 +129,7 @@ test.describe('host page policy', () => {
     // writes go through its policy from the first one; the host page's violation list, its console and the element's
     // `violation` event stay empty. Chromium and WebKit: Firefox has no Trusted Types.
     test("require-trusted-types-for 'script': the library's own writes give the host page no violation, console error or 'violation' event, over 25 renders and in every mode", async ({ sandbox, page, browserName }) => {
+        // ledger: trusted-types
         test.skip(browserName === 'firefox', 'no Trusted Types in Firefox: nothing is enforced, nothing is reported');
         const RENDERS = 25;
         const errors: string[] = [];
@@ -170,6 +171,7 @@ test.describe('host page policy', () => {
     test("a trusted-types directive that does not name 'web-sandbox': the build ends with the reason naming it (Firefox has no Trusted Types: the same, from hostContentSecurityPolicy; without it, ready)", async ({ sandbox, page, browserName }) => {
         const csp = "require-trusted-types-for 'script'; trusted-types other";
         await openWithPolicy(page, { csp });
+        // ledger: trusted-types
         const expected = browserName === 'firefox' ? [{ type: 'ready', reason: null }] : [{ type: 'terminated', reason: TRUSTED_TYPES }];
         expect(await strictEntry(sandbox)).toEqual(expected);
         expect(await configure(sandbox, COOPERATIVE)).toEqual(expected);
@@ -233,9 +235,10 @@ test.describe('host page policy', () => {
         }
     });
 
+    // The wrapper's warning only: the default `allowAnimations: false` has its own (view-switches.spec.ts).
     test(`style-src 'self': the frame is 150 px high and the element warns once, naming the hash; with ${WRAPPER_STYLE_HASH} it fills the element, no warning`, async ({ sandbox, page, browserName }) => {
         const warnings: string[] = [];
-        page.on('console', (message) => { if (message.type() === 'warning' && message.text().includes('style-src')) warnings.push(message.text()); });
+        page.on('console', (message) => { if (message.type() === 'warning' && message.text().includes('style-src') && !message.text().includes('stops animations')) warnings.push(message.text()); });
         await openWithPolicy(page, { csp: "style-src 'self'" });
         expect(await strictEntry(sandbox)).toEqual([{ type: 'ready', reason: null }]);
         expect(await frameHeights(page, browserName)).toEqual([300, 150]);
@@ -265,6 +268,7 @@ test.describe('host page policy', () => {
     test('Cross-Origin-Embedder-Policy: require-corp: strict renders in Chromium and Firefox; WebKit refuses the blob: worker, and the reason says so', async ({ sandbox, page, browserName }) => {
         await openWithPolicy(page, { coep: 'require-corp' });
         const events = await strictEntry(sandbox);
+        // ledger: coep-require-corp
         if (browserName === 'webkit') {
             await expect.poll(() => page.evaluate(() => (window as any).sandboxEvents.length)).toBe(2);
             expect(await page.evaluate(() => (window as any).sandboxEvents)).toEqual([{ type: 'ready', reason: null }, { type: 'terminated', reason: WORKER_REFUSED }]);

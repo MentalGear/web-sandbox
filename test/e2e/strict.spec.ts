@@ -61,9 +61,8 @@ test.describe('G1 rendered markup', () => {
             `<details open ontoggle="${M('ontoggle')}"><summary>s</summary></details>`,
             `<a id="jslink" href="javascript:${M('javascript-link')}" style="${at(0, 0)}">js</a>`,
             // the hash-admitted bootstrap, verbatim, as HTML and SVG script and inside a frame
-            `<script>${bootstrap}</script>`,
-            `<svg><script>${bootstrap}</script></svg>`,
-            `<iframe ${srcdoc(`<script>${bootstrap}</script>`)}></iframe>`,
+            // (rendered into these holders below: three copies in one render would pass VIEW_RENDER_MAX_LENGTH)
+            '<div id="bootstrap-html"></div><div id="bootstrap-svg"></div><div id="bootstrap-frame"></div>',
             // nested browsing contexts, any depth and namespace
             `<iframe ${srcdoc(`<script>${M('frame-inline')}</script><iframe ${srcdoc(`<script>${M('grandchild')}</script>`)}></iframe>`)}></iframe>`,
             `<iframe src="javascript:${M('javascript-frame')}"></iframe>`,
@@ -86,6 +85,9 @@ test.describe('G1 rendered markup', () => {
             `<img id="allowed" src="${recorder.allowed}/rendered.svg">`,
         ].join('');
         await render(sandbox, browserName, corpus);
+        await render(sandbox, browserName, `<script>${bootstrap}</script>`, 'done-html', 'bootstrap-html');
+        await render(sandbox, browserName, `<svg><script>${bootstrap}</script></svg>`, 'done-svg', 'bootstrap-svg');
+        await render(sandbox, browserName, `<iframe ${srcdoc(`<script>${bootstrap}</script>`)}></iframe>`, 'done-frame', 'bootstrap-frame');
         await recorder.waitFor('allowed', '/rendered.svg');
         await page.waitForTimeout(800);
         await clickInSandbox(page, 20, 20); // the javascript: link: a trusted click
@@ -108,7 +110,8 @@ test.describe('G1 rendered markup', () => {
             handlers: Array.from(document.body.querySelectorAll('*')).filter(e => e.getAttributeNames().some(n => n.toLowerCase().startsWith('on'))).length,
             url: location.href,
         })`);
-        expect(view).toEqual({ removed: [], head: ['meta', 'meta', 'script'], shadowRoots: 0, kept: ['img-handler', 'jslink', 'allowed'], handlers: 0, url: 'about:srcdoc' });
+        // (the head's first element is the still stylesheet: the default allowAnimations is false)
+        expect(view).toEqual({ removed: [], head: ['style', 'meta', 'meta', 'script'], shadowRoots: 0, kept: ['img-handler', 'jslink', 'allowed'], handlers: 0, url: 'about:srcdoc' });
 
         // the refusals the view raised arrived, labelled 'view' (A6): the image from the blocked origin
         await sandbox.waitForViolation('img-src', recorder.blocked);
@@ -331,6 +334,17 @@ test.describe('the entry', () => {
             expect(await sandbox.waitForLog(/^Uncaught /)).toBeTruthy(); // the error's text, as a guest line (FR:F3)
         });
     }
+
+    test('an entry that does not parse: the same reason, host line and state on every engine; the guest line carries the engine\'s own SyntaxError text, and on Firefox, which gives none, the library\'s stated placeholder', async ({ sandbox, browserName }) => {
+        await sandbox.registerFiles({ 'bad.js': 'var a = ;\n\nvar b = (;' });
+        await sandbox.mount(strict({ entry: 'bad.js' }));
+        expect(await sandbox.waitForLog('the guest entry failed to start')).toBe('[Sandbox] the guest entry failed to start');
+        const line = await sandbox.waitForLog(/^Uncaught /);
+        expect(await sandbox.state()).toBe('terminated');
+        // ledger: entry-parse-detail
+        if (browserName === 'firefox') expect(line).toBe('Uncaught the entry did not parse (this browser gives no detail)');
+        else expect(line).toMatch(/^Uncaught SyntaxError: \S/);
+    });
 
     test('an error after the entry ran is logged and does not end the sandbox', async ({ sandbox, page }) => {
         await sandbox.registerFiles({ 'later.js': `setTimeout(() => { throw new Error('later failure'); }, 50); bridge.expose('alive', () => true);` });

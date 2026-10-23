@@ -60,6 +60,7 @@ test.describe('R4-2, R4-6, R4-7: uncaught errors and unhandled rejections reach 
         await sandbox.waitForLog('Uncaught (in promise) Error: rejected');
         await page.locator('web-sandbox iframe').contentFrame().locator('iframe').contentFrame().locator('#b').click();
         await sandbox.waitForLog('Uncaught Error: module');
+        // ledger: webkit-muted-errors
         const muted = browserName === 'webkit';
         if (muted) await expect.poll(async () => (await sandbox.logs()).filter(line => line === 'Uncaught Script error.').length).toBe(3); // classic, syntax, inline
         else await sandbox.waitForLog('Uncaught Error: inline');
@@ -77,6 +78,7 @@ test.describe('R4-2, R4-6, R4-7: uncaught errors and unhandled rejections reach 
             await sandbox.run(`setTimeout(() => { throw new Error('later') }); Promise.reject(new TypeError('promised'));`);
             await sandbox.waitForLog('Uncaught (in promise) TypeError: promised');
             // strict mode: the view's Worker object still has the text WebKit mutes in the worker (in-sandbox-view.ts)
+            // ledger: webkit-muted-errors
             const line = browserName === 'webkit' && mode === 'worker' ? 'Uncaught Script error.' : 'Uncaught Error: later';
             await sandbox.waitForLog(line);
             const logs = await sandbox.logs();
@@ -179,11 +181,13 @@ test.describe('R2-2 (cooperative-mode limit, measured): a script-synthesized mod
 
     for (const gesture of [false, true]) {
         test(`a link, ${gesture ? 'after a user click' : 'with no user gesture'}: ${gesture ? 'Chromium and Firefox open it' : 'Chromium opens it'}`, async ({ sandbox, browserName }) => {
+            // ledger: modifier-click-links
             const opens = browserName === 'chromium' || (gesture && browserName === 'firefox');
             expect(await measure(sandbox, LINK(recorder.blocked), SCRIPTS, modifierClick('l'), gesture)).toEqual(opens ? { opened: 1, heard: ['/r22-link'] } : { opened: 0, heard: [] });
         });
 
         test(`a form submit with unsafeCapabilities: ['allow-forms'], ${gesture ? 'after a user click' : 'with no user gesture'}: Chromium submits it in a new tab past form-action 'none'`, async ({ sandbox, browserName }) => {
+            // ledger: modifier-click-links
             const opens = browserName === 'chromium';
             expect(await measure(sandbox, FORM(recorder.blocked), FORMS, modifierClick('b'), gesture)).toEqual(opens ? { opened: 1, heard: ['/r22-form?q=secret'] } : { opened: 0, heard: [] });
         });

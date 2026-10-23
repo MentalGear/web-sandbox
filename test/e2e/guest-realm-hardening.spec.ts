@@ -111,6 +111,7 @@ test.describe('PD8: a second announcement from the guest window ends the environ
             // to a document without one (no second announcement), and the frame's old document stops answering
             expect(await sandbox.mount({ html, watchdogTimeout: 3000 })).toBe('ready');
             if (code) await sandbox.run(code);
+            // ledger: meta-refresh-termination
             const expected = !code && browserName === 'firefox' ? 'the guest stopped responding (watchdog)' : SECOND_ANNOUNCEMENT;
             await expect.poll(() => terminations(page), { timeout: 8000 }).toEqual([expected]);
             expect(await sandbox.state()).toBe('terminated');
@@ -259,6 +260,7 @@ test.describe('PD2: fetch() with keepalive is refused in the guest realm', () =>
         await sandbox.run(`const f = document.createElement('iframe'); f.srcdoc = ${JSON.stringify(`<script>fetch('${recorder.blocked}/pd2-nested', { keepalive: true, method: 'POST', body: 'x' }).catch(() => {}); fetch('${recorder.allowed}/pd2-nested-control').catch(() => {});</script>`)}; document.body.append(f);`);
         await recorder.waitFor('allowed', '/pd2-nested-control'); // the nested frame's scripts run (positive control)
         await sandbox.page.waitForTimeout(800);
+        // ledger: keepalive-fetch
         expect(recorder.paths('blocked')).toEqual(browserName === 'firefox' ? ['/pd2-nested'] : []);
     });
 });
@@ -278,6 +280,7 @@ test.describe('PD3: DNS prefetching and preconnect', () => {
         await sandbox.page.waitForTimeout(1500);
         expect(recorder.connections.allowed).toBeGreaterThan(0);
         expect(recorder.paths('blocked')).toEqual([]); // no request either way
+        // ledger: preconnect
         if (browserName === 'webkit') expect(recorder.connections.blocked).toBeGreaterThan(0);
         else expect(recorder.connections.blocked).toBe(0);
     });
@@ -304,6 +307,7 @@ test.describe('PD4: the guest never moves the host page through history', () => 
         await page.evaluate(() => history.pushState({}, '', '?pd4=nested'));
         await sandbox.run(`const f = document.createElement('iframe'); f.srcdoc = '<script>history.back()<\\/script>'; document.body.append(f);`);
         await page.waitForTimeout(1000);
+        // ledger: nested-frame-history
         if (browserName === 'chromium') expect(page.url()).toContain('?pd4=nested');
         else expect(page.url()).not.toContain('?pd4=nested');
     });
@@ -322,6 +326,7 @@ test.describe('PD5: focus and the clipboard (residuals, measured)', () => {
         await page.waitForTimeout(300);
         const guestKeys = (await sandbox.logs()).filter(line => line.startsWith('PD5-KEY')).at(-1) ?? null;
         const hostValue = await page.evaluate(() => (document.getElementById('host-input') as HTMLInputElement).value);
+        // ledger: focus-and-clipboard
         const measured = { chromium: ['web-sandbox', 'PD5-KEY abc', ''], firefox: ['web-sandbox', null, ''], webkit: ['input', null, 'abc'] }[browserName as 'chromium'];
         expect([active, guestKeys, hostValue]).toEqual(measured);
     });
@@ -344,6 +349,7 @@ test.describe('PD5: focus and the clipboard (residuals, measured)', () => {
         const inHandler = (await sandbox.waitForLog('PD5-HANDLER')).slice('PD5-HANDLER '.length);
         console.log('PD5 clipboard', browserName, JSON.stringify({ without, withClick, inHandler }));
         const measured = {
+            // ledger: focus-and-clipboard
             chromium: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'NotAllowedError', copied: true }, inHandler: 'NotAllowedError' },
             firefox: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'written', copied: true }, inHandler: 'written' },
             webkit: { without: { written: 'NotAllowedError', copied: false }, withClick: { written: 'NotAllowedError', copied: false }, inHandler: 'written' },

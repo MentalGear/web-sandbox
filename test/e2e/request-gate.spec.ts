@@ -126,6 +126,7 @@ test.describe('credentials: never on fetch() or XMLHttpRequest, on any engine', 
         await expect.poll(() => Object.keys(cookiesOf('control')).sort()).toEqual(['cred-include', 'cred-no-cors', 'cred-ws', 'cred-xhr']);
         expect(cookiesOf('control')['cred-include']).toContain('ws_gate=1');
 
+        // ledger: cookies
         const handshake = (COOKIE_ENGINE_FACTS[browserName as CookieEngine].sends.crossSite as readonly string[]).includes('None');
         for (const mode of MODES) {
             expect(await sandbox.mount({ mode, origins: { connect: [recorder.allowed, wss(recorder.allowed)] } }), mode).toBe('ready');
