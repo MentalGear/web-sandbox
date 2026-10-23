@@ -235,18 +235,18 @@ for (const guestMeta of [false, true]) {
     });
 }
 
-test('cooperative mode, residual S18: a guest asking for unsafe-url sends a same-site target the host ORIGIN in Firefox and the FULL host URL in WebKit (measured; strict mode closes it, section 4)', async ({ sandbox, browserName }) => {
+test('cooperative mode, S18: a same-site target is dropped from origins in every mode, so a guest asking for unsafe-url reaches it with no Referer of any kind', async ({ sandbox }) => {
     const prefix = `t${++run}samesite`;
     expect(await sandbox.mount({ origins: { images: [REC_SAME_SITE] } })).toBe('ready');
     const outcome = await sandbox.inGuest(`
         const image = (kind, policy) => new Promise(res => { const i = new Image(); if (policy) i.referrerPolicy = policy; i.onload = () => res('loaded'); i.onerror = () => res('error'); i.src = '${REC_SAME_SITE}/r?id=${prefix}-' + kind; });
         return { image: await image('image'), imageUnsafe: await image('imageUnsafe', 'unsafe-url') };
     `);
-    expect(outcome).toEqual({ image: 'loaded', imageUnsafe: 'loaded' });
-    const seen = await referers([`${prefix}-image`, `${prefix}-imageUnsafe`]);
-    // by default nothing (the inherited no-referrer); asked for, the engine decides (research 15, P8)
-    expect(seen[`${prefix}-image`]).toBeNull();
-    expect(seen[`${prefix}-imageUnsafe`]).toBe({ chromium: null, firefox: HOST_ORIGIN_REFERER, webkit: HOST_URL_WITHOUT_FRAGMENT }[browserName]);
+    // engines differ on the Referer an unsafe-url request to the host page's site carries (Firefox its origin, WebKit its URL);
+    // no mode lists such an origin (the policy refuses the images), so no engine's rule is reached
+    expect(outcome).toEqual({ image: 'error', imageUnsafe: 'error' });
+    await sandbox.page.waitForTimeout(300);
+    expect(hits.filter(hit => hit.id.startsWith(prefix)), 'nothing reached the same-site listener').toEqual([]);
 });
 
 // ---- 3. worker mode ---------------------------------------------------------------------------------
