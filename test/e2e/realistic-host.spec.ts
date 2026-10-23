@@ -178,33 +178,24 @@ test.describe('strict mode (the default)', () => {
         }
     });
 
-    // docs/API.md#host-page-policy: "Your connect-src … narrow origins silently". `'none'` does on every engine. `'self'`
-    // does in Chromium and Firefox and not in WebKit, where a request to a listed origin passes a host policy of
-    // `connect-src 'self'` (observed: the sandbox's frames reach origins the host page's policy does not name). The docs say
-    // the host page's policy narrows the sandbox's; the library is as documented on the engines where it does, and the
-    // WebKit row is kept as observed so a change shows (reported, not changed: src/ is not touched here).
-    const NARROWED_BY: Record<string, Record<'chromium' | 'firefox' | 'webkit', boolean>> = {
-        "'none'": { chromium: true, firefox: true, webkit: true },
-        "'self'": { chromium: true, firefox: true, webkit: false },
-    };
-    for (const value of Object.keys(NARROWED_BY)) {
-        test(`the host page's connect-src ${value} narrows origins and the bridge's allow list; admitting the origin is all that changes`, async ({ sandbox, browserName }) => {
+    // docs/API.md#host-page-policy: the host page's connect-src narrows `origins.connect` and `fetchBridge.allow`, the same on
+    // every engine: the library applies the page's policy itself (host-csp.ts reads it once; host-connect.ts parses it), where the
+    // engines differ on what a `'self'` source admits in a sandboxed frame (CONNECT_ENGINE_FACTS). `'none'` and `'self'` both
+    // refuse the listed origin.
+    for (const value of ["'none'", "'self'"]) {
+        test(`the host page's connect-src ${value} narrows origins and the bridge's allow list on every engine; admitting the origin is all that changes`, async ({ sandbox, browserName }) => {
             const sibling = await startSiblingApi();
             try {
                 const guest = guestBattery({ direct: { cross: `${sibling.crossSite}/api/cross` }, bridge: { bcross: `${sibling.crossSite}/api/bcross` } });
                 const config = { origins: { connect: [sibling.crossSite] }, fetchBridge: { allow: [sibling.crossSite] }, guest };
-                const narrows = NARROWED_BY[value]![browserName as 'chromium' | 'firefox' | 'webkit'];
 
                 const narrowed = await RealisticHost.open(sandbox, { mode: 'strict', directives: base => ({ ...base, 'connect-src': [value] }) });
                 expect(await narrowed.embed('strict', config)).toEqual(READY);
                 const seen = await narrowed.guestResult();
                 await narrowed.page.waitForTimeout(300);
-                if (narrows) {
-                    expect(sibling.hits, covering('cspFetch', `connect-src ${value} on the host page: neither the guest's own request nor the bridge's reached the listed origin (${browserName})`)).toEqual([]);
-                    expect(String(seen['bcross:bridge']), covering('cspFetch', 'the bridge refused the request (the guest sees an error code)')).toMatch(/^ERR /);
-                } else {
-                    expect(sibling.named('bcross').length, covering('cspFetch', `observed on ${browserName}: connect-src ${value} on the host page does not narrow the bridge's allow list`)).toBe(1);
-                }
+                expect(sibling.hits, covering('cspFetch', `connect-src ${value} on the host page: neither the guest's own request nor the bridge's reached the listed origin (${browserName})`)).toEqual([]);
+                expect(String(seen['bcross:bridge']), covering('cspFetch', 'the bridge refused the request (the guest sees an error code)')).toMatch(/^ERR /);
+                expect(narrowed.consoleWarnings.filter(text => text.startsWith('[Sandbox] origins.connect dropped') || text.startsWith('[Sandbox] fetchBridge.allow dropped')), covering('cspFetch', 'the library dropped the origin from both lists, with a warning for each, before it wrote the policies')).toHaveLength(2);
                 expect(await narrowed.state(), covering('cspFetch', 'the refusal does not end the sandbox')).toBe('ready');
 
                 sibling.hits.length = 0;

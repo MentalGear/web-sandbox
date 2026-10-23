@@ -5,6 +5,8 @@
 import type { SafeCapability, UnsafeCapability } from "./csp-directives";
 import { UNSAFE_PERMISSIONS } from "./csp-directives";
 import { cooperativePolicy, fileKinds, strictViewPolicy } from "./lib/csp/csp-generator";
+import { narrowToHostPolicy, parseHostPolicies, type NarrowedReach } from "./lib/csp/host-connect";
+import { hostPolicyReadFailed, knownHostPolicies, whenHostPoliciesKnown } from "./lib/host-csp";
 import { NO_ORIGINS, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
@@ -349,6 +351,32 @@ export interface SandboxConfigOptions {
      * @defaultValue off
      */
     fetchBridge?: FetchBridgeConfig;
+    /**
+     * The host page's Content-Security-Policy as text, so that the library drops the origins it refuses from
+     * `origins.connect` and `fetchBridge.allow`: a string (one or more policies, as a header or a `<meta>` carries them),
+     * or `false` to skip. Left out, the library reads the page's policy once per page load.
+     *
+     * @remarks
+     * A sandbox's frames inherit the host page's policy, which can only narrow theirs, but engines differ on what some of
+     * its sources admit in such a frame. So the library applies the page's `connect-src` (else
+     * `default-src`) itself, in every engine: each origin in `origins.connect` and `fetchBridge.allow` that a policy
+     * refuses is dropped with a warning, before the guest's and the bridge's policies are written. Only `connect-src` is
+     * read, and an origin is kept only where every engine admits it: `'self'`, a host written without a scheme, a path
+     * and anything the parser does not understand admit nothing (docs/API.md#your-connect-src has the grammar).
+     *
+     * - A string is the enforced policy, exactly as served; several policies are separated by commas, as in a header. A
+     *   Report-Only policy is not passed. The page is then not asked.
+     * - `false` skips the narrowing and the read. The browser's own inheritance still narrows where the engine applies it.
+     * - Left out, a build that lists a connect origin reads the policy before it starts, once per page load (cached):
+     *   the element calls `fetch()` once from a hidden, empty frame to a decoy host that cannot exist, on a port every
+     *   engine refuses; the request never leaves the browser and costs no DNS lookup, and the policy that refuses it
+     *   reports its own text. Its cost is a console error (two in an engine that logs the refused port, whatever the
+     *   policy) and, when a policy refuses the decoy, a CSP report to that policy's `report-uri`. The first such build waits
+     *   for it, a few tens of milliseconds. A build with no connect origin never reads.
+     *
+     * @defaultValue read from the page
+     */
+    hostContentSecurityPolicy?: string | false;
     /**
      * Whether the guest's `sandboxFiles.write()` and `remove()` are recorded as pending changes of the environment,
      * announced as `fileswritten`, listed by `listGuestWrites()` and applied only by
@@ -1760,8 +1788,7 @@ export class WebSandbox extends ElementBase {
     // Closed over its own bridge, it reaches the one teardown closed, and is refused there.
     // Its requests are made by its own frame (bridge-frame.ts; BD1:ISO-1, class E-net), prepared by the build and put in
     // the shadow root after the wrapper: the bridge's only transport. The host page's fetch makes none of them.
-    private _startFetchBridge(prepared: HTMLIFrameElement | null) {
-        const policy = this._fetchPolicy;
+    private _startFetchBridge(prepared: HTMLIFrameElement | null, policy: FetchPolicy | null) {
         if (!policy || !prepared) {
             this._fetchBridge = null;
             this._exposeFetch(null);
@@ -1983,16 +2010,47 @@ export class WebSandbox extends ElementBase {
     // The guest policy of this build (csp-generator.ts, ADR-007): the mode's template, the parsed origins, and blob:
     // for the kinds of load this build's files need (the snapshot's types, through the one load-kind table). The one
     // place a guest policy is made; worker mode's worker and strict mode's worker inherit their frame's.
-    private _guestPolicy(files: FileSnapshotEntry[]): string {
+    private _guestPolicy(files: FileSnapshotEntry[], origins: OriginPolicy): string {
         const types = files.map(entry => entry[1]);
         const scriptUnsafe = this._config.scriptUnsafe === true;
-        if (this._config.mode !== 'strict') return cooperativePolicy({ origins: this._origins, fileKinds: fileKinds(types), scriptUnsafe });
+        if (this._config.mode !== 'strict') return cooperativePolicy({ origins, fileKinds: fileKinds(types), scriptUnsafe });
         // A type the view mints no URL for (isViewFileType, BR:ST1) is only fetched, by the worker.
         const viewTypes = types.map(type => (isViewFileType(type) ? type : FALLBACK_TYPE));
         const kinds = fileKinds(viewTypes);
         // With guest writes the view may mint URLs for raster images during the environment (R1:R4-4): image loads only.
         if (this._config.guestWrites === true) kinds.add(LOAD_KINDS.image.key);
-        return strictViewPolicy({ origins: this._origins, fileKinds: kinds, scriptUnsafe, bootstrapHash: viewBootstrapHash() });
+        return strictViewPolicy({ origins, fileKinds: kinds, scriptUnsafe, bootstrapHash: viewBootstrapHash() });
+    }
+
+    // The host page's policy applied to the connect origins of this build (host-connect.ts): `origins` and the bridge's
+    // allowlist as configured, less what a policy of the page refuses. The policy is the embedder's
+    // (`hostContentSecurityPolicy`), or the page's as the first such build read it (host-csp.ts, which `_buildGate` waited
+    // for); `false`, a policy that could not be read, and a build with nothing to narrow leave the configured lists.
+    // Pure of the element's fields: a nested or stale build narrows its own (LM-2).
+    private _reach(): NarrowedReach {
+        const configured = { origins: this._origins, fetchPolicy: this._fetchPolicy };
+        const option = this._config.hostContentSecurityPolicy;
+        if (option === false) return configured;
+        let texts: string | readonly string[];
+        if (typeof option === 'string') {
+            texts = option;
+        } else {
+            const read = knownHostPolicies();
+            if (!read) {
+                if (read === null && hostPolicyReadFailed()) this._warnConfig("[Sandbox] the host page's Content-Security-Policy could not be read, so its connect-src is not applied to origins.connect and fetchBridge.allow by the library (the browser still applies it where its engine does). Pass hostContentSecurityPolicy to give it (docs/API.md#host-page-policy).");
+                return configured;
+            }
+            texts = read;
+        }
+        return narrowToHostPolicy(configured.origins, configured.fetchPolicy, parseHostPolicies(texts), message => this._warnConfig(message));
+    }
+
+    // What the build waits for (the executor's gate, lifecycle.ts): the host page's policy, when the embedder gave none and
+    // the build lists a connect origin or a bridge origin it could refuse. Null when nothing is to be waited for.
+    private _buildGate(): Promise<void> | null {
+        if (this._config.hostContentSecurityPolicy !== undefined || !this.shadowRoot) return null;
+        if (this._origins.connect.length === 0 && (this._fetchPolicy?.allow.length ?? 0) === 0) return null;
+        return whenHostPoliciesKnown(this.shadowRoot);
     }
 
     // What the bootstrap does with this build's guest markup (GuestMarkupPlan): references to registered
@@ -2056,11 +2114,12 @@ export class WebSandbox extends ElementBase {
         // guest-write overlay answers from it (BR:CB4). Later registerFiles() calls reach the guest only through the next build.
         const built = this._files.copy();
         const files = built.snapshot();
-        if (this._config.mode === 'strict') return this._prepareStrictFrame(built, files);
+        const reach = this._reach();
+        if (this._config.mode === 'strict') return this._prepareStrictFrame(built, files, reach);
 
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
-        const policy = this._guestPolicy(files);
+        const policy = this._guestPolicy(files, reach.origins);
 
         // Guest markup is the guest's own: cooperative mode runs it as it is (that is the mode), and strict mode's view cleans
         // it with its allowlist renderer (sanitizeRender), not here.
@@ -2093,7 +2152,7 @@ export class WebSandbox extends ElementBase {
         // srcdoc goes in before the frame is inserted: an iframe inserted without one first
         // loads about:blank, which would count as the frame's one load (see _frameLoadHandler)
         setLibrarySrcdoc(iframe, buildWrapperDocument(guestDocument, sandboxFlags, permissions));
-        return { iframe, built, strictInit: null, bridgeFrame: this._prepareBridgeFrame() };
+        return { iframe, built, strictInit: null, bridgeFrame: this._prepareBridgeFrame(reach.fetchPolicy), fetchPolicy: reach.fetchPolicy };
     }
 
     /**
@@ -2102,7 +2161,7 @@ export class WebSandbox extends ElementBase {
      * INIT_VIEW once the wrapper has loaded. The view mints its own blob: URLs for the registered files it may
      * show, so no JavaScript file is ever given to it.
      */
-    private _prepareStrictFrame(built: FileStore, files: FileSnapshotEntry[]): PreparedBuild {
+    private _prepareStrictFrame(built: FileStore, files: FileSnapshotEntry[], reach: NarrowedReach): PreparedBuild {
         let entrySource = '';
         const entry = this._config.entry;
         if (typeof entry === 'string' && entry !== '') {
@@ -2114,7 +2173,7 @@ export class WebSandbox extends ElementBase {
         const html = this._config.html || '<div id="root"></div>';
         this._warnAboutStrictHtml(html);
         const sandboxFlags = this._getSandboxFlags();
-        const policy = this._guestPolicy(files);
+        const policy = this._guestPolicy(files, reach.origins);
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (BR:ST4)
         const strictInit: StrictInit = {
             workerSource: this._getStrictWorkerSource(files, entrySource, marker),
@@ -2133,12 +2192,12 @@ export class WebSandbox extends ElementBase {
         setWrapperFrameIsolation(iframe);
         iframe.style.cssText = "width:100%;height:100%;border:none";
         setLibrarySrcdoc(iframe, buildWrapperDocument(view, sandboxFlags, []));
-        return { iframe, built, strictInit, bridgeFrame: this._prepareBridgeFrame() };
+        return { iframe, built, strictInit, bridgeFrame: this._prepareBridgeFrame(reach.fetchPolicy), fetchPolicy: reach.fetchPolicy };
     }
 
     // The fetch bridge's frame of this build, written detached like the wrapper, or null with the bridge off.
-    private _prepareBridgeFrame(): HTMLIFrameElement | null {
-        return this._fetchPolicy ? prepareBridgeFrame(this._fetchPolicy.allow) : null;
+    private _prepareBridgeFrame(policy: FetchPolicy | null): HTMLIFrameElement | null {
+        return policy ? prepareBridgeFrame(policy.allow) : null;
     }
 
     // The executor's `attach` effect: the prepared build becomes the element's, every per-build resource made here (the
@@ -2158,7 +2217,7 @@ export class WebSandbox extends ElementBase {
         // environment other than the one built (environment-check.ts), the fetch bridge's frame included.
         this._listenForAnnouncement(iframe, prepared.bridgeFrame, prepared.strictInit === null);
         this.shadowRoot!.appendChild(iframe);
-        this._startFetchBridge(prepared.bridgeFrame); // its frame after the wrapper, which stays the shadow root's first
+        this._startFetchBridge(prepared.bridgeFrame, prepared.fetchPolicy); // its frame after the wrapper, which stays the shadow root's first
     }
 
     // The worker's source in strict mode: the scope check, the globals allowlist, the comms script (bridge, logs, violations, execute,
@@ -2292,6 +2351,7 @@ const LIFECYCLE = WebSandbox.prototype as unknown as {
     _buildContext(): BuildContext;
     _configure(): string | null;
     _prepareBuild(): PreparedBuild;
+    _buildGate(): Promise<void> | null;
     _attachBuild(prepared: PreparedBuild): void;
     _startLoadDeadline(): void;
     _teardown(): void;
@@ -2319,6 +2379,7 @@ interface PreparedBuild {
     built: FileStore; // the copy of the store this build delivers (BR:CB4)
     strictInit: StrictInit | null; // strict mode: what the wrapper's load hands the view
     bridgeFrame: HTMLIFrameElement | null; // the fetch bridge's frame, its srcdoc written, not in the document (BD1:ISO-1)
+    fetchPolicy: FetchPolicy | null; // the bridge's policy with the host page's policy applied (_reach): what its requests are checked against
 }
 
 // The context of a build where the element may not build (buildsHere): it stops instead, and asks nothing else.
@@ -2369,6 +2430,7 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
         discardWrites: () => Reflect.apply(LIFECYCLE._discardGuestWrites, element, []),
         applyConfig: () => Reflect.apply(LIFECYCLE._configure, element, []),
         buildContext: () => Reflect.apply(LIFECYCLE._buildContext, element, []),
+        buildGate: () => Reflect.apply(LIFECYCLE._buildGate, element, []),
         build: () => Reflect.apply(LIFECYCLE._prepareBuild, element, []),
         attach: (prepared) => Reflect.apply(LIFECYCLE._attachBuild, element, [prepared as PreparedBuild]),
         startLoadDeadline: () => Reflect.apply(LIFECYCLE._startLoadDeadline, element, []),

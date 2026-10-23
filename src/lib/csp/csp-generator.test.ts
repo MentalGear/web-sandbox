@@ -15,7 +15,7 @@ const input = (overrides: Partial<PolicyInput> = {}): PolicyInput => ({ origins:
 const origins = (config: Record<string, unknown>, mode = 'cooperative') => parseOrigins(config, mode, () => {});
 const ALL = origins({
     scripts: ['https://cdn.example'], styles: ['https://css.example'], images: ['https://img.example', 'http://localhost:5173'],
-    fonts: ['https://fonts.example'], media: ['https://media.example:8443'], connect: ['https://api.example', 'wss://ws.example'],
+    fonts: ['https://fonts.example'], media: ['https://media.example:8443'], connect: ['https://api.example', 'https://ws.example', 'wss://ws.example'],
 });
 
 const COOPERATIVE_DEFAULT = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; media-src 'none'; connect-src 'none'; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'; upgrade-insecure-requests";
@@ -30,7 +30,7 @@ describe('the templates: golden policies', () => {
         expect(cooperativePolicy(input({ origins: ALL, fileKinds: new Set(ORIGIN_KINDS), scriptUnsafe: true }))).toBe(
             "default-src 'none'; script-src 'unsafe-inline' https://cdn.example blob: 'unsafe-eval'; style-src 'unsafe-inline' https://css.example blob:; "
             + "img-src https://img.example http://localhost:5173 blob:; font-src https://fonts.example blob:; media-src https://media.example:8443 blob:; "
-            + "connect-src https://api.example wss://ws.example blob:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; "
+            + "connect-src https://api.example https://ws.example wss://ws.example blob:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; "
             + "form-action 'none'; manifest-src 'none'; upgrade-insecure-requests");
     });
 
@@ -42,7 +42,7 @@ describe('the templates: golden policies', () => {
         expect(strictViewPolicy({ ...input({ origins: ALL, fileKinds: new Set(ORIGIN_KINDS), scriptUnsafe: true }), bootstrapHash: HASH })).toBe(
             `default-src 'none'; script-src ${HASH} 'unsafe-eval'; script-src-attr 'none'; style-src 'unsafe-inline' https://css.example blob:; `
             + "img-src https://img.example http://localhost:5173 blob:; font-src https://fonts.example blob:; media-src https://media.example:8443 blob:; "
-            + "connect-src https://api.example wss://ws.example blob:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; "
+            + "connect-src https://api.example https://ws.example wss://ws.example blob:; worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; "
             + "form-action 'none'; manifest-src 'none'; upgrade-insecure-requests");
     });
 

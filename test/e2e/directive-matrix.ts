@@ -91,8 +91,8 @@ export const EXCLUDED = {
 export const DIRECTIVE_CASES = {
     'child-src': [{ value: "'none'", row: 'cspFetch', outcome: works(), note: 'a srcdoc frame loads no URL, so no frame directive refuses it' }],
     'connect-src': [
-        { value: "'none'", row: 'cspFetch', outcome: works('refused'), note: 'the policy narrows the bridge\'s allow list (docs/API.md#host-page-policy)' },
-        { value: "'self'", row: 'cspFetch', outcome: works('ok'), engines: { webkit: works('refused') }, note: "WebKit: 'self' of the inherited policy does not match the host page's own origin in the bridge's frame" },
+        { value: "'none'", row: 'cspFetch', outcome: works('refused'), note: "the library drops the bridge's allow list (docs/API.md#your-connect-src)" },
+        { value: "'self'", row: 'cspFetch', outcome: works('refused'), note: "'self' admits nothing to the library, which drops the host page's own origin from the bridge's allow list on every engine: the engines disagree on what 'self' matches in a sandboxed frame (docs/API.md#your-connect-src)" },
     ],
     'default-src': [{ value: "'none'", row: 'cspFetch', outcome: works(), note: "the base names every directive the library needs, so the fallback decides nothing" }],
     'fenced-frame-src': [{ value: "'none'", row: 'cspFetch', outcome: works() }],

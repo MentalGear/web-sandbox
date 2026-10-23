@@ -19,8 +19,9 @@ import { defineData, ownField } from "../utils";
  * origins to six directives of the guest's policy and can change nothing else.
  *
  * @remarks
- * An entry is one exact origin, `https://host[:port]`; in `connect` also `wss://host[:port]`; plain `http://` only for
- * `localhost` and `127.0.0.1`. Case is folded and a default port is dropped. Anything else is dropped with one warning
+ * An entry is one exact origin, `https://host[:port]`; in `connect` also `wss://host[:port]`, which is kept only beside
+ * its `https://host[:port]` twin (the pair admits both `fetch()` and `WebSocket` on every engine); plain `http://` only
+ * for `localhost` and `127.0.0.1`. Case is folded and a default port is dropped. Anything else is dropped with one warning
  * per entry (other schemes, `*`, `'self'` and other keywords, paths, credentials, an IPv6 literal, a non-ASCII or
  * percent-encoded host), and a key that is not a kind is dropped too. Dropping only narrows: a kind with no origin left
  * admits none. An `origins` that is not an object, or a kind that is not a list, cannot be read and refuses the whole
@@ -35,9 +36,11 @@ import { defineData, ownField } from "../utils";
  */
 export interface SandboxOrigins {
     /**
-     * fetch(), XMLHttpRequest and WebSocket: connect-src. A WebSocket needs an entry of its own (`wss://host`): an
-     * `https://host` entry does not admit it. Cooperative mode's guest document also has EventSource and sendBeacon(),
-     * which this list governs; strict and worker mode's worker has neither.
+     * fetch(), XMLHttpRequest and WebSocket: connect-src. A WebSocket needs an entry of its own (`wss://host`), and that
+     * entry is dropped with a warning unless `https://host` is listed too: the pair admits `fetch()` and `WebSocket` to
+     * the host on every engine, and `https://host` alone admits `fetch()` only. Cooperative mode's guest document also
+     * has EventSource and sendBeacon(), which this list governs; strict and worker mode's worker has neither. The host
+     * page's own `connect-src` narrows this list in every engine (`hostContentSecurityPolicy`).
      */
     connect?: readonly string[];
     /** Images, CSS backgrounds, icons: img-src. */
@@ -122,5 +125,29 @@ function originsOf(kind: OriginKind, entries: readonly unknown[], mode: unknown,
         }
         origins.add(origin);
     }
-    return [...origins];
+    if (kind !== 'connect') return [...origins];
+    const { kept, orphans } = withHttpsTwins([...origins]);
+    for (const orphan of orphans) {
+        warn(`[Sandbox] origins.connect entry ${shown(orphan)} was dropped: it needs ${shown(httpsTwin(orphan))} listed as well. Some engines let a wss:// entry admit https:// requests and others do not, so the library admits the pair on every engine, or neither (see docs/API.md#origins).`);
+    }
+    return kept;
+}
+
+/** The `https://` origin that a `wss://` origin needs beside it: the same host and port. */
+export function httpsTwin(origin: string): string {
+    return `https://${origin.slice('wss://'.length)}`;
+}
+
+/**
+ * `list` without the `wss://` origins whose `https://` twin is not in it. A `wss://host` source admits `https://host`
+ * requests in WebKit (CSP3's scheme matching) and not in Chromium or Firefox (measured, CONNECT_ENGINE_FACTS in
+ * connect-facts.ts), and no source expression removes the difference. Admitting both on a pair makes the engines agree: a
+ * connect list is then nothing, `https://h`, or `https://h` with `wss://h`, and each admits the same requests everywhere.
+ */
+export function withHttpsTwins(list: readonly Origin[]): { kept: Origin[]; orphans: Origin[] } {
+    const listed = new Set<string>(list);
+    const kept: Origin[] = [];
+    const orphans: Origin[] = [];
+    for (const origin of list) (origin.startsWith('wss://') && !listed.has(httpsTwin(origin)) ? orphans : kept).push(origin);
+    return { kept, orphans };
 }

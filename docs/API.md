@@ -92,7 +92,7 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 ## Configuration
 
-<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig sig:10835a2538da91d012d1923da001 -->
+<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig sig:c06c5a2538da4af912d1923da001 -->
 [`setConfig(config)`](#setconfigconfig) takes a `SandboxConfig`, a union keyed by `mode` (`StrictSandboxConfig`,
 `CooperativeSandboxConfig`, `WorkerSandboxConfig`, each extending `SandboxConfigOptions`, the options every mode takes):
 strict mode's `origins` has no `scripts`, and a config without `mode` is a strict config (strict mode is the default).
@@ -121,6 +121,7 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 | `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-downloads`, `allow-forms`, `allow-modals`, `allow-pointer-lock`, `allow-popups`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `allow-pointer-lock` and `fullscreen` let a guest hide the cursor, capture relative input or draw over the whole screen, so each can imitate host or browser UI. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups` lets the guest open has no opener: the guest's `window.open()` returns `null`, though the page opens. |
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
 | `origins` | `SandboxOrigins` | none | all (strict: no `scripts`) | The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. See [below](#origins). |
+| `hostContentSecurityPolicy` | `string \| false` | read from the page | all | Your page's Content-Security-Policy as text (one or more policies, as a header or `<meta>` carries them), so that the library drops the `origins.connect` and `fetchBridge.allow` entries it refuses, on every engine; `false` skips that. Left out, the library reads the page's policy once per page load, by one deliberate violation in a hidden frame (no request, no DNS lookup; a console error and, when a policy refuses it, a CSP report). See [Host page policy](#host-page-policy). |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in strict and worker mode on every browser, and in cooperative mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | strict, worker | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
@@ -157,10 +158,15 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   policy cannot name one), IPv4 shorthand, percent-encoding, non-ASCII name (write its `xn--` form) or trailing dot.
   An `xn--` label is checked by the browser's own URL parser, and engines differ on invalid Punycode: one that an engine
   refuses is dropped there, so write the form your registrar gives.
-- **A scheme is matched as written.** `https://api.example.com` does not admit `wss://api.example.com`: list both for a
-  WebSocket and a `fetch()` to one host (measured on Chromium 145, Firefox 146 and WebKit 26). WebKit also lets a
-  `wss://host` entry admit `https://host` requests, so an entry that is only for a WebSocket opens the host to `fetch()`
-  there.
+- **A scheme is matched as written, and a `wss://` entry needs its `https://` twin.** `https://api.example.com` alone
+  admits `fetch()` and `XMLHttpRequest` to the host and no `WebSocket`. A `wss://api.example.com` entry is dropped with a
+  warning unless `https://api.example.com` (the same host and port) is listed too; with both, `fetch()` and `WebSocket`
+  reach the host. It is the same on every engine: they disagree on a `wss://` source alone (see
+  [the engines](#connect-src-by-engine)), so the library lists only the pairs they agree on.
+- **The host page's `connect-src` narrows `connect` and the bridge's `allow` on every engine.** The library applies your
+  page's policy to the two lists itself, before it writes the guest's and the bridge's policies: an origin your
+  `connect-src` (or `default-src`) does not admit is dropped with a warning. See
+  [Host page policy](#host-page-policy) for what it reads, how, and what it costs.
 - **Anything else is dropped** with one warning per entry: `https:` and other schemes, `*` and `*.example.com`,
   `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
   narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
@@ -252,7 +258,7 @@ See [ADR-006](ADR-006-fetch-bridge.md).
 
 | Field | Type | Default | What it does |
 | :--- | :--- | :--- | :--- |
-| `allow` | `string[]` | (required) | The exact origins the guest may reach: scheme, host and optional port, like `https://api.example` or `http://localhost:8080`. An entry with a path, query, fragment, credentials or `*` is dropped with a warning, and so is a value that is not a list. An empty list refuses everything. Listing the host page's own origin or a loopback, private or link-local host works, with one warning each. |
+| `allow` | `string[]` | (required) | The exact origins the guest may reach: scheme, host and optional port, like `https://api.example` or `http://localhost:8080`. An entry with a path, query, fragment, credentials or `*` is dropped with a warning, and so is a value that is not a list. An empty list refuses everything. Listing the host page's own origin or a loopback, private or link-local host works, with one warning each. The host page's `connect-src` narrows the list on every engine: an origin it does not admit by its scheme and host (`'self'` admits nothing) is dropped with a warning (`hostContentSecurityPolicy`; [Host page policy](#host-page-policy)). |
 | `maxBytes` | `number` | `1048576` (1 MiB) | Most bytes of one response body, and of one request body. At most `33554432` (32 MiB). |
 | `timeoutMs` | `number` | `10000` | Most ms for one request, response body included. At most `120000`. |
 | `methods` | `string[]` | `['GET', 'HEAD', 'POST']` | The methods the guest may use, from `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE`. Replaces the default list. |
@@ -1561,10 +1567,10 @@ policy must allow:
 | `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; `'unsafe-eval'` for `execute()` | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
 | `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
 | `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; with `allowAnimations: false`, also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
-| `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` | the same | the same |
+| `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` (in `connect-src`, named by scheme and host, not `'self'`: [below](#your-connect-src)) | the same | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
 | `base-uri` | `about:` (for example `base-uri 'self' about:`), or omit the directive: the wrapper sets `<base href="about:blank">` so the guest never sees your page's URL, and a policy that refuses it (`'self'`, `'none'`) ends the build, because every bootstrap first checks its document's base URL | the same | the same |
-| With `fetchBridge` | the bridge's frame runs the view bootstrap too: the same hash, or `'unsafe-inline'`, admits it; `connect-src`: every origin in `fetchBridge.allow` (the frame's requests inherit your policy) | the same: `'unsafe-inline'` admits the frame's script | the same |
+| With `fetchBridge` | the bridge's frame runs the view bootstrap too: the same hash, or `'unsafe-inline'`, admits it; `connect-src`: every origin in `fetchBridge.allow` (the frame's requests inherit your policy; name each origin by scheme and host, [below](#your-connect-src)) | the same: `'unsafe-inline'` admits the frame's script | the same |
 | Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox` from their first write (so the page gets no violation, console error or report from them), which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox 146, the version measured, has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
 | `Cross-Origin-Embedder-Policy: require-corp` (without `Cross-Origin-Opener-Policy: same-origin`) | works in Chromium and Firefox; WebKit refuses the view's `blob:` worker | works; resources from `origins` need CORP or CORS headers | as strict |
 | `Cross-Origin-Opener-Policy: same-origin` with `Cross-Origin-Embedder-Policy` (`require-corp` or `credentialless`), when the browser makes the page cross-origin isolated (`crossOriginIsolated` is `true`) | **not supported, on any engine**: a guest never runs cross-origin isolated. The element reads `crossOriginIsolated` of your page before it creates a frame and, when it is `true`, ends the build with `the host page is cross-origin isolated …`; no frame exists and nothing of the guest runs. The outcome follows your page's isolation, not the engine (which pairs isolate a page is the browser's: COOP with `require-corp` does everywhere, and with `credentialless` in Chromium and Firefox but not in WebKit, where the sandbox then runs). The library's own bootstraps check the same value in their documents as well | not supported (the same) | not supported (the same) |
@@ -1586,10 +1592,11 @@ policy must allow:
   `'unsafe-inline'` allows inline script everywhere on it, and so gives up its defence against an injected `<script>`.
   Prefer strict mode, whose hash sits beside your own hashes and nonces; using `'unsafe-inline'` there instead of the hash
   costs the same.
-- **Your `connect-src`, `img-src` and the other fetch directives narrow `origins` silently**: an origin listed in
-  `origins` that your page's policy does not allow is refused in the sandbox too. The refusal happens in the sandbox's
-  documents, so it arrives as the element's `violation` event (where the browser reports it), never as a
-  `securitypolicyviolation` on your page, and nothing warns at `setConfig()`.
+- **Your `img-src`, `media-src`, `font-src` and the other fetch directives narrow `origins` silently**, in the engines
+  that apply the inherited list: an origin listed in `origins` that your page's policy does not allow is refused in the
+  sandbox too. The refusal happens in the sandbox's documents, so it arrives as the element's `violation` event (where the
+  browser reports it), never as a `securitypolicyviolation` on your page, and nothing warns at `setConfig()`. Your
+  `connect-src` is different: the library applies it itself, with a warning ([below](#your-connect-src)).
 - **The view bootstrap's hash** is `viewScriptHash()`, the very value the element puts in the view's `script-src`, and in
   the fetch bridge's frame's: the library has one hashed bootstrap, which runs the view in strict mode and, with
   `fetchBridge`, the frame that makes the bridge's requests in every mode, so one hash admits both.
@@ -1603,6 +1610,76 @@ policy must allow:
   ```
 
   The wrapper style's and the animation stylesheet's hashes are constants of the library, listed in the table above.
+
+### Your `connect-src`
+
+<!-- describes: option:hostContentSecurityPolicy, connect-facts, host-source-rules sig:004179a2109d -->
+The engines do not agree on what some sources of your page's `connect-src` admit in a sandbox document
+([the table below](#connect-src-by-engine)). So the library applies your policy to the two lists that
+open connections, the same on every engine: every origin in `origins.connect` and `fetchBridge.allow` that your
+`connect-src` (or `default-src`) does not admit is **dropped with one warning per list**, before the guest's and the
+bridge's policies are written. A `wss://` entry whose `https://` twin was dropped goes with it. Nothing else changes:
+the other directives, the sandbox's own policy and the rest of the configuration are as configured, and an origin your
+policy admits is kept, as is every origin when your page sends no policy or none that governs connections.
+
+The policy comes from [`hostContentSecurityPolicy`](#configuration): a string (the enforced policy as served; several
+policies separated by commas, as in a header) is used as it is, and `false` skips the narrowing. Left out, the library
+reads your page's policy itself, **once per page load**, when a build first lists a connect origin (a build that lists none
+reads nothing):
+
+- **How**: the element adds a hidden, empty frame to its shadow root, calls `fetch()` from it, once, to a plain-http host
+  that cannot exist (under `.invalid`) on port 6000, which every engine refuses after the policy's check and before any
+  DNS lookup or connection, and removes the frame. Any policy that refuses an https host refuses it, and so does one that
+  admits only https (`connect-src https:`); on an https page the policy is still checked first. A policy that refuses the
+  request reports its own text (`securitypolicyviolation.originalPolicy`), which is what the library parses; a
+  Report-Only policy is ignored. The frame holds no script, so your `script-src` does not matter, and your own
+  `securitypolicyviolation` listeners (an error tracker's) see nothing: the violation is the frame's.
+- **What it costs your page**: a console error for the refused port in some engines whatever your policy says (the table
+  below says which), one more line when a policy of yours refuses the decoy, and one report to that policy's
+  `report-uri`, if it has one. No request reaches the network and no name is looked up. The first such build waits for
+  it, a few tens of milliseconds (it settles 50 ms after the decoy; at most 2 s if the frame never loads, then the policy
+  is unknown, the element says so once, and nothing is narrowed). A page that does not want the errors and reports
+  passes the policy, or `false`.
+- **What it cannot see**: a policy that restricts only `ws:` and `wss:` (every `https:` host admitted), and a policy that
+  appears after the read (a `<meta>` added later). Pass `hostContentSecurityPolicy` for them.
+
+The parser reads `connect-src` only. It keeps an origin only where every engine of the suite admits it, so what it keeps is
+admitted everywhere and what it drops is dropped everywhere, even where one engine would have admitted it; anything it
+does not understand admits nothing, so it can only narrow. Policies are an intersection: an origin must pass each one
+your page sends, header and `<meta>` alike. The grammar:
+
+<!-- generated:begin host-source-rules -->
+| Source in your `connect-src` | Admits an `origins.connect` or `fetchBridge.allow` entry when | Example |
+| :--- | :--- | :--- |
+| `connect-src`, else `default-src` | the directive that governs `fetch()`, `XMLHttpRequest` and `WebSocket`; a policy with neither admits every origin; a directive named twice counts the first time | `connect-src https://a.example; default-src 'none'` admits `https://a.example` |
+| `'none'`, or no source | nothing; next to other sources it is ignored | `connect-src 'none'` drops `https://a.example` |
+| `'self'` | nothing: in a sandboxed frame one engine lets it admit origins it does not name, so name the origin | `connect-src 'self'` drops `https://app.example` |
+| `*` | an origin of the network schemes `http`, `https`, `ws` and `wss` | `connect-src *` admits `https://a.example` |
+| `scheme:` | an origin of that scheme; `http:` also `https:`, `ws:` also `wss:`, and no other widening | `connect-src https:` admits `https://a.example` |
+| `scheme://host[:port]` | an origin whose host is equal (case folded) and whose port is equal, the scheme's default when the source names none; the scheme as for `scheme:`, except that an upgraded scheme (`http://` for `https://`, `ws://` for `wss://`) needs no port written, or `:*` | `connect-src https://a.example` admits `https://a.example` |
+| `*.host` and `:*` | a subdomain of the host (one or more labels, not the bare domain); any port | `connect-src https://*.example` admits `https://a.example` |
+| `host/path` | nothing: a path admits some of an origin, never the origin (a lone `/` is the whole origin) | `connect-src https://a.example/api` drops `https://a.example` |
+| `host[:port]`, without a scheme | nothing: WebKit reads it against the frame's own scheme, and Chromium does not take it with a port, so write the scheme | `connect-src a.example` drops `https://a.example` |
+| anything else | nothing: nonces, hashes, `'unsafe-*'`, `'strict-dynamic'`, `data:`, `blob:`, `filesystem:`, a keyword the parser does not know, a token that is not a source | `connect-src 'unsafe-inline' 'unsafe-eval' 'strict-dynamic'` drops `https://a.example` |
+<!-- generated:end -->
+
+Two sources deserve a sentence. **`'self'` admits nothing**: the engines differ on what it admits in a sandboxed frame
+(the table below), so the same entry would reach in one and not in another. To let the sandbox, or the bridge, reach
+your own origin, name it (`connect-src 'self' https://app.example`). And **write the scheme**: a host without one is read
+against the frame's own scheme by some engines. These are the two places the library narrows beyond what your browser
+alone would.
+
+<a id="connect-src-by-engine"></a>
+What each engine does without the library's rules, and why they exist (the table is the source of these sentences, and of
+the rules above):
+
+<!-- generated:begin connect-facts -->
+| Engine | A `'self'` source of your `connect-src` admits an origin it does not name | A host written without a scheme admits the `https://` origin it names | A `http://h:P` source admits `https://h:P` | A `wss://h` source also admits `https://h` | A guest's `http://h` request to a listed `https://h` is admitted | The read's decoy logs a line though your policy admits it | Found by |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Chromium | no | yes, not with a port | no | no | no | yes | 2026-10-23, Playwright 1.58.1, Chromium 145: test/e2e/connect-uniform.spec.ts (every source of the grammar table against fetch and WebSocket requests of a guest, the page's policy left to the browser; the decoy through a logging proxy) |
+| Firefox | no | yes | yes | no | yes | no | 2026-10-23, Playwright 1.58.1, Firefox 146: as Chromium |
+| WebKit | yes | no | yes | yes | yes | yes | 2026-10-23, Playwright 1.58.1, WebKit 26: as Chromium |
+<!-- generated:end -->
 
 ---
 

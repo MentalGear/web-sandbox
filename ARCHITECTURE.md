@@ -292,6 +292,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/bridge-frame.ts` | The fetch bridge's frame, host side |
 | `src/lib/capabilities.ts` | Filtering of the capabilities an embedder lists: the allowed ones are kept, every other one dropped with a warning |
 | `src/lib/config-schema.ts` | The config schema |
+| `src/lib/connect-facts.ts` | What each engine does with a `connect-src` source, as one table |
 | `src/lib/cookie-facts.ts` | Which cookies each engine sends with a request of the sandbox, as one table |
 | `src/lib/css-references.ts` | URL references in CSS |
 | `src/lib/egress.ts` | The egress table |
@@ -303,6 +304,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/frame-documents.ts` | Builds the documents the sandbox is made of |
 | `src/lib/frames.ts` | The frame table |
 | `src/lib/guest-writes.ts` | Guest writes, host side: the overlay of one environment |
+| `src/lib/host-csp.ts` | The host page's Content-Security-Policy, read once per page load when the embedder did not give it (`hostContentSecurityPolicy`; INHERITED_CONTEXT.cspFetch) |
 | `src/lib/host-site.ts` | The host page's site for cookies: which hosts get the host site's cookies with a request of the sandbox |
 | `src/lib/import-map.ts` | The guest's own import maps |
 | `src/lib/in-bridge-frame.ts` | The fetch bridge's frame, frame side: the only code that performs a request of the bridge |
@@ -334,6 +336,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/worker-bootstrap.ts` | Worker mode's frame bootstrap: stringified and injected into the sandbox frame |
 | `src/lib/worker-globals.ts` | What guest code may find on a worker's global object, in worker mode and in strict mode |
 | `src/lib/csp/csp-generator.ts` | The guest policy: one template per mode, filled with the parsed origins (origins.ts) and the library's own sources |
+| `src/lib/csp/host-connect.ts` | The host page's `connect-src`, as far as the library needs it |
 | `src/lib/csp/origins.ts` | `origins`: what the embedder may open in the guest policy |
 | `src/lib/csp/script-hash.ts` | The CSP hash-source of a script, computed synchronously on the host |
 <!-- generated:end -->

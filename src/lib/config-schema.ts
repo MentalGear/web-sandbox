@@ -181,6 +181,8 @@ export interface StoredConfig {
     guestWrites: boolean;
     allowAnimations: boolean;
     allowAutoplay: boolean;
+    /** The host page's policy as the embedder gave it, `false` to skip narrowing, or absent: read from the page (host-csp.ts). */
+    hostContentSecurityPolicy?: string | false;
 }
 
 /** What one setConfig() argument normalises to: everything a build reads of the configuration. */
@@ -360,6 +362,15 @@ export const CONFIG_SCHEMA = {
         // config names it or not; a value that cannot be read refuses the config (origins.ts)
         read: ({ given, mode, warn, context }) => limitHostReach(parseOrigins(given, mode, warn), context, mode, warn),
     },
+    hostContentSecurityPolicy: {
+        default: undefined, documented: 'read from the page', modes: ALL_MODES,
+        // a string (the page's policy text) or false (skip); anything else is ignored with a warning, and the page's policy is read
+        read: ({ given, warn }) => {
+            if (given === undefined || typeof given === 'string' || given === false) return given;
+            warn(`[Sandbox] hostContentSecurityPolicy must be a string or false; ${shown(given)} was ignored: the host page's policy is read from the page.`);
+            return undefined;
+        },
+    },
     autoResize: {
         default: false, documented: '`false`', modes: ['strict', 'cooperative'], ignoredIn: (mode) => mode === 'worker',
         read: literalTrue,
@@ -501,10 +512,11 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
             && [config.capabilities, config.unsafeCapabilities].every(list => Array.isArray(list) && plainData(list, Array.prototype)),
     },
     {
-        name: 'every stored option has its type: switches are booleans, html a string, entry a string or nothing, delays 0 or a finite number > 0',
+        name: 'every stored option has its type: switches are booleans, html a string, entry a string or nothing, hostContentSecurityPolicy a string, false or nothing, delays 0 or a finite number > 0',
         holds: ({ config }) => [config.scriptUnsafe, config.autoResize, config.guestWrites, config.allowAnimations, config.allowAutoplay].every(value => typeof value === 'boolean')
             && typeof config.html === 'string' && (config.entry === undefined || typeof config.entry === 'string')
-            && isDelay(config.watchdogTimeout) && isDelay(config.workerExecutionTimeout),
+            && isDelay(config.watchdogTimeout) && isDelay(config.workerExecutionTimeout)
+            && (config.hostContentSecurityPolicy === undefined || config.hostContentSecurityPolicy === false || typeof config.hostContentSecurityPolicy === 'string'),
     },
     {
         name: 'capabilities are only those the mode allows (strict: its view flags too); unsafeCapabilities only unsafe ones',

@@ -120,9 +120,20 @@ sandbox.setConfig({
 });
 ```
 
-An entry is one origin (`https://host[:port]`, `wss://` for `connect`, plain `http://` only for `localhost` and
-`127.0.0.1`); a scheme, wildcard, keyword, `data:` or path is dropped with a warning. Strict mode takes no `scripts`,
-so `scripts` needs `mode: 'cooperative'` or `'worker'` ([API](docs/API.md#origins), [ADR-007](docs/ADR-007-typed-origins.md)).
+An entry is one origin (`https://host[:port]`, `wss://` for `connect` beside its `https://` twin, plain `http://` only for
+`localhost` and `127.0.0.1`); a scheme, wildcard, keyword, `data:` or path is dropped with a warning, and so is a
+`wss://` entry without its `https://` twin. Strict mode takes no `scripts`, so `scripts` needs `mode: 'cooperative'` or
+`'worker'` ([API](docs/API.md#origins), [ADR-007](docs/ADR-007-typed-origins.md)).
+
+**Your page's `connect-src` applies to `origins.connect` and `fetchBridge.allow`, the same on every engine.** An origin
+it does not admit by scheme and host (`'self'` admits nothing) is dropped with a warning. `hostContentSecurityPolicy`
+gives the library the policy as text, or `false` to skip; left out, the library reads it once per page, when a build
+first lists a connect origin, by one deliberate violation in a hidden frame that reaches neither the network nor the DNS
+(it costs a console error and, when a policy refuses it, a CSP report; [API](docs/API.md#your-connect-src)).
+
+<!-- generated:begin connect-sentence -->
+Without the library's own rules the engines disagree: a `'self'` source of the host page's `connect-src` admits origins it does not name in WebKit only, a `wss://host` source also admits `https://host` requests in WebKit only, and a host written without a scheme is read differently by each. The library applies the page's policy and these two rules itself, so `origins.connect` and `fetchBridge.allow` mean the same everywhere.
+<!-- generated:end -->
 
 **API reference**: [`docs/API.md`](docs/API.md) lists every option, method, event, refusal code, guest global
 and limit. The sections below walk through each feature.

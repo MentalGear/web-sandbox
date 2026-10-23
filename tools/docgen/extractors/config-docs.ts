@@ -33,6 +33,8 @@ export const OPTION_WORDS: Record<Documented, OptionWords> = {
         what: "Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element." },
     origins: { type: "`SandboxOrigins`", modesNote: " (strict: no `scripts`)",
         what: "The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. See [below](#origins)." },
+    hostContentSecurityPolicy: { type: "`string | false`",
+        what: "Your page's Content-Security-Policy as text (one or more policies, as a header or `<meta>` carries them), so that the library drops the `origins.connect` and `fetchBridge.allow` entries it refuses, on every engine; `false` skips that. Left out, the library reads the page's policy once per page load, by one deliberate violation in a hidden frame (no request, no DNS lookup; a console error and, when a policy refuses it, a CSP report). See [Host page policy](#host-page-policy)." },
     entry: { type: "`string`",
         what: "The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry \"…\" is not a registered JavaScript file`)." },
     watchdogTimeout: { type: "`number` (ms)",

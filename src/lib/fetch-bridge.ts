@@ -90,7 +90,9 @@ export interface FetchBridgeConfig {
      * The exact origins the guest may reach: scheme, host and optional port, like `https://api.example` or
      * `http://localhost:8080`. An entry with a path, query, fragment, credentials or `*` is dropped with a warning, and so
      * is a value that is not a list. An empty list refuses everything. Listing the host page's own origin or a loopback,
-     * private or link-local host works, with one warning each.
+     * private or link-local host works, with one warning each. The host page's `connect-src` narrows the list on every
+     * engine: an origin it does not admit by its scheme and host (`'self'` admits nothing) is dropped with a warning
+     * (`hostContentSecurityPolicy`; docs/API.md#host-page-policy).
      */
     allow: string[];
     /**

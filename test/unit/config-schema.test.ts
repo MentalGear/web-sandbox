@@ -133,6 +133,7 @@ const POOLS: Record<string, unknown[]> = {
         { allow: [], maxBytes: 0 }, { allow: [], maxBytes: 1e15, timeoutMs: 1e15, maxConcurrent: 1e15 }, { allow: [], maxBytes: 0.5, timeoutMs: -1, maxConcurrent: NaN }, { allow: 'x', methods: 'GET' }],
     callLimits: [undefined, null, 5, {}, { maxPerSecond: 0 }, { maxBytesPerSecond: 100 }, { maxBytesPerSecond: RPC_MAX_BYTES - 1 }, { maxBytesPerSecond: RPC_MAX_BYTES }, { maxPerSecond: 1.5, maxBytesPerSecond: Infinity }],
     origins: [undefined, {}, { images: ['https://img.example', 'https:'] }, { scripts: ['https://s.example'] }, { connect: ['wss://ws.example'], nope: [] }, null, 'x', { images: 'x' }],
+    hostContentSecurityPolicy: [undefined, false, true, '', "connect-src 'self'", "connect-src 'none', connect-src https://api.example", 5, null, {}, ['connect-src *']],
     autoResize: [undefined, true, false, 1, 'true'],
     entry: [undefined, '', 'main.js', 5, null],
     allowAnimations: [undefined, true, false, 0, 'no', null],
@@ -427,7 +428,11 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
     it('by name alone: same host with another scheme or port, a subdomain and a parent are on the site; a sibling, an IP address and a lookalike are not', () => {
         for (const mode of SANDBOX_MODES) {
             const onSite = (origin: string) => said(mode, { connect: [origin] }).length === 1 && kept(mode, { connect: [origin] }).connect.length === (mode === 'strict' ? 0 : 1);
-            for (const origin of ['https://app.example', 'https://app.example:1', 'wss://app.example', 'https://x.app.example', 'https://example']) expect(onSite(origin), `${mode} ${origin}`).toBe(true);
+            for (const origin of ['https://app.example', 'https://app.example:1', 'https://x.app.example', 'https://example']) expect(onSite(origin), `${mode} ${origin}`).toBe(true);
+            // a wss:// origin is listed beside its https:// twin (origins.ts), and the pair is on the site as one origin is
+            const pair = { connect: ['https://app.example', 'wss://app.example'] };
+            expect(said(mode, pair), `${mode} the pair`).toHaveLength(1);
+            expect(kept(mode, pair).connect, `${mode} the pair`).toHaveLength(mode === 'strict' ? 0 : 2);
             for (const origin of ['https://sibling.example', 'https://notapp.example', 'https://app.example.evil', 'https://203.0.113.7']) expect(said(mode, { connect: [origin] }), `${mode} ${origin}`).toEqual([]);
         }
     });
@@ -465,6 +470,38 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
             normaliseConfig({ mode: 'cooperative', origins: { connect: ['https://api.example.co.uk'] } }, counting);
             expect(asked).toBe(1);
         });
+    });
+});
+
+describe("hostContentSecurityPolicy: the host page's policy as text, `false` to skip, or read from the page", () => {
+    const read = (config: Record<string, unknown>, mode = 'strict') => normaliseWhole({ mode, ...config });
+
+    it.each(['strict', 'cooperative', 'worker'])('%s: a string and false are kept as given; left out, it is absent (the page is read)', (mode) => {
+        for (const value of ["connect-src 'self'", '', "connect-src 'none', connect-src https://api.example", false]) {
+            const result = read({ hostContentSecurityPolicy: value }, mode);
+            expect(result.value!.config.hostContentSecurityPolicy, `${mode} ${String(value)}`).toBe(value);
+            expect(result.warnings, `${mode} ${String(value)}`).toEqual([]);
+        }
+        for (const config of [{}, { hostContentSecurityPolicy: undefined }]) {
+            const result = read(config, mode);
+            expect(Object.hasOwn(result.value!.config, 'hostContentSecurityPolicy'), mode).toBe(false);
+            expect(result.warnings, mode).toEqual([]);
+        }
+    });
+
+    it('any other value is ignored with one warning, and the page is read as if it were left out', () => {
+        for (const value of [true, 0, 5, null, {}, [], ['connect-src *'], 1n]) {
+            const result = read({ hostContentSecurityPolicy: value });
+            expect(Object.hasOwn(result.value!.config, 'hostContentSecurityPolicy'), String(value)).toBe(false);
+            expect(result.warnings, String(value)).toEqual([expect.stringMatching(/^\[Sandbox\] hostContentSecurityPolicy must be a string or false; .* was ignored: the host page's policy is read from the page\.$/)]);
+        }
+    });
+
+    it('is documented as read from the page, in every mode, and the schema lists it among the stored options', () => {
+        expect(CONFIG_SCHEMA.hostContentSecurityPolicy.documented).toBe('read from the page');
+        expect([...CONFIG_SCHEMA.hostContentSecurityPolicy.modes]).toEqual([...SANDBOX_MODES]);
+        expect(CONFIG_OPTIONS).toContain('hostContentSecurityPolicy');
+        expect(PARSED_APART).not.toContain('hostContentSecurityPolicy');
     });
 });
 

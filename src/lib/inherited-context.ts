@@ -89,12 +89,12 @@ export const INHERITED_CONTEXT = {
         tests: ['test/e2e/environment-check.spec.ts', 'test/unit/environment-check.test.ts', 'test/unit/environment-gate.test.ts'],
     },
     cspFetch: {
-        channel: "The host page's CSP fetch directives (`img-src`, `connect-src`, `font-src`, `media-src`, `default-src`, `frame-src`): a copy narrows `origins`",
+        channel: "The host page's CSP fetch directives (`img-src`, `connect-src`, `font-src`, `media-src`, `default-src`, `frame-src`): a copy narrows `origins`, in some engines and not in others (connect-facts.ts)",
         inheritedBy: 'every mode',
-        how: "A policy list only narrows (CSP3 intersects the lists), so an origin the host page's policy refuses is never reachable, and the sandbox's own policy is not weakened; documented under `origins` and in the host-page policy section",
-        by: ['documented'],
+        how: "`connect-src` (else `default-src`) is neutralised by the library, uniformly: every origin of `origins.connect` and `fetchBridge.allow` that a policy of the page refuses is dropped, with a warning, before the guest's and the bridge's policies are written, on every engine; a `wss://` entry is kept only beside its `https://` twin. The page's policy is the embedder's (`hostContentSecurityPolicy`) or is read once per page by one deliberate violation that reaches neither the network nor the DNS (host-csp.ts); a policy the parser does not understand admits nothing. The other fetch directives narrow in the browser, where the engine applies the inherited list, and are documented under `origins` and in the host-page policy section; a policy list only narrows (CSP3 intersects the lists), so the sandbox's own policy is never weakened",
+        by: ['refuse', 'documented'],
         engines: ALL,
-        tests: ['test/unit/host-page-policy.test.ts', 'test/unit/policy-guarantees.test.ts'],
+        tests: ['test/unit/host-connect.test.ts', 'test/unit/host-csp.test.ts', 'test/unit/connect-facts.test.ts', 'test/e2e/connect-uniform.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/unit/policy-guarantees.test.ts'],
     },
     trustedTypesRequirement: {
         channel: "The host page's `require-trusted-types-for 'script'` and its `trusted-types` names",
