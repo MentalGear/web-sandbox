@@ -164,6 +164,7 @@ test('cooperative mode: nothing the guest document or location exposes carries t
 
     // Platform limits, asserted as measured. ancestorOrigins cannot be set by a page, and a no-referrer
     // policy on the frames does not mask it in Chromium 141 or WebKit 26: the host ORIGIN shows.
+    // ledger: ancestor-origins
     const hasAncestorOrigins = browserName !== 'firefox';
     expect(r.ancestorOrigins).toEqual(hasAncestorOrigins ? ['null', ORIGIN] : null);
     expect(r.nested.baseURI).toBe('about:blank');
@@ -172,6 +173,7 @@ test('cooperative mode: nothing the guest document or location exposes carries t
     // (FrameLoader::outgoingReferrer), which is the host page, with no check for the opaque origin in
     // between: a frame the guest creates with referrerpolicy="unsafe-url" sees the host page URL minus
     // its fragment. No document or attribute the library controls changes that.
+    // ledger: referrer-of-nested-frame
     expect(r.nested.referrer).toBe(browserName === 'webkit' ? HOST_URL_WITHOUT_FRAGMENT : '');
 
     // everything else: no path, query or fragment of the host page anywhere
@@ -223,6 +225,7 @@ for (const guestMeta of [false, true]) {
         // Fetch spec says). Firefox and WebKit send the host ORIGIN on image requests whenever the policy
         // in force allows a referrer: never by default (the wrapper's no-referrer is inherited), but the
         // guest can ask for one, per request or with its own <meta>, and no document can stop that.
+        // ledger: referrer-on-requests
         const originOnImages = browserName !== 'chromium';
         expect(byKind).toEqual({
             image: originOnImages && guestMeta ? HOST_ORIGIN_REFERER : null,
@@ -324,5 +327,6 @@ test('strict mode: the worker sees only its own blob: URL; no request from the w
         await sandbox.page.evaluate(([src]) => new Promise(res => { const i = new Image(); i.referrerPolicy = 'unsafe-url'; i.onload = i.onerror = res; i.src = src!; }), [`${origin}/r?id=${id}`]);
         control[site] = (await referers([id]))[id]!;
     }
+    // ledger: referrer-on-requests
     expect(control).toEqual({ cross: browserName === 'chromium' ? HOST_URL_WITHOUT_FRAGMENT : HOST_ORIGIN_REFERER, same: HOST_URL_WITHOUT_FRAGMENT });
 });

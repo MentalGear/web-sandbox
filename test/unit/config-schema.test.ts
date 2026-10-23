@@ -327,7 +327,7 @@ describe("the config schema, which docs/API.md's Configuration table is generate
         ['autoResize', 1, 'cooperative', false, null],
         ['autoResize', true, 'worker', false, 'autoResize has no effect in worker mode'],
         ['allowAnimations', 'no', 'strict', false, 'allowAnimations must be a boolean; "no" was taken as false'],
-        ['allowAnimations', false, 'cooperative', true, '"allowAnimations" is used only in strict mode and was ignored.'],
+        ['allowAnimations', true, 'cooperative', false, '"allowAnimations" is used only in strict mode and was ignored.'],
         ['allowAutoplay', 1, 'strict', false, 'allowAutoplay must be a boolean; a value of type number was taken as false'],
         ['allowAutoplay', true, 'strict', true, null],
         ['allowAutoplay', true, 'worker', false, '"allowAutoplay" is used only in strict mode and was ignored.'],

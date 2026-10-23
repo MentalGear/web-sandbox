@@ -7,6 +7,8 @@ import { lag, oneApplyStall, quietStall, startLag } from './host-share';
  * responsive; a guest that keeps answering is never terminated; and the watchdog stops with the
  * environment it watches.
  *
+ * ledger: cooperative-thread (whether a cooperative frame shares the host's thread varies by engine and environment)
+ *
  * Where it holds: the guest must run on a different thread or process from the host, so that its loop
  * cannot block the host's timers. Worker mode is that on every browser. Cooperative mode is that only where
  * the browser runs the sandboxed frame out of process, which is browser policy rather than something the

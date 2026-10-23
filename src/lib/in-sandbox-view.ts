@@ -7,6 +7,7 @@ import { REFERENCES, VIRTUAL_DOCUMENT_URL, VIRTUAL_ROOT } from './markup-referen
 import { admits, LINK_REL_KINDS, LOAD_KINDS, type KindRule } from './load-kinds';
 import { TRUSTED_TYPES_POLICY } from './trusted-types';
 import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
+import { UNCAUGHT_CHARACTERS_PER_SECOND } from './egress';
 import { KIND_DIRECTIVES } from './csp/csp-generator';
 
 /**
@@ -1281,8 +1282,11 @@ export interface ViewOptions {
     trustedTypesPolicy: string;
     /** VIEW_WRITE_TYPES: the only types the view mints a URL for from a guest write. */
     writeTypes: readonly string[];
-    /** The guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT): longest, and most per second. */
-    guestText: { maxLength: number; perSecond: number };
+    /**
+     * The guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT): longest, and most per second; and the characters
+     * of the uncaught ones the view counts in any one second (UNCAUGHT_CHARACTERS_PER_SECOND), past which the sandbox ends.
+     */
+    guestText: { maxLength: number; perSecond: number; uncaughtCharacters: number };
     /** VIEW_STILL_STYLE: the view's stylesheet for `allowAnimations: false`. */
     stillStyle: string;
     /** VIEW_STILL_PSEUDO_ELEMENTS and VIEW_STILL_DECLARATIONS: the rules the view adds to it, where the engine supports them. */
@@ -2414,6 +2418,39 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             viewPort!.postMessage({ type, message: cutText(text, options.guestText.maxLength) });
         };
 
+        // The characters of the uncaught errors that reach this document, in any one-second window, against the budget the
+        // worker keeps of the ones it sees (egress.ts, UNCAUGHT_CHARACTERS_PER_SECOND; in-sandbox-script.ts). The worker
+        // counts what its own error event says, and WebKit mutes there the error of a revoked script or of code compiled
+        // from a string ("Script error."), so the text of such an error is counted here, where it is visible, in the same
+        // window: an error is charged by the length of its text on every engine. Past the window the view tells the host
+        // once (UNCAUGHT_PAST_BUDGET), which ends the sandbox with the reason of the worker's own count.
+        const uncaughtTimes: number[] = [];
+        const uncaughtSizes: number[] = [];
+        let uncaughtHead = 0;
+        let uncaughtTotal = 0;
+        let uncaughtPast = false;
+        const countUncaught = (characters: number) => {
+            if (uncaughtPast) return;
+            const now = performance.now();
+            while (uncaughtHead < uncaughtTimes.length && uncaughtTimes[uncaughtHead]! <= now - 1000) {
+                uncaughtTotal -= uncaughtSizes[uncaughtHead]!;
+                uncaughtHead++;
+            }
+            if (uncaughtTotal + characters <= options.guestText.uncaughtCharacters) {
+                uncaughtTimes.push(now);
+                uncaughtSizes.push(characters);
+                uncaughtTotal += characters;
+                if (uncaughtHead > 64 && uncaughtHead * 2 > uncaughtTimes.length) { // drop what left the window, now and then
+                    uncaughtTimes.splice(0, uncaughtHead);
+                    uncaughtSizes.splice(0, uncaughtHead);
+                    uncaughtHead = 0;
+                }
+                return;
+            }
+            uncaughtPast = true;
+            viewPort!.postMessage({ type: 'UNCAUGHT_PAST_BUDGET' });
+        };
+
         let sourceUrl: string | null = null;
         let started = false;
         // The build's marker (entryDoneName), whose error says the entry ran to its end; '' (a malformed INIT_VIEW)
@@ -2492,6 +2529,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             }
             error.preventDefault();
             toHostGuestText('GUEST_UNCAUGHT', message);
+            countUncaught(message.length);
         };
         worker!.postMessage({ type: 'INIT_WORKER' }, [logicPort, channel.port2]);
 
@@ -2904,7 +2942,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     writeTypes: VIEW_WRITE_TYPES,
     // the host cuts these texts to the same length again on receipt (host.ts), and dispatches at most
     // LOG_EVENTS_PER_SECOND guest lines in any one second
-    guestText: { maxLength: 2048, perSecond: LOG_EVENTS_PER_SECOND },
+    guestText: { maxLength: 2048, perSecond: LOG_EVENTS_PER_SECOND, uncaughtCharacters: UNCAUGHT_CHARACTERS_PER_SECOND },
     stillStyle: VIEW_STILL_STYLE,
     still: { pseudoElements: VIEW_STILL_PSEUDO_ELEMENTS, declarations: VIEW_STILL_DECLARATIONS },
 };

@@ -4,7 +4,7 @@
  * CHANNEL_BUDGETS) names constants by their key here: test/unit/api-docs.test.ts and test/unit/budgets.test.ts read
  * both tables against this registry, so a limit added, removed or changed shows in the docs or fails there.
  *
- * A value is imported from the module that declares it. Four live only inside a function stringified into a realm,
+ * A value is imported from the module that declares it. Some live only inside a function stringified into a realm,
  * which cannot import: their rows hold the value, and `mirror` names the constant there, which
  * test/unit/api-docs.test.ts keeps equal to it (the pattern of every constant mirrored into stringified code).
  *
@@ -56,6 +56,7 @@ export const LIMITS = {
     GUEST_CALLS_PER_SECOND: { value: GUEST_CALLS_PER_SECOND, unit: 'count', label: 'Guest calls per second, per environment (any one-second window; default of `callLimits.maxPerSecond`)', enforced: "config-schema.ts, admitGuestCall: the host, and the guest's broker by the same rule", exported: false },
     GUEST_CALL_BYTES_PER_SECOND: { value: GUEST_CALL_BYTES_PER_SECOND, unit: 'bytes', label: 'Bytes of guest calls per second, per environment (any one-second window; default of `callLimits.maxBytesPerSecond`)', enforced: "config-schema.ts, admitGuestCall: the host, and the guest's broker by the same rule", exported: false },
     DEFAULT_TIMEOUT_MS: { value: 30000, unit: 'ms', label: 'Default call timeout (ms)', enforced: 'rpc.ts, createBroker, callWithTimeout', exported: false, mirror: ['src/lib/rpc.ts', 'DEFAULT_TIMEOUT_MS'] },
+    BLOB_TYPE_MAX_LENGTH: { value: 4096, unit: 'characters', label: "Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget, on every engine)", enforced: 'structured-size.ts, the byte measure, at both ends of a message and a log line', exported: false, mirror: ['src/lib/structured-size.ts', 'BLOB_TYPE_MAX_LENGTH'] },
     MAX_NAME_LENGTH: { value: 256, unit: 'characters', label: 'Characters of a method name', enforced: RPC, exported: false, mirror: ['src/lib/rpc.ts', 'MAX_NAME_LENGTH'] },
     MAX_TEXT_LENGTH: { value: 65536, unit: 'characters', label: 'Characters of an error message a call carries', enforced: RPC, exported: false, mirror: ['src/lib/rpc.ts', 'MAX_TEXT_LENGTH'] },
     LOG_EVENTS_PER_SECOND: { value: LOG_EVENTS_PER_SECOND, unit: 'count', label: 'Guest log lines per second, per environment', enforced: 'in-sandbox-script.ts, the console relay; host.ts, the log limiter, again on receipt', exported: true },

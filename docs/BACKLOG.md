@@ -324,17 +324,18 @@ findings that leak data: the fetch bridge running in the host page's fetch envir
 same-site origins warning (BD1:NEW-1) and `allow-pointer-lock` as a safe capability (BD1:NEW-14). The board's reports and the verifiers' verdicts are kept in
 [BOARD-PASS-1-2026-10-20.md](archive/reviews/BOARD-PASS-1-2026-10-20.md); each item cites its findings by ID (`BD1:`).
 
-**Pass 2 (2026-10-21, main 6d727a8)** found confirmed findings that leak or can manipulate data (P2-NEW-1, high: a host
-`base-uri` blocks the guest document's base, cooperative mode; P2-ISO-2 with P2-NEW-2, high: host-site and listed-origin
-cookies on guest requests; P2-CHL-1, high: a re-entrant teardown leaves a guest running after `terminate()`; P2-ISO-1,
-medium: the hashed bootstrap replayed on the host page), so it was not clean either. P2-CHL-1 is fixed by
-detach-then-release (`src/lib/environment.ts`). Its docs-only and comments-only findings were fixed in their own batch (P2-DOC-1, P2-DOC-2, P2-DOC-4 to
-P2-DOC-6, P2-CHL-2's docs, P2-NEW-3, P2-NEW-6, P2-LIM-4's docs; the S82 checklist's docs items); its
-availability-only findings are backlogged: P2-CHL-2's code half in S79 (the cross-sandbox case), P2-LIM-3 in S82
+**Pass 2 (2026-10-21, main 6d727a8)** found confirmed findings that leak or can manipulate data (BD2:NEW-1, high: a host
+`base-uri` blocks the guest document's base, cooperative mode; BD2:ISO-2 with BD2:NEW-2, high: host-site and listed-origin
+cookies on guest requests; BD2:CHL-1, high: a re-entrant teardown leaves a guest running after `terminate()`; BD2:ISO-1,
+medium: the hashed bootstrap replayed on the host page), so it was not clean either. BD2:CHL-1 is fixed by
+detach-then-release (`src/lib/environment.ts`). Its docs-only and comments-only findings were fixed in their own batch (BD2:DOC-1, BD2:DOC-2, BD2:DOC-4 to
+BD2:DOC-6, BD2:CHL-2's docs, BD2:NEW-3, BD2:NEW-6, BD2:LIM-4's docs; the S82 checklist's docs items); its
+availability-only findings are backlogged: BD2:CHL-2's code half in S79 (the cross-sandbox case), BD2:LIM-3 in S82
 (a budget that counts a proxy: the fetch result's head is capped in characters, its size is measured in
 structured-clone bytes, so a head of very many small headers can make a response the bridge read in full be refused
-on its way to the guest; availability only, low). The pass 2 reports get their `BD2:` IDs when the coordinator
-registers them.
+on its way to the guest; availability only, low). The board's reports and the verifiers' verdicts are kept in
+[BOARD-PASS-2-2026-10-21.md](archive/reviews/BOARD-PASS-2-2026-10-21.md), with how each finding was resolved; each item
+cites its findings by ID (`BD2:`).
 
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
 
@@ -358,7 +359,7 @@ Structural test: a Playwright project with `channel: 'chromium'` (desktop Chromi
 `test/e2e/view-bound.spec.ts` (b) with the verdicts of the shared-thread engines. Fallback if that is not wanted: state
 the 5 s outer bound in API.md (b) and (d) and in the reasons table.
 
-**The cross-sandbox case (S74 pass 2, P2-CHL-2).** This extends the mechanism across sandboxes. Desktop Chromium
+**The cross-sandbox case (S74 pass 2, BD2:CHL-2).** This extends the mechanism across sandboxes. Desktop Chromium
 groups the sandboxed frames of the page in one process, so the view of sandbox B shares a process with the frames of
 sandbox A: a plain loop in A's cooperative guest, or one documented stall in A's strict view, stalls B's view while the
 host page keeps ticking, and B's liveness ping ends B (`the sandbox view stopped responding`); a cooperative B is
@@ -449,7 +450,7 @@ a finding").
   `Object.prototype` (affects only the guest).
 - [ ] BD1:LIM-6: no e2e covers the isolated view (S79 carries the test); the guest-controlled kinds of a rejection are
   covered (`test/e2e/error-cost-and-queued-calls.spec.ts`, `test/unit/egress.test.ts`). **[tests]**
-- [ ] P2-LIM-3 (S74 pass 2, low, availability only; the class of the byte measure, fixed for the values it counted): the
+- [ ] BD2:LIM-3 (S74 pass 2, low, availability only; the class of the byte measure, fixed for the values it counted): the
   fetch result's head is capped in characters (`MAX_RESPONSE_HEAD`), its size is measured in structured-clone bytes
   (about 40 bytes of overhead for every header pair), so a head of up to 32 768 small headers measures about 2.5 MB
   against the 1 MiB `FETCH_RESULT_OVERHEAD` that the config invariant allows. With `maxBytes` near 32 MiB the bridge reads

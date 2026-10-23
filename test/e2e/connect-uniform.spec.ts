@@ -110,6 +110,7 @@ async function guestRequests(sandbox: SandboxDriver, url: string) {
 }
 
 /** Whether the engine logs a line for the decoy though the page's policy admits it (its refused port: CONNECT_ENGINE_FACTS). */
+// ledger: connect-src
 const logsWhenAdmitted = (browserName: string) => CONNECT_ENGINE_FACTS[browserName as ConnectEngine].decoyLogsWhenAdmitted;
 
 const reached = (recorder: Recorder) => recorder.paths('allowed').map(path => path.split('?')[0]).sort();
@@ -273,6 +274,7 @@ test.describe('the parser keeps only what every engine admits', () => {
     });
 
     test("controls: the channel works, and CONNECT_ENGINE_FACTS is what each engine does with 'self' and with a host written without a scheme", async ({ sandbox, page, browserName }) => {
+        // ledger: connect-src
         const facts = CONNECT_ENGINE_FACTS[browserName as ConnectEngine];
         const named = ['https://a.example.test'];
         const other = ['https://b.example.test'];

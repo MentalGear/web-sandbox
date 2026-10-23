@@ -5,7 +5,7 @@ import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { runBootstrap } from './sandbox-environment';
 
 /**
- * The strict view's two switches, `allowAnimations` (default true) and `allowAutoplay` (default false), where the
+ * The strict view's two switches, `allowAnimations` and `allowAutoplay` (both default false), where the
  * library's own logic decides: the renderer (what a style attribute and a media element keep), the view's still
  * stylesheet (its text, and that the view puts it first and checks it is in force), and the element's configuration
  * (values, warnings, other modes, the equal-config comparison). What the browsers make of the stylesheet is in
@@ -173,10 +173,10 @@ describe('the configuration: allowAnimations and allowAutoplay', () => {
         return { el, warnings, init };
     }
 
-    it('the defaults: animations allowed, no autoplay; left out and undefined alike', async () => {
+    it('the defaults: no animations, no autoplay; left out and undefined alike', async () => {
         const { init, warnings } = await element();
-        expect(init({})).toEqual({ allowAnimations: true, allowAutoplay: false });
-        expect(init({ allowAnimations: undefined, allowAutoplay: undefined })).toEqual({ allowAnimations: true, allowAutoplay: false });
+        expect(init({})).toEqual({ allowAnimations: false, allowAutoplay: false });
+        expect(init({ allowAnimations: undefined, allowAutoplay: undefined })).toEqual({ allowAnimations: false, allowAutoplay: false });
         expect(warnings()).toEqual([]);
     });
 

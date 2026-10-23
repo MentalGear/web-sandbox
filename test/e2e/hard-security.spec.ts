@@ -71,6 +71,7 @@ test.describe('Escape attempts', () => {
         `);
         expect(await sandbox.waitForLog('PING_CLICKED')).toBe('PING_CLICKED about:srcdoc#ping');
 
+        // ledger: ping-attribute
         if (browserName === 'firefox') {
             // Firefox does not send pings by default (browser.send_pings is off): nothing to refuse. The
             // positive control below shows that it sends none to an allowed origin either.
@@ -101,6 +102,7 @@ test('positive control: the same loads to an allowlisted origin succeed and reac
     await recorder.waitFor('allowed', '/img.svg');
     await recorder.waitFor('allowed', '/track.svg');
     await recorder.waitFor('allowed', '/beacon');
+    // ledger: ping-attribute
     if (browserName === 'firefox') {
         await sandbox.page.waitForTimeout(500);
         expect(recorder.paths('allowed')).not.toContain('/ping'); // pings are off in Firefox

@@ -371,7 +371,7 @@ export const CHANNEL_BUDGETS: readonly ChannelBudget[] = Object.freeze(([
     { channel: "Strict: the guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT), to `sandbox-log`",
         surfaces: [['worker-object', 'error']],
         count: '{LOG_EVENTS_PER_SECOND} a second, counted in the view',
-        bytes: 'each cut at {VIEW_OPTIONS.guestText.maxLength} characters in the view, before it is posted',
+        bytes: 'each cut at {VIEW_OPTIONS.guestText.maxLength} characters in the view, before it is posted; each uncaught one counted whole against {UNCAUGHT_CHARACTERS_PER_SECOND} characters in any second, as the worker counts the ones it sees (WebKit mutes those of a revoked script there); past it the sandbox ends',
         time: 'none of its own: one line each',
         cost: 'none beyond the count and the bytes',
         test: 'test/unit/rpc-bounds-and-call-limits.test.ts (C-4); test/e2e/worker-port-and-view-cost.spec.ts (M-5)' },

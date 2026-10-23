@@ -69,11 +69,13 @@ test('every mode: the wrapper iframe carries the credentialless attribute, and t
         });
         expect(attribute.present, mode).toBe(true);
         // Chromium reflects it; Firefox and WebKit have no such property, and ignore the attribute
+        // ledger: cookies
         expect(attribute.reflected, `${mode} on ${browserName}`).toBe(browserName === 'chromium' ? true : undefined);
     }
 });
 
 test.describe('Chromium: no request of the sandbox carries a cookie', () => {
+    // ledger: cookies
     test.skip(({ browserName }) => browserName !== 'chromium', 'credentialless frames are a Chromium feature; the other engines are in cookie-facts.ts');
 
     test('a same-site origin is dropped in every mode, so nothing reaches it and no cookie of the host site can', async ({ sandbox, context }) => {

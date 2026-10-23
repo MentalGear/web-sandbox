@@ -77,6 +77,7 @@ test('allow-popups-to-escape-sandbox is dropped: a popup the guest opens keeps t
     const logs = await sandbox.runUntilDone(preset.aimedAt(target));
     // Chromium: the wrapper frame is credentialless, so its popups open without an opener and window.open() returns null
     // (S74); the popup is the evidence there, and is checked below
+    // ledger: popup-opener
     expect(logs.find(l => l.startsWith(browserName === 'chromium' ? 'PWN_INFO: window.open() returned no window' : 'PWN_INFO: Popup opened'))).toBeDefined();
     const popup = await popupPromise;
     await popup.waitForURL(target);

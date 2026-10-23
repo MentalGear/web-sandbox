@@ -92,7 +92,7 @@ name (the guest's own frame cannot; its `window.name` is inert).
 
 ## Configuration
 
-<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig sig:c06c5a2538da4af912d1923da001 -->
+<!-- describes: options, capabilities, api:SandboxConfig, api:SandboxConfigOptions, api:StrictSandboxConfig, api:CooperativeSandboxConfig, api:WorkerSandboxConfig sig:ddd45a2538da4af912d1923da001 -->
 [`setConfig(config)`](#setconfigconfig) takes a `SandboxConfig`, a union keyed by `mode` (`StrictSandboxConfig`,
 `CooperativeSandboxConfig`, `WorkerSandboxConfig`, each extending `SandboxConfigOptions`, the options every mode takes):
 strict mode's `origins` has no `scripts`, and a config without `mode` is a strict config (strict mode is the default).
@@ -128,7 +128,7 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 | `autoResize` | `boolean` | `false` | strict, cooperative | Only a literal `true` enables it. The element's height follows the guest's content height, from `ready` on (the guest document may still be loading then); see [Limits](#limits) for the bounds. In worker mode it does nothing, with one warning. Without it, the height is left to your CSS. |
 | `fetchBridge` | `FetchBridgeConfig` | off | all | Opens [`sandboxFetch()`](#sandboxfetch); the host decides each request, and a hidden frame with an opaque origin makes it (the target sees `Origin: null`). A config without it turns the bridge off (`sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`). [ADR-006](ADR-006-fetch-bridge.md) |
 | `callLimits` | `CallLimits` | 1000 calls and 64 MiB per second | all | The per-second budget of the calls the guest makes, per environment; see [below](#calllimits). |
-| `allowAnimations` | `boolean` | `true` | strict | Whether CSS animations and transitions run in the view. **While `true`, they run on your page's main thread wherever the browser runs the view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation), and the view's time budget does not bound them: a guest can keep your page 80–98% busy.** `false` removes them (elements show their end state). Left out or `true` keeps them; any other value turns them off, with one warning when it is not a boolean. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
+| `allowAnimations` | `boolean` | `false` | strict | Whether CSS animations and transitions run in the view. **While `true`, they run on your page's main thread wherever the browser runs the view there (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation), and the view's time budget does not bound them: a guest can keep your page 80–98% busy.** `false` removes them (elements show their end state). Only a literal `true` keeps them: left out or `false` removes them, and so does any other value, with one warning when it is not a boolean. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
 | `allowAutoplay` | `boolean` | `false` | strict | Whether `<video autoplay>` and `<audio autoplay>` in the view start on their own; while `false` the `autoplay` attribute is removed and media plays only when the user starts it. With `true`, playing media costs your page's main thread where the view shares it (measured up to +6 points for 20 looping videos), outside the time budget. Only a literal `true` enables it: left out or `false` keeps it off, and so does any other value, with one warning when it is not a boolean. Ignored with a warning in other modes. See [below](#allowanimations-and-allowautoplay). |
 | `guestWrites` | `boolean` | `false` | all | Only a literal `true` enables it. The guest's [`sandboxFiles.write()` and `remove()`](#sandboxfiles) are recorded by the element as pending changes of this environment; they reach the files only through [`commitGuestWrites()`](#commitguestwritespaths-options). See [Guest writes](#guest-writes). |
 <!-- generated:end -->
@@ -334,12 +334,12 @@ renders is work on that thread:
 
 Rendering follows script: wherever the view's script runs on your page's thread, so does its rendering.
 
-**`allowAnimations: true`, the default: CSS animations and transitions in the view run on your page's main thread
+**`allowAnimations: true`, an opt-in: CSS animations and transitions in the view run on your page's main thread
 wherever the browser runs the view there, and the view's time budget does not bound them.** A guest can keep your page
 busy for as long as they run (measured with 5 000 animated elements: 80–98% of its main thread; scroll-driven
 animations and transitions too). The budget bounds what the view does when the guest renders; an animation, once
-rendered, runs without the view doing anything. Set `false` to remove animations and transitions from the view: every
-element shows its end state, and the bound holds again. With `false` the view puts a stylesheet of its own before
+rendered, runs without the view doing anything. Left out, or `false`, the default, removes animations and transitions
+from the view: every element shows its end state, and the bound holds on every engine. With `false` the view puts a stylesheet of its own before
 anything the guest renders, one anonymous cascade layer that sets `animation` and `transition` to `none !important` on
 every element and, once the guest's CSS names it (or uses an escape or `@import`), on each pseudo-element the browser
 supports that an animation applies to (not `::first-letter`, `::first-line`, the highlight pseudo-elements or scrollbar
@@ -1312,6 +1312,7 @@ in strict mode.
 | Guest calls per second, per environment (any one-second window; default of `callLimits.maxPerSecond`) | 1000 | — |
 | Bytes of guest calls per second, per environment (any one-second window; default of `callLimits.maxBytesPerSecond`) | 67108864 (64 MiB) | — |
 | Default call timeout (ms) | 30000 | — |
+| Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget, on every engine) | 4096 | — |
 | Characters of a method name | 256 | — |
 | Characters of an error message a call carries | 65536 | — |
 | Guest log lines per second, per environment | 1000 | `LOG_EVENTS_PER_SECOND` |
@@ -1367,9 +1368,11 @@ unit plus 8, a `BigInt` its digits, any other primitive 8; a plain object, a `Ma
 an array the more of its `length` times 8 and its keys, so a sparse array of 2**32 - 1 slots is past every limit; a typed
 array or a `DataView` its whole buffer, once; a `Blob` 64 plus its `type` like a string; a `File` that plus its `name`
 like a string and 8 for `lastModified`. Any other kind (an `Error`, an `ImageData`, a `SharedArrayBuffer`) is refused as
-unsupported. The library's own walks of a delivered value follow its own keys, never an array's `length`. Chromium keeps
-a `Blob`'s `type` only up to a length its engine chooses (100 000 characters were dropped); Firefox and WebKit keep it
-whole, and the measure counts what arrives.
+unsupported. The library's own walks of a delivered value follow its own keys, never an array's `length`. A `Blob` or
+`File` whose `type` is longer than `BLOB_TYPE_MAX_LENGTH` (4096) characters is over every byte budget, on every
+engine, and is refused as one past the budget: what an engine would keep of a longer type differs (Chromium empties a
+type of 65 536 characters or more when the object is made, Firefox and WebKit keep it whole), so the limit is the
+library's, not the engine's. A type of up to 4096 characters crosses on every engine.
 
 ---
 
@@ -1398,7 +1401,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 | CSP violation reports, to `violation` | `VIOLATION_EVENT_LIMIT` (100) events an environment (strict mode: per source, and per directive for the view) | each string cut at `VIOLATION_MAX_STRING` (2048) characters before it is posted, by the bootstrap and by the view, and again by the host on receipt | none of its own: the count | none beyond the count | src/lib/in-sandbox-script.test.ts (violation reports); test/e2e/violations.spec.ts; test/unit/structural.test.ts |
 | Content heights (`autoResize`), to the frame's height | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) a second, and one a frame | a number, at most `AUTO_RESIZE_MAX_HEIGHT` (100000) px | none of its own: one relayout of the host page's frame a change | a cap: `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) relayouts of the host page's frame a second | src/lib/auto-resize.test.ts; test/e2e/auto-resize.spec.ts |
 | Liveness answers (PONG, VIEW_PONG), to the host's probes | one a probe of the host's | a number | `VIEW_LIVENESS_TIMEOUT_MS` (5000) ms for the view to answer; `EXECUTION_TIMEOUT_GRACE_MS` (1000) ms past a deadline for the worker (`workerExecutionTimeout`) | none: the library's own | src/lib/watchdog.test.ts; test/e2e/watchdog.spec.ts |
-| Strict: the guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT), to `sandbox-log` | `LOG_EVENTS_PER_SECOND` (1000) a second, counted in the view | each cut at `VIEW_OPTIONS.guestText.maxLength` (2048) characters in the view, before it is posted | none of its own: one line each | none beyond the count and the bytes | test/unit/rpc-bounds-and-call-limits.test.ts (C-4); test/e2e/worker-port-and-view-cost.spec.ts (M-5) |
+| Strict: the guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT), to `sandbox-log` | `LOG_EVENTS_PER_SECOND` (1000) a second, counted in the view | each cut at `VIEW_OPTIONS.guestText.maxLength` (2048) characters in the view, before it is posted; each uncaught one counted whole against `UNCAUGHT_CHARACTERS_PER_SECOND` (1048576) characters in any second, as the worker counts the ones it sees (WebKit mutes those of a revoked script there); past it the sandbox ends | none of its own: one line each | none beyond the count and the bytes | test/unit/rpc-bounds-and-call-limits.test.ts (C-4); test/e2e/worker-port-and-view-cost.spec.ts (M-5) |
 | Strict: the view's operations (`sandboxView.render`, `text`, `set`) | one at a time; the body holds at most `VIEW_MAX_ELEMENTS` (50000) elements, `VIEW_MAX_DEPTH` (256) deep | `VIEW_RENDER_MAX_LENGTH` (262144) characters an operation; `VIEW_RENDER_CHARACTERS_PER_SECOND` (1048576) a second; `VIEW_MAX_CHARACTERS` (1048576) in the body | `VIEW_APPLY_MS_PER_SECOND` (200) ms a second on average, each operation charged in full; the second operation past `VIEW_MAX_OPERATION_MS` (2000) ms within `VIEW_OVERRUN_WINDOW_MS` (300000) ms ends the sandbox | a share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/view-bound.spec.ts; test/e2e/view-budget.spec.ts; test/unit/view-budget.prop.test.ts |
 | Strict: the view's loads (URL attributes, CSS, and what the browser reports) | `VIEW_URLS_PER_SECOND` (200) a second, each charged before it can start; `VIEW_MAX_URLS` (1000) URL attributes in the body; `VIEW_MAX_DISTINCT_URLS` (10000) distinct URLs over the view's life | what the policy's origins serve: no budget of the library's | none of its own: the rate | a rate: at most `VIEW_URLS_PER_SECOND` (200) loads a second; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/worker-port-and-view-cost.spec.ts (M-2); test/e2e/strict-view-budget.spec.ts; test/unit/view-css-loads.test.ts; test/unit/view-budget.prop.test.ts |
 | Strict: the view's events, to the guest's `sandboxView.on` handlers | as the user raises them, of the types a handler listens to; `VIEW_EVENT_LIMITS.maxIds` (32) ids and `VIEW_EVENT_LIMITS.maxFields` (1000) form fields a detail | each string cut at `VIEW_EVENT_LIMITS.maxString` (65536) characters, all of one detail at `VIEW_EVENT_LIMITS.maxTotal` (262144) | none of its own: the user's input | none beyond the user's own input | test/e2e/strict-events.spec.ts |
@@ -1410,7 +1413,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 counts and bytes above bound); and where the view shares the host page's thread it cannot run during a stall of the view
 ([(b)](#b-the-single-operation-bound)).
 
-<!-- describes: budgets sig:6872 -->
+<!-- describes: budgets sig:8d3f -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
 shared 4-core VM, 2026-10-19 ([R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
 of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;
@@ -1570,7 +1573,7 @@ This list is closed: a cost of the view not listed here and not inside (a) or (b
 
 | What | Magnitude, measured | Source |
 | :--- | :--- | :--- |
-| CSS animations and transitions while `allowAnimations: true` (the default), and while they run | 5 000 animated elements: 81–92% busy (Firefox 21–89% by property); transitions 75–87%; scroll-driven animations 47–92%. `false` brings every vector back to idle. | [research 16](research/16_view_isolation/README.md#what-keeps-a-shared-thread-busy); [`allowAnimations`](#allowanimations-and-allowautoplay) |
+| CSS animations and transitions while `allowAnimations: true` (an opt-in), and while they run | 5 000 animated elements: 81–92% busy (Firefox 21–89% by property); transitions 75–87%; scroll-driven animations 47–92%. `false` brings every vector back to idle. | [research 16](research/16_view_isolation/README.md#what-keeps-a-shared-thread-busy); [`allowAnimations`](#allowanimations-and-allowautoplay) |
 | What else runs on its own, which `allowAnimations: false` does not stop: animated images, indeterminate `<progress>`, autoplaying media with `allowAutoplay: true` | 2 000 animated PNGs: WebKit 39% (+22 points), Firefox 12%; 5 000 `<progress>`: up to +4 points; 20 looping videos: up to +6 points | research 16 |
 | Relayout after image decodes or font swaps: the browser's work after the frame the meter measured; only the load rate and the caps of (c) bound it | One render of 1 000 admitted images without dimensions above 15 000 paragraphs, the responses spread over 2 s, so that each arrival lays the paragraphs out again: over the 3 s after it, Chromium 40%, Firefox 22%, WebKit 37% busy, longest gap 226, 55 and 289 ms (the loads themselves included; (a)'s flood of images with dimensions, 3–8%). One `@font-face` swap over 15 000 paragraphs: 2%, 5% and 23% busy over the 3 s around it, longest gap 31, 54 and 214 ms. | [review round 5](archive/reviews/REVIEW-ROUND-5-2026-10-19.md), "What remains"; `test/e2e/view-bound.spec.ts` (d), on demand |
 | The documented single-operation stalls, each one operation's own cost: CSS filters, bidirectional text, small CSS changes over many elements, selectors whose matching grows faster than the elements, `<img>` in Chromium, and WebKit's first value of a 250 000-character textarea | 10 `blur()`s on 1 000 elements: WebKit 3.7 s (100 on 1 000: over 180 s); 240 000 characters of bidirectional text in one paragraph: tens of seconds in Chromium and WebKit; a 31-character `text()` into a `<style>` over 46 000 elements: Firefox 7 s; a rule whose `:has()` looks at every later sibling, over 24 000 elements: Chromium 4.2 s, Firefox 8.9–9.2 s, WebKit 7.1–8.6 s; 6 500 `<img alt>`: Chromium 1.9–2.6 s, Firefox and WebKit about 150 ms (an example, measured 2026-10-18); the first `set()` of a 250 000-character textarea: WebKit over 2 s, an overrun the sandbox survives. Past `VIEW_MAX_OPERATION_MS` each is an overrun, after the stall: charged in full, and the second within `VIEW_OVERRUN_WINDOW_MS` ends the sandbox ((b)). | [broad review](archive/reviews/BROAD-REVIEW-2026-10-14.md), review rounds [1](archive/reviews/REVIEW-ROUND-1-2026-10-15.md), [4](archive/reviews/REVIEW-ROUND-4-2026-10-18.md) and [5](archive/reviews/REVIEW-ROUND-5-2026-10-19.md) |
@@ -1595,7 +1598,7 @@ policy must allow:
 | :--- | :--- | :--- | :--- |
 | `script-src` | the view bootstrap's hash, `'sha256-…'` (below), or `'unsafe-inline'`; `'unsafe-eval'` for `execute()` | `'unsafe-inline'` (the bootstrap and the guest's inline scripts; its hash changes with every build), plus what the guest loads | `'unsafe-inline'`, `'unsafe-eval'` for `execute()` |
 | `worker-src` (or `script-src` without it) | `blob:` | — (`blob:` for workers the guest makes) | `blob:` |
-| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; with `allowAnimations: false`, also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
+| `style-src` | `'unsafe-inline'`, or the wrapper style's hash `'sha256-jKvfmEYIGlm8DGk4pp05gJ0MwYdTY+NU6tSvyPZyDow='`; while `allowAnimations` is `false` (the default), also the view's animation stylesheet's hash `'sha256-+xgty2clGX4Uw4d4EP9TmDH+dSL1A5dfieXcAO96Zec='`; `'unsafe-inline'` for the guest's own inline styles | the same (no animation stylesheet) | the same (no animation stylesheet) |
 | `img-src`, `media-src`, `font-src`, `connect-src` | `blob:` for registered files of that kind; every origin in `origins` (in `connect-src`, named by scheme and host, not `'self'`: [below](#your-connect-src)) | the same | the same |
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
 | `base-uri` | `about:` (for example `base-uri 'self' about:`), or omit the directive: the wrapper sets `<base href="about:blank">` so the guest never sees your page's URL, and a policy that refuses it (`'self'`, `'none'`) ends the build, because every bootstrap first checks its document's base URL | the same | the same |
@@ -1612,7 +1615,7 @@ policy must allow:
   ends the build with the startup reason above. A bridge frame that fails to start alone (its script refused while the
   sandbox runs) leaves the sandbox running and fails the bridge closed: every `sandboxFetch()` rejects with `FETCH_FAILED`,
   each `fetch` record is `refused` with a `reason` that names the hash, and the element warns once. A refused wrapper style leaves the frame 150 px
-  high, and the element warns with the hash to allow; so does a refused animation stylesheet (`allowAnimations: false`),
+  high, and the element warns with the hash to allow; so does a refused animation stylesheet (`allowAnimations` `false`, the default),
   whose view then shows no guest stylesheet.
 - **Cooperative and worker mode need `'unsafe-inline'` in your page's `script-src`**, and that has a price. Their
   bootstrap is inline and its hash changes with every build, so no hash or nonce can name it. Next to a hash or a nonce a

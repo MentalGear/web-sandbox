@@ -81,15 +81,23 @@ const animationsInView = (page: Page, browserName: string) =>
     inView<string[]>(page, browserName, `document.getAnimations().map(a => (a.constructor.name) + ' ' + (a.animationName || a.transitionProperty || '') + ' ' + ((a.effect && a.effect.target && (a.effect.target.className && a.effect.target.className.baseVal !== undefined ? a.effect.target.localName : a.effect.target.className || a.effect.target.localName)) || '') + (a.effect && a.effect.pseudoElement ? a.effect.pseudoElement : ''))`);
 
 test.describe('allowAnimations', () => {
-    test('positive control, the default (true): the vectors animate in the view', async ({ sandbox, page, browserName }) => {
+    test('the default (false): no animation and no transition runs in the view', async ({ sandbox, page, browserName }) => {
         await mountVectors(sandbox, {});
+        await waitInView(page, browserName, `document.querySelectorAll('.linked, .imported').length === 2`, 10000);
+        await page.waitForTimeout(500); // the registered stylesheets load
+        expect(await animationsInView(page, browserName)).toEqual([]);
+        expect(await inView(page, browserName, `document.head.firstElementChild.localName + ' ' + document.head.firstElementChild.textContent.slice(0, 7)`)).toBe('style @layer{');
+    });
+
+    test('positive control, true: the vectors animate in the view', async ({ sandbox, page, browserName }) => {
+        await mountVectors(sandbox, { allowAnimations: true });
         // The linked stylesheet (and the one it @imports) loads after the markup: the elements are there, and the inline
         // vectors already animate (21 of the 23), while the sheets' animations are not yet. So wait for what is asserted
         // below, the animations of the linked and of the imported element, not for their elements and a count that the
         // inline vectors reach alone.
         await waitInView(page, browserName, `document.querySelectorAll('.linked, .imported').length === 2 && document.getAnimations().length > 16 && ['linked', 'imported'].every(name => document.getAnimations().some(a => a.effect && a.effect.target && a.effect.target.className === name))`, 10000);
         const running = await animationsInView(page, browserName) as string[];
-        console.log(`MEASURED ${browserName} allowAnimations default: ${running.length} animations: ${running.join(', ')}`);
+        console.log(`MEASURED ${browserName} allowAnimations true: ${running.length} animations: ${running.join(', ')}`);
         for (const expected of ['unlayered', 'named', 'anonymous', 'linked', 'imported', 'property', 'scrolled', '::before', '::after', '::marker', 'rect', 'circle', ' mi']) {
             expect(running.some(entry => entry.includes(expected)), expected).toBe(true);
         }
@@ -113,7 +121,7 @@ test.describe('allowAnimations', () => {
         expect(await inView(page, browserName, `document.head.firstElementChild.localName + ' ' + document.head.firstElementChild.textContent.slice(0, 7)`)).toBe('style @layer{');
     });
 
-    test("5000 animated elements: false leaves the host page its ticks; the default takes them where the view shares the host page's thread", async ({ sandbox, page, browserName }) => {
+    test("5000 animated elements: false leaves the host page its ticks; true takes them where the view shares the host page's thread", async ({ sandbox, page, browserName }) => {
         test.setTimeout(90000);
         const entry = `sandboxView.render('<style>${SPIN} i { display: block; height: 1px; animation: spin 1s infinite alternate }</style>' + '<i></i>'.repeat(5000));`;
         await sandbox.registerFiles({ 'main.js': entry });
@@ -142,6 +150,7 @@ test.describe('allowAnimations', () => {
         test.setTimeout(90000);
         // the animation name the parts compute to, where the engine computes style for them
         const COMPUTED_PARTS: Record<string, [string, string][]> = {
+            // ledger: form-control-parts
             chromium: [['file', '::file-selector-button']],
             firefox: [['file', '::file-selector-button'], ['range', '::-moz-range-thumb']],
             webkit: [],
@@ -174,6 +183,7 @@ test.describe('allowAnimations', () => {
             await page.waitForTimeout(1000);
             if (!allowAnimations) busyFalse = (await loadedShare(page, idle, ANIMATED)).busy;
             computed[String(allowAnimations)] = await partAnimations() as string[];
+            // ledger: form-control-parts
             if (browserName === 'webkit') distinct[String(allowAnimations)] = await pictures();
         }
         console.log(`MEASURED ${browserName} 300 animated form-control parts: busy share against ${idle.count} idle ticks per ${idle.ms} ms, allowAnimations false ${Math.round(busyFalse * 100)}%; computed animation names false ${JSON.stringify(computed.false)}, true ${JSON.stringify(computed.true)}`
@@ -181,6 +191,7 @@ test.describe('allowAnimations', () => {
         // the guarantee
         expect(busyFalse).toBeLessThanOrEqual(MARGIN); // docs/API.md: false brings every vector back to idle
         // the positive control (true), and the same signal with false
+        // ledger: form-control-parts
         if (browserName === 'webkit') {
             expect(distinct.true, 'positive control: the parts animate with true').toBeGreaterThan(1);
             expect(distinct.false).toBe(1);

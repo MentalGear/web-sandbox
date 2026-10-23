@@ -53,6 +53,7 @@ test("the host page's cache-first Service Worker never answers a bridge request:
     try {
         // positive control: where the worker controls the page, the host page's own request is answered from the cache
         const own = await page.evaluate(async (url) => (await fetch(url)).text(), url);
+        // ledger: service-worker-control
         if (browserName === 'firefox') {
             // Playwright's Firefox: the worker never controls the harness, so the control shows nothing either way
             test.info().annotations.push({ type: 'limit', description: `Firefox: Service Worker controlling the harness: ${controlled}` });
