@@ -2,7 +2,7 @@ import { ENVIRONMENT_EXPECTED, type EnvironmentCheckId } from '@src/lib/environm
 
 /**
  * The environment a library bootstrap finds in a sandbox document (src/lib/environment-check.ts), for a unit test that
- * runs a bootstrap's text in jsdom: the origin, URL and base URL the library built its documents with. jsdom loads no
+ * runs a bootstrap's text in jsdom: the origin, URL and base URL the library built its documents with, and not cross-origin isolated (the `isolated` row reads `'true'` to make it so). jsdom loads no
  * srcdoc document, so a test that runs a bootstrap runs it here; a test of one row gives that row another value.
  *
  * jsdom's window is its own parent, and a bootstrap posts nothing to the window it runs in, so a test that listens for
@@ -48,6 +48,7 @@ export function inSandboxDocument<T>(run: (record: SandboxEnvironmentRecord) => 
     };
     define(globalThis, 'origin', { value: expected.origin });
     define(globalThis, 'location', { value: { href: expected.url } });
+    define(globalThis, 'crossOriginIsolated', { value: expected.isolated === 'true' });
     define(document, 'baseURI', { get: () => expected.base });
     if (options.captureRefusals) define(globalThis, 'parent', { value: { ...hostVia('parent'), parent: hostVia('parent.parent') } });
     if (options.currentScript) define(document, 'currentScript', { get: () => options.currentScript });
