@@ -25,6 +25,7 @@ The security review reports, newest last. Each finding has an anchor, and a pref
 | [Review round 4](reviews/REVIEW-ROUND-4-2026-10-18.md) | `R4:` | The worker's only way out, values read once, the view's URL budget |
 | [Review round 5](reviews/REVIEW-ROUND-5-2026-10-19.md) | `R5:` | The recurring classes behind the findings |
 | [S74 review board, pass 1](reviews/BOARD-PASS-1-2026-10-20.md) | `BD1:` | Six reviewers (isolation, channels, limits, docs, tests, a newcomer) and three verifiers: 4 confirmed high; the owner's decision, 2026-10-21: fix what leaks data, backlog the rest (S77 to S82) |
+| [S74 review board, pass 2](reviews/BOARD-PASS-2-2026-10-21.md) | `BD2:` | Six reviewers and three verifiers on the pass 1 fixes: not clean (BD2:NEW-1, BD2:ISO-2 with BD2:NEW-2 and BD2:CHL-1 high, BD2:ISO-1 medium), so 0 of 2 clean passes; the fixes, and the class review of both passes |
 
 ## Renamed test files
 
