@@ -218,6 +218,8 @@ describe('a property per rule', () => {
 const origins = (connect: string[]): OriginPolicy => parseOrigins({ connect, images: ['https://img.example'] }, 'cooperative', () => {});
 const bridge = (allow: string[]): FetchPolicy => toFetchPolicy({ allow }, () => {})!;
 
+const warning0 = (result: { warnings: string[] }) => result.warnings[0] ?? '';
+
 describe("narrowToHostPolicy: the lists as configured, less what the page's policy refuses", () => {
     const run = (connect: string[], allow: string[] | null, policy: string) => {
         const warnings: string[] = [];
@@ -257,8 +259,12 @@ describe("narrowToHostPolicy: the lists as configured, less what the page's poli
         expect(narrowToHostPolicy(NO_ORIGINS, null, parseHostPolicies("connect-src 'none'"), () => { throw new Error('no warning'); })).toEqual({ origins: NO_ORIGINS, fetchPolicy: null });
     });
 
-    it("'self' alone drops every origin, the page's own included; naming the origin keeps it", () => {
-        expect(run(['https://app.example', 'https://api.example'], null, "connect-src 'self'").origins.connect).toEqual([]);
+    it("'self' alone drops every origin, the page's own included, and the warning tells the embedder to list the origin; naming the origin keeps it", () => {
+        const dropped = run(['https://app.example', 'https://api.example'], ['https://app.example'], "connect-src 'self'");
+        expect(dropped.origins.connect).toEqual([]);
+        expect(dropped.warnings).toHaveLength(2);
+        for (const warning of dropped.warnings) expect(warning).toContain("Your policy names 'self'");
+        expect(warning0(run(['https://api.example'], null, 'connect-src https://other.example'))).not.toContain("'self'");
         expect(run(['https://app.example', 'https://api.example'], null, "connect-src 'self' https://app.example").origins.connect).toEqual(['https://app.example']);
     });
 

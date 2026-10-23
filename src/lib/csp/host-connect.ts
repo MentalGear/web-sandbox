@@ -287,7 +287,8 @@ export function narrowToHostPolicy(origins: OriginPolicy, fetchPolicy: FetchPoli
     if (policies.length === 0) return { origins, fetchPolicy };
     const refused = (entries: readonly Origin[]) => entries.filter(entry => !hostAdmits(policies, entry));
     const because = "the host page's Content-Security-Policy does not admit it in connect-src (or default-src), and the sandbox's frames inherit that policy; the library applies it in every engine";
-    const advice = "Allow the origin in your page's policy by its scheme and host (not 'self'), or pass hostContentSecurityPolicy (docs/API.md#host-page-policy).";
+    const names = policies.some(policy => policy.restricts && policy.sources.some(source => sourceKind(source) === 'self'));
+    const advice = `Allow the origin in your page's policy by its scheme and host, or pass hostContentSecurityPolicy (docs/API.md#your-connect-src).${names ? " Your policy names 'self', which engines bind differently in a sandbox document (one admits origins it does not name), so it admits nothing here: list the origin explicitly." : ''}`;
 
     let nextOrigins = origins;
     const noConnect = refused(origins.connect);
