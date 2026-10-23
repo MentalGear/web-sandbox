@@ -269,8 +269,9 @@ describe('docs/API.md lists the public surface', () => {
         for (const file of files) {
             const source = read(file);
             // published with the captured defineProperty (R2:C-1): `publish('x', …)` or `defineOwn(g, 'x', { value: … })`,
-            // but for the guard that replaces fetch and the inert window.name, which are no globals of the library's
-            for (const match of source.matchAll(/(?:\bpublish\(|defineOwn\(g, )'([A-Za-z]\w*)', (?!\{ get:|\{ value: guardedFetch)/g)) installed.push(match[1]!);
+            // but for the inert window.name, which is no global of the library's (the request gate replaces the platform's
+            // fetch, XMLHttpRequest and WebSocket through replaceGlobal, and adds none)
+            for (const match of source.matchAll(/(?:\bpublish\(|defineOwn\(g, )'([A-Za-z]\w*)', (?!\{ get:)/g)) installed.push(match[1]!);
             for (const match of source.matchAll(/remove\((?:g|\w+Statics), '(\w+)'\)/g)) removed.push(match[1]!);
             const peer = source.match(/PEER_CONNECTION_CONSTRUCTORS = \['(\w+)'/);
             if (peer) removed.push(peer[1]!);

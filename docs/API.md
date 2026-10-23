@@ -145,7 +145,7 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 
 | Kind | Directive | What loads from it |
 | :--- | :--- | :--- |
-| `connect` | `connect-src` | `fetch()`, `XMLHttpRequest`, `WebSocket` (it needs its own `wss://` entry). In cooperative mode also `EventSource` and `sendBeacon()`; the worker of strict and worker mode has neither. |
+| `connect` | `connect-src` | `fetch()`, `XMLHttpRequest`, `WebSocket` (it needs its own `wss://` entry), each through the library's [request gate](#the-request-gate). In cooperative mode also `EventSource` and `sendBeacon()`, which the browser's policy alone governs; the worker of strict and worker mode has neither. |
 | `images` | `img-src` | Images, CSS backgrounds, icons. |
 | `styles` | `style-src` | Stylesheets: `<link rel=stylesheet>`, `@import`. Inline styles are always allowed. |
 | `fonts` | `font-src` | `@font-face` fonts. |
@@ -164,6 +164,26 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   warning unless `https://api.example.com` (the same host and port) is listed too; with both, `fetch()` and `WebSocket`
   reach the host. It is the same on every engine: they disagree on a `wss://` source alone (see
   [the engines](#connect-src-by-engine)), so the library lists only the pairs they agree on.
+- <a id="the-request-gate"></a>**The request gate: `fetch()`, `XMLHttpRequest` and `WebSocket` behave and report the same on
+  every engine.** In every mode the guest's three request makers are the library's, put in its realm before any guest
+  code runs. Each request's URL is resolved as the browser resolves it and admitted only when its scheme, host and port
+  are exactly those of a `connect-src` source of the guest policy (the `connect` origins as kept, and `blob:` when files
+  are registered), which is the list the policy is written from. A refused request never reaches the browser: `fetch()`
+  rejects with a `TypeError`, an `XMLHttpRequest` fails as a network error does (`loadstart`, then `readystatechange`,
+  `error` and `loadend` with `readyState` 4 and `status` 0; a synchronous `send()` throws a `NetworkError`), and
+  `new WebSocket()` throws a `SecurityError`, each with the library's own message. The library reports each one itself, as
+  a [`violation`](#violation--sandboxviolation): `directive` `'connect-src'`, `blockedURI` the URL without credentials
+  or fragment, `sourceFile` `'web-sandbox:request-gate'`, no line or column, and in strict mode `source` `'logic'`. So a
+  refusal is reported on WebKit too, which raises no report in a worker. The browser's policy stays in force underneath:
+  a redirect to an origin it refuses is refused and reported by the browser, per engine. The guest cannot reach the
+  browser's own `fetch`, `XMLHttpRequest` or `WebSocket` (not through a prototype, a `constructor`, `Function` or a frame
+  it creates); a frame or a worker it creates is a realm of its own, with the browser's request makers under the same
+  policy, and reports nothing here.
+- **`fetch()` and `XMLHttpRequest` send no credentials, on any engine.** Every `fetch()` is made with
+  `credentials: 'omit'`, whatever the guest asks for, and `withCredentials` stays `false`. A `WebSocket` handshake cannot
+  be stripped: it carries the cookies the engine attaches ([table below](#cookies-by-engine)), and so does a load of the
+  guest's markup or CSS. A server behind a listed `wss://` origin must check the `Origin` header (a sandbox sends
+  `null`), as any WebSocket server must.
 - **The host page's `connect-src` narrows `connect` and the bridge's `allow` on every engine.** The library applies your
   page's policy to the two lists itself, before it writes the guest's and the bridge's policies: an origin your
   `connect-src` (or `default-src`) does not admit is dropped with a warning. See
@@ -172,8 +192,9 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
   narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
 - **An origin on the host page's site is dropped in every mode**, with one warning per kind that names the kind and each
-  such origin. A request of the sandbox to it can carry the host site's cookies, as the [table below](#cookies-by-engine)
-  says, so use [`fetchBridge`](#fetchbridge) for an API that knows the user: it sends no credentials in any engine.
+  such origin. A WebSocket handshake or a load of the guest's markup or CSS to it can carry the host site's cookies, as
+  the [table below](#cookies-by-engine) says, so use [`fetchBridge`](#fetchbridge) for an API that knows the user: it
+  sends no credentials in any engine.
 - **The host page's site is the browser's registrable domain of the page's host**: `example.com` for `app.example.com`,
   `example.co.uk` for `www.example.co.uk`, and `user.github.io` for itself. On it are the host page's own origin on any
   scheme or port, its subdomains, its parents down to that domain and its siblings (`api.example.com` for a page on
@@ -193,15 +214,17 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   only resolves to a private address, and is not private by convention, is not recognised.
 
 <a id="cookies-by-engine"></a>
-The cookies the browser would send with a request of the sandbox, by engine (why an origin on the host page's site is
-dropped; the warning is written from the same table; every wrapper frame is `credentialless`, which only some engines honour):
+The cookies the browser would send with a request of the sandbox that the library cannot strip, by engine: a WebSocket
+handshake, and a load of the guest's markup or CSS (`fetch()` and `XMLHttpRequest` carry none; this is why an origin on
+the host page's site is dropped; the warning is written from the same table; every wrapper frame is `credentialless`,
+which only some engines honour):
 
 <!-- generated:begin cookie-facts -->
 | Engine | To an origin on the host page's site | To an origin on another site | Narrower with | Found by |
 | :--- | :--- | :--- | :--- | :--- |
 | Chromium (the sandbox's frame is credentialless) | none | none | — | test/e2e/cookies.spec.ts: a listener of the same site and one of another, fetch with credentials, a no-cors POST and an image, in every mode; the same requests from a frame without the attribute carry the cookie |
-| Firefox | `SameSite=None` | `SameSite=None` | Total Cookie Protection, Firefox's default: none to the host page's site, none to another | S74 board, 2026-10-21, Playwright's Firefox (cookieBehavior 4): a SameSite=None cookie in every mode, Lax and Strict none; with cookieBehavior 5 none |
-| WebKit | `SameSite=None, Lax and Strict` | `SameSite=None` | Safari, which blocks third-party cookies (not measured): `SameSite=None, Lax and Strict` to the host page's site, none to another | S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode |
+| Firefox | `SameSite=None` | `SameSite=None` | Total Cookie Protection, Firefox's default: none to the host page's site, none to another | S74 board, 2026-10-21, Playwright's Firefox (cookieBehavior 4): a SameSite=None cookie in every mode, Lax and Strict none; with cookieBehavior 5 none. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23 |
+| WebKit | `SameSite=None, Lax and Strict` | `SameSite=None` | Safari, which blocks third-party cookies (not measured): `SameSite=None, Lax and Strict` to the host page's site, none to another | S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23 |
 <!-- generated:end -->
 
 - **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used.
@@ -768,18 +791,23 @@ The `detail` of a `violation` event: the guest's policy refused a load. Guest-su
 trusted.
 
 A report is evidence that the guest attempted something the policy refused, never a host fact: guest code can suppress
-its own reports, a frame the guest creates reports to itself, and worker reports depend on the engine (WebKit raises
-none in workers). At most `VIOLATION_EVENT_LIMIT` events per environment; in strict mode per `source`, and for the
-view per directive, so refused loads of one kind never hide a report of another. See [ADR-005](ADR-005-strict-mode.md).
+its own reports, and a frame the guest creates reports to itself. A `fetch()`, `XMLHttpRequest` or `WebSocket` request
+of the guest's realm to an origin `origins.connect` does not list is refused by the library's request gate before the
+browser sees it, and reported by the gate in every mode and on every engine, with the same fields: `directive`
+`'connect-src'`, `blockedURI` the URL without credentials or fragment, `sourceFile` `'web-sandbox:request-gate'`, no
+line or column (in strict mode `source` `'logic'`). Reports the browser raises itself depend on the engine in workers
+(WebKit raises none there), so what remains of them there, such as a redirect the browser refuses, is per engine. At
+most `VIOLATION_EVENT_LIMIT` events per environment; in strict mode per `source`, and for the view per directive,
+so refused loads of one kind never hide a report of another. See [ADR-005](ADR-005-strict-mode.md).
 
 | Field | Type | Meaning |
 | :--- | :--- | :--- |
 | `directive` | `string` | The effective directive that refused the load, e.g. `'connect-src'` or `'img-src'`. |
 | `blockedURI` | `string` | What was refused: a URL (possibly reduced to its origin by the browser; a `data:` or `blob:` URL is reported by its scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
-| `sourceFile` | `string?` | Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like). At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
+| `sourceFile` | `string?` | Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like), or `'web-sandbox:request-gate'` for a request the library's request gate refused. At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
 | `lineNumber` | `number?` | The line of the refused code, a positive integer, when the browser gives one. |
 | `columnNumber` | `number?` | The column of the refused code, a positive integer, when the browser gives one. |
-| `source` | `'view' \| 'logic'?` | Strict mode only ([ADR-005](ADR-005-strict-mode.md)): which document's report this is, set by the element from the port it arrived on, never read from the report. `'view'` is the view document, which runs no guest code, so its reports are the library's own and complete up to the cap. `'logic'` is the worker, whose reports guest code can forge or suppress like any cooperative-mode report, and which depend on the engine (WebKit raises none in workers; Firefox raises the worker's `importScripts()` refusals in the view, so those arrive as `'view'`). |
+| `source` | `'view' \| 'logic'?` | Strict mode only ([ADR-005](ADR-005-strict-mode.md)): which document's report this is, set by the element from the port it arrived on, never read from the report. `'view'` is the view document, which runs no guest code, so its reports are the library's own and complete up to the cap. `'logic'` is the worker: the request gate's reports, the same on every engine, and the browser's own worker reports, which guest code can forge or suppress like any cooperative-mode report and which depend on the engine (WebKit raises none in workers). |
 <!-- generated:end -->
 
 ### `fetch` — `FetchRecord`
@@ -1002,7 +1030,7 @@ In the guest, the codes other than `NOT_FOUND` come from the element through the
 
 ## Guest globals
 
-<!-- describes: worker-globals sig:389e -->
+<!-- describes: worker-globals sig:bb00 -->
 What guest code can use, by mode. Everything here is installed by the library's bootstrap before any guest code
 runs; in cooperative mode that needs `allow-scripts` (the policy always admits it).
 
@@ -1021,9 +1049,10 @@ runs no guest code at all, and acts only on trusted events: a synthetic event is
 
 **The worker's globals are an allowlist** (worker and strict mode): before anything else runs in it, the worker keeps
 only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WORKER_NAVIGATOR_MEMBERS` for
-`navigator`) and deletes every other one, so a platform API that is not listed is absent. Four listed globals can make
-a request, each governed by the policy on every engine: `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`) and
-`importScripts` (`script-src`). Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
+`navigator`) and deletes every other one, so a platform API that is not listed is absent. The listed globals that can
+make a request are `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`), which are the library's
+[request gate](#the-request-gate) in every mode, and in worker mode `importScripts` (`script-src`). Strict mode's worker
+has no `importScripts`: its policy's `script-src` is the view's hash, so it could never load anything. Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
 encoding, streams, `crypto`, `Blob`, `File`, `URL`, IndexedDB, `OffscreenCanvas` with 2D and WebGL, WebCodecs,
 `performance`, `scheduler`, `BroadcastChannel`. Absent: `EventSource`, `WebTransport`, `WebSocketStream`, `FontFace`
 and `fonts`, `caches`, `Notification`, `Worker` and `SharedWorker` (no nested workers), the Service Worker, Push, RTC,
@@ -1261,8 +1290,7 @@ a mode. [ADR-005](ADR-005-strict-mode.md)
 (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation; desktop Chromium 127+ runs it in a
 process apart from the page's, which the page's other sandboxes can share): there the view's cost is the bound stated in [The view's cost to the host page](#the-views-cost-to-the-host-page),
 and what it lists as outside it. Cooperative mode is no better there. Also
-CSS within what the policy allows, the worker's `violation` reports (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the host site's
-cookies on requests to a same-site origin in some engines (no mode admits one, so none is sent; [by engine](#cookies-by-engine)).
+CSS within what the policy allows, the worker's own `violation` reports beyond the [request gate's](#the-request-gate) (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the cookies a WebSocket handshake or a rendered load carries in some engines (none to a same-site origin, which no mode admits; [by engine](#cookies-by-engine)).
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;

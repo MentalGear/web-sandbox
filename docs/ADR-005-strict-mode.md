@@ -123,7 +123,8 @@ creates the render port, spawns the worker from a `blob:` URL (`worker-src blob:
   guest's refused loads of one kind cannot hide a report of another; the buckets are the known directive names plus one,
   which bounds the view's events). The view's reports include refusals of the guest's own rendered markup, so a guest that
   renders 100 refused loads uses up the cap for that directive in the environment. Worker reports (`source: 'logic'`) are
-  forgeable like any cooperative-mode report and per engine.
+  the request gate's (below), the same on every engine, and the browser's own, forgeable like any cooperative-mode report
+  and per engine.
 - **The view renders no `blob:` content but registered files and raster-image guest writes, decoded only** (A8). The worker
   cannot mint URLs (its prelude removes `URL.createObjectURL`), the worker's own source URL is revoked once its script ran
   (below), and the renderer removes every attribute that names a `blob:` URL the view did not mint
@@ -272,9 +273,11 @@ refused if it contains any, or anything that would end or re-enter the script el
 The worker keeps only the globals of `WORKER_GLOBALS` and the navigator members of `WORKER_NAVIGATOR_MEMBERS`
 (`src/lib/worker-globals.ts`). Its first statement, in strict mode and in worker mode (`keepOnlyWorkerGlobals`), deletes
 every other name from the global object and from its scope prototypes (where the engines keep `fetch`, `fonts`, `caches`,
-`importScripts`, …), before the library's scripts and any guest code. Four listed globals can make a request — `fetch`,
-`XMLHttpRequest`, `WebSocket` (`connect-src`) and `importScripts` (`script-src`) — each measured as governed on all three
-engines; the rest of the list makes none (the language, timers, events, encoding, streams, crypto, blobs and URLs,
+`importScripts`, …), before the library's scripts and any guest code. Three listed globals can make a request in strict
+mode's worker — `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`) — each measured as governed on all three engines,
+and each then replaced by the bootstrap's request gate (below); worker mode's also keeps `importScripts` (`script-src`),
+which strict mode's never has (`STRICT_WORKER_GLOBALS`): its `script-src` is the view's hash, so `importScripts()` could
+load nothing. The rest of the list makes none (the language, timers, events, encoding, streams, crypto, blobs and URLs,
 IndexedDB, OffscreenCanvas, WebCodecs). A denylist would have to know every engine's gaps and every future API: in Firefox,
 `new EventSource(url)` from a worker reached an origin `connect-src` blocks, and `new FontFace(name, 'url(…)')` one
 `font-src` blocks, with no violation, while `fetch` and the rest were refused. So G4 reads: **the worker requests only
@@ -283,6 +286,19 @@ added later must be measured the same way first. A name off the list that cannot
 channel exists (fails closed); WebIDL constants, primitives, are left. Worker mode thereby loses nested workers too.
 Residual: in cooperative mode the guest can still create a worker of its own, and in Firefox its EventSource and FontFace
 pass (the S13 class: a realm of its own).
+
+### The request gate
+
+In every mode the guest's `fetch`, `XMLHttpRequest` and `WebSocket` are the bootstrap's (`inSandboxScript`,
+`src/lib/in-sandbox-script.ts`; S74), built from the originals it captured before any guest code ran. Each request's URL
+is resolved as the platform resolves it and admitted only when its exact origin (or `blob:`, where the build's files put it
+there) is a source of the policy's `connect-src`: the list the host writes that directive from (`connectSources`). A refused
+request never reaches the browser; it fails as a refused request does, with the library's own message, and the gate
+reports it on the logic port, so its `violation` (`source: 'logic'`, `sourceFile` `'web-sandbox:request-gate'`) arrives on
+every engine, WebKit included, with the same fields. `fetch` and `XMLHttpRequest` never send credentials. The originals
+cannot be reached: every copy on the global object's prototype chain is removed (a worker's `fetch` lives on
+`WorkerGlobalScope.prototype`), and each prototype's `constructor` names the gated constructor. The browser's policy stays
+underneath: what the gate admits it still checks, and a redirect it refuses is reported per engine.
 
 The entry's console lines are not lost: the comms script installs its console relay while the bootstrap runs and buffers up
 to 1000 lines (in order with bridge frames) until the logic port exists.
@@ -494,8 +510,8 @@ tests in `src/lib/in-sandbox-view.test.ts`, `src/lib/worker-globals.test.ts`, `s
   not count host stalls against the guest; the bound on termination is the budget plus one apply.
 - **CSS exfiltration** within the policy (style-based probing of the view's own content, requests to allowed origins); the
   policy governs it.
-- **Worker reports** are per engine: WebKit raises no violations in workers, Firefox raises the worker's `importScripts`
-  refusals in the view (they arrive as `source: 'view'`).
+- **The browser's own worker reports** are per engine (WebKit raises no violations in workers): what remains of them past
+  the request gate, such as a redirect the browser refuses.
 - **A worker that ends itself** (`close()`) or crashes is detected only by the opt-in watchdog.
 - **Memory, timing side channels, UI spoofing** inside the element's box, and same-site cookies on requests to allowed origins
   (every mode).

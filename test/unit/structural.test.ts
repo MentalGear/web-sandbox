@@ -110,6 +110,10 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIOLATION', 'sourceFile', 'cutAt(read.sourceFile, VIOLATION_MAX_STRING)'],
     ['VIOLATION', 'lineNumber', 'read.lineNumber'],
     ['VIOLATION', 'columnNumber', 'read.columnNumber'],
+    // the request gate's own reports (S74): the same frame, its strings cut the same way
+    ['VIOLATION', 'directive', "'connect-src'"],
+    ['VIOLATION', 'blockedURI', 'cutAt(reportedUrl(href), VIOLATION_MAX_STRING)'],
+    ['VIOLATION', 'sourceFile', 'GATE_SOURCE'],
     ['RESIZE', 'type', "'RESIZE'"],
     ['RESIZE', 'height', 'height'],
     ['LOG', 'type', "'LOG'"],
