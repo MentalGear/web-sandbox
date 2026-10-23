@@ -65,12 +65,15 @@ export interface MatrixCase {
     readonly engines?: Partial<Record<MatrixEngine, Outcome>>;
     /** Why, where the outcome is not what the directive's name suggests. */
     readonly note?: string;
+    /**
+     * The embedder passes the page's policy as `hostContentSecurityPolicy`. A browser without Trusted Types applies the page's
+     * Trusted Types directives from it alone (host-trusted-types.ts), and the browsers that have them apply theirs either way.
+     */
+    readonly givesPolicy?: true;
 }
 
 const works = (bridge: 'ok' | 'refused' = 'ok', warns?: MatrixWarning): Outcome => warns ? { kind: 'works', bridge, warns } : { kind: 'works', bridge };
 const ends = (reason: ReasonId): Outcome => ({ kind: 'terminates', reason });
-// Firefox has no Trusted Types: the page's directive does nothing there
-const NO_TRUSTED_TYPES_IN_FIREFOX = { firefox: works() } as const;
 
 /** Directives the matrix cannot run, and why. */
 export const EXCLUDED = {
@@ -127,8 +130,8 @@ export const DIRECTIVE_CASES = {
     'report-uri': [{ value: '/nowhere', row: 'trustedTypesRequirement', outcome: works() }],
     'require-trusted-types-for': [{ value: "'script'", row: 'trustedTypesRequirement', outcome: works(), note: "the base already enforces it; the library's writes go through its policy" }],
     'trusted-types': [
-        { value: "'none'", row: 'trustedTypesRequirement', outcome: ends('trustedTypes'), engines: NO_TRUSTED_TYPES_IN_FIREFOX },
-        { value: 'other', row: 'trustedTypesRequirement', outcome: ends('trustedTypes'), engines: NO_TRUSTED_TYPES_IN_FIREFOX },
+        { value: "'none'", row: 'trustedTypesRequirement', outcome: ends('trustedTypes'), givesPolicy: true, note: "Firefox has no Trusted Types: the library applies the page's directive from hostContentSecurityPolicy (test/e2e/trusted-types-uniform.spec.ts: without it Firefox builds)" },
+        { value: 'other', row: 'trustedTypesRequirement', outcome: ends('trustedTypes'), givesPolicy: true },
         { value: 'web-sandbox', row: 'trustedTypesDefault', outcome: works(), note: "the library's policy named alone: the host's own default policy is not created" },
     ],
 } as const satisfies Record<Exclude<CspDirective, keyof typeof EXCLUDED>, readonly MatrixCase[]>;

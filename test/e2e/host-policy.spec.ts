@@ -167,11 +167,16 @@ test.describe('host page policy', () => {
         }
     });
 
-    test("a trusted-types directive that does not name 'web-sandbox': the build ends with the reason naming it (Firefox: no Trusted Types, ready)", async ({ sandbox, page, browserName }) => {
-        await openWithPolicy(page, { csp: "require-trusted-types-for 'script'; trusted-types other" });
+    test("a trusted-types directive that does not name 'web-sandbox': the build ends with the reason naming it (Firefox has no Trusted Types: the same, from hostContentSecurityPolicy; without it, ready)", async ({ sandbox, page, browserName }) => {
+        const csp = "require-trusted-types-for 'script'; trusted-types other";
+        await openWithPolicy(page, { csp });
         const expected = browserName === 'firefox' ? [{ type: 'ready', reason: null }] : [{ type: 'terminated', reason: TRUSTED_TYPES }];
         expect(await strictEntry(sandbox)).toEqual(expected);
         expect(await configure(sandbox, COOPERATIVE)).toEqual(expected);
+        // given the page's policy, every engine ends alike (the rest of the table: trusted-types-uniform.spec.ts)
+        const ended = [{ type: 'terminated', reason: TRUSTED_TYPES }];
+        expect(await configure(sandbox, { entry: 'main.js', hostContentSecurityPolicy: csp })).toEqual(ended);
+        expect(await configure(sandbox, { ...COOPERATIVE, hostContentSecurityPolicy: csp })).toEqual(ended);
     });
 
     test("review round 2, C-5: worker mode under a worker-src without blob: ends with the worker reason and is never ready (before: ready, and call() hung)", async ({ sandbox, page }) => {

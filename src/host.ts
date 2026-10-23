@@ -6,6 +6,7 @@ import type { SafeCapability, UnsafeCapability } from "./csp-directives";
 import { UNSAFE_PERMISSIONS } from "./csp-directives";
 import { cooperativePolicy, fileKinds, strictViewPolicy } from "./lib/csp/csp-generator";
 import { narrowToHostPolicy, parseHostPolicies, type NarrowedReach } from "./lib/csp/host-connect";
+import { buildRefused, executeRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
 import { hostPolicyReadFailed, knownHostPolicies, whenHostPoliciesKnown } from "./lib/host-csp";
 import { NO_ORIGINS, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
@@ -30,7 +31,7 @@ import { createFetchBridge, fetchRefusal, FETCH_METHOD, type FetchBridge, type F
 import { BRIDGE_FRAME_REFUSED, createBridgeFrame, prepareBridgeFrame, type BridgeFrame } from "./lib/bridge-frame";
 import { buildGuestDocument, buildWrapperDocument, permissionAttributes, setWrapperFrameIsolation, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
-import { setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
+import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { hostRegistrableDomain } from "./lib/host-site";
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
@@ -365,7 +366,10 @@ export interface SandboxConfigOptions {
      * and anything the parser does not understand admit nothing (docs/API.md#your-connect-src has the grammar).
      *
      * - A string is the enforced policy, exactly as served; several policies are separated by commas, as in a header. A
-     *   Report-Only policy is not passed. The page is then not asked.
+     *   Report-Only policy is not passed. The page is then not asked. It is also what a browser without Trusted Types
+     *   (Firefox, at the version measured) reads the page's `require-trusted-types-for` and `trusted-types` from: with it,
+     *   such a browser ends the build and refuses `execute()` as the others do, and without it nothing is applied there
+     *   (docs/API.md#trusted-types-without-the-browser).
      * - `false` skips the narrowing and the read. The browser's own inheritance still narrows where the engine applies it.
      * - Left out, a build that lists a connect origin reads the policy before it starts, once per page load (cached):
      *   the element calls `fetch()` once from a hidden, empty frame to a decoy host that cannot exist, on a port every
@@ -1148,6 +1152,12 @@ export class WebSandbox extends ElementBase {
 
     // One EXECUTE frame, with its budget armed first.
     private _postExecute(port: MessagePort, code: string) {
+        // where the browser has no Trusted Types: the page requires them for scripts, so a string is not evaluated (as the guest's own sink refuses it where it has them)
+        const trustedTypes = this._trustedTypes();
+        if (trustedTypes && executeRefused(trustedTypes)) {
+            console.warn("[Sandbox] execute() refused: the host page requires Trusted Types for scripts (require-trusted-types-for 'script'), so a string is not evaluated (docs/API.md#host-page-policy).");
+            return;
+        }
         this._armExecutionBudget();
         port.postMessage({ type: 'EXECUTE', code });
     }
@@ -2053,6 +2063,17 @@ export class WebSandbox extends ElementBase {
         return whenHostPoliciesKnown(this.shadowRoot);
     }
 
+    // The host page's Trusted Types directives, where the browser has no Trusted Types to apply them (a browser that has them
+    // decides, in the sinks and in the guest: null), and only from the embedder's `hostContentSecurityPolicy`: the read of the
+    // page's policy (host-csp.ts) cannot supply them, because a browser without Trusted Types leaves the directives it does not
+    // implement out of the policy text it reports (measured), so nothing is read, and nothing is applied, without the option
+    // (host-trusted-types.ts).
+    private _trustedTypes(): TrustedTypesStance | null {
+        if (browserHasTrustedTypes()) return null;
+        const option = this._config.hostContentSecurityPolicy;
+        return typeof option === 'string' ? trustedTypesStance(option, TRUSTED_TYPES_POLICY) : null;
+    }
+
     // What the bootstrap does with this build's guest markup (GuestMarkupPlan): references to registered
     // files cut into parts for it to write (markup-references.ts) and, with JavaScript files, the one
     // import map (module graph). Only when the bootstrap can run — scripts allowed by the sandbox flags (the
@@ -2115,6 +2136,9 @@ export class WebSandbox extends ElementBase {
         const built = this._files.copy();
         const files = built.snapshot();
         const reach = this._reach();
+        // where the browser has no Trusted Types: the page's list that does not name the library's policy ends the build, as it does where it has them
+        const trustedTypes = this._trustedTypes();
+        if (trustedTypes && buildRefused(trustedTypes, this._config.mode as TrustedTypesMode)) throw new TrustedTypesRefusal("the host page's trusted-types directive does not name the policy");
         if (this._config.mode === 'strict') return this._prepareStrictFrame(built, files, reach);
 
         const sandboxFlags = this._getSandboxFlags();

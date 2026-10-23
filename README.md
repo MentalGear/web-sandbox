@@ -372,7 +372,7 @@ sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.u
     with a path, query or wildcard is dropped with a warning. Anything else is refused before a request is
     made, including the host page's own origin and loopback, private and link-local hosts (`localhost`,
     `127.0.0.1`, `10.x`, `192.168.x`, `[::1]`, …) and names private by convention (`printer.local`,
-    `host.docker.internal`, a single label such as `intranet`) unless you list them. A listed public name that resolves to
+    `host.docker.internal`, a single label such as `intranet`) unless you list them (a private host is kept only when the host page is itself on one). A listed public name that resolves to
     a private address (DNS rebinding) cannot be detected from a page.
 *   **No host authority.** Requests never carry cookies or other credentials (`credentials: 'omit'`) nor a
     `Referer`, and never follow redirects. Your page's `fetch` never makes them: its Service Worker never answers
@@ -701,7 +701,9 @@ the default. Measured per engine and asserted by tests; worker mode shares the r
     tab past `form-action`.
 *   **Trusted Types**: under a host page's `require-trusted-types-for 'script'` the guest inherits the requirement, so
     its own scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too
-    (strict mode renders as usual: its view assigns through its own policy; in every mode `execute()` is refused).
+    (strict mode renders as usual: its view assigns through its own policy; in every mode `execute()` is refused). A browser
+    without Trusted Types applies a page's requirement only from `hostContentSecurityPolicy`
+    ([API.md](docs/API.md#trusted-types-without-the-browser)).
 *   **Session history**: the guest's fragment navigations add entries to the tab's history (the back button walks
     them first), and in Chromium so does a navigation the wrapper refuses.
 *   **Guest-only stalls**: a guest that never finishes its document stays `ready`, and its calls time out; Firefox

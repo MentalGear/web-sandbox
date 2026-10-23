@@ -121,7 +121,7 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 | `unsafeCapabilities` | `UnsafeCapability[]` | `[]` | cooperative, worker | Capabilities that act outside the frame: `allow-downloads`, `allow-forms`, `allow-modals`, `allow-pointer-lock`, `allow-popups`, `allow-presentation`, `fullscreen`. Each one enabled warns once. `allow-forms` lets guest forms submit: `form-action 'none'` refuses the submission inside the frame, but one opened in a new tab by a modifier click (the user's, or one the guest's script synthesizes) is not checked against it in Chromium. `allow-pointer-lock` and `fullscreen` let a guest hide the cursor, capture relative input or draw over the whole screen, so each can imitate host or browser UI. `fullscreen` is granted as `allow="fullscreen *"` (a Permissions Policy feature), the rest as sandbox flags. Dropped with a warning in strict mode. Without `allow-popups` guest code opens no window, but in cooperative mode the user's own Ctrl-, Shift- or middle-click, or Ctrl/Shift+Enter, on a guest link opens it in a new tab in Chromium and Firefox (platform behaviour of any sandboxed frame; see [Modes](#modes)). On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups` lets the guest open has no opener: the guest's `window.open()` returns `null`, though the page opens. |
 | `scriptUnsafe` | `boolean` | `false` | all | Only a literal `true` enables it. Adds `'unsafe-eval'` to the guest policy (strings run as code; WebAssembly too) and enables [`execute()`](#executecode). For testing; warns once per element. |
 | `origins` | `SandboxOrigins` | none | all (strict: no `scripts`) | The exact origins the guest may load each kind from: connections, images, styles, fonts, media, scripts. See [below](#origins). |
-| `hostContentSecurityPolicy` | `string \| false` | read from the page | all | Your page's Content-Security-Policy as text (one or more policies, as a header or `<meta>` carries them), so that the library drops the `origins.connect` and `fetchBridge.allow` entries it refuses, on every engine; `false` skips that. Left out, the library reads the page's policy once per page load, by one deliberate violation in a hidden frame (no request, no DNS lookup; a console error and, when a policy refuses it, a CSP report). See [Host page policy](#host-page-policy). |
+| `hostContentSecurityPolicy` | `string \| false` | read from the page | all | Your page's Content-Security-Policy as text (one or more policies, as a header or `<meta>` carries them), so that the library drops the `origins.connect` and `fetchBridge.allow` entries it refuses, on every engine; `false` skips that. Left out, the library reads the page's policy once per page load, by one deliberate violation in a hidden frame (no request, no DNS lookup; a console error and, when a policy refuses it, a CSP report). A browser without Trusted Types (Firefox) applies your page's `require-trusted-types-for` and `trusted-types` only from the text you pass ([Trusted Types without the browser](#trusted-types-without-the-browser)). See [Host page policy](#host-page-policy). |
 | `entry` | `string` | none | strict | The path of a registered JavaScript file the worker runs first. Ignored with a warning in other modes. If it is not a registered JavaScript file the sandbox terminates (`the guest entry "…" is not a registered JavaScript file`). |
 | `watchdogTimeout` | `number` (ms) | `0` (off) | all | Terminates a guest that stops answering for this long (`the guest stopped responding (watchdog)`). Anything but a finite number `> 0` is off. Bounds a looping guest in strict and worker mode on every browser, and in cooperative mode only where the browser runs the frame in its own process. Starts at `ready`, so it covers the guest's startup scripts too. Needs the guest bootstrap to run. [ADR-003](ADR-003-lifecycle-and-liveness.md) |
 | `workerExecutionTimeout` | `number` (ms) | `0` (off) | strict, worker | A deadline for each `execute()`, this long after the element posts the code, at which the guest's event loop must be free: the element pings the guest, and if no answer arrives within `EXECUTION_TIMEOUT_GRACE_MS` the sandbox ends: a `sandbox-log` line `Execution Timeout` (`source: 'host'`), then `terminated` with `the executed code ran longer than workerExecutionTimeout`. See [`execute()`](#executecode). Anything but a finite number `> 0` is off. |
@@ -1572,7 +1572,7 @@ policy must allow:
 | `frame-src` / `child-src` | nothing (a `srcdoc` frame loads no URL) | the same | the same |
 | `base-uri` | `about:` (for example `base-uri 'self' about:`), or omit the directive: the wrapper sets `<base href="about:blank">` so the guest never sees your page's URL, and a policy that refuses it (`'self'`, `'none'`) ends the build, because every bootstrap first checks its document's base URL | the same | the same |
 | With `fetchBridge` | the bridge's frame runs the view bootstrap too: the same hash, or `'unsafe-inline'`, admits it; `connect-src`: every origin in `fetchBridge.allow` (the frame's requests inherit your policy; name each origin by scheme and host, [below](#your-connect-src)) | the same: `'unsafe-inline'` admits the frame's script | the same |
-| Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox` from their first write (so the page gets no violation, console error or report from them), which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused (Chromium, WebKit; Firefox 146, the version measured, has no Trusted Types) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
+| Trusted Types | `require-trusted-types-for 'script'` works: the element and the view assign through one policy named `web-sandbox` from their first write (so the page gets no violation, console error or report from them), which blesses only the sandbox's own documents; a `trusted-types` directive must name it (add `'allow-duplicates'` if two copies of the library share the page). Strings are not evaluated: `execute()` and the guest's `eval` are refused. A browser without Trusted Types (Firefox 146, the version measured) cannot do this itself: pass your page's policy as `hostContentSecurityPolicy` and the library refuses as the others do (a `trusted-types` list that does not name the policy ends the build with the Trusted Types reason, and `execute()` warns and does nothing); without it nothing is applied there, because the read of your policy (below) never sees directives the browser does not implement ([Trusted Types without the browser](#trusted-types-without-the-browser)) | the guest inherits the requirement: its scripts, the import map and the markup the bootstrap writes for registered files need Trusted Types too; `execute()` is refused | works (the frame starts the worker through the policy); `execute()` is refused |
 | `Cross-Origin-Embedder-Policy: require-corp` (without `Cross-Origin-Opener-Policy: same-origin`) | works in Chromium and Firefox; WebKit refuses the view's `blob:` worker | works; resources from `origins` need CORP or CORS headers | as strict |
 | `Cross-Origin-Opener-Policy: same-origin` with `Cross-Origin-Embedder-Policy` (`require-corp` or `credentialless`), when the browser makes the page cross-origin isolated (`crossOriginIsolated` is `true`) | **not supported, on any engine**: a guest never runs cross-origin isolated. The element reads `crossOriginIsolated` of your page before it creates a frame and, when it is `true`, ends the build with `the host page is cross-origin isolated …`; no frame exists and nothing of the guest runs. The outcome follows your page's isolation, not the engine (which pairs isolate a page is the browser's: COOP with `require-corp` does everywhere, and with `credentialless` in Chromium and Firefox but not in WebKit, where the sandbox then runs). The library's own bootstraps check the same value in their documents as well | not supported (the same) | not supported (the same) |
 
@@ -1680,6 +1680,54 @@ the rules above):
 | Chromium | no | yes, not with a port | no | no | yes | 2026-10-23, Playwright 1.58.1, Chromium 145: test/e2e/connect-uniform.spec.ts (every source of the grammar table against fetch and WebSocket requests of a guest, the page's policy left to the browser; the decoy through a logging proxy) |
 | Firefox | no | yes | yes | no | no | 2026-10-23, Playwright 1.58.1, Firefox 146: as Chromium |
 | WebKit | yes | no | yes | yes | yes | 2026-10-23, Playwright 1.58.1, WebKit 26: as Chromium |
+<!-- generated:end -->
+
+### Trusted Types without the browser
+
+<!-- describes: option:hostContentSecurityPolicy, trusted-types-rules sig:00416b2f -->
+A page that sends `require-trusted-types-for 'script'` makes the browser refuse a string at a script sink, and its
+`trusted-types` list must name the library's policy `web-sandbox`. Chromium and WebKit enforce both themselves: a list that
+does not name the policy ends the build with the Trusted Types reason, and the string of `execute()` is not evaluated in the
+guest. Firefox 146 (the version measured) has no Trusted Types, so it would build and run `execute()` on the same page. To
+make it answer alike, pass your page's policy as [`hostContentSecurityPolicy`](#configuration): where the browser has no
+Trusted Types the library then reads the two directives from your text and refuses as the other browsers do, in every mode;
+`execute()` logs one warning ("`execute()` refused") and does nothing. The browsers that have Trusted Types ignore the text
+for this and go on enforcing their own, so one configuration gives one result everywhere.
+
+Without the option nothing is applied in a browser that has no Trusted Types: the read of your policy (above) reports the
+policy text the browser keeps, and such a browser leaves out the directives it does not implement, so it can never show these.
+`hostContentSecurityPolicy: false` skips the rule too. The grammar is the part the browsers that have Trusted Types agree
+on; where they differ (the case of the `'script'` keyword, a `require-trusted-types-for` named twice) the library follows the
+specification and the table has no row:
+
+<!-- generated:begin trusted-types-rules -->
+| In your policy | Rule | Example | Strict and worker mode | Cooperative mode | `execute()` |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `require-trusted-types-for 'script'` | the requirement: strings are refused at script sinks, so `execute()` is refused; the directive's name folds case | `require-trusted-types-for 'script'` | builds | builds | refused |
+|  |  | `REQUIRE-TRUSTED-TYPES-FOR 'script'` | builds | builds | refused |
+|  |  | `require-trusted-types-for 'script'; TRUSTED-TYPES other` | ends the build | ends the build | refused |
+|  |  | `require-trusted-types-for 'style'` | builds | builds | runs |
+|  |  | `img-src *; connect-src 'self'` | builds | builds | runs |
+| `trusted-types` without the requirement | names the policies the page lets be made and refuses nothing by itself: a string is still taken, so the build goes on | `trusted-types other` | builds | builds | runs |
+|  |  | `trusted-types 'none'` | builds | builds | runs |
+| `trusted-types` naming `web-sandbox`, or `*` | admits the library's policy: the build goes on, with the requirement too | `require-trusted-types-for 'script'; trusted-types web-sandbox` | builds | builds | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types a web-sandbox b 'allow-duplicates'` | builds | builds | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types *` | builds | builds | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types * 'allow-duplicates'` | builds | builds | refused |
+| `trusted-types` naming other policies, or `'none'` | with the requirement the library's policy is refused, and the build ends with the Trusted Types reason; names are case-sensitive | `require-trusted-types-for 'script'; trusted-types other` | ends the build | ends the build | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types 'none'` | ends the build | ends the build | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types` | ends the build | ends the build | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types Web-Sandbox` | ends the build | ends the build | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types web-sandbox2` | ends the build | ends the build | refused |
+|  |  | `trusted-types other; require-trusted-types-for 'script'` | ends the build | ends the build | refused |
+| `trusted-types default` | a page whose every list allows a policy named `default` may have made one, which takes the element's strings in cooperative mode; strict and worker mode make their policy in a frame that has none, so a refused name ends them | `require-trusted-types-for 'script'; trusted-types default` | ends the build | builds | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types default other` | ends the build | builds | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types default web-sandbox` | builds | builds | refused |
+| a list of policies | is read as the browsers do: the requirement of any policy counts, and the library's policy must pass every `trusted-types` list | `require-trusted-types-for 'script', trusted-types other` | ends the build | ends the build | refused |
+|  |  | `trusted-types web-sandbox, require-trusted-types-for 'script'` | builds | builds | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types web-sandbox, trusted-types other` | ends the build | ends the build | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types web-sandbox, trusted-types default` | ends the build | ends the build | refused |
+|  |  | `require-trusted-types-for 'script'; trusted-types default web-sandbox, trusted-types default` | ends the build | builds | refused |
 <!-- generated:end -->
 
 ---

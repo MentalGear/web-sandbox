@@ -337,6 +337,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/worker-globals.ts` | What guest code may find on a worker's global object, in worker mode and in strict mode |
 | `src/lib/csp/csp-generator.ts` | The guest policy: one template per mode, filled with the parsed origins (origins.ts) and the library's own sources |
 | `src/lib/csp/host-connect.ts` | The host page's `connect-src`, as far as the library needs it |
+| `src/lib/csp/host-trusted-types.ts` | The host page's Trusted Types directives, as far as the library needs them (INHERITED_CONTEXT.trustedTypesRequirement) |
 | `src/lib/csp/origins.ts` | `origins`: what the embedder may open in the guest policy |
 | `src/lib/csp/script-hash.ts` | The CSP hash-source of a script, computed synchronously on the host |
 <!-- generated:end -->
