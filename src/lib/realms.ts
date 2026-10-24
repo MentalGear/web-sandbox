@@ -125,6 +125,8 @@ export const STRINGIFIED = {
     cssLoadBound: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     cssReferences: { module: 'src/lib/css-references.ts', realms: ['view'], capture: NO_GUEST, readOnce: OWN_RECORDS, typeofRead: true },
     withoutNetworkReferences: { module: 'src/lib/css-references.ts', realms: ['view'], capture: NO_GUEST, readOnce: OWN_RECORDS, typeofRead: true },
+    viewInputOutbox: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
+    isStyleProperty: { module: 'src/lib/in-sandbox-view.ts', realms: ['view', 'strict-worker'], capture: 'it names no global and calls only the function it is given (the strict prelude gives it a captured charCodeAt)', readOnce: 'its arguments are a string and a list of the library\'s, never an object of the guest\'s', typeofRead: true },
     checkSandboxEnvironment: { module: 'src/lib/environment-check.ts', realms: ['cooperative', 'worker-frame', 'view', 'bridge-frame'], capture: RUNS_FIRST, readOnce: true, typeofRead: true },
     inBridgeFrame: { module: 'src/lib/in-bridge-frame.ts', realms: ['bridge-frame'], capture: NO_GUEST, readOnce: true, typeofRead: true },
 } as const satisfies Record<string, StringifiedRow>;

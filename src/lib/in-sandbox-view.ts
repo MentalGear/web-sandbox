@@ -282,8 +282,25 @@ export const STILL_PROPERTIES = [
     'transition-delay', 'transition-behavior',
 ] as const;
 
-/** The events sandboxView.on() can subscribe to (ADR-005). */
-export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'] as const;
+/** The events sandboxView.on() can subscribe to (ADR-005; the pointer, wheel, scroll and focus types: research 23). */
+export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown', 'pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'wheel', 'scroll', 'focusin', 'focusout'] as const;
+
+/**
+ * The continuous event types (research 23): the view coalesces them in its input outbox (viewInputOutbox), at most one
+ * entry per pointer, or per element, the latest winning, and sends what it holds at most once per animation frame,
+ * while no batch is unacknowledged (VIEW_INPUT_IN_FLIGHT). Every other type of VIEW_EVENT_TYPES is discrete: posted at
+ * once, as the user raises it, behind what the outbox held.
+ */
+export const VIEW_CONTINUOUS_EVENT_TYPES = ['pointermove', 'wheel', 'scroll'] as const;
+
+/**
+ * The most batches of the view's events the worker has not acknowledged yet (research 23). The worker's prelude answers
+ * each batch with VIEW_EVENT_ACK once the handlers it dispatched to have returned, and the view sends the continuous
+ * events it coalesced (VIEW_CONTINUOUS_EVENT_TYPES) only while fewer than this many are unacknowledged: a guest whose
+ * handler blocks gets the latest state when it returns, and neither the worker's queue nor the host page's thread grows
+ * with a stuck guest. A discrete event is posted at once, whatever is in flight: it is bounded by the user's own input.
+ */
+export const VIEW_INPUT_IN_FLIGHT = 1;
 
 /**
  * Limits of one event's detail: every string, the ids of the target and its ancestors, the form fields, and all its
@@ -291,6 +308,120 @@ export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'
  * them says so: `truncated: true`.
  */
 export const VIEW_EVENT_LIMITS = { maxString: 65536, maxIds: 32, maxFields: 1000, maxTotal: VIEW_RENDER_MAX_LENGTH } as const;
+
+/**
+ * The inline style properties `sandboxView.set(id, { css })` may set on an element (research 23): what a drag, a
+ * gesture, a slider or a virtual list moves, and nothing else. `--*` stands for any custom property (`--` then letters,
+ * digits, `-` and `_`). No `animation*` or `transition*` (`allowAnimations: false` holds), no property that names a URL
+ * but `cursor` and the custom properties, whose loads are charged like a style attribute's (cssLoadBound).
+ */
+export const VIEW_STYLE_PROPERTIES = [
+    'transform', 'translate', 'rotate', 'scale', 'transform-origin', 'opacity', 'visibility',
+    'left', 'top', 'right', 'bottom', 'width', 'height', 'z-index', 'cursor', '--*',
+] as const;
+
+/**
+ * Limits of one `sandboxView.set(id, { css })` (research 23): the properties it names, and the characters of each value
+ * (and of a custom property's name). Past either, set() throws a `RangeError` in the guest.
+ */
+export const VIEW_SET_STYLE_LIMITS = { maxProperties: 16, maxValue: 1024 } as const;
+
+/** A VIEW_SET's fields, as the view checked them (inSandboxView, fieldsOf). */
+export interface SetFields {
+    value?: string;
+    checked?: boolean;
+    focus?: boolean;
+    scroll?: { top?: number; left?: number };
+    css?: Record<string, string | null>;
+}
+
+/**
+ * Whether `name` is a property `set({ css })` may name (VIEW_STYLE_PROPERTIES): one of its names, or a custom property of
+ * at most `maxName` characters. Stringified into the view and the strict prelude, which pass captured intrinsics.
+ */
+export function isStyleProperty(name: string, properties: readonly string[], maxName: number, codeAt: (text: string, index: number) => number): boolean {
+    for (let i = 0; i < properties.length; i++) if (properties[i] === name && name !== '--*') return true;
+    if (name.length < 3 || name.length > maxName || codeAt(name, 0) !== 45 || codeAt(name, 1) !== 45) return false;
+    for (let i = 2; i < name.length; i++) {
+        const c = codeAt(name, i);
+        const ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 45 || c === 95;
+        if (!ok) return false;
+    }
+    return true;
+}
+
+/** One entry of the view's input outbox (viewInputOutbox): a continuous event, or the latest of several coalesced. */
+export interface ViewInputEntry {
+    /** The event type. */
+    type: string;
+    /** What it is coalesced by: a pointer id (pointermove), or the element (wheel, scroll). */
+    key: unknown;
+    /** A wheel's delta unit: entries of different units are not summed. '' for the other types. */
+    unit: string;
+    /** How many raw events it stands for. */
+    coalesced: number;
+    /** A wheel's deltas, summed while it is coalesced. */
+    wheel?: { dx: number; dy: number; dz: number; unit: string };
+    /** What the view needs to describe it when it is sent. */
+    [field: string]: unknown;
+}
+
+/**
+ * The view's input outbox (research 23), as arithmetic and nothing else, so that a unit test runs it as the view does.
+ * Continuous events are put in one slot per (type, key, unit): the latest wins and takes the slot to the end, its
+ * `coalesced` the sum of the raw events it stands for, a wheel's deltas the sum of its own and the slot's. The view sends
+ * what the slots hold as one frame (`take`) only while fewer than `inFlight` frames are unacknowledged (`ready`), and a
+ * discrete event in a frame behind whatever the slots hold (`take` too), whatever is in flight, so no discrete event
+ * overtakes a move made before it. Every frame `take` empties the slots for counts as unacknowledged until its
+ * VIEW_EVENT_ACK (`acked`).
+ *   clamp(value, most)  a coordinate in the view, clamped to [0, most] and rounded to 0.1 CSS px: whatever the browser
+ *                       routes to the view (a press that began in it goes on delivering over the host page in every
+ *                       engine), no coordinate outside its box reaches the guest.
+ * Stringified into the view bootstrap; self-contained.
+ */
+export function viewInputOutbox(inFlight: number) {
+    let slots: ViewInputEntry[] = [];
+    let outstanding = 0;
+    return {
+        put(entry: ViewInputEntry) {
+            for (let i = 0; i < slots.length; i++) {
+                const slot = slots[i]!;
+                if (slot.type !== entry.type || slot.key !== entry.key || slot.unit !== entry.unit) continue;
+                entry.coalesced += slot.coalesced;
+                if (slot.wheel && entry.wheel) {
+                    entry.wheel.dx += slot.wheel.dx;
+                    entry.wheel.dy += slot.wheel.dy;
+                    entry.wheel.dz += slot.wheel.dz;
+                }
+                slots.splice(i, 1);
+                break;
+            }
+            slots.push(entry);
+        },
+        ready(): boolean {
+            return outstanding < inFlight && slots.length > 0;
+        },
+        pending(): number {
+            return slots.length;
+        },
+        unacknowledged(): number {
+            return outstanding;
+        },
+        take(): ViewInputEntry[] {
+            const batch = slots;
+            slots = [];
+            outstanding++;
+            return batch;
+        },
+        acked() {
+            if (outstanding > 0) outstanding--;
+        },
+        clamp(value: number, most: number): number {
+            const inside = value > most ? most : value > 0 ? value : 0;
+            return Math.round(inside * 10) / 10;
+        },
+    };
+}
 
 /** The prefix of the worker's one-time "the entry ran to its end" marker; each build appends 128 random bits (entryDoneName). */
 export const ENTRY_DONE_PREFIX = '__sandboxEntryRan_';
@@ -1401,7 +1532,10 @@ export interface ViewOptions {
     violationDirectives: readonly string[];
     /** VIOLATION_MAX_STRING: the longest string of a violation report the view posts. */
     violationMaxString: number;
-    events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
+    /** VIEW_STYLE_PROPERTIES and VIEW_SET_STYLE_LIMITS. */
+    style: { properties: readonly string[]; maxProperties: number; maxValue: number };
+    /** VIEW_EVENT_TYPES, VIEW_CONTINUOUS_EVENT_TYPES, VIEW_INPUT_IN_FLIGHT and VIEW_EVENT_LIMITS. */
+    events: { types: readonly string[]; continuous: readonly string[]; inFlight: number; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
     /** The Trusted Types policy name the view creates where the host page enforces them (trusted-types.ts). */
     trustedTypesPolicy: string;
     /** VIEW_WRITE_TYPES: the only types the view mints a URL for from a guest write. */
@@ -1427,7 +1561,7 @@ export interface ViewOptions {
  * message is ignored. A copy of this text that ever ran a second time in the same document would return
  * at once (the run counter), and a copy elsewhere would never receive INIT_VIEW (research 15, P1).
  */
-export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, scanCss: typeof cssReferences, dropCss: typeof withoutNetworkReferences, options: ViewOptions) {
+export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, scanCss: typeof cssReferences, dropCss: typeof withoutNetworkReferences, options: ViewOptions, makeOutbox: typeof viewInputOutbox, styleProperty: typeof isStyleProperty) {
     const g = globalThis as any;
     const runs = (g.__sandboxViewRuns || 0) + 1;
     g.__sandboxViewRuns = runs;
@@ -1571,31 +1705,117 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // Events for the worker's sandboxView.on() handlers: only the types it subscribed to (VIEW_LISTEN), only
     // trusted ones (no guest code runs here, but the rule is stated, not assumed), capture-delegated on the
     // window. The detail describes the target and its ancestors' ids, the key, the form's fields — never a
-    // URL: no href, src or action is read. Every string is clamped, and all of them together share one budget
-    // (BR:ST3): a detail cut anywhere carries `truncated: true`. Link and submit defaults are
+    // URL: no href, src or action is read. Every string is clamped, and all the strings of one frame together share
+    // one budget (BR:ST3): a detail cut anywhere carries `truncated: true`. Link and submit defaults are
     // cancelled above whether or not anyone listens.
+    // Pointer input (research 23): numbers and constants only, never a string of the guest's. Coordinates are clamped to
+    // the view's box: a press that began in the view goes on delivering moves over the host page until it is released,
+    // in every engine, with or without capture, so a move outside the box is forwarded only while a press that began
+    // here is held (a button down), and clamped to the edge; nothing of the host page's own input ever reaches the
+    // view. No tilt, twist, contact size, coalesced or predicted point lists, and no relatedTarget (focusin and focusout
+    // say which of the view's elements gained or lost focus, never where it went or came from).
+    // Flow control: discrete events are posted at once, as the user raises them; continuous ones
+    // (VIEW_CONTINUOUS_EVENT_TYPES) wait in the input outbox (viewInputOutbox), coalesced, and go at most once per
+    // animation frame (a timer stands in where frames are throttled, as for the flush), while no frame is
+    // unacknowledged (VIEW_INPUT_IN_FLIGHT: the worker's prelude answers each VIEW_EVENT with VIEW_EVENT_ACK) and the time
+    // budget is not in debt. The event path's own time (reading the events, building the details) is measured and
+    // charged to the time budget (VIEW_APPLY_MS_PER_SECOND), like the operations.
     let subscribed: string[] = [];
-    const forward = (event: any) => {
-        if (!event.isTrusted || !renderPort || subscribed.indexOf(event.type) < 0) return;
-        let target = event.target;
+    const inputs = makeOutbox(options.events.inFlight);
+    const pressed = new Map<number, boolean>(); // the pointers whose press began in the view, until released
+    // The subscriptions with options (VIEW_LISTEN's marks; sandboxView.on's options): which elements the view captures a
+    // pointer for on a trusted pointerdown (CAPTURE), which elements' rectangles a detail carries (RECT: the worker
+    // cannot read layout), and inside which elements, or anywhere for null, it cancels a wheel's default (PREVENT).
+    const CAPTURE = 1, RECT = 2, PREVENT = 4;
+    let marks: { type: string; id: string | null; flags: number }[] = [];
+    const captured = new Map<number, Element>(); // the element each captured pointer is captured to, until released
+    // The nearest element from `node` up to the body whose id has a mark of `type` with `flag`.
+    const markedAncestor = (node: any, type: string, flag: number): Element | null => {
+        const body = call(bodyOf, document, []);
+        for (let n = node; n && n !== body && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) {
+            const id = call(idOf, n, []);
+            if (!id) continue;
+            for (let i = 0; i < marks.length; i++) if (marks[i]!.type === type && marks[i]!.id === id && (marks[i]!.flags & flag) !== 0) return n;
+        }
+        return null;
+    };
+    const getRect = E.getBoundingClientRect;
+    // The rectangles of the marked elements a detail's handlers asked for (RECT): those of its type among its ids.
+    const rectsOf = (detail: any) => {
+        const rects: [string, number, number, number, number][] = [];
+        for (let i = 0; i < marks.length; i++) {
+            const mark = marks[i]!;
+            if (mark.type !== detail.type || (mark.flags & RECT) === 0 || mark.id === null || detail.ids.indexOf(mark.id) < 0) continue;
+            const element = elementInBody(mark.id);
+            if (!element) continue;
+            const bounds = call(getRect, element, []);
+            rects.push([mark.id, tenth(bounds.x), tenth(bounds.y), tenth(bounds.width), tenth(bounds.height)]);
+        }
+        return rects;
+    };
+    // A wheel's default (scrolling, the view's or, past its edge, the host page's) is cancelled inside an element with a
+    // PREVENT mark, by a listener that is not passive and is there only while such a mark is: scrolling over the
+    // sandbox then waits for the view's thread, as it does over any frame with a wheel listener.
+    const cancelWheel = (event: any) => {
+        if (!event.isTrusted) return;
+        let anywhere = false;
+        for (let i = 0; i < marks.length; i++) if (marks[i]!.type === 'wheel' && marks[i]!.id === null && (marks[i]!.flags & PREVENT) !== 0) anywhere = true;
+        if (anywhere || markedAncestor(event.target, 'wheel', PREVENT)) event.preventDefault();
+    };
+    let wheelCancelled = false;
+    const listen = (given: unknown) => {
+        const kept: { type: string; id: string | null; flags: number }[] = [];
+        const perType = new Map<string, number>();
+        for (let i = 0; Array.isArray(given) && i < given.length; i++) {
+            const mark = given[i];
+            if (!Array.isArray(mark) || mark.length !== 3) continue;
+            const [type, id, flags] = mark;
+            if (options.events.types.indexOf(type) < 0 || !(id === null || isTarget(id)) || typeof flags !== 'number' || (flags | 0) !== flags || flags < 1 || flags > 7) continue;
+            const count = perType.get(type) || 0;
+            if (count >= options.events.maxIds) continue;
+            perType.set(type, count + 1);
+            kept.push({ id, flags, type });
+        }
+        marks = kept;
+        let cancel = false;
+        for (let i = 0; i < marks.length; i++) if (marks[i]!.type === 'wheel' && (marks[i]!.flags & PREVENT) !== 0) cancel = true;
+        if (cancel === wheelCancelled) return;
+        wheelCancelled = cancel;
+        if (cancel) addEventListener('wheel', cancelWheel, { capture: true, passive: false });
+        else removeEventListener('wheel', cancelWheel, { capture: true });
+    };
+    // While a pointer is captured, a native drag or a text selection inside its element would take the gesture: both
+    // are cancelled there (no CSS stops a drag in Firefox, and `draggable` is no attribute the renderer keeps).
+    const cancelInCapture = (event: any) => {
+        if (!event.isTrusted || captured.size === 0) return;
+        captured.forEach((element) => {
+            if (call(containsNode, element, [event.target])) event.preventDefault();
+        });
+    };
+    addEventListener('dragstart', cancelInCapture, true);
+    addEventListener('selectstart', cancelInCapture, true);
+    let inputWork = 0; // ms the event path spent since it was last charged
+    const isContinuous = (type: string) => options.events.continuous.indexOf(type) >= 0;
+    // The strings of one frame share one budget: `share.left` characters.
+    const describe = (eventType: string, node: unknown, share: { left: number }, event: any) => {
+        let target: any = node;
         if (!target || !(target instanceof Element)) target = call(bodyOf, document, []);
-        if (!target) return;
-        let budget = options.events.maxTotal;
+        if (!target) return null;
         let truncated = false;
         const clamp = (input: unknown) => {
             let text = String(input);
-            const most = Math.min(options.events.maxString, budget);
+            const most = Math.min(options.events.maxString, share.left);
             if (text.length > most) {
                 text = text.slice(0, most);
                 truncated = true;
             }
-            budget -= text.length;
+            share.left -= text.length;
             return text;
         };
         const tag = clamp(call(localNameOf, target, []));
         const value = tag === 'form' ? undefined : target.value; // a form's "value" could be a named control
         const detail: any = {
-            type: event.type,
+            type: eventType,
             ids: [] as string[],
             target: {
                 tag,
@@ -1605,7 +1825,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 checked: tag !== 'form' && target.checked === true,
             },
         };
-        if (event.type === 'keydown') detail.key = clamp(event.key || '');
+        if (eventType === 'keydown' && event) detail.key = clamp(event.key || '');
         for (let n = target; n && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) {
             const id = call(idOf, n, []);
             if (!id) continue;
@@ -1615,7 +1835,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             }
             detail.ids.push(clamp(id));
         }
-        if (event.type === 'submit' && tag === 'form') {
+        if (eventType === 'submit' && tag === 'form' && event) {
             const fields: [string, string][] = [];
             let data: FormData;
             try {
@@ -1625,7 +1845,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             }
             data.forEach((value, name) => {
                 if (typeof value !== 'string') return;
-                if (fields.length === options.events.maxFields || budget === 0) {
+                if (fields.length === options.events.maxFields || share.left === 0) {
                     truncated = true;
                     return;
                 }
@@ -1634,9 +1854,160 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             detail.form = fields;
         }
         if (truncated) detail.truncated = true;
-        renderPort.postMessage({ type: 'VIEW_EVENT', detail });
+        return detail;
     };
-    for (let i = 0; i < options.events.types.length; i++) addEventListener(options.events.types[i]!, forward, true);
+    const modifiersOf = (event: any) => ({ alt: event.altKey === true, ctrl: event.ctrlKey === true, meta: event.metaKey === true, shift: event.shiftKey === true });
+    const pointerOf = (event: any) => {
+        const kind = event.pointerType === 'pen' || event.pointerType === 'touch' ? event.pointerType : 'mouse';
+        return {
+            x: inputs.clamp(event.clientX, g.innerWidth), y: inputs.clamp(event.clientY, g.innerHeight), id: event.pointerId, kind,
+            primary: event.isPrimary === true, button: event.button, buttons: event.buttons, pressure: Math.round(event.pressure * 100) / 100,
+        };
+    };
+    // What the view keeps of an event until it describes it: read now, from the event; the detail is built when it is sent.
+    const entryOf = (event: any): ViewInputEntry => {
+        const eventType = event.type;
+        const entry: ViewInputEntry = { type: eventType, key: null, unit: '', coalesced: 1, target: event.target };
+        if (eventType.indexOf('pointer') === 0) {
+            entry.time = Math.round(event.timeStamp); // whole ms: no finer than the worker's own clock
+            entry.key = event.pointerId;
+            entry.pointer = pointerOf(event);
+            entry.modifiers = modifiersOf(event);
+        } else if (eventType === 'wheel') {
+            // per element and unit, the deltas summed; where the pointer was, clamped like a pointer's
+            const unit = event.deltaMode === 1 ? 'line' : event.deltaMode === 2 ? 'page' : 'pixel';
+            entry.time = Math.round(event.timeStamp);
+            entry.key = event.target;
+            entry.unit = unit;
+            entry.wheel = { dx: event.deltaX, dy: event.deltaY, dz: event.deltaZ, unit };
+            entry.pointer = { x: inputs.clamp(event.clientX, g.innerWidth), y: inputs.clamp(event.clientY, g.innerHeight) };
+            entry.modifiers = modifiersOf(event);
+        } else if (eventType === 'scroll') {
+            // per scrolled element: the document's own scrolling is its scrollingElement's; its extent is read when sent
+            const scroller = event.target instanceof Element ? event.target : scrollingElementOf ? call(scrollingElementOf, document, []) : call(rootOf, document, []);
+            entry.time = Math.round(event.timeStamp);
+            entry.key = scroller;
+            entry.target = scroller;
+            entry.scroller = scroller;
+        }
+        return entry;
+    };
+    const scrollingDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'scrollingElement'); // every engine has it; jsdom does not
+    const scrollingElementOf = scrollingDescriptor ? scrollingDescriptor.get! : null;
+    const tenth = (value: number) => Math.round(value * 10) / 10;
+    // A scrolled element's position and extent, in CSS px: what a virtual list needs, about the guest's own layout only.
+    const extentOf = (element: any) => ({
+        top: tenth(element.scrollTop), left: tenth(element.scrollLeft), width: element.scrollWidth, height: element.scrollHeight,
+        clientWidth: element.clientWidth, clientHeight: element.clientHeight,
+    });
+    const detailOf = (entry: ViewInputEntry, share: { left: number }, event: any) => {
+        const detail = describe(entry.type, entry.target, share, event);
+        if (!detail) return null;
+        if (entry.pointer) detail.pointer = entry.pointer;
+        if (entry.wheel) detail.wheel = entry.wheel;
+        if (entry.scroller) detail.scroll = extentOf(entry.scroller);
+        if (entry.modifiers) detail.modifiers = entry.modifiers;
+        if (entry.time !== undefined) detail.time = entry.time;
+        if (isContinuous(entry.type)) detail.coalesced = entry.coalesced;
+        const rects = rectsOf(detail);
+        if (rects.length > 0) detail.rects = rects; // the prelude gives each handler that asked its own element's, as `rect`
+        return detail;
+    };
+    // Posts what the outbox holds and, after it, `last` (a discrete event's entry, with its event), as one frame, and
+    // charges the event path's time.
+    const postInput = (last: ViewInputEntry | null, event: any) => {
+        const started = performance.now();
+        const share = { left: options.events.maxTotal };
+        const entries = inputs.take();
+        if (last) entries.push(last);
+        const details: unknown[] = [];
+        for (let i = 0; i < entries.length; i++) {
+            const detail = detailOf(entries[i]!, share, entries[i] === last ? event : null);
+            if (detail) details.push(detail);
+        }
+        renderPort!.postMessage({ type: 'VIEW_EVENT', details });
+        const now = performance.now();
+        const spent = inputWork + (now - started);
+        inputWork = 0;
+        judge(budget.measured(spent, spent, now, true));
+    };
+    let inputScheduled = false;
+    const requestInput = () => {
+        if (inputScheduled || overran || !renderPort || !inputs.ready()) return;
+        inputScheduled = true;
+        let ran = false;
+        let frame = 0;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const run = (inFrame: boolean) => {
+            if (ran) return;
+            ran = true;
+            if (inFrame && timer !== null) clearTimeout(timer);
+            if (!inFrame) cancelAnimationFrame(frame);
+            inputScheduled = false;
+            if (overran || !renderPort || !inputs.ready()) return;
+            const wait = budget.wait(0, performance.now());
+            if (wait > 0) {
+                // the time budget is in debt (the view's operations, or this path): the next frame after it is repaid
+                inputScheduled = true;
+                setTimeout(() => {
+                    inputScheduled = false;
+                    requestInput();
+                }, wait);
+                return;
+            }
+            postInput(null, null);
+        };
+        frame = requestAnimationFrame(() => run(true));
+        timer = setTimeout(() => run(false), 100);
+    };
+    const inputAcked = () => {
+        inputs.acked();
+        requestInput();
+    };
+    const forward = (event: any) => {
+        if (!event.isTrusted) return;
+        const started = performance.now();
+        const type = event.type;
+        // the presses that began here, whether or not anyone listens (the rule for moves outside the box, above)
+        if (type === 'pointerdown') pressed.set(event.pointerId, true);
+        else if (type === 'pointerup' || type === 'pointercancel') {
+            pressed.delete(event.pointerId);
+            captured.delete(event.pointerId); // the platform releases the capture here
+        }
+        if (!renderPort || overran || subscribed.indexOf(type) < 0) return;
+        if (type === 'pointerdown') {
+            // Captured for the guest now, in the trusted event (a worker's answer would come a frame too late): moves and
+            // the release are retargeted to that element, so its id stays in their ids after the pointer leaves it.
+            const element = markedAncestor(event.target, 'pointerdown', CAPTURE);
+            if (element) {
+                try {
+                    call(E.setPointerCapture, element, [event.pointerId]);
+                    captured.set(event.pointerId, element);
+                } catch {
+                    // a pointer the platform does not let be captured (not active): the gesture goes on uncaptured
+                }
+            }
+        }
+        if (!isContinuous(type)) {
+            postInput(entryOf(event), event);
+            return;
+        }
+        let wanted = true;
+        if (type === 'pointermove') {
+            const outside = event.clientX < 0 || event.clientY < 0 || event.clientX > g.innerWidth || event.clientY > g.innerHeight;
+            wanted = !outside || (pressed.has(event.pointerId) && event.buttons !== 0);
+        }
+        if (wanted) {
+            inputs.put(entryOf(event));
+            requestInput();
+        }
+        inputWork += performance.now() - started;
+    };
+    for (let i = 0; i < options.events.types.length; i++) {
+        const type = options.events.types[i]!;
+        // the pointer, wheel and scroll types are only read: passive, so the browser never waits for the view to scroll or pan
+        addEventListener(type, forward, type === 'wheel' || type === 'scroll' || type.indexOf('pointer') === 0 ? { capture: true, passive: true } : true);
+    }
 
     // The view's two sinks under a host page's Trusted Types (R1:R3-1): the view inherits the host page's
     // `require-trusted-types-for 'script'`, which makes the template's innerHTML and the Worker constructor throw a
@@ -1757,7 +2128,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     // After an operation on `target`: its own records (the target's children, its value attribute) are dropped, and
     // any other record means the counts do not hold. Without an observer the counts are never trusted.
-    const settle = (target: Element) => {
+    const settle = (target: Element, attribute = 'value') => {
         if (!observer || !takeRecords || !recordTarget || !recordType || !recordAttribute) {
             forget();
             return;
@@ -1765,7 +2136,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const records = call(takeRecords, observer, []) as MutationRecord[];
         for (let i = 0; i < records.length; i++) {
             const type = call(recordType, records[i], []);
-            const own = call(recordTarget, records[i], []) === target && (type === 'childList' || (type === 'attributes' && call(recordAttribute, records[i], []) === 'value'));
+            const own = call(recordTarget, records[i], []) === target && (type === 'childList' || (type === 'attributes' && call(recordAttribute, records[i], []) === attribute));
             if (!own) forget();
         }
     };
@@ -2125,6 +2496,63 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const selectValue = setter(HTMLSelectElement.prototype, 'value');
     const outputValue = setter(HTMLOutputElement.prototype, 'value');
     const focusElement = HTMLElement.prototype.focus;
+    const setScrollTop = setter(Element.prototype, 'scrollTop');
+    // css: inline properties of one element, any namespace's (research 23), from VIEW_STYLE_PROPERTIES only (checked by the
+    // prelude and again in fieldsOf); null removes one. What the style attribute grows by counts against the view's
+    // characters like a value, and is refused past it, the element left as it was; what the values can load is prepaid
+    // like a style attribute's (cssLoadBound), and refused once the view has loaded VIEW_MAX_DISTINCT_URLS.
+    const inlineStyle = (proto: any) => {
+        const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, 'style') : undefined;
+        return descriptor && descriptor.get ? descriptor.get : null;
+    };
+    const styleGetters = [inlineStyle(HTMLElement.prototype), inlineStyle(g.SVGElement && g.SVGElement.prototype), inlineStyle(g.MathMLElement && g.MathMLElement.prototype)];
+    const setProperty = CSSStyleDeclaration.prototype.setProperty;
+    const removeProperty = CSSStyleDeclaration.prototype.removeProperty;
+    const applyCss = (target: Element, given: Record<string, string | null>, refused: [directive: string, url: string][]) => {
+        let style: CSSStyleDeclaration | null = null;
+        for (let i = 0; !style && i < styleGetters.length; i++) {
+            try {
+                if (styleGetters[i]) style = call(styleGetters[i]!, target, []) as CSSStyleDeclaration;
+            } catch {
+                // not an element of that interface
+            }
+        }
+        if (!style) return;
+        const names = Object.keys(given);
+        // Each value without its network URLs, as a style attribute the renderer keeps (S74, cssInto): one of an origin in
+        // `origins.withoutCors` stays, any other becomes `""` and is reported as refused, so set() loads nothing the
+        // renderer would not.
+        const css: Record<string, string | null> = {};
+        for (let i = 0; i < names.length; i++) {
+            const value = given[names[i]!];
+            css[names[i]!] = typeof value === 'string' ? cssInto(value, refused) : null;
+        }
+        let loads = 0;
+        for (let i = 0; i < names.length; i++) {
+            const value = css[names[i]!];
+            if (value === null || value === undefined) continue;
+            if (distinctLoads.size >= options.maxDistinctUrls && CSS_URL.test(value)) throw new RangeError('VIEW_MAX_DISTINCT_URLS');
+            loads += countLoads(value, options.rates.urls);
+        }
+        const before = counts(call(bodyOf, document, []));
+        const old = styleAttributeOf(target);
+        for (let i = 0; i < names.length; i++) {
+            const value = css[names[i]!];
+            if (value === null || value === undefined) call(removeProperty, style, [names[i]]);
+            else call(setProperty, style, [names[i], value]);
+        }
+        const change = valueAttributeLength(styleAttributeOf(target), 'style') - valueAttributeLength(old, 'style');
+        if (before.characters + change > options.render.maxCharacters) {
+            if (old === null) call(E.removeAttribute, target, ['style']);
+            else call(E.setAttribute, target, ['style', old]);
+            settle(target, 'style');
+            throw new RangeError('VIEW_MAX_CHARACTERS');
+        }
+        settle(target, 'style');
+        cssWork += loads;
+        if (bodyCharacters !== null) bodyCharacters = before.characters + change;
+    };
+    const setScrollLeft = setter(Element.prototype, 'scrollLeft');
     const hasFocus = D.hasFocus;
     // How many characters `text` is as an element's content, serialized (escaped, as in every element the renderer
     // keeps but <style>, where it is raw text and so shorter: the count is an upper bound there).
@@ -2133,11 +2561,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         call(setTextContent, probe.content, [text]);
         return innerLength(probe);
     };
-    // How many characters an attribute `value="…"` adds to its element's serialization; 0 for none.
-    const valueAttributeLength = (value: string | null) => {
+    // How many characters an attribute `name="…"` (by default `value`) adds to its element's serialization; 0 for none.
+    const valueAttributeLength = (value: string | null, name = 'value') => {
         if (value === null) return 0;
         const probe = call(D.createElement, document, ['span']);
-        call(E.setAttribute, probe, ['value', value]);
+        call(E.setAttribute, probe, [name, value]);
         const length = call(outerHTMLOf, probe, []).length as number;
         work += length;
         return length - '<span></span>'.length;
@@ -2175,13 +2603,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // or a file input, is left as it is. checked: an input's. focus: only while this document has the user's focus, so
     // a guest can move focus within the sandbox but never take it from the host page (VIEW_FOCUS, refused); a value or
     // checked state in the same set still applies.
-    const applySet = (id: string, fields: { value?: string; checked?: boolean; focus?: boolean }) => {
+    const applySet = (id: string, fields: SetFields) => {
         const target = elementInBody(id);
-        if (!target || call(namespaceOf, target, []) !== HTML_NS) return;
-        const name = call(localNameOf, target, []);
+        if (!target) return;
         const refused: [string, string][] = [];
+        // css: each value without network URLs, as the renderer's style attributes (S74; applyCss)
+        if (fields.css) applyCss(target, fields.css, refused);
+        const html = call(namespaceOf, target, []) === HTML_NS;
+        const name = call(localNameOf, target, []);
         // a text a sheet could read (see inStyle), without network URLs (S74); the renderer leaves no control inside a style
-        const value = fields.value !== undefined && (name === 'textarea' || name === 'output') && inStyle(target) ? cssInto(fields.value, refused) : fields.value;
+        const value = !html ? undefined : fields.value !== undefined && (name === 'textarea' || name === 'output') && inStyle(target) ? cssInto(fields.value, refused) : fields.value;
         if (value !== undefined) {
             if (name === 'input' && call(inputType, target, []) !== 'file') {
                 const before = counts(call(bodyOf, document, []));
@@ -2206,9 +2637,14 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 call(selectValue, target, [value]);
             }
         }
-        if (fields.checked !== undefined && name === 'input') call(inputChecked, target, [fields.checked]);
+        if (fields.checked !== undefined && html && name === 'input') call(inputChecked, target, [fields.checked]);
         reportAll(refused);
-        if (fields.focus !== true) return;
+        // scroll: the element's own scroll position, any element's (research 23). An assignment to it never scrolls an
+        // ancestor, nor the host page; the scroll event it raises is trusted, and is coalesced like the user's.
+        const scroll = fields.scroll;
+        if (scroll && scroll.top !== undefined) call(setScrollTop, target, [scroll.top]);
+        if (scroll && scroll.left !== undefined) call(setScrollLeft, target, [scroll.left]);
+        if (fields.focus !== true || !html) return;
         if (!call(hasFocus, document, [])) throw new RangeError('VIEW_FOCUS');
         call(focusElement, target, []);
     };
@@ -2263,7 +2699,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // the host page's that the event loop runs before the meter's task is in it too: both are charged to the view and
     // count towards its operation, which slows the guest, and makes it an overrun only past VIEW_MAX_OPERATION_MS: one
     // reason why one overrun does not end the sandbox (VIEW_OVERRUN_WINDOW_MS).
-    type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: { value?: string; checked?: boolean; focus?: boolean } | null };
+    type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: SetFields | null };
     let pending: Job[] = [];
     let scheduled = false;
     // What a measure's verdict does (viewBudget, the repeated-overrun rule; S72, class P). An overrun that is not
@@ -2335,7 +2771,18 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     const costOf = (jobs: Job[]) => {
         let cost = 0;
-        for (let i = 0; i < jobs.length; i++) cost += jobs[i]!.kind === 'set' ? (jobs[i]!.fields!.value || '').length : jobs[i]!.html.length;
+        for (let i = 0; i < jobs.length; i++) {
+            const job = jobs[i]!;
+            if (job.kind !== 'set') {
+                cost += job.html.length;
+                continue;
+            }
+            cost += (job.fields!.value || '').length;
+            const css = job.fields!.css;
+            if (!css) continue;
+            const names = Object.keys(css);
+            for (let k = 0; k < names.length; k++) cost += names[k]!.length + (css[names[k]!] || '').length;
+        }
         return cost;
     };
     // After operations that started at `started`: what they serialized and the time they took, layout included, are
@@ -2422,6 +2869,32 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             if (typeof data[key] !== 'boolean') return null;
             fields[key] = data[key];
         }
+        const scroll = data.scroll;
+        if (scroll !== undefined) {
+            if (!scroll || typeof scroll !== 'object') return null;
+            const position: { top?: number; left?: number } = {};
+            for (const key of ['top', 'left'] as const) {
+                const at = scroll[key];
+                if (at === undefined) continue;
+                if (typeof at !== 'number' || !isFinite(at)) return null;
+                position[key] = at;
+            }
+            fields.scroll = position;
+        }
+        const css = data.css;
+        if (css !== undefined) {
+            if (!css || typeof css !== 'object' || Array.isArray(css)) return null;
+            const names = Object.keys(css);
+            if (names.length > options.style.maxProperties) return null;
+            const checked: Record<string, string | null> = Object.create(null);
+            for (let i = 0; i < names.length; i++) {
+                const value = css[names[i]!];
+                if (!styleProperty(names[i]!, options.style.properties, options.style.maxValue, (text, at) => text.charCodeAt(at))) return null;
+                if (value !== null && (typeof value !== 'string' || value.length > options.style.maxValue)) return null;
+                checked[names[i]!] = value;
+            }
+            fields.css = checked;
+        }
         return fields;
     };
     const onRender = (event: MessageEvent) => {
@@ -2429,6 +2902,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (!data || typeof data !== 'object') return;
         if (data.type === 'VIEW_LISTEN') {
             subscribed = Array.isArray(data.types) ? data.types.filter((type: unknown) => options.events.types.indexOf(type as string) >= 0) : [];
+            listen(data.marks);
+            return;
+        }
+        if (data.type === 'VIEW_EVENT_ACK') {
+            inputAcked();
             return;
         }
         let job: Job | null = null;
@@ -2767,9 +3245,10 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * MessagePort.prototype, MessageEvent.prototype or Function.prototype cannot reach the port. Guest code
  * gets only `sandboxView.render`, `text` and `set`, which queue operations for the view and post one at a time, the
  * next only after the view's VIEW_ACK, and `sandboxView.on`, which registers handlers for the events the view forwards
- * (the port itself is never handed to a handler).
+ * (the port itself is never handed to a handler); each frame of events is acknowledged (VIEW_EVENT_ACK) once its
+ * handlers have returned.
  */
-export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; maxUrls: number; maxDistinctUrls: number; entryDoneName: string; eventTypes: readonly string[] }) {
+export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; maxUrls: number; maxDistinctUrls: number; entryDoneName: string; eventTypes: readonly string[]; maxMarks: number; style: { properties: readonly string[]; maxProperties: number; maxValue: number } }, styleProperty: typeof isStyleProperty) {
     // ---- The captured list (AR:C3, R2:C-1): sandboxView's methods, the render port's listener and the
     // error listener run after the entry, so everything they use is taken here, and nothing below reads a global or a
     // prototype guest code can replace (a unit test scans the text). The prelude's own lists have no prototype
@@ -2785,6 +3264,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     const keysOf = Object.keys;
     const freeze = Object.freeze;
     const isArray = Array.isArray;
+    const isFiniteNumber = Number.isFinite;
     const addListener = EventTarget.prototype.addEventListener;
     const dataOf = getOwn(MessageEvent.prototype, 'data')!.get!;
     const portsOf = getOwn(MessageEvent.prototype, 'ports')!.get!;
@@ -2799,6 +3279,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     const startPort = MessagePort.prototype.start;
     const join = Array.prototype.join; // for error texts: a patched join would otherwise receive the prelude's own list as `this`
     const slice = String.prototype.slice;
+    const charCodeAt = String.prototype.charCodeAt;
     const startsWith = String.prototype.startsWith;
     const StringConstructor = String;
     const ErrorConstructor = Error;
@@ -2847,15 +3328,41 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         inFlight = next;
         apply(post, renderPort, [next.message]);
     };
+    // Two sets merge unless their css together would name more properties than one set may (VIEW_SET_STYLE_LIMITS).
+    const mergeable = (earlier: Record<string, unknown>, later: Record<string, unknown>) => {
+        const a = earlier.css as Record<string, unknown> | undefined;
+        const b = later.css as Record<string, unknown> | undefined;
+        if (!a || !b) return true;
+        const known = keysOf(a);
+        const names = keysOf(b);
+        let count = known.length;
+        for (let i = 0; i < names.length; i++) {
+            let found = false;
+            for (let k = 0; k < known.length; k++) if (known[k] === names[i]) found = true;
+            if (!found) count++;
+        }
+        return count <= options.style.maxProperties;
+    };
     const enqueue = (operation: Operation) => {
         if (operation.kind !== 'set') {
             let kept = 0;
             for (let i = 0; i < queue.length; i++) if (queue[i]!.slot !== operation.slot) queue[kept++] = queue[i]!;
             queue.length = kept;
-        } else if (queue.length > 0 && queue[queue.length - 1]!.slot === operation.slot) {
+        } else if (queue.length > 0 && queue[queue.length - 1]!.slot === operation.slot && mergeable(queue[queue.length - 1]!.message, operation.message)) {
             const merged = queue[queue.length - 1]!.message;
             const keys = keysOf(operation.message); // indexed, never iterated: guest code can replace the array iterator (AR:C3)
-            for (let i = 0; i < keys.length; i++) merged[keys[i]!] = operation.message[keys[i]!];
+            for (let i = 0; i < keys.length; i++) {
+                const key = keys[i]!;
+                const earlier = merged[key];
+                const later = operation.message[key];
+                // a field that is a set of its own (scroll, css) merges key by key: the later wins per key
+                if ((key === 'scroll' || key === 'css') && earlier && later) {
+                    const inner = keysOf(later);
+                    for (let k = 0; k < inner.length; k++) (earlier as Record<string, unknown>)[inner[k]!] = (later as Record<string, unknown>)[inner[k]!];
+                } else {
+                    merged[key] = later;
+                }
+            }
             return;
         }
         queue[queue.length] = operation;
@@ -2878,11 +3385,46 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         if (value.length > options.maxRender) throw new RangeErrorConstructor('sandboxView.text: text is longer than ' + options.maxRender + ' characters');
         enqueue({ slot: 'content#' + id, kind: 'text', message: { type: 'VIEW_TEXT', into: id, text: value } });
     };
-    // A form control's value or checked state, or focus (R1:R4-5). Each own enumerable field of `fields` is read once,
-    // and only these three are allowed, each of its one type; what is posted is a fresh object of those primitives.
+    // An object of the guest's, as an object of its own enumerable fields, each read once, with no prototype; each key
+    // must be one of `keys`, and its value pass `check` (which throws), or the call throws `what`'s TypeError.
+    const fieldsOf = (value: unknown, what: string, keys: string, check: (key: string, field: unknown) => void) => {
+        if (value === null || typeof value !== 'object' || isArray(value)) throw new TypeErrorConstructor(what + ' must be an object: { ' + keys + ' }');
+        const out: Record<string, unknown> = setPrototype({}, null);
+        const own = keysOf(value);
+        for (let i = 0; i < own.length; i++) {
+            const field = (value as Record<string, unknown>)[own[i]!];
+            check(own[i]!, field);
+            out[own[i]!] = field;
+        }
+        return out;
+    };
+    // scroll: the element's own scroll position (research 23), in CSS px.
+    const scrollOf = (value: unknown) => fieldsOf(value, 'sandboxView.set: scroll', 'top?, left?', (key, field) => {
+        if (key !== 'top' && key !== 'left') throw new TypeErrorConstructor('sandboxView.set: unknown scroll key "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the keys are top and left');
+        if (!isFiniteNumber(field)) throw new TypeErrorConstructor('sandboxView.set: scroll.' + key + ' must be a finite number');
+    });
+    // css: inline style properties of one element (research 23), from VIEW_STYLE_PROPERTIES only, each a string or null
+    // (which removes it); at most VIEW_SET_STYLE_LIMITS.maxProperties of them, each value (and a custom property's name)
+    // at most maxValue characters. The view checks all of it again.
+    const codeAt = (text: string, index: number) => apply(charCodeAt, text, [index]) as number;
+    const cssOf = (value: unknown) => {
+        if (value !== null && typeof value === 'object' && !isArray(value) && keysOf(value).length > options.style.maxProperties) {
+            throw new RangeErrorConstructor('sandboxView.set: css names more than ' + options.style.maxProperties + ' properties');
+        }
+        return fieldsOf(value, 'sandboxView.set: css', 'property: string | null', (key, field) => {
+            if (!styleProperty(key, options.style.properties, options.style.maxValue, codeAt)) {
+                throw new TypeErrorConstructor('sandboxView.set: css cannot set "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the properties are ' + apply(join, options.style.properties, [', ']));
+            }
+            if (field !== null && typeof field !== 'string') throw new TypeErrorConstructor('sandboxView.set: css["' + key + '"] must be a string, or null to remove it');
+            if (typeof field === 'string' && field.length > options.style.maxValue) throw new RangeErrorConstructor('sandboxView.set: css["' + key + '"] is longer than ' + options.style.maxValue + ' characters');
+        });
+    };
+    // A form control's value or checked state, focus, an element's scroll position or inline style (R1:R4-5; research
+    // 23). Each own enumerable field of `fields` is read once, and only these are allowed, each of its one type; what is
+    // posted is a fresh object of those values.
     const set = (id: unknown, fields: unknown) => {
         if (!isId(id)) throw new TypeErrorConstructor('sandboxView.set: id must be an element id');
-        if (fields === null || typeof fields !== 'object' || isArray(fields)) throw new TypeErrorConstructor('sandboxView.set: the second argument must be an object: { value?, checked?, focus? }');
+        if (fields === null || typeof fields !== 'object' || isArray(fields)) throw new TypeErrorConstructor('sandboxView.set: the second argument must be an object: { value?, checked?, focus?, scroll?, css? }');
         const message: Record<string, unknown> = setPrototype({ type: 'VIEW_SET', id }, null); // no inherited setter for a key (AR:C3)
         let any = false;
         const keys = keysOf(fields);
@@ -2894,49 +3436,113 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
                 if (value.length > options.maxRender) throw new RangeErrorConstructor('sandboxView.set: value is longer than ' + options.maxRender + ' characters');
             } else if (key === 'checked' || key === 'focus') {
                 if (typeof value !== 'boolean') throw new TypeErrorConstructor('sandboxView.set: ' + key + ' must be a boolean');
+            } else if (key === 'scroll' || key === 'css') {
+                message[key] = key === 'scroll' ? scrollOf(value) : cssOf(value);
+                any = true;
+                continue;
             } else {
-                throw new TypeErrorConstructor('sandboxView.set: unknown key "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the keys are value, checked and focus');
+                throw new TypeErrorConstructor('sandboxView.set: unknown key "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the keys are value, checked, focus, scroll and css');
             }
             message[key] = value;
             any = true;
         }
         if (any) enqueue({ slot: 'set#' + id, kind: 'set', message });
     };
-    // ---- events: sandboxView.on(type, id | null, handler) → off ----
+    // ---- events: sandboxView.on(type, id | null, handler, options?) → off ----
     // The view forwards only the types some handler listens to (VIEW_LISTEN, sent whenever that set changes).
     // A handler with an id runs for events on that element or inside it (the detail's ids); with null, for all.
+    // Options (research 23), read once: `pointerCapture` (pointerdown, with an id: the view captures the pointer to that
+    // element in the trusted event), `rect` (with an id: the detail carries that element's rectangle as `rect`; the worker
+    // cannot read layout) and `preventDefault` (wheel: the view cancels the wheel's default inside the element, or
+    // anywhere for null). They reach the view as marks, [type, id, flags], at most options.maxMarks per type.
+    const CAPTURE = 1, RECT = 2, PREVENT = 4;
     const isEventType = (type: unknown) => {
         for (let i = 0; i < options.eventTypes.length; i++) if (options.eventTypes[i] === type) return true;
         return false;
     };
-    type Handler = { type: string; id: string | null; handler: (detail: unknown) => void; active: boolean };
+    type Handler = { type: string; id: string | null; handler: (detail: unknown) => void; active: boolean; flags: number };
     const handlers = list<Handler>();
     let listened = '';
     const syncListen = () => {
         if (!renderPort) return;
         const types = list<string>();
+        const marks = list<[string, string | null, number]>();
         let key = '';
         for (let t = 0; t < options.eventTypes.length; t++) {
+            const type = options.eventTypes[t]!;
+            let heard = false;
             for (let h = 0; h < handlers.length; h++) {
-                if (handlers[h]!.type === options.eventTypes[t]) {
-                    types[types.length] = options.eventTypes[t]!;
-                    key += options.eventTypes[t] + ',';
-                    break;
+                const entry = handlers[h]!;
+                if (entry.type !== type) continue;
+                if (!heard) {
+                    heard = true;
+                    types[types.length] = type;
+                    key += type + ',';
                 }
+                if (entry.flags === 0) continue;
+                let merged = false;
+                for (let m = 0; m < marks.length; m++) {
+                    if (marks[m]![0] === type && marks[m]![1] === entry.id) {
+                        marks[m]![2] = marks[m]![2] | entry.flags;
+                        merged = true;
+                    }
+                }
+                if (!merged) marks[marks.length] = setPrototype([type, entry.id, entry.flags], null) as [string, string | null, number];
             }
+        }
+        for (let m = 0; m < marks.length; m++) {
+            const id = marks[m]![1];
+            key += marks[m]![0] + ':' + (id === null ? '-' : id.length + ':' + id) + ':' + marks[m]![2] + ';';
         }
         if (key === listened) return;
         listened = key;
-        apply(post, renderPort, [{ type: 'VIEW_LISTEN', types }]);
+        apply(post, renderPort, [{ type: 'VIEW_LISTEN', types, marks }]);
     };
-    const on = (type: unknown, id: unknown, handler: unknown) => {
+    const flagsOf = (type: string, target: string | null, given: unknown) => {
+        if (given === undefined) return 0;
+        const read = fieldsOf(given, 'sandboxView.on: options', 'pointerCapture?, rect?, preventDefault?', (key, field) => {
+            if (key !== 'pointerCapture' && key !== 'rect' && key !== 'preventDefault') {
+                throw new TypeErrorConstructor('sandboxView.on: unknown option "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the options are pointerCapture, rect and preventDefault');
+            }
+            if (field !== undefined && typeof field !== 'boolean') throw new TypeErrorConstructor('sandboxView.on: ' + key + ' must be a boolean');
+        });
+        let flags = 0;
+        if (read.pointerCapture === true) {
+            if (type !== 'pointerdown' || target === null) throw new TypeErrorConstructor('sandboxView.on: pointerCapture is for a pointerdown handler with an element id');
+            flags = flags | CAPTURE;
+        }
+        if (read.rect === true) {
+            if (target === null) throw new TypeErrorConstructor('sandboxView.on: rect needs an element id');
+            flags = flags | RECT;
+        }
+        if (read.preventDefault === true) {
+            if (type !== 'wheel') throw new TypeErrorConstructor('sandboxView.on: preventDefault is for a wheel handler');
+            flags = flags | PREVENT;
+        }
+        return flags;
+    };
+    const on = (type: unknown, id: unknown, handler: unknown, given?: unknown) => {
         if (!isEventType(type)) throw new TypeErrorConstructor('sandboxView.on: type must be one of ' + apply(join, options.eventTypes, [', ']));
         const target = id === undefined || id === null ? null : id;
         if (target !== null && (typeof target !== 'string' || target.length === 0 || target.length > options.maxTarget)) {
             throw new TypeErrorConstructor('sandboxView.on: id must be an element id or null');
         }
         if (typeof handler !== 'function') throw new TypeErrorConstructor('sandboxView.on: handler must be a function');
-        const entry: Handler = { type: type as string, id: target as string | null, handler: handler as (detail: unknown) => void, active: true };
+        const flags = flagsOf(type as string, target as string | null, given);
+        if (flags !== 0) {
+            // at most maxMarks elements with options per type: what the view looks through for each event
+            let marked = 0, known = false;
+            for (let i = 0; i < handlers.length; i++) {
+                const entry = handlers[i]!;
+                if (entry.type !== type || entry.flags === 0) continue;
+                if (entry.id === target) known = true;
+                let first = true;
+                for (let k = 0; k < i; k++) if (handlers[k]!.type === type && handlers[k]!.flags !== 0 && handlers[k]!.id === entry.id) first = false;
+                if (first) marked++;
+            }
+            if (!known && marked >= options.maxMarks) throw new RangeErrorConstructor('sandboxView.on: at most ' + options.maxMarks + ' elements a type may have handlers with options');
+        }
+        const entry: Handler = { type: type as string, id: target as string | null, handler: handler as (detail: unknown) => void, active: true, flags };
         handlers[handlers.length] = entry;
         syncListen();
         return () => {
@@ -2948,9 +3554,26 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
             syncListen();
         };
     };
+    // The detail a handler with `rect` gets: the detail's own fields, and its element's rectangle as `rect` when the view
+    // sent one (the element is in the view). A fresh object, its fields defined (no setter of the guest's runs).
+    const withRect = (detail: Record<string, unknown>, rects: unknown, id: string) => {
+        let rect: Record<string, unknown> | null = null;
+        for (let i = 0; isArray(rects) && i < rects.length; i++) {
+            const found = rects[i];
+            if (isArray(found) && found[0] === id) rect = { x: found[1], y: found[2], width: found[3], height: found[4] };
+        }
+        if (rect === null) return detail;
+        const copy = {};
+        const keys = keysOf(detail);
+        for (let i = 0; i < keys.length; i++) defineOwn(copy, keys[i]!, { value: detail[keys[i]!], writable: true, enumerable: true, configurable: true });
+        defineOwn(copy, 'rect', { value: rect, writable: true, enumerable: true, configurable: true });
+        return copy;
+    };
     const dispatch = (detail: any) => {
         if (!detail || typeof detail !== 'object' || !isEventType(detail.type)) return;
         const ids = detail.ids;
+        const rects = detail.rects;
+        if (rects !== undefined) deleteOwn(detail, 'rects');
         const current = list<Handler>();
         for (let i = 0; i < handlers.length; i++) current[i] = handlers[i]!;
         for (let i = 0; i < current.length; i++) {
@@ -2962,7 +3585,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
                 if (!found) continue;
             }
             try {
-                entry.handler(detail);
+                entry.handler((entry.flags & RECT) !== 0 && entry.id !== null ? withRect(detail, rects, entry.id) : detail);
             } catch (error) {
                 // reported like any uncaught error (logged by the listener below), without stopping the others
                 if (reportUncaught) apply(reportUncaught, g, [error]);
@@ -2999,7 +3622,15 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
             sendNext();
             return;
         }
-        if (data.type === 'VIEW_EVENT') dispatch(data.detail);
+        if (data.type === 'VIEW_EVENT') {
+            // One frame of the view's events, in the order they were raised (research 23): each dispatched to its handlers,
+            // which have all returned (a throwing one reported) when the frame is acknowledged. The view sends no further
+            // continuous events before VIEW_EVENT_ACK (VIEW_INPUT_IN_FLIGHT), and only the prelude posts it: guest code
+            // cannot reach the render port.
+            const details = data.details;
+            for (let i = 0; isArray(details) && i < details.length; i++) dispatch(details[i]);
+            apply(post, renderPort, [{ type: 'VIEW_EVENT_ACK' }]);
+        }
     };
     defineOwn(g, 'sandboxView', { value: freeze({ render, text, set, on }), writable: true, enumerable: true, configurable: true });
 
@@ -3136,7 +3767,8 @@ export const VIEW_OPTIONS: ViewOptions = {
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
     violationDirectives: VIOLATION_DIRECTIVES,
     violationMaxString: 2048, // VIOLATION_MAX_STRING (violation.ts); a test keeps them equal
-    events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
+    events: { types: VIEW_EVENT_TYPES, continuous: VIEW_CONTINUOUS_EVENT_TYPES, inFlight: VIEW_INPUT_IN_FLIGHT, ...VIEW_EVENT_LIMITS },
+    style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,
     writeTypes: VIEW_WRITE_TYPES,
     // the host cuts these texts to the same length again on receipt (host.ts), and dispatches at most
@@ -3183,7 +3815,7 @@ export function environmentGate(host: string, stopParsing: boolean, body: string
 export function viewBootstrapSource(options: ViewOptions): string {
     const script = 'var s = document.currentScript;';
     const bridge = `(${inBridgeFrame.toString()})(${JSON.stringify(BRIDGE_FRAME_OPTIONS).replaceAll('<', '\\u003c')});`;
-    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')});`;
+    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()});`;
     // The gate first (environment-check.ts): a refusal goes to the host page's window, which is the bridge frame's parent and
     // the view's grandparent.
     const host = `(document.currentScript && document.currentScript.getAttribute('data-role') === '${BRIDGE_ROLE}' ? parent : parent.parent)`;

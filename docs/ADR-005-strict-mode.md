@@ -41,13 +41,13 @@ all, with the realms named as there (`strict-worker` is the guest's worker). `VI
 on, and the render port is the view's and the worker's alone
 ([ADR-002](ADR-002-host-guest-broker.md#strict-mode-renders-bypass-the-host)).
 
-<!-- describes: adr005:ports sig:773c -->
+<!-- describes: adr005:ports sig:47ca -->
 <!-- generated:begin adr005-ports -->
 | Port | Ends | Carries |
 | :--- | :--- | :--- |
 | logic | host ↔ strict-worker | `EXECUTE`, `PING`, `PONG`, `RPC_REQ`, `RPC_RES`, `LOG`, `VIOLATION`, `UNCAUGHT_PAST_BUDGET` |
 | view | host ↔ view | `VIOLATION`, `RESIZE`, `UNCAUGHT_PAST_BUDGET`, `VIEW_READY`, `VIEW_PING`, `VIEW_PONG`, `VIEW_WRITE`, `VIEW_WRITTEN`, `VIEW_FIRST_OVERRUN`, `VIEW_OVERRUN`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `GUEST_TEXT_DROPPED`, `TRUSTED_TYPES_REFUSED`, `WORKER_REFUSED` |
-| render | view ↔ strict-worker (the host is not on this path) | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_TEXT`, `VIEW_SET`, `VIEW_LISTEN`, `VIEW_ACK`, `VIEW_EVENT` |
+| render | view ↔ strict-worker (the host is not on this path) | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_TEXT`, `VIEW_SET`, `VIEW_LISTEN`, `VIEW_ACK`, `VIEW_EVENT`, `VIEW_EVENT_ACK` |
 <!-- generated:end -->
 
 <!-- generated:begin adr005-init-view -->
@@ -144,11 +144,17 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js' });
 - In the worker, `sandboxView.render(html, into?)` replaces the view's body, or the children of the element whose id is
   `into`; at most `VIEW_RENDER_MAX_LENGTH` (256 Ki) characters; latest wins per target. `sandboxView.text(id, text)` makes a
   string an element's only content, assigned and never parsed, so a guest escapes nothing; `sandboxView.set(id, { value?,
-  checked?, focus? })` sets an `input`'s, `textarea`'s, `select`'s or `output`'s value (not a file input's) or an `input`'s
-  checked state, or focuses the element. `sandboxView.on(type, id | null, handler)` returns `off`: `click`, `input`,
-  `change`, `submit`, `keydown`, trusted only, with a detail of `{ type, ids, target: { tag, id, name, value, checked },
-  key?, form? }` — never a URL. [API.md](API.md#sandboxview-strict-mode) lists the signatures, the renderer's lists and the
-  budgets.
+  checked?, focus?, scroll?, css? })` sets an `input`'s, `textarea`'s, `select`'s or `output`'s value (not a file input's)
+  or an `input`'s checked state, focuses the element, sets its own scroll position, or sets inline style properties of it
+  from the closed list `VIEW_STYLE_PROPERTIES`. `sandboxView.on(type, id | null, handler, options?)` returns `off`:
+  `click`, `input`, `change`, `submit`, `keydown`, `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, `wheel`,
+  `scroll`, `focusin` and `focusout`, trusted only, with a detail of `{ type, ids, target: { tag, id, name, value,
+  checked }, key?, form?, pointer?, wheel?, scroll?, rect?, modifiers?, time?, coalesced? }` — never a URL, and no pointer
+  coordinate outside the view's box. Pointer moves, wheel and scroll events are coalesced in the view and sent at most
+  once per animation frame while the worker has not acknowledged the last frame (`VIEW_EVENT_ACK`,
+  `VIEW_INPUT_IN_FLIGHT`); their time is charged to the view's time budget. The options are `pointerCapture`, `rect` and
+  `preventDefault` ([research 23](research/23_view_input/README.md)). [API.md](API.md#sandboxview-strict-mode) lists the
+  signatures, the renderer's lists and the budgets.
 - An entry that fails to start (a syntax error, or a throw at its top level) ends the sandbox with `the guest entry failed
   to start`; a later uncaught error is logged and does not. An entry that is not a registered JavaScript file ends the build
   with a reason.
