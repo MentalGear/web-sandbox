@@ -1191,7 +1191,7 @@
         {
           "kind": "TypeAlias",
           "canonicalReference": "web-sandbox!GuestWrite:type",
-          "docComment": "/**\n * One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size`\n * and a copy of the written bytes in `content`) or a removal. Each call reports fresh objects. A change reaches the\n * files only through `commitGuestWrites()`.\n */\n",
+          "docComment": "/**\n * One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size`\n * and a copy of the written bytes in `content`) or a removal. Each call reports fresh objects. A change reaches the\n * files only through `commitGuestWrites()`.\n *\n * @remarks\n *\n * The `path`, the `type` and the `content` are the guest's: attacker text. Show a path or a type with `textContent`, never\n * in an HTML, URL, `eval` or template sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,`\n * and `@`, so one written into a single-quoted attribute can end it and add one).\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -4763,7 +4763,7 @@
         {
           "kind": "Interface",
           "canonicalReference": "web-sandbox!WebSandboxEventMap:interface",
-          "docComment": "/**\n * The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.\n *\n * @remarks\n *\n * Every event is a `CustomEvent` dispatched on the element and none is `composed`. The bubbling ones reach a listener on\n * `window` for every sandbox on the page; `event.target` says which. The `detail` is frozen, deeply: every object and\n * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an\n * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and\n * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log\n * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`): show it with `textContent`,\n * never in an HTML, URL (such as a link `href`), `eval` or template sink. `terminated.reason` is the library's text.\n */\n",
+          "docComment": "/**\n * The events the element dispatches, and the `detail` of each: the type map of `addEventListener()`.\n *\n * @remarks\n *\n * Every event is a `CustomEvent` dispatched on the element and none is `composed`. The bubbling ones reach a listener on\n * `window` for every sandbox on the page; `event.target` says which. The `detail` is frozen, deeply: every object and\n * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an\n * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and\n * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log\n * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a\n * guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,\n * URL (such as a link `href`), `eval` or template sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,\n * `+`, `,` and `@`, so one written into a single-quoted attribute can end it and add one. `terminated.reason` is the\n * library's text.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -4901,7 +4901,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!WebSandboxEventMap#fileswritten:member",
-              "docComment": "/**\n * The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths`\n * holds that one path.\n *\n * @remarks\n *\n * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles.\n */\n",
+              "docComment": "/**\n * The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths`\n * holds that one path.\n *\n * @remarks\n *\n * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles. The path is guest-controlled text: show\n * it with `textContent` (a valid path can end a single-quoted attribute).\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",

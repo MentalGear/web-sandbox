@@ -298,7 +298,9 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
   ([API.md](API.md#trusted-types-without-the-browser)).
 - **Cross-Origin-Embedder-Policy `require-corp`**: WebKit refuses the view's `blob:` worker, so a strict build fails there.
 - **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`, a
-  `fetch` record's `url` (it can be `javascript:`), the message of a call rejected by a guest handler. The library
+  `fetch` record's `url` (it can be `javascript:`), the path and type of a guest's write (`fileswritten`'s `detail.paths`,
+  `listGuestWrites()`; a valid path holds `'`, `(`, `;`, `=` and more, so it can end a single-quoted attribute), the
+  message of a call rejected by a guest handler. The library
   validates and clamps its size and shape, not its content. Show it with `textContent`; never pass it to an HTML, URL (a
   link `href`), `eval` or template sink, or the guest's text runs with the host page's authority.
 - **Exposed methods are the attack surface** the embedder adds: validate every argument, copy objects with spread, never

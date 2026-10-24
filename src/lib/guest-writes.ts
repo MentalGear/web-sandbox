@@ -77,6 +77,11 @@ export const INERT_TYPES: ReadonlySet<string> = new Set([
  * One pending change of the guest, as `listGuestWrites()` reports it: a write (with its `type`, `size`
  * and a copy of the written bytes in `content`) or a removal. Each call reports fresh objects. A change reaches the
  * files only through `commitGuestWrites()`.
+ *
+ * @remarks
+ * The `path`, the `type` and the `content` are the guest's: attacker text. Show a path or a type with `textContent`, never
+ * in an HTML, URL, `eval` or template sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,`
+ * and `@`, so one written into a single-quoted attribute can end it and add one).
  */
 export type GuestWrite =
     | { path: string; change: 'write'; type: string; size: number; content: Uint8Array }

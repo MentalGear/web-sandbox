@@ -125,8 +125,11 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions {
  * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
  * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
  * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
- * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`): show it with `textContent`,
- * never in an HTML, URL (such as a link `href`), `eval` or template sink. `terminated.reason` is the library's text.
+ * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
+ * guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
+ * URL (such as a link `href`), `eval` or template sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
+ * `+`, `,` and `@`, so one written into a single-quoted attribute can end it and add one. `terminated.reason` is the
+ * library's text.
  */
 export interface WebSandboxEventMap extends HTMLElementEventMap {
     /**
@@ -183,7 +186,8 @@ export interface WebSandboxEventMap extends HTMLElementEventMap {
      * holds that one path.
      *
      * @remarks
-     * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles.
+     * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles. The path is guest-controlled text: show
+     * it with `textContent` (a valid path can end a single-quoted attribute).
      */
     fileswritten: CustomEvent<{ readonly paths: readonly string[] }>;
 }

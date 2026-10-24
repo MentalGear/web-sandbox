@@ -206,8 +206,9 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     type `SandboxViolation`. In
     strict mode each report also carries `source`, `'view'` or `'logic'` (see [Strict mode](#strict-mode)).
 *   **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`,
-    a `fetch` record's `url` (it can be `javascript:`), the message of a call rejected by a guest handler, and the
-    arguments of a method you `expose()`. "Validated and clamped" bounds its size and shape; it does not make it safe to
+    a `fetch` record's `url` (it can be `javascript:`), the path and type of a guest's write (`fileswritten`'s
+    `detail.paths`, `listGuestWrites()`; a valid path can end a single-quoted attribute), the message of a call rejected by
+    a guest handler, and the arguments of a method you `expose()`. "Validated and clamped" bounds its size and shape; it does not make it safe to
     display. Show it with `textContent`, and never pass it to an HTML (`innerHTML`, `insertAdjacentHTML`), URL (a link
     `href`), `eval` or template sink. (`terminated.reason` is the library's own text.)
 *   **`state === 'terminated'` is a second, authoritative signal** next to a call's `TERMINATED`

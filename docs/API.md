@@ -711,8 +711,11 @@ Every event is a `CustomEvent` dispatched on the element and none is `composed`.
 array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
 `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
 clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
-line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`): show it with `textContent`,
-never in an HTML, URL (such as a link `href`), `eval` or template sink. `terminated.reason` is the library's text.
+line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
+guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
+URL (such as a link `href`), `eval` or template sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
+`+`, `,` and `@`, so one written into a single-quoted attribute can end it and add one. `terminated.reason` is the
+library's text.
 
 | Event | `detail` | Bubbles | When |
 | :--- | :--- | :--- | :--- |
@@ -722,7 +725,7 @@ never in an HTML, URL (such as a link `href`), `eval` or template sink. `termina
 | `violation` | `SandboxViolation` | yes | The guest's policy refused a load; see `SandboxViolation`. At most `VIOLATION_EVENT_LIMIT` per environment. A report is a claim by the guest, not a host fact. |
 | `fetch` | `FetchRecord` | yes | A `sandboxFetch()` request settled, refusals included; see `FetchRecord`. Dispatched only with `fetchBridge` configured. Without it `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
 | `fileschanged` | `{ paths: string[] }` | no | `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; `detail.paths` lists the paths that changed. Dispatched synchronously, once per call that changed something. |
-| `fileswritten` | `{ paths: string[] }` | yes | The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths` holds that one path. At most `GUEST_WRITES_PER_SECOND` per environment per second. |
+| `fileswritten` | `{ paths: string[] }` | yes | The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths` holds that one path. At most `GUEST_WRITES_PER_SECOND` per environment per second. The path is guest-controlled text: show it with `textContent` (a valid path can end a single-quoted attribute). |
 <!-- generated:end -->
 
 The element's own startup message, the guest frame's port announcement (`{ type: 'SANDBOX_PORT' }` from the guest
@@ -1121,7 +1124,9 @@ guest writes reaches the files, a policy or another environment until the host c
 [`commitGuestWrites()`](#commitguestwritespaths-options); it is listed by
 [`listGuestWrites()`](#listguestwrites) and announced by `fileswritten`. Without `guestWrites`, both methods
 reject with `FILES_NOT_ALLOWED`, and so does the element for any request that reaches it. Treat written
-content as the guest's data. [ADR-004](ADR-004-files-as-blob-urls.md)
+content as the guest's data, and so its path and type: show them with `textContent`, never in an HTML, URL or template
+sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,` and `@`, so one written into a
+single-quoted attribute can end it and add one). [ADR-004](ADR-004-files-as-blob-urls.md)
 
 In strict mode the view shows the raster images the guest writes: a write whose type is `image/png`, `image/jpeg`,
 `image/gif`, `image/webp` or `image/avif` (as the files would give it, never SVG) can be named by path in `img`,
