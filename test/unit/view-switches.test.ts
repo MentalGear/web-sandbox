@@ -234,7 +234,7 @@ describe('the configuration: allowAnimations and allowAutoplay', () => {
         el._lc = { ...el._lc, state: 'loading' };
         el._onViewMessage(port1, { type: 'VIEW_READY', width: 400, height: 300, stillStyleRefused: true });
         const said = warn.mock.calls.map(call => String(call[0])).filter(message => message.includes('stops animations'));
-        expect(said).toEqual([`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or '${scriptHashSource(VIEW_STILL_STYLE)}' in style-src (see docs/API.md#host-page-policy).`]);
+        expect(said).toEqual([`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or ${scriptHashSource(VIEW_STILL_STYLE)} in style-src (see docs/API.md#host-page-policy).`]);
         port1.close();
     });
 });

@@ -1645,14 +1645,14 @@ export class WebSandbox extends ElementBase {
         const frame = this._iframe?.clientHeight ?? 0;
         if (this._warnedWrapperStyle || typeof height !== 'number' || height > 150 || frame <= height + 1) return;
         this._warnedWrapperStyle = true;
-        console.warn(`[Sandbox] the sandbox's view is ${height} px high in a frame of ${frame} px: the host page's style-src refuses the wrapper's style. Allow 'unsafe-inline' or '${scriptHashSource(WRAPPER_STYLE)}' in style-src (see docs/API.md#host-page-policy).`);
+        console.warn(`[Sandbox] the sandbox's view is ${height} px high in a frame of ${frame} px: the host page's style-src refuses the wrapper's style. Allow 'unsafe-inline' or ${scriptHashSource(WRAPPER_STYLE)} in style-src (see docs/API.md#host-page-policy).`);
     }
 
     // allowAnimations: false, and the host page's style-src refused the view's still stylesheet (in-sandbox-view.ts,
     // VIEW_STILL_STYLE), which a srcdoc document inherits: the view checked, and drops the guest's stylesheets instead, so
     // no guest animation runs either way. Said once per element, with the hash to allow.
     private _warnStillStyleRefused() {
-        this._warnStrictOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or '${scriptHashSource(VIEW_STILL_STYLE)}' in style-src (see docs/API.md#host-page-policy).`);
+        this._warnStrictOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or ${scriptHashSource(VIEW_STILL_STYLE)} in style-src (see docs/API.md#host-page-policy).`);
     }
 
     // Flushes what was queued before the build was ready onto its port, in the order it was issued (R2:L-3): execute() code
