@@ -505,7 +505,7 @@ a finding").
   measured bytes in the frame next to `MAX_RESPONSE_HEAD`, and test with the worst head the cap admits.
 
 *Docs*
-- [ ] BD1:DOC-1: the owner enables private vulnerability reporting (repository Settings, Code security). SECURITY.md keeps
+- [ ] BD1:DOC-1 (BD3:DOC-10: still switched off, `gh api repos/MentalGear/web-sandbox/private-vulnerability-reporting` answers `enabled: false`): the owner enables private vulnerability reporting (repository Settings, Code security), or SECURITY.md gives a private address. SECURITY.md keeps
   the route and says `main` is what is supported. **[owner]**
 - [ ] BD1:DOC-2: `load(html)` does not validate; its TSDoc says a non-string is dropped with a warning, and
   `load(() => 1)` terminates strict mode (embedder-only). Code, or the TSDoc.
