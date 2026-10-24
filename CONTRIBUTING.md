@@ -149,6 +149,7 @@ the registry [docs/ids.ts](docs/ids.ts):
 | `R1:`, `R2:`, `R3:`, `R4:`, `R5:` and the finding's own ID | a finding of that review round | `R5:M-2`, `R1:R3-6` |
 | `BD1:` and the finding's own ID | a finding of the S74 review board's pass 1 (ISO, CHL, LIM, DOC, TST, NEW, CO) | `BD1:ISO-1` |
 | `BD2:` and the finding's own ID | a finding of the S74 review board's pass 2 (ISO, CHL, LIM, DOC, TST, NEW) | `BD2:ISO-2` |
+| `BD3:` and the finding's own ID | a finding of the S74 review board's pass 3 (ISO, CHL, LIM, DOC, TST, NEW) | `BD3:ISO-2` |
 | `AR:`, `BR:`, `FR:`, `VR:` and the finding's own ID | a finding of the adversarial, broad and focused reviews and the verification | `BR:CB1` |
 | `S<n>`, `T<n>`; `BL:` for the B, C, D and H series | a backlog item | `S76`, `BL:D1` |
 | `ADR-<nnn>`, `ADR-<nnn>#<heading anchor>` | an ADR, or one of its sections | `ADR-005` |
