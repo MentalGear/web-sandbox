@@ -306,12 +306,45 @@ export const VIEW_INPUT_IN_FLIGHT = 1;
  */
 export const VIEW_EVENT_LIMITS = { maxString: 65536, maxIds: 32, maxFields: 1000, maxTotal: VIEW_RENDER_MAX_LENGTH } as const;
 
+/**
+ * The inline style properties `sandboxView.set(id, { css })` may set on an element (research 23): what a drag, a
+ * gesture, a slider or a virtual list moves, and nothing else. `--*` stands for any custom property (`--` then letters,
+ * digits, `-` and `_`). No `animation*` or `transition*` (`allowAnimations: false` holds), no property that names a URL
+ * but `cursor` and the custom properties, whose loads are charged like a style attribute's (cssLoadBound).
+ */
+export const VIEW_STYLE_PROPERTIES = [
+    'transform', 'translate', 'rotate', 'scale', 'transform-origin', 'opacity', 'visibility',
+    'left', 'top', 'right', 'bottom', 'width', 'height', 'z-index', 'cursor', '--*',
+] as const;
+
+/**
+ * Limits of one `sandboxView.set(id, { css })` (research 23): the properties it names, and the characters of each value
+ * (and of a custom property's name). Past either, set() throws a `RangeError` in the guest.
+ */
+export const VIEW_SET_STYLE_LIMITS = { maxProperties: 16, maxValue: 1024 } as const;
+
 /** A VIEW_SET's fields, as the view checked them (inSandboxView, fieldsOf). */
 export interface SetFields {
     value?: string;
     checked?: boolean;
     focus?: boolean;
     scroll?: { top?: number; left?: number };
+    css?: Record<string, string | null>;
+}
+
+/**
+ * Whether `name` is a property `set({ css })` may name (VIEW_STYLE_PROPERTIES): one of its names, or a custom property of
+ * at most `maxName` characters. Stringified into the view and the strict prelude, which pass captured intrinsics.
+ */
+export function isStyleProperty(name: string, properties: readonly string[], maxName: number, codeAt: (text: string, index: number) => number): boolean {
+    for (let i = 0; i < properties.length; i++) if (properties[i] === name && name !== '--*') return true;
+    if (name.length < 3 || name.length > maxName || codeAt(name, 0) !== 45 || codeAt(name, 1) !== 45) return false;
+    for (let i = 2; i < name.length; i++) {
+        const c = codeAt(name, i);
+        const ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 45 || c === 95;
+        if (!ok) return false;
+    }
+    return true;
 }
 
 /** One entry of the view's input outbox (viewInputOutbox): a continuous event, or the latest of several coalesced. */
@@ -1375,6 +1408,8 @@ export interface ViewOptions {
     violationLimit: number;
     /** VIOLATION_MAX_STRING: the longest string of a violation report the view posts. */
     violationMaxString: number;
+    /** VIEW_STYLE_PROPERTIES and VIEW_SET_STYLE_LIMITS. */
+    style: { properties: readonly string[]; maxProperties: number; maxValue: number };
     /** VIEW_EVENT_TYPES, VIEW_CONTINUOUS_EVENT_TYPES, VIEW_INPUT_IN_FLIGHT and VIEW_EVENT_LIMITS. */
     events: { types: readonly string[]; continuous: readonly string[]; inFlight: number; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
     /** The Trusted Types policy name the view creates where the host page enforces them (trusted-types.ts). */
@@ -1402,7 +1437,7 @@ export interface ViewOptions {
  * message is ignored. A copy of this text that ever ran a second time in the same document would return
  * at once (the run counter), and a copy elsewhere would never receive INIT_VIEW (research 15, P1).
  */
-export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, options: ViewOptions, makeOutbox: typeof viewInputOutbox) {
+export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, options: ViewOptions, makeOutbox: typeof viewInputOutbox, styleProperty: typeof isStyleProperty) {
     const g = globalThis as any;
     const runs = (g.__sandboxViewRuns || 0) + 1;
     g.__sandboxViewRuns = runs;
@@ -1517,6 +1552,77 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     let subscribed: string[] = [];
     const inputs = makeOutbox(options.events.inFlight);
     const pressed = new Map<number, boolean>(); // the pointers whose press began in the view, until released
+    // The subscriptions with options (VIEW_LISTEN's marks; sandboxView.on's options): which elements the view captures a
+    // pointer for on a trusted pointerdown (CAPTURE), which elements' rectangles a detail carries (RECT: the worker
+    // cannot read layout), and inside which elements, or anywhere for null, it cancels a wheel's default (PREVENT).
+    const CAPTURE = 1, RECT = 2, PREVENT = 4;
+    let marks: { type: string; id: string | null; flags: number }[] = [];
+    const captured = new Map<number, Element>(); // the element each captured pointer is captured to, until released
+    // The nearest element from `node` up to the body whose id has a mark of `type` with `flag`.
+    const markedAncestor = (node: any, type: string, flag: number): Element | null => {
+        const body = call(bodyOf, document, []);
+        for (let n = node; n && n !== body && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) {
+            const id = call(idOf, n, []);
+            if (!id) continue;
+            for (let i = 0; i < marks.length; i++) if (marks[i]!.type === type && marks[i]!.id === id && (marks[i]!.flags & flag) !== 0) return n;
+        }
+        return null;
+    };
+    const getRect = E.getBoundingClientRect;
+    // The rectangles of the marked elements a detail's handlers asked for (RECT): those of its type among its ids.
+    const boxesOf = (detail: any) => {
+        const boxes: [string, number, number, number, number][] = [];
+        for (let i = 0; i < marks.length; i++) {
+            const mark = marks[i]!;
+            if (mark.type !== detail.type || (mark.flags & RECT) === 0 || mark.id === null || detail.ids.indexOf(mark.id) < 0) continue;
+            const element = elementInBody(mark.id);
+            if (!element) continue;
+            const rect = call(getRect, element, []);
+            boxes.push([mark.id, tenth(rect.x), tenth(rect.y), tenth(rect.width), tenth(rect.height)]);
+        }
+        return boxes;
+    };
+    // A wheel's default (scrolling, the view's or, past its edge, the host page's) is cancelled inside an element with a
+    // PREVENT mark, by a listener that is not passive and is there only while such a mark is: scrolling over the
+    // sandbox then waits for the view's thread, as it does over any frame with a wheel listener.
+    const cancelWheel = (event: any) => {
+        if (!event.isTrusted) return;
+        let anywhere = false;
+        for (let i = 0; i < marks.length; i++) if (marks[i]!.type === 'wheel' && marks[i]!.id === null && (marks[i]!.flags & PREVENT) !== 0) anywhere = true;
+        if (anywhere || markedAncestor(event.target, 'wheel', PREVENT)) event.preventDefault();
+    };
+    let wheelCancelled = false;
+    const listen = (given: unknown) => {
+        const kept: { type: string; id: string | null; flags: number }[] = [];
+        const perType = new Map<string, number>();
+        for (let i = 0; Array.isArray(given) && i < given.length; i++) {
+            const mark = given[i];
+            if (!Array.isArray(mark) || mark.length !== 3) continue;
+            const [type, id, flags] = mark;
+            if (options.events.types.indexOf(type) < 0 || !(id === null || isTarget(id)) || typeof flags !== 'number' || (flags | 0) !== flags || flags < 1 || flags > 7) continue;
+            const count = perType.get(type) || 0;
+            if (count >= options.events.maxIds) continue;
+            perType.set(type, count + 1);
+            kept.push({ id, flags, type });
+        }
+        marks = kept;
+        let cancel = false;
+        for (let i = 0; i < marks.length; i++) if (marks[i]!.type === 'wheel' && (marks[i]!.flags & PREVENT) !== 0) cancel = true;
+        if (cancel === wheelCancelled) return;
+        wheelCancelled = cancel;
+        if (cancel) addEventListener('wheel', cancelWheel, { capture: true, passive: false });
+        else removeEventListener('wheel', cancelWheel, { capture: true });
+    };
+    // While a pointer is captured, a native drag or a text selection inside its element would take the gesture: both
+    // are cancelled there (no CSS stops a drag in Firefox, and `draggable` is no attribute the renderer keeps).
+    const cancelInCapture = (event: any) => {
+        if (!event.isTrusted || captured.size === 0) return;
+        captured.forEach((element) => {
+            if (call(containsNode, element, [event.target])) event.preventDefault();
+        });
+    };
+    addEventListener('dragstart', cancelInCapture, true);
+    addEventListener('selectstart', cancelInCapture, true);
     let inputWork = 0; // ms the event path spent since it was last charged
     const isContinuous = (type: string) => options.events.continuous.indexOf(type) >= 0;
     // The strings of one frame share one budget: `share.left` characters.
@@ -1632,6 +1738,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (entry.modifiers) detail.modifiers = entry.modifiers;
         if (entry.time !== undefined) detail.time = entry.time;
         if (isContinuous(entry.type)) detail.coalesced = entry.coalesced;
+        const boxes = boxesOf(detail);
+        if (boxes.length > 0) detail.boxes = boxes; // the prelude gives each handler that asked its own element's, as `box`
         return detail;
     };
     // Posts what the outbox holds and, after it, `last` (a discrete event's entry, with its event), as one frame, and
@@ -1691,8 +1799,24 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const type = event.type;
         // the presses that began here, whether or not anyone listens (the rule for moves outside the box, above)
         if (type === 'pointerdown') pressed.set(event.pointerId, true);
-        else if (type === 'pointerup' || type === 'pointercancel') pressed.delete(event.pointerId);
+        else if (type === 'pointerup' || type === 'pointercancel') {
+            pressed.delete(event.pointerId);
+            captured.delete(event.pointerId); // the platform releases the capture here
+        }
         if (!renderPort || overran || subscribed.indexOf(type) < 0) return;
+        if (type === 'pointerdown') {
+            // Captured for the guest now, in the trusted event (a worker's answer would come a frame too late): moves and
+            // the release are retargeted to that element, so its id stays in their ids after the pointer leaves it.
+            const element = markedAncestor(event.target, 'pointerdown', CAPTURE);
+            if (element) {
+                try {
+                    call(E.setPointerCapture, element, [event.pointerId]);
+                    captured.set(event.pointerId, element);
+                } catch {
+                    // a pointer the platform does not let be captured (not active): the gesture goes on uncaptured
+                }
+            }
+        }
         if (!isContinuous(type)) {
             postInput(entryOf(event), event);
             return;
@@ -1833,7 +1957,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     // After an operation on `target`: its own records (the target's children, its value attribute) are dropped, and
     // any other record means the counts do not hold. Without an observer the counts are never trusted.
-    const settle = (target: Element) => {
+    const settle = (target: Element, attribute = 'value') => {
         if (!observer || !takeRecords || !recordTarget || !recordType || !recordAttribute) {
             forget();
             return;
@@ -1841,7 +1965,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const records = call(takeRecords, observer, []) as MutationRecord[];
         for (let i = 0; i < records.length; i++) {
             const type = call(recordType, records[i], []);
-            const own = call(recordTarget, records[i], []) === target && (type === 'childList' || (type === 'attributes' && call(recordAttribute, records[i], []) === 'value'));
+            const own = call(recordTarget, records[i], []) === target && (type === 'childList' || (type === 'attributes' && call(recordAttribute, records[i], []) === attribute));
             if (!own) forget();
         }
     };
@@ -2180,6 +2304,53 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const outputValue = setter(HTMLOutputElement.prototype, 'value');
     const focusElement = HTMLElement.prototype.focus;
     const setScrollTop = setter(Element.prototype, 'scrollTop');
+    // css: inline properties of one element, any namespace's (research 23), from VIEW_STYLE_PROPERTIES only (checked by the
+    // prelude and again in fieldsOf); null removes one. What the style attribute grows by counts against the view's
+    // characters like a value, and is refused past it, the element left as it was; what the values can load is prepaid
+    // like a style attribute's (cssLoadBound), and refused once the view has loaded VIEW_MAX_DISTINCT_URLS.
+    const inlineStyle = (proto: any) => {
+        const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, 'style') : undefined;
+        return descriptor && descriptor.get ? descriptor.get : null;
+    };
+    const styleGetters = [inlineStyle(HTMLElement.prototype), inlineStyle(g.SVGElement && g.SVGElement.prototype), inlineStyle(g.MathMLElement && g.MathMLElement.prototype)];
+    const setProperty = CSSStyleDeclaration.prototype.setProperty;
+    const removeProperty = CSSStyleDeclaration.prototype.removeProperty;
+    const applyCss = (target: Element, css: Record<string, string | null>) => {
+        let style: CSSStyleDeclaration | null = null;
+        for (let i = 0; !style && i < styleGetters.length; i++) {
+            try {
+                if (styleGetters[i]) style = call(styleGetters[i]!, target, []) as CSSStyleDeclaration;
+            } catch {
+                // not an element of that interface
+            }
+        }
+        if (!style) return;
+        const names = Object.keys(css);
+        let loads = 0;
+        for (let i = 0; i < names.length; i++) {
+            const value = css[names[i]!];
+            if (value === null || value === undefined) continue;
+            if (distinctLoads.size >= options.maxDistinctUrls && CSS_URL.test(value)) throw new RangeError('VIEW_MAX_DISTINCT_URLS');
+            loads += countLoads(value, options.rates.urls);
+        }
+        const before = counts(call(bodyOf, document, []));
+        const old = styleAttributeOf(target);
+        for (let i = 0; i < names.length; i++) {
+            const value = css[names[i]!];
+            if (value === null || value === undefined) call(removeProperty, style, [names[i]]);
+            else call(setProperty, style, [names[i], value]);
+        }
+        const change = valueAttributeLength(styleAttributeOf(target), 'style') - valueAttributeLength(old, 'style');
+        if (before.characters + change > options.render.maxCharacters) {
+            if (old === null) call(E.removeAttribute, target, ['style']);
+            else call(E.setAttribute, target, ['style', old]);
+            settle(target, 'style');
+            throw new RangeError('VIEW_MAX_CHARACTERS');
+        }
+        settle(target, 'style');
+        cssWork += loads;
+        if (bodyCharacters !== null) bodyCharacters = before.characters + change;
+    };
     const setScrollLeft = setter(Element.prototype, 'scrollLeft');
     const hasFocus = D.hasFocus;
     // How many characters `text` is as an element's content, serialized (escaped, as in every element the renderer
@@ -2189,11 +2360,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         call(setTextContent, probe.content, [text]);
         return innerLength(probe);
     };
-    // How many characters an attribute `value="…"` adds to its element's serialization; 0 for none.
-    const valueAttributeLength = (value: string | null) => {
+    // How many characters an attribute `name="…"` (by default `value`) adds to its element's serialization; 0 for none.
+    const valueAttributeLength = (value: string | null, name = 'value') => {
         if (value === null) return 0;
         const probe = call(D.createElement, document, ['span']);
-        call(E.setAttribute, probe, ['value', value]);
+        call(E.setAttribute, probe, [name, value]);
         const length = call(outerHTMLOf, probe, []).length as number;
         work += length;
         return length - '<span></span>'.length;
@@ -2231,6 +2402,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const applySet = (id: string, fields: SetFields) => {
         const target = elementInBody(id);
         if (!target) return;
+        if (fields.css) applyCss(target, fields.css);
         const html = call(namespaceOf, target, []) === HTML_NS;
         const name = call(localNameOf, target, []);
         const value = html ? fields.value : undefined;
@@ -2391,7 +2563,18 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     const costOf = (jobs: Job[]) => {
         let cost = 0;
-        for (let i = 0; i < jobs.length; i++) cost += jobs[i]!.kind === 'set' ? (jobs[i]!.fields!.value || '').length : jobs[i]!.html.length;
+        for (let i = 0; i < jobs.length; i++) {
+            const job = jobs[i]!;
+            if (job.kind !== 'set') {
+                cost += job.html.length;
+                continue;
+            }
+            cost += (job.fields!.value || '').length;
+            const css = job.fields!.css;
+            if (!css) continue;
+            const names = Object.keys(css);
+            for (let k = 0; k < names.length; k++) cost += names[k]!.length + (css[names[k]!] || '').length;
+        }
         return cost;
     };
     // After operations that started at `started`: what they serialized and the time they took, layout included, are
@@ -2490,6 +2673,20 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             }
             fields.scroll = position;
         }
+        const css = data.css;
+        if (css !== undefined) {
+            if (!css || typeof css !== 'object' || Array.isArray(css)) return null;
+            const names = Object.keys(css);
+            if (names.length > options.style.maxProperties) return null;
+            const checked: Record<string, string | null> = Object.create(null);
+            for (let i = 0; i < names.length; i++) {
+                const value = css[names[i]!];
+                if (!styleProperty(names[i]!, options.style.properties, options.style.maxValue, (text, at) => text.charCodeAt(at))) return null;
+                if (value !== null && (typeof value !== 'string' || value.length > options.style.maxValue)) return null;
+                checked[names[i]!] = value;
+            }
+            fields.css = checked;
+        }
         return fields;
     };
     const onRender = (event: MessageEvent) => {
@@ -2497,6 +2694,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (!data || typeof data !== 'object') return;
         if (data.type === 'VIEW_LISTEN') {
             subscribed = Array.isArray(data.types) ? data.types.filter((type: unknown) => options.events.types.indexOf(type as string) >= 0) : [];
+            listen(data.marks);
             return;
         }
         if (data.type === 'VIEW_EVENT_ACK') {
@@ -2842,7 +3040,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * (the port itself is never handed to a handler); each frame of events is acknowledged (VIEW_EVENT_ACK) once its
  * handlers have returned.
  */
-export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; maxUrls: number; maxDistinctUrls: number; entryDoneName: string; eventTypes: readonly string[] }) {
+export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; maxUrls: number; maxDistinctUrls: number; entryDoneName: string; eventTypes: readonly string[]; maxMarks: number; style: { properties: readonly string[]; maxProperties: number; maxValue: number } }, styleProperty: typeof isStyleProperty) {
     // ---- The captured list (AR:C3, R2:C-1): sandboxView's methods, the render port's listener and the
     // error listener run after the entry, so everything they use is taken here, and nothing below reads a global or a
     // prototype guest code can replace (a unit test scans the text). The prelude's own lists have no prototype
@@ -2873,6 +3071,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     const startPort = MessagePort.prototype.start;
     const join = Array.prototype.join; // for error texts: a patched join would otherwise receive the prelude's own list as `this`
     const slice = String.prototype.slice;
+    const charCodeAt = String.prototype.charCodeAt;
     const startsWith = String.prototype.startsWith;
     const StringConstructor = String;
     const ErrorConstructor = Error;
@@ -2921,20 +3120,35 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         inFlight = next;
         apply(post, renderPort, [next.message]);
     };
+    // Two sets merge unless their css together would name more properties than one set may (VIEW_SET_STYLE_LIMITS).
+    const mergeable = (earlier: Record<string, unknown>, later: Record<string, unknown>) => {
+        const a = earlier.css as Record<string, unknown> | undefined;
+        const b = later.css as Record<string, unknown> | undefined;
+        if (!a || !b) return true;
+        const known = keysOf(a);
+        const names = keysOf(b);
+        let count = known.length;
+        for (let i = 0; i < names.length; i++) {
+            let found = false;
+            for (let k = 0; k < known.length; k++) if (known[k] === names[i]) found = true;
+            if (!found) count++;
+        }
+        return count <= options.style.maxProperties;
+    };
     const enqueue = (operation: Operation) => {
         if (operation.kind !== 'set') {
             let kept = 0;
             for (let i = 0; i < queue.length; i++) if (queue[i]!.slot !== operation.slot) queue[kept++] = queue[i]!;
             queue.length = kept;
-        } else if (queue.length > 0 && queue[queue.length - 1]!.slot === operation.slot) {
+        } else if (queue.length > 0 && queue[queue.length - 1]!.slot === operation.slot && mergeable(queue[queue.length - 1]!.message, operation.message)) {
             const merged = queue[queue.length - 1]!.message;
             const keys = keysOf(operation.message); // indexed, never iterated: guest code can replace the array iterator (AR:C3)
             for (let i = 0; i < keys.length; i++) {
                 const key = keys[i]!;
                 const earlier = merged[key];
                 const later = operation.message[key];
-                // a field that is a set of its own (scroll) merges key by key: the later wins per key
-                if (key === 'scroll' && earlier && later) {
+                // a field that is a set of its own (scroll, css) merges key by key: the later wins per key
+                if ((key === 'scroll' || key === 'css') && earlier && later) {
                     const inner = keysOf(later);
                     for (let k = 0; k < inner.length; k++) (earlier as Record<string, unknown>)[inner[k]!] = (later as Record<string, unknown>)[inner[k]!];
                 } else {
@@ -2981,12 +3195,28 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         if (key !== 'top' && key !== 'left') throw new TypeErrorConstructor('sandboxView.set: unknown scroll key "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the keys are top and left');
         if (!isFiniteNumber(field)) throw new TypeErrorConstructor('sandboxView.set: scroll.' + key + ' must be a finite number');
     });
-    // A form control's value or checked state, focus, or an element's scroll position (R1:R4-5; research 23). Each own
-    // enumerable field of `fields` is read once, and only these are allowed, each of its one type; what is posted is a
-    // fresh object of those values.
+    // css: inline style properties of one element (research 23), from VIEW_STYLE_PROPERTIES only, each a string or null
+    // (which removes it); at most VIEW_SET_STYLE_LIMITS.maxProperties of them, each value (and a custom property's name)
+    // at most maxValue characters. The view checks all of it again.
+    const codeAt = (text: string, index: number) => apply(charCodeAt, text, [index]) as number;
+    const cssOf = (value: unknown) => {
+        if (value !== null && typeof value === 'object' && !isArray(value) && keysOf(value).length > options.style.maxProperties) {
+            throw new RangeErrorConstructor('sandboxView.set: css names more than ' + options.style.maxProperties + ' properties');
+        }
+        return fieldsOf(value, 'sandboxView.set: css', 'property: string | null', (key, field) => {
+            if (!styleProperty(key, options.style.properties, options.style.maxValue, codeAt)) {
+                throw new TypeErrorConstructor('sandboxView.set: css cannot set "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the properties are ' + apply(join, options.style.properties, [', ']));
+            }
+            if (field !== null && typeof field !== 'string') throw new TypeErrorConstructor('sandboxView.set: css["' + key + '"] must be a string, or null to remove it');
+            if (typeof field === 'string' && field.length > options.style.maxValue) throw new RangeErrorConstructor('sandboxView.set: css["' + key + '"] is longer than ' + options.style.maxValue + ' characters');
+        });
+    };
+    // A form control's value or checked state, focus, an element's scroll position or inline style (R1:R4-5; research
+    // 23). Each own enumerable field of `fields` is read once, and only these are allowed, each of its one type; what is
+    // posted is a fresh object of those values.
     const set = (id: unknown, fields: unknown) => {
         if (!isId(id)) throw new TypeErrorConstructor('sandboxView.set: id must be an element id');
-        if (fields === null || typeof fields !== 'object' || isArray(fields)) throw new TypeErrorConstructor('sandboxView.set: the second argument must be an object: { value?, checked?, focus?, scroll? }');
+        if (fields === null || typeof fields !== 'object' || isArray(fields)) throw new TypeErrorConstructor('sandboxView.set: the second argument must be an object: { value?, checked?, focus?, scroll?, css? }');
         const message: Record<string, unknown> = setPrototype({ type: 'VIEW_SET', id }, null); // no inherited setter for a key (AR:C3)
         let any = false;
         const keys = keysOf(fields);
@@ -2998,53 +3228,113 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
                 if (value.length > options.maxRender) throw new RangeErrorConstructor('sandboxView.set: value is longer than ' + options.maxRender + ' characters');
             } else if (key === 'checked' || key === 'focus') {
                 if (typeof value !== 'boolean') throw new TypeErrorConstructor('sandboxView.set: ' + key + ' must be a boolean');
-            } else if (key === 'scroll') {
-                message[key] = scrollOf(value);
+            } else if (key === 'scroll' || key === 'css') {
+                message[key] = key === 'scroll' ? scrollOf(value) : cssOf(value);
                 any = true;
                 continue;
             } else {
-                throw new TypeErrorConstructor('sandboxView.set: unknown key "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the keys are value, checked, focus and scroll');
+                throw new TypeErrorConstructor('sandboxView.set: unknown key "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the keys are value, checked, focus, scroll and css');
             }
             message[key] = value;
             any = true;
         }
         if (any) enqueue({ slot: 'set#' + id, kind: 'set', message });
     };
-    // ---- events: sandboxView.on(type, id | null, handler) → off ----
+    // ---- events: sandboxView.on(type, id | null, handler, options?) → off ----
     // The view forwards only the types some handler listens to (VIEW_LISTEN, sent whenever that set changes).
     // A handler with an id runs for events on that element or inside it (the detail's ids); with null, for all.
+    // Options (research 23), read once: `pointerCapture` (pointerdown, with an id: the view captures the pointer to that
+    // element in the trusted event), `rect` (with an id: the detail carries that element's rectangle as `box`; the worker
+    // cannot read layout) and `preventDefault` (wheel: the view cancels the wheel's default inside the element, or
+    // anywhere for null). They reach the view as marks, [type, id, flags], at most options.maxMarks per type.
+    const CAPTURE = 1, RECT = 2, PREVENT = 4;
     const isEventType = (type: unknown) => {
         for (let i = 0; i < options.eventTypes.length; i++) if (options.eventTypes[i] === type) return true;
         return false;
     };
-    type Handler = { type: string; id: string | null; handler: (detail: unknown) => void; active: boolean };
+    type Handler = { type: string; id: string | null; handler: (detail: unknown) => void; active: boolean; flags: number };
     const handlers = list<Handler>();
     let listened = '';
     const syncListen = () => {
         if (!renderPort) return;
         const types = list<string>();
+        const marks = list<[string, string | null, number]>();
         let key = '';
         for (let t = 0; t < options.eventTypes.length; t++) {
+            const type = options.eventTypes[t]!;
+            let heard = false;
             for (let h = 0; h < handlers.length; h++) {
-                if (handlers[h]!.type === options.eventTypes[t]) {
-                    types[types.length] = options.eventTypes[t]!;
-                    key += options.eventTypes[t] + ',';
-                    break;
+                const entry = handlers[h]!;
+                if (entry.type !== type) continue;
+                if (!heard) {
+                    heard = true;
+                    types[types.length] = type;
+                    key += type + ',';
                 }
+                if (entry.flags === 0) continue;
+                let merged = false;
+                for (let m = 0; m < marks.length; m++) {
+                    if (marks[m]![0] === type && marks[m]![1] === entry.id) {
+                        marks[m]![2] = marks[m]![2] | entry.flags;
+                        merged = true;
+                    }
+                }
+                if (!merged) marks[marks.length] = setPrototype([type, entry.id, entry.flags], null) as [string, string | null, number];
             }
+        }
+        for (let m = 0; m < marks.length; m++) {
+            const id = marks[m]![1];
+            key += marks[m]![0] + ':' + (id === null ? '-' : id.length + ':' + id) + ':' + marks[m]![2] + ';';
         }
         if (key === listened) return;
         listened = key;
-        apply(post, renderPort, [{ type: 'VIEW_LISTEN', types }]);
+        apply(post, renderPort, [{ type: 'VIEW_LISTEN', types, marks }]);
     };
-    const on = (type: unknown, id: unknown, handler: unknown) => {
+    const flagsOf = (type: string, target: string | null, given: unknown) => {
+        if (given === undefined) return 0;
+        const read = fieldsOf(given, 'sandboxView.on: options', 'pointerCapture?, rect?, preventDefault?', (key, field) => {
+            if (key !== 'pointerCapture' && key !== 'rect' && key !== 'preventDefault') {
+                throw new TypeErrorConstructor('sandboxView.on: unknown option "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the options are pointerCapture, rect and preventDefault');
+            }
+            if (field !== undefined && typeof field !== 'boolean') throw new TypeErrorConstructor('sandboxView.on: ' + key + ' must be a boolean');
+        });
+        let flags = 0;
+        if (read.pointerCapture === true) {
+            if (type !== 'pointerdown' || target === null) throw new TypeErrorConstructor('sandboxView.on: pointerCapture is for a pointerdown handler with an element id');
+            flags = flags | CAPTURE;
+        }
+        if (read.rect === true) {
+            if (target === null) throw new TypeErrorConstructor('sandboxView.on: rect needs an element id');
+            flags = flags | RECT;
+        }
+        if (read.preventDefault === true) {
+            if (type !== 'wheel') throw new TypeErrorConstructor('sandboxView.on: preventDefault is for a wheel handler');
+            flags = flags | PREVENT;
+        }
+        return flags;
+    };
+    const on = (type: unknown, id: unknown, handler: unknown, given?: unknown) => {
         if (!isEventType(type)) throw new TypeErrorConstructor('sandboxView.on: type must be one of ' + apply(join, options.eventTypes, [', ']));
         const target = id === undefined || id === null ? null : id;
         if (target !== null && (typeof target !== 'string' || target.length === 0 || target.length > options.maxTarget)) {
             throw new TypeErrorConstructor('sandboxView.on: id must be an element id or null');
         }
         if (typeof handler !== 'function') throw new TypeErrorConstructor('sandboxView.on: handler must be a function');
-        const entry: Handler = { type: type as string, id: target as string | null, handler: handler as (detail: unknown) => void, active: true };
+        const flags = flagsOf(type as string, target as string | null, given);
+        if (flags !== 0) {
+            // at most maxMarks elements with options per type: what the view looks through for each event
+            let marked = 0, known = false;
+            for (let i = 0; i < handlers.length; i++) {
+                const entry = handlers[i]!;
+                if (entry.type !== type || entry.flags === 0) continue;
+                if (entry.id === target) known = true;
+                let first = true;
+                for (let k = 0; k < i; k++) if (handlers[k]!.type === type && handlers[k]!.flags !== 0 && handlers[k]!.id === entry.id) first = false;
+                if (first) marked++;
+            }
+            if (!known && marked >= options.maxMarks) throw new RangeErrorConstructor('sandboxView.on: at most ' + options.maxMarks + ' elements a type may have handlers with options');
+        }
+        const entry: Handler = { type: type as string, id: target as string | null, handler: handler as (detail: unknown) => void, active: true, flags };
         handlers[handlers.length] = entry;
         syncListen();
         return () => {
@@ -3056,9 +3346,26 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
             syncListen();
         };
     };
+    // The detail a handler with `rect` gets: the detail's own fields, and its element's rectangle as `box` when the view
+    // sent one (the element is in the view). A fresh object, its fields defined (no setter of the guest's runs).
+    const withBox = (detail: Record<string, unknown>, boxes: unknown, id: string) => {
+        let box: Record<string, unknown> | null = null;
+        for (let i = 0; isArray(boxes) && i < boxes.length; i++) {
+            const found = boxes[i];
+            if (isArray(found) && found[0] === id) box = { x: found[1], y: found[2], width: found[3], height: found[4] };
+        }
+        if (box === null) return detail;
+        const copy = {};
+        const keys = keysOf(detail);
+        for (let i = 0; i < keys.length; i++) defineOwn(copy, keys[i]!, { value: detail[keys[i]!], writable: true, enumerable: true, configurable: true });
+        defineOwn(copy, 'box', { value: box, writable: true, enumerable: true, configurable: true });
+        return copy;
+    };
     const dispatch = (detail: any) => {
         if (!detail || typeof detail !== 'object' || !isEventType(detail.type)) return;
         const ids = detail.ids;
+        const boxes = detail.boxes;
+        if (boxes !== undefined) deleteOwn(detail, 'boxes');
         const current = list<Handler>();
         for (let i = 0; i < handlers.length; i++) current[i] = handlers[i]!;
         for (let i = 0; i < current.length; i++) {
@@ -3070,7 +3377,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
                 if (!found) continue;
             }
             try {
-                entry.handler(detail);
+                entry.handler((entry.flags & RECT) !== 0 && entry.id !== null ? withBox(detail, boxes, entry.id) : detail);
             } catch (error) {
                 // reported like any uncaught error (logged by the listener below), without stopping the others
                 if (reportUncaught) apply(reportUncaught, g, [error]);
@@ -3252,6 +3559,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
     violationMaxString: 2048, // VIOLATION_MAX_STRING (violation.ts); a test keeps them equal
     events: { types: VIEW_EVENT_TYPES, continuous: VIEW_CONTINUOUS_EVENT_TYPES, inFlight: VIEW_INPUT_IN_FLIGHT, ...VIEW_EVENT_LIMITS },
+    style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,
     writeTypes: VIEW_WRITE_TYPES,
     // the host cuts these texts to the same length again on receipt (host.ts), and dispatches at most
@@ -3290,7 +3598,7 @@ export function environmentGate(host: string, stopParsing: boolean, body: string
 export function viewBootstrapSource(options: ViewOptions): string {
     const script = 'var s = document.currentScript;';
     const bridge = `(${inBridgeFrame.toString()})(${JSON.stringify(BRIDGE_FRAME_OPTIONS).replaceAll('<', '\\u003c')});`;
-    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')}, ${viewInputOutbox.toString()});`;
+    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()});`;
     // The gate first (environment-check.ts): a refusal goes to the host page's window, which is the bridge frame's parent and
     // the view's grandparent.
     const host = `(document.currentScript && document.currentScript.getAttribute('data-role') === '${BRIDGE_ROLE}' ? parent : parent.parent)`;

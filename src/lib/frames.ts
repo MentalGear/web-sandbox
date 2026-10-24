@@ -270,7 +270,7 @@ export const FRAMES = {
         },
     },
     VIEW_SET: {
-        purpose: "sandboxView.set(): a form control's value or checked state, focus, or an element's scroll position.",
+        purpose: "sandboxView.set(): a form control's value or checked state, focus, or an element's scroll position or inline style.",
         routes: [{ channel: 'render-port', from: ['strict-worker'], to: ['view'] }],
         fields: {
             id: { bound: 'checked', how: 'an id of at most VIEW_TARGET_MAX_LENGTH characters' },
@@ -278,12 +278,16 @@ export const FRAMES = {
             checked: { bound: 'not a string', how: 'set by key after the literal: a boolean' },
             focus: { bound: 'not a string', how: 'set by key after the literal: true' },
             scroll: { bound: 'not a string', how: 'set by key after the literal: { top?, left? }, finite numbers, read once' },
+            css: { bound: 'checked', how: 'set by key after the literal: at most VIEW_SET_STYLE_LIMITS.maxProperties properties of VIEW_STYLE_PROPERTIES, each value a string of at most VIEW_SET_STYLE_LIMITS.maxValue characters or null, else set() throws; read once' },
         },
     },
     VIEW_LISTEN: {
-        purpose: "The event types the worker's sandboxView.on() handlers listen to.",
+        purpose: "The event types the worker's sandboxView.on() handlers listen to, and the elements their options name (pointerCapture, rect, preventDefault).",
         routes: [{ channel: 'render-port', from: ['strict-worker'], to: ['view'] }],
-        fields: { types: { bound: 'constant', how: 'members of VIEW_EVENT_TYPES' } },
+        fields: {
+            types: { bound: 'constant', how: 'members of VIEW_EVENT_TYPES' },
+            marks: { bound: 'checked', how: '[type, id | null, flags] for the handlers with options: a member of VIEW_EVENT_TYPES, an id of at most VIEW_TARGET_MAX_LENGTH characters, flags 1–7; at most VIEW_EVENT_LIMITS.maxIds ids a type, else on() throws' },
+        },
     },
     VIEW_ACK: {
         purpose: "The view applied a flush of operations: the worker's next one may go. What it refused, by name.",
@@ -293,7 +297,7 @@ export const FRAMES = {
     VIEW_EVENT: {
         purpose: 'Events of the types the worker listens to, as details, in the order they were raised: a discrete one behind the continuous ones the view coalesced before it, or those alone (at most one such frame unacknowledged, VIEW_INPUT_IN_FLIGHT).',
         routes: [{ channel: 'render-port', from: ['view'], to: ['strict-worker'] }],
-        fields: { details: { bound: 'cut', how: 'every string of them through clamp, at most VIEW_EVENT_LIMITS.maxString each and maxTotal together for the frame; ids and form fields capped; the rest numbers and constants, coordinates clamped to the view' } },
+        fields: { details: { bound: 'cut', how: 'every string of them through clamp, at most VIEW_EVENT_LIMITS.maxString each and maxTotal together for the frame; ids and form fields capped; the rest numbers and constants, coordinates clamped to the view; the rectangles a rect option asked for, by the ids of VIEW_LISTEN\'s marks' } },
     },
     VIEW_EVENT_ACK: {
         purpose: "The worker's prelude dispatched a VIEW_EVENT and its handlers have returned: the view may send the next continuous events.",

@@ -266,6 +266,15 @@ export const VIEW_LIVENESS_TIMEOUT_MS = 5000;
 export const VIEW_RENDER_MAX_LENGTH = 262144;
 
 // @public
+export const VIEW_SET_STYLE_LIMITS: {
+    readonly maxProperties: 16;
+    readonly maxValue: 1024;
+};
+
+// @public
+export const VIEW_STYLE_PROPERTIES: readonly ['transform', 'translate', 'rotate', 'scale', 'transform-origin', 'opacity', 'visibility', 'left', 'top', 'right', 'bottom', 'width', 'height', 'z-index', 'cursor', '--*'];
+
+// @public
 export function viewScriptHash(): string;
 
 // @public

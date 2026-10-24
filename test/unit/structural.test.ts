@@ -188,6 +188,7 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIEW_SET', 'id', 'id'],
     ['VIEW_LISTEN', 'type', "'VIEW_LISTEN'"],
     ['VIEW_LISTEN', 'types', 'types'],
+    ['VIEW_LISTEN', 'marks', 'marks'],
     ['VIEW_STARTED', 'type', "'VIEW_STARTED'"],
     ['VIEW_EVENT_ACK', 'type', "'VIEW_EVENT_ACK'"],
     // rpc.ts, createBroker: the three builders (both sides)

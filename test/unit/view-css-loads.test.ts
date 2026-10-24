@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { cssLoadBound, inSandboxView, sanitizeRender, VIEW_OPTIONS, VIEW_URLS_PER_SECOND, viewBudget, viewInputOutbox, type ViewOptions } from '@src/lib/in-sandbox-view';
+import { cssLoadBound, inSandboxView, isStyleProperty, sanitizeRender, VIEW_OPTIONS, VIEW_URLS_PER_SECOND, viewBudget, viewInputOutbox, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { scalingRatio, type ScalingSize } from './scaling';
 
@@ -413,7 +413,7 @@ describe('S73: the view prepays the CSS each operation applies, and a reported l
             return add.call(this, type, listener, options);
         } as typeof window.addEventListener;
         try {
-            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${spy}, ${cssLoadBound.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()});`)();
+            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${spy}, ${cssLoadBound.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()});`)();
         } finally {
             window.addEventListener = add;
         }

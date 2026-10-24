@@ -3396,6 +3396,52 @@
           }
         },
         {
+          "kind": "Variable",
+          "canonicalReference": "web-sandbox!VIEW_SET_STYLE_LIMITS:var",
+          "docComment": "/**\n * Limits of one `sandboxView.set(id, { css })` (research 23): the properties it names, and the characters of each value\n * (and of a custom property's name). Past either, set() throws a `RangeError` in the guest.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "VIEW_SET_STYLE_LIMITS: "
+            },
+            {
+              "kind": "Content",
+              "text": "{\n    readonly maxProperties: 16;\n    readonly maxValue: 1024;\n}"
+            }
+          ],
+          "fileUrlPath": "dist/lib/in-sandbox-view.d.ts",
+          "isReadonly": true,
+          "releaseTag": "Public",
+          "name": "VIEW_SET_STYLE_LIMITS",
+          "variableTypeTokenRange": {
+            "startIndex": 1,
+            "endIndex": 2
+          }
+        },
+        {
+          "kind": "Variable",
+          "canonicalReference": "web-sandbox!VIEW_STYLE_PROPERTIES:var",
+          "docComment": "/**\n * The inline style properties `sandboxView.set(id, { css })` may set on an element (research 23): what a drag, a\n * gesture, a slider or a virtual list moves, and nothing else. `--*` stands for any custom property (`--` then letters,\n * digits, `-` and `_`). No `animation*` or `transition*` (`allowAnimations: false` holds), no property that names a URL\n * but `cursor` and the custom properties, whose loads are charged like a style attribute's (cssLoadBound).\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "VIEW_STYLE_PROPERTIES: "
+            },
+            {
+              "kind": "Content",
+              "text": "readonly ['transform', 'translate', 'rotate', 'scale', 'transform-origin', 'opacity', 'visibility', 'left', 'top', 'right', 'bottom', 'width', 'height', 'z-index', 'cursor', '--*']"
+            }
+          ],
+          "fileUrlPath": "dist/lib/in-sandbox-view.d.ts",
+          "isReadonly": true,
+          "releaseTag": "Public",
+          "name": "VIEW_STYLE_PROPERTIES",
+          "variableTypeTokenRange": {
+            "startIndex": 1,
+            "endIndex": 2
+          }
+        },
+        {
           "kind": "Function",
           "canonicalReference": "web-sandbox!viewScriptHash:function(1)",
           "docComment": "/**\n * The CSP hash source of the library's bootstrap for this release of the package, to allow in the host page's own\n * Content-Security-Policy (R1:R4-5): strict mode's view runs it, and so does the fetch bridge's frame.\n *\n * @remarks\n *\n * It is the very value the element puts in the `script-src` of both documents, and both inherit the host page's policy\n * (docs/API.md#host-page-policy), so one hash admits them both: the view in strict mode, and with `fetchBridge` the\n * frame that makes the bridge's requests, in every mode (BD1:ISO-1). The bootstrap is a string literal of the bundle, so the hash is the same in a build\n * step (importing the package needs no DOM) and in the browser, however the embedder's app is bundled or minified. It\n * changes only with the package's version.\n *\n * @returns The hash source, `'sha256-…'`, quotes included.\n */\n",

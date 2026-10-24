@@ -94,3 +94,20 @@ test("a guest that answers its own scroll events with set({ scroll }) loops at m
     expect(await sandbox.state()).toBe('ready');
     test.info().annotations.push({ type: 'measured', description: `${browserName}: ${loops} scroll answers in 2 s, ${frames} frames` });
 });
+
+test('preventDefault: a wheel over an element whose handler asked for it scrolls nothing, and still reaches the guest; elsewhere it scrolls', async ({ sandbox, page, browserName }) => {
+    const TWO = LIST.replace('id="list" style="position:absolute;left:0;top:0;width:300px;height:200px', 'id="list" style="position:absolute;left:0;top:0;width:180px;height:200px')
+        .replace('<p id="ready"', '<div id="other" style="position:absolute;left:200px;top:0;width:180px;height:200px;overflow:auto"><div style="height:5000px"></div></div><p id="ready"');
+    await mountInput(sandbox, browserName, `sandboxView.on('wheel', 'list', keep('wheel'), { preventDefault: true });`, TWO);
+    const box = await boxOf(page);
+    await page.mouse.move(box.x + 90, box.y + 100);
+    for (let i = 0; i < 3; i++) await page.mouse.wheel(0, 300);
+    await page.mouse.move(box.x + 290, box.y + 100);
+    for (let i = 0; i < 3; i++) await page.mouse.wheel(0, 300);
+    await waitInView(page, browserName, `document.getElementById('other').scrollTop > 0`, 8000);
+    await sleep(300);
+    expect(await inView(page, browserName, `document.getElementById('list').scrollTop`)).toBe(0);
+    const wheels = await take(sandbox);
+    expect(wheels.reduce((n, k) => n + k.detail.coalesced, 0)).toBe(3);
+    expect(await page.evaluate(() => scrollY)).toBe(0);
+});

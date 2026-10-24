@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import fc from 'fast-check';
-import { cssLoadBound, inSandboxView, inStrictWorker, sanitizeRender, VIEW_CONTINUOUS_EVENT_TYPES, VIEW_EVENT_TYPES, VIEW_INPUT_IN_FLIGHT, VIEW_OPTIONS, viewBudget, viewInputOutbox, type ViewInputEntry, type ViewOptions } from '@src/lib/in-sandbox-view';
+import { cssLoadBound, inSandboxView, inStrictWorker, isStyleProperty, sanitizeRender, VIEW_CONTINUOUS_EVENT_TYPES, VIEW_EVENT_LIMITS, VIEW_EVENT_TYPES, VIEW_INPUT_IN_FLIGHT, VIEW_SET_STYLE_LIMITS, VIEW_STYLE_PROPERTIES, VIEW_OPTIONS, viewBudget, viewInputOutbox, type ViewInputEntry, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 
 /**
@@ -128,7 +128,7 @@ describe("the view's event path (inSandboxView, run as stringified)", () => {
             constructor() { workers.push({ transfer: [] }); }
             postMessage(_message: unknown, transfer: MessagePort[]) { workers[workers.length - 1]!.transfer = transfer; }
         };
-        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()});`)();
+        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()});`)();
         const a = new MessageChannel(), b = new MessageChannel();
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<div id="pad" style="width:100px;height:100px"><span id="inner"></span></div>' }, source: window, ports: [a.port1, b.port1] }));
         const render = workers[0]!.transfer[1]!;
@@ -217,6 +217,35 @@ describe("the view's event path (inSandboxView, run as stringified)", () => {
         expect(await send({ clientX: 3, clientY: 4 })).toEqual([[3, 4]]);
     });
 
+    it('options: a pointerdown in a pointerCapture element captures the pointer to it, and a drag or selection inside it is cancelled until the release; a detail carries the rects its marks ask for', async () => {
+        const captures: [Element, number][] = [];
+        (Element.prototype as any).setPointerCapture = function (this: Element, id: number) { captures.push([this, id]); };
+        try {
+            const { render, fire, events } = await startView();
+            render.postMessage({ type: 'VIEW_LISTEN', types: ['pointerdown', 'pointermove'], marks: [['pointerdown', 'pad', 3], ['pointermove', 'inner', 2]] });
+            await settle();
+            fire('pointerdown', { pointerId: 9, buttons: 1 });
+            await until(() => events().length === 1);
+            expect(captures).toEqual([[document.getElementById('pad'), 9]]);
+            expect(events()[0].details[0].boxes).toEqual([['pad', 0, 0, 0, 0]]); // jsdom lays nothing out
+            let prevented = 0;
+            const inner = document.getElementById('inner')!;
+            fire('dragstart', { target: inner, preventDefault: () => { prevented++; } });
+            fire('selectstart', { target: inner.appendChild(document.createTextNode('t')), preventDefault: () => { prevented++; } });
+            fire('dragstart', { target: document.body, preventDefault: () => { prevented++; } }); // outside it
+            expect(prevented).toBe(2);
+            fire('pointerup', { pointerId: 9 });
+            fire('dragstart', { target: inner, preventDefault: () => { prevented++; } });
+            expect(prevented).toBe(2); // released
+            fire('pointermove', { pointerId: 9 });
+            render.postMessage({ type: 'VIEW_EVENT_ACK' });
+            await until(() => events().length === 2);
+            expect(events()[1].details[0].boxes).toEqual([['inner', 0, 0, 0, 0]]);
+        } finally {
+            delete (Element.prototype as any).setPointerCapture;
+        }
+    });
+
     it("sums a wheel's deltas per element and unit, the pointer where it last was (clamped); a scroll carries the scrolled element's position and extent", async () => {
         const { render, fire, events } = await startView();
         render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel', 'scroll'] });
@@ -263,7 +292,7 @@ function startPrelude() {
     const reported: unknown[] = [];
     w.reportError = (error: unknown) => reported.push(error);
     const run = new Function('globalThis', 'EventTarget', 'MessageEvent', 'Event', 'MessagePort', `return (${inStrictWorker.toString()})`)(w, FakeTarget, FakeMessageEvent, FakeEvent, FakePort);
-    run({ attach: () => {}, log: () => {} }, { scriptUnsafe: false, maxRender: 100, maxTarget: 50, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: VIEW_EVENT_TYPES });
+    run({ attach: () => {}, log: () => {} }, { scriptUnsafe: false, maxRender: 100, maxTarget: 50, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } }, isStyleProperty);
     const render = new FakePort();
     w.listeners.message(new FakeMessageEvent({ data: { type: 'INIT_WORKER' }, ports: [new FakePort(), render] }));
     const sent = () => render.posted.filter(frame => frame.type !== 'VIEW_STARTED' && frame.type !== 'VIEW_LISTEN' && frame.type !== 'VIEW_EVENT_ACK');
@@ -313,5 +342,185 @@ describe('sandboxView.set({ scroll })', () => {
         view.set('list', { scroll: { top: 3 } });
         render.deliver({ type: 'VIEW_ACK' });
         expect(sent()).toEqual([{ type: 'VIEW_SET', id: 'a', value: 'x' }, { type: 'VIEW_SET', id: 'list', scroll: { top: 3, left: 2 } }]);
+    });
+});
+
+describe('set({ css }): the closed list of style properties and its limits', () => {
+    const codeAt = (text: string, at: number) => text.charCodeAt(at);
+    const allowed = (name: string) => isStyleProperty(name, VIEW_STYLE_PROPERTIES, VIEW_SET_STYLE_LIMITS.maxValue, codeAt);
+
+    it('VIEW_STYLE_PROPERTIES and custom properties only: no animation, transition, background or any other property; `--*` stands for custom properties', () => {
+        for (const name of VIEW_STYLE_PROPERTIES.filter(p => p !== '--*')) expect(allowed(name), name).toBe(true);
+        for (const name of ['--x', '--drag-x', '--A_1']) expect(allowed(name), name).toBe(true);
+        for (const name of ['--*', '--', '-x', '--a b', '--a;b', '--é', 'animation', 'animation-name', 'transition', 'background', 'background-image',
+            'content', 'position', 'display', 'filter', 'mask', 'Transform', 'transform ', '-webkit-transform', '--' + 'x'.repeat(VIEW_SET_STYLE_LIMITS.maxValue)]) {
+            expect(allowed(name), name).toBe(false);
+        }
+        expect(VIEW_STYLE_PROPERTIES.some(p => /animation|transition/.test(p))).toBe(false);
+        expect(VIEW_SET_STYLE_LIMITS).toEqual({ maxProperties: 16, maxValue: 1024 });
+    });
+
+    it('the prelude: each name on the list, each value a string or null, read once; past maxProperties or maxValue a RangeError; nothing refused is sent', () => {
+        const { view, sent } = startPrelude();
+        expect(() => view.set('t', { css: { 'background-image': 'url(x)' } })).toThrow(TypeError);
+        expect(() => view.set('t', { css: { animation: 'spin 1s' } })).toThrow(TypeError);
+        expect(() => view.set('t', { css: { transform: 5 } })).toThrow(TypeError);
+        expect(() => view.set('t', { css: 'transform: none' })).toThrow(TypeError);
+        expect(() => view.set('t', { css: { transform: 'x'.repeat(VIEW_SET_STYLE_LIMITS.maxValue + 1) } })).toThrow(RangeError);
+        const many: Record<string, string> = {};
+        for (let i = 0; i <= VIEW_SET_STYLE_LIMITS.maxProperties; i++) many['--p' + i] = '1';
+        expect(() => view.set('t', { css: many })).toThrow(RangeError);
+        expect(sent()).toEqual([]);
+        let reads = 0;
+        view.set('t', { css: { get transform() { reads++; return 'translate(1px, 2px)'; }, opacity: null, '--x': '3' } });
+        expect(reads).toBe(1);
+        expect(sent()).toEqual([{ type: 'VIEW_SET', id: 't', css: { transform: 'translate(1px, 2px)', opacity: null, '--x': '3' } }]);
+    });
+
+    it('consecutive sets of one id merge their css key by key, unless together they would name more than maxProperties', () => {
+        const { view, sent, render } = startPrelude();
+        view.set('a', { value: 'x' }); // in flight
+        view.set('t', { css: { left: '1px' } });
+        view.set('t', { css: { top: '2px', left: '3px' } });
+        const many: Record<string, string> = {};
+        for (let i = 0; i < VIEW_SET_STYLE_LIMITS.maxProperties; i++) many['--p' + i] = '1';
+        view.set('t', { css: many }); // 16 more: not merged
+        for (let i = 0; i < 3; i++) render.deliver({ type: 'VIEW_ACK' });
+        expect(sent().map(f => f.css)).toEqual([undefined, { left: '3px', top: '2px' }, many]);
+    });
+});
+
+describe("sandboxView.on's options: pointerCapture, rect and preventDefault", () => {
+    it('are read once and checked: pointerCapture for a pointerdown with an id, rect with an id, preventDefault for a wheel; unknown ones are a TypeError', () => {
+        const { view } = startPrelude();
+        const h = () => {};
+        expect(() => view.on('pointerdown', 'thumb', h, { pointerCapture: true })).not.toThrow();
+        expect(() => view.on('pointermove', 'thumb', h, { pointerCapture: true })).toThrow(TypeError);
+        expect(() => view.on('pointerdown', null, h, { pointerCapture: true })).toThrow(TypeError);
+        expect(() => view.on('click', null, h, { rect: true })).toThrow(TypeError);
+        expect(() => view.on('click', 'x', h, { rect: true })).not.toThrow();
+        expect(() => view.on('pointerdown', 'x', h, { preventDefault: true })).toThrow(TypeError);
+        expect(() => view.on('wheel', null, h, { preventDefault: true })).not.toThrow();
+        expect(() => view.on('wheel', null, h, { passive: false })).toThrow(TypeError);
+        expect(() => view.on('wheel', null, h, { rect: 'yes' })).toThrow(TypeError);
+        expect(() => view.on('wheel', null, h, 'rect')).toThrow(TypeError);
+        expect(() => view.on('wheel', null, h, { rect: false, preventDefault: undefined })).not.toThrow();
+        let reads = 0;
+        view.on('pointerdown', 'pad', h, { get rect() { reads++; return true; } });
+        expect(reads).toBe(1);
+    });
+
+    it('reach the view as marks, one per element and type with the options of its handlers together, and go when the last handler does', () => {
+        const { view, render } = startPrelude();
+        const listens = () => render.posted.filter(f => f.type === 'VIEW_LISTEN');
+        const off1 = view.on('pointerdown', 'thumb', () => {}, { pointerCapture: true });
+        const off2 = view.on('pointerdown', 'thumb', () => {}, { rect: true });
+        view.on('wheel', null, () => {}, { preventDefault: true });
+        view.on('pointermove', 'thumb', () => {});
+        expect(listens().at(-1)).toEqual({ type: 'VIEW_LISTEN', types: ['pointerdown', 'pointermove', 'wheel'], marks: [['pointerdown', 'thumb', 3], ['wheel', null, 4]] });
+        off1();
+        expect(listens().at(-1).marks).toEqual([['pointerdown', 'thumb', 2], ['wheel', null, 4]]);
+        off2();
+        expect(listens().at(-1)).toEqual({ type: 'VIEW_LISTEN', types: ['pointermove', 'wheel'], marks: [['wheel', null, 4]] });
+    });
+
+    it(`at most VIEW_EVENT_LIMITS.maxIds (${VIEW_EVENT_LIMITS.maxIds}) elements a type with options; past it a RangeError`, () => {
+        const { view } = startPrelude();
+        for (let i = 0; i < VIEW_EVENT_LIMITS.maxIds; i++) view.on('click', 'e' + i, () => {}, { rect: true });
+        view.on('click', 'e0', () => {}, { rect: true }); // an element already marked
+        view.on('click', 'other', () => {}); // no options
+        expect(() => view.on('click', 'one-more', () => {}, { rect: true })).toThrow(RangeError);
+        expect(() => view.on('pointerdown', 'one-more', () => {}, { rect: true })).not.toThrow(); // another type
+    });
+
+    it("rect: each handler that asked gets its own element's rectangle as `box`, in a copy; the others get the detail without it", () => {
+        const { view, render } = startPrelude();
+        const seen: any[] = [];
+        view.on('pointerdown', 'thumb', (d: any) => seen.push(['thumb', d]), { rect: true });
+        view.on('pointerdown', 'pad', (d: any) => seen.push(['pad', d]), { rect: true });
+        view.on('pointerdown', null, (d: any) => seen.push(['any', d]));
+        render.deliver({ type: 'VIEW_EVENT', details: [{ type: 'pointerdown', ids: ['thumb', 'pad'], pointer: { x: 1 }, boxes: [['thumb', 20, 20, 40, 40], ['pad', 0, 0, 400, 300]] }] });
+        expect(seen.map(([who, d]) => [who, d.box])).toEqual([['thumb', { x: 20, y: 20, width: 40, height: 40 }], ['pad', { x: 0, y: 0, width: 400, height: 300 }], ['any', undefined]]);
+        for (const [, d] of seen) expect('boxes' in d).toBe(false);
+        expect(seen[0][1].pointer).toEqual({ x: 1 });
+    });
+});
+
+describe('the view applies set({ css }) and the options (inSandboxView, run as stringified)', () => {
+    const originalWorker = (globalThis as any).Worker;
+    const originalAdd = window.addEventListener;
+    afterEach(() => {
+        (globalThis as any).Worker = originalWorker;
+        window.addEventListener = originalAdd;
+        delete (globalThis as any).__sandboxViewRuns;
+        document.body.replaceChildren();
+    });
+    async function start(options: ViewOptions = VIEW_OPTIONS) {
+        const registered: [string, unknown][] = [];
+        window.addEventListener = function (this: Window, type: string, listener: any, how?: any) {
+            registered.push([type, how]);
+            return originalAdd.call(this, type, listener, how);
+        } as typeof window.addEventListener;
+        const workers: { transfer: MessagePort[] }[] = [];
+        (globalThis as any).Worker = class {
+            onerror: unknown = null;
+            constructor() { workers.push({ transfer: [] }); }
+            postMessage(_message: unknown, transfer: MessagePort[]) { workers[workers.length - 1]!.transfer = transfer; }
+        };
+        new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()});`)();
+        const a = new MessageChannel(), b = new MessageChannel();
+        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html: '<div id="t" style="color: red"></div><svg><rect id="r"></rect></svg>' }, source: window, ports: [a.port1, b.port1] }));
+        const render = workers[0]!.transfer[1]!;
+        const received: any[] = [];
+        render.onmessage = (event) => received.push(event.data);
+        render.postMessage({ type: 'VIEW_STARTED' });
+        const acks = () => received.filter(m => m.type === 'VIEW_ACK');
+        const send = async (message: unknown) => {
+            const before = acks().length;
+            render.postMessage(message);
+            for (let i = 0; i < 300 && acks().length === before; i++) await new Promise(resolve => setTimeout(resolve, 5));
+            return acks()[acks().length - 1];
+        };
+        return { render, received, send, registered };
+    }
+
+    it('sets and removes inline properties of an HTML or SVG element; a property off the list, a value too long or too many properties is refused whole', async () => {
+        const { send } = await start();
+        const t = () => document.getElementById('t')!.getAttribute('style');
+        expect(await send({ type: 'VIEW_SET', id: 't', css: { transform: 'translate(5px, 6px)', opacity: '0.5', '--drag': '1' } })).toEqual({ type: 'VIEW_ACK' });
+        expect(t()).toBe('color: red; transform: translate(5px, 6px); opacity: 0.5; --drag: 1;');
+        await send({ type: 'VIEW_SET', id: 't', css: { opacity: null } });
+        expect(t()).toBe('color: red; transform: translate(5px, 6px); --drag: 1;');
+        await send({ type: 'VIEW_SET', id: 'r', css: { transform: 'scale(2)' } });
+        expect(document.getElementById('r')!.getAttribute('style')).toBe('transform: scale(2);');
+        for (const css of [{ 'background-image': 'url(x)' }, { animation: 'x 1s' }, { left: 'x'.repeat(VIEW_SET_STYLE_LIMITS.maxValue + 1) }, Object.fromEntries(Array.from({ length: 17 }, (_, i) => ['--p' + i, '1'])), { left: 5 }, ['left']]) {
+            await send({ type: 'VIEW_SET', id: 't', css });
+        }
+        expect(t()).toBe('color: red; transform: translate(5px, 6px); --drag: 1;');
+    });
+
+    it("what the style attribute grows by counts against the view's characters: past VIEW_MAX_CHARACTERS the set is refused by name and the element left as it was", async () => {
+        const { send } = await start({ ...VIEW_OPTIONS, render: { ...VIEW_OPTIONS.render, maxCharacters: 400 } });
+        const before = document.getElementById('t')!.getAttribute('style');
+        expect(await send({ type: 'VIEW_SET', id: 't', css: { '--a': 'x'.repeat(200), '--b': 'y'.repeat(200) } })).toEqual({ type: 'VIEW_ACK', refused: ['VIEW_MAX_CHARACTERS'] });
+        expect(document.getElementById('t')!.getAttribute('style')).toBe(before);
+        expect(await send({ type: 'VIEW_SET', id: 't', css: { '--a': 'x'.repeat(100) } })).toEqual({ type: 'VIEW_ACK' });
+    });
+
+    it('a wheel listener that is not passive is added only while a preventDefault mark exists; marks of other types, or with an overlong id, are dropped', async () => {
+        const { render, registered } = await start();
+        const wheelListeners = () => registered.filter(([type, how]) => type === 'wheel' && (how as any)?.passive === false).length;
+        const pause = () => new Promise(resolve => setTimeout(resolve, 20));
+        render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel'], marks: [['wheel', 'x'.repeat(2000), 4], ['nope', 't', 4]] });
+        await pause();
+        expect(wheelListeners()).toBe(0);
+        render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel'], marks: [['wheel', null, 4]] });
+        render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel'], marks: [['wheel', 't', 4]] });
+        await pause();
+        expect(wheelListeners()).toBe(1); // still the one
+        render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel'], marks: [] });
+        render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel'], marks: [['wheel', 't', 4]] });
+        await pause();
+        expect(wheelListeners()).toBe(2); // removed with the last mark, added again with the next
     });
 });
