@@ -47,11 +47,14 @@ export function createGateHarness() {
     let port: FakePort;
     const prototypeOfGlobal = Object.getPrototypeOf(globalThis);
 
-    /** Installs the stand-ins and the gate over `connect`, the list of the policy's connect-src. */
-    const install = (connect: readonly string[]) => {
+    /**
+     * Installs the stand-ins and the gate over `connect`, the list of the policy's connect-src. With `sealed`, the copy of
+     * fetch on the global object's prototype cannot be deleted.
+     */
+    const install = (connect: readonly string[], options: { sealed?: boolean } = {}) => {
         g.MessagePort = FakePort;
         Object.defineProperty(globalThis, 'fetch', { value: platformFetch, writable: true, configurable: true });
-        Object.defineProperty(prototypeOfGlobal, 'fetch', { value: platformFetch, writable: true, configurable: true });
+        Object.defineProperty(prototypeOfGlobal, 'fetch', { value: platformFetch, writable: !options.sealed, configurable: !options.sealed });
         g.XMLHttpRequest = PlatformXMLHttpRequest;
         g.WebSocket = PlatformWebSocket;
         // strict mode's form: the port is handed to attach() (no INIT_PORT listener), as the strict prelude does
