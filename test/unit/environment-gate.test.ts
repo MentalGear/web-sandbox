@@ -242,11 +242,11 @@ describe("the bridge frame's document holds the table's values as the wrapper's 
 describe('the element ends the sandbox on a refusal, by its own table', () => {
     const host = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/host.ts'), 'utf8');
 
-    it("takes the reason from the table by the check's id, from a trusted message of the guest frame's window or the bridge frame's, and from no other window", () => {
+    // (The rule that the element takes a refusal only from the guest frame's window or the bridge frame's, as a trusted
+    // message, by a row of its own table, is run with real messages in test/e2e/environment-check.spec.ts, BD3:TST-7; a pin of
+    // the source's text held a mutant that kept the pinned line and made the check vacuous.)
+    it("takes the reason from the table by the check's id: one reason for each row of the table, whatever the guest names", () => {
         expect(host).toContain('Object.entries(ENVIRONMENT_CHECKS).map(([id, row]) => [id, reasonText(row.reason)])');
-        expect(host).toContain('const reason = ENVIRONMENT_REFUSALS[data.refused as string];');
-        expect(host).toContain('if (!event.isTrusted || !source || reason === undefined || (source !== guestWindow && source !== bridge?.contentWindow)) return;');
-        expect(host).toContain('this._refusedByHostPage(reason, gen);');
     });
 
     it('listens in every mode: a strict build installs the listener too, and announces nothing', () => {
