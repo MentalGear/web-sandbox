@@ -302,7 +302,7 @@ environments), one guest loop freezes the host page and no watchdog can stop it.
   `listGuestWrites()`; a valid path holds `'`, `(`, `;`, `=` and more, so it can end a single-quoted attribute), the
   message of a call rejected by a guest handler. The library
   validates and clamps its size and shape, not its content. Show it with `textContent`; never pass it to an HTML, URL (a
-  link `href`), `eval` or template sink, or the guest's text runs with the host page's authority.
+  link `href`), `eval`, template or `console` format-string sink, or the guest's text runs with the host page's authority.
 - **Exposed methods are the attack surface** the embedder adds: validate every argument, copy objects with spread, never
   `Object.assign` or `for…in` ([S25](BACKLOG.md#s25)), and throw only errors whose message the guest may see.
 - **Opt-ins widen the model**, each with a warning: `scriptUnsafe` (`execute()` and `eval` in the guest's realm;

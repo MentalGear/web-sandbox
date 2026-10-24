@@ -80,7 +80,7 @@ export const INERT_TYPES: ReadonlySet<string> = new Set([
  *
  * @remarks
  * The `path`, the `type` and the `content` are the guest's: attacker text. Show a path or a type with `textContent`, never
- * in an HTML, URL, `eval` or template sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,`
+ * in an HTML, URL, `eval`, template or `console` format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,`
  * and `@`, so one written into a single-quoted attribute can end it and add one).
  */
 export type GuestWrite =

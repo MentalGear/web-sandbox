@@ -37,11 +37,31 @@ describe('the attacker-text lists', () => {
         const paragraph = paragraphWith(read(file), marker);
         for (const names of GUEST_CHOSEN) expect(names.some(name => paragraph.includes(name)), names.join(' or ')).toBe(true);
         expect(paragraph).toContain('textContent');
+        expect(paragraph, 'and the console, where the first argument is a format string').toContain('format-string');
     });
 
     it('docs/API.md says it where the guest-writes surface is described too', () => {
         const paragraph = paragraphWith(read('docs/API.md'), 'Treat written content as the guest');
         for (const word of ['path', 'type', 'textContent', 'single-quoted attribute']) expect(paragraph, word).toContain(word);
+    });
+});
+
+describe('the docs\' examples never put a guest string first in a console call (BD3:DOC-3)', () => {
+    const GUEST_FIELD = /\b(?:e|event)\.detail\.(?:directive|blockedURI|sourceFile|args|url|paths|message|reason)\b/;
+
+    it.each(['README.md', 'docs/API.md'])('%s', (file) => {
+        const examples = [...read(file).matchAll(/console\.(?:log|warn|error|info|debug)\(([^;\n]*)\)/g)].map(match => match[1]!);
+        expect(examples.length, 'the scan sees the examples').toBeGreaterThan(2);
+        // `detail.reason` is the library's text; the guest's fields are not, and may follow a fixed first argument
+        const first = (call: string) => call.split(',')[0]!.trim();
+        const offending = examples.filter(call => GUEST_FIELD.test(first(call)) && !/detail\.reason/.test(first(call)));
+        expect(offending).toEqual([]);
+        expect(examples.some(call => /^'violation',/.test(call)), 'a violation example, with a fixed first argument').toBe(true);
+    });
+
+    it('the scan sees the form it forbids', () => {
+        expect(GUEST_FIELD.test('e.detail.directive, e.detail.blockedURI')).toBe(true);
+        expect(GUEST_FIELD.test("'violation'")).toBe(false);
     });
 });
 

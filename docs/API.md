@@ -514,7 +514,7 @@ Methods belong to the element: they survive `reset()`, `load()`,
 start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
 validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
 survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
-`eval` or template sink.
+`eval`, template or `console` format-string sink.
 
 **Parameters**
 
@@ -719,7 +719,7 @@ array in it, a guest's log arguments included. What cannot be frozen stays as it
 clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
 line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
 guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
-URL (such as a link `href`), `eval` or template sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
+URL (such as a link `href`), `eval`, template or `console` format-string sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
 `+`, `,` and `@`, so one written into a single-quoted attribute can end it and add one. `terminated.reason` is the
 library's text.
 
@@ -747,7 +747,7 @@ its shape.
 | :--- | :--- | :--- |
 | `type` | `'LOG'` | Always `'LOG'`. |
 | `level` | `'log' \| 'info' \| 'warn' \| 'error'` | How serious the line is. A level the guest sends that is not one of `SandboxLogLevel` reads as `'log'`. |
-| `args` | `readonly unknown[]` | What was logged, structured-cloned: at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING` characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced by a string that says so. Guest-controlled text when `source` is `'guest'`: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
+| `args` | `readonly unknown[]` | What was logged, structured-cloned: at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING` characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced by a string that says so. Guest-controlled text when `source` is `'guest'`: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or `console` format-string sink. |
 | `source` | `'guest' \| 'host'` | `'host'` for a line the element wrote itself, `'guest'` for a line that came from the guest's port, whatever it claims. Set by the element, never read from the line. |
 <!-- generated:end -->
 
@@ -829,8 +829,8 @@ so refused loads of one kind never hide a report of another. See [ADR-005](ADR-0
 | Field | Type | Meaning |
 | :--- | :--- | :--- |
 | `directive` | `string` | The effective directive that refused the load, e.g. `'connect-src'` or `'img-src'`. |
-| `blockedURI` | `string` | What was refused: a URL (possibly reduced to its origin by the browser; a `data:` or `blob:` URL is reported by its scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
-| `sourceFile` | `string?` | Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like), or `'web-sandbox:request-gate'` for a request the library's request gate refused. At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
+| `blockedURI` | `string` | What was refused: a URL (possibly reduced to its origin by the browser; a `data:` or `blob:` URL is reported by its scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or `console` format-string sink. |
+| `sourceFile` | `string?` | Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like), or `'web-sandbox:request-gate'` for a request the library's request gate refused. At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or `console` format-string sink. |
 | `lineNumber` | `number?` | The line of the refused code, a positive integer, when the browser gives one. |
 | `columnNumber` | `number?` | The column of the refused code, a positive integer, when the browser gives one. |
 | `source` | `'view' \| 'logic'?` | Strict mode only ([ADR-005](ADR-005-strict-mode.md)): which document's report this is, set by the element from the port it arrived on, never read from the report. `'view'` is the view document, which runs no guest code, so its reports are the library's own and complete up to the cap. `'logic'` is the worker: the request gate's reports, the same on every engine, and the browser's own worker reports, which guest code can forge or suppress like any cooperative-mode report and which depend on the engine (WebKit raises none in workers). |
@@ -864,7 +864,7 @@ first. `method` is upper case (`''` when the guest sent no valid one). `url` is 
 most 8192 characters (a longer one is refused and reported cut), or the guest's string cut to that when it is not a
 URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement. `url` is
 guest-controlled text (it can be `javascript:`): show it with `textContent`, never in an HTML, URL (such as a link
-`href`), `eval` or template sink.
+`href`), `eval`, template or `console` format-string sink.
 
 ```ts
 type FetchRecord = {
@@ -1130,8 +1130,8 @@ guest writes reaches the files, a policy or another environment until the host c
 [`commitGuestWrites()`](#commitguestwritespaths-options); it is listed by
 [`listGuestWrites()`](#listguestwrites) and announced by `fileswritten`. Without `guestWrites`, both methods
 reject with `FILES_NOT_ALLOWED`, and so does the element for any request that reaches it. Treat written
-content as the guest's data, and so its path and type: show them with `textContent`, never in an HTML, URL or template
-sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,` and `@`, so one written into a
+content as the guest's data, and so its path and type: show them with `textContent`, never in an HTML, URL, template or `console`
+format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,` and `@`, so one written into a
 single-quoted attribute can end it and add one). [ADR-004](ADR-004-files-as-blob-urls.md)
 
 In strict mode the view shows the raster images the guest writes: a write whose type is `image/png`, `image/jpeg`,
@@ -1931,5 +1931,5 @@ sandbox.addEventListener('terminated', (e) => console.warn(e.detail.reason));
 
 ```js
 sandbox.addEventListener('sandbox-log', (e) => console.log(`[${e.detail.source}]`, e.detail.level, ...e.detail.args));
-sandbox.addEventListener('violation', (e) => console.warn(e.detail.directive, e.detail.blockedURI));
+sandbox.addEventListener('violation', (e) => console.warn('violation', e.detail.directive, e.detail.blockedURI));
 ```

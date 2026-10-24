@@ -179,7 +179,7 @@ export type FetchRefusal = Error & { code: FetchErrorCode; reason?: string; unse
  * most 8192 characters (a longer one is refused and reported cut), or the guest's string cut to that when it is not a
  * URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement. `url` is
  * guest-controlled text (it can be `javascript:`): show it with `textContent`, never in an HTML, URL (such as a link
- * `href`), `eval` or template sink.
+ * `href`), `eval`, template or `console` format-string sink.
  */
 export type FetchRecord = {
     /** The method, upper case; `''` when the guest sent no valid one. */
@@ -187,7 +187,7 @@ export type FetchRecord = {
     /**
      * The URL without its fragment, or the guest's string when it is not a URL; at most 8192 characters.
      * Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`: it can be
-     * `javascript:`), `eval` or template sink.
+     * `javascript:`), `eval`, template or `console` format-string sink.
      */
     url: string;
     /** Time from the request to its settlement, in ms. */

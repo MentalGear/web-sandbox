@@ -127,7 +127,7 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions {
  * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
  * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
  * guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
- * URL (such as a link `href`), `eval` or template sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
+ * URL (such as a link `href`), `eval`, template or `console` format-string sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
  * `+`, `,` and `@`, so one written into a single-quoted attribute can end it and add one. `terminated.reason` is the
  * library's text.
  */
@@ -1183,7 +1183,7 @@ export class WebSandbox extends ElementBase {
      * start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
      * validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
      * survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
-     * `eval` or template sink.
+     * `eval`, template or `console` format-string sink.
      *
      * @param name - The method name, a string of at most 256 characters.
      * @param fn - The handler; its arguments come from the guest by structured clone.

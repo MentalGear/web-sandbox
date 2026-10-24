@@ -36,14 +36,14 @@ export interface SandboxViolation {
     /**
      * What was refused: a URL (possibly reduced to its origin by the browser; a `data:` or `blob:` URL is reported by its
      * scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters. Guest-controlled text: show it with
-     * `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink.
+     * `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or `console` format-string sink.
      */
     blockedURI: string;
     /**
      * Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like), or
      * `'web-sandbox:request-gate'` for a request the library's request gate refused. At most 2048 characters.
-     * Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template
-     * sink.
+     * Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or
+     * `console` format-string sink.
      */
     sourceFile?: string;
     /** The line of the refused code, a positive integer, when the browser gives one. */

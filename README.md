@@ -152,7 +152,7 @@ A config or build the element cannot use ends in `terminated` with a reason; `se
 sandbox.addEventListener('ready', () => { /* state is 'ready' */ });
 sandbox.addEventListener('terminated', (e) => console.warn(e.detail.reason));
 sandbox.addEventListener('sandbox-log', (e) => console.log(e.detail.level, ...e.detail.args));
-sandbox.addEventListener('violation', (e) => console.warn(e.detail.directive, e.detail.blockedURI));
+sandbox.addEventListener('violation', (e) => console.warn('violation', e.detail.directive, e.detail.blockedURI));
 
 sandbox.terminate('user pressed stop');  // tears it down; 'terminated' fires once
 sandbox.reset();                         // a fresh frame and opaque origin, from any state
@@ -210,7 +210,9 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     `detail.paths`, `listGuestWrites()`; a valid path can end a single-quoted attribute), the message of a call rejected by
     a guest handler, and the arguments of a method you `expose()`. "Validated and clamped" bounds its size and shape; it does not make it safe to
     display. Show it with `textContent`, and never pass it to an HTML (`innerHTML`, `insertAdjacentHTML`), URL (a link
-    `href`), `eval` or template sink. (`terminated.reason` is the library's own text.)
+    `href`), `eval`, template or `console` format-string sink (as the first argument of a `console` method it is a
+    format string, `%c` styles the line and `%s` takes the next argument: put a fixed text first, as the examples do).
+    (`terminated.reason` is the library's own text.)
 *   **`state === 'terminated'` is a second, authoritative signal** next to a call's `TERMINATED`
     code: the element sets both from its own state, so the guest can produce neither.
 
@@ -516,7 +518,7 @@ sandbox.setConfig({ guestWrites: true, /* … */ });
 await sandboxFiles.write('out/report.json', JSON.stringify(result));  // a string, Blob, ArrayBuffer or typed array
 await sandboxFiles.remove('draft.txt');
 // on the host
-sandbox.addEventListener('fileswritten', (e) => console.log(e.detail.paths));
+sandbox.addEventListener('fileswritten', (e) => console.log('fileswritten', e.detail.paths));
 sandbox.listGuestWrites();                        // [{ path, change: 'write', type, size, content }, …]
 sandbox.commitGuestWrites(['out/report.json']);   // now a registered file, from the next build on
 sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the flag
