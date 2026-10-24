@@ -1142,7 +1142,7 @@ assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](
 | `render` | `(html: string, into?: string \| null) => void` | Replaces the view's body, or the children of the element with id `into`. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). The latest render per target wins; one operation is in flight at a time. |
 | `text` | `(id: string, text: string) => void` | Makes `text` the only content of the element with that id, as text: the view assigns it and parses nothing, so nothing needs escaping. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). Shares its slot with `render`: the latest of the two per target wins. |
 | `set` | `(id: string, fields: { value?: string, checked?: boolean, focus?: boolean, scroll?: { top?: number, left?: number }, css?: Record<string, string \| null> }) => void` | Sets the value of an `input`, `textarea`, `select` or `output` (not a file input), the checked state of an `input`, focuses the element, sets its own scroll position (CSS px; never an ancestor's, never the host page's), or sets inline style properties of it (`css`; `null` removes one): only those of `VIEW_STYLE_PROPERTIES`, at most `VIEW_SET_STYLE_LIMITS.maxProperties` a call, each value at most `VIEW_SET_STYLE_LIMITS.maxValue` characters. Any other key, property or a field of another type is a `TypeError`; a value past `VIEW_RENDER_MAX_LENGTH` characters, or past the `css` limits, a `RangeError`. |
-| `on` | `(type, id: string \| null, handler: (detail) => void, options?: { pointerCapture?: boolean, rect?: boolean, preventDefault?: boolean }) => () => void` | Subscribes to `click`, `input`, `change`, `submit`, `keydown`, `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, `wheel`, `scroll`, `focusin` or `focusout` on the element with that id (or inside it), or anywhere with `null`. Returns `off`. The options, each `true` or left out: `pointerCapture` (a `pointerdown` handler with an id), `rect` (a handler with an id; its element's rectangle arrives as the detail's `box`) and `preventDefault` (a `wheel` handler); anything else is a `TypeError`, and more than `VIEW_EVENT_LIMITS.maxIds` elements of one type with options a `RangeError`. |
+| `on` | `(type, id: string \| null, handler: (detail) => void, options?: { pointerCapture?: boolean, rect?: boolean, preventDefault?: boolean }) => () => void` | Subscribes to `click`, `input`, `change`, `submit`, `keydown`, `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, `wheel`, `scroll`, `focusin` or `focusout` on the element with that id (or inside it), or anywhere with `null`. Returns `off`. The options, each `true` or left out: `pointerCapture` (a `pointerdown` handler with an id), `rect` (a handler with an id; its element's rectangle arrives as the detail's `rect`) and `preventDefault` (a `wheel` handler); anything else is a `TypeError`, and more than `VIEW_EVENT_LIMITS.maxIds` elements of one type with options a `RangeError`. |
 
 The renderer is an allowlist: what it does not list is gone before insertion.
 
@@ -1255,7 +1255,7 @@ An event handler receives:
     wheel?: { dx: number, dy: number, dz: number, unit: 'pixel' | 'line' | 'page' }, // the deltas it stands for, summed
     scroll?: { top: number, left: number, width: number, height: number, clientWidth: number, clientHeight: number },
                                          // scroll: the scrolled element's position and extent (the document's: its root)
-    box?: { x: number, y: number, width: number, height: number }, // with the `rect` option: the handler's element, view CSS px
+    rect?: { x: number, y: number, width: number, height: number }, // with the `rect` option: the handler's element, view CSS px
     modifiers?: { alt: boolean, ctrl: boolean, meta: boolean, shift: boolean }, // pointer*, wheel
     time?: number,                       // pointer*, wheel, scroll: the event's timeStamp, whole ms
     coalesced?: number,                  // pointermove, wheel, scroll: how many raw events this one stands for
@@ -1287,7 +1287,7 @@ the view, gestures, custom sliders and virtual lists, all of it guest code in th
   the moves and the release keep naming the element in `ids` after the pointer leaves it (a slider's thumb, a drag), and
   cancels a native drag or a text selection inside it until the release.
 - **`rect`**: the worker cannot read layout, so the view gives a handler that asks its element's rectangle,
-  `box: { x, y, width, height }` in view CSS px, read once per frame of events.
+  `rect: { x, y, width, height }` in view CSS px, read once per frame of events.
 - **`preventDefault`**: the view cancels the wheel's default (scrolling) inside the element, or anywhere with `null`.
   While such a subscription exists, scrolling over the sandbox waits for the view's thread, as over any frame with a
   wheel listener that is not passive.
@@ -1309,7 +1309,7 @@ the view, gestures, custom sliders and virtual lists, all of it guest code in th
 
 Measured (2026-10-24, headless, a shared 4-core VM; [research 23](research/23_view_input/README.md#23-latency)): a
 60 Hz drag answered with `set({ css })` is rendered a median 28 ms (Chromium), 25 ms (Firefox) and 50 ms (WebKit) after
-the move, one frame more than a handler in the same document, at 0–3% of your page's thread.
+the move, one frame of it the worker's round trip, at 0–3% of your page's thread.
 
 `render`, `text` and `set` go to the view in order, one at a time: an id that names no element in the view's body is
 dropped, and the next one applies. What `text` and `set` leave in the view counts against its characters and the

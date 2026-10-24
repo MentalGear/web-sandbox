@@ -34,7 +34,7 @@ test('a drag: the thumb follows the pointer through set({ css }), captured, and 
     await waitInView(page, browserName, `(() => { const r = document.getElementById('thumb').getBoundingClientRect(); return r.left === 180 && r.top === 120; })()`, 8000);
     const kept = await drain(sandbox);
     expect(kept.map(k => k.label)).toEqual(['down', 'up']); // no pointercancel: no native drag took it
-    expect(kept[0]!.detail.box).toEqual({ x: 20, y: 20, width: 40, height: 40 });
+    expect(kept[0]!.detail.rect).toEqual({ x: 20, y: 20, width: 40, height: 40 });
     expect(kept[1]!.detail.ids).toEqual(['thumb', 'pad']); // the release went to the captured thumb, though the pointer was far from it
     expect(await inView(page, browserName, `document.getElementById('thumb').getAttribute('style')`)).toContain('transform: translate(160px, 100px)');
 });
@@ -46,10 +46,10 @@ test('a custom slider: the value follows the pointer over the track, clamped at 
     await mountInput(sandbox, browserName, `
         let dragging = false;
         const to = (d) => {
-            const value = Math.round(Math.min(1, Math.max(0, (d.pointer.x - d.box.x) / d.box.width)) * 100);
+            const value = Math.round(Math.min(1, Math.max(0, (d.pointer.x - d.rect.x) / d.rect.width)) * 100);
             sandboxView.set('knob', { css: { left: (value * 2.9) + 'px' } });
             sandboxView.text('out', String(value));
-            kept.push({ label: 'value', detail: { value, box: d.box } });
+            kept.push({ label: 'value', detail: { value, rect: d.rect } });
         };
         sandboxView.on('pointerdown', 'track', (d) => { dragging = true; to(d); }, { pointerCapture: true, rect: true });
         sandboxView.on('pointermove', 'track', (d) => { if (dragging) to(d); }, { rect: true });
@@ -64,7 +64,7 @@ test('a custom slider: the value follows the pointer over the track, clamped at 
     await page.mouse.up();
     await waitInView(page, browserName, `document.getElementById('out').textContent === '0'`);
     const values = (await drain(sandbox)).map(k => k.detail);
-    expect(values[0]!.box).toEqual({ x: 50, y: 100, width: 300, height: 20 });
+    expect(values[0]!.rect).toEqual({ x: 50, y: 100, width: 300, height: 20 });
     expect(Math.max(...values.map(v => v.value))).toBe(100);
     expect(await inView(page, browserName, `document.getElementById('knob').style.left`)).toBe('0px');
 });

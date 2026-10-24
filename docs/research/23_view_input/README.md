@@ -23,7 +23,7 @@ lists. What the guest learns is about its own view only, and less than any cross
   opacity, visibility, geometry, `z-index`, `cursor` and custom properties), within `VIEW_SET_STYLE_LIMITS`, and
   `set(id, { scroll: { top, left } })` that element's own scroll position.
 - **The options of `on()`**: `pointerCapture` (the view captures the pointer for the guest, in the trusted
-  `pointerdown`), `rect` (the detail carries the handler's element's rectangle, as `box`: the worker cannot read layout)
+  `pointerdown`), `rect` (the detail carries the handler's element's rectangle, as `rect`: the worker cannot read layout)
   and `preventDefault` (the view cancels a wheel's default inside the element).
 - **Flow control**: at most one entry per pointer (moves) or element (wheel, scroll) waits in the view's input outbox, the
   latest winning and a wheel's deltas summed; what it holds goes to the worker at most once per animation frame, and only
@@ -32,8 +32,8 @@ lists. What the guest learns is about its own view only, and less than any cross
   event path's own time is charged to the view's time budget (`VIEW_APPLY_MS_PER_SECOND`). There is no per-second count
   of its own: the frame rate and the acknowledgement bound the rate, the time budget bounds the cost.
 - **Measured** on the shipped code (`measure.spec.ts`; below): a 60 Hz drag answered with `set({ css })` is rendered a
-  median 28 ms (Chromium), 25 ms (Firefox) and 50 ms (WebKit) after the move, about one frame more than a same-document
-  handler; the host page's thread stays 0–3% busy.
+  median 28 ms (Chromium), 25 ms (Firefox) and 50 ms (WebKit) after the move, one frame of it the worker's round trip;
+  the host page's thread stays 0–3% busy.
 
 ## 1. What each event carries
 
@@ -42,7 +42,7 @@ never a string of the guest's and never a URL:
 
 | Event | Kind | Fields | Notes |
 | :--- | :--- | :--- | :--- |
-| `pointerdown`, `pointerup`, `pointercancel` | discrete | `pointer`, `modifiers`, `time`, `box?` | `pointer = { x, y, id, kind: 'mouse' \| 'pen' \| 'touch', primary, button, buttons, pressure }`; `x`, `y` in view CSS px, rounded to 0.1 and clamped to `[0, innerWidth] × [0, innerHeight]`; `pressure` rounded to 0.01 |
+| `pointerdown`, `pointerup`, `pointercancel` | discrete | `pointer`, `modifiers`, `time`, `rect?` | `pointer = { x, y, id, kind: 'mouse' \| 'pen' \| 'touch', primary, button, buttons, pressure }`; `x`, `y` in view CSS px, rounded to 0.1 and clamped to `[0, innerWidth] × [0, innerHeight]`; `pressure` rounded to 0.01 |
 | `pointermove` | continuous | as above, and `coalesced`, how many raw events it stands for | outside the view's box only while a press that began in the view is held (a button down), and clamped (§3.1) |
 | `wheel` | continuous | `wheel = { dx, dy, dz, unit: 'pixel' \| 'line' \| 'page' }`, `pointer = { x, y }`, `modifiers`, `time`, `coalesced` | the deltas of one element and unit are summed while coalesced; another unit is another entry |
 | `scroll` | continuous | `scroll = { top, left, width, height, clientWidth, clientHeight }` of the scrolled element, read when the frame is sent; `time`, `coalesced` | the document's own scrolling is its root's; a capture listener on the window (scroll does not bubble) |
@@ -50,7 +50,7 @@ never a string of the guest's and never a URL:
 
 `time` is the event's `timeStamp` in whole milliseconds: no finer than the worker's own clock (the view's
 `performance.now()` steps are 0.1 ms in Chromium and 1 ms in Firefox and WebKit, measured), and it lets a fling compute
-a velocity without the jitter of arrival times. `box`, with the `rect` option, is `{ x, y, width, height }` of the
+a velocity without the jitter of arrival times. `rect`, with the `rect` option, is `{ x, y, width, height }` of the
 handler's own element, read once per frame of events, never per raw event.
 
 ## 2. Flow control, and how the worker answers fast enough
@@ -77,8 +77,8 @@ function, which `test/unit/view-input.test.ts` runs, a property test of the in-f
    (class P, [research 18](../18_finding_classes/README.md)).
 
 Why coalesce when Chromium and Firefox already align pointer events to frames: **WebKit does not.** A burst of moves as
-fast as the driver sends them reached WebKit's view 1 100–2 300 times a second (the probe; 1 386 in `measure.spec.ts`),
-and the guest receives about 60 a second on every engine. Coalescing makes the rate the same on every engine, so no
+fast as the driver sends them reached WebKit's view 1 386 times a second (`measure.spec.ts`), Chromium's and Firefox's
+60, and the guest receives about 60 a second on every engine. Coalescing makes the rate the same on every engine, so no
 engine-ledger row is needed for delivery.
 
 ### 2.2 The answer
@@ -88,18 +88,9 @@ engine-ledger row is needed for delivery.
   value that names a load (`url(`, `image-set(` and the rest; only `cursor` and custom properties can carry one) is
   prepaid to the load budget like a style attribute's (`cssLoadBound`, S73) and refused once the view has loaded
   `VIEW_MAX_DISTINCT_URLS`; the browser applies the view's policy to the load. What the style attribute grows by counts
-  against `VIEW_MAX_CHARACTERS`.
-
-  It is the difference between smooth and stuck on a real UI (the probe, a 60 Hz drag over 10 000 elements):
-
-  | Engine | Updates/s, a transform with `set` | p50 / p95, `set` (ms) | Updates/s, rule text into a `<style>` | p50 / p95, `<style>` (ms) |
-  | :--- | :--- | :--- | :--- | :--- |
-  | Chromium | 60 | 32 / 35 | 59 | 32 / 38 |
-  | Firefox | 56 | 30 / 35 | 9 | 160 / 186 |
-  | WebKit | 23–36 | 40–53 / 59–76 | 10 | 154 / 236 |
-
-  The `<style>` route is what `text()` gives. The time budget throttled it on Firefox and WebKit, and the host page
-  stayed within its bound (WebKit 19% against 20%).
+  against `VIEW_MAX_CHARACTERS`. One inline property of one element is what a drag changes each frame; the other route,
+  a rule's text into a `<style>` with `text()`, restyles the whole view each time, and the time budget slows it where
+  the view is large.
 - **`set(id, { scroll: { top, left } })`** assigns that element's own `scrollTop` and `scrollLeft`: never an ancestor's,
   never the host page's. It is not `scrollIntoView` and not a fragment.
 - **`pointerCapture`**, on a `pointerdown` handler with an id: on a trusted `pointerdown` inside that element, the view
@@ -132,13 +123,11 @@ rendering update that showed it, on the view's own clock.
 | Firefox | 25 / 33 ms | 0% / 0% / 1% | 60 / 60; 3% (answering) |
 | WebKit | 50 / 61 ms (it rendered 120 of 273 moves: about 30 frames a second under the updates) | 1% / 1% / 3% | 1 386 / 62 receiving, 404 / 27 answering; 8% (answering) |
 
-The design probe measured a same-document handler (what cooperative mode and any iframe get) at 5–8 ms in Chromium and
-Firefox and 21–26 ms in WebKit: the async hop costs one frame, structurally, since an asynchronous worker cannot answer
-within the frame that dispatched the input. Where the time goes (Chromium, the probe; Firefox within 1 ms): 12.8 ms of
-input alignment (the move is delivered at the start of the next frame, which a same-document handler pays in part too),
-0.1 ms for the forward and the worker's handler, one whole frame (16.8 ms) because the answer arrives after the frame
-that dispatched the event has rendered, and 0.8–2.8 ms for the flush and the rendering. WebKit rendered 26–56 frames a
-second under continuous updates (research 16 saw the same, 27), and moved with the machine's load.
+One frame of it is structural: an asynchronous worker cannot answer within the frame that dispatched the input, so the
+answer arrives after that frame has rendered, and the next frame applies it. The rest is the engine's input alignment
+(the move is delivered at the start of a frame), the forward and the worker's handler, and the flush and the rendering.
+WebKit rendered about 30 frames a second under continuous updates (research 16 saw the same, 27), and moved with the
+machine's load.
 
 If one frame is too much, a later option: a declarative `follow`, with which the view itself moves the captured element by
 the pointer's delta, in the event, and leaves the result to the worker at `pointerup`; it would need its own row in the
@@ -151,17 +140,17 @@ cost statement.
 | Information | About | Already available to | What the view does |
 | :--- | :--- | :--- | :--- |
 | Pointer position over the view, buttons, pointer id, primary | the user's interaction with the view | cooperative guests; any cross-origin iframe | forwarded, clamped |
-| Pointer position **outside** the view during a press that began in it | the pointer's path over the host page | any iframe: the probe measured, on all three engines, moves up to 300 px past the view's right and bottom edges with `buttons: 1`, with or without `setPointerCapture`, and nothing after the release | **clamped** to the view's box, and a move outside it forwarded only while such a press is held (a button down). Firefox, after a release outside the browser's viewport, went on delivering moves outside the box with `buttons: 0`; the rule drops those too. So strict mode gives less than an iframe here: the guest learns only the projection onto its own edge, during a drag the user started on its content |
+| Pointer position **outside** the view during a press that began in it | the pointer's path over the host page | any iframe: every engine goes on delivering moves to the view past its edges while the press lasts, with or without `setPointerCapture`, and none after the release | **clamped** to the view's box, and a move outside it forwarded only while such a press is held (a button down), so a move outside the box with `buttons: 0` (Firefox delivers some after a release outside the browser's viewport) is dropped too. `test/e2e/strict-pointer-events.spec.ts` drags past the view's edges on every engine: the guest gets coordinates at the edge, none past it, and nothing after the release. So strict mode gives less than an iframe here: the guest learns only the projection onto its own edge, during a drag the user started on its content |
 | `kind` (`pointerType`), `pressure` | the device class: pen or touch present | iframes, cooperative guests | forwarded; tilt, twist and contact size are not (biometric, and not needed) |
 | Event timing, whole ms | input dynamics in the view (mouse dynamics are a known biometric) | every page and iframe, at a finer resolution | forwarded; nothing of the host page's input reaches the view |
 | Wheel deltas and unit | the OS's scroll settings | every page | forwarded |
-| Layout readback: `box`, scroll extents | the guest's own layout: font metrics, zoom, the view's size | the worker has `OffscreenCanvas` `measureText`; the embedder sets the element's size | forwarded |
+| Layout readback: `rect`, scroll extents | the guest's own layout: font metrics, zoom, the view's size | the worker has `OffscreenCanvas` `measureText`; the embedder sets the element's size | forwarded |
 | `focusin`, `focusout` | when the user enters or leaves the view's controls | iframes (the window's `blur` and `focus`); cooperative guests | forwarded without `relatedTarget` |
 | Native drag-and-drop data (`text/html` of a host-page selection, `text/uri-list`, files) | **host-page content or the user's files**, dragged in | iframes, cooperative guests | **not forwarded**: no drag event is subscribable. File inputs give the worker no `File` either (`FormData` drops what is not a string) |
 
 **Nothing of the host page or of other origins.** The view hears only events dispatched in its own document: capture
-listeners on its own window, each checking `isTrusted`. With no button held over the view, the probe saw no move outside
-its box. Keystroke inference from pointer timing would need the host page's events, and none arrive; typing in the view
+listeners on its own window, each checking `isTrusted`. With no button held, the host page's own moves around the view
+reach nothing (`test/e2e/strict-pointer-events.spec.ts`). Keystroke inference from pointer timing would need the host page's events, and none arrive; typing in the view
 reaches the guest through `keydown`, as before.
 
 **Two residuals**, documented ([THREAT-MODEL](../../THREAT-MODEL.md#accepted-risks-and-open-items)):
@@ -227,9 +216,6 @@ reaches the guest through `keydown`, as before.
 
 - `measure.spec.ts`: the shipped path's latency and host cost, on demand
   (`WEB_SANDBOX_MEASURE=1 bunx playwright test docs/research/23_view_input/measure.spec.ts --project=<engine> --workers=1`).
-- `probe.spec.ts`: the design probe, which prototyped pointer events by rewriting the view's source in flight; the
-  figures marked "the probe" above are its own. Its rewrites target a view without the input path, and it asserts that
-  each one applies, so on the shipped view it stops there.
 - The specs that hold the guarantees, on every engine: `test/e2e/strict-pointer-events.spec.ts` (the schema, trusted
   only, clamping, coalescing, a blocked handler), `test/e2e/strict-scroll-and-wheel.spec.ts` (wheel sums, a virtual
   list, the bounded scroll loop, `preventDefault`), `test/e2e/strict-drag-and-slider.spec.ts` (a captured drag, a

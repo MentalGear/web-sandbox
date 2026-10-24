@@ -297,7 +297,7 @@ export const FRAMES = {
     VIEW_EVENT: {
         purpose: 'Events of the types the worker listens to, as details, in the order they were raised: a discrete one behind the continuous ones the view coalesced before it, or those alone (at most one such frame unacknowledged, VIEW_INPUT_IN_FLIGHT).',
         routes: [{ channel: 'render-port', from: ['view'], to: ['strict-worker'] }],
-        fields: { details: { bound: 'cut', how: 'every string of them through clamp, at most VIEW_EVENT_LIMITS.maxString each and maxTotal together for the frame; ids and form fields capped; the rest numbers and constants, coordinates clamped to the view; the rectangles a rect option asked for, by the ids of VIEW_LISTEN\'s marks' } },
+        fields: { details: { bound: 'cut', how: 'every string of them through clamp, at most VIEW_EVENT_LIMITS.maxString each and maxTotal together for the frame; ids and form fields capped; the rest numbers and constants, coordinates clamped to the view; rects: the rectangles a rect option asked for, by the ids of VIEW_LISTEN\'s marks' } },
     },
     VIEW_EVENT_ACK: {
         purpose: "The worker's prelude dispatched a VIEW_EVENT and its handlers have returned: the view may send the next continuous events.",

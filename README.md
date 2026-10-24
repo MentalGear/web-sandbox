@@ -563,7 +563,7 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     custom properties); `sandboxView.on(type, id | null, handler, options?)` returns `off` and receives `click`,
     `input`, `change`, `submit`, `keydown`, `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, `wheel`,
     `scroll`, `focusin` and `focusout` as `{ type, ids, target: { tag, id, name, value, checked }, key?, form?,
-    pointer?, wheel?, scroll?, box?, modifiers?, time?, coalesced?, truncated? }`. Pointer moves, wheel and scroll
+    pointer?, wheel?, scroll?, rect?, modifiers?, time?, coalesced?, truncated? }`. Pointer moves, wheel and scroll
     events are coalesced to one per pointer or element and animation frame, and pointer coordinates are clamped to the
     view's box; the options capture the pointer for a drag (`pointerCapture`), give the handler its element's
     rectangle (`rect`), or cancel a wheel's scrolling (`preventDefault`). So drag-and-drop within the view, gestures,

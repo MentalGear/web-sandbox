@@ -227,7 +227,7 @@ describe("the view's event path (inSandboxView, run as stringified)", () => {
             fire('pointerdown', { pointerId: 9, buttons: 1 });
             await until(() => events().length === 1);
             expect(captures).toEqual([[document.getElementById('pad'), 9]]);
-            expect(events()[0].details[0].boxes).toEqual([['pad', 0, 0, 0, 0]]); // jsdom lays nothing out
+            expect(events()[0].details[0].rects).toEqual([['pad', 0, 0, 0, 0]]); // jsdom lays nothing out
             let prevented = 0;
             const inner = document.getElementById('inner')!;
             fire('dragstart', { target: inner, preventDefault: () => { prevented++; } });
@@ -240,7 +240,7 @@ describe("the view's event path (inSandboxView, run as stringified)", () => {
             fire('pointermove', { pointerId: 9 });
             render.postMessage({ type: 'VIEW_EVENT_ACK' });
             await until(() => events().length === 2);
-            expect(events()[1].details[0].boxes).toEqual([['inner', 0, 0, 0, 0]]);
+            expect(events()[1].details[0].rects).toEqual([['inner', 0, 0, 0, 0]]);
         } finally {
             delete (Element.prototype as any).setPointerCapture;
         }
@@ -433,15 +433,15 @@ describe("sandboxView.on's options: pointerCapture, rect and preventDefault", ()
         expect(() => view.on('pointerdown', 'one-more', () => {}, { rect: true })).not.toThrow(); // another type
     });
 
-    it("rect: each handler that asked gets its own element's rectangle as `box`, in a copy; the others get the detail without it", () => {
+    it("rect: each handler that asked gets its own element's rectangle as `rect`, in a copy; the others get the detail without it", () => {
         const { view, render } = startPrelude();
         const seen: any[] = [];
         view.on('pointerdown', 'thumb', (d: any) => seen.push(['thumb', d]), { rect: true });
         view.on('pointerdown', 'pad', (d: any) => seen.push(['pad', d]), { rect: true });
         view.on('pointerdown', null, (d: any) => seen.push(['any', d]));
-        render.deliver({ type: 'VIEW_EVENT', details: [{ type: 'pointerdown', ids: ['thumb', 'pad'], pointer: { x: 1 }, boxes: [['thumb', 20, 20, 40, 40], ['pad', 0, 0, 400, 300]] }] });
-        expect(seen.map(([who, d]) => [who, d.box])).toEqual([['thumb', { x: 20, y: 20, width: 40, height: 40 }], ['pad', { x: 0, y: 0, width: 400, height: 300 }], ['any', undefined]]);
-        for (const [, d] of seen) expect('boxes' in d).toBe(false);
+        render.deliver({ type: 'VIEW_EVENT', details: [{ type: 'pointerdown', ids: ['thumb', 'pad'], pointer: { x: 1 }, rects: [['thumb', 20, 20, 40, 40], ['pad', 0, 0, 400, 300]] }] });
+        expect(seen.map(([who, d]) => [who, d.rect])).toEqual([['thumb', { x: 20, y: 20, width: 40, height: 40 }], ['pad', { x: 0, y: 0, width: 400, height: 300 }], ['any', undefined]]);
+        for (const [, d] of seen) expect('rects' in d).toBe(false);
         expect(seen[0][1].pointer).toEqual({ x: 1 });
     });
 });

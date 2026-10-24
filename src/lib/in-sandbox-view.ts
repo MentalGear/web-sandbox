@@ -1571,17 +1571,17 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     const getRect = E.getBoundingClientRect;
     // The rectangles of the marked elements a detail's handlers asked for (RECT): those of its type among its ids.
-    const boxesOf = (detail: any) => {
-        const boxes: [string, number, number, number, number][] = [];
+    const rectsOf = (detail: any) => {
+        const rects: [string, number, number, number, number][] = [];
         for (let i = 0; i < marks.length; i++) {
             const mark = marks[i]!;
             if (mark.type !== detail.type || (mark.flags & RECT) === 0 || mark.id === null || detail.ids.indexOf(mark.id) < 0) continue;
             const element = elementInBody(mark.id);
             if (!element) continue;
-            const rect = call(getRect, element, []);
-            boxes.push([mark.id, tenth(rect.x), tenth(rect.y), tenth(rect.width), tenth(rect.height)]);
+            const bounds = call(getRect, element, []);
+            rects.push([mark.id, tenth(bounds.x), tenth(bounds.y), tenth(bounds.width), tenth(bounds.height)]);
         }
-        return boxes;
+        return rects;
     };
     // A wheel's default (scrolling, the view's or, past its edge, the host page's) is cancelled inside an element with a
     // PREVENT mark, by a listener that is not passive and is there only while such a mark is: scrolling over the
@@ -1739,8 +1739,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         if (entry.modifiers) detail.modifiers = entry.modifiers;
         if (entry.time !== undefined) detail.time = entry.time;
         if (isContinuous(entry.type)) detail.coalesced = entry.coalesced;
-        const boxes = boxesOf(detail);
-        if (boxes.length > 0) detail.boxes = boxes; // the prelude gives each handler that asked its own element's, as `box`
+        const rects = rectsOf(detail);
+        if (rects.length > 0) detail.rects = rects; // the prelude gives each handler that asked its own element's, as `rect`
         return detail;
     };
     // Posts what the outbox holds and, after it, `last` (a discrete event's entry, with its event), as one frame, and
@@ -3245,7 +3245,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     // The view forwards only the types some handler listens to (VIEW_LISTEN, sent whenever that set changes).
     // A handler with an id runs for events on that element or inside it (the detail's ids); with null, for all.
     // Options (research 23), read once: `pointerCapture` (pointerdown, with an id: the view captures the pointer to that
-    // element in the trusted event), `rect` (with an id: the detail carries that element's rectangle as `box`; the worker
+    // element in the trusted event), `rect` (with an id: the detail carries that element's rectangle as `rect`; the worker
     // cannot read layout) and `preventDefault` (wheel: the view cancels the wheel's default inside the element, or
     // anywhere for null). They reach the view as marks, [type, id, flags], at most options.maxMarks per type.
     const CAPTURE = 1, RECT = 2, PREVENT = 4;
@@ -3347,26 +3347,26 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
             syncListen();
         };
     };
-    // The detail a handler with `rect` gets: the detail's own fields, and its element's rectangle as `box` when the view
+    // The detail a handler with `rect` gets: the detail's own fields, and its element's rectangle as `rect` when the view
     // sent one (the element is in the view). A fresh object, its fields defined (no setter of the guest's runs).
-    const withBox = (detail: Record<string, unknown>, boxes: unknown, id: string) => {
-        let box: Record<string, unknown> | null = null;
-        for (let i = 0; isArray(boxes) && i < boxes.length; i++) {
-            const found = boxes[i];
-            if (isArray(found) && found[0] === id) box = { x: found[1], y: found[2], width: found[3], height: found[4] };
+    const withRect = (detail: Record<string, unknown>, rects: unknown, id: string) => {
+        let rect: Record<string, unknown> | null = null;
+        for (let i = 0; isArray(rects) && i < rects.length; i++) {
+            const found = rects[i];
+            if (isArray(found) && found[0] === id) rect = { x: found[1], y: found[2], width: found[3], height: found[4] };
         }
-        if (box === null) return detail;
+        if (rect === null) return detail;
         const copy = {};
         const keys = keysOf(detail);
         for (let i = 0; i < keys.length; i++) defineOwn(copy, keys[i]!, { value: detail[keys[i]!], writable: true, enumerable: true, configurable: true });
-        defineOwn(copy, 'box', { value: box, writable: true, enumerable: true, configurable: true });
+        defineOwn(copy, 'rect', { value: rect, writable: true, enumerable: true, configurable: true });
         return copy;
     };
     const dispatch = (detail: any) => {
         if (!detail || typeof detail !== 'object' || !isEventType(detail.type)) return;
         const ids = detail.ids;
-        const boxes = detail.boxes;
-        if (boxes !== undefined) deleteOwn(detail, 'boxes');
+        const rects = detail.rects;
+        if (rects !== undefined) deleteOwn(detail, 'rects');
         const current = list<Handler>();
         for (let i = 0; i < handlers.length; i++) current[i] = handlers[i]!;
         for (let i = 0; i < current.length; i++) {
@@ -3378,7 +3378,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
                 if (!found) continue;
             }
             try {
-                entry.handler((entry.flags & RECT) !== 0 && entry.id !== null ? withBox(detail, boxes, entry.id) : detail);
+                entry.handler((entry.flags & RECT) !== 0 && entry.id !== null ? withRect(detail, rects, entry.id) : detail);
             } catch (error) {
                 // reported like any uncaught error (logged by the listener below), without stopping the others
                 if (reportUncaught) apply(reportUncaught, g, [error]);

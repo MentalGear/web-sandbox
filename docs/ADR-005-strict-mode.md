@@ -149,7 +149,7 @@ sandbox.setConfig({ mode: 'strict', entry: 'main.js' });
   from the closed list `VIEW_STYLE_PROPERTIES`. `sandboxView.on(type, id | null, handler, options?)` returns `off`:
   `click`, `input`, `change`, `submit`, `keydown`, `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, `wheel`,
   `scroll`, `focusin` and `focusout`, trusted only, with a detail of `{ type, ids, target: { tag, id, name, value,
-  checked }, key?, form?, pointer?, wheel?, scroll?, box?, modifiers?, time?, coalesced? }` — never a URL, and no pointer
+  checked }, key?, form?, pointer?, wheel?, scroll?, rect?, modifiers?, time?, coalesced? }` — never a URL, and no pointer
   coordinate outside the view's box. Pointer moves, wheel and scroll events are coalesced in the view and sent at most
   once per animation frame while the worker has not acknowledged the last frame (`VIEW_EVENT_ACK`,
   `VIEW_INPUT_IN_FLIGHT`); their time is charged to the view's time budget. The options are `pointerCapture`, `rect` and
