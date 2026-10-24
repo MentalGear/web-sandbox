@@ -1,6 +1,6 @@
+import http from 'node:http';
 import https from 'node:https';
-import dns from 'node:dns/promises';
-import type { AddressInfo } from 'node:net';
+import net, { type AddressInfo } from 'node:net';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,14 +23,19 @@ import { inView, waitInView } from './strict-view';
  * its positive control: a plain sandboxed srcdoc frame of the host page, which is never credentialless, loads an image
  * from the same origins without the attribute, and the listener sees cookies on it.
  *
- *   cross-site  the harness page on localhost; the listed origin https://127.0.0.1:P, another site, with its
- *               SameSite=None cookie. Runs everywhere.
- *   names       the harness page served as https://app.wsprobe.test (H); listed: a sibling, https://cdn.wsprobe.test
- *               (S, the host page's own site, with every SameSite kind and host-only cookies) and
- *               https://cross.wsprobe2.test (X, another site). The library drops a listed origin on the host page's
- *               site, so the page's cookie-domain probe (host-site.ts) is made to answer "the host itself", as a probe
- *               that cannot tell would: S stays listed, and the loads that reach it show that the construction, not the
- *               site rule, keeps the cookies off. Needs one line in /etc/hosts (HOSTS_LINE) and skips without it.
+ *   cross-site   the harness page on localhost; the listed origin https://127.0.0.1:P, another site, with its
+ *                SameSite=None cookie.
+ *   opaque-host  the harness page served as https://app.wsprobe.test (H) with `Content-Security-Policy: sandbox
+ *                allow-scripts`, as a site of user content serves its pages: the page's origin is opaque, so it has no
+ *                site of its own and the library keeps every entry, with a warning (host-site.ts, limitHostReach).
+ *                Listed: a sibling, https://cdn.wsprobe.test (S, the site of the page's URL, with domain cookies of
+ *                every SameSite kind and host-only ones) and https://cross.wsprobe2.test (X, another site). A page with
+ *                a tuple origin cannot list an origin on its own site (onHostSite refuses it from `self.origin` alone,
+ *                with nothing of the page to deceive), so a sandboxed host page is the one through which a same-site
+ *                target is listed at all; the loads that reach S show that the construction, not the site rule, keeps
+ *                the cookies off. The names reach the listener through a CONNECT proxy of this spec's
+ *                (startNameProxy), so no DNS entry is needed.
+ * Both run on every engine.
  *
  * And the costs of the construction, on every engine: an origin that answers CORS still renders (images, media, and a
  * seek in a 7 MB video through Range requests); one that does not fails, and each failed load is reported as a
@@ -39,11 +44,45 @@ import { inView, waitInView } from './strict-view';
  */
 
 test.use({ ignoreHTTPSErrors: true });
-// The browsers read the proxy settings from the environment: a machine with HTTPS_PROXY would send the names to it.
-for (const name of ['NO_PROXY', 'no_proxy']) process.env[name] = `${process.env[name] ?? ''},.test`;
-
 const NAMES = { H: 'app.wsprobe.test', S: 'cdn.wsprobe.test', X: 'cross.wsprobe2.test' } as const;
-const HOSTS_LINE = `127.0.0.1 ${Object.values(NAMES).join(' ')}`;
+
+/** The host page's header in the opaque-host world: a sandboxed document, whose origin is opaque. */
+const OPAQUE_HOST_CSP = 'sandbox allow-scripts';
+
+/**
+ * The names' resolver: an HTTP proxy that tunnels a CONNECT to any `.test` host to the same port on 127.0.0.1 and
+ * refuses everything else. The opaque-host world's context uses it (`proxy`), on every engine, for every host but
+ * localhost and 127.0.0.1; the browser never resolves the names itself.
+ */
+async function startNameProxy() {
+    const server = http.createServer((_req, res) => { res.writeHead(403); res.end(); });
+    const tunnels = new Set<net.Socket>(); // a tunnel leaves the server's connections: closed by stop() itself
+    server.on('connect', (req: http.IncomingMessage, client: net.Socket, head: Buffer) => {
+        tunnels.add(client);
+        client.on('close', () => tunnels.delete(client));
+        const target = /^([a-z0-9.-]+\.test):(\d+)$/i.exec(req.url ?? '');
+        if (!target) { client.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
+        const upstream = net.connect(Number(target[2]), '127.0.0.1', () => {
+            tunnels.add(upstream);
+            upstream.on('close', () => tunnels.delete(upstream));
+            client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+            if (head.length > 0) upstream.write(head);
+            upstream.pipe(client);
+            client.pipe(upstream);
+        });
+        upstream.on('error', () => client.destroy());
+        client.on('error', () => upstream.destroy());
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    return {
+        server: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+        stop: () => new Promise<void>(resolve => {
+            server.close(() => resolve());
+            server.closeAllConnections();
+            for (const socket of tunnels) socket.destroy();
+        }),
+    };
+}
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAIAAAAPE8H1AAAAEElEQVR4nGP4z8AAQQxEsgCEuw7yxezkBQAAAABJRU5ErkJggg==', 'base64');
 const VTT = 'WEBVTT\n\n00:00.000 --> 00:05.000\nhello\n';
@@ -74,8 +113,9 @@ type Hit = { host: string; k: string; cookies: string[]; origin: string; mode: s
 
 /**
  * One HTTPS listener for 127.0.0.1 and the three names. `/cors/<file>?k=<id>` answers with `Access-Control-Allow-Origin: *`,
- * `/nocors/<file>` without it; media answers Range requests (206). Anything else asked of H is the e2e server's (the
- * harness and its modules), passed through.
+ * `/nocors/<file>` without it; media answers Range requests (206). Anything else is the e2e server's (the harness and
+ * its modules), passed through with `Access-Control-Allow-Origin: *` (an opaque page fetches its modules with CORS);
+ * the harness asked with `?opaque` comes with OPAQUE_HOST_CSP.
  */
 async function startListener(seek = true) {
     const dir = mkdtempSync(path.join(tmpdir(), 'view-credentials-'));
@@ -95,10 +135,11 @@ async function startListener(seek = true) {
         const url = new URL(req.url ?? '/', 'https://listener');
         const host = String(req.headers.host ?? '').replace(/:\d+$/, '');
         const match = /^\/(cors|nocors)\/([^/]+)$/.exec(url.pathname);
-        if (!match && host === NAMES.H) {
+        if (!match && !url.searchParams.has('k')) {
             // the host page and its modules, from the e2e server
+            const page = url.pathname.endsWith('/harness.html') && url.searchParams.has('opaque') ? { 'content-security-policy': OPAQUE_HOST_CSP } : {};
             fetch(ORIGIN + (req.url ?? '/')).then(async (response) => {
-                res.writeHead(response.status, { 'content-type': response.headers.get('content-type') ?? 'text/plain', 'cache-control': 'no-store' });
+                res.writeHead(response.status, { 'content-type': response.headers.get('content-type') ?? 'text/plain', 'cache-control': 'no-store', 'access-control-allow-origin': '*', ...page });
                 res.end(Buffer.from(await response.arrayBuffer()));
             }, () => { res.writeHead(502); res.end(); });
             return;
@@ -146,15 +187,6 @@ async function startListener(seek = true) {
 
 type Listener = Awaited<ReturnType<typeof startListener>>;
 
-async function namesResolve(): Promise<boolean> {
-    try {
-        for (const name of Object.values(NAMES)) if ((await dns.lookup(name)).address !== '127.0.0.1') return false;
-        return true;
-    } catch {
-        return false;
-    }
-}
-
 const cookie = (name: string, domain: string, sameSite: 'None' | 'Lax' | 'Strict') => ({ name, value: '1', domain, path: '/', secure: true, sameSite });
 
 /** A world: which origins are listed, and the cookies the jar holds for them. */
@@ -168,7 +200,7 @@ const crossSiteWorld = (listener: Listener): World => ({
     cookies: [cookie('x_none', '127.0.0.1', 'None')],
 });
 
-const namesWorld = (listener: Listener): World => ({
+const opaqueHostWorld = (listener: Listener): World => ({
     targets: { S: `https://${NAMES.S}:${listener.port}`, X: `https://${NAMES.X}:${listener.port}` },
     cookies: [
         ...(['None', 'Lax', 'Strict'] as const).flatMap(site => [cookie(`d_${site.toLowerCase()}`, '.wsprobe.test', site), cookie(`xd_${site.toLowerCase()}`, '.wsprobe2.test', site)]),
@@ -216,10 +248,20 @@ async function controlFrame(page: Page, targets: Record<string, string>, tag: st
 
 const seen = (listener: Listener, k: string) => listener.hits.filter(hit => hit.k === k);
 
-for (const worldName of ['cross-site', 'names'] as const) {
+for (const worldName of ['cross-site', 'opaque-host'] as const) {
     test.describe(`strict view loads carry no cookie (${worldName})`, () => {
         let listener: Listener;
         let world: World;
+        let siteWarnings: string[];
+        if (worldName === 'opaque-host') {
+            test.use({
+                proxy: async ({}, use) => {
+                    const proxy = await startNameProxy();
+                    await use({ server: proxy.server, bypass: 'localhost,127.0.0.1' }); // the fixture's own harness stays direct
+                    await proxy.stop();
+                },
+            });
+        }
         test.beforeAll(async () => {
             listener = await startListener();
         });
@@ -227,24 +269,14 @@ for (const worldName of ['cross-site', 'names'] as const) {
             await listener?.stop();
         });
         test.beforeEach(async ({ sandbox, page, context }) => {
-            if (worldName === 'names') test.skip(!(await namesResolve()), `add this line to /etc/hosts: ${HOSTS_LINE}`);
-            world = worldName === 'names' ? namesWorld(listener) : crossSiteWorld(listener);
+            world = worldName === 'opaque-host' ? opaqueHostWorld(listener) : crossSiteWorld(listener);
             await context.addCookies(world.cookies);
-            if (worldName === 'names') {
-                // The page's cookie-domain probe (host-site.ts) finds no parent domain the jar accepts, as a probe that
-                // cannot tell would, so it takes the page's host for its site and keeps the sibling listed. The jar, and
-                // what the browser attaches from it, is untouched.
-                await page.addInitScript(() => {
-                    if (window !== window.top) return;
-                    const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie')!;
-                    Object.defineProperty(Document.prototype, 'cookie', {
-                        configurable: true,
-                        get() { return descriptor.get!.call(this); },
-                        set(value: string) { if (!/;\s*domain=/i.test(value)) descriptor.set!.call(this, value); },
-                    });
-                });
-                await page.goto(`https://${NAMES.H}:${listener.port}/test/e2e/harness.html`);
+            siteWarnings = [];
+            page.on('console', message => { if (message.type() === 'warning' && message.text().includes('whose origin is opaque')) siteWarnings.push(message.text()); });
+            if (worldName === 'opaque-host') {
+                await page.goto(`https://${NAMES.H}:${listener.port}/test/e2e/harness.html?opaque`);
                 await page.waitForFunction(() => (window as any).harnessReady === true);
+                expect(await page.evaluate(() => self.origin), 'the host page is a sandboxed document').toBe('null');
             }
             listener.hits.length = 0;
             await sandbox.clearViolations();
@@ -264,6 +296,8 @@ for (const worldName of ['cross-site', 'names'] as const) {
             await sandbox.registerFiles({ 'main.js': `sandboxView.render(${JSON.stringify(run.html)});`, 'own.css': run.stylesheet });
             const origins = Object.values(world.targets);
             expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', origins: { images: origins, media: origins, styles: origins, fonts: origins } })).toBe('ready');
+            // the opaque host page keeps the same-site target listed, and says so (#71); a page with a tuple origin lists none
+            if (worldName === 'opaque-host') expect(siteWarnings.some(text => text.includes(`origins.images lists ${world.targets.S}`)), siteWarnings.join('\n')).toBe(true);
             for (const k of run.kept) await expect.poll(() => seen(listener, k).length, k).toBeGreaterThan(0);
             await page.waitForTimeout(1500); // what CSS would load once styled, and the media's later requests
 
