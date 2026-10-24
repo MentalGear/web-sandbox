@@ -20,9 +20,20 @@
  * and when a policy refuses the decoy one line for the refusal and one CSP report to that policy's `report-uri`. Nothing
  * reaches the network or the DNS.
  *
- * The read is made lazily, by the first build that lists a connect origin (host.ts): the page's policy is cached for the
- * page, and the build waits for it. Where the read cannot run (a document with no frame that can fetch: a unit test's
- * jsdom), it is "unknown" at once and nothing is narrowed.
+ * The read is made lazily, by the first build that lists a connect origin (host.ts), and the page's policy is cached for
+ * the page. Its frame is a resource of the page that one element holds in its shadow root while other elements' builds
+ * wait on it (S74, class L), so no element's removal answers for another element's build:
+ *  - every build that asks is a waiter, and only a read whose frame stayed in the document from its insertion to its
+ *    answer answers it;
+ *  - a frame that leaves the document gives no answer and caches nothing. Its element's disconnection says so at once
+ *    (hostPolicyReaderLeft); a frame removed or reloaded otherwise is noticed after its load, or at READ_TIMEOUT_MS. The
+ *    read then starts again in a new frame, in the shadow root of a waiter still in the document, up to READ_FRAMES
+ *    frames for one set of waiters;
+ *  - when no waiter is left in the document, or the frames ran out, the waiters go on without an answer, and a build
+ *    that asked narrows its connect lists to nothing, with a warning (host-connect.ts, hostReach): it fails closed;
+ *  - "cannot be read" (null) is cached for the page only from a frame that stayed in the document: a document with no
+ *    frame that can fetch (a unit test's jsdom, unknown at once), and a frame that never loaded within READ_TIMEOUT_MS
+ *    (said with a warning). Neither is narrowed by the library; the browser still applies the page's policy.
  *
  * Host-side only, never stringified into a guest.
  */
@@ -34,15 +45,27 @@ export const DECOY_HOST = 'web-sandbox-policy-read.invalid';
 export const DECOY_URL = `http://${DECOY_HOST}:${DECOY_PORT}/`;
 /** How long after the decoys settled the frame waits for their events (they are queued tasks; measured under 10 ms). */
 export const SETTLE_MS = 50;
-/** How long the read may take in all before it gives up and the page's policy is unknown. */
+/** How long one frame's read may take before it gives up: the page's policy is then unknown, if the frame stayed in the document. */
 export const READ_TIMEOUT_MS = 2000;
+/** How many frames one read may lose (their element removed or moved under it) before its waiting builds go on without an answer. */
+export const READ_FRAMES = 4;
 
 /** What is known of the page's policy: the texts of the enforced policies that refused a decoy (empty: none did), or null (unknown). */
 export type HostPolicies = readonly string[] | null;
 
 let known: HostPolicies | undefined; // undefined: not read yet
-let failed = false; // the read gave up (a frame that never loaded): unknown, and the element says so
-let inflight: Promise<void> | null = null;
+let failed = false; // the read gave up (a frame that stayed in the document and never loaded): unknown, and the element says so
+
+// A build that waits for the answer: the shadow root its element reads from, and its wait's end.
+interface Waiter {
+    readonly parent: ParentNode;
+    readonly settle: () => void;
+}
+let waiters: Waiter[] = [];
+// The read in progress: the parent of its frame, and how to stop it (the frame removed, its timer cleared, its answer ignored).
+let reading: { readonly parent: ParentNode; readonly stop: () => void } | null = null;
+let framesLost = 0; // frames the current waiters' read lost
+let restartQueued = false;
 
 /** The page's policies as read, or undefined while they are not known yet (and null where they cannot be read). */
 export const knownHostPolicies = (): HostPolicies | undefined => known;
@@ -50,58 +73,153 @@ export const knownHostPolicies = (): HostPolicies | undefined => known;
 /** Whether the read gave up, as opposed to a document that cannot make it. */
 export const hostPolicyReadFailed = (): boolean => failed;
 
-/** Forgets what was read, for a test that stands in for a new page. */
+/** Forgets what was read, and ends every wait without an answer, for a test that stands in for a new page. */
 export function forgetHostPolicies(): void {
+    stopReading();
+    settleWaiters();
     known = undefined;
     failed = false;
-    inflight = null;
+    restartQueued = false;
 }
 
+const isConnected = (parent: ParentNode): boolean => (parent as Node).isConnected === true;
+
 /**
- * Starts the read if it was not, and returns the promise that settles when it is known, or null when it already is (or
- * cannot be made: unknown at once). The promise never rejects. `parent` is where the hidden frame goes (the element's
- * shadow root).
+ * Asks for the page's policy on behalf of one build: starts the read if none runs, and returns the promise that settles
+ * when the build may go on, or null when the policy is known already (or cannot be read: unknown at once). The promise
+ * never rejects. It settles when the policy is known, when the build's element left the document (hostPolicyReaderLeft),
+ * or when the read has no frame left to try (no waiter in the document, READ_FRAMES lost): then nothing is known, and the
+ * build narrows to nothing (host-connect.ts, hostReach). `parent` is the element's shadow root: where the hidden frame
+ * goes if this build's element is the one to read.
  */
 export function whenHostPoliciesKnown(parent: ParentNode): Promise<void> | null {
     if (known !== undefined) return null;
-    if (inflight) return inflight;
+    // a parent that is not in a document has no frame to read from: not an answer, and not cached
+    if (!isConnected(parent)) return null;
+    let settle!: () => void;
+    const answered = new Promise<void>(resolve => { settle = resolve; });
+    waiters.push({ parent, settle });
+    if (!reading && !restartQueued) startRead();
+    return known !== undefined ? null : answered;
+}
+
+/**
+ * The element whose shadow root is `parent` left the document (removed, moved or adopted; host.ts calls it from the
+ * element's disconnection): its builds' waits end now (their builds were torn down), and a read whose frame it held gave
+ * no answer: it starts again, at once, from a waiter still in the document.
+ */
+export function hostPolicyReaderLeft(parent: ParentNode): void {
+    const leaving = waiters.filter(waiter => waiter.parent === parent);
+    if (leaving.length > 0) {
+        waiters = waiters.filter(waiter => waiter.parent !== parent);
+        for (const waiter of leaving) waiter.settle();
+    }
+    if (reading?.parent === parent) lose();
+}
+
+function stopReading(): void {
+    const current = reading;
+    reading = null;
+    current?.stop();
+}
+
+// The read's frame left the document, or was reloaded under it: no answer, nothing cached. The read starts again once the
+// current task's DOM changes are done (one element moved with others, or a list reordered, loses one frame, not one each).
+function lose(): void {
+    stopReading();
+    framesLost++;
+    if (restartQueued) return;
+    restartQueued = true;
+    queueMicrotask(() => {
+        restartQueued = false;
+        if (!reading && known === undefined) startRead();
+    });
+}
+
+function settleWaiters(): void {
+    const all = waiters;
+    waiters = [];
+    framesLost = 0;
+    for (const waiter of all) waiter.settle();
+}
+
+function conclude(policies: HostPolicies, gaveUp: boolean): void {
+    known = policies;
+    if (gaveUp) failed = true;
+    settleWaiters();
+}
+
+// One frame's read, in the shadow root of the first waiter still in the document.
+function startRead(): void {
+    const gone = waiters.filter(waiter => !isConnected(waiter.parent));
+    if (gone.length > 0) {
+        waiters = waiters.filter(waiter => isConnected(waiter.parent));
+        for (const waiter of gone) waiter.settle();
+    }
+    const parent = waiters[0]?.parent;
+    if (parent === undefined || framesLost >= READ_FRAMES) {
+        settleWaiters(); // no answer: a build that asked narrows to nothing
+        return;
+    }
     const frame = document.createElement('iframe');
     frame.hidden = true; // the user agent's own style: no style-src governs it
     frame.setAttribute('aria-hidden', 'true');
     frame.setAttribute('tabindex', '-1');
-    const loaded = new Promise<void>(resolve => frame.addEventListener('load', () => resolve(), { once: true }));
+    let loads = 0;
+    const loaded = new Promise<void>(resolve => frame.addEventListener('load', () => { loads++; resolve(); }));
     try {
         parent.appendChild(frame);
     } catch {
-        return null;
+        settleWaiters();
+        return;
     }
-    // a parent that is not in a document has no frame to read from: not an answer, and not cached
     if (!frame.isConnected) {
         frame.remove();
-        return null;
+        settleWaiters();
+        return;
     }
     if (!canFetch(frame)) {
         frame.remove();
-        known = null;
-        return null;
+        conclude(null, false);
+        return;
     }
-    const finish = (policies: HostPolicies | undefined, gaveUp: boolean) => {
-        frame.remove();
-        inflight = null;
-        // undefined: the frame was taken out of the document under the read (the element was removed): read again at the next build
-        if (policies !== undefined) known = policies;
-        if (gaveUp) failed = true;
-    };
-    inflight = new Promise<void>(resolve => {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const giveUp = new Promise<'timeout'>(over => { timer = setTimeout(() => over('timeout'), READ_TIMEOUT_MS); });
-        void Promise.race([read(frame, loaded), giveUp]).then(result => {
+    let over = false;
+    // A frame still in the document and loaded at most once is the one the read started with.
+    const intact = () => frame.isConnected && loads <= 1;
+    const timer = setTimeout(() => {
+        if (over) return;
+        if (intact()) {
+            stopReading();
+            conclude(null, true);
+        } else {
+            lose();
+        }
+    }, READ_TIMEOUT_MS);
+    reading = {
+        parent,
+        stop: () => {
+            over = true;
             clearTimeout(timer);
-            if (result === 'timeout') finish(null, true);
-            else finish(result, false);
-        }, () => finish(null, true)).then(() => resolve());
+            frame.remove();
+        },
+    };
+    void read(frame, loaded).then(result => {
+        if (over) return;
+        if (result === undefined) {
+            lose();
+            return;
+        }
+        stopReading();
+        conclude(result, false);
+    }, () => {
+        if (over) return;
+        if (!intact()) {
+            lose();
+            return;
+        }
+        stopReading();
+        conclude(null, true);
     });
-    return inflight;
 }
 
 // Whether the frame's window has a fetch (a jsdom window has none, and a read there is unknown at once).

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import {
-    connectAdmits, connectSources, HOST_SOURCE_RULES, hostAdmits, narrowToHostPolicy, parseHostPolicies, schemeAdmits,
-    sourceAdmits, sourceKind, splitPolicies, type SourceKind,
+    connectAdmits, connectSources, HOST_SOURCE_RULES, hostAdmits, hostReach, narrowToHostPolicy, parseHostPolicies, POLICY_UNREADABLE, schemeAdmits,
+    sourceAdmits, sourceKind, splitPolicies, type HostPolicySource, type SourceKind,
 } from '@src/lib/csp/host-connect';
 import { NO_ORIGINS, ORIGIN_KINDS, parseOrigins, withHttpsTwins, type OriginPolicy } from '@src/lib/csp/origins';
 import { toFetchPolicy, type FetchPolicy } from '@src/lib/fetch-bridge';
@@ -315,5 +315,62 @@ describe('withHttpsTwins: a wss:// origin stays only beside its https:// twin', 
             for (const origin of orphans) expect(origin.startsWith('wss://') && !values.includes(`https://${origin.slice(6)}`)).toBe(true);
             expect([...kept, ...orphans].sort()).toEqual([...values].sort());
         }));
+    });
+});
+
+// ---- hostReach: what one build's connect lists are, by what it knows of the host page's policy (host.ts `_reach`) ------
+
+describe("hostReach: a build's connect lists by what it knows of the host page's policy", () => {
+    const API = 'https://api.example';
+    const CDN = 'https://cdn.example';
+    const origins = (connect: string[]): OriginPolicy => parseOrigins({ connect }, 'strict', () => {});
+    const bridge = (allow: string[]): FetchPolicy => toFetchPolicy({ allow }, () => {}, 'https://app.example')!;
+    const refusesApi = "connect-src 'self' https://cdn.example";
+
+    type Row = [name: string, source: HostPolicySource, connect: string[], allow: string[], warned: RegExp[]];
+    // every source a build can have, with connect and bridge origins listed (CDN admitted by the policy, API refused)
+    const ROWS: Row[] = [
+        ['hostContentSecurityPolicy: false', { given: false }, [API, CDN], [API, CDN], []],
+        ['hostContentSecurityPolicy: a text', { given: refusesApi }, [CDN], [CDN], [/^\[Sandbox\] origins\.connect dropped https:\/\/api\.example: /, /^\[Sandbox\] fetchBridge\.allow dropped https:\/\/api\.example: /]],
+        ['read: the texts of the policies', { read: [refusesApi], failed: false }, [CDN], [CDN], [/^\[Sandbox\] origins\.connect dropped https:\/\/api\.example: /, /^\[Sandbox\] fetchBridge\.allow dropped https:\/\/api\.example: /]],
+        ['read: no policy refused the decoy', { read: [], failed: false }, [API, CDN], [API, CDN], []],
+        ['null: a document that cannot read it', { read: null, failed: false }, [API, CDN], [API, CDN], []],
+        ['null: the read gave up (a frame that stayed and never loaded)', { read: null, failed: true }, [API, CDN], [API, CDN], [/could not be read/]],
+        ['no answer: the frames that read it left the document', { read: undefined, failed: false }, [], [], [/^\[Sandbox\] origins\.connect dropped https:\/\/api\.example, https:\/\/cdn\.example: the host page's Content-Security-Policy is not known for this build/, /^\[Sandbox\] fetchBridge\.allow dropped https:\/\/api\.example, https:\/\/cdn\.example: the host page's Content-Security-Policy is not known/]],
+    ];
+
+    it.each(ROWS)('%s', (_, source, connect, allow, warned) => {
+        const warnings: string[] = [];
+        const result = hostReach(origins([API, CDN]), bridge([API, CDN]), source, message => warnings.push(message));
+        expect(result.origins.connect).toEqual(connect);
+        expect(result.fetchPolicy!.allow).toEqual(allow);
+        expect(warnings).toHaveLength(warned.length);
+        warned.forEach((pattern, index) => expect(warnings[index]).toMatch(pattern));
+    });
+
+    it('no answer keeps nothing, frozen', () => {
+        const result = hostReach(origins([API]), bridge([API]), { read: undefined, failed: false }, () => {});
+        expect(result.origins.connect).toEqual([]);
+        expect(result.fetchPolicy!.allow).toEqual([]);
+        expect(Object.isFrozen(result.origins) && Object.isFrozen(result.origins.connect) && Object.isFrozen(result.fetchPolicy!.allow)).toBe(true);
+    });
+
+    it('a build with nothing to narrow is left as it is, whatever it knows; other kinds are never touched', () => {
+        const none = origins([]);
+        const images = parseOrigins({ images: [CDN], connect: [API] }, 'strict', () => {});
+        for (const [, source] of ROWS) {
+            const warnings: string[] = [];
+            const result = hostReach(none, null, source, message => warnings.push(message));
+            expect(result.origins).toBe(none);
+            expect(result.fetchPolicy).toBeNull();
+            expect(warnings).toEqual([]);
+            expect(hostReach(images, null, source, () => {}).origins.images).toEqual([CDN]);
+        }
+    });
+
+    it('the unreadable warning is the one the element gives', () => {
+        const warnings: string[] = [];
+        hostReach(origins([API]), null, { read: null, failed: true }, message => warnings.push(message));
+        expect(warnings).toEqual([POLICY_UNREADABLE]);
     });
 });

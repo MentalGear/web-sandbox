@@ -18,8 +18,6 @@
  *
  * Host-side only, never stringified into a guest.
  */
-import { isAddress } from './host-site';
-
 declare const ORIGIN_BRAND: unique symbol;
 
 /** An exact origin (scheme://host[:port]), canonical, produced only by parseOrigin(). */
@@ -76,35 +74,4 @@ export function parseOrigin(entry: unknown, rules: OriginRules): Origin | null {
     if (url.protocol !== protocol || url.hostname !== name) return null;
     const origin = `${protocol}//${url.host}`;
     return ORIGIN_PATTERN.test(origin) ? (origin as Origin) : null;
-}
-
-/**
- * Whether `origin` (an Origin) names a host the host page's cookies can be sent to: a host on the host page's site, the
- * hosts under one registrable domain (`example.com` for `app.example.com`), whatever the scheme or port. A cookie with
- * `Domain=example.com` is shared by the page, its subdomains, its parents down to that domain and its siblings
- * (`a.example.com` and `b.example.com`). An IP address matches only itself. False for a `hostOrigin` that is not an
- * origin (empty, `null`).
- *
- * The registrable domain is the browser's to say (host-site.ts, a cookie-domain probe; no public-suffix list is bundled):
- * `site()` is asked for it, only for a name that could be on the site (it shares the host page's last label), and
- * returns null where the probe cannot run. Then, and when `site` is not given, the decision is by name: the host page's
- * own host, or a name above or below it (`example.com` and `app.example.com`); a sibling is not recognised, and a name
- * above the host page that is itself a public suffix (`co.uk`) counts as above it.
- */
-export function sharesHostSite(origin: string, hostOrigin: string, site?: () => string | null): boolean {
-    let host: string;
-    let page: string;
-    try {
-        host = new URL(origin).hostname;
-        page = new URL(hostOrigin).hostname;
-    } catch {
-        return false;
-    }
-    if (host === '' || page === '') return false;
-    if (host === page) return true;
-    if (isAddress(host) || isAddress(page)) return false;
-    if (host.slice(host.lastIndexOf('.') + 1) !== page.slice(page.lastIndexOf('.') + 1)) return false;
-    const registrable = site?.() ?? null;
-    if (registrable !== null) return host === registrable || host.endsWith(`.${registrable}`);
-    return host.endsWith(`.${page}`) || page.endsWith(`.${host}`);
 }
