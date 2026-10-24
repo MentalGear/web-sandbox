@@ -34,6 +34,34 @@ describe('TRUSTED_TYPES_RULES: every example of every rule', () => {
     });
 });
 
+// Where the engines differ the library follows the specification, so the rule has no row in TRUSTED_TYPES_RULES (the e2e twin
+// asserts the browsers against that table): these are the library's own decisions, held here (BD3:TST-9).
+describe('where the browsers differ the library follows the specification (BD3:TST-9)', () => {
+    it("the keyword's case folds: 'SCRIPT' and 'Script' require Trusted Types for scripts, so execute() is refused", () => {
+        for (const keyword of ["'SCRIPT'", "'Script'", "'script'"]) {
+            expect(stance(`require-trusted-types-for ${keyword}`).requires, keyword).toBe(true);
+            expect(executeRefused(stance(`require-trusted-types-for ${keyword}`)), keyword).toBe(true);
+        }
+        expect(stance("require-trusted-types-for 'style'").requires).toBe(false);
+    });
+
+    it('a directive named twice counts the first time: require-trusted-types-for and trusted-types', () => {
+        expect(stance("require-trusted-types-for 'style'; require-trusted-types-for 'script'").requires).toBe(false);
+        expect(stance("require-trusted-types-for 'script'; require-trusted-types-for 'style'").requires).toBe(true);
+        expect(stance("require-trusted-types-for 'script'; trusted-types other; trusted-types web-sandbox").admitsName).toBe(false);
+        expect(stance("require-trusted-types-for 'script'; trusted-types web-sandbox; trusted-types other").admitsName).toBe(true);
+    });
+
+    it("a list that allows any policy (*) names `default` too: the page may have made a default policy that takes the element's strings", () => {
+        expect(stance("require-trusted-types-for 'script'; trusted-types *").namesDefault).toBe(true);
+        expect(stance("require-trusted-types-for 'script'; trusted-types default").namesDefault).toBe(true);
+        expect(stance("require-trusted-types-for 'script'; trusted-types other").namesDefault).toBe(false);
+        // and so cooperative mode is not ended by a list that names neither the policy nor *, once it names default
+        expect(ends("require-trusted-types-for 'script'; trusted-types default", 'cooperative')).toBe(false);
+        expect(ends("require-trusted-types-for 'script'; trusted-types default", 'strict')).toBe(true);
+    });
+});
+
 describe('the properties of the rules', () => {
     const names = fc.stringMatching(/^[a-z][a-z0-9-]{0,8}$/).filter(name => name !== TRUSTED_TYPES_POLICY && name !== 'default');
     const lists = fc.array(names, { maxLength: 4 });
