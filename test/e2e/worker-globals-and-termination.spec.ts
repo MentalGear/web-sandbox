@@ -57,7 +57,7 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
             expect(recorder.paths('blocked')).toEqual([]);
         });
 
-        test(`${mode} mode: the worker's globals are the allowlist and nothing else, and no network API of any engine reaches the blocked listener; fetch, XMLHttpRequest, WebSocket${mode === 'worker' ? ' and importScripts' : ''} reach the allowed one (positive controls)`, async ({ sandbox }) => {
+        test(`${mode} mode: the worker's globals are the allowlist and nothing else, and no network API of any engine reaches the blocked listener; fetch, XMLHttpRequest${mode === 'worker' ? ', WebSocket and importScripts' : ''} reach the allowed one (positive controls)`, async ({ sandbox }) => {
             const origins = { connect: [recorder.allowed, wss(recorder.allowed)], fonts: [recorder.allowed] };
             // importScripts' positive control needs a script origin, which only worker mode takes (strict has no scripts kind)
             expect(await sandbox.mount(mode === 'worker' ? { mode, origins: { ...origins, scripts: [recorder.allowed] } } : { mode, origins })).toBe('ready');
@@ -76,14 +76,16 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
             await sandbox.run(ATTEMPTS(recorder.blocked) + `
                 fetch('${recorder.allowed}/v1-fetch-control').catch(() => {});
                 const x = new XMLHttpRequest(); x.open('GET', '${recorder.allowed}/v1-xhr-control'); x.send();
-                new WebSocket('${wss(recorder.allowed)}/v1-ws-control');
+                try { new WebSocket('${wss(recorder.allowed)}/v1-ws-control'); } catch (e) {}
                 ${mode === 'worker' ? `importScripts('${recorder.allowed}/v1-import-control.js');` : ''}
             `);
-            for (const control of ['/v1-fetch-control', '/v1-xhr-control', '/v1-ws-control', ...(mode === 'worker' ? ['/v1-import-control.js'] : [])]) {
+            // strict mode opens no WebSocket (docs/API.md#strict-no-websocket): its socket control is refused, and worker mode's is the positive control
+            for (const control of ['/v1-fetch-control', '/v1-xhr-control', ...(mode === 'worker' ? ['/v1-ws-control', '/v1-import-control.js'] : [])]) {
                 await recorder.waitFor('allowed', control);
             }
             await sandbox.page.waitForTimeout(1500);
             expect(recorder.paths('blocked')).toEqual([]);
+            if (mode === 'strict') expect(recorder.paths('allowed')).not.toContain('/v1-ws-control');
         });
     }
 
