@@ -7,6 +7,7 @@ import { rewriteGuestMarkup, VIRTUAL_DOCUMENT_URL } from '@src/lib/markup-refere
 import { rewriteInlineModule } from '@src/lib/module-specifiers';
 import { admitsAll, linkKinds } from '@src/lib/load-kinds';
 import { isViewFileType, RENDER_RULES, type RenderSwitches, sanitizeRender } from '@src/lib/in-sandbox-view';
+import { dropNetworkCss } from '@src/lib/css-references';
 
 // the renderer with every switch on: what it keeps besides its rules is not what this file tests
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
@@ -358,7 +359,7 @@ describe("I1: the strict renderer's own copy of a <link>'s load kinds agrees wit
                 fragment.append(link);
                 cases.push([rel, as]);
             }
-            sanitizeRender(fragment, (path) => (path === 'file' ? { url: 'blob:null/file', type } : null), (url) => url === 'blob:null/file', RENDER_RULES, KEEP_ALL);
+            sanitizeRender(fragment, (path) => (path === 'file' ? { url: 'blob:null/file', type } : null), (url) => url === 'blob:null/file', dropNetworkCss, RENDER_RULES, KEEP_ALL);
             cases.forEach(([rel, as], i) => {
                 const kept = fragment.getElementById(`l${i}`) !== null;
                 const rendered = rel.toLowerCase().split(' ').every(token => RENDER_RULES.linkRelations.includes(token));

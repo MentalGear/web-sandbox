@@ -9,7 +9,7 @@ import { narrowToHostPolicy, parseHostPolicies, type NarrowedReach } from "./lib
 import { buildRefused, executeRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
 import { hostPolicyReadFailed, knownHostPolicies, whenHostPoliciesKnown } from "./lib/host-csp";
 import { NO_ORIGINS, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
-import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
+import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, viewStylesheets, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
 import { kindMismatchMessage, rewriteGuestMarkup, type MarkupParts } from "./lib/markup-references";
@@ -624,6 +624,15 @@ interface StrictInit {
     // The origins the view's policy admits for the loads its markup makes, by kind key (R4:M-2): the
     // renderer drops an http(s) URL outside them, so the browser never processes a refusal.
     origins: { images: readonly string[]; media: readonly string[] };
+}
+
+// The warning for a registered stylesheet strict mode's view gets without its network URLs, or not at all (files.ts,
+// viewStylesheets): once per element and text, as the build's other warnings about the files (_warnOnce).
+function viewStylesheetWarning(path: string, urls: readonly string[], unreadable: string | null): string {
+    const file = `[Sandbox] strict mode: the registered stylesheet ${JSON.stringify(path.slice(0, 256))}`;
+    if (unreadable !== null) return `${file} gets no URL in the view: ${unreadable}, so the view could not take its network URLs out of it.`;
+    const first = JSON.stringify(urls[0]!.slice(0, 256));
+    return `${file} names ${urls.length === 1 ? 'a network URL' : `${urls.length} network URLs`} (${first}${urls.length > 1 ? ', …' : ''}); the view drops ${urls.length === 1 ? 'it' : 'them'}: a load that CSS makes cannot be sent without cookies. Register the file instead, or show it with an element (<img>, <video>) from an origin listed in origins.`;
 }
 
 // What the element extends: HTMLElement where there is a DOM. Importing the package must not need one (R2:C-8):
@@ -2223,10 +2232,13 @@ export class WebSandbox extends ElementBase {
         const sandboxFlags = this._getSandboxFlags();
         const policy = this._guestPolicy(files, reach.origins);
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (BR:ST4)
+        // never a type that opens as a document (BR:ST1); stylesheets without a network URL (S74, files.ts viewStylesheets)
+        const viewFiles = viewStylesheets(files.filter(candidate => isViewFileType(candidate[1])));
+        for (const drop of viewFiles.dropped) this._warnOnce(viewStylesheetWarning(drop.path, drop.urls, drop.unreadable));
         const strictInit: StrictInit = {
             workerSource: this._getStrictWorkerSource(files, entrySource, marker, this._gateConnect(files, reach.origins)),
             entryDone: marker,
-            viewFiles: files.filter(candidate => isViewFileType(candidate[1])), // never a type that opens as a document (BR:ST1)
+            viewFiles: viewFiles.entries,
             html,
             autoResize: this._autoResizeEnabled(),
             allowAnimations: this._config.allowAnimations === true,

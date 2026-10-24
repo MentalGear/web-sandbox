@@ -13,7 +13,7 @@ section has been read (see [CONTRIBUTING](CONTRIBUTING.md#generated-docs-and-the
 
 ## Modes and realms
 
-<!-- describes: realms sig:acaf -->
+<!-- describes: realms sig:74bd -->
 
 Guest content never runs in the host page's realm. The element builds a **wrapper** frame it owns (`frame-src 'none'`,
 an inert base URL, no referrer) and puts the guest inside it, in a frame with an opaque origin and a Content-Security-Policy
@@ -45,7 +45,7 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `cooperative` | Cooperative mode's guest document: the bootstrap, then the guest's markup and scripts. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `inSandboxImportMap`, `inSandboxMarkup`, `checkSandboxEnvironment` | `announcement`, `logic-port` |
 | `worker-frame` | Worker mode's frame document: it spawns the guest's worker and announces its port; no guest code or markup. | no | `workerBootstrap`, `checkSandboxEnvironment` | `announcement`, `worker` |
 | `worker` | Worker mode's guest worker: the globals allowlist and the bootstrap, then the guest's code. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `removeWebAssembly` | `logic-port`, `worker` |
-| `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound`, `checkSandboxEnvironment` | `announcement`, `view-init`, `view-port`, `render-port`, `worker` |
+| `view` | Strict mode's view document: it renders the guest's markup, spawns the guest's worker, and runs no guest code. | no | `inSandboxFiles`, `inSandboxView`, `sanitizeRender`, `viewBudget`, `cssLoadBound`, `cssReferences`, `withoutNetworkReferences`, `checkSandboxEnvironment` | `announcement`, `view-init`, `view-port`, `render-port`, `worker` |
 | `strict-worker` | Strict mode's guest worker: the scope check, the globals allowlist, the bootstrap and the prelude, then the guest's entry. | yes | `inSandboxScript`, `createBroker`, `createSizeOf`, `inSandboxFiles`, `keepOnlyWorkerGlobals`, `assertEntryScoped`, `inStrictWorker` | `logic-port`, `render-port`, `worker` |
 | `bridge-frame` | The fetch bridge's frame (bridge-frame.ts): a hidden frame of the element's with an opaque origin, which makes every request the host decided; no guest code or markup, and the guest has no handle on it. | no | `checkSandboxEnvironment`, `inBridgeFrame` | `announcement`, `bridge-init`, `bridge-port` |
 <!-- generated:end -->
@@ -68,18 +68,20 @@ bundle, so those functions close over nothing, and the tests scan their text).
 | `sanitizeRender` | `src/lib/in-sandbox-view.ts` | `view` |
 | `viewBudget` | `src/lib/in-sandbox-view.ts` | `view` |
 | `cssLoadBound` | `src/lib/in-sandbox-view.ts` | `view` |
+| `cssReferences` | `src/lib/css-references.ts` | `view` |
+| `withoutNetworkReferences` | `src/lib/css-references.ts` | `view` |
 | `checkSandboxEnvironment` | `src/lib/environment-check.ts` | `cooperative`, `worker-frame`, `view`, `bridge-frame` |
 | `inBridgeFrame` | `src/lib/in-bridge-frame.ts` | `bridge-frame` |
 <!-- generated:end -->
 
 ## Strict mode: the worker and the view
 
-<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:acaff2f6377249d7 -->
+<!-- describes: realms, channel:view-port, channel:render-port, channel:view-init sig:74bdf2f6377249d7 -->
 
 Strict mode splits what a guest needs into two realms that cannot run each other's code. The **worker** has the guest's
 logic and no DOM; it keeps only the globals an allowlist names, so a network API an engine forgot to police does not exist
-there. The **view** has the DOM and none of the guest's code: it cleans the markup the worker asks to render, moves it into
-its document, and enforces the view's budgets. They talk on the render port, which the host is not on, so the host's own code never
+there. The **view** has the DOM and none of the guest's code: it cleans the markup the worker asks to render (whatever it
+keeps loads without credentials: [API.md](docs/API.md#the-views-loads)), moves it into its document, and enforces the view's budgets. They talk on the render port, which the host is not on, so the host's own code never
 carries a render (the view's work still runs on the host page's thread where the browser places the view there, and is
 bounded: [API.md](docs/API.md#the-views-cost-to-the-host-page)). The host talks to each on a port of its own, and watches the view for liveness always and
 the worker's with `watchdogTimeout`. The guest can therefore draw but not script, and a flood of drawing is bounded where

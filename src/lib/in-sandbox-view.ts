@@ -9,6 +9,7 @@ import { TRUSTED_TYPES_POLICY } from './trusted-types';
 import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
 import { UNCAUGHT_CHARACTERS_PER_SECOND } from './egress';
 import { KIND_DIRECTIVES } from './csp/csp-generator';
+import { cssReferences, withoutNetworkReferences } from './css-references';
 
 /**
  * Strict mode's view and worker prelude (ADR-005).
@@ -30,7 +31,8 @@ import { KIND_DIRECTIVES } from './csp/csp-generator';
  *
  * Three self-contained functions here are stringified (same rules as in-sandbox-script.ts: no module
  * scope, no async/await): inSandboxView (the view's bootstrap), sanitizeRender (the renderer it calls) and
- * inStrictWorker (the worker's prelude). The rest is host-only.
+ * inStrictWorker (the worker's prelude); the view also runs css-references.ts's cssReferences and
+ * withoutNetworkReferences. The rest is host-only.
  */
 
 /**
@@ -493,6 +495,30 @@ export const RENDER_URL_ATTRIBUTES = [
 ] as const;
 
 /**
+ * The elements the renderer gives `crossorigin="anonymous"`, every one it keeps, whatever the guest wrote there (S74,
+ * BD2:ISO-2; class A, a browser choice taken by construction): the engine attaches no cookie of any SameSite kind,
+ * no HTTP authentication and no client certificate to a load in CORS `anonymous` mode, on every engine and to every
+ * target, where a `no-cors` load would carry the listed origin's own cookies (Firefox, WebKit) and the host site's
+ * (WebKit). Each is the element whose own attribute governs what loads for it: an `<img>` its `src`, its `srcset` and
+ * the `srcset` of its `<picture>`'s `<source>` elements; a `<video>` or `<audio>` its `src`, its `<source>` and `<track>`
+ * children (which have no such attribute: theirs would be ignored); a `<link>` its `href` (a URL the view minted only,
+ * where the attribute changes nothing). The renderer sets it in the inert template, before the element is first
+ * connected: set on an element in the document after its URL, the engine would already have started a `no-cors` load.
+ * A load from a listed origin is a CORS request, so the origin must answer with `Access-Control-Allow-Origin` (`*`,
+ * or `null`: the view's origin is opaque); without it the load fails, and the view reports it (inSandboxView).
+ */
+export const RENDER_CROSSORIGIN_ELEMENTS = ['img', 'video', 'audio', 'link'] as const;
+
+/**
+ * The [element, attribute] pairs of RENDER_URL_ATTRIBUTES whose http(s) URL the renderer drops, reported like a URL the
+ * policy refuses: no attribute takes away the credentials of their load on every engine. Firefox loads a `<video>`'s
+ * `poster` in `no-cors` mode whatever the video's crossorigin says. A poster that names a registered file (a URL the view
+ * minted) stays. The loads CSS makes take no attribute at all, so the renderer drops every network URL in CSS too (a
+ * `style` attribute, a `<style>`: withoutNetworkReferences, css-references.ts).
+ */
+export const RENDER_NETWORK_DROPPED = [['video', 'poster']] as const;
+
+/**
  * The value of every hyperlink href in the strict view (S24, option B): the guest's URL is discarded before
  * insertion, so a user's own browser actions on a rendered link ("copy link address", "open in new tab", hover,
  * dragging it) can carry nothing of the guest's. The view already cancels clicks, auxclicks and Enter (G4), and the
@@ -523,6 +549,10 @@ export interface RenderRules {
     attributes: typeof RENDER_ATTRIBUTES;
     /** [element, attribute] pairs that hold a URL the view loads (RENDER_URL_ATTRIBUTES). */
     urls: readonly (readonly [string, string])[];
+    /** The HTML elements that always get crossorigin="anonymous" (RENDER_CROSSORIGIN_ELEMENTS). */
+    crossOrigin: readonly string[];
+    /** The pairs of `urls` that keep no http(s) URL (RENDER_NETWORK_DROPPED). */
+    networkDropped: readonly (readonly [string, string])[];
     /** [element, attribute, kind] triples that may name a registered file (markup-references.ts, minus <script src>). */
     references: readonly (readonly [string, string, string])[];
     /** Which file types each kind of load admits in the view (VIEW_LOAD_KINDS, derived from load-kinds.ts). */
@@ -603,6 +633,8 @@ export const RENDER_RULES: RenderRules = {
     removed: RENDER_REMOVED_ELEMENTS,
     attributes: RENDER_ATTRIBUTES,
     urls: RENDER_URL_ATTRIBUTES,
+    crossOrigin: RENDER_CROSSORIGIN_ELEMENTS,
+    networkDropped: RENDER_NETWORK_DROPPED,
     // derived, not copied: the table markup-references.ts resolves in cooperative mode. Scripts never survive
     // the renderer, so <script src> names nothing here.
     references: REFERENCES.filter(([element]) => element !== 'script'),
@@ -639,19 +671,26 @@ export const RENDER_RULES: RenderRules = {
  *      would against rules.documentUrl, becomes the view's own blob: URL for it (`fileOf`), but only when the file's
  *      type is admitted for the kind of load the element makes (rules.kinds; a <link> by its rel tokens);
  *   4. a <link> stays only if its href is a URL the view minted;
- *   5. every href that makes a hyperlink becomes rules.inertHref (S24): HTML <a> and <area>, SVG <a> (href and
+ *   5. a <style> (HTML or SVG) keeps its child text only, without its network URLs (`dropNetworkCss`, below);
+ *   6. every href that makes a hyperlink becomes rules.inertHref (S24): HTML <a> and <area>, SVG <a> (href and
  *      xlink:href) and any MathML element;
- *   6. every attribute outside rules.attributes goes; so does any attribute whose value contains "blob:" (after
+ *   7. every attribute outside rules.attributes goes; so does any attribute whose value contains "blob:" (after
  *      removing the tabs and newlines the URL parser ignores) unless it is a file-reference attribute holding exactly
  *      a URL the view minted (A8), a URL attribute (rules.urls) whose URL is not http(s), minted or relative, or is an
- *      http(s) URL the view's policy refuses for the load the element makes (context.origins; R4:M-2), and
- *      an SVG paint or clip reference that is not a fragment; referrerpolicy becomes no-referrer, and is set on
- *      rules.referrerElements; rel on <a>/<area> keeps only rules.anchorRelations (A1);
- *   7. per `switches` (RenderSwitches): autoplay goes; a style attribute loses its animations and transitions; <style>
+ *      http(s) URL the view's policy refuses for the load the element makes (context.origins; R4:M-2), or is any
+ *      http(s) URL where rules.networkDropped says so (a poster), and an SVG paint or clip reference that is not a
+ *      fragment; a style attribute loses its network URLs (`dropNetworkCss`); referrerpolicy becomes no-referrer, and
+ *      is set on rules.referrerElements; rel on <a>/<area> keeps only rules.anchorRelations (A1);
+ *   8. every kept element of rules.crossOrigin gets crossorigin="anonymous", the guest's own value replaced (S74), so
+ *      that it is never connected without it: none of its loads carries credentials (RENDER_CROSSORIGIN_ELEMENTS);
+ *   9. per `switches` (RenderSwitches): autoplay goes; a style attribute loses its animations and transitions; <style>
  *      and stylesheet links go.
+ * `dropNetworkCss` is withoutNetworkReferences (css-references.ts) over cssReferences: the CSS without a network URL,
+ * each one it dropped added to the list it is given, with its kind of load.
  * The URL attributes it keeps are counted (context.urls) against `room.urls`, what is left of VIEW_MAX_URLS: past it it
- * throws, like the element budget, a RangeError 'VIEW_MAX_URLS'. Each URL it dropped as refused is reported
- * (context.refused) with the directive that refuses it, for the view to report as the browser would have.
+ * throws, like the element budget, a RangeError 'VIEW_MAX_URLS'. Each URL it dropped as refused, or as a network URL
+ * of a poster or of CSS, is reported (context.refused) with the directive of its load, for the view to report as the
+ * browser would report a refusal.
  * Text is kept, each run of adjacent text joined into one node; comments and processing instructions are dropped. The
  * walk is linear in the fragment's size on every engine (R1:R1-2; see the walk below).
  * Kept elements are counted against `room` (what is left of VIEW_MAX_ELEMENTS and VIEW_MAX_DEPTH once the elements
@@ -663,7 +702,7 @@ export const RENDER_RULES: RenderRules = {
  * exposes its controls as named properties that override built-ins, so in `<form><input name="getAttribute">` the
  * form's getAttribute is the input. Should anything still throw, the caller inserts nothing (fail closed).
  */
-export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string) => { url: string; type: string } | null, isMinted: (url: string) => boolean, rules: RenderRules, switches: RenderSwitches, room?: { elements: number; depth: number; urls?: number }, given?: RenderContext): number {
+export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string) => { url: string; type: string } | null, isMinted: (url: string) => boolean, dropNetworkCss: (css: string, dropped: [kind: string, url: string][]) => string, rules: RenderRules, switches: RenderSwitches, room?: { elements: number; depth: number; urls?: number }, given?: RenderContext): number {
     const HTML = 'http://www.w3.org/1999/xhtml';
     const SVG = 'http://www.w3.org/2000/svg';
     const MATHML = 'http://www.w3.org/1998/Math/MathML';
@@ -761,8 +800,14 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         const rule = ruleOf(kind);
         return rule && call(own, rules.directives, [rule.key]) ? rules.directives[rule.key]! : 'default-src';
     };
-    // The URL a refusal names, as every engine reports it (without credentials or fragment), or null when the
-    // policy admits it (or it does not parse).
+    // A URL as every engine reports a refused one: without credentials or fragment.
+    const reported = (url: URL): string => {
+        url.username = '';
+        url.password = '';
+        url.hash = '';
+        return url.href;
+    };
+    // The URL a refusal names (reported), or null when the policy admits it (or it does not parse).
     const refusedUrl = (value: string, kind: string): string | null => {
         let url: URL;
         try {
@@ -775,10 +820,16 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         for (let i = 0; i < origins.length; i++) {
             if (origins[i] === exact) return null;
         }
-        url.username = '';
-        url.password = '';
-        url.hash = '';
-        return url.href;
+        return reported(url);
+    };
+    // A network URL dropped whatever the policy says (RENDER_NETWORK_DROPPED, CSS): reported, or as written where it does
+    // not parse (it would have loaded nothing, but it is still what the guest named).
+    const droppedUrl = (value: string): string => {
+        try {
+            return reported(new URL(value));
+        } catch {
+            return value;
+        }
     };
     // What a kept http(s) URL loads, for the count of distinct loads: the parsed URL without its fragment.
     const loadOf = (value: string): string | null => {
@@ -794,14 +845,19 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     // to nothing). The scheme is read the way the URL parser reads it: outer C0 controls and spaces stripped, tabs and
     // newlines removed. Any other scheme is dropped, and nothing is reported: no engine would have made a request for it.
     // An http(s) URL the policy refuses for a load of `kind` ('' for none) is added to `refused`, and is not allowed;
-    // one it admits is added to `loads`.
-    const urlAllowed = (value: string, kind: string, refused: string[], loads: string[]) => {
+    // one it admits is added to `loads`. With `network` false (RENDER_NETWORK_DROPPED) no http(s) URL is allowed, and
+    // each is added to `refused` all the same.
+    const urlAllowed = (value: string, kind: string, refused: string[], loads: string[], network: boolean) => {
         const url = value.replace(/^[\u0000- ]+|[\u0000- ]+$/g, '').replace(/[\t\n\r]/g, '');
         const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(url);
         if (!scheme) return true;
         const name = scheme[1]!.toLowerCase();
         if (name === 'blob') return isMinted(value);
         if (name !== 'https' && name !== 'http') return false;
+        if (!network) {
+            refused[refused.length] = droppedUrl(url);
+            return false;
+        }
         if (kind === '') return true;
         const blocked = refusedUrl(url, kind);
         if (blocked !== null) {
@@ -818,7 +874,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         const pieces = value.split(',');
         for (let i = 0; i < pieces.length; i++) {
             const url = pieces[i]!.replace(/^[\t\n\f\r ]+/, '').split(/[\t\n\f\r ]/)[0]!;
-            if (url !== '' && !urlAllowed(url, kind, refused, loads)) return false;
+            if (url !== '' && !urlAllowed(url, kind, refused, loads, true)) return false;
         }
         return true;
     };
@@ -944,6 +1000,30 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         else set(element, 'style', String(call(cssTextOf, style, [])));
     };
 
+    // CSS without its network URLs (S74, BD2:ISO-2): no attribute reaches a load that CSS makes, so a kept style attribute
+    // or <style> holds no http(s) URL at all (dropNetworkCss: withoutNetworkReferences, css-references.ts; what it finds
+    // errs toward more), and each one dropped is reported with the directive of its kind of load: an @import's style-src,
+    // a url() in @font-face font-src, any other img-src. A reference to a file the view minted is a blob: URL, and stays.
+    const withoutNetwork = (css: string): string => {
+        const dropped = list<[string, string]>();
+        const kept = dropNetworkCss(css, dropped);
+        for (let i = 0; i < dropped.length; i++) context.refused[context.refused.length] = [directiveOf(dropped[i]![0]), droppedUrl(dropped[i]![1])];
+        return kept;
+    };
+    // A kept <style> (HTML or SVG) holds one text only: its child text, which is what a sheet reads, without network URLs.
+    // Anything else in it goes (SVG parses elements into one), so no element is ever inside a style, and no later text()
+    // or set() can reach a sheet but through the view's own filter (inSandboxView, `cssInto`).
+    const nextSiblingOf = getter(N, 'nextSibling');
+    const setTextContent = Object.getOwnPropertyDescriptor(N, 'textContent')!.set!;
+    const cleanSheet = (element: Element) => {
+        const parts = list<string>();
+        for (let child: Node | null = call(firstChildOf, element, []); child; child = call(nextSiblingOf, child, [])) {
+            const type = call(nodeTypeOf, child, []);
+            if (type === 3 || type === 4) parts[parts.length] = call(dataOf, child, []);
+        }
+        call(setTextContent, element, [withoutNetwork(call(joinList, parts, ['']) as string)]);
+    };
+
     const KEEP = 0, REMOVE = 1, UNWRAP = 2;
     const verdict = (namespace: unknown, name: string) => {
         if (namespace === HTML) {
@@ -981,6 +1061,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             }
             if (name === 'link' && !isMinted(get(element, 'href') || '')) return false;
         }
+        if ((html || namespace === SVG) && name === 'style') cleanSheet(element);
         // a hyperlink keeps being a link, but its href is the constant, never the guest's URL (S24)
         if ((html && (name === 'a' || name === 'area')) || (namespace === SVG && name === 'a') || namespace === MATHML) {
             if (has(element, 'href')) set(element, 'href', rules.inertHref);
@@ -996,7 +1077,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             const loads = list<string>();
             const keep = attributeAllowed(namespace, name, attribute)
                 && !(/blob:/i.test(value.replace(/[\t\n\r]/g, '')) && !(html && isPair(rules.references, name, attribute) && isMinted(value)))
-                && !(isUrl && !(attribute === 'srcset' ? srcsetAllowed(value, kind, refused, loads) : urlAllowed(value, kind, refused, loads)))
+                && !(isUrl && !(attribute === 'srcset' ? srcsetAllowed(value, kind, refused, loads) : urlAllowed(value, kind, refused, loads, !isPair(rules.networkDropped, name, attribute))))
                 && !(namespace === SVG && svgLocal[attribute] && /[:\\]/.test(value))
                 && !(attribute === 'autoplay' && !switches.autoplay);
             // a URL the policy refuses: reported as the browser would have reported its load (a srcset's first one)
@@ -1006,14 +1087,20 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
                 continue;
             }
             if (attribute === 'referrerpolicy') set(element, attribute, 'no-referrer');
-            else if (attribute === 'style' && !switches.animations) stillStyle(element, namespace, value);
-            if (attribute === 'style' && context.css) context.css[context.css.length] = value; // as written (cssLoadsOf)
+            if (attribute === 'style') {
+                const css = withoutNetwork(value);
+                if (css !== value) set(element, 'style', css);
+                if (!switches.animations) stillStyle(element, namespace, css);
+                if (context.css) context.css[context.css.length] = css; // before the still rules (cssLoadsOf)
+            }
             if (!isUrl) continue;
             for (let l = 0; l < loads.length; l++) context.loads[context.loads.length] = loads[l]!;
             context.urls++;
             if (context.urls > urlRoom) throw new RangeError('VIEW_MAX_URLS');
         }
         if (rules.referrerElements.indexOf(name) >= 0) set(element, 'referrerpolicy', 'no-referrer');
+        // whatever the guest wrote (its own crossorigin is on no allowlist and went above), before the element is connected
+        if (html && rules.crossOrigin.indexOf(name) >= 0) set(element, 'crossorigin', 'anonymous');
         if ((name === 'a' || name === 'area') && has(element, 'rel')) {
             set(element, 'rel', tokens(get(element, 'rel')).filter((token) => rules.anchorRelations.indexOf(token) >= 0).join(' '));
         }
@@ -1303,7 +1390,7 @@ export interface ViewOptions {
  * message is ignored. A copy of this text that ever ran a second time in the same document would return
  * at once (the run counter), and a copy elsewhere would never receive INIT_VIEW (research 15, P1).
  */
-export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, options: ViewOptions) {
+export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, scanCss: typeof cssReferences, dropCss: typeof withoutNetworkReferences, options: ViewOptions) {
     const g = globalThis as any;
     const runs = (g.__sandboxViewRuns || 0) + 1;
     g.__sandboxViewRuns = runs;
@@ -1320,6 +1407,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const nodeTypeOf = getter(Node.prototype, 'nodeType');
     const parentOf = getter(Node.prototype, 'parentNode');
     const localNameOf = getter(Element.prototype, 'localName');
+    const namespaceOfElement = getter(Element.prototype, 'namespaceURI');
     const idOf = getter(Element.prototype, 'id');
     const bodyOf = getter(Document.prototype, 'body');
     const rootOf = getter(Document.prototype, 'documentElement');
@@ -1374,6 +1462,50 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const blockedURI = event.blockedURI;
         if (!renderedLoads.has(String(blockedURI))) budget.observed(1, performance.now());
         reportViolation(event.effectiveDirective || event.violatedDirective, blockedURI, event.sourceFile, event.lineNumber, event.columnNumber);
+    }, true);
+
+    // The directive of a kind of load (options.render.kinds and directives), as the renderer reports its refusals.
+    const directiveOfKind = (kind: string): string => {
+        const rule = Object.prototype.hasOwnProperty.call(options.render.kinds, kind) ? options.render.kinds[kind]! : null;
+        return rule && Object.prototype.hasOwnProperty.call(options.render.directives, rule.key) ? options.render.directives[rule.key]! : 'default-src';
+    };
+    // A URL as a report names it: without credentials or fragment, or as written where it does not parse.
+    const reportedUrl = (value: string): string => {
+        try {
+            const url = new URL(value);
+            url.username = '';
+            url.password = '';
+            url.hash = '';
+            return url.href;
+        } catch {
+            return value;
+        }
+    };
+
+    // A load the view kept that fails (S74, BD2:ISO-2). Every element load is a CORS request without credentials
+    // (RENDER_CROSSORIGIN_ELEMENTS), so a listed origin that sends no Access-Control-Allow-Origin fails it, as a missing or
+    // undecodable file does: the page cannot tell which, and the browser fires `error` and reports nothing. Each is
+    // reported as a violation of its load's directive, with the URL that failed (an image's current source, a media
+    // element's, a <source>'s or a <track>'s src; without credentials or fragment), within the same per-directive cap.
+    // Only an http(s) URL counts: the view's own files are blob: URLs. Charged nothing: its URL attribute was charged when
+    // it was rendered.
+    const FAILED_LOAD_KINDS: Record<string, string> = { img: 'image', video: 'media', audio: 'media', source: 'media', track: 'track' };
+    const currentSrcOf = (constructor: unknown) => {
+        const descriptor = typeof constructor === 'function' ? Object.getOwnPropertyDescriptor(constructor.prototype, 'currentSrc') : undefined;
+        return descriptor && descriptor.get ? descriptor.get as (this: Element) => string : undefined;
+    };
+    const mediaCurrentSrc = currentSrcOf(g.HTMLMediaElement);
+    const currentSourceOf: Record<string, ((this: Element) => string) | undefined> = { img: currentSrcOf(g.HTMLImageElement), video: mediaCurrentSrc, audio: mediaCurrentSrc };
+    addEventListener('error', (event: Event) => {
+        if (!event.isTrusted) return;
+        const target = event.target;
+        if (!(target instanceof Element) || call(namespaceOfElement, target, []) !== 'http://www.w3.org/1999/xhtml') return;
+        const name = String(call(localNameOf, target, []));
+        if (!Object.prototype.hasOwnProperty.call(FAILED_LOAD_KINDS, name)) return;
+        const current = Object.prototype.hasOwnProperty.call(currentSourceOf, name) ? currentSourceOf[name] : undefined;
+        const url = String((current ? call(current, target, []) : '') || call(E.getAttribute, target, ['src']) || '');
+        if (!/^https?:/i.test(url)) return;
+        reportViolation(directiveOfKind(FAILED_LOAD_KINDS[name]!), reportedUrl(url));
     }, true);
 
     // No navigation from rendered markup (G4, A5): the default of every click or auxclick on or inside a link
@@ -1872,6 +2004,19 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         observer.observe({ type: 'resource', buffered: true });
     };
 
+    // CSS without its network URLs (sanitizeRender, `dropNetworkCss`; S74), for the renderer and for what an operation
+    // puts into a <style> or inside one: each one dropped goes to `refused` with its directive, as the renderer's own.
+    const dropNetworkCss = (css: string, dropped: [kind: string, url: string][]) => dropCss(css, scanCss, dropped as [kind: 'style' | 'font' | 'image', url: string][]);
+    const cssInto = (text: string, refused: [directive: string, url: string][]): string => {
+        const dropped: [string, string][] = [];
+        const kept = dropNetworkCss(text, dropped);
+        for (let i = 0; i < dropped.length; i++) refused.push([directiveOfKind(dropped[i]![0]), reportedUrl(dropped[i]![1])]);
+        return kept;
+    };
+    const reportAll = (refused: [directive: string, url: string][]) => {
+        for (let i = 0; i < refused.length; i++) reportViolation(refused[i]![0], refused[i]![1]);
+    };
+
     // template.innerHTML parses into an inert fragment (no script runs, nothing loads); the renderer cleans
     // it; replaceChildren MOVES its nodes into the document (A2) — never a clone or an import. The renderer gets the
     // room the view's budget leaves (BR:ST2): the body's elements outside the target stay, the target's own
@@ -1890,7 +2035,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         for (let n = target; n !== body; n = call(parentOf, n, [])) depth++;
         const context: RenderContext = { target: String(call(localNameOf, target, [])), animating: switches.animations ? [] : animatingProperties(), origins: viewOrigins, refused: [], urls: 0, loads: [], css: [] };
         const room = { elements: options.render.maxElements - (before.elements - ownElements), depth: options.render.maxDepth - depth, urls: options.render.maxUrls - (before.urls - ownUrls) };
-        const kept = sanitize(template.content, fileOf, isMinted, options.render, switches, room, context);
+        let kept = sanitize(template.content, fileOf, isMinted, dropNetworkCss, options.render, switches, room, context);
+        if (inStyle(target)) {
+            // into a <style>: what the sheet reads is text, so the render puts its text there, without network URLs, and
+            // nothing else (the renderer leaves no element inside a style; S74)
+            call(setTextContent, template.content, [cssInto(String(call(textContentOf, template.content, [])), context.refused)]);
+            kept = 0;
+            context.urls = 0;
+            context.loads.length = 0;
+            context.css!.length = 0;
+        }
         const fresh = newLoads(context.loads, template.content);
         // The characters the body would hold (R1:R1-1): its serialization outside the target, plus the cleaned fragment's
         // (what the target's serialization becomes: the same nodes, moved; never more, and less only inside a raw-text
@@ -1906,7 +2060,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         cssWork += css;
         for (let i = 0; i < context.loads.length; i++) renderedLoads.add(context.loads[i]!);
         for (let i = 0; i < fresh.length; i++) distinctLoads.add(fresh[i]!);
-        for (let i = 0; i < context.refused.length; i++) reportViolation(context.refused[i]![0], context.refused[i]![1]);
+        reportAll(context.refused);
         if (bodyCharacters === null) return;
         bodyCharacters = before.characters - ownCharacters + innerLength(target);
         bodyElements = before.elements - ownElements + kept;
@@ -1967,13 +2121,16 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         bodyElements = before.elements - ownElements;
         bodyUrls = before.urls - ownUrls;
     };
-    const applyText = (text: string, into: string) => {
+    const applyText = (given: string, into: string) => {
         const target = elementInBody(into);
         if (!target) return;
+        const refused: [string, string][] = [];
+        const text = inStyle(target) ? cssInto(given, refused) : given; // a stylesheet's new text, without network URLs (S74)
         if (!switches.animations && call(localNameOf, target, []) === 'style') stillNamed(text); // a stylesheet's new text
         const css = inStyle(target) ? countLoads(text, options.rates.urls) : 0; // a stylesheet's new text (S73)
         replaceText(target, text);
         cssWork += css;
+        reportAll(refused);
     };
     // value: an input's (shown, and its value attribute, so the characters it holds are in the serialization and the
     // budget), a textarea's (shown, and its text), a select's (which option), an output's (its text); any other element,
@@ -1984,7 +2141,9 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const target = elementInBody(id);
         if (!target || call(namespaceOf, target, []) !== HTML_NS) return;
         const name = call(localNameOf, target, []);
-        const value = fields.value;
+        const refused: [string, string][] = [];
+        // a text a sheet could read (see inStyle), without network URLs (S74); the renderer leaves no control inside a style
+        const value = fields.value !== undefined && (name === 'textarea' || name === 'output') && inStyle(target) ? cssInto(fields.value, refused) : fields.value;
         if (value !== undefined) {
             if (name === 'input' && call(inputType, target, []) !== 'file') {
                 const before = counts(call(bodyOf, document, []));
@@ -2010,6 +2169,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             }
         }
         if (fields.checked !== undefined && name === 'input') call(inputChecked, target, [fields.checked]);
+        reportAll(refused);
         if (fields.focus !== true) return;
         if (!call(hasFocus, document, [])) throw new RangeError('VIEW_FOCUS');
         call(focusElement, target, []);
@@ -2976,7 +3136,7 @@ export function environmentGate(host: string, stopParsing: boolean, body: string
 export function viewBootstrapSource(options: ViewOptions): string {
     const script = 'var s = document.currentScript;';
     const bridge = `(${inBridgeFrame.toString()})(${JSON.stringify(BRIDGE_FRAME_OPTIONS).replaceAll('<', '\\u003c')});`;
-    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')});`;
+    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')});`;
     // The gate first (environment-check.ts): a refusal goes to the host page's window, which is the bridge frame's parent and
     // the view's grandparent.
     const host = `(document.currentScript && document.currentScript.getAttribute('data-role') === '${BRIDGE_ROLE}' ? parent : parent.parent)`;

@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handTimedScaling, meterHits, wallClockBounds } from './host-share-scan';
+import { dropNetworkCss } from '@src/lib/css-references';
 
 /**
  * Backlog T9: every spec that counts the host page's ticks, the gaps between them, a busy share or a stall goes through
@@ -146,7 +147,7 @@ describe('T9: every host-tick measure goes through test/e2e/host-share.ts', () =
         expect(large / small, \`best of 3: \${small.toFixed(1)} ms for 1 MiB, \${large.toFixed(1)} ms for 8 MiB\`).toBeLessThan(24);`).map(hit => hit.pattern)).toEqual(['a ceiling on a ratio of two names']);
         expect(handTimedScaling(`                template.innerHTML = text;
                 const started = performance.now();
-                sanitizeRender(template.content, () => null, () => false, RENDER_RULES, KEEP_ALL);
+                sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, KEEP_ALL);
                 fastest = Math.min(fastest, performance.now() - started);
         expect(large / small, \`best of 3: \${small.toFixed(1)} ms for 1 000\`).toBeLessThan(24); // linear: ~8`)).toHaveLength(2);
         // the same through a Date.now() clock, and a ceiling of or-equal

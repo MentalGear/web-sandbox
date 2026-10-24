@@ -31,7 +31,10 @@ import { defineData, ownField } from "../utils";
  * link-local host reaches the user's own machine or network, and engines differ on whether a page of the public web may
  * do that: it is kept, with one warning per kind, only when the host page is itself on one, and dropped, with a warning,
  * otherwise. The fetch bridge sends no credentials. Registered files add `blob:` to the
- * directive of each kind of load their type is for, whatever is listed here. See ADR-007.
+ * directive of each kind of load their type is for, whatever is listed here. In strict mode the view loads images and
+ * media without credentials, as CORS requests (`crossorigin="anonymous"`), so those origins must answer with
+ * `Access-Control-Allow-Origin` (`*` or `null`), and a failed load is reported as a `violation`; CSS and posters keep no
+ * network URL there, so nothing loads from `styles` or `fonts` (docs/API.md#the-views-loads). See ADR-007.
  *
  * @defaultValue none
  */

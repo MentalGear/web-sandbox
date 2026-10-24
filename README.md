@@ -10,8 +10,8 @@ Web Sandbox provides a mechanism to run untrusted JavaScript code safely in the 
 *   **Local-First:** No server round-trips for code execution.
 *   **Secure by default:** [strict mode](#strict-mode), the default, runs guest code only in a worker; the visible
     frame runs no guest script. Every guest runs in an opaque origin: no access to the host origin's storage, Service
-    Workers, DOM or scripts. Strict mode admits no `origins` entry on the host page's site (a guest request to one can
-    carry the host site's cookies in some engines, except a `fetch()` or `XMLHttpRequest`; see [Cookies](#limits)). [Cooperative mode](#modes) runs guest script
+    Workers, DOM or scripts. Strict mode's requests and loads carry no cookie on any engine, but a WebSocket handshake,
+    and it admits no `origins` entry on the host page's site (see [Cookies](#limits)). [Cooperative mode](#modes) runs guest script
     in a document, for content that cooperates, with the [limits listed below](#limits).
 *   **Unified:** Use the same "Preset" definitions for both manual testing (Playground) and automated regression testing.
 
@@ -124,6 +124,14 @@ An entry is one origin (`https://host[:port]`, `wss://` for `connect` beside its
 `localhost` and `127.0.0.1`); a scheme, wildcard, keyword, `data:` or path is dropped with a warning, and so is a
 `wss://` entry without its `https://` twin. Strict mode takes no `scripts`, so `scripts` needs `mode: 'cooperative'` or
 `'worker'` ([API](docs/API.md#origins), [ADR-007](docs/ADR-007-typed-origins.md)).
+
+**Strict mode's view loads without credentials, so your `images` and `media` origins must answer with CORS.** Every
+`<img>`, `<video>`, `<audio>` and `<link>` the view keeps gets `crossorigin="anonymous"`, so each load is a CORS request
+that carries no cookie, on every engine: the origin must answer `Access-Control-Allow-Origin: *` (or `null`), and a
+load that fails is reported as a `violation`. What no attribute reaches is dropped, and reported: a network `poster`,
+and every network URL in CSS (`url()`, `@import`, `image-set()`, `@font-face`, in style attributes, `<style>` and
+registered stylesheets). Register the stylesheets, fonts and posters the guest shows; nothing loads from `styles` or
+`fonts` in strict mode ([API](docs/API.md#the-views-loads)).
 
 **Your page's `connect-src` applies to `origins.connect` and `fetchBridge.allow`, the same on every engine.** An origin
 it does not admit by scheme and host (`'self'` admits nothing) is dropped with a warning. `hostContentSecurityPolicy`
@@ -663,22 +671,23 @@ What remains for the default:
 
     Cooperative mode is no better: there a guest `while (true) {}` freezes the host page wherever the frame shares its
     thread.
-*   **CSS within what the policy allows**: style-based probing of the view's own content, and loads from the origins
-    you allow.
+*   **CSS probing the view's own content**: CSS loads nothing from the network in the view, but it can still read
+    the view's own content by style.
 *   **Worker `violation` reports** (`source: 'logic'`): the request gate's are the same on every engine; the browser's own
     worker reports (a redirect it refuses) are per engine (WebKit raises none in workers); all are influenced by guest
     code. The view's reports are complete and unforgeable up to the cap.
 *   **A worker that closes itself** is noticed only by the watchdog; **memory** is not bounded.
-*   **Cookies**: `fetch()` and `XMLHttpRequest` send none, on any engine. The sandbox's frame is credentialless, which
-    only some engines honour, for the rest: a WebSocket handshake (a listed `wss://` server must check `Origin`) and the
-    loads of rendered markup and CSS. Every mode drops an `origins`
+*   **Cookies**: `fetch()`, `XMLHttpRequest` and every load of the view send none, on any engine (the view's elements
+    load as CORS requests without credentials, and its CSS keeps no network URL). The sandbox's frame is credentialless,
+    which only some engines honour, for the one request left: a WebSocket handshake (a listed `wss://` server must
+    check `Origin`); in cooperative mode also the loads of the guest's markup and CSS. Every mode drops an `origins`
     entry on the host page's site from every kind, with a warning. The site is the browser's registrable domain of the
     page's host (`example.com` for `app.example.com`), so a sibling subdomain is on it. A loopback, private or link-local
     host is kept, with a warning, only when the host page is itself on one, and dropped otherwise. Use the fetch bridge for
     an API that knows the user: it sends no credentials. What the engines would send ([the table](docs/API.md#cookies-by-engine)):
 
 <!-- generated:begin cookie-sentence -->
-`fetch()` and `XMLHttpRequest` of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (a WebSocket handshake, or a load of the guest's markup or CSS) to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine.
+`fetch()` and `XMLHttpRequest` of the sandbox carry no cookie in any engine: the library sends them without credentials. Neither does any load of strict mode's view: its elements load as CORS requests without credentials (`crossorigin="anonymous"`), and its CSS and posters keep no network URL. A request it cannot strip (a WebSocket handshake, or in cooperative mode a load of the guest's markup or CSS) to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine.
 <!-- generated:end -->
 
 ### Cooperative-mode limits

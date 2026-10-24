@@ -169,11 +169,11 @@ export const ENGINE_DIFFERENCES = {
         tests: [`${E2E}host-policy.spec.ts`, `${E2E}trusted-types-uniform.spec.ts`],
     },
     'cookies': {
-        what: "Cookies sent with a request of the sandbox to a listed origin on the host page's site (and on another site)",
+        what: "Cookies sent with a request of the sandbox that cannot be stripped (a WebSocket handshake; in cooperative mode a load of markup or CSS) to a listed origin on the host page's site (and on another site)",
         chromium: cookie('chromium'),
         firefox: cookie('firefox'),
         webkit: cookie('webkit'),
-        why: "Only Chromium honours `credentialless` on the wrapper frame. A same-site entry of `origins` is dropped in every mode; `fetchBridge` sends no cookie on any engine",
+        why: "Only Chromium honours `credentialless` on the wrapper frame. A same-site entry of `origins` is dropped in every mode; `fetchBridge` sends no cookie on any engine, and neither do `fetch()`, `XMLHttpRequest` and the loads of strict mode's view (made uniform: `test/e2e/view-credentials.spec.ts`)",
         tests: [`${E2E}cookies.spec.ts`, `${E2E}request-gate.spec.ts`],
     },
     'connect-src': {

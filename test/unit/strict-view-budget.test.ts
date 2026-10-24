@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { vi } from 'vitest';
 import { runBootstrap } from './sandbox-environment';
+import { dropNetworkCss } from '@src/lib/css-references';
 
 /**
  * The strict view's findings of R5 (unit): the library's own logic where no browser decides. The engines' side is in test/e2e/strict-view-budget.spec.ts.
@@ -331,7 +332,7 @@ describe('L-2 and N-7 (docs and class P): with allowAnimations false, what happe
         template.innerHTML = styles.map(style => `<p style="${style.replace(/"/g, '&quot;')}"></p>`).join('');
         const read = vi.spyOn(CSSStyleDeclaration.prototype, 'getPropertyValue');
         try {
-            sanitizeRender(template.content, () => null, () => false, RENDER_RULES, { animations: false, autoplay: true, stylesheets: true });
+            sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, { animations: false, autoplay: true, stylesheets: true });
             return { styles: [...template.content.querySelectorAll('p')].map(p => p.getAttribute('style')), reads: read.mock.calls.length };
         } finally {
             read.mockRestore();

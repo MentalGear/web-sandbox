@@ -5,12 +5,14 @@
  * `test/unit/cookie-facts.test.ts` fails on a document that says what an engine sends outside a generated region.
  *
  * What a row says: the SameSite values of the cookies an engine attaches to a request of a sandbox document or its worker
- * that the library cannot strip (a WebSocket handshake; a load of the guest's markup or CSS: an image, a stylesheet, a
- * font, media; in cooperative mode also `EventSource` and `sendBeacon()`) to a listed origin on the host page's site
+ * that the library cannot strip (a WebSocket handshake; in cooperative mode a load of the guest's markup or CSS: an
+ * image, a stylesheet, a font, media, and `EventSource` and `sendBeacon()`) to a listed origin on the host page's site
  * (`sameSite`) or on another site (`crossSite`). The wrapper iframe is `credentialless` (frame-documents.ts), which only
  * Chromium honours. `fetch()` and `XMLHttpRequest` carry no cookie in any engine: the bootstrap's request gate sends
  * every fetch with `credentials: 'omit'` and keeps `withCredentials` false (in-sandbox-script.ts, S74). The fetch bridge
- * sends none either (`credentials: 'omit'`). Neither is in the table.
+ * sends none either (`credentials: 'omit'`). Strict mode's view makes every load without credentials, on every engine:
+ * every element that loads is given `crossorigin="anonymous"` before it is connected, and CSS and posters keep no network
+ * URL (in-sandbox-view.ts, RENDER_CROSSORIGIN_ELEMENTS; S74). None of these is in the table.
  *
  * Internal: not exported from the package.
  */
@@ -95,8 +97,8 @@ export const engineClauses = (reach: Reach, code?: (text: string) => string, cre
 
 /** What the warning says of the host site's cookies on a request to an origin on the host page's site. */
 export const sameSiteCookieClause = (code?: (text: string) => string): string =>
-    `a guest's WebSocket handshake, or a load of its markup or CSS, to the host page's site can carry the host site's cookies (${engineClauses('sameSite', code)}; fetch() and XMLHttpRequest carry none)`;
+    `a guest's WebSocket handshake, or in cooperative mode a load of its markup or CSS, to the host page's site can carry the host site's cookies (${engineClauses('sameSite', code)}; fetch(), XMLHttpRequest and the loads of strict mode's view carry none)`;
 
 /** The sentence the README states: both kinds of origin, every engine. */
 export const cookieSentence = (code: (text: string) => string): string =>
-    `${code('fetch()')} and ${code('XMLHttpRequest')} of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (a WebSocket handshake, or a load of the guest's markup or CSS) to an origin on the host page's site carries these cookies: ${engineClauses('sameSite', code)}. To an origin on another site it carries that site's own cookies: ${engineClauses('crossSite', code, false)}. The fetch bridge sends none in any engine.`;
+    `${code('fetch()')} and ${code('XMLHttpRequest')} of the sandbox carry no cookie in any engine: the library sends them without credentials. Neither does any load of strict mode's view: its elements load as CORS requests without credentials (${code('crossorigin="anonymous"')}), and its CSS and posters keep no network URL. A request it cannot strip (a WebSocket handshake, or in cooperative mode a load of the guest's markup or CSS) to an origin on the host page's site carries these cookies: ${engineClauses('sameSite', code)}. To an origin on another site it carries that site's own cookies: ${engineClauses('crossSite', code, false)}. The fetch bridge sends none in any engine.`;
