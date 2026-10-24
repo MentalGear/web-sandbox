@@ -1,0 +1,114 @@
+{
+ "engine": "chromium",
+ "struct": "strict",
+ "rows": [
+  {
+   "id": "B.-.-.blob-img-none",
+   "group": "B",
+   "T": "X",
+   "A": "cors",
+   "name": "blob-img-none",
+   "co": "-",
+   "result": {
+    "outcome": "load",
+    "nw": 3
+   },
+   "hits": []
+  },
+  {
+   "id": "B.-.-.blob-img-anon",
+   "group": "B",
+   "T": "X",
+   "A": "cors",
+   "name": "blob-img-anon",
+   "co": "-",
+   "result": {
+    "outcome": "load",
+    "nw": 3
+   },
+   "hits": []
+  },
+  {
+   "id": "B.-.-.blob-srcset-anon",
+   "group": "B",
+   "T": "X",
+   "A": "cors",
+   "name": "blob-srcset-anon",
+   "co": "-",
+   "result": {
+    "outcome": "load",
+    "nw": 3
+   },
+   "hits": []
+  },
+  {
+   "id": "B.-.-.blob-audio-none",
+   "group": "B",
+   "T": "X",
+   "A": "cors",
+   "name": "blob-audio-none",
+   "co": "-",
+   "result": {
+    "outcome": "loadedmetadata",
+    "rs": 1,
+    "err": 0,
+    "dur": 0.1
+   },
+   "hits": []
+  },
+  {
+   "id": "B.-.-.blob-audio-anon",
+   "group": "B",
+   "T": "X",
+   "A": "cors",
+   "name": "blob-audio-anon",
+   "co": "-",
+   "result": {
+    "outcome": "loadedmetadata",
+    "rs": 1,
+    "err": 0,
+    "dur": 0.1
+   },
+   "hits": []
+  },
+  {
+   "id": "B.-.-.blob-poster-anon",
+   "group": "B",
+   "T": "X",
+   "A": "cors",
+   "name": "blob-poster-anon",
+   "co": "-",
+   "result": {
+    "outcome": "load",
+    "w": 3
+   },
+   "hits": []
+  },
+  {
+   "id": "B.-.-.blob-link-anon",
+   "group": "B",
+   "T": "X",
+   "A": "cors",
+   "name": "blob-link-anon",
+   "co": "-",
+   "result": {
+    "outcome": "load",
+    "applied": true
+   },
+   "hits": []
+  },
+  {
+   "id": "B.-.-.blob-link-none",
+   "group": "B",
+   "T": "X",
+   "A": "cors",
+   "name": "blob-link-none",
+   "co": "-",
+   "result": {
+    "outcome": "load",
+    "applied": true
+   },
+   "hits": []
+  }
+ ]
+}
