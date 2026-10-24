@@ -312,6 +312,14 @@ export const ENGINE_DIFFERENCES = {
         why: "Each browser's focus and user-activation rules for an opaque-origin frame. Residuals of cooperative mode (S36)",
         tests: [`${E2E}guest-realm-hardening.spec.ts`],
     },
+    'redirect-refusal-outcome': {
+        what: "A synchronous `XMLHttpRequest` in a worker (strict and worker mode) to a listed origin that redirects to one the policy does not list",
+        chromium: "`send()` throws a `NetworkError`",
+        firefox: "`send()` returns with `status` 0 and no exception (a document's, in cooperative mode, throws a `NetworkError`)",
+        webkit: "`send()` throws a `NetworkError`",
+        why: "Each engine's network-error path for a synchronous request. The gate sees the first URL, which it admits; the browser's policy refuses the redirect on every engine, so nothing reaches the unlisted origin, and an asynchronous XHR, a `fetch` and the view's loads end the same way on all three",
+        tests: [`${E2E}redirect-refusal.spec.ts`],
+    },
     'ping-attribute': {
         what: "`<a ping>` in the guest document",
         chromium: "Sends the ping to an allowed origin; a blocked one is a `connect-src` violation",

@@ -420,7 +420,8 @@ export function inSandboxScript(
     // gate reports it itself, as a VIOLATION frame of `connect-src` whose sourceFile is the gate's (GATE_SOURCE_FILE,
     // violation.ts), within the same VIOLATION_LIMIT: so an engine that raises no violation in a worker (WebKit) reports
     // it too, and every engine reports one thing. The browser's policy stays underneath (the second layer): a redirect to
-    // an origin it refuses is the browser's to refuse and to report, per engine. A gate that errs can only refuse more.
+    // an origin it refuses is the browser's to refuse and to report, per engine (test/e2e/redirect-refusal.spec.ts, ledger row
+    // redirect-refusal-outcome). A gate that errs can only refuse more.
     //
     // fetch and XMLHttpRequest never carry credentials (class A, S74): every fetch is made from a Request built again
     // with `credentials: 'omit'`, and an XMLHttpRequest's `withCredentials` stays false (its setter changes nothing), so
