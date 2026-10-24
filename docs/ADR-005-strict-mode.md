@@ -41,13 +41,13 @@ all, with the realms named as there (`strict-worker` is the guest's worker). `VI
 on, and the render port is the view's and the worker's alone
 ([ADR-002](ADR-002-host-guest-broker.md#strict-mode-renders-bypass-the-host)).
 
-<!-- describes: adr005:ports sig:773c -->
+<!-- describes: adr005:ports sig:47ca -->
 <!-- generated:begin adr005-ports -->
 | Port | Ends | Carries |
 | :--- | :--- | :--- |
 | logic | host ↔ strict-worker | `EXECUTE`, `PING`, `PONG`, `RPC_REQ`, `RPC_RES`, `LOG`, `VIOLATION`, `UNCAUGHT_PAST_BUDGET` |
 | view | host ↔ view | `VIOLATION`, `RESIZE`, `UNCAUGHT_PAST_BUDGET`, `VIEW_READY`, `VIEW_PING`, `VIEW_PONG`, `VIEW_WRITE`, `VIEW_WRITTEN`, `VIEW_FIRST_OVERRUN`, `VIEW_OVERRUN`, `GUEST_ERROR`, `GUEST_UNCAUGHT`, `GUEST_TEXT_DROPPED`, `TRUSTED_TYPES_REFUSED`, `WORKER_REFUSED` |
-| render | view ↔ strict-worker (the host is not on this path) | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_TEXT`, `VIEW_SET`, `VIEW_LISTEN`, `VIEW_ACK`, `VIEW_EVENT` |
+| render | view ↔ strict-worker (the host is not on this path) | `VIEW_STARTED`, `VIEW_RENDER`, `VIEW_TEXT`, `VIEW_SET`, `VIEW_LISTEN`, `VIEW_ACK`, `VIEW_EVENT`, `VIEW_EVENT_ACK` |
 <!-- generated:end -->
 
 <!-- generated:begin adr005-init-view -->

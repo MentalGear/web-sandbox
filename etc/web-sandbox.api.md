@@ -257,6 +257,9 @@ export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];
 export type UnsafePermission = (typeof UNSAFE_PERMISSIONS)[number];
 
 // @public
+export const VIEW_INPUT_IN_FLIGHT = 1;
+
+// @public
 export const VIEW_LIVENESS_TIMEOUT_MS = 5000;
 
 // @public

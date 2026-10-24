@@ -3316,6 +3316,33 @@
         },
         {
           "kind": "Variable",
+          "canonicalReference": "web-sandbox!VIEW_INPUT_IN_FLIGHT:var",
+          "docComment": "/**\n * The most batches of the view's events the worker has not acknowledged yet (research 23). The worker's prelude answers\n * each batch with VIEW_EVENT_ACK once the handlers it dispatched to have returned, and the view sends the continuous\n * events it coalesced (VIEW_CONTINUOUS_EVENT_TYPES) only while fewer than this many are unacknowledged: a guest whose\n * handler blocks gets the latest state when it returns, and neither the worker's queue nor the host page's thread grows\n * with a stuck guest. A discrete event is posted at once, whatever is in flight: it is bounded by the user's own input.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "VIEW_INPUT_IN_FLIGHT = "
+            },
+            {
+              "kind": "Content",
+              "text": "1"
+            }
+          ],
+          "fileUrlPath": "dist/lib/in-sandbox-view.d.ts",
+          "initializerTokenRange": {
+            "startIndex": 1,
+            "endIndex": 2
+          },
+          "isReadonly": true,
+          "releaseTag": "Public",
+          "name": "VIEW_INPUT_IN_FLIGHT",
+          "variableTypeTokenRange": {
+            "startIndex": 0,
+            "endIndex": 0
+          }
+        },
+        {
+          "kind": "Variable",
           "canonicalReference": "web-sandbox!VIEW_LIVENESS_TIMEOUT_MS:var",
           "docComment": "/**\n * How long, in ms, strict mode's view may go without answering before the sandbox terminates (ADR-005). Always on,\n * independent of `watchdogTimeout`. Counted in host ticks, so a stall of the host page never counts (watchdog.ts).\n */\n",
           "excerptTokens": [

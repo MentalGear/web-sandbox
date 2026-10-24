@@ -279,8 +279,25 @@ export const STILL_PROPERTIES = [
     'transition-delay', 'transition-behavior',
 ] as const;
 
-/** The events sandboxView.on() can subscribe to (ADR-005). */
-export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'] as const;
+/** The events sandboxView.on() can subscribe to (ADR-005; the pointer types: research 23). */
+export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown', 'pointerdown', 'pointermove', 'pointerup', 'pointercancel'] as const;
+
+/**
+ * The continuous event types (research 23): the view coalesces them in its input outbox (viewInputOutbox), at most one
+ * entry per pointer, or per element, the latest winning, and sends what it holds at most once per animation frame,
+ * while no batch is unacknowledged (VIEW_INPUT_IN_FLIGHT). Every other type of VIEW_EVENT_TYPES is discrete: posted at
+ * once, as the user raises it, behind what the outbox held.
+ */
+export const VIEW_CONTINUOUS_EVENT_TYPES = ['pointermove'] as const;
+
+/**
+ * The most batches of the view's events the worker has not acknowledged yet (research 23). The worker's prelude answers
+ * each batch with VIEW_EVENT_ACK once the handlers it dispatched to have returned, and the view sends the continuous
+ * events it coalesced (VIEW_CONTINUOUS_EVENT_TYPES) only while fewer than this many are unacknowledged: a guest whose
+ * handler blocks gets the latest state when it returns, and neither the worker's queue nor the host page's thread grows
+ * with a stuck guest. A discrete event is posted at once, whatever is in flight: it is bounded by the user's own input.
+ */
+export const VIEW_INPUT_IN_FLIGHT = 1;
 
 /**
  * Limits of one event's detail: every string, the ids of the target and its ancestors, the form fields, and all its
@@ -288,6 +305,79 @@ export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'
  * them says so: `truncated: true`.
  */
 export const VIEW_EVENT_LIMITS = { maxString: 65536, maxIds: 32, maxFields: 1000, maxTotal: VIEW_RENDER_MAX_LENGTH } as const;
+
+/** One entry of the view's input outbox (viewInputOutbox): a continuous event, or the latest of several coalesced. */
+export interface ViewInputEntry {
+    /** The event type. */
+    type: string;
+    /** What it is coalesced by: a pointer id (pointermove), or the element (wheel, scroll). */
+    key: unknown;
+    /** A wheel's delta unit: entries of different units are not summed. '' for the other types. */
+    unit: string;
+    /** How many raw events it stands for. */
+    coalesced: number;
+    /** A wheel's deltas, summed while it is coalesced. */
+    wheel?: { dx: number; dy: number; dz: number; unit: string };
+    /** What the view needs to describe it when it is sent. */
+    [field: string]: unknown;
+}
+
+/**
+ * The view's input outbox (research 23), as arithmetic and nothing else, so that a unit test runs it as the view does.
+ * Continuous events are put in one slot per (type, key, unit): the latest wins and takes the slot to the end, its
+ * `coalesced` the sum of the raw events it stands for, a wheel's deltas the sum of its own and the slot's. The view sends
+ * what the slots hold as one frame (`take`) only while fewer than `inFlight` frames are unacknowledged (`ready`), and a
+ * discrete event in a frame behind whatever the slots hold (`take` too), whatever is in flight, so no discrete event
+ * overtakes a move made before it. Every frame `take` empties the slots for counts as unacknowledged until its
+ * VIEW_EVENT_ACK (`acked`).
+ *   clamp(value, most)  a coordinate in the view, clamped to [0, most] and rounded to 0.1 CSS px: whatever the browser
+ *                       routes to the view (a press that began in it goes on delivering over the host page in every
+ *                       engine), no coordinate outside its box reaches the guest.
+ * Stringified into the view bootstrap; self-contained.
+ */
+export function viewInputOutbox(inFlight: number) {
+    let slots: ViewInputEntry[] = [];
+    let outstanding = 0;
+    return {
+        put(entry: ViewInputEntry) {
+            for (let i = 0; i < slots.length; i++) {
+                const slot = slots[i]!;
+                if (slot.type !== entry.type || slot.key !== entry.key || slot.unit !== entry.unit) continue;
+                entry.coalesced += slot.coalesced;
+                if (slot.wheel && entry.wheel) {
+                    entry.wheel.dx += slot.wheel.dx;
+                    entry.wheel.dy += slot.wheel.dy;
+                    entry.wheel.dz += slot.wheel.dz;
+                }
+                slots.splice(i, 1);
+                break;
+            }
+            slots.push(entry);
+        },
+        ready(): boolean {
+            return outstanding < inFlight && slots.length > 0;
+        },
+        pending(): number {
+            return slots.length;
+        },
+        unacknowledged(): number {
+            return outstanding;
+        },
+        take(): ViewInputEntry[] {
+            const batch = slots;
+            slots = [];
+            outstanding++;
+            return batch;
+        },
+        acked() {
+            if (outstanding > 0) outstanding--;
+        },
+        clamp(value: number, most: number): number {
+            const inside = value > most ? most : value > 0 ? value : 0;
+            return Math.round(inside * 10) / 10;
+        },
+    };
+}
 
 /** The prefix of the worker's one-time "the entry ran to its end" marker; each build appends 128 random bits (entryDoneName). */
 export const ENTRY_DONE_PREFIX = '__sandboxEntryRan_';
@@ -1277,7 +1367,8 @@ export interface ViewOptions {
     violationLimit: number;
     /** VIOLATION_MAX_STRING: the longest string of a violation report the view posts. */
     violationMaxString: number;
-    events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
+    /** VIEW_EVENT_TYPES, VIEW_CONTINUOUS_EVENT_TYPES, VIEW_INPUT_IN_FLIGHT and VIEW_EVENT_LIMITS. */
+    events: { types: readonly string[]; continuous: readonly string[]; inFlight: number; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
     /** The Trusted Types policy name the view creates where the host page enforces them (trusted-types.ts). */
     trustedTypesPolicy: string;
     /** VIEW_WRITE_TYPES: the only types the view mints a URL for from a guest write. */
@@ -1303,7 +1394,7 @@ export interface ViewOptions {
  * message is ignored. A copy of this text that ever ran a second time in the same document would return
  * at once (the run counter), and a copy elsewhere would never receive INIT_VIEW (research 15, P1).
  */
-export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, options: ViewOptions) {
+export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typeof sanitizeRender, makeBudget: typeof viewBudget, countLoads: typeof cssLoadBound, options: ViewOptions, makeOutbox: typeof viewInputOutbox) {
     const g = globalThis as any;
     const runs = (g.__sandboxViewRuns || 0) + 1;
     g.__sandboxViewRuns = runs;
@@ -1401,31 +1492,45 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // Events for the worker's sandboxView.on() handlers: only the types it subscribed to (VIEW_LISTEN), only
     // trusted ones (no guest code runs here, but the rule is stated, not assumed), capture-delegated on the
     // window. The detail describes the target and its ancestors' ids, the key, the form's fields — never a
-    // URL: no href, src or action is read. Every string is clamped, and all of them together share one budget
-    // (BR:ST3): a detail cut anywhere carries `truncated: true`. Link and submit defaults are
+    // URL: no href, src or action is read. Every string is clamped, and all the strings of one frame together share
+    // one budget (BR:ST3): a detail cut anywhere carries `truncated: true`. Link and submit defaults are
     // cancelled above whether or not anyone listens.
+    // Pointer input (research 23): numbers and constants only, never a string of the guest's. Coordinates are clamped to
+    // the view's box: a press that began in the view goes on delivering moves over the host page until it is released,
+    // in every engine, with or without capture, so a move outside the box is forwarded only while a press that began
+    // here is held (a button down), and clamped to the edge; nothing of the host page's own input ever reaches the
+    // view. No tilt, twist, contact size, coalesced or predicted point lists, and no relatedTarget.
+    // Flow control: discrete events are posted at once, as the user raises them; continuous ones
+    // (VIEW_CONTINUOUS_EVENT_TYPES) wait in the input outbox (viewInputOutbox), coalesced, and go at most once per
+    // animation frame (a timer stands in where frames are throttled, as for the flush), while no frame is
+    // unacknowledged (VIEW_INPUT_IN_FLIGHT: the worker's prelude answers each VIEW_EVENT with VIEW_EVENT_ACK) and the time
+    // budget is not in debt. The event path's own time (reading the events, building the details) is measured and
+    // charged to the time budget (VIEW_APPLY_MS_PER_SECOND), like the operations.
     let subscribed: string[] = [];
-    const forward = (event: any) => {
-        if (!event.isTrusted || !renderPort || subscribed.indexOf(event.type) < 0) return;
-        let target = event.target;
+    const inputs = makeOutbox(options.events.inFlight);
+    const pressed = new Map<number, boolean>(); // the pointers whose press began in the view, until released
+    let inputWork = 0; // ms the event path spent since it was last charged
+    const isContinuous = (type: string) => options.events.continuous.indexOf(type) >= 0;
+    // The strings of one frame share one budget: `share.left` characters.
+    const describe = (eventType: string, node: unknown, share: { left: number }, event: any) => {
+        let target: any = node;
         if (!target || !(target instanceof Element)) target = call(bodyOf, document, []);
-        if (!target) return;
-        let budget = options.events.maxTotal;
+        if (!target) return null;
         let truncated = false;
         const clamp = (input: unknown) => {
             let text = String(input);
-            const most = Math.min(options.events.maxString, budget);
+            const most = Math.min(options.events.maxString, share.left);
             if (text.length > most) {
                 text = text.slice(0, most);
                 truncated = true;
             }
-            budget -= text.length;
+            share.left -= text.length;
             return text;
         };
         const tag = clamp(call(localNameOf, target, []));
         const value = tag === 'form' ? undefined : target.value; // a form's "value" could be a named control
         const detail: any = {
-            type: event.type,
+            type: eventType,
             ids: [] as string[],
             target: {
                 tag,
@@ -1435,7 +1540,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 checked: tag !== 'form' && target.checked === true,
             },
         };
-        if (event.type === 'keydown') detail.key = clamp(event.key || '');
+        if (eventType === 'keydown' && event) detail.key = clamp(event.key || '');
         for (let n = target; n && call(nodeTypeOf, n, []) === 1; n = call(parentOf, n, [])) {
             const id = call(idOf, n, []);
             if (!id) continue;
@@ -1445,7 +1550,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             }
             detail.ids.push(clamp(id));
         }
-        if (event.type === 'submit' && tag === 'form') {
+        if (eventType === 'submit' && tag === 'form' && event) {
             const fields: [string, string][] = [];
             let data: FormData;
             try {
@@ -1455,7 +1560,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             }
             data.forEach((value, name) => {
                 if (typeof value !== 'string') return;
-                if (fields.length === options.events.maxFields || budget === 0) {
+                if (fields.length === options.events.maxFields || share.left === 0) {
                     truncated = true;
                     return;
                 }
@@ -1464,9 +1569,116 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             detail.form = fields;
         }
         if (truncated) detail.truncated = true;
-        renderPort.postMessage({ type: 'VIEW_EVENT', detail });
+        return detail;
     };
-    for (let i = 0; i < options.events.types.length; i++) addEventListener(options.events.types[i]!, forward, true);
+    const modifiersOf = (event: any) => ({ alt: event.altKey === true, ctrl: event.ctrlKey === true, meta: event.metaKey === true, shift: event.shiftKey === true });
+    const pointerOf = (event: any) => {
+        const kind = event.pointerType === 'pen' || event.pointerType === 'touch' ? event.pointerType : 'mouse';
+        return {
+            x: inputs.clamp(event.clientX, g.innerWidth), y: inputs.clamp(event.clientY, g.innerHeight), id: event.pointerId, kind,
+            primary: event.isPrimary === true, button: event.button, buttons: event.buttons, pressure: Math.round(event.pressure * 100) / 100,
+        };
+    };
+    // What the view keeps of an event until it describes it: read now, from the event; the detail is built when it is sent.
+    const entryOf = (event: any): ViewInputEntry => {
+        const eventType = event.type;
+        const entry: ViewInputEntry = { type: eventType, key: null, unit: '', coalesced: 1, target: event.target };
+        if (eventType.indexOf('pointer') === 0) {
+            entry.time = Math.round(event.timeStamp); // whole ms: no finer than the worker's own clock
+            entry.key = event.pointerId;
+            entry.pointer = pointerOf(event);
+            entry.modifiers = modifiersOf(event);
+        }
+        return entry;
+    };
+    const detailOf = (entry: ViewInputEntry, share: { left: number }, event: any) => {
+        const detail = describe(entry.type, entry.target, share, event);
+        if (!detail) return null;
+        if (entry.pointer) detail.pointer = entry.pointer;
+        if (entry.modifiers) detail.modifiers = entry.modifiers;
+        if (entry.time !== undefined) detail.time = entry.time;
+        if (isContinuous(entry.type)) detail.coalesced = entry.coalesced;
+        return detail;
+    };
+    // Posts what the outbox holds and, after it, `last` (a discrete event's entry, with its event), as one frame, and
+    // charges the event path's time.
+    const postInput = (last: ViewInputEntry | null, event: any) => {
+        const started = performance.now();
+        const share = { left: options.events.maxTotal };
+        const entries = inputs.take();
+        if (last) entries.push(last);
+        const details: unknown[] = [];
+        for (let i = 0; i < entries.length; i++) {
+            const detail = detailOf(entries[i]!, share, entries[i] === last ? event : null);
+            if (detail) details.push(detail);
+        }
+        renderPort!.postMessage({ type: 'VIEW_EVENT', details });
+        const now = performance.now();
+        const spent = inputWork + (now - started);
+        inputWork = 0;
+        judge(budget.measured(spent, spent, now, true));
+    };
+    let inputScheduled = false;
+    const requestInput = () => {
+        if (inputScheduled || overran || !renderPort || !inputs.ready()) return;
+        inputScheduled = true;
+        let ran = false;
+        let frame = 0;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const run = (inFrame: boolean) => {
+            if (ran) return;
+            ran = true;
+            if (inFrame && timer !== null) clearTimeout(timer);
+            if (!inFrame) cancelAnimationFrame(frame);
+            inputScheduled = false;
+            if (overran || !renderPort || !inputs.ready()) return;
+            const wait = budget.wait(0, performance.now());
+            if (wait > 0) {
+                // the time budget is in debt (the view's operations, or this path): the next frame after it is repaid
+                inputScheduled = true;
+                setTimeout(() => {
+                    inputScheduled = false;
+                    requestInput();
+                }, wait);
+                return;
+            }
+            postInput(null, null);
+        };
+        frame = requestAnimationFrame(() => run(true));
+        timer = setTimeout(() => run(false), 100);
+    };
+    const inputAcked = () => {
+        inputs.acked();
+        requestInput();
+    };
+    const forward = (event: any) => {
+        if (!event.isTrusted) return;
+        const started = performance.now();
+        const type = event.type;
+        // the presses that began here, whether or not anyone listens (the rule for moves outside the box, above)
+        if (type === 'pointerdown') pressed.set(event.pointerId, true);
+        else if (type === 'pointerup' || type === 'pointercancel') pressed.delete(event.pointerId);
+        if (!renderPort || overran || subscribed.indexOf(type) < 0) return;
+        if (!isContinuous(type)) {
+            postInput(entryOf(event), event);
+            return;
+        }
+        let wanted = true;
+        if (type === 'pointermove') {
+            const outside = event.clientX < 0 || event.clientY < 0 || event.clientX > g.innerWidth || event.clientY > g.innerHeight;
+            wanted = !outside || (pressed.has(event.pointerId) && event.buttons !== 0);
+        }
+        if (wanted) {
+            inputs.put(entryOf(event));
+            requestInput();
+        }
+        inputWork += performance.now() - started;
+    };
+    for (let i = 0; i < options.events.types.length; i++) {
+        const type = options.events.types[i]!;
+        // the pointer types are only read: passive, so the browser never waits for the view to scroll or pan
+        addEventListener(type, forward, type.indexOf('pointer') === 0 ? { capture: true, passive: true } : true);
+    }
 
     // The view's two sinks under a host page's Trusted Types (R1:R3-1): the view inherits the host page's
     // `require-trusted-types-for 'script'`, which makes the template's innerHTML and the Worker constructor throw a
@@ -2233,6 +2445,10 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             subscribed = Array.isArray(data.types) ? data.types.filter((type: unknown) => options.events.types.indexOf(type as string) >= 0) : [];
             return;
         }
+        if (data.type === 'VIEW_EVENT_ACK') {
+            inputAcked();
+            return;
+        }
         let job: Job | null = null;
         if (data.type === 'VIEW_RENDER') {
             if (isText(data.html) && (data.into === null || isTarget(data.into))) job = { kind: 'render', target: data.into, html: data.html, fields: null };
@@ -2569,7 +2785,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
  * MessagePort.prototype, MessageEvent.prototype or Function.prototype cannot reach the port. Guest code
  * gets only `sandboxView.render`, `text` and `set`, which queue operations for the view and post one at a time, the
  * next only after the view's VIEW_ACK, and `sandboxView.on`, which registers handlers for the events the view forwards
- * (the port itself is never handed to a handler).
+ * (the port itself is never handed to a handler); each frame of events is acknowledged (VIEW_EVENT_ACK) once its
+ * handlers have returned.
  */
 export function inStrictWorker(comms: { attach(port: MessagePort): void; log(level: 'log' | 'info' | 'warn' | 'error', args: unknown[]): void }, options: { scriptUnsafe: boolean; maxRender: number; maxTarget: number; maxElements: number; maxDepth: number; maxCharacters: number; maxUrls: number; maxDistinctUrls: number; entryDoneName: string; eventTypes: readonly string[] }) {
     // ---- The captured list (AR:C3, R2:C-1): sandboxView's methods, the render port's listener and the
@@ -2801,7 +3018,15 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
             sendNext();
             return;
         }
-        if (data.type === 'VIEW_EVENT') dispatch(data.detail);
+        if (data.type === 'VIEW_EVENT') {
+            // One frame of the view's events, in the order they were raised (research 23): each dispatched to its handlers,
+            // which have all returned (a throwing one reported) when the frame is acknowledged. The view sends no further
+            // continuous events before VIEW_EVENT_ACK (VIEW_INPUT_IN_FLIGHT), and only the prelude posts it: guest code
+            // cannot reach the render port.
+            const details = data.details;
+            for (let i = 0; isArray(details) && i < details.length; i++) dispatch(details[i]);
+            apply(post, renderPort, [{ type: 'VIEW_EVENT_ACK' }]);
+        }
     };
     defineOwn(g, 'sandboxView', { value: freeze({ render, text, set, on }), writable: true, enumerable: true, configurable: true });
 
@@ -2937,7 +3162,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     maxDistinctUrls: VIEW_MAX_DISTINCT_URLS,
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
     violationMaxString: 2048, // VIOLATION_MAX_STRING (violation.ts); a test keeps them equal
-    events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
+    events: { types: VIEW_EVENT_TYPES, continuous: VIEW_CONTINUOUS_EVENT_TYPES, inFlight: VIEW_INPUT_IN_FLIGHT, ...VIEW_EVENT_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,
     writeTypes: VIEW_WRITE_TYPES,
     // the host cuts these texts to the same length again on receipt (host.ts), and dispatches at most
@@ -2976,7 +3201,7 @@ export function environmentGate(host: string, stopParsing: boolean, body: string
 export function viewBootstrapSource(options: ViewOptions): string {
     const script = 'var s = document.currentScript;';
     const bridge = `(${inBridgeFrame.toString()})(${JSON.stringify(BRIDGE_FRAME_OPTIONS).replaceAll('<', '\\u003c')});`;
-    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')});`;
+    const view = `(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${JSON.stringify(options).replaceAll('<', '\\u003c')}, ${viewInputOutbox.toString()});`;
     // The gate first (environment-check.ts): a refusal goes to the host page's window, which is the bridge frame's parent and
     // the view's grandparent.
     const host = `(document.currentScript && document.currentScript.getAttribute('data-role') === '${BRIDGE_ROLE}' ? parent : parent.parent)`;

@@ -157,7 +157,7 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIOLATION', 'lineNumber', 'lineNumber'],
     ['VIOLATION', 'columnNumber', 'columnNumber'],
     ['VIEW_EVENT', 'type', "'VIEW_EVENT'"],
-    ['VIEW_EVENT', 'detail', 'detail'],
+    ['VIEW_EVENT', 'details', 'details'],
     ['VIEW_FIRST_OVERRUN', 'type', "'VIEW_FIRST_OVERRUN'"],
     ['VIEW_OVERRUN', 'type', "'VIEW_OVERRUN'"],
     ['VIEW_ACK', 'type', "'VIEW_ACK'"],
@@ -189,6 +189,7 @@ const SENT: readonly (readonly [type: string, field: string, expression: string]
     ['VIEW_LISTEN', 'type', "'VIEW_LISTEN'"],
     ['VIEW_LISTEN', 'types', 'types'],
     ['VIEW_STARTED', 'type', "'VIEW_STARTED'"],
+    ['VIEW_EVENT_ACK', 'type', "'VIEW_EVENT_ACK'"],
     // rpc.ts, createBroker: the three builders (both sides)
     ['RPC_REQ', 'type', "'RPC_REQ'"],
     ['RPC_REQ', 'id', 'id'],

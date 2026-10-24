@@ -49,7 +49,7 @@ frozen ([S49](BACKLOG.md#s49)).
 
 ## Trust boundaries
 
-<!-- describes: realms, channels sig:acafc204 -->
+<!-- describes: realms, channels sig:85739d12 -->
 
 The realms and the channels between them are generated from the code in [ARCHITECTURE.md](../ARCHITECTURE.md#modes-and-realms)
 (which realm runs guest code, which library functions are stringified into it) and
@@ -171,7 +171,7 @@ are governed by the request gate and the policy but not logged: only the bridge'
 
 ### Channel integrity
 
-<!-- describes: frames sig:84f0 -->
+<!-- describes: frames sig:6bab -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
@@ -204,7 +204,7 @@ forge or suppress them, and they differ per engine. Treat them as claims.
 
 ### Resource limits
 
-<!-- describes: budgets:channels sig:8864 -->
+<!-- describes: budgets:channels sig:f478 -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
