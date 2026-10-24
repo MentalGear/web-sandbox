@@ -50,7 +50,7 @@ describe('the strict view policy: exact strings', () => {
     });
 
     it("registered files: blob: for their types' kinds, never in script-src, even with JavaScript files; the configured origins are there", async () => {
-        const el = await mount({ mode: 'strict', origins: { connect: ['https://api.example'], fonts: ['https://fonts.example'] } },
+        const el = await mount({ mode: 'strict', origins: { connect: ['https://api.example'], fonts: ['https://fonts.example'] }, hostContentSecurityPolicy: false },
             { 'app.js': 'void 0', 'lib/mod.mjs': 'export {}', 'img/logo.png': 'x', 'site.css': 'p{}' });
         expect(policyOf(el)).toBe(STRICT(H(), { style: ' blob:', img: 'blob:', font: 'https://fonts.example', connect: 'https://api.example blob:' }));
         expect(policyOf(el)).not.toMatch(/script-src[^;]*blob:/);

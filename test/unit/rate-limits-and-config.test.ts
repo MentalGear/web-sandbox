@@ -361,7 +361,7 @@ describe('F6: a refused config is never stored', () => {
 
 describe('Hardening: sandbox:fetch is bound to the build it belongs to, like sandbox:write', () => {
     it("a request that arrived in environment N but runs after a rebuild is refused by N's closed bridge, never served by N+1's", async () => {
-        const el = await mount({ fetchBridge: { allow: ['https://api.example'] } });
+        const el = await mount({ fetchBridge: { allow: ['https://api.example'] }, hostContentSecurityPolicy: false });
         const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('ok'));
         const { port1 } = new MessageChannel();
         el._port = port1;

@@ -324,7 +324,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const list = ['https://a.example'];
         const capabilities: string[] = ['allow-scripts'];
-        const el = await mount({ mode: 'cooperative', capabilities, origins: { connect: list } });
+        const el = await mount({ mode: 'cooperative', capabilities, origins: { connect: list }, hostContentSecurityPolicy: false });
         list.push('https://later.example');
         capabilities.push('allow-orientation-lock'); // a safe capability: only the copy keeps it out
         el.reset();

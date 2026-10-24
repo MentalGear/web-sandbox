@@ -5,9 +5,8 @@
 import type { SafeCapability, UnsafeCapability } from "./csp-directives";
 import { UNSAFE_PERMISSIONS } from "./csp-directives";
 import { connectSources, cooperativePolicy, fileKinds, strictViewPolicy, type PolicyInput } from "./lib/csp/csp-generator";
-import { hostReach, type HostPolicySource, type NarrowedReach } from "./lib/csp/host-connect";
+import { hostReach, type NarrowedReach } from "./lib/csp/host-connect";
 import { buildRefused, executeRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
-import { hostPolicyReaderLeft, hostPolicyReadFailed, knownHostPolicies, whenHostPoliciesKnown } from "./lib/host-csp";
 import { NO_ORIGINS, refusalDetail, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, viewStylesheets, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
@@ -361,7 +360,7 @@ export interface SandboxConfigOptions {
     /**
      * The host page's Content-Security-Policy as text, so that the library drops the origins it refuses from
      * `origins.connect` and `fetchBridge.allow`: a string (one or more policies, as a header or a `<meta>` carries them),
-     * or `false` to skip. Left out, the library reads the page's policy once per page load.
+     * or `false` when the page sends none. Left out, both lists are dropped, with a warning.
      *
      * @remarks
      * A sandbox's frames inherit the host page's policy, which can only narrow theirs, but engines differ on what some of
@@ -372,19 +371,17 @@ export interface SandboxConfigOptions {
      * and anything the parser does not understand admit nothing (docs/API.md#your-connect-src has the grammar).
      *
      * - A string is the enforced policy, exactly as served; several policies are separated by commas, as in a header. A
-     *   Report-Only policy is not passed. The page is then not asked. It is also what a browser without Trusted Types
-     *   (Firefox, at the version measured) reads the page's `require-trusted-types-for` and `trusted-types` from: with it,
-     *   such a browser ends the build and refuses `execute()` as the others do, and without it nothing is applied there
+     *   Report-Only policy is not passed. It is also what a browser without Trusted Types (Firefox, at the version
+     *   measured) reads the page's `require-trusted-types-for` and `trusted-types` from: with it, such a browser ends the
+     *   build and refuses `execute()` as the others do, and without it nothing is applied there
      *   (docs/API.md#trusted-types-without-the-browser).
-     * - `false` skips the narrowing and the read. The browser's own inheritance still narrows where the engine applies it.
-     * - Left out, a build that lists a connect origin reads the policy before it starts, once per page load (cached):
-     *   the element calls `fetch()` once from a hidden, empty frame to a decoy host that cannot exist, on a port every
-     *   engine refuses; the request never leaves the browser and costs no DNS lookup, and the policy that refuses it
-     *   reports its own text. Its cost is a console error (two in an engine that logs the refused port, whatever the
-     *   policy) and, when a policy refuses the decoy, a CSP report to that policy's `report-uri`. The first such build waits
-     *   for it, a few tens of milliseconds. A build with no connect origin never reads.
+     * - `false` says the page sends no Content-Security-Policy: the lists are kept as configured. A policy the page does
+     *   send is then applied by the browser alone, and engines differ on what some of its sources admit.
+     * - Left out, a build that lists an `origins.connect` or `fetchBridge.allow` entry drops all of them, with one
+     *   warning that says what to pass: the guest's requests are refused by the request gate and its `sandboxFetch()`
+     *   with `FETCH_NOT_ALLOWED`. The library never asks the page for its policy. A build with no such entry needs nothing.
      *
-     * @defaultValue read from the page
+     * @defaultValue none: `origins.connect` and `fetchBridge.allow` are dropped
      */
     hostContentSecurityPolicy?: string | false;
     /**
@@ -2071,30 +2068,16 @@ export class WebSandbox extends ElementBase {
     }
 
     // The host page's policy applied to the connect origins of this build (host-connect.ts): `origins` and the bridge's
-    // allowlist as configured, less what a policy of the page refuses (hostReach, the one decision). The policy is the
-    // embedder's (`hostContentSecurityPolicy`), or the page's as a read whose frame stayed in the document answered it
-    // (host-csp.ts, which `_buildGate` waited for). A build that waited and got no answer drops every connect and bridge
-    // origin (fails closed); `false`, a policy that cannot be read, and a build with nothing to narrow leave the
-    // configured lists. Pure of the element's fields: a nested or stale build narrows its own (LM-2).
+    // allowlist as configured, less what the embedder's `hostContentSecurityPolicy` refuses, and nothing of them when the
+    // embedder did not give it (hostReach, the one decision; BD4:CHL-1, BD4:CHL-2). The page itself is never asked.
+    // Pure of the element's fields: a nested or stale build narrows its own (LM-2).
     private _reach(): NarrowedReach {
-        const option = this._config.hostContentSecurityPolicy;
-        const source: HostPolicySource = option !== undefined ? { given: option } : { read: knownHostPolicies(), failed: hostPolicyReadFailed() };
-        return hostReach(this._origins, this._fetchPolicy, source, message => this._warnConfig(message));
-    }
-
-    // What the build waits for (the executor's gate, lifecycle.ts): the host page's policy, when the embedder gave none and
-    // the build lists a connect origin or a bridge origin it could refuse. Null when nothing is to be waited for.
-    private _buildGate(): Promise<void> | null {
-        if (this._config.hostContentSecurityPolicy !== undefined || !this.shadowRoot) return null;
-        if (this._origins.connect.length === 0 && (this._fetchPolicy?.allow.length ?? 0) === 0) return null;
-        return whenHostPoliciesKnown(this.shadowRoot);
+        return hostReach(this._origins, this._fetchPolicy, this._config.hostContentSecurityPolicy, message => this._warnConfig(message));
     }
 
     // The host page's Trusted Types directives, where the browser has no Trusted Types to apply them (a browser that has them
-    // decides, in the sinks and in the guest: null), and only from the embedder's `hostContentSecurityPolicy`: the read of the
-    // page's policy (host-csp.ts) cannot supply them, because a browser without Trusted Types leaves the directives it does not
-    // implement out of the policy text it reports (measured), so nothing is read, and nothing is applied, without the option
-    // (host-trusted-types.ts).
+    // decides, in the sinks and in the guest: null), and only from the embedder's `hostContentSecurityPolicy`: nothing is
+    // applied without the option (host-trusted-types.ts).
     private _trustedTypes(): TrustedTypesStance | null {
         if (browserHasTrustedTypes()) return null;
         const option = this._config.hostContentSecurityPolicy;
@@ -2406,7 +2389,6 @@ const LIFECYCLE = WebSandbox.prototype as unknown as {
     _buildContext(): BuildContext;
     _configure(): string | null;
     _prepareBuild(): PreparedBuild;
-    _buildGate(): Promise<void> | null;
     _attachBuild(prepared: PreparedBuild): void;
     _startLoadDeadline(): void;
     _teardown(): void;
@@ -2485,7 +2467,6 @@ function lifecycleHostOf(element: WebSandbox): LifecycleHost {
         discardWrites: () => Reflect.apply(LIFECYCLE._discardGuestWrites, element, []),
         applyConfig: () => Reflect.apply(LIFECYCLE._configure, element, []),
         buildContext: () => Reflect.apply(LIFECYCLE._buildContext, element, []),
-        buildGate: () => Reflect.apply(LIFECYCLE._buildGate, element, []),
         build: () => Reflect.apply(LIFECYCLE._prepareBuild, element, []),
         attach: (prepared) => Reflect.apply(LIFECYCLE._attachBuild, element, [prepared as PreparedBuild]),
         startLoadDeadline: () => Reflect.apply(LIFECYCLE._startLoadDeadline, element, []),
@@ -2589,12 +2570,8 @@ function restorePrototype(element: WebSandbox): boolean {
 }
 
 // Removal, and adoption into another document: the environment ends, with no 'terminated' event (the reducer's `stop`).
-// The host page's policy read (host-csp.ts) is a resource of the page that other elements' builds may wait on: a read
-// whose frame this element's shadow root held gave no answer, and starts again from another waiter, now (S74, class L).
 function disconnected(element: WebSandbox) {
     step(element, { t: 'disconnect' });
-    const root = element.shadowRoot;
-    if (root) hostPolicyReaderLeft(root);
 }
 
 function adopted(element: WebSandbox) {

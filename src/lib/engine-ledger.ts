@@ -181,8 +181,8 @@ export const ENGINE_DIFFERENCES = {
         chromium: connect('chromium'),
         firefox: connect('firefox'),
         webkit: connect('webkit'),
-        why: "The engines read some sources differently. The library applies the page's policy to `origins.connect` and `fetchBridge.allow` itself, and lists a `wss://` entry only beside its `https://` twin, so the outcome is one on every engine; a build whose read of the page's policy got no answer (its frame moved or removed) drops every connect origin, on every engine",
-        tests: [`${E2E}connect-uniform.spec.ts`, `${E2E}host-policy-read-race.spec.ts`],
+        why: "The engines read some sources differently. The library applies the page's policy as `hostContentSecurityPolicy` gives it to `origins.connect` and `fetchBridge.allow` itself, and lists a `wss://` entry only beside its `https://` twin, so with the policy given the outcome is one on every engine; without the option both lists are dropped, on every engine. With `false` (the page sends no policy) the library narrows nothing: a policy the page does send is then applied by each engine as this row says",
+        tests: [`${E2E}connect-uniform.spec.ts`],
     },
     'secure-cookie-over-http': {
         what: "A `Secure` cookie sent to the test suite's plain-http listener (the suite, not the library)",

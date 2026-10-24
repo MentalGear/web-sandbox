@@ -119,6 +119,7 @@ and the `terminated` reason names `'cooperative'`.
 sandbox.setConfig({
     entry: 'main.js',
     origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] },
+    hostContentSecurityPolicy: false, // your page's Content-Security-Policy as text, or false if it sends none (below)
 });
 ```
 
@@ -138,10 +139,10 @@ registered stylesheets). Register the stylesheets, fonts and posters the guest s
 cookies where the engine sends third-party cookies ([API](docs/API.md#origins-withoutcors)).
 
 **Your page's `connect-src` applies to `origins.connect` and `fetchBridge.allow`, the same on every engine.** An origin
-it does not admit by scheme and host (`'self'` admits nothing) is dropped with a warning. `hostContentSecurityPolicy`
-gives the library the policy as text, or `false` to skip; left out, the library reads it once per page, when a build
-first lists a connect origin, by one deliberate violation in a hidden frame that reaches neither the network nor the DNS
-(it costs a console error and, when a policy refuses it, a CSP report; [API](docs/API.md#your-connect-src)).
+it does not admit by scheme and host (`'self'` admits nothing) is dropped with a warning. The library takes the policy
+only from `hostContentSecurityPolicy`: your page's policy as text, or `false` if your page sends none. Left out, both
+lists are dropped, with one warning that says what to pass: the library never asks the page for its policy
+([API](docs/API.md#your-connect-src)).
 
 <!-- generated:begin connect-sentence -->
 Without the library's own rules the engines disagree: a `'self'` source of the host page's `connect-src` admits origins it does not name in WebKit only, a `wss://host` source also admits `https://host` requests in WebKit only, and a host written without a scheme is read differently by each. The library applies the page's policy and these two rules itself, so `origins.connect` and `fetchBridge.allow` mean the same everywhere.
@@ -381,6 +382,7 @@ sandbox.registerFiles({ 'main.js': `
 sandbox.setConfig({
     entry: 'main.js',
     fetchBridge: { allow: ['https://api.example'], maxBytes: 1024 * 1024, timeoutMs: 10000 },
+    hostContentSecurityPolicy: false, // your page's policy as text, or false if it sends none
 });
 sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.url, e.detail.outcome, e.detail.status ?? e.detail.code));
 ```
@@ -422,7 +424,8 @@ sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.u
 *   **Your page's policy**: the bridge's frame runs the same hashed bootstrap as the strict view, under the same hash, so
     the policy that admits the sandbox admits it (`viewScriptHash()`, or `'unsafe-inline'`; see
     [Host page policy](docs/API.md#host-page-policy)), and one that refuses the view refuses it too (in strict mode the
-    build then ends with the startup reason). Your `connect-src` must allow the listed origins, as for any request. A
+    build then ends with the startup reason). Your `connect-src` must allow the listed origins, as for any request, and
+    the library applies it from `hostContentSecurityPolicy` (left out, `allow` is dropped: [API](docs/API.md#your-connect-src)). A
     frame whose script never runs while the sandbox does fails closed: every request is refused with `FETCH_FAILED`.
 *   `sandboxFetch` is a separate global; `fetch` itself is untouched (assign `globalThis.fetch = sandboxFetch`
     in the guest if you want that). It works in every mode. The name `sandbox:fetch`, like every

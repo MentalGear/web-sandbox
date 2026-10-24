@@ -182,7 +182,7 @@ export interface StoredConfig {
     guestWrites: boolean;
     allowAnimations: boolean;
     allowAutoplay: boolean;
-    /** The host page's policy as the embedder gave it, `false` to skip narrowing, or absent: read from the page (host-csp.ts). */
+    /** The host page's policy as the embedder gave it, `false` (the page sends none), or absent: the connect lists are dropped (host-connect.ts, hostReach). */
     hostContentSecurityPolicy?: string | false;
 }
 
@@ -377,11 +377,11 @@ export const CONFIG_SCHEMA = {
         read: ({ given, mode, warn, context }) => limitHostReach(parseOrigins(given, mode, warn), context, warn),
     },
     hostContentSecurityPolicy: {
-        default: undefined, documented: 'read from the page', modes: ALL_MODES,
-        // a string (the page's policy text) or false (skip); anything else is ignored with a warning, and the page's policy is read
+        default: undefined, documented: 'none: `origins.connect` and `fetchBridge.allow` are dropped', modes: ALL_MODES,
+        // a string (the page's policy text) or false (the page sends none); anything else is ignored with a warning, as if left out
         read: ({ given, warn }) => {
             if (given === undefined || typeof given === 'string' || given === false) return given;
-            warn(`[Sandbox] hostContentSecurityPolicy must be a string or false; ${shown(given)} was ignored: the host page's policy is read from the page.`);
+            warn(`[Sandbox] hostContentSecurityPolicy must be a string or false; ${shown(given)} was ignored, as if it were left out.`);
             return undefined;
         },
     },
