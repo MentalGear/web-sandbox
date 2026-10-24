@@ -243,6 +243,12 @@ has all of them. Each row is made on every engine by `test/e2e/cookies.spec.ts`:
 | A request of a frame or worker the guest creates (its own `fetch()` with `credentials: 'include'`) | cooperative mode only | A realm of its own with the platform's `fetch`: a limit of cooperative mode (S44) |
 <!-- generated:end -->
 
+The browser may attach credentials that are not cookies to these requests when it holds them for the origin: cached HTTP
+authentication (Basic, Digest, integrated Windows or Kerberos) and a TLS client certificate. The tables do not state what
+each engine sends (not measured), so do not list an origin for a guest that it recognises the user by. The guest's
+`fetch()` and `XMLHttpRequest` through the gate, and the [fetch bridge](#fetchbridge), send none of these
+(`credentials: 'omit'`).
+
 - **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used, and
   the reason names the option (`(TypeError: origins.connect is not a list)`).
 - **Strict mode has no `scripts`**: a type error in TypeScript (`SandboxConfig` is a union keyed by `mode`), and dropped

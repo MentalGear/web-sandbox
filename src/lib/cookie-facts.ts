@@ -125,6 +125,18 @@ export interface CookieCarrier {
     readonly test: string;
 }
 
+/**
+ * The credentials besides cookies that the browser may attach to the same requests (BD3:ISO-4): they belong to the user
+ * and the origin, not to the page, and the suite has not measured what each engine sends. The gate's `fetch()` and
+ * `XMLHttpRequest` and the fetch bridge send none (`credentials: 'omit'`); a WebSocket handshake and a load of the
+ * guest's markup or CSS cannot be stripped. A listed origin must not rely on them for the user's identity.
+ */
+export const AMBIENT_CREDENTIALS = ['cached HTTP authentication (Basic, Digest, integrated Windows or Kerberos)', 'a TLS client certificate'] as const;
+
+/** The sentence that says so: the README's, and the paragraphs of docs/API.md and docs/THREAT-MODEL.md under the carriers' table. */
+export const ambientCredentialsSentence = (): string =>
+    `The browser may attach credentials that are not cookies to the same requests when it holds them for the origin: ${AMBIENT_CREDENTIALS.join(' and ')}; the tables do not state what each engine sends (not measured), so do not list an origin for a guest that it recognises the user by.`;
+
 export type CookieCarrierId = keyof typeof COOKIE_CARRIERS;
 export const COOKIE_CARRIER_IDS = Object.keys(COOKIE_CARRIERS) as CookieCarrierId[];
 
@@ -168,4 +180,4 @@ export const sameSiteCookieClause = (code?: (text: string) => string): string =>
 
 /** The sentence the README states: both kinds of origin, every engine. */
 export const cookieSentence = (code: (text: string) => string): string =>
-    `${code('fetch()')} and ${code('XMLHttpRequest')} of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (${carrierClause(code)}) to an origin on the host page's site carries these cookies: ${engineClauses('sameSite', code)}. To an origin on another site it carries that site's own cookies: ${engineClauses('crossSite', code, false)}. The fetch bridge sends none in any engine.`;
+    `${code('fetch()')} and ${code('XMLHttpRequest')} of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (${carrierClause(code)}) to an origin on the host page's site carries these cookies: ${engineClauses('sameSite', code)}. To an origin on another site it carries that site's own cookies: ${engineClauses('crossSite', code, false)}. The fetch bridge sends none in any engine. ${ambientCredentialsSentence()}`;
