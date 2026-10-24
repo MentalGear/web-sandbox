@@ -24,7 +24,7 @@ import { keepOnlyWorkerGlobals, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NA
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { setLongTimeout, type LongTimeout } from "./lib/long-timer";
 import { createRateLimiter, type RateLimiter } from "./lib/rate-limit";
-import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT, type SandboxViolation } from "./lib/violation";
+import { toViolationDetail, VIOLATION_EVENT_LIMIT, violationBucket, type SandboxViolation } from "./lib/violation";
 import { createLogLimiter, LOG_MAX_BYTES, LOG_OWN_LINES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
@@ -1752,7 +1752,7 @@ export class WebSandbox extends ElementBase {
     private _dispatchViolation(frame: unknown, source: 'view' | 'logic' | null = null) {
         const detail = toViolationDetail(frame, source ?? undefined);
         if (!detail) return;
-        const key = source === 'view' ? `view:${VIOLATION_DIRECTIVES.includes(detail.directive) ? detail.directive : '*'}` : (source ?? '');
+        const key = source === 'view' ? `view:${violationBucket(detail.directive)}` : (source ?? '');
         const count = this._violationCounts.get(key) ?? 0;
         if (count > VIOLATION_EVENT_LIMIT) return;
         this._violationCounts.set(key, count + 1);

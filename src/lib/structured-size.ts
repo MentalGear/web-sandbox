@@ -88,6 +88,8 @@ export function createSizeOf(): SizeOf {
     const slice = String.prototype.slice;
     // The longest Blob or File `type`, in characters (LIMITS.BLOB_TYPE_MAX_LENGTH: api-docs.test.ts keeps the value equal).
     const BLOB_TYPE_MAX_LENGTH = 4096;
+    // The longest kind name a refusal gives (LIMITS.KIND_MAX_LENGTH: api-docs.test.ts keeps the value equal).
+    const KIND_MAX_LENGTH = 64;
     const CAPTURE_POINT = 'nothing below reads a global, or an intrinsic guest code can replace';
 
     const brand = (read: ((this: unknown) => unknown) | null, value: unknown): unknown => {
@@ -116,12 +118,12 @@ export function createSizeOf(): SizeOf {
     };
 
     // The kind of a value the measure does not know: its tag's name, `Error` of `[object Error]`; its type for a primitive.
-    // At most 64 characters: a tag is guest code's to choose (Symbol.toStringTag), and a sender's message names it.
+    // At most KIND_MAX_LENGTH characters: a tag is guest code's to choose (Symbol.toStringTag), and a sender's message names it.
     const kindOf = (value: unknown): string => {
         if (typeof value !== 'object' || value === null) return typeof value;
         try {
             const tag = apply(toTag, value, []) as string;
-            return apply(slice, tag, [8, tag.length - 1 < 72 ? tag.length - 1 : 72]) as string;
+            return apply(slice, tag, [8, tag.length - 1 < 8 + KIND_MAX_LENGTH ? tag.length - 1 : 8 + KIND_MAX_LENGTH]) as string;
         } catch {
             return 'object';
         }

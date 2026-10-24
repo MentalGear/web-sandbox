@@ -225,8 +225,8 @@ const SAFE_HEADERS = ['accept', 'accept-language', 'content-language', 'content-
 // Names an embedder cannot add: the browser forbids them in fetch, or they carry host-page authority.
 const FORBIDDEN_HEADER = /^(accept-charset|accept-encoding|access-control-request-headers|access-control-request-method|connection|content-length|cookie|cookie2|date|dnt|expect|host|keep-alive|origin|referer|set-cookie|te|trailer|transfer-encoding|upgrade|via|proxy-.*|sec-.*)$/;
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]{1,64}$/;
-const MAX_HEADERS = 64;
-const MAX_HEADER_VALUE = 8192;
+export const MAX_HEADERS = 64;
+export const MAX_HEADER_VALUE = 8192;
 // The longest URL the bridge takes, as the guest wrote it and as parsed (percent-encoding can make the parsed one
 // longer): past it a request is refused. A record reports the whole URL, so it is never longer than this either (R3:M-4:
 // a valid request's URL is never reported cut).

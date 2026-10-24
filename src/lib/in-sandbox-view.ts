@@ -9,6 +9,7 @@ import { TRUSTED_TYPES_POLICY } from './trusted-types';
 import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
 import { UNCAUGHT_CHARACTERS_PER_SECOND } from './egress';
 import { KIND_DIRECTIVES } from './csp/csp-generator';
+import { VIOLATION_DIRECTIVES } from './violation';
 
 /**
  * Strict mode's view and worker prelude (ADR-005).
@@ -1275,6 +1276,8 @@ export interface ViewOptions {
     /** VIEW_MAX_DISTINCT_URLS */
     maxDistinctUrls: number;
     violationLimit: number;
+    /** VIOLATION_DIRECTIVES: the directive names counted apart; every other name shares one count (violationBucket, violation.ts). */
+    violationDirectives: readonly string[];
     /** VIOLATION_MAX_STRING: the longest string of a violation report the view posts. */
     violationMaxString: number;
     events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
@@ -1345,7 +1348,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // (VIOLATION_EVENT_LIMIT each; the host keeps the same buckets, AR:C4): the view's reports include
     // refusals of the guest's own rendered markup, so one shared cap would let a guest that rendered 100 refused
     // images hide a later script-src-attr report. The directive is the browser's, so the buckets are the
-    // browser's directive names; past 32 distinct names everything shares one more bucket.
+    // browser's directive names, the ones of options.violationDirectives (VIOLATION_DIRECTIVES, which the host counts by
+    // too: violationBucket, violation.ts) and one more bucket for every other name (BD3:LIM-3).
     // The renderer's own refusals go through the same counts (R4:M-2): a URL the view's policy refuses is
     // dropped before insertion, so the browser never processes it, and reported here as the browser would report it (its
     // directive, and the URL without credentials or fragment), within the same per-directive cap.
@@ -1357,7 +1361,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const violationCounts = new Map<string, number>();
     const reportViolation = (directive: unknown, blockedURI: unknown, sourceFile?: unknown, lineNumber?: unknown, columnNumber?: unknown) => {
         const name = String(cutText(directive, options.violationMaxString));
-        const bucket = violationCounts.has(name) || violationCounts.size < 32 ? name : '';
+        const bucket = options.violationDirectives.indexOf(name) >= 0 ? name : '';
         const count = violationCounts.get(bucket) || 0;
         if (count >= options.violationLimit) return;
         violationCounts.set(bucket, count + 1);
@@ -2936,6 +2940,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     overrunWindow: VIEW_OVERRUN_WINDOW_MS,
     maxDistinctUrls: VIEW_MAX_DISTINCT_URLS,
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
+    violationDirectives: VIOLATION_DIRECTIVES,
     violationMaxString: 2048, // VIOLATION_MAX_STRING (violation.ts); a test keeps them equal
     events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,

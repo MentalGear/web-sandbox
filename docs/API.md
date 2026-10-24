@@ -1343,10 +1343,14 @@ in strict mode.
 | Bytes of guest calls per second, per environment (any one-second window; default of `callLimits.maxBytesPerSecond`) | 67108864 (64 MiB) | — |
 | Default call timeout (ms) | 30000 | — |
 | Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget on every engine that keeps the type; Chromium empties one of 65 536 characters or more) | 4096 | — |
+| Characters of the kind a message names when it refuses a value it does not know (a guest chooses the tag; the name is cut) | 64 | — |
+| Objects a log line is walked through to turn its errors into plain records (an error past it stays, and the measure names it as unsupported) | 10000 | — |
+| Levels of that walk | 64 | — |
 | Characters of a method name | 256 | — |
 | Characters of an error message a call carries | 65536 | — |
 | Guest log lines per second, per environment | 1000 | `LOG_EVENTS_PER_SECOND` |
 | Guest log lines kept until the guest is connected | 1000 (and 4 MiB) | — |
+| Library lines (`own`: its Ready line and the relay's warnings) the host dispatches outside the guest's log window, per environment; past it a marked line counts as the guest's | 4 | — |
 | Arguments kept per log line | 64 | `LOG_MAX_ARGS` |
 | Characters kept per string log argument | 65536 | `LOG_MAX_STRING` |
 | Bytes per log line, all arguments together | 1048576 (1 MiB) | — |
@@ -1383,8 +1387,11 @@ in strict mode.
 | Fetch: largest `timeoutMs` | 120000 | — |
 | Fetch: default `maxConcurrent` | 4 | — |
 | Fetch: largest `maxConcurrent` | 16 | — |
+| Fetch: headers of one `sandboxFetch()` request | 64 | — |
+| Fetch: characters of a request header value | 8192 | — |
 | Fetch: characters of a URL, as written and as parsed | 8192 | — |
 | Fetch: characters of a response's status text and headers, together | 262144 | — |
+| Pairs of objects `setConfig()` compares with the configuration the environment was built from (and 64 levels deep); past it the configurations count as different, which only costs a rebuild | 10000 | — |
 | Guest writes: requests per second, per environment | 100 | `GUEST_WRITES_PER_SECOND` |
 | Guest writes: bytes per second, per environment | 8388608 (8 MiB) | `GUEST_WRITE_BYTES_PER_SECOND` |
 <!-- generated:end -->

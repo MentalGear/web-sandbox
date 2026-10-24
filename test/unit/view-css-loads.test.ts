@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { cssLoadBound, inSandboxView, sanitizeRender, VIEW_OPTIONS, VIEW_URLS_PER_SECOND, viewBudget, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
+import { VIOLATION_DIRECTIVES, violationBucket } from '@src/lib/violation';
 import { scalingRatio, type ScalingSize } from './scaling';
 
 /**
@@ -441,8 +442,31 @@ describe('S73: the view prepays the CSS each operation applies, and a reported l
             listeners['securitypolicyviolation']!({ isTrusted: true, blockedURI, effectiveDirective: 'img-src' });
             return (globalThis as any).__calls.slice();
         };
-        return { send, loaded, violation, budget: () => (globalThis as any).__budget, close: () => { render.close(); view.port2.close(); logic.port2.close(); } };
+        // the reports the view posts to the host, by the directive they name (the host labels and counts them: host.ts)
+        const reported: string[] = [];
+        view.port2.onmessage = (event) => { if (event.data?.type === 'VIOLATION') reported.push(event.data.directive); };
+        const refused = async (directive: string, blockedURI: string) => {
+            listeners['securitypolicyviolation']!({ isTrusted: true, blockedURI, effectiveDirective: directive });
+            await new Promise(resolve => setTimeout(resolve, 0));
+        };
+        return { send, loaded, violation, refused, reported, budget: () => (globalThis as any).__budget, close: () => { render.close(); view.port2.close(); logic.port2.close(); } };
     }
+
+    it('the view caps its violation reports by the host\'s buckets: each known directive apart, every other name together (BD3:LIM-3)', async () => {
+        const { refused, reported, close } = await startView();
+        const limit = VIEW_OPTIONS.violationLimit;
+        for (let i = 0; i < limit + 5; i++) await refused('img-src', `https://a.example/${i}.png`);
+        await refused('script-src-attr', 'inline');
+        // unlisted names, each reported twice: one shared bucket, however many distinct names (the old rule kept 32 apart)
+        for (let name = 0; name < 150; name++) for (let again = 0; again < 2; again++) await refused(`made-up-${name}`, `https://a.example/${name}.png`);
+        close();
+        const count = (directive: string) => reported.filter(name => name === directive).length;
+        expect([count('img-src'), count('script-src-attr')]).toEqual([limit, 1]);
+        const other = reported.filter(name => !VIOLATION_DIRECTIVES.includes(name));
+        expect(other, 'unlisted names share the cap of one bucket').toHaveLength(limit);
+        // and the host's bucket of those names is one too
+        expect(new Set(other.map(violationBucket))).toEqual(new Set(['*']));
+    });
 
     it('what each operation can add CSS with is prepaid: style attributes, <style> texts, text() and a render into a <style>', async () => {
         const { send, close } = await startView();

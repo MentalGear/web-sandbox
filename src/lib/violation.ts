@@ -79,6 +79,13 @@ export const VIOLATION_DIRECTIVES: readonly string[] = [
 ];
 
 /**
+ * The count a strict view's report is kept under: its directive when it is a known one, else `'*'`. The host counts by
+ * it (host.ts, _dispatchViolation); the view counts by the same partition (VIEW_OPTIONS.violationDirectives is
+ * VIOLATION_DIRECTIVES), so the two cap the same reports (BD3:LIM-3).
+ */
+export const violationBucket = (directive: string): string => (VIOLATION_DIRECTIVES.includes(directive) ? directive : '*');
+
+/**
  * The `sourceFile` of a report of the request gate (in-sandbox-script.ts): a request of the guest's realm that the gate
  * refused, before the browser saw it. Not a URL, so no report of the browser's carries it.
  */
