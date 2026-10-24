@@ -626,9 +626,8 @@ interface StrictInit {
     allowAnimations: boolean;
     allowAutoplay: boolean;
     // The origins the view's policy admits for the loads its markup makes, by kind key (R4:M-2): the
-    // renderer drops an http(s) URL outside them, so the browser never processes a refusal. And `withoutCors`: the
-    // origins the view loads without CORS (origins.withoutCors).
-    origins: { images: readonly string[]; media: readonly string[]; withoutCors: readonly string[] };
+    // renderer drops an http(s) URL outside them, so the browser never processes a refusal.
+    origins: { images: readonly string[]; media: readonly string[] };
 }
 
 // The warning for a registered stylesheet strict mode's view gets without its network URLs, or not at all (files.ts,
@@ -2228,7 +2227,7 @@ export class WebSandbox extends ElementBase {
         const policy = this._guestPolicy(files, reach.origins);
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (BR:ST4)
         // never a type that opens as a document (BR:ST1); stylesheets without a network URL (S74, files.ts viewStylesheets)
-        const viewFiles = viewStylesheets(files.filter(candidate => isViewFileType(candidate[1])), reach.origins.withoutCors);
+        const viewFiles = viewStylesheets(files.filter(candidate => isViewFileType(candidate[1])));
         for (const drop of viewFiles.dropped) this._warnOnce(viewStylesheetWarning(drop.path, drop.urls, drop.unreadable));
         const strictInit: StrictInit = {
             workerSource: this._getStrictWorkerSource(files, entrySource, marker, this._gateConnect(files, reach.origins)),
@@ -2238,7 +2237,7 @@ export class WebSandbox extends ElementBase {
             autoResize: this._autoResizeEnabled(),
             allowAnimations: this._config.allowAnimations === true,
             allowAutoplay: this._config.allowAutoplay === true,
-            origins: { images: [...this._origins.images], media: [...this._origins.media], withoutCors: [...this._origins.withoutCors] },
+            origins: { images: [...this._origins.images], media: [...this._origins.media] },
         };
         const view = buildViewDocument(policy, viewBootstrapText());
 

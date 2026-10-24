@@ -22,8 +22,9 @@
  * @remarks
  * A report is evidence that the guest attempted something the policy refused, never a host fact: guest code can suppress
  * its own reports, and a frame the guest creates reports to itself. A `fetch()`, `XMLHttpRequest` or `WebSocket` request
- * of the guest's realm to an origin `origins.connect` does not list is refused by the library's request gate before the
- * browser sees it, and reported by the gate in every mode and on every engine, with the same fields: `directive`
+ * of the guest's realm to an origin `origins.connect` does not list (in strict mode, any `WebSocket`) is refused by the
+ * library's request gate before the browser sees it, and reported by the gate in every mode and on every engine, with
+ * the same fields: `directive`
  * `'connect-src'`, `blockedURI` the URL without credentials or fragment, `sourceFile` `'web-sandbox:request-gate'`, no
  * line or column (in strict mode `source` `'logic'`). Reports the browser raises itself depend on the engine in workers
  * (WebKit raises none there), so what remains of them there, such as a redirect the browser refuses, is per engine. At
