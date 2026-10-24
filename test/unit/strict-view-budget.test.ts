@@ -80,6 +80,17 @@ describe("N-2 (class G): the strict prelude's error listener reads the event onl
         expect(lines).toEqual([['Uncaught Error: thrown']]);
     });
 
+    it("a muted error is both conditions (BD3:TST-6): 'Script error.' with an error object, or an error object-less one with another text, is cancelled and logged, not left to the view", () => {
+        const { onError, lines } = start();
+        const withObject = trusted(new ErrorEvent('error', { message: 'Script error.', error: new Error('x'), cancelable: true }));
+        onError(withObject);
+        expect(withObject.defaultPrevented).toBe(true);
+        const noObject = trusted(new ErrorEvent('error', { message: 'Error: other', error: null, cancelable: true }));
+        onError(noObject);
+        expect(noObject.defaultPrevented).toBe(true);
+        expect(lines).toHaveLength(2);
+    });
+
     it("positive control: a muted error (WebKit's, no error object and 'Script error.') is left to the view; any other is cancelled", () => {
         const { onError, lines } = start();
         const muted = trusted(new ErrorEvent('error', { message: 'Script error.', error: null, cancelable: true }));

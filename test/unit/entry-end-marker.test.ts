@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { inStrictWorker, VIEW_OPTIONS, viewBootstrapSource } from '@src/lib/in-sandbox-view';
 import { UNCAUGHT_CHARACTERS_PER_SECOND } from '@src/lib/egress';
 import { runBootstrap } from './sandbox-environment';
@@ -117,6 +117,28 @@ describe("S75: the view tells the entry's errors from later ones by the marker e
             expect(await pastBudget()).toBe(1);
             expect((await verdicts()).map(line => line.length)).toEqual(['GUEST_UNCAUGHT '.length + 2048]);
             close();
+        });
+
+        it('the budget is per sliding second (BD3:TST-6): the same text a second and a half later fits again, and a trickle never ends the sandbox', async () => {
+            let clock = 1000;
+            const now = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+            try {
+                const { raise, pastBudget, close } = startView();
+                raise(`Error: ${MARKER}`);
+                raise('x'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND - 1));
+                clock += 1500;
+                raise('y'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND - 1));
+                expect(await pastBudget()).toBe(0);
+                // a trickle: many windows, each far under the budget, whose total is far past it
+                for (let second = 0; second < 8; second++) {
+                    clock += 1100;
+                    raise('t'.repeat(UNCAUGHT_CHARACTERS_PER_SECOND / 2));
+                }
+                expect(await pastBudget()).toBe(0);
+                close();
+            } finally {
+                now.mockRestore();
+            }
         });
 
         it("the entry's own errors are not counted: they end the sandbox", async () => {
