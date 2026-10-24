@@ -1670,9 +1670,17 @@ reads nothing):
 - **What it costs your page**: a console error for the refused port in some engines whatever your policy says (the table
   below says which), one more line when a policy of yours refuses the decoy, and one report to that policy's
   `report-uri`, if it has one. No request reaches the network and no name is looked up. The first such build waits for
-  it, a few tens of milliseconds (it settles 50 ms after the decoy; at most 2 s if the frame never loads, then the policy
-  is unknown, the element says so once, and nothing is narrowed). A page that does not want the errors and reports
-  passes the policy, or `false`.
+  it, a few tens of milliseconds (it settles 50 ms after the decoy; at most 2 s if the frame stays in the page and never
+  loads, then the policy is unknown, the element says so once, and nothing is narrowed by the library). A page that does
+  not want the errors and reports passes the policy, or `false`.
+- **When your page moves or removes the element that reads**: the frame is in the shadow root of the first element
+  that asked, and other sandboxes' builds wait on the same read. A read whose frame left the page (that element moved
+  by a keyed reorder, removed by an unmount, or adopted elsewhere) is no answer, and nothing of it is kept: the read
+  starts again at once, in a new frame, in another waiting sandbox still in the page. A build that waited and still has
+  no answer (no waiting sandbox left in the page, or four frames lost in a row) drops every `origins.connect` and
+  `fetchBridge.allow` entry, with a warning: its guest's requests are refused by the request gate and its
+  `sandboxFetch()` with `FETCH_NOT_ALLOWED`. It never builds with the lists unnarrowed. `reset()` builds again and reads
+  again; passing `hostContentSecurityPolicy` avoids the read altogether.
 - **What it cannot see**: a policy that restricts only `ws:` and `wss:` (every `https:` host admitted), and a policy that
   appears after the read (a `<meta>` added later). Pass `hostContentSecurityPolicy` for them.
 

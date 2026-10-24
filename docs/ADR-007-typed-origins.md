@@ -68,7 +68,9 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['h
    and the bridge's policies are written, the same on every engine: the policy is the embedder's (`hostContentSecurityPolicy`)
    or read once per page by a deliberate violation that reaches neither the network nor the DNS, and a parser of
    `connect-src` alone keeps an origin only where every engine admits it (docs/API.md#your-connect-src). The parser
-   only narrows: a source it does not understand admits nothing, `'self'` among them.
+   only narrows: a source it does not understand admits nothing, `'self'` among them. The read's frame is a resource of
+   the page that other elements' builds wait on, so only a frame that stayed in the document answers; a build that
+   waited and got no answer narrows its lists to nothing, never leaves them as configured.
 
 ### The accepted grammar, and why
 
