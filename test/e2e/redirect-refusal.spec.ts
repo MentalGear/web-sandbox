@@ -67,7 +67,7 @@ test.describe('the worker\'s and the cooperative guest\'s requests', () => {
 });
 
 test.describe('the strict view\'s loads', () => {
-    test('an image, a CSS background and an image set named through a listed origin that redirects to an unlisted one reach nothing there; one that redirects to the listed origin loads', async ({ sandbox }) => {
+    test('an image and an image set named through a listed origin that redirects to an unlisted one reach nothing there; one that redirects to the listed origin loads; a CSS background naming it is dropped before any load', async ({ sandbox }) => {
         const redirect = (to: string) => `${recorder.allowed}/redirect?to=${encodeURIComponent(to)}`;
         await sandbox.registerFiles({
             'main.js': `sandboxView.render(${JSON.stringify(
@@ -81,10 +81,13 @@ test.describe('the strict view\'s loads', () => {
         expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', origins: { images: [recorder.allowed], media: [recorder.allowed] } })).toBe('ready');
         // the first hops are admitted and arrive; the positive control's second hop arrives too
         await recorder.waitFor('allowed', '/v-followed.svg');
-        for (const name of ['v-img', 'v-srcset', 'v-css']) {
+        for (const name of ['v-img', 'v-srcset']) {
             await expect.poll(() => recorder.paths('allowed').some(path => decodeURIComponent(path).includes(`${recorder.blocked}/${name}.svg`)), { message: `${name}: the first hop reached the listed origin` }).toBe(true);
         }
         await sandbox.page.waitForTimeout(800);
         expect(recorder.paths('blocked')).toEqual([]);
+        // the renderer drops every network URL in guest CSS in strict mode (no engine can make a CSS load cookie-free,
+        // research 21), so the CSS background requests nothing, not even its first hop
+        expect(recorder.paths('allowed').filter(path => decodeURIComponent(path).includes('/v-css.svg'))).toEqual([]);
     });
 });

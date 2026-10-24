@@ -296,8 +296,9 @@ test('strict mode: the worker sees only its own blob: URL; no request from the w
     expect(revealsHostUrl(worker)).toBe(false);
 
     // rendered markup asking for a referrer every way it can: attribute, <meta> before the image, a nested
-    // frame with its own <meta>, CSS, and a link with ping (the renderer removes or neutralises each)
-    const kinds = ['default', 'attr', 'meta', 'css', 'frame'];
+    // frame with its own <meta>, CSS, and a link with ping (the renderer removes or neutralises each; a network URL in
+    // CSS is dropped before it loads, research 21)
+    const kinds = ['default', 'attr', 'meta', 'frame'];
     const markup = (site: string, origin: string) => [
         `<img src="${origin}/r?id=${prefix}-default-${site}">`,
         `<img referrerpolicy="unsafe-url" src="${origin}/r?id=${prefix}-attr-${site}">`,
@@ -310,8 +311,8 @@ test('strict mode: the worker sees only its own blob: URL; no request from the w
     const expected = ['cross'].flatMap(site => [...kinds.filter(k => k !== 'frame').map(k => `${prefix}-${k}-${site}`), `${prefix}-fetch-${site}`]);
     const seen = await referers(expected);
     await sandbox.page.waitForTimeout(500);
-    // the frame and the ping never exist (A1), so they never request anything
-    expect(hits.filter(h => /-(frame|ping|link)-/.test(h.id) && h.id.startsWith(prefix))).toEqual([]);
+    // the frame and the ping never exist (A1), and the CSS URL is dropped, so they never request anything
+    expect(hits.filter(h => /-(frame|ping|link|css)-/.test(h.id) && h.id.startsWith(prefix))).toEqual([]);
     expect(hits.filter(h => h.id.startsWith(prefix) && h.id.endsWith('-same')), 'nothing reached the same-site listener').toEqual([]);
     expect(Object.values(seen)).toEqual(expected.map(() => null));
     // no Origin header naming the host either: none on the images; 'null' (the opaque origin) on the worker's fetch
