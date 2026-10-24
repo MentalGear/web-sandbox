@@ -196,7 +196,7 @@ refused if it contains any, or anything that would end or re-enter the script el
   Attributes: the global ones, `data-*`, `aria-*`, and per element what it needs; never a handler, a form target, an
   invoker, or a URL attribute other than `src`, `srcset`, `poster` and the minted `link` `href`, which keep only `https:`,
   `http:`, a URL the view minted or a relative one (no `data:`, no `javascript:`; a `poster` no `https:` or `http:`).
-- **No load of the view carries credentials** (S74): every `img`, `video`, `audio` and `link` the renderer keeps gets
+- **No load of the view carries credentials** (S74; [research 21](research/21_crossorigin_loads/README.md)): every `img`, `video`, `audio` and `link` the renderer keeps gets
   `crossorigin="anonymous"` in the inert template, before it is connected, so its loads are CORS requests without
   cookies on every engine (a listed origin must answer with CORS; a failed load is reported); CSS keeps no `https:` or
   `http:` URL (style attributes, `<style>`, registered stylesheets), since no attribute reaches a load CSS makes.
