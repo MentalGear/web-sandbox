@@ -1104,8 +1104,9 @@ runs; in cooperative mode that needs `allow-scripts` (the policy always admits i
 | `console` relayed | every method ([`sandbox-log`](#sandbox-log--sandboxlog)) | every method | every method |
 
 Removed before guest code runs: `RTCPeerConnection` (and prefixed variants) in every mode. In strict and worker mode
-also `WebAssembly` unless `scriptUnsafe` (WebKit compiles it without `'wasm-unsafe-eval'`, so the policy alone does not
-keep it out; cooperative mode keeps it, a frozen limit), and in strict mode `URL.createObjectURL`. In strict mode the view document
+also `WebAssembly` unless `scriptUnsafe` (WebKit compiles it without `'wasm-unsafe-eval'` but refuses to instantiate it, so
+nothing runs there either; deleting it keeps WebKit's compiler away from guest bytes, [research 24](research/24_sealed_mode/README.md);
+cooperative mode keeps it, a frozen limit), and in strict mode `URL.createObjectURL`. In strict mode the view document
 runs no guest code at all, and acts only on trusted events: a synthetic event is never forwarded to `sandboxView.on`.
 
 **The worker's globals are an allowlist** (worker and strict mode): before anything else runs in it, the worker keeps
