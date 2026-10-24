@@ -3,7 +3,7 @@
  * table of docs/API.md and docs/THREAT-MODEL.md and the sentence of the README. The warning of `origins` reads the same
  * table, so the wording is one.
  */
-import { COOKIE_ENGINES, COOKIE_ENGINE_FACTS, cookieSentence, sameSiteValues, type CookieEngineFacts } from '../../../src/lib/cookie-facts';
+import { COOKIE_CARRIERS, COOKIE_CARRIER_IDS, COOKIE_ENGINES, COOKIE_ENGINE_FACTS, cookieSentence, sameSiteValues, type CookieEngineFacts } from '../../../src/lib/cookie-facts';
 import { signatureOf } from '../engine';
 import { code, row, table, type Extractor } from './markdown';
 
@@ -23,13 +23,24 @@ const factsTable = () => table(
     }),
 );
 
+const carriersTable = () => table(
+    ['Request', 'Where', 'Why the library cannot strip it'],
+    COOKIE_CARRIER_IDS.map(id => {
+        const carrier = COOKIE_CARRIERS[id];
+        return row([carrier.request, carrier.modes === 'every mode' ? 'every mode' : 'cooperative mode only', carrier.unsentBy.length === 0 ? carrier.why : `${carrier.why} (${carrier.unsentBy.map(engine => facts(engine).name).join(', ')} sends none)`]);
+    }),
+);
+
 export const cookieFacts: Extractor = {
     items: () => [
         // the values per engine and reach, and whether the engine honours the attribute: prose that states them follows these
         { id: 'cookie-facts', signature: signatureOf(COOKIE_ENGINES.map(engine => [engine, facts(engine).credentialless, facts(engine).sends, facts(engine).protectedBy?.sends ?? null])), render: () => '' },
+        // the requests that carry them
+        { id: 'cookie-carriers', signature: signatureOf(COOKIE_CARRIER_IDS.map(id => [id, COOKIE_CARRIERS[id].modes, COOKIE_CARRIERS[id].unsentBy])), render: () => '' },
     ],
     regions: {
         'cookie-facts': factsTable,
+        'cookie-carriers': carriersTable,
         'cookie-sentence': () => cookieSentence(code),
     },
 };

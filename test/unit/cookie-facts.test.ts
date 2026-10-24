@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { COOKIE_ENGINE_FACTS, COOKIE_ENGINES, cookieSentence, engineClause, engineClauses, SAME_SITE_VALUES, sameSiteCookieClause, sameSiteValues } from '@src/lib/cookie-facts';
+import { carrierClause, COOKIE_CARRIER_IDS, COOKIE_CARRIERS, COOKIE_ENGINE_FACTS, COOKIE_ENGINES, cookieSentence, engineClause, engineClauses, SAME_SITE_VALUES, sameSiteCookieClause, sameSiteValues, withCode } from '@src/lib/cookie-facts';
 import { normaliseConfig } from '@src/lib/config-schema';
 import { CONTEXT_ENGINES } from '@src/lib/inherited-context';
 
@@ -44,6 +44,31 @@ describe('COOKIE_ENGINE_FACTS', () => {
         expect(COOKIE_ENGINES.filter(engine => COOKIE_ENGINE_FACTS[engine].credentialless)).toEqual(['chromium']);
         expect(COOKIE_ENGINE_FACTS.firefox.sends).toEqual({ sameSite: ['None'], crossSite: ['None'] });
         expect(COOKIE_ENGINE_FACTS.webkit.sends).toEqual({ sameSite: ['None', 'Lax', 'Strict'], crossSite: ['None'] });
+    });
+});
+
+describe('COOKIE_CARRIERS: the requests the library cannot strip (BD3:DOC-1)', () => {
+    it('names the requests of every mode, and the four that only cooperative mode has, which the gate does not cover', () => {
+        expect(COOKIE_CARRIER_IDS.filter(id => COOKIE_CARRIERS[id].modes === 'every mode')).toEqual(['websocket', 'markup']);
+        expect(COOKIE_CARRIER_IDS.filter(id => COOKIE_CARRIERS[id].modes === 'cooperative mode')).toEqual(['beacon', 'eventsource', 'ping', 'frames']);
+    });
+
+    it('each row is said, and the spec that makes it exists (a cooperative-mode row\'s reads the table)', () => {
+        for (const id of COOKIE_CARRIER_IDS) {
+            const carrier = COOKIE_CARRIERS[id];
+            for (const text of [carrier.request, carrier.short, carrier.why]) expect(text, id).not.toBe('');
+            for (const engine of carrier.unsentBy) expect(COOKIE_ENGINES, `${id} ${engine}`).toContain(engine);
+            const spec = readFileSync(path.join(root, carrier.test), 'utf8');
+            if (carrier.modes === 'cooperative mode') expect(spec, `${id}: its spec makes the request from the table`).toContain('COOKIE_CARRIERS');
+        }
+    });
+
+    it('the README\'s sentence names every carrier, in every engine\'s sentence', () => {
+        const tick = (text: string) => `\`${text}\``;
+        const sentence = cookieSentence(tick);
+        expect(sentence).toContain(carrierClause(tick));
+        for (const id of COOKIE_CARRIER_IDS) expect(sentence, id).toContain(withCode(COOKIE_CARRIERS[id].short, tick));
+        expect(carrierClause()).toBe("a WebSocket handshake, or a load of the guest's markup or CSS; in cooperative mode also navigator.sendBeacon(), EventSource with withCredentials, an <a ping> click and the requests of a frame the guest creates");
     });
 });
 

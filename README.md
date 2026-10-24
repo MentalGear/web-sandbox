@@ -672,7 +672,8 @@ What remains for the default:
     code. The view's reports are complete and unforgeable up to the cap.
 *   **A worker that closes itself** is noticed only by the watchdog; **memory** is not bounded.
 *   **Cookies**: `fetch()` and `XMLHttpRequest` send none, on any engine. The sandbox's frame is credentialless, which
-    only some engines honour, for the rest: a WebSocket handshake (a listed `wss://` server must check `Origin`) and the
+    only some engines honour, for the rest: a WebSocket handshake (a listed `wss://` server must check `Origin`), in cooperative
+    mode also `sendBeacon()`, `EventSource`, an `<a ping>` click and a nested frame's requests, and the
     loads of rendered markup and CSS. Every mode drops an `origins`
     entry on the host page's site from every kind, with a warning. The site is the browser's registrable domain of the
     page's host (`example.com` for `app.example.com`), so a sibling subdomain is on it. A loopback, private or link-local
@@ -680,7 +681,7 @@ What remains for the default:
     an API that knows the user: it sends no credentials. What the engines would send ([the table](docs/API.md#cookies-by-engine)):
 
 <!-- generated:begin cookie-sentence -->
-`fetch()` and `XMLHttpRequest` of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (a WebSocket handshake, or a load of the guest's markup or CSS) to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine.
+`fetch()` and `XMLHttpRequest` of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (a WebSocket handshake, or a load of the guest's markup or CSS; in cooperative mode also `navigator.sendBeacon()`, `EventSource` with `withCredentials`, an `<a ping>` click and the requests of a frame the guest creates) to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine.
 <!-- generated:end -->
 
 ### Cooperative-mode limits
@@ -698,6 +699,11 @@ the default. Measured per engine and asserted by tests; worker mode shares the r
 *   **A worker the guest creates** (from the guest document or a frame it creates): in Firefox its `EventSource` and
     `FontFace` pass the policy.
 *   **WebKit's preconnect**: `<link rel=preconnect>` opens a connection to any origin.
+*   **Requests the gate does not cover** carry the browser's cookies where the engine sends them: `navigator.sendBeacon()`,
+    `new EventSource(url, { withCredentials: true })`, an `<a ping>` click (a POST; Firefox sends none) and the requests of
+    a frame or worker the guest creates (their own `fetch()` with `credentials: 'include'`). The request gate covers
+    `fetch()`, `XMLHttpRequest` and `WebSocket` only. [The table](docs/API.md#cookie-carriers) lists them, and
+    [the cookies by engine](docs/API.md#cookies-by-engine) say what each engine sends.
 *   **Focus and the clipboard**: guest code takes focus from the host page (Chromium, Firefox) and, in a user's click,
     writes the clipboard (`writeText()` in Firefox and, in the click's own handler, WebKit; `execCommand('copy')` in
     Chromium and Firefox).

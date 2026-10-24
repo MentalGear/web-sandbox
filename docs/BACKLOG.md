@@ -91,6 +91,9 @@ applies in strict mode, the default; worker mode shares only the reports item.
 - a worker the guest creates (from its document or a frame it creates): Firefox sends its `EventSource` and loads its
   `FontFace` past the policy (S43);
 - WebKit opens a connection for `<link rel=preconnect>` (S35);
+- requests the gate does not cover carry the browser's cookies where the engine sends them: `sendBeacon()`, `EventSource`
+  with `withCredentials`, an `<a ping>` click (Firefox sends none) and the requests of a frame the guest creates
+  (BD3:DOC-1; the table is `COOKIE_CARRIERS`, `src/lib/cookie-facts.ts`);
 - focus (Chromium, Firefox) and, in a user's click, the clipboard (`writeText()` in Firefox and, in the click's own
   handler, WebKit; `execCommand('copy')` in Chromium and Firefox) (S36);
 - messages to the host window; embedders check `event.source` (S36);

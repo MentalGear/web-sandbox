@@ -214,8 +214,8 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   only resolves to a private address, and is not private by convention, is not recognised.
 
 <a id="cookies-by-engine"></a>
-The cookies the browser would send with a request of the sandbox that the library cannot strip, by engine: a WebSocket
-handshake, and a load of the guest's markup or CSS (`fetch()` and `XMLHttpRequest` carry none; this is why an origin on
+The cookies the browser would send with a request of the sandbox that the library cannot strip, by engine, for the
+requests [listed below the table](#cookie-carriers) (`fetch()` and `XMLHttpRequest` carry none; this is why an origin on
 the host page's site is dropped; the warning is written from the same table; every wrapper frame is `credentialless`,
 which only some engines honour):
 
@@ -225,6 +225,22 @@ which only some engines honour):
 | Chromium (the sandbox's frame is credentialless) | none | none | — | test/e2e/cookies.spec.ts: a listener of the same site and one of another, fetch with credentials, a no-cors POST and an image, in every mode; the same requests from a frame without the attribute carry the cookie |
 | Firefox | `SameSite=None` | `SameSite=None` | Total Cookie Protection, Firefox's default: none to the host page's site, none to another | S74 board, 2026-10-21, Playwright's Firefox (cookieBehavior 4): a SameSite=None cookie in every mode, Lax and Strict none; with cookieBehavior 5 none. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23 |
 | WebKit | `SameSite=None, Lax and Strict` | `SameSite=None` | Safari, which blocks third-party cookies (not measured): `SameSite=None, Lax and Strict` to the host page's site, none to another | S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23 |
+<!-- generated:end -->
+
+<a id="cookie-carriers"></a>
+The requests that carry them. The library's [request gate](#the-request-gate) covers the guest's `fetch()`,
+`XMLHttpRequest` and `WebSocket`; every other maker of a request is the browser's, and in cooperative mode the guest
+has all of them. Each row is made on every engine by `test/e2e/cookies.spec.ts`:
+
+<!-- generated:begin cookie-carriers -->
+| Request | Where | Why the library cannot strip it |
+| :--- | :--- | :--- |
+| A WebSocket handshake | every mode | The browser makes the handshake and attaches the cookies by site; the gate can refuse it, not strip it, so a server behind a listed `wss://` origin must check `Origin` |
+| A load of the guest's markup or CSS (an image, a stylesheet, a font, media) | every mode | The engine makes the load for the document that holds it |
+| A `navigator.sendBeacon(url, data)` call | cooperative mode only | A credentialed POST. The gate covers `fetch()`, `XMLHttpRequest` and `WebSocket`; this maker is not among them, and the strict and worker-mode worker has none |
+| An `EventSource` made with `{ withCredentials: true }` | cooperative mode only | The guest chooses `withCredentials`; the gate does not cover `EventSource`, and the strict and worker-mode worker has none |
+| An `<a ping>` click | cooperative mode only | A POST made by the browser when the link is followed; Firefox sends no ping by default (Firefox sends none) |
+| A request of a frame or worker the guest creates (its own `fetch()` with `credentials: 'include'`) | cooperative mode only | A realm of its own with the platform's `fetch`: a limit of cooperative mode (S44) |
 <!-- generated:end -->
 
 - **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used, and
@@ -1297,7 +1313,7 @@ CSS within what the policy allows, the worker's own `violation` reports beyond t
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;
-focus and the clipboard; messages to the host window; the user's link actions and modifier clicks the guest's script
+requests the gate does not cover (`sendBeacon()`, `EventSource`, `<a ping>`: [their cookies](#cookie-carriers)); focus and the clipboard; messages to the host window; the user's link actions and modifier clicks the guest's script
 synthesizes (a new top-level tab without `allow-popups`; with `allow-forms`, Chromium submits a form that way past
 `form-action`); session history; guest-only stalls; forgeable reports; the host page's URL and origin; the host page's
 Trusted Types requirement. Each is described in the
