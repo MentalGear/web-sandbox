@@ -3343,6 +3343,33 @@
         },
         {
           "kind": "Variable",
+          "canonicalReference": "web-sandbox!VIEW_INPUT_IN_FLIGHT:var",
+          "docComment": "/**\n * The most batches of the view's events the worker has not acknowledged yet (research 23). The worker's prelude answers\n * each batch with VIEW_EVENT_ACK once the handlers it dispatched to have returned, and the view sends the continuous\n * events it coalesced (VIEW_CONTINUOUS_EVENT_TYPES) only while fewer than this many are unacknowledged: a guest whose\n * handler blocks gets the latest state when it returns, and neither the worker's queue nor the host page's thread grows\n * with a stuck guest. A discrete event is posted at once, whatever is in flight: it is bounded by the user's own input.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "VIEW_INPUT_IN_FLIGHT = "
+            },
+            {
+              "kind": "Content",
+              "text": "1"
+            }
+          ],
+          "fileUrlPath": "dist/lib/in-sandbox-view.d.ts",
+          "initializerTokenRange": {
+            "startIndex": 1,
+            "endIndex": 2
+          },
+          "isReadonly": true,
+          "releaseTag": "Public",
+          "name": "VIEW_INPUT_IN_FLIGHT",
+          "variableTypeTokenRange": {
+            "startIndex": 0,
+            "endIndex": 0
+          }
+        },
+        {
+          "kind": "Variable",
           "canonicalReference": "web-sandbox!VIEW_LIVENESS_TIMEOUT_MS:var",
           "docComment": "/**\n * How long, in ms, strict mode's view may go without answering before the sandbox terminates (ADR-005). Always on,\n * independent of `watchdogTimeout`. Counted in host ticks, so a stall of the host page never counts (watchdog.ts).\n */\n",
           "excerptTokens": [
@@ -3393,6 +3420,52 @@
           "variableTypeTokenRange": {
             "startIndex": 0,
             "endIndex": 0
+          }
+        },
+        {
+          "kind": "Variable",
+          "canonicalReference": "web-sandbox!VIEW_SET_STYLE_LIMITS:var",
+          "docComment": "/**\n * Limits of one `sandboxView.set(id, { css })` (research 23): the properties it names, and the characters of each value\n * (and of a custom property's name). Past either, set() throws a `RangeError` in the guest.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "VIEW_SET_STYLE_LIMITS: "
+            },
+            {
+              "kind": "Content",
+              "text": "{\n    readonly maxProperties: 16;\n    readonly maxValue: 1024;\n}"
+            }
+          ],
+          "fileUrlPath": "dist/lib/in-sandbox-view.d.ts",
+          "isReadonly": true,
+          "releaseTag": "Public",
+          "name": "VIEW_SET_STYLE_LIMITS",
+          "variableTypeTokenRange": {
+            "startIndex": 1,
+            "endIndex": 2
+          }
+        },
+        {
+          "kind": "Variable",
+          "canonicalReference": "web-sandbox!VIEW_STYLE_PROPERTIES:var",
+          "docComment": "/**\n * The inline style properties `sandboxView.set(id, { css })` may set on an element (research 23): what a drag, a\n * gesture, a slider or a virtual list moves, and nothing else. `--*` stands for any custom property (`--` then letters,\n * digits, `-` and `_`). No `animation*` or `transition*` (`allowAnimations: false` holds), no property that names a URL\n * but `cursor` and the custom properties, whose loads are charged like a style attribute's (cssLoadBound).\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "VIEW_STYLE_PROPERTIES: "
+            },
+            {
+              "kind": "Content",
+              "text": "readonly ['transform', 'translate', 'rotate', 'scale', 'transform-origin', 'opacity', 'visibility', 'left', 'top', 'right', 'bottom', 'width', 'height', 'z-index', 'cursor', '--*']"
+            }
+          ],
+          "fileUrlPath": "dist/lib/in-sandbox-view.d.ts",
+          "isReadonly": true,
+          "releaseTag": "Public",
+          "name": "VIEW_STYLE_PROPERTIES",
+          "variableTypeTokenRange": {
+            "startIndex": 1,
+            "endIndex": 2
           }
         },
         {

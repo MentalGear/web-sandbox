@@ -570,7 +570,7 @@ describe('the view bootstrap: budgets (broad review ST2, ST3)', () => {
         (document.getElementById('big') as HTMLFormElement).requestSubmit();
         (document.getElementById('small') as HTMLFormElement).requestSubmit();
         await until(() => received.filter(m => m.type === 'VIEW_EVENT').length === 2);
-        const [big, small] = received.filter(m => m.type === 'VIEW_EVENT').map(m => m.detail);
+        const [big, small] = received.filter(m => m.type === 'VIEW_EVENT').map(m => m.details[0]);
         const chars = (d: any) => [d.target.tag, d.target.id, d.target.name, d.target.value, ...d.ids, ...d.form.flat()].join('').length;
         expect(chars(big)).toBe(VIEW_EVENT_LIMITS.maxTotal);
         expect(big.truncated).toBe(true);

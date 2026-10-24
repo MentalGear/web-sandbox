@@ -145,7 +145,7 @@ test('sandboxView.on validates its arguments; handlers registered before the por
     const r = await sandbox.inGuest(`
         const attempt = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
         return {
-            type: attempt(() => sandboxView.on('scroll', null, () => {})),
+            type: attempt(() => sandboxView.on('keyup', null, () => {})),
             id: attempt(() => sandboxView.on('click', 5, () => {})),
             empty: attempt(() => sandboxView.on('click', '', () => {})),
             handler: attempt(() => sandboxView.on('click', null, 'code')),

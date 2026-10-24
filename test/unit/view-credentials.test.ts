@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { cssLoadBound, inSandboxView, INERT_HREF, RENDER_ATTRIBUTES, RENDER_CROSSORIGIN_ELEMENTS, RENDER_ELEMENTS, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES, sanitizeRender, VIEW_OPTIONS, viewBudget, type RenderContext, type RenderSwitches, type ViewOptions } from '@src/lib/in-sandbox-view';
+import { cssLoadBound, inSandboxView, INERT_HREF, isStyleProperty, RENDER_ATTRIBUTES, RENDER_CROSSORIGIN_ELEMENTS, RENDER_ELEMENTS, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES, sanitizeRender, VIEW_OPTIONS, viewBudget, viewInputOutbox, type RenderContext, type RenderSwitches, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { cssReferences, dropNetworkCss, withoutNetworkReferences } from '@src/lib/css-references';
 import { FileStore, viewStylesheets, type FileSnapshotEntry } from '@src/lib/files';
@@ -305,7 +305,7 @@ describe('the view: what an operation puts into a <style>, and a load that fails
         document.body.replaceChildren();
     });
 
-    async function startView() {
+    async function startView(origins: Record<string, readonly string[]> = ORIGINS) {
         for (const name of GLOBALS) saved[name] = (globalThis as any)[name];
         const workers: { transfer: MessagePort[] }[] = [];
         (globalThis as any).Worker = class {
@@ -322,7 +322,7 @@ describe('the view: what an operation puts into a <style>, and a load that fails
             return add.call(this, type, listener, options);
         } as typeof window.addEventListener;
         try {
-            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)});`)();
+            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()});`)();
         } finally {
             window.addEventListener = add;
         }
@@ -330,7 +330,7 @@ describe('the view: what an operation puts into a <style>, and a load that fails
         const violations: [string, string][] = [];
         view.port2.onmessage = (event) => { if (event.data?.type === 'VIOLATION') violations.push([event.data.directive, event.data.blockedURI]); };
         const html = '<div id="a"></div><style id="s"></style><svg><style id="v"></style></svg>';
-        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html, allowAnimations: true, origins: ORIGINS }, source: window, ports: [logic.port1, view.port1] }));
+        window.dispatchEvent(new MessageEvent('message', { data: { type: 'INIT_VIEW', workerSource: 'void 0', viewFiles: [], html, allowAnimations: true, origins }, source: window, ports: [logic.port1, view.port1] }));
         const render = workers[0]!.transfer[1]!;
         let acks = 0;
         render.onmessage = (event) => { if (event.data?.type === 'VIEW_ACK') acks++; };
@@ -359,6 +359,19 @@ describe('the view: what an operation puts into a <style>, and a load that fails
         const style = document.getElementById('s')!;
         expect([style.children.length, style.textContent]).toEqual([0, 'xi { background: url("") }']);
         expect(violations).toEqual([['img-src', `${LISTED}/t.png`], ['style-src', `${LISTED}/i.css`], ['img-src', `${LISTED}/v.png`], ['img-src', `${LISTED}/r.png`]]);
+        close();
+    });
+
+    it('set({ css }): each value without network URLs, as a style attribute the renderer keeps; an origin of withoutCors stays', async () => {
+        const FREE = 'https://free.example';
+        const { send, violations, close } = await startView({ ...ORIGINS, images: [LISTED, FREE], withoutCors: [FREE] });
+        const style = () => document.getElementById('a')!.style;
+        await send({ type: 'VIEW_SET', id: 'a', css: { cursor: `url(${LISTED}/c.png), auto`, '--bg': `url("${LISTED}/b.png")`, '--e': `\\75 rl(${LISTED}/e.png)`, '--s': `image-set("${LISTED}/s.png" 1x)` } });
+        for (const name of ['cursor', '--bg', '--e', '--s']) expect(style().getPropertyValue(name)).not.toContain(LISTED);
+        expect(violations).toEqual([['img-src', `${LISTED}/c.png`], ['img-src', `${LISTED}/b.png`], ['img-src', `${LISTED}/e.png`], ['img-src', `${LISTED}/s.png`]]);
+        await send({ type: 'VIEW_SET', id: 'a', css: { cursor: `url(${FREE}/c.png), auto` } });
+        expect(style().getPropertyValue('cursor')).toContain(`${FREE}/c.png`);
+        expect(violations.length).toBe(4);
         close();
     });
 
