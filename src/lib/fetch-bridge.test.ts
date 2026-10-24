@@ -141,6 +141,36 @@ describe('validateRequest (backlog B5)', () => {
     });
 });
 
+describe('the header rules of a request (BD2:TST-7, class C)', () => {
+    // the names the platform forbids a script to set (the fetch spec's forbidden request-header names): a policy cannot list them, and a request cannot carry them
+    const FORBIDDEN = ['host', 'origin', 'referer', 'cookie', 'proxy-authorization', 'proxy-anything', 'sec-fetch-site', 'sec-ch-ua', 'content-length', 'connection', 'transfer-encoding', 'upgrade', 'via', 'te', 'date'];
+
+    it('a policy drops each forbidden name from its headers list, with a warning', () => {
+        for (const name of FORBIDDEN) {
+            const warnings: string[] = [];
+            const p = toFetchPolicy({ allow: ['https://api.example'], headers: [name, 'authorization'] }, message => warnings.push(message))!;
+            expect(p.headers, name).not.toContain(name);
+            expect(p.headers, name).toContain('authorization');
+            expect(warnings.some(message => message.includes('was dropped')), name).toBe(true);
+        }
+    });
+
+    it('a request is refused for each forbidden name, listed or not, in any letter case', () => {
+        for (const name of FORBIDDEN) {
+            expect(refusalCode(validateRequest({ url: 'https://api.example/', headers: [[name.toUpperCase(), 'x']] }, policy(), HOST)), name).toBe('FETCH_NOT_ALLOWED');
+            expect(refusalCode(validateRequest({ url: 'https://api.example/', headers: [[name, 'x']] }, policy({ headers: [name] }), HOST)), `${name}, listed`).toBe('FETCH_NOT_ALLOWED');
+        }
+    });
+
+    it('at most 64 headers: 64 pass, 65 are refused', () => {
+        const p = policy({ headers: ['x-a'] });
+        const pairs = (count: number): [string, string][] => Array.from({ length: count }, () => ['x-a', 'v']);
+        expect(refusalCode(validateRequest({ url: 'https://api.example/', headers: pairs(64) }, p, HOST))).toBe('accepted');
+        expect(refusalCode(validateRequest({ url: 'https://api.example/', headers: pairs(65) }, p, HOST))).toBe('FETCH_NOT_ALLOWED');
+        expect(refusalCode(validateRequest({ url: 'https://api.example/', headers: pairs(6400) }, p, HOST))).toBe('FETCH_NOT_ALLOWED');
+    });
+});
+
 describe('createFetchBridge (backlog B5)', () => {
     afterEach(() => vi.useRealTimers());
 
