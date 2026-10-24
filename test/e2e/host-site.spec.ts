@@ -130,7 +130,7 @@ async function mountIn(page: Page, variant: 'cookie-gate' | 'srcdoc' | 'blank-do
     await page.goto(`${APP}/host.html`);
     await page.waitForFunction(() => (window as any).__ready === true);
     const config = {
-        mode: 'strict', entry: 'main.js', scriptUnsafe: true,
+        mode: 'strict', entry: 'main.js', scriptUnsafe: true, hostContentSecurityPolicy: false,
         origins: { images: [API, APP, OTHER], connect: [API, API.replace('https://', 'wss://'), APP] },
         html: `<img src="${API}/probe?view-img"><img src="${APP}/probe?view-own"><img src="${OTHER}/probe?view-other">`,
     };

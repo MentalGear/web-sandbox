@@ -175,7 +175,8 @@ test.describe('strict mode (the default)', () => {
     });
 
     // docs/API.md#host-page-policy: the host page's connect-src narrows `origins.connect` and `fetchBridge.allow`, the same on
-    // every engine: the library applies the page's policy itself (host-csp.ts reads it once; host-connect.ts parses it), where the
+    // every engine: the library applies the page's policy itself (embed() passes it as hostContentSecurityPolicy, which
+    // host-connect.ts parses), where the
     // engines differ on what a `'self'` source admits in a sandboxed frame (CONNECT_ENGINE_FACTS). `'none'` and `'self'` both
     // refuse the listed origin.
     for (const value of ["'none'", "'self'"]) {

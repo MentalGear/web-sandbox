@@ -160,10 +160,9 @@ test.describe('host page policy', () => {
             await quiet(`${csp}, cooperative`);
 
             // strict: renders (the view's template sink) and the bridge's frame (a second srcdoc), with markup the host reads inert.
-            // (The bridge's origin would make the build read the page's policy: a deliberate violation with a console line of its
-            // own, whose cost is test/e2e/connect-uniform.spec.ts's; `hostContentSecurityPolicy: false` skips it.)
+            // (The page's policy is given, as docs/API.md#your-connect-src says, so the bridge keeps its origin.)
             await sandbox.registerFiles({ 'main.js': `let i = 0; const timer = setInterval(() => { sandboxView.render('<p id="r' + i + '">' + i + '</p>'); if (++i === ${RENDERS}) { clearInterval(timer); console.log('RENDERED'); } }, 20);` });
-            expect(await configure(sandbox, { entry: 'main.js', html: '<p>x</p><script>1</script>', fetchBridge: { allow: ['https://api.example'] }, hostContentSecurityPolicy: false }), csp).toEqual([{ type: 'ready', reason: null }]);
+            expect(await configure(sandbox, { entry: 'main.js', html: '<p>x</p><script>1</script>', fetchBridge: { allow: ['https://api.example'] }, hostContentSecurityPolicy: csp }), csp).toEqual([{ type: 'ready', reason: null }]);
             await sandbox.waitForLog('RENDERED');
             await waitInView(page, browserName, `!!document.getElementById('r${RENDERS - 1}')`);
             await quiet(`${csp}, strict`);
