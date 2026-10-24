@@ -10,11 +10,11 @@
  *
  * Data only, imported by tests and the docs.
  */
-import { EXECUTION_TIMEOUT_GRACE_MS, LOAD_TIMEOUT_MS, VIEW_LIVENESS_TIMEOUT_MS } from '../host';
+import { EXECUTION_TIMEOUT_GRACE_MS, LOAD_TIMEOUT_MS, SAME_DATA_MAX_PAIRS, VIEW_LIVENESS_TIMEOUT_MS } from '../host';
 import { AUTO_RESIZE_MAX_HEIGHT, AUTO_RESIZE_MAX_UPDATES_PER_SECOND } from './auto-resize';
 import { GUEST_CALL_BYTES_PER_SECOND, GUEST_CALLS_PER_SECOND } from './config-schema';
 import { UNCAUGHT_CHARACTERS_PER_SECOND, UNCAUGHT_PER_SECOND } from './egress';
-import { DEFAULT_FETCH_TIMEOUT_MS, DEFAULT_MAX_BYTES, DEFAULT_MAX_CONCURRENT, MAX_MAX_BYTES, MAX_MAX_CONCURRENT, MAX_TIMEOUT_MS, MAX_URL } from './fetch-bridge';
+import { DEFAULT_FETCH_TIMEOUT_MS, DEFAULT_MAX_BYTES, DEFAULT_MAX_CONCURRENT, MAX_HEADER_VALUE, MAX_HEADERS, MAX_MAX_BYTES, MAX_MAX_CONCURRENT, MAX_TIMEOUT_MS, MAX_URL } from './fetch-bridge';
 import { MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES } from './files';
 import { MAX_RESPONSE_HEAD } from './in-bridge-frame';
 import { GUEST_WRITE_BYTES_PER_SECOND, GUEST_WRITES_PER_SECOND } from './guest-writes';
@@ -24,7 +24,7 @@ import {
     VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH, VIEW_URLS_PER_SECOND,
 } from './in-sandbox-view';
 import { MAX_INBOUND_IN_FLIGHT, RPC_MAX_BYTES, RPC_MAX_INBOUND_BYTES } from './rpc';
-import { LOG_BYTES_PER_SECOND, LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_BYTES, LOG_MAX_STRING } from './sandbox-log';
+import { LOG_BYTES_PER_SECOND, LOG_EVENTS_PER_SECOND, LOG_MAX_ARGS, LOG_MAX_BYTES, LOG_MAX_STRING, LOG_OWN_LINES } from './sandbox-log';
 import { VIOLATION_EVENT_LIMIT, VIOLATION_MAX_STRING } from './violation';
 
 export type LimitUnit = 'count' | 'bytes' | 'characters' | 'ms' | 'px';
@@ -56,11 +56,15 @@ export const LIMITS = {
     GUEST_CALLS_PER_SECOND: { value: GUEST_CALLS_PER_SECOND, unit: 'count', label: 'Guest calls per second, per environment (any one-second window; default of `callLimits.maxPerSecond`)', enforced: "config-schema.ts, admitGuestCall: the host, and the guest's broker by the same rule", exported: false },
     GUEST_CALL_BYTES_PER_SECOND: { value: GUEST_CALL_BYTES_PER_SECOND, unit: 'bytes', label: 'Bytes of guest calls per second, per environment (any one-second window; default of `callLimits.maxBytesPerSecond`)', enforced: "config-schema.ts, admitGuestCall: the host, and the guest's broker by the same rule", exported: false },
     DEFAULT_TIMEOUT_MS: { value: 30000, unit: 'ms', label: 'Default call timeout (ms)', enforced: 'rpc.ts, createBroker, callWithTimeout', exported: false, mirror: ['src/lib/rpc.ts', 'DEFAULT_TIMEOUT_MS'] },
-    BLOB_TYPE_MAX_LENGTH: { value: 4096, unit: 'characters', label: "Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget, on every engine)", enforced: 'structured-size.ts, the byte measure, at both ends of a message and a log line', exported: false, mirror: ['src/lib/structured-size.ts', 'BLOB_TYPE_MAX_LENGTH'] },
+    BLOB_TYPE_MAX_LENGTH: { value: 4096, unit: 'characters', label: "Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget on every engine that keeps the type; Chromium empties one of 65 536 characters or more)", enforced: 'structured-size.ts, the byte measure, at both ends of a message and a log line', exported: false, mirror: ['src/lib/structured-size.ts', 'BLOB_TYPE_MAX_LENGTH'] },
+    KIND_MAX_LENGTH: { value: 64, unit: 'characters', label: 'Characters of the kind a message names when it refuses a value it does not know (a guest chooses the tag; the name is cut)', enforced: 'structured-size.ts, the byte measure; in-sandbox-script.ts, the console relay', exported: false, mirror: ['src/lib/structured-size.ts', 'KIND_MAX_LENGTH'] },
+    ERROR_WALK_NODES: { value: 10000, unit: 'count', label: "Objects a log line is walked through to turn its errors into plain records (an error past it stays, and the measure names it as unsupported)", enforced: 'in-sandbox-script.ts, the console relay, before the line is measured', exported: false, mirror: ['src/lib/in-sandbox-script.ts', 'ERROR_WALK_NODES'] },
+    ERROR_WALK_DEPTH: { value: 64, unit: 'count', label: 'Levels of that walk', enforced: 'in-sandbox-script.ts, the console relay, before the line is measured', exported: false, mirror: ['src/lib/in-sandbox-script.ts', 'ERROR_WALK_DEPTH'] },
     MAX_NAME_LENGTH: { value: 256, unit: 'characters', label: 'Characters of a method name', enforced: RPC, exported: false, mirror: ['src/lib/rpc.ts', 'MAX_NAME_LENGTH'] },
     MAX_TEXT_LENGTH: { value: 65536, unit: 'characters', label: 'Characters of an error message a call carries', enforced: RPC, exported: false, mirror: ['src/lib/rpc.ts', 'MAX_TEXT_LENGTH'] },
     LOG_EVENTS_PER_SECOND: { value: LOG_EVENTS_PER_SECOND, unit: 'count', label: 'Guest log lines per second, per environment', enforced: 'in-sandbox-script.ts, the console relay; host.ts, the log limiter, again on receipt', exported: true },
     LOG_BUFFER_LIMIT: { value: LOG_EVENTS_PER_SECOND, unit: 'count', label: 'Guest log lines kept until the guest is connected', note: 'and 4 MiB', enforced: 'in-sandbox-script.ts, the console relay, before the port is attached: one window of LOG_EVENTS_PER_SECOND lines and LOG_BYTES_PER_SECOND bytes', exported: false, mirror: ['src/lib/in-sandbox-script.ts', 'LOG_LINES_PER_SECOND'] },
+    LOG_OWN_LINES: { value: LOG_OWN_LINES, unit: 'count', label: "Library lines (`own`: its Ready line and the relay's warnings) the host dispatches outside the guest's log window, per environment; past it a marked line counts as the guest's", enforced: "sandbox-log.ts, the host: the lines the bootstrap marks `own` that are dispatched outside the guest's window; past it a marked line counts as the guest's", exported: false },
     LOG_MAX_ARGS: { value: LOG_MAX_ARGS, unit: 'count', label: 'Arguments kept per log line', enforced: RELAY, exported: true },
     LOG_MAX_STRING: { value: LOG_MAX_STRING, unit: 'characters', label: 'Characters kept per string log argument', enforced: RELAY, exported: true },
     LOG_MAX_BYTES: { value: LOG_MAX_BYTES, unit: 'bytes', label: 'Bytes per log line, all arguments together', enforced: RELAY, exported: false },
@@ -102,8 +106,11 @@ export const LIMITS = {
     MAX_TIMEOUT_MS: { value: MAX_TIMEOUT_MS, unit: 'ms', label: 'Fetch: largest `timeoutMs`', enforced: FETCH, exported: false },
     DEFAULT_MAX_CONCURRENT: { value: DEFAULT_MAX_CONCURRENT, unit: 'count', label: 'Fetch: default `maxConcurrent`', enforced: FETCH, exported: false },
     MAX_MAX_CONCURRENT: { value: MAX_MAX_CONCURRENT, unit: 'count', label: 'Fetch: largest `maxConcurrent`', enforced: FETCH, exported: false },
+    MAX_HEADERS: { value: MAX_HEADERS, unit: 'count', label: 'Fetch: headers of one `sandboxFetch()` request', enforced: 'fetch-bridge.ts, the request check', exported: false },
+    MAX_HEADER_VALUE: { value: MAX_HEADER_VALUE, unit: 'characters', label: 'Fetch: characters of a request header value', enforced: 'fetch-bridge.ts, the request check', exported: false },
     MAX_URL: { value: MAX_URL, unit: 'characters', label: 'Fetch: characters of a URL, as written and as parsed', enforced: 'fetch-bridge.ts, the request check', exported: false },
     MAX_RESPONSE_HEAD: { value: MAX_RESPONSE_HEAD, unit: 'characters', label: "Fetch: characters of a response's status text and headers, together", enforced: "in-bridge-frame.ts, the bridge's frame, before it posts the head", exported: false },
+    SAME_DATA_MAX_PAIRS: { value: SAME_DATA_MAX_PAIRS, unit: 'count', label: 'Pairs of objects `setConfig()` compares with the configuration the environment was built from (and 64 levels deep); past it the configurations count as different, which only costs a rebuild', enforced: 'host.ts, sameData: the comparison of a configuration with the one the environment was built from, which answers "changed" past it', exported: false },
     GUEST_WRITES_PER_SECOND: { value: GUEST_WRITES_PER_SECOND, unit: 'count', label: 'Guest writes: requests per second, per environment', enforced: 'guest-writes.ts, the host', exported: true },
     GUEST_WRITE_BYTES_PER_SECOND: { value: GUEST_WRITE_BYTES_PER_SECOND, unit: 'bytes', label: 'Guest writes: bytes per second, per environment', enforced: 'guest-writes.ts, the host', exported: true },
 } as const satisfies Record<string, LimitRow>;

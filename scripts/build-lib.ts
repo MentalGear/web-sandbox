@@ -7,7 +7,7 @@
  * minified consumer bundle.
  */
 import { join } from 'node:path';
-import { viewBootstrapText, viewScriptHash } from '../src/lib/in-sandbox-view';
+import { viewBootstrapHash, viewBootstrapText } from '../src/lib/in-sandbox-view';
 
 const root = join(import.meta.dir, '..');
 const bootstrap = viewBootstrapText(); // throws if the text could not be hashed as written (A3)
@@ -25,8 +25,8 @@ if (!result.success) {
 }
 // The bundle, imported here (it needs no DOM), hashes the very text built above.
 const built = await import(join(root, 'dist', 'index.js'));
-if (built.viewScriptHash() !== viewScriptHash()) {
-    console.error(`build-lib: dist/index.js hashes its view bootstrap as ${built.viewScriptHash()}, not ${viewScriptHash()}: the literal is missing`);
+if (built.viewScriptHash() !== viewBootstrapHash()) {
+    console.error(`build-lib: dist/index.js hashes its view bootstrap as ${built.viewScriptHash()}, not ${viewBootstrapHash()}: the literal is missing`);
     process.exit(1);
 }
-console.log(`build-lib: dist/index.js, view bootstrap ${viewScriptHash()} (${bootstrap.length} characters)`);
+console.log(`build-lib: dist/index.js, view bootstrap ${viewBootstrapHash()} (${bootstrap.length} characters)`);

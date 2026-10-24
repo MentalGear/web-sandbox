@@ -5,9 +5,9 @@
  * `test/unit/cookie-facts.test.ts` fails on a document that says what an engine sends outside a generated region.
  *
  * What a row says: the SameSite values of the cookies an engine attaches to a request of a sandbox document or its worker
- * that the library cannot strip (a WebSocket handshake; a load of the guest's markup or CSS: an image, a stylesheet, a
- * font, media; in cooperative mode also `EventSource` and `sendBeacon()`) to a listed origin on the host page's site
- * (`sameSite`) or on another site (`crossSite`). The wrapper iframe is `credentialless` (frame-documents.ts), which only
+ * that the library cannot strip (COOKIE_CARRIERS: a WebSocket handshake; a load of the guest's markup or CSS; in
+ * cooperative mode also `sendBeacon()`, `EventSource`, `<a ping>` and the requests of a frame the guest creates) to a listed origin on the host page's site
+ * (`sameSite`) or on another site (`crossSite`); COOKIE_CARRIERS lists those requests. The wrapper iframe is `credentialless` (frame-documents.ts), which only
  * Chromium honours. `fetch()` and `XMLHttpRequest` carry no cookie in any engine: the bootstrap's request gate sends
  * every fetch with `credentials: 'omit'` and keeps `withCredentials` false (in-sandbox-script.ts, S74). The fetch bridge
  * sends none either (`credentials: 'omit'`). Neither is in the table.
@@ -69,6 +69,87 @@ export const COOKIE_ENGINE_FACTS = {
 
 export type Reach = keyof CookieReach;
 
+/**
+ * The requests of a sandbox that carry the browser's cookies, because the library cannot strip them (BD3:DOC-1, class A):
+ * the request gate sends the guest's `fetch()` and `XMLHttpRequest` without credentials and refuses what it does not admit,
+ * and it covers those two and `WebSocket`; every other maker is the browser's. The README's sentence and the tables of
+ * docs/API.md and docs/THREAT-MODEL.md are rendered from this list, and `test/e2e/cookies.spec.ts` makes one request for
+ * each row of cooperative mode on every engine, so a carrier that is not here is not listed anywhere. In `request`, `short`
+ * and `why` a backticked span is code.
+ */
+export const COOKIE_CARRIERS = {
+    websocket: {
+        request: 'A WebSocket handshake', short: 'a WebSocket handshake', modes: 'every mode', unsentBy: [],
+        why: "The browser makes the handshake and attaches the cookies by site; the gate can refuse it, not strip it, so a server behind a listed `wss://` origin must check `Origin`",
+        test: 'test/e2e/request-gate.spec.ts',
+    },
+    markup: {
+        request: "A load of the guest's markup or CSS (an image, a stylesheet, a font, media)", short: "a load of the guest's markup or CSS", modes: 'every mode', unsentBy: [],
+        why: 'The engine makes the load for the document that holds it',
+        test: 'test/e2e/cookies.spec.ts',
+    },
+    beacon: {
+        request: 'A `navigator.sendBeacon(url, data)` call', short: '`navigator.sendBeacon()`', modes: 'cooperative mode', unsentBy: [],
+        why: 'A credentialed POST. The gate covers `fetch()`, `XMLHttpRequest` and `WebSocket`; this maker is not among them, and the strict and worker-mode worker has none',
+        test: 'test/e2e/cookies.spec.ts',
+    },
+    eventsource: {
+        request: 'An `EventSource` made with `{ withCredentials: true }`', short: '`EventSource` with `withCredentials`', modes: 'cooperative mode', unsentBy: [],
+        why: 'The guest chooses `withCredentials`; the gate does not cover `EventSource`, and the strict and worker-mode worker has none',
+        test: 'test/e2e/cookies.spec.ts',
+    },
+    ping: {
+        request: 'An `<a ping>` click', short: 'an `<a ping>` click', modes: 'cooperative mode', unsentBy: ['firefox'],
+        why: 'A POST made by the browser when the link is followed; Firefox sends no ping by default',
+        test: 'test/e2e/cookies.spec.ts',
+    },
+    frames: {
+        request: "A request of a frame or worker the guest creates (its own `fetch()` with `credentials: 'include'`)", short: 'the requests of a frame the guest creates', modes: 'cooperative mode', unsentBy: [],
+        why: 'A realm of its own with the platform\'s `fetch`: a limit of cooperative mode (S44)',
+        test: 'test/e2e/cookies.spec.ts',
+    },
+} as const satisfies Record<string, CookieCarrier>;
+
+export interface CookieCarrier {
+    /** The request, as the table of the docs names it. */
+    readonly request: string;
+    /** The request, as a sentence names it. */
+    readonly short: string;
+    /** Where the guest can make it. */
+    readonly modes: 'every mode' | 'cooperative mode';
+    /** The engines that send no such request at all. */
+    readonly unsentBy: readonly CookieEngine[];
+    /** Why the library cannot strip its credentials. */
+    readonly why: string;
+    /** The spec that makes it on every engine. */
+    readonly test: string;
+}
+
+/**
+ * The credentials besides cookies that the browser may attach to the same requests (BD3:ISO-4): they belong to the user
+ * and the origin, not to the page, and the suite has not measured what each engine sends. The gate's `fetch()` and
+ * `XMLHttpRequest` and the fetch bridge send none (`credentials: 'omit'`); a WebSocket handshake and a load of the
+ * guest's markup or CSS cannot be stripped. A listed origin must not rely on them for the user's identity.
+ */
+export const AMBIENT_CREDENTIALS = ['cached HTTP authentication (Basic, Digest, integrated Windows or Kerberos)', 'a TLS client certificate'] as const;
+
+/** The sentence that says so: the README's, and the paragraphs of docs/API.md and docs/THREAT-MODEL.md under the carriers' table. */
+export const ambientCredentialsSentence = (): string =>
+    `The browser may attach credentials that are not cookies to the same requests when it holds them for the origin: ${AMBIENT_CREDENTIALS.join(' and ')}; the tables do not state what each engine sends (not measured), so do not list an origin for a guest that it recognises the user by.`;
+
+export type CookieCarrierId = keyof typeof COOKIE_CARRIERS;
+export const COOKIE_CARRIER_IDS = Object.keys(COOKIE_CARRIERS) as CookieCarrierId[];
+
+/** `text` with each backticked span through `code`. */
+export const withCode = (text: string, code: (text: string) => string): string => text.replace(/`([^`]+)`/g, (_, span: string) => code(span));
+
+/** The carriers a sentence names: every mode's, and, after "in cooperative mode also", the cooperative mode's. */
+export function carrierClause(code: (text: string) => string = text => text): string {
+    const named = (modes: CookieCarrier['modes']) => COOKIE_CARRIER_IDS.filter(id => COOKIE_CARRIERS[id].modes === modes).map(id => withCode(COOKIE_CARRIERS[id].short, code));
+    const cooperative = named('cooperative mode');
+    return `${named('every mode').join(', or ')}; in cooperative mode also ${cooperative.slice(0, -1).join(', ')} and ${cooperative[cooperative.length - 1]}`;
+}
+
 /** `SameSite=None`, `SameSite=None and Lax`, `SameSite=None, Lax and Strict`; "none" for no value. `code` wraps a literal. */
 export function sameSiteValues(values: readonly SameSiteValue[], code: (text: string) => string = text => text): string {
     if (values.length === 0) return 'none';
@@ -99,4 +180,4 @@ export const sameSiteCookieClause = (code?: (text: string) => string): string =>
 
 /** The sentence the README states: both kinds of origin, every engine. */
 export const cookieSentence = (code: (text: string) => string): string =>
-    `${code('fetch()')} and ${code('XMLHttpRequest')} of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (a WebSocket handshake, or a load of the guest's markup or CSS) to an origin on the host page's site carries these cookies: ${engineClauses('sameSite', code)}. To an origin on another site it carries that site's own cookies: ${engineClauses('crossSite', code, false)}. The fetch bridge sends none in any engine.`;
+    `${code('fetch()')} and ${code('XMLHttpRequest')} of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (${carrierClause(code)}) to an origin on the host page's site carries these cookies: ${engineClauses('sameSite', code)}. To an origin on another site it carries that site's own cookies: ${engineClauses('crossSite', code, false)}. The fetch bridge sends none in any engine. ${ambientCredentialsSentence()}`;

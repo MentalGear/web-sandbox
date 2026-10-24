@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fc from 'fast-check';
 import { createSizeOf } from '@src/lib/structured-size';
 import { LOG_MAX_BYTES } from '@src/lib/sandbox-log';
@@ -158,4 +158,40 @@ describe('the Blob and File fields: every string-valued getter is counted or dec
             if (kind === 'File') expect(bytes).toBeGreaterThanOrEqual(2 * value.type.length + 2 * (value as File).name.length);
         });
     }
+});
+
+describe('the measure is exact, not only a bound from below (BD3:TST-4, class P)', () => {
+    // The property tests above hold the measure to "at least what is delivered", and a Blob or File carries 16 + 64 of slack,
+    // so a constant under that could be dropped unseen. These are the constants themselves, in bytes: every object 16, a
+    // Blob's handle 64, a File's lastModified 8, a Map entry 16, a Set entry 8.
+    it.each([
+        ['an empty Blob', () => new Blob([]), 16 + 64 + 0 + 8],
+        ['a typed Blob (type "a/b")', () => new Blob([], { type: 'a/b' }), 16 + 64 + 6 + 8],
+        ['a File named "n" (lastModified is counted: 8)', () => new File([], 'n', { lastModified: 1 }), 16 + 64 + 0 + 8 + (2 + 8) + 8],
+        ['a Map with one entry of two empty strings (16 an entry)', () => new Map([['', '']]), 16 + 16 + 8 + 8],
+        ['a Set with one number (8 an entry)', () => new Set([1]), 16 + 8 + 8],
+    ] as const)('%s', (_, make, bytes) => {
+        expect(sizeOf(make(), Infinity)).toBe(bytes);
+    });
+
+    it('a BigInt past the limit is Infinity at once: the cap decides before its digits are written out (2**26 bits)', () => {
+        const big = (1n << (2n ** 26n)) - 1n;
+        const toString = vi.spyOn(BigInt.prototype, 'toString');
+        try {
+            // the measure takes the text function when it is made, so it is made under the spy
+            expect(createSizeOf()(big, LOG_MAX_BYTES)).toBe(Infinity);
+            expect(toString).not.toHaveBeenCalled();
+        } finally {
+            toString.mockRestore();
+        }
+    });
+
+    it('a SharedArrayBuffer is never small, bare or as the buffer of a view: Infinity, its kind named', () => {
+        const bare = { kind: '' };
+        expect(sizeOf(new SharedArrayBuffer(8), LOG_MAX_BYTES, undefined, bare)).toBe(Infinity);
+        expect(bare.kind).toBe('SharedArrayBuffer');
+        const viewed = { kind: '' };
+        expect(sizeOf(new Uint8Array(new SharedArrayBuffer(8)), LOG_MAX_BYTES, undefined, viewed)).toBe(Infinity);
+        expect(viewed.kind).toBe('SharedArrayBuffer');
+    });
 });

@@ -78,9 +78,14 @@ export interface SandboxFiles {
     /**
      * The file's `blob:` URL, minted in the guest's own realm (the rewritten form of a module or stylesheet).
      *
+     * @remarks
+     * In strict mode's worker only a file of a type the view shows has a URL; any other is `read()` and `text()` only.
+     *
      * @param path - A registered path.
      * @returns The URL.
-     * @throws An `Error` with `code: 'NOT_FOUND'`, also for a path the guest wrote.
+     * @throws An `Error` with `code: 'NOT_FOUND'` for a path that is not there (its message says `no such file`), and, with
+     * a message that says the file has no URL, for a file that is there and has none: a path the guest wrote, and in
+     * strict mode's worker a type the view does not show.
      */
     url(path: string): string;
     /**

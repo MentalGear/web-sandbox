@@ -43,7 +43,7 @@ export interface SandboxLog {
      * What was logged, structured-cloned: at most {@link LOG_MAX_ARGS} values, strings cut at {@link LOG_MAX_STRING}
      * characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced
      * by a string that says so. Guest-controlled text when `source` is `'guest'`: show it with `textContent`, never in an
-     * HTML, URL (such as a link `href`), `eval` or template sink.
+     * HTML, URL (such as a link `href`), `eval`, template or `console` format-string sink.
      */
     args: readonly unknown[];
     /**

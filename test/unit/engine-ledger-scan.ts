@@ -4,7 +4,9 @@
  *
  * A line is an engine site when it compares `browserName` with something, looks something up by it, tests it with
  * `includes`, is a per-engine map (two or more of `chromium:`, `firefox:`, `webkit:` on a line, or one at the start of
- * one), lists one or two engines as strings in an array (a list of all three is not a difference), or is an `engines:` override of the directive matrix. Passing
+ * one), lists one or two engines as strings in an array (a list of all three is not a difference), is an `engines:` override of the directive matrix,
+ * or names the engine another way: the project's name, an alias or a rename of `browserName`, a `switch` or a method call on it, a
+ * regular expression tested against it, or the user agent read in the page. Passing
  * `browserName` on as an argument (`inView(page, browserName, …)`) is not a site: the callee that compares it is.
  *
  * A site is cited when `ledger: <id>[, <id>]` is on its own line or on one of the WINDOW lines above it. The citation is
@@ -23,6 +25,18 @@ export const ENGINE_SITE = new RegExp([
     String.raw`\[\s*'(?:chromium|firefox|webkit)'(?:\s*,\s*'(?:chromium|firefox|webkit)')?\s*\]`,
     String.raw`^\s*(?:chromium|firefox|webkit)\s*:`,
     String.raw`\b(?:chromium|firefox|webkit)\s*:[^,]*,\s*(?:chromium|firefox|webkit)\s*:`,
+    // the forms that name the engine another way (BD3:TST-8): the project's name, an alias or a rename of browserName, a switch
+    // or a method on it, a regular expression tested against it, and the user agent read in the page
+    String.raw`\bproject\.name\s*(?:===|!==|==|!=)`,
+    String.raw`(?:===|!==|==|!=)\s*[\w.()]*\bproject\.name\b`,
+    String.raw`\[\s*[\w.()]*\bproject\.name\b`,
+    String.raw`=\s*browserName\b(?!\s*[,;)])`,
+    String.raw`=\s*browserName\s*;`,
+    String.raw`\{[^}]*\bbrowserName\s*:\s*\w+`,
+    String.raw`\bswitch\s*\(\s*browserName\s*\)`,
+    String.raw`\bbrowserName\s*\.\s*\w+\s*\(`,
+    String.raw`\.test\(\s*browserName\s*\)`,
+    String.raw`\bnavigator\.userAgent\b`,
 ].join('|'));
 
 const CITATION = /\bledger:\s*([a-z][a-z0-9-]*(?:\s*,\s*[a-z][a-z0-9-]*)*)/;

@@ -245,7 +245,7 @@ test.describe("allowAnimations: false under a host page's style-src", () => {
             expect(await inView(page, browserName, `document.querySelectorAll('link[rel=stylesheet]').length`)).toBe(allowed ? 1 : 0);
             expect(await animationsInView(page, browserName)).toEqual([]);
             const said = warnings.filter(text => text.includes('stops animations'));
-            expect(said).toEqual(allowed ? [] : [`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or '${still}' in style-src (see docs/API.md#host-page-policy).`]);
+            expect(said).toEqual(allowed ? [] : [`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or ${still} in style-src (see docs/API.md#host-page-policy).`]);
         });
     }
 });

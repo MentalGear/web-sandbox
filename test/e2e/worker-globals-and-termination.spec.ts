@@ -120,6 +120,24 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         });
     }
 
+    // docs/API.md lists indexedDB among the kept globals and says it stores nothing (BD3:NEW-6): the worker's origin is opaque.
+    for (const mode of ['worker', 'strict'] as const) {
+        test(`${mode} mode: indexedDB is kept, and open() is denied with a SecurityError on every engine, so the sandbox stores nothing in it`, async ({ sandbox }) => {
+            expect(await sandbox.mount({ mode })).toBe('ready');
+            expect(WORKER_GLOBALS).toContain('indexedDB');
+            const outcome = await sandbox.inGuest(`
+                return await new Promise((resolve) => {
+                    const done = (error) => resolve({ kind: typeof indexedDB, error });
+                    try {
+                        const request = indexedDB.open('probe', 1);
+                        request.onerror = () => done(request.error && request.error.name);
+                        request.onsuccess = () => done(null);
+                    } catch (e) { done(e && e.name); }
+                });`);
+            expect(outcome).toEqual({ kind: 'object', error: 'SecurityError' });
+        });
+    }
+
     test('positive control of the evidence: an EventSource the policy allows reaches the allowed listener (cooperative mode, the document)', async ({ sandbox }) => {
         expect(await sandbox.mount({ origins: { connect: [recorder.allowed] } })).toBe('ready');
         await sandbox.run(`new EventSource('${recorder.allowed}/es-allowed?x=1');`);

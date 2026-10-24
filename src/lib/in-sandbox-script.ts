@@ -420,7 +420,8 @@ export function inSandboxScript(
     // gate reports it itself, as a VIOLATION frame of `connect-src` whose sourceFile is the gate's (GATE_SOURCE_FILE,
     // violation.ts), within the same VIOLATION_LIMIT: so an engine that raises no violation in a worker (WebKit) reports
     // it too, and every engine reports one thing. The browser's policy stays underneath (the second layer): a redirect to
-    // an origin it refuses is the browser's to refuse and to report, per engine. A gate that errs can only refuse more.
+    // an origin it refuses is the browser's to refuse and to report, per engine (test/e2e/redirect-refusal.spec.ts, ledger row
+    // redirect-refusal-outcome). A gate that errs can only refuse more.
     //
     // fetch and XMLHttpRequest never carry credentials (class A, S74): every fetch is made from a Request built again
     // with `credentials: 'omit'`, and an XMLHttpRequest's `withCredentials` stays false (its setter changes nothing), so
@@ -945,11 +946,13 @@ export function inSandboxScript(
     };
     // The name of a value's kind, for a line's own words: `Uint8Array` of `[object Uint8Array]` (R3:M-7: the brackets
     // are not doubled), its type for a primitive.
-    // At most 64 characters: a tag is the guest's to choose (Symbol.toStringTag), and this text is posted unmeasured.
+    // At most KIND_MAX_LENGTH characters (a mirror of structured-size.ts's): a tag is the guest's to choose
+    // (Symbol.toStringTag), and this text is posted unmeasured.
+    const KIND_MAX_LENGTH: LimitValue<'KIND_MAX_LENGTH'> = 64;
     const kindOf = (value: unknown): string => {
         if (typeof value !== 'object' || value === null) return typeof value;
         const tag = tagOf(value);
-        const name = apply(slice, tag, [8, tag.length - 1 < 72 ? tag.length - 1 : 72]) as string;
+        const name = apply(slice, tag, [8, tag.length - 1 < 8 + KIND_MAX_LENGTH ? tag.length - 1 : 8 + KIND_MAX_LENGTH]) as string;
         return name || 'object';
     };
     const textOf = (value: unknown): string => (typeof value === 'string' ? cut(value) : '');
@@ -1032,8 +1035,8 @@ export function inSandboxScript(
     // from Object.prototype.toString, which reads Symbol.toStringTag through the prototype chain, guest code's; a Map or
     // a Set is told by the platform's own getters, captured; and an error's fields are its own properties (an own
     // accessor of a clone is the engine's), or the platform's getters captured above.
-    const ERROR_WALK_NODES = 10000;
-    const ERROR_WALK_DEPTH = 64;
+    const ERROR_WALK_NODES: LimitValue<'ERROR_WALK_NODES'> = 10000;
+    const ERROR_WALK_DEPTH: LimitValue<'ERROR_WALK_DEPTH'> = 64;
     const brandOf = (read: (this: unknown) => unknown, value: unknown): unknown => {
         try {
             return apply(read, value, []);

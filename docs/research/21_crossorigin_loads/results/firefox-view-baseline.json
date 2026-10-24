@@ -1,0 +1,378 @@
+{
+ "engine": "firefox",
+ "variant": "baseline",
+ "cors": {
+  "crossoriginAttributes": "[\"img:null\",\"img:null\",\"source:null\",\"img:null\",\"img:null\",\"video:null\",\"track:null\",\"video:null\",\"source:null\",\"track:null\",\"audio:null\",\"audio:null\",\"source:null\",\"img:null\",\"audio:null\",\"link:null\"]",
+  "imageWidths": "[3,3,3,3,3]",
+  "ownFiles": "{\"img\":3,\"imgSrc\":\"blob:null\",\"audio\":4,\"audioError\":null,\"css\":\"9px\"}",
+  "violations": [],
+  "hits": [
+   {
+    "k": "import",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "style",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "styleattr",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "video",
+    "method": "GET",
+    "status": 206,
+    "mode": "no-cors",
+    "dest": "video",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "bytes=0-"
+   },
+   {
+    "k": "poster",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "guest-usecred",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "import.sub-import",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "style",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "audio",
+    "method": "GET",
+    "status": 206,
+    "mode": "no-cors",
+    "dest": "audio",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "bytes=0-"
+   },
+   {
+    "k": "img",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "sourceaudio",
+    "method": "GET",
+    "status": 206,
+    "mode": "no-cors",
+    "dest": "audio",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "bytes=0-"
+   },
+   {
+    "k": "sourcevideo",
+    "method": "GET",
+    "status": 206,
+    "mode": "no-cors",
+    "dest": "video",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "bytes=0-"
+   },
+   {
+    "k": "srcset",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "picsource",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "stylebg",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "font",
+    "method": "GET",
+    "status": 200,
+    "mode": "cors",
+    "dest": "font",
+    "origin": "null",
+    "cookies": [],
+    "range": "-"
+   }
+  ]
+ },
+ "nocors": {
+  "crossoriginAttributes": "[\"img:null\",\"img:null\",\"source:null\",\"img:null\",\"img:null\",\"video:null\",\"track:null\",\"video:null\",\"source:null\",\"track:null\",\"audio:null\",\"audio:null\",\"source:null\",\"img:null\",\"audio:null\",\"link:null\"]",
+  "imageWidths": "[3,3,3,3,3]",
+  "ownFiles": "{\"img\":3,\"imgSrc\":\"blob:null\",\"audio\":4,\"audioError\":null,\"css\":\"9px\"}",
+  "violations": [],
+  "hits": [
+   {
+    "k": "import",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "style",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "styleattr",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "img",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "guest-usecred",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "srcset",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "picsource",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "import.sub-import",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "style",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "poster",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "video",
+    "method": "GET",
+    "status": 206,
+    "mode": "no-cors",
+    "dest": "video",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "bytes=0-"
+   },
+   {
+    "k": "sourcevideo",
+    "method": "GET",
+    "status": 206,
+    "mode": "no-cors",
+    "dest": "video",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "bytes=0-"
+   },
+   {
+    "k": "audio",
+    "method": "GET",
+    "status": 206,
+    "mode": "no-cors",
+    "dest": "audio",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "bytes=0-"
+   },
+   {
+    "k": "sourceaudio",
+    "method": "GET",
+    "status": 206,
+    "mode": "no-cors",
+    "dest": "audio",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "bytes=0-"
+   },
+   {
+    "k": "stylebg",
+    "method": "GET",
+    "status": 200,
+    "mode": "no-cors",
+    "dest": "image",
+    "origin": "-",
+    "cookies": [
+     "xd_none",
+     "x_none"
+    ],
+    "range": "-"
+   },
+   {
+    "k": "font",
+    "method": "GET",
+    "status": 200,
+    "mode": "cors",
+    "dest": "font",
+    "origin": "null",
+    "cookies": [],
+    "range": "-"
+   }
+  ]
+ }
+}

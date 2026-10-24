@@ -141,6 +141,36 @@ describe('validateRequest (backlog B5)', () => {
     });
 });
 
+describe('the header rules of a request (BD2:TST-7, class C)', () => {
+    // the names the platform forbids a script to set (the fetch spec's forbidden request-header names): a policy cannot list them, and a request cannot carry them
+    const FORBIDDEN = ['host', 'origin', 'referer', 'cookie', 'proxy-authorization', 'proxy-anything', 'sec-fetch-site', 'sec-ch-ua', 'content-length', 'connection', 'transfer-encoding', 'upgrade', 'via', 'te', 'date'];
+
+    it('a policy drops each forbidden name from its headers list, with a warning', () => {
+        for (const name of FORBIDDEN) {
+            const warnings: string[] = [];
+            const p = toFetchPolicy({ allow: ['https://api.example'], headers: [name, 'authorization'] }, message => warnings.push(message))!;
+            expect(p.headers, name).not.toContain(name);
+            expect(p.headers, name).toContain('authorization');
+            expect(warnings.some(message => message.includes('was dropped')), name).toBe(true);
+        }
+    });
+
+    it('a request is refused for each forbidden name, listed or not, in any letter case', () => {
+        for (const name of FORBIDDEN) {
+            expect(refusalCode(validateRequest({ url: 'https://api.example/', headers: [[name.toUpperCase(), 'x']] }, policy(), HOST)), name).toBe('FETCH_NOT_ALLOWED');
+            expect(refusalCode(validateRequest({ url: 'https://api.example/', headers: [[name, 'x']] }, policy({ headers: [name] }), HOST)), `${name}, listed`).toBe('FETCH_NOT_ALLOWED');
+        }
+    });
+
+    it('at most 64 headers: 64 pass, 65 are refused', () => {
+        const p = policy({ headers: ['x-a'] });
+        const pairs = (count: number): [string, string][] => Array.from({ length: count }, () => ['x-a', 'v']);
+        expect(refusalCode(validateRequest({ url: 'https://api.example/', headers: pairs(64) }, p, HOST))).toBe('accepted');
+        expect(refusalCode(validateRequest({ url: 'https://api.example/', headers: pairs(65) }, p, HOST))).toBe('FETCH_NOT_ALLOWED');
+        expect(refusalCode(validateRequest({ url: 'https://api.example/', headers: pairs(6400) }, p, HOST))).toBe('FETCH_NOT_ALLOWED');
+    });
+});
+
 describe('createFetchBridge (backlog B5)', () => {
     afterEach(() => vi.useRealTimers());
 
@@ -335,5 +365,41 @@ describe('FetchRecord, a union keyed by outcome (S76, decision D)', () => {
         // every member declares every optional field, so a consumer of the plain union reads them without narrowing
         const seen: (number | string | undefined)[] = [withCode.status, withStatus.reason, otherCode.status];
         expect(seen).toHaveLength(3);
+    });
+});
+
+describe('the method of a request is read once: the record names the method the check judged (BD3:LIM-2, class D)', () => {
+    // [what the guest sent as `method` (a request that has the key), the record's method, whether the default policy admits it]
+    const METHODS: Array<[string, unknown, string, boolean]> = [
+        ['undefined', undefined, 'GET', true],
+        ['null', null, '', false],
+        ['a number', 7, '', false],
+        ['an object', { toString: () => 'GET' }, '', false],
+        ['an array', ['GET'], '', false],
+        ['text that is no token', 'GE T', '', false],
+        ['too long', 'G'.repeat(17), '', false],
+        ['a lower-case method', 'post', 'POST', true],
+        ['a method the policy refuses', 'delete', 'DELETE', false],
+    ];
+
+    it.each(METHODS)('method %s: the record says %j, and the request is made: %s', async (_, method, recorded, admitted) => {
+        const records: FetchRecord[] = [];
+        const bridge = createFetchBridge({ policy: policy(), hostOrigin: HOST, onRecord: (r) => records.push(r), transport: (async () => new Response('x')) as any });
+        const result = await bridge.handle({ url: 'https://api.example/x', method }).then(() => 'made', error => refusalCode(error));
+        expect(result).toBe(admitted ? 'made' : 'FETCH_NOT_ALLOWED');
+        expect(records).toHaveLength(1);
+        expect(records[0]!.method).toBe(recorded);
+        // the record's method is the one the check judged: the validated method when there is one
+        const checked = validateRequest({ url: 'https://api.example/x', method }, policy(), HOST);
+        if (!(checked instanceof Error)) expect(checked.method).toBe(recorded);
+    });
+
+    it('an absent method is GET in the check and in the record; a request with no `method` key reads the same as one that is undefined', async () => {
+        const records: FetchRecord[] = [];
+        const bridge = createFetchBridge({ policy: policy(), hostOrigin: HOST, onRecord: (r) => records.push(r), transport: (async () => new Response('x')) as any });
+        await bridge.handle({ url: 'https://api.example/a' });
+        await bridge.handle({ url: 'https://api.example/b', method: undefined });
+        await bridge.handle('not a request').catch(() => {});
+        expect(records.map(r => r.method)).toEqual(['GET', 'GET', 'GET']);
     });
 });

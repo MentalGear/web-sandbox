@@ -20,13 +20,13 @@ const read = (file: string) => readFileSync(path.join(ROOT, file), 'utf8');
 /** The regions each document carries: deleting one would otherwise go unseen, since an absent region is never stale. */
 const REGIONS: Record<string, string[]> = {
     'docs/API.md': [
-        'configuration', 'csp-cooperative', 'csp-strict', 'host-lines', 'termination-reasons', 'limits', 'budgets', 'cookie-facts', 'connect-facts', 'host-source-rules', 'trusted-types-rules',
+        'configuration', 'csp-cooperative', 'csp-strict', 'host-lines', 'termination-reasons', 'limits', 'budgets', 'cookie-facts', 'cookie-carriers', 'connect-facts', 'host-source-rules', 'trusted-types-rules',
         // rendered from the TSDoc of the public API (tools/docgen/extractors/api.ts)
         'api-define', 'api-element', 'api-methods', 'api-reactions', 'api-events', 'api-sandbox-log', 'api-violation', 'api-fetch-record',
         'api-fetch-bridge', 'api-call-limits', 'api-exports-values', 'api-exports-types',
     ],
     'docs/ADR-005-strict-mode.md': ['adr005-ports', 'adr005-init-view'],
-    'docs/THREAT-MODEL.md': ['cookie-facts', 'connect-facts', 'inherited-context', 'engine-ledger'],
+    'docs/THREAT-MODEL.md': ['cookie-facts', 'cookie-carriers', 'connect-facts', 'inherited-context', 'engine-ledger'],
     'README.md': ['cookie-sentence', 'connect-sentence'],
     'ARCHITECTURE.md': ['realms', 'stringified', 'channels', 'frames', 'lifecycle-states', 'lifecycle-diagram', 'lifecycle-inputs', 'lifecycle-effects', 'module-map'],
 };

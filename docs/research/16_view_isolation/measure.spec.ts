@@ -129,8 +129,9 @@ for (const stub of [false, true]) {
         await measure(sandbox, page, browserName, `text() loop${suffix}`);
 
         await sandbox.registerFiles({ 'main.js': ANIMATED });
-        expect(await sandbox.mount({ mode: 'strict', entry: 'main.js' })).toBe('ready');
+        // the default, allowAnimations: false, removes the animations this run measures
+        expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', allowAnimations: true })).toBe('ready');
         await page.waitForTimeout(1000);
-        await measure(sandbox, page, browserName, `animated idle view (20 elements, allowAnimations default)${suffix}`);
+        await measure(sandbox, page, browserName, `animated idle view (20 elements, allowAnimations: true)${suffix}`);
     });
 }

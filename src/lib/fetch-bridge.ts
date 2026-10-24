@@ -179,7 +179,7 @@ export type FetchRefusal = Error & { code: FetchErrorCode; reason?: string; unse
  * most 8192 characters (a longer one is refused and reported cut), or the guest's string cut to that when it is not a
  * URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement. `url` is
  * guest-controlled text (it can be `javascript:`): show it with `textContent`, never in an HTML, URL (such as a link
- * `href`), `eval` or template sink.
+ * `href`), `eval`, template or `console` format-string sink.
  */
 export type FetchRecord = {
     /** The method, upper case; `''` when the guest sent no valid one. */
@@ -187,7 +187,7 @@ export type FetchRecord = {
     /**
      * The URL without its fragment, or the guest's string when it is not a URL; at most 8192 characters.
      * Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`: it can be
-     * `javascript:`), `eval` or template sink.
+     * `javascript:`), `eval`, template or `console` format-string sink.
      */
     url: string;
     /** Time from the request to its settlement, in ms. */
@@ -225,8 +225,8 @@ const SAFE_HEADERS = ['accept', 'accept-language', 'content-language', 'content-
 // Names an embedder cannot add: the browser forbids them in fetch, or they carry host-page authority.
 const FORBIDDEN_HEADER = /^(accept-charset|accept-encoding|access-control-request-headers|access-control-request-method|connection|content-length|cookie|cookie2|date|dnt|expect|host|keep-alive|origin|referer|set-cookie|te|trailer|transfer-encoding|upgrade|via|proxy-.*|sec-.*)$/;
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9a-z-]{1,64}$/;
-const MAX_HEADERS = 64;
-const MAX_HEADER_VALUE = 8192;
+export const MAX_HEADERS = 64;
+export const MAX_HEADER_VALUE = 8192;
 // The longest URL the bridge takes, as the guest wrote it and as parsed (percent-encoding can make the parsed one
 // longer): past it a request is refused. A record reports the whole URL, so it is never longer than this either (R3:M-4:
 // a valid request's URL is never reported cut).
@@ -454,6 +454,14 @@ const reportedUrl = (value: unknown): string => {
 const reportedMethod = (value: unknown): string =>
     typeof value === 'string' && /^[A-Za-z]{1,16}$/.test(value) ? value.toUpperCase() : '';
 
+/**
+ * The method of a request from the guest: `GET` when it names none (the field is absent or undefined), else the method
+ * it names upper-cased, or `''` for one that is no method (a null, a number, an object, text that is no token). The one
+ * reading of the field: the check against the policy and the record of the request take it from here, so a refused
+ * request is recorded with the method the check judged (BD3:LIM-2, class D).
+ */
+const methodOf = (source: Record<string, unknown>): string => (source.method === undefined ? 'GET' : reportedMethod(source.method));
+
 const toBody = (value: unknown): string | Uint8Array | undefined | null => {
     if (value === undefined || value === null) return undefined;
     if (typeof value === 'string') return value;
@@ -513,7 +521,7 @@ export function validateRequest(request: unknown, policy: FetchPolicy, hostOrigi
         return refusal;
     }
 
-    const method = source.method === undefined ? 'GET' : reportedMethod(source.method);
+    const method = methodOf(source);
     if (!policy.methods.includes(method)) return fetchRefusal('FETCH_NOT_ALLOWED', `method ${method || '(invalid)'} is not allowed`);
 
     const headers = toHeaders(source.headers, policy.headers);
@@ -682,7 +690,7 @@ export function createFetchBridge({ policy, hostOrigin, onRecord, transport, now
 
     const handle = async (request: unknown): Promise<FetchResult> => {
         const source = request && typeof request === 'object' ? request as Record<string, unknown> : {};
-        const base = { method: reportedMethod(source.method ?? 'GET'), url: reportedUrl(source.url), started: now() };
+        const base = { method: methodOf(source), url: reportedUrl(source.url), started: now() };
 
         const refuse = (error: FetchRefusal): never => {
             const outcome = record(base, error.reason === undefined ? { outcome: 'refused', code: error.code } : { outcome: 'refused', code: error.code, reason: error.reason });

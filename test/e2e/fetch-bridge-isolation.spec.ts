@@ -33,9 +33,12 @@ const fetchInGuest = (url: string) => `
         return { code: e && e.code, message: String(e && e.message) };
     }`;
 
-/** The bridge's frame in the element's shadow root: hidden, sandboxed, after the wrapper. */
+/** The bridge's frame in the element's shadow root: hidden, sandboxed, after the wrapper; both credentialless (BD3:NEW-5). */
 const bridgeFrames = (page: Page) => page.evaluate(() => [...(document.querySelector('web-sandbox') as HTMLElement).shadowRoot!.querySelectorAll('iframe')]
-    .map(frame => ({ sandbox: frame.getAttribute('sandbox'), hidden: frame.hidden })));
+    .map(frame => ({
+        sandbox: frame.getAttribute('sandbox'), hidden: frame.hidden,
+        credentialless: frame.hasAttribute('credentialless'),
+    })));
 
 test("the host page's cache-first Service Worker never answers a bridge request: the request reaches the network, and the guest never sees the host app's cached data", async ({ sandbox, page, browserName }) => {
     await page.evaluate(async () => {
@@ -98,7 +101,7 @@ test("a wrapper of the host page's fetch never applies to a bridge request: an a
     expect(recorder.hits.find(h => h.server === 'allowed' && h.path === '/echo?own' && h.method === 'GET')!.headers.authorization).toBe(TOKEN);
 });
 
-test('the target sees Origin: null, no Referer and no Cookie, in every mode; the guest has no handle on the frame that made it', async ({ sandbox, page }) => {
+test('the target sees Origin: null, no Referer and no Cookie, in every mode; the guest has no handle on the frame that made it; the frame is credentialless like the wrapper', async ({ sandbox, page }) => {
     await page.evaluate(() => { document.cookie = 'harness_secret=h1; path=/'; });
     for (const mode of ['strict', 'worker', 'cooperative'] as const) {
         recorder.clear();
@@ -116,8 +119,8 @@ test('the target sees Origin: null, no Referer and no Cookie, in every mode; the
         expect(own.headers.origin, mode).toBe('null');
         expect(own.headers.cookie, mode).toBeUndefined();
         expect(await bridgeFrames(page), mode).toEqual([
-            { sandbox: expect.any(String), hidden: false }, // the wrapper, first
-            { sandbox: 'allow-scripts', hidden: true },
+            { sandbox: expect.any(String), hidden: false, credentialless: true }, // the wrapper, first
+            { sandbox: 'allow-scripts', hidden: true, credentialless: true }, // (cookies.spec.ts: what the engines make of the attribute)
         ]);
     }
     // the guest's own frame tree: the bridge's frame is in the element's shadow root, which no window lists

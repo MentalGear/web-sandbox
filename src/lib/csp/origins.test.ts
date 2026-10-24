@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { NO_ORIGINS, ORIGIN_KINDS, originRules, parseOrigins, type SandboxOrigins, type StrictSandboxOrigins } from './origins';
+import { NO_ORIGINS, ORIGIN_KINDS, ORIGINS_REFUSAL_TEXT, originRules, OriginsTypeError, parseOrigins, type SandboxOrigins, type StrictSandboxOrigins } from './origins';
 import type { SandboxConfig } from '../../host';
 
 const parse = (input: unknown, mode: unknown = 'cooperative') => {
@@ -92,11 +92,29 @@ describe('parseOrigins: `origins` parsed once, at the boundary (ADR-007)', () =>
     });
 
     it.each([[null], ['https://a.example'], [['https://a.example']], [7], [true]])('a value that is not an object refuses the config: %j', (value) => {
-        expect(() => parse(value)).toThrowError(new TypeError('origins must be an object of origin lists'));
+        expect(() => parse(value)).toThrowError(TypeError);
+        expect(() => parse(value)).toThrowError('origins must be an object of origin lists');
     });
 
     it.each([['a string', 'https://a.example'], ['null', null], ['an object', { 0: 'https://a.example' }], ['a number', 1]])('a kind that is not a list refuses the config: %s', (_, value) => {
-        expect(() => parse({ images: value })).toThrowError(new TypeError('origins.images must be a list of origins'));
+        expect(() => parse({ images: value })).toThrowError(TypeError);
+        expect(() => parse({ images: value })).toThrowError('origins.images must be a list of origins');
+    });
+
+    it('the refusal carries the option, and the fixed text the element gives for it names that option, for `origins` and for each kind (BD3:NEW-3)', () => {
+        const refused = (input: unknown) => { try { parse(input); } catch (error) { return error; } return null; };
+        const top = refused(5);
+        expect(top).toBeInstanceOf(OriginsTypeError);
+        expect(top).toBeInstanceOf(TypeError);
+        expect((top as TypeError).name).toBe('TypeError');
+        expect(ORIGINS_REFUSAL_TEXT[(top as OriginsTypeError).option]).toBe('origins is not an object');
+        for (const kind of ORIGIN_KINDS) {
+            const error = refused({ [kind]: 7 }) as OriginsTypeError;
+            expect(error, kind).toBeInstanceOf(OriginsTypeError);
+            expect(error.option).toBe(kind);
+            expect(ORIGINS_REFUSAL_TEXT[kind]).toBe(`origins.${kind} is not a list`);
+        }
+        expect(Object.keys(ORIGINS_REFUSAL_TEXT).sort()).toEqual(['origins', ...ORIGIN_KINDS].sort());
     });
 });
 

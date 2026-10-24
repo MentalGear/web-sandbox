@@ -9,6 +9,7 @@ import { TRUSTED_TYPES_POLICY } from './trusted-types';
 import { LOG_EVENTS_PER_SECOND } from './sandbox-log';
 import { UNCAUGHT_CHARACTERS_PER_SECOND } from './egress';
 import { KIND_DIRECTIVES } from './csp/csp-generator';
+import { VIOLATION_DIRECTIVES } from './violation';
 
 /**
  * Strict mode's view and worker prelude (ADR-005).
@@ -1275,6 +1276,8 @@ export interface ViewOptions {
     /** VIEW_MAX_DISTINCT_URLS */
     maxDistinctUrls: number;
     violationLimit: number;
+    /** VIOLATION_DIRECTIVES: the directive names counted apart; every other name shares one count (violationBucket, violation.ts). */
+    violationDirectives: readonly string[];
     /** VIOLATION_MAX_STRING: the longest string of a violation report the view posts. */
     violationMaxString: number;
     events: { types: readonly string[]; maxString: number; maxIds: number; maxFields: number; maxTotal: number };
@@ -1345,7 +1348,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // (VIOLATION_EVENT_LIMIT each; the host keeps the same buckets, AR:C4): the view's reports include
     // refusals of the guest's own rendered markup, so one shared cap would let a guest that rendered 100 refused
     // images hide a later script-src-attr report. The directive is the browser's, so the buckets are the
-    // browser's directive names; past 32 distinct names everything shares one more bucket.
+    // browser's directive names, the ones of options.violationDirectives (VIOLATION_DIRECTIVES, which the host counts by
+    // too: violationBucket, violation.ts) and one more bucket for every other name (BD3:LIM-3).
     // The renderer's own refusals go through the same counts (R4:M-2): a URL the view's policy refuses is
     // dropped before insertion, so the browser never processes it, and reported here as the browser would report it (its
     // directive, and the URL without credentials or fragment), within the same per-directive cap.
@@ -1357,7 +1361,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const violationCounts = new Map<string, number>();
     const reportViolation = (directive: unknown, blockedURI: unknown, sourceFile?: unknown, lineNumber?: unknown, columnNumber?: unknown) => {
         const name = String(cutText(directive, options.violationMaxString));
-        const bucket = violationCounts.has(name) || violationCounts.size < 32 ? name : '';
+        const bucket = options.violationDirectives.indexOf(name) >= 0 ? name : '';
         const count = violationCounts.get(bucket) || 0;
         if (count >= options.violationLimit) return;
         violationCounts.set(bucket, count + 1);
@@ -2936,6 +2940,7 @@ export const VIEW_OPTIONS: ViewOptions = {
     overrunWindow: VIEW_OVERRUN_WINDOW_MS,
     maxDistinctUrls: VIEW_MAX_DISTINCT_URLS,
     violationLimit: 100, // VIOLATION_EVENT_LIMIT (violation.ts); a test keeps them equal
+    violationDirectives: VIOLATION_DIRECTIVES,
     violationMaxString: 2048, // VIOLATION_MAX_STRING (violation.ts); a test keeps them equal
     events: { types: VIEW_EVENT_TYPES, ...VIEW_EVENT_LIMITS },
     trustedTypesPolicy: TRUSTED_TYPES_POLICY,
@@ -2949,6 +2954,14 @@ export const VIEW_OPTIONS: ViewOptions = {
 
 let cachedText: string | null = null;
 let cachedHash: string | null = null;
+
+/**
+ * What viewScriptHash() warns, once, when the library runs from its sources and not from the built package (BD3:NEW-1):
+ * the bootstrap's text is then the functions as the bundler or runtime prints them, so the hash differs between a build
+ * step and the page's bundle of the same sources, and the page's policy would refuse the view's startup script.
+ */
+export const SOURCES_HASH_WARNING = "viewScriptHash() was computed from the library's sources, not from the built package: a bundler prints the bootstrap's functions its own way, so a build step that imports the sources gets another hash than the page that runs them, and a host policy that lists it refuses the view's startup script. Import the built package (dist/index.js, `bun run build:lib`), or read this value in the page that runs the sources (docs/API.md#host-page-policy).";
+let warnedSourcesHash = false;
 
 /**
  * The role attribute of the bootstrap's script element in the fetch bridge's frame (bridge-frame.ts,
@@ -2991,7 +3004,9 @@ export function viewBootstrapSource(options: ViewOptions): string {
  * importing the package) is the one the browser computes for the script the element injects. Hashing the functions'
  * Function.prototype.toString() would give one hash plain and another minified, and a host page that listed
  * the build-time hash would end with "the sandbox's startup script did not run". Undefined where the sources run unbundled
- * (the dev server, the unit tests): there the text is built from the functions, as it always matches the page serving it.
+ * (the dev server, the unit tests): there the text is built from the functions, as it always matches the page serving it. A consumer that
+ * bundles the sources has no literal either: its transpiler prints the functions its own way, so a build step that
+ * imports the sources computes another hash than the page's bundle does. viewScriptHash() says so (BD3:NEW-1).
  */
 declare const __WEB_SANDBOX_VIEW_BOOTSTRAP__: string | undefined;
 
@@ -3020,13 +3035,22 @@ export function viewBootstrapHash(): string {
  * @remarks
  * It is the very value the element puts in the `script-src` of both documents, and both inherit the host page's policy
  * (docs/API.md#host-page-policy), so one hash admits them both: the view in strict mode, and with `fetchBridge` the
- * frame that makes the bridge's requests, in every mode (BD1:ISO-1). The bootstrap is a string literal of the bundle, so the hash is the same in a build
- * step (importing the package needs no DOM) and in the browser, however the embedder's app is bundled or minified. It
- * changes only with the package's version.
+ * frame that makes the bridge's requests, in every mode (BD1:ISO-1). In the built package the bootstrap is a string
+ * literal of the bundle, so the hash is the same in a build step (importing the package needs no DOM) and in the browser,
+ * however the embedder's app is bundled or minified. It changes only with the package's version.
+ *
+ * The sources have no such literal: a project that bundles `src/index.ts` (not the built package) gets the hash of the
+ * functions as its own transpiler prints them, which a build step that imports the sources does not compute. There the
+ * value is right only where it is read, in the page that runs the sources, and the first call in a process or page
+ * warns (BD3:NEW-1).
  *
  * @returns The hash source, `'sha256-…'`, quotes included.
  */
 export function viewScriptHash(): string {
+    if (typeof __WEB_SANDBOX_VIEW_BOOTSTRAP__ !== 'string' && !warnedSourcesHash) {
+        warnedSourcesHash = true;
+        console.warn(SOURCES_HASH_WARNING);
+    }
     return viewBootstrapHash();
 }
 

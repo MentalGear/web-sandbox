@@ -1,0 +1,8 @@
+{
+ "cors.plain": "painted; 1 request(s): mode=no-cors origin=- cookies=[xd_none,x_none]",
+ "cors.anon": "blank; 0 request(s): ",
+ "cors.uc": "blank; 0 request(s): ",
+ "nocors.plain": "painted; 1 request(s): mode=no-cors origin=- cookies=[xd_none,x_none]",
+ "nocors.anon": "blank; 0 request(s): ",
+ "nocors.uc": "blank; 0 request(s): "
+}

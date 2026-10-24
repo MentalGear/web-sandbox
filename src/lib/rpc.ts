@@ -187,7 +187,7 @@ export const RESERVED_METHOD_PREFIX = 'sandbox:';
  * @remarks
  * When the other side reported the code (`HANDLER_ERROR` and the rest of the reported group), the message is its text.
  * Guest-controlled text when the guest handled the call: show it with `textContent`, never in an HTML, URL (such as a
- * link `href`), `eval` or template sink.
+ * link `href`), `eval`, template or `console` format-string sink.
  */
 export interface RpcError extends Error {
     /** Why the call was refused. */

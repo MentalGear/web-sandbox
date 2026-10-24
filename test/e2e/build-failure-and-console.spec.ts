@@ -21,7 +21,7 @@ test('an origins kind given a string instead of a list: setConfig() does not thr
             thrown = String(error);
         }
     }));
-    expect(outcome).toEqual({ reason: 'the configuration could not be used (TypeError)', state: 'terminated', frames: 0, thrown: null });
+    expect(outcome).toEqual({ reason: 'the configuration could not be used (TypeError: origins.images is not a list)', state: 'terminated', frames: 0, thrown: null });
     expect(await sandbox.mount()).toBe('ready');
 });
 

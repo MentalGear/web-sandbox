@@ -240,7 +240,7 @@ describe('F3: a reason, event or host line never carries the text of a caught er
         el._guestPolicy = () => { throw new Error(SECRET); };
         el.setConfig({});
         await settled();
-        expect(reasons).toEqual(['the configuration could not be used (TypeError)', 'the environment could not be built (Error)']);
+        expect(reasons).toEqual(['the configuration could not be used (TypeError: origins.images is not a list)', 'the environment could not be built (Error)']);
         for (const call of warn.mock.calls) expect(String(call[0])).not.toContain(SECRET);
     });
 
@@ -336,7 +336,7 @@ describe('F6: a refused config is never stored', () => {
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
         el.setConfig({ mode: 'strict', origins: null });
         await new Promise(resolve => setTimeout(resolve, 0)); // a build's 'terminated' comes in a task (R1:R3-2)
-        expect(reasons).toEqual(['the configuration could not be used (TypeError)']);
+        expect(reasons).toEqual(['the configuration could not be used (TypeError: origins is not an object)']);
         expect([el._config.mode, el._config.watchdogTimeout, el._config.workerExecutionTimeout, el._origins.images]).toEqual(['worker', 9, 7, ['https://kept.example']]);
     });
 
@@ -351,7 +351,9 @@ describe('F6: a refused config is never stored', () => {
                 await new Promise(resolve => setTimeout(resolve, 0)); // each build's 'terminated' in a task (R1:R3-2)
             }
         }
-        expect(reasons).toEqual(new Array(18).fill('the configuration could not be used (TypeError)'));
+        // the reason names the option (BD3:NEW-3)
+        const refusals = ['origins is not an object', 'origins is not an object', 'origins is not an object', 'origins is not an object', 'origins.images is not a list', 'origins.connect is not a list'];
+        expect(reasons).toEqual(['cooperative', 'worker', 'strict'].flatMap(() => refusals.map(refusal => `the configuration could not be used (TypeError: ${refusal})`)));
         el.setConfig({ origins: { images: ['https://a.example'] } });
         expect(el.state).toBe('loading'); // positive control
     });

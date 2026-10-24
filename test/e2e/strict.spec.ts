@@ -451,9 +451,14 @@ test.describe('files', () => {
         // the view holds only the files it may show: no JavaScript, no JSON (VIEW_FILE_TYPES, BR:ST1)
         expect(r).toEqual({ logo: 'blob:null/', sheet: 'blob:null/', styled: '7px', unregistered: 'img/missing.png', viewFiles: ['css/site.css', 'img/logo.png'] });
         // the worker reads every file; it mints URLs only for the types the view shows (R1:R2-4)
-        const worker = await sandbox.inGuest(`let js; try { js = sandboxFiles.url('lib.js'); } catch (error) { js = error.code; }
-            return { list: sandboxFiles.list(), json: JSON.parse(await sandboxFiles.text('data.json')).answer, js, png: sandboxFiles.url('img/logo.png').slice(0, 10) }`);
-        expect(worker).toEqual({ list: ['css/site.css', 'data.json', 'img/logo.png', 'lib.js'], json: 42, js: 'NOT_FOUND', png: 'blob:null/' });
+        const worker = await sandbox.inGuest(`let js, jsMessage, gone; try { js = sandboxFiles.url('lib.js'); } catch (error) { js = error.code; jsMessage = error.message; }
+            try { sandboxFiles.url('nothing.js'); } catch (error) { gone = error.message; }
+            return { list: sandboxFiles.list(), json: JSON.parse(await sandboxFiles.text('data.json')).answer, js, jsMessage, gone, png: sandboxFiles.url('img/logo.png').slice(0, 10) }`);
+        // a file that is there and has no URL does not say it is missing (BD3:NEW-4)
+        expect(worker).toEqual({
+            list: ['css/site.css', 'data.json', 'img/logo.png', 'lib.js'], json: 42, js: 'NOT_FOUND', png: 'blob:null/',
+            jsMessage: '[sandboxFiles] NOT_FOUND: this file has no URL (read() and text() work)', gone: '[sandboxFiles] NOT_FOUND: no such file',
+        });
         expect((await sandbox.violations()).filter(v => v.source === 'view')).toEqual([]);
     });
 
