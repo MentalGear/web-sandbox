@@ -4,6 +4,7 @@ import { fileKinds } from './csp/csp-generator';
 import { rewriteGuestMarkup, rewriteMarkupReferences, type KindMismatch } from './markup-references';
 import { FileStore, isJavaScriptType, isStylesheetType, mimeTypeFor } from './files';
 import { isViewFileType, RENDER_RULES, type RenderSwitches, sanitizeRender, VIEW_FILE_TYPES, VIEW_LOAD_KINDS } from './in-sandbox-view';
+import { dropNetworkCss } from './css-references';
 
 // the renderer with every switch on: what it keeps besides its rules is not what this file tests
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
@@ -167,7 +168,7 @@ describe('the strict view renderer reads a table derived from the same one', () 
         const template = document.createElement('template');
         template.innerHTML = html;
         const url = 'blob:null/00000000-0000-0000-0000-000000000001';
-        sanitizeRender(template.content, path => (path === 'f.bin' ? { url, type } : null), u => u === url, RENDER_RULES, KEEP_ALL);
+        sanitizeRender(template.content, path => (path === 'f.bin' ? { url, type } : null), u => u === url, dropNetworkCss, RENDER_RULES, KEEP_ALL);
         const div = document.createElement('div');
         div.append(template.content);
         return div.innerHTML.includes(url);

@@ -48,9 +48,9 @@ describe('COOKIE_ENGINE_FACTS', () => {
 });
 
 describe('COOKIE_CARRIERS: the requests the library cannot strip (BD3:DOC-1)', () => {
-    it('names the requests of every mode, and the four that only cooperative mode has, which the gate does not cover', () => {
-        expect(COOKIE_CARRIER_IDS.filter(id => COOKIE_CARRIERS[id].modes === 'every mode')).toEqual(['websocket', 'markup']);
-        expect(COOKIE_CARRIER_IDS.filter(id => COOKIE_CARRIERS[id].modes === 'cooperative mode')).toEqual(['beacon', 'eventsource', 'ping', 'frames']);
+    it('names the request of every mode, and the five that only cooperative mode has, which the gate does not cover', () => {
+        expect(COOKIE_CARRIER_IDS.filter(id => COOKIE_CARRIERS[id].modes === 'every mode')).toEqual(['websocket']);
+        expect(COOKIE_CARRIER_IDS.filter(id => COOKIE_CARRIERS[id].modes === 'cooperative mode')).toEqual(['markup', 'beacon', 'eventsource', 'ping', 'frames']);
     });
 
     it('each row is said, and the spec that makes it exists (a cooperative-mode row\'s reads the table)', () => {
@@ -68,7 +68,7 @@ describe('COOKIE_CARRIERS: the requests the library cannot strip (BD3:DOC-1)', (
         const sentence = cookieSentence(tick);
         expect(sentence).toContain(carrierClause(tick));
         for (const id of COOKIE_CARRIER_IDS) expect(sentence, id).toContain(withCode(COOKIE_CARRIERS[id].short, tick));
-        expect(carrierClause()).toBe("a WebSocket handshake, or a load of the guest's markup or CSS; in cooperative mode also navigator.sendBeacon(), EventSource with withCredentials, an <a ping> click and the requests of a frame the guest creates");
+        expect(carrierClause()).toBe("a WebSocket handshake; in cooperative mode also a load of the guest's markup or CSS, navigator.sendBeacon(), EventSource with withCredentials, an <a ping> click and the requests of a frame the guest creates");
     });
 });
 

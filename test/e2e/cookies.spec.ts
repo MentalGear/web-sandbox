@@ -94,6 +94,7 @@ type CooperativeCarrier = { [K in CookieCarrierId]: (typeof COOKIE_CARRIERS)[K][
 
 /** One request of each, the guest's own, to `target`; a row of the table without a probe here does not compile. The ping is last: the click follows the link. */
 const PROBES = (target: string): Record<CooperativeCarrier, string> => ({
+    markup: `const image = new Image(); image.src = ${JSON.stringify(`${target}/carrier?tag=markup`)}; document.body.appendChild(image); return 'loading'`,
     beacon: `return navigator.sendBeacon(${JSON.stringify(`${target}/carrier?tag=beacon`)}, 'x')`,
     eventsource: `window.source = new EventSource(${JSON.stringify(`${target}/carrier?tag=eventsource`)}, { withCredentials: true }); return 'made'`,
     frames: `const frame = document.createElement('iframe'); frame.srcdoc = '<script>fetch(${JSON.stringify(`${target}/carrier?tag=frames`)}, { credentials: "include" }).catch(() => {})<\\/script>'; document.body.appendChild(frame); return 'framed'`,
@@ -107,7 +108,7 @@ test('cooperative mode: each request the gate does not cover carries the listed 
     await expect.poll(() => recorder.hits.filter(hit => hit.path.includes('tag=control')).length).toBe(3);
     for (const hit of recorder.hits.filter(candidate => candidate.path.includes('tag=control'))) expect(String(hit.headers.cookie), hit.path).toContain('ws_none=1');
 
-    expect(await sandbox.mount({ mode: 'cooperative', origins: { connect: [recorder.allowed] } })).toBe('ready');
+    expect(await sandbox.mount({ mode: 'cooperative', origins: { connect: [recorder.allowed], images: [recorder.allowed] } })).toBe('ready');
     // ledger: cookies
     const engine = browserName as CookieEngine;
     const carries = (COOKIE_ENGINE_FACTS[engine].sends.crossSite as readonly string[]).includes('None');

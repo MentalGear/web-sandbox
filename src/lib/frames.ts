@@ -99,7 +99,7 @@ export const FRAMES = {
             autoResize: { bound: 'host', how: "the embedder's switch" },
             allowAnimations: { bound: 'host', how: "the embedder's switch" },
             allowAutoplay: { bound: 'host', how: "the embedder's switch" },
-            origins: { bound: 'host', how: "the policy's image and media origins" },
+            origins: { bound: 'host', how: "the policy's image and media origins, and origins.withoutCors" },
         },
     },
     INIT_WORKER: {

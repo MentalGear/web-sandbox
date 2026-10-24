@@ -3,7 +3,7 @@
  * table of docs/API.md and docs/THREAT-MODEL.md and the sentence of the README. The warning of `origins` reads the same
  * table, so the wording is one.
  */
-import { COOKIE_CARRIERS, COOKIE_CARRIER_IDS, COOKIE_ENGINES, COOKIE_ENGINE_FACTS, cookieSentence, sameSiteValues, type CookieEngineFacts } from '../../../src/lib/cookie-facts';
+import { COOKIE_CARRIERS, COOKIE_CARRIER_IDS, COOKIE_ENGINES, COOKIE_ENGINE_FACTS, cookieSentence, sameSiteValues, withoutCorsCookieSentence, type CookieEngineFacts } from '../../../src/lib/cookie-facts';
 import { signatureOf } from '../engine';
 import { code, row, table, type Extractor } from './markdown';
 
@@ -42,5 +42,6 @@ export const cookieFacts: Extractor = {
         'cookie-facts': factsTable,
         'cookie-carriers': carriersTable,
         'cookie-sentence': () => cookieSentence(code),
+        'without-cors-cost': () => withoutCorsCookieSentence(code),
     },
 };

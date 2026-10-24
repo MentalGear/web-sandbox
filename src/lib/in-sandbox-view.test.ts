@@ -7,6 +7,7 @@ import { VIOLATION_EVENT_LIMIT, VIOLATION_MAX_STRING } from './violation';
 import { mimeTypeFor } from './files';
 import { scalingRatio, type ScalingSize } from '../../test/unit/scaling';
 import { runBootstrap } from '../../test/unit/sandbox-environment';
+import { dropNetworkCss } from './css-references';
 
 // the renderer with every switch on (RenderSwitches): the tests that do not test a switch keep what the switches govern
 const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets: true };
@@ -21,7 +22,7 @@ function sanitize(html: string, files: Record<string, string> = {}, origins: Rec
     template.innerHTML = html;
     const minted = new Set(Object.values(files));
     const context: RenderContext = { target: 'body', animating: RENDER_RULES.still.known, origins, refused: [], urls: 0, loads: [] };
-    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), RENDER_RULES, KEEP_ALL, undefined, context);
+    sanitizeRender(template.content, (path) => (Object.hasOwn(files, path) ? { url: files[path]!, type: mimeTypeFor(path) } : null), (url) => minted.has(url), dropNetworkCss, RENDER_RULES, KEEP_ALL, undefined, context);
     return template.content;
 }
 const serialise = (fragment: DocumentFragment) => {
@@ -179,7 +180,7 @@ describe('A2: the fragment is moved, never cloned or imported', () => {
         const adoptNode = vi.spyOn(Document.prototype, 'adoptNode');
         const template = document.createElement('template');
         template.innerHTML = '<svg><script>x</script></svg><div><img src="a"><p>t</p></div>';
-        sanitizeRender(template.content, () => null, () => false, RENDER_RULES, KEEP_ALL);
+        sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, KEEP_ALL);
         expect([clone.mock.calls.length, importNode.mock.calls.length, adoptNode.mock.calls.length]).toEqual([0, 0, 0]);
     });
 
@@ -412,7 +413,9 @@ describe('broad review 2026-10-14: the renderer is an allowlist', () => {
         for (const element of Array.from(fragment.querySelectorAll('*'))) {
             if (!allowedElement(element)) found.push(`seed ${seed}: <${element.localName}> in ${element.namespaceURI}`);
             for (const name of element.getAttributeNames()) {
-                if (!allowedAttribute(element, name) || name.toLowerCase().startsWith('on')) found.push(`seed ${seed}: ${element.localName}[${name}]`);
+                // crossorigin is the renderer's own, on the elements it gives it to (RENDER_CROSSORIGIN_ELEMENTS), with its one value
+                const own = name === 'crossorigin' && (RENDER_RULES.crossOrigin as readonly string[]).includes(element.localName) && element.getAttribute(name) === 'anonymous';
+                if ((!own && !allowedAttribute(element, name)) || name.toLowerCase().startsWith('on')) found.push(`seed ${seed}: ${element.localName}[${name}]`);
                 const value = element.getAttribute(name)!.replace(/[\t\n\r]/g, '').trim().toLowerCase();
                 if (['src', 'srcset', 'href', 'xlink:href', 'poster'].includes(name) && /^(javascript|data|vbscript):/.test(value)) found.push(`seed ${seed}: ${element.localName}[${name}]=${value}`);
             }
@@ -487,7 +490,7 @@ describe('broad review ST2: the renderer counts what it keeps against the room i
         const run = (html: string, room: { elements: number; depth: number }) => {
             const template = document.createElement('template');
             template.innerHTML = html;
-            return sanitizeRender(template.content, () => null, () => false, RENDER_RULES, KEEP_ALL, room);
+            return sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, KEEP_ALL, room);
         };
         expect(run('<p></p>'.repeat(10), { elements: 10, depth: 5 })).toBe(10);
         expect(() => run('<p></p>'.repeat(11), { elements: 10, depth: 5 })).toThrowError(new RangeError('VIEW_MAX_ELEMENTS'));
@@ -603,7 +606,7 @@ describe('review round 1: R1-2, the renderer is linear and keeps no element whos
             const template = document.createElement('template');
             template.innerHTML = markup(n);
             return {
-                run: () => { sanitizeRender(template.content, () => null, () => false, RENDER_RULES, KEEP_ALL); return template; },
+                run: () => { sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, KEEP_ALL); return template; },
                 verify: done => expect(done.content.querySelector('p')!.childNodes).toHaveLength(1),
             };
         };

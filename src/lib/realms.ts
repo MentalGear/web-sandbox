@@ -104,6 +104,7 @@ export interface StringifiedRow {
 const RUNS_FIRST = 'it runs to its end before any guest code, and leaves no closure behind';
 const NO_GUEST = 'its realm runs no guest code';
 const VIEW_STATEMENTS = "in-sandbox-view.ts's own: the typeof-then-read statement scan covers it";
+const OWN_RECORDS = 'it reads a string and the tokens and references it makes itself, in realms that run no guest code';
 
 /** Every function the library stringifies into a realm. */
 export const STRINGIFIED = {
@@ -122,6 +123,8 @@ export const STRINGIFIED = {
     sanitizeRender: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     viewBudget: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
     cssLoadBound: { module: 'src/lib/in-sandbox-view.ts', realms: ['view'], capture: NO_GUEST, readOnce: VIEW_STATEMENTS, typeofRead: true },
+    cssReferences: { module: 'src/lib/css-references.ts', realms: ['view'], capture: NO_GUEST, readOnce: OWN_RECORDS, typeofRead: true },
+    withoutNetworkReferences: { module: 'src/lib/css-references.ts', realms: ['view'], capture: NO_GUEST, readOnce: OWN_RECORDS, typeofRead: true },
     checkSandboxEnvironment: { module: 'src/lib/environment-check.ts', realms: ['cooperative', 'worker-frame', 'view', 'bridge-frame'], capture: RUNS_FIRST, readOnce: true, typeofRead: true },
     inBridgeFrame: { module: 'src/lib/in-bridge-frame.ts', realms: ['bridge-frame'], capture: NO_GUEST, readOnce: true, typeofRead: true },
 } as const satisfies Record<string, StringifiedRow>;

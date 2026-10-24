@@ -16,6 +16,7 @@ import { LOG_EVENTS_PER_SECOND } from '@src/lib/sandbox-log';
 import { SyntaxKind, tokenize } from '../../scripts/js-tokens';
 import { stringifiedFor } from './stringified';
 import { runBootstrap } from './sandbox-environment';
+import { dropNetworkCss } from '@src/lib/css-references';
 
 const TYPEOF_SCANNED = await stringifiedFor('typeofRead');
 
@@ -426,12 +427,12 @@ describe('M-2: the renderer drops every URL the view policy refuses, reports it,
         const template = document.createElement('template');
         template.innerHTML = html;
         const context = { target, animating: [] as string[], origins, refused: [] as [string, string][], urls: 0, loads: [] as string[] };
-        sanitizeRender(template.content, () => null, () => false, RENDER_RULES, { animations: true, autoplay: true, stylesheets: true }, room, context);
+        sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, { animations: true, autoplay: true, stylesheets: true }, room, context);
         return { fragment: template.content, context };
     };
     const attribute = (fragment: DocumentFragment, id: string, name: string) => fragment.getElementById(id)!.getAttribute(name);
 
-    it('by the kind of load each attribute makes: images (src, srcset, poster, a <picture> source), media (audio, video, their source and track)', () => {
+    it('by the kind of load each attribute makes: images (src, srcset, a <picture> source; a network poster always goes), media (audio, video, their source and track)', () => {
         const { fragment, context } = run([
             '<img id="a" src="https://a.example/1.png"><img id="b" src="https://u:p@b.example:8443/2.png?q#f"><img id="c" srcset="https://a.example/3.png 1x, https://b.example/4.png 2x">',
             '<video id="v" src="https://b.example/v.mp4" poster="https://a.example/p.png"><source id="vs" src="https://a.example/s.mp4"><track id="t" src="https://b.example/t.vtt"></video>',
@@ -439,17 +440,18 @@ describe('M-2: the renderer drops every URL the view policy refuses, reports it,
             '<img id="up" src="http://a.example/5.png"><img id="rel" src="r.png"><audio id="au" src="https://a.example/a.mp3"></audio>',
         ].join(''), { images: ['https://a.example'], media: ['https://b.example'] });
         expect([['a', 'src'], ['b', 'src'], ['c', 'srcset'], ['v', 'src'], ['v', 'poster'], ['vs', 'src'], ['t', 'src'], ['ps', 'srcset'], ['loose', 'src'], ['up', 'src'], ['rel', 'src'], ['au', 'src']].map(([id, name]) => attribute(fragment, id!, name!))).toEqual([
-            'https://a.example/1.png', null, null, 'https://b.example/v.mp4', 'https://a.example/p.png', null, 'https://b.example/t.vtt', null, 'https://b.example/l.mp4', null, 'r.png', null,
+            'https://a.example/1.png', null, null, 'https://b.example/v.mp4', null, null, 'https://b.example/t.vtt', null, 'https://b.example/l.mp4', null, 'r.png', null,
         ]);
         expect(context.refused).toEqual([
             ['img-src', 'https://b.example:8443/2.png?q'],
             ['img-src', 'https://b.example/4.png'],
+            ['img-src', 'https://a.example/p.png'], // a listed origin, but no poster keeps a network URL (RENDER_NETWORK_DROPPED)
             ['media-src', 'https://a.example/s.mp4'],
             ['img-src', 'https://b.example/p.png'],
             ['img-src', 'http://a.example/5.png'],
             ['media-src', 'https://a.example/a.mp3'],
         ]);
-        expect(context.urls).toBe(6); // a, v src, v poster, t, loose (a <source> outside media loads nothing), rel (up is the http: form of a listed https: origin: refused, not kept)
+        expect(context.urls).toBe(5); // a, v src, t, loose (a <source> outside media loads nothing), rel (up is the http: form of a listed https: origin: refused, not kept)
     });
 
     it("a fragment's top-level <source> loads by the target it goes into", () => {

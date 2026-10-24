@@ -2,6 +2,8 @@ import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { inView, waitInView } from './strict-view';
 import type { Page } from '@playwright/test';
 import { cssLoadBound, RENDER_RULES, sanitizeRender, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_OPERATION_MS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_MAX_LENGTH, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
+import { cssReferences, withoutNetworkReferences } from '@src/lib/css-references';
+import { VIOLATION_EVENT_LIMIT } from '@src/lib/violation';
 import { busyOf, busyShare, describeShare, idleBaseline, lag, loadedShare, operationCost, startLag, viewBound } from './host-share';
 
 /**
@@ -37,7 +39,10 @@ test.describe('N-3 (class B): the renderer keeps a URL only where every engine a
         // b, c, v, l and u are dropped by the renderer (no policy upgrades an http: form, so every engine refuses it alike)
         expect(kept).toEqual(['https://a.example/1.png', null, null, null, 'https://a.example/w.mp4', null, `http://127.0.0.1:${port}/test/e2e/pixel.png`, null]);
         await page.waitForTimeout(500);
-        const reported = (await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI}`).sort();
+        // the renderer's reports; a URL it kept can be reported too, as a load that failed (S74: the e2e server answers
+        // pixel.png without Access-Control-Allow-Origin, and the route answers w.mp4 with an image), which is not this test's
+        const keptUrls = (kept as (string | null)[]).filter((url): url is string => url !== null);
+        const reported = (await sandbox.violations()).map(v => `${v.directive} ${v.blockedURI}`).filter(line => !keptUrls.some(url => line.endsWith(` ${url}`))).sort();
         expect(reported).toEqual([`img-src http://127.0.0.1:${other}/u.png`, `img-src https://127.0.0.1:${port}/l.png`, 'img-src http://a.example/2.png', 'img-src http://a.example:443/3.png', 'media-src http://a.example/v.mp4'].sort());
     });
 });
@@ -85,59 +90,54 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
     // loads), and the credit carried in, at most a second's worth. No stylesheet is in the view, so nothing else.
     // Derived from the code, not measured: every load is charged before the browser can start it.
     const bound = (seconds: number) => VIEW_URLS_PER_SECOND * seconds + VIEW_URLS_PER_SECOND + PER_RENDER + VIEW_URLS_PER_SECOND;
-    // Refusals the view's document reports over a window that starts once the flood is under way: twice the rate. Not
-    // the bound above, which is of loads: WebKit reports some refusals twice, and each report past the credit is charged
-    // only once it is made (at most 1.8 times the rate, Firefox).
-    const ADMITTED = 2 * VIEW_URLS_PER_SECOND * WINDOW_S;
     // the host page's share over the same WINDOW_S: the best of 2 windows of half of it
     const WINDOWS = { windows: 2, ms: (WINDOW_S * 1000) / 2 };
 
-    test(`CSS backgrounds to an admitted origin: at most VIEW_URLS_PER_SECOND loads per second, and the host page keeps about its share`, async ({ sandbox, page, browserName }) => {
+    // CSS makes no network load in the view (S74): the renderer drops every http(s) URL CSS names before insertion, from a
+    // listed origin or not, and reports it. So a flood of CSS backgrounds reaches no server, makes no refusal of the
+    // browser's, and the reports are capped (VIOLATION_EVENT_LIMIT per directive); the operations are charged their
+    // url() tokens all the same (S73), and the host page keeps about its share.
+    test(`CSS backgrounds to an admitted origin: none leaves the view, each is dropped and reported (capped), and the host page keeps about its share`, async ({ sandbox, page, browserName }) => {
         test.setTimeout(90000);
         const requested: number[] = [];
         await page.route(A_EXAMPLE, route => { requested.push(Date.now()); return route.fulfill({ body: PNG, contentType: 'image/png' }); });
         await mountEntry(sandbox, backgroundFlood('https://a.example/', PER_RENDER), { origins: { images: ['https://a.example'] } });
+        await waitInView(page, browserName, `!!document.getElementById('a')`);
+        // the refusals the view's document saw, counted in the view, from outside: none, the browser never sees the URLs
+        await inView(page, browserName, `(window.__refusals = [], addEventListener('securitypolicyviolation', () => window.__refusals.push(performance.now())), true)`);
         await page.waitForTimeout(300);
         const idle = await idleBaseline(page);
-        const started = Date.now();
         await sandbox.run(`flood(${WINDOW_S + 6})`);
         await page.waitForTimeout(3000);
-        const from = Date.now();
         const share = await loadedShare(page, idle, WINDOWS);
-        const until = from + WINDOW_S * 1000;
-        // Counted over the whole flood, from the first render: a render's loads are charged when it is applied, so the
-        // budget holds the next one back until they are repaid. On a fast runner that wait can cover the whole window
-        // (0 loads in it, WebKit in CI), which is the budget working; the host-share check below is over the window.
-        const loads = requested.filter(time => time >= started && time < until).length;
-        const seconds = (until - started) / 1000;
-        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, admitted origin: ${loads} loads over the ${seconds.toFixed(1)} s flood, ${(loads / seconds).toFixed(0)} per second (budget ${VIEW_URLS_PER_SECOND}, bound ${bound(seconds).toFixed(0)}); ${describeShare(share)}`);
-        // Firefox: about 1400 loads per second under the flood, within the bound (S73; unbounded, 5000 over an 11.1 s flood)
-        expect(loads).toBeLessThanOrEqual(bound(seconds));
-        expect(loads).toBeGreaterThan(0);
+        const reported = (await sandbox.violations()).filter(v => v.directive === 'img-src' && v.blockedURI.startsWith('https://a.example/'));
+        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, admitted origin: ${requested.length} loads, ${reported.length} reports; ${describeShare(share)}`);
+        expect(requested).toEqual([]);
+        expect(await inView<number>(page, browserName, `window.__refusals.length`)).toBe(0);
+        expect(reported.length).toBeGreaterThan(0);
+        expect(reported.length).toBeLessThanOrEqual(VIOLATION_EVENT_LIMIT);
         expect(share.busy).toBeLessThanOrEqual(viewBound(true)); // docs/API.md (a) for a view that loads: 40%, plus 10 points
     });
 
-    test(`CSS backgrounds from a refused source: at most VIEW_URLS_PER_SECOND refusals per second, and the host page keeps about its share`, async ({ sandbox, page, browserName }) => {
+    test(`CSS backgrounds from a refused source: the same, no refusal of the browser's, and the host page keeps about its share`, async ({ sandbox, page, browserName }) => {
         test.setTimeout(90000);
         await mountEntry(sandbox, backgroundFlood('https://r.example/', PER_RENDER));
         await waitInView(page, browserName, `!!document.getElementById('a')`);
-        // the refusals the view's document saw, counted in the view, from outside
-        await inView(page, browserName, `(window.__refusals = [], addEventListener('securitypolicyviolation', () => window.__refusals.push(performance.now() + performance.timeOrigin)), true)`);
+        await inView(page, browserName, `(window.__refusals = [], addEventListener('securitypolicyviolation', () => window.__refusals.push(performance.now())), true)`);
         await page.waitForTimeout(300);
         const idle = await idleBaseline(page);
         await sandbox.run(`flood(${WINDOW_S + 6})`);
         await page.waitForTimeout(3000);
-        const from = Date.now();
         const share = await loadedShare(page, idle, WINDOWS);
-        const times = await inView<number[]>(page, browserName, `window.__refusals`) as number[];
-        const refusals = times.filter(time => time >= from && time < from + WINDOW_S * 1000).length;
-        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, refused source: ${(refusals / WINDOW_S).toFixed(0)} refusals per second (budget ${VIEW_URLS_PER_SECOND}); ${describeShare(share)}`);
-        expect(refusals).toBeLessThanOrEqual(ADMITTED);
-        expect(refusals).toBeGreaterThan(0);
-        expect(share.busy).toBeLessThanOrEqual(viewBound(true)); // refusals are charged as loads: 40%, plus 10 points
+        const reported = (await sandbox.violations()).filter(v => v.directive === 'img-src' && v.blockedURI.startsWith('https://r.example/'));
+        console.log(`MEASURED ${browserName} M-3 CSS backgrounds, refused source: ${reported.length} reports; ${describeShare(share)}`);
+        expect(await inView<number>(page, browserName, `window.__refusals.length`)).toBe(0);
+        expect(reported.length).toBeGreaterThan(0);
+        expect(reported.length).toBeLessThanOrEqual(VIOLATION_EVENT_LIMIT);
+        expect(share.busy).toBeLessThanOrEqual(viewBound(true));
     });
 
-    test('S73: behind a slow server (every response 1 s late) the burst is the same bound: it no longer grows with the latency', async ({ sandbox, page, browserName }) => {
+    test('S73: behind a slow server (every response 1 s late) nothing CSS names reaches it either', async ({ sandbox, page, browserName }) => {
         test.setTimeout(90000);
         const FLOOD_S = 6;
         const requested: number[] = [];
@@ -148,18 +148,10 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         });
         await mountEntry(sandbox, backgroundFlood('https://a.example/', PER_RENDER), { origins: { images: ['https://a.example'] } });
         await page.waitForTimeout(300);
-        const started = Date.now();
         await sandbox.run(`flood(${FLOOD_S})`);
         await page.waitForTimeout(FLOOD_S * 1000 + 1500);
-        const until = started + FLOOD_S * 1000;
-        const loads = requested.filter(time => time >= started && time < until).length;
-        // the first second: before S73 every render the view applied before the first response ended went through
-        const first = requested.filter(time => time >= started && time < started + 1000).length;
-        const seconds = (until - started) / 1000;
-        console.log(`MEASURED ${browserName} S73 CSS backgrounds behind a 1 s server: ${first} loads in the first second (bound ${bound(1)}), ${loads} over the ${seconds.toFixed(1)} s flood (bound ${bound(seconds).toFixed(0)})`);
-        expect(first).toBeLessThanOrEqual(bound(1));
-        expect(loads).toBeLessThanOrEqual(bound(seconds));
-        expect(loads).toBeGreaterThan(0);
+        console.log(`MEASURED ${browserName} S73 CSS backgrounds behind a 1 s server: ${requested.length} loads (bound ${bound(FLOOD_S)})`);
+        expect(requested).toEqual([]);
     });
 
     test('S73: counting what CSS can load costs little next to parsing and cleaning it (a 256 KiB render full of CSS)', async ({ sandbox, page, browserName }) => {
@@ -178,6 +170,9 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
         await inView(page, browserName, `(window.__s73 = null, setTimeout(() => {
             const count = (${cssLoadBound.toString()});
             const sanitize = (${sanitizeRender.toString()});
+            const scanCss = (${cssReferences.toString()});
+            const dropCss = (${withoutNetworkReferences.toString()});
+            const dropNetworkCss = (css, dropped) => dropCss(css, scanCss, dropped);
             const rules = ${JSON.stringify(RENDER_RULES)};
             const half = ${VIEW_RENDER_MAX_LENGTH / 2};
             const escape = (name) => name.split('').map(c => '\\\\' + c.charCodeAt(0).toString(16) + ' ').join('');
@@ -211,7 +206,7 @@ test.describe('M-3 (class E-net and P): every load the view makes is charged to 
                 const cleaned = () => {
                     const content = parsed();
                     const context = { target: 'div', animating: [], origins: { images: ['https://a.example'] }, refused: [], urls: 0, loads: [], css: [] };
-                    sanitize(content, () => null, () => false, rules, switches, { elements: 50000, depth: 256, urls: 1000 }, context);
+                    sanitize(content, () => null, () => false, dropNetworkCss, rules, switches, { elements: 50000, depth: 256, urls: 1000 }, context);
                     return { content, context };
                 };
                 // what cssLoadsOf does with them: the <style> texts and the stylesheet links read, and all counted joined

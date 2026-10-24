@@ -3,6 +3,7 @@ import { inSandboxView, RENDER_RULES, sanitizeRender, VIEW_OPTIONS, VIEW_STILL_P
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { scriptHashSource } from '@src/lib/csp/script-hash';
 import { runBootstrap } from './sandbox-environment';
+import { dropNetworkCss } from '@src/lib/css-references';
 
 /**
  * The strict view's two switches, `allowAnimations` and `allowAutoplay` (both default false), where the
@@ -18,7 +19,7 @@ const SWITCHES: RenderSwitches = { animations: true, autoplay: false, stylesheet
 function render(html: string, switches: Partial<RenderSwitches>) {
     const template = document.createElement('template');
     template.innerHTML = html;
-    sanitizeRender(template.content, () => null, () => false, RENDER_RULES, { ...SWITCHES, ...switches });
+    sanitizeRender(template.content, () => null, () => false, dropNetworkCss, RENDER_RULES, { ...SWITCHES, ...switches });
     return template.content;
 }
 
@@ -59,8 +60,8 @@ describe('the renderer', () => {
     it('autoplay off: video and audio lose autoplay and keep the rest; on: they keep it', () => {
         const markup = '<video id="v" autoplay muted loop controls></video><audio id="a" autoplay loop></audio>';
         const off = render(markup, { autoplay: false });
-        expect(off.getElementById('v')!.getAttributeNames().sort()).toEqual(['controls', 'id', 'loop', 'muted']);
-        expect(off.getElementById('a')!.getAttributeNames().sort()).toEqual(['id', 'loop']);
+        expect(off.getElementById('v')!.getAttributeNames().sort()).toEqual(['controls', 'crossorigin', 'id', 'loop', 'muted']);
+        expect(off.getElementById('a')!.getAttributeNames().sort()).toEqual(['crossorigin', 'id', 'loop']);
         const on = render(markup, { autoplay: true });
         expect(on.getElementById('v')!.hasAttribute('autoplay')).toBe(true);
         expect(on.getElementById('a')!.hasAttribute('autoplay')).toBe(true);
@@ -72,7 +73,7 @@ describe('the renderer', () => {
         const run = (stylesheets: boolean) => {
             const template = document.createElement('template');
             template.innerHTML = '<style>p{}</style><svg><style>rect{}</style></svg><link rel="stylesheet" href="a.css"><link rel="icon" href="i.png"><p>x</p>';
-            sanitizeRender(template.content, (path) => files[path] ?? null, isMinted, RENDER_RULES, { ...SWITCHES, stylesheets });
+            sanitizeRender(template.content, (path) => files[path] ?? null, isMinted, dropNetworkCss, RENDER_RULES, { ...SWITCHES, stylesheets });
             return Array.from(template.content.querySelectorAll('*')).map(e => e.localName + (e.getAttribute('rel') ? `[${e.getAttribute('rel')}]` : ''));
         };
         expect(run(true)).toEqual(['style', 'svg', 'style', 'link[stylesheet]', 'link[icon]', 'p']);

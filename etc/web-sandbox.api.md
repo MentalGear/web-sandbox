@@ -214,6 +214,7 @@ export interface SandboxOrigins {
     media?: readonly string[];
     scripts?: readonly string[];
     styles?: readonly string[];
+    withoutCors?: readonly string[];
 }
 
 // @public
