@@ -267,7 +267,7 @@ stateDiagram-v2
 
 ## Budgets
 
-<!-- describes: budgets:channels sig:a85e -->
+<!-- describes: budgets:channels sig:f458 -->
 
 Everything the guest can make the host page, the view or the network do goes through a **channel**, and every channel has
 a bound in count, bytes and time. The surfaces a guest can reach are listed once (the egress table), each with how it is

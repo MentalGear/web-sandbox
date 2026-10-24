@@ -279,8 +279,8 @@ export const STILL_PROPERTIES = [
     'transition-delay', 'transition-behavior',
 ] as const;
 
-/** The events sandboxView.on() can subscribe to (ADR-005; the pointer types: research 23). */
-export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown', 'pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'wheel', 'scroll'] as const;
+/** The events sandboxView.on() can subscribe to (ADR-005; the pointer, wheel, scroll and focus types: research 23). */
+export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown', 'pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'wheel', 'scroll', 'focusin', 'focusout'] as const;
 
 /**
  * The continuous event types (research 23): the view coalesces them in its input outbox (viewInputOutbox), at most one
@@ -1542,7 +1542,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // the view's box: a press that began in the view goes on delivering moves over the host page until it is released,
     // in every engine, with or without capture, so a move outside the box is forwarded only while a press that began
     // here is held (a button down), and clamped to the edge; nothing of the host page's own input ever reaches the
-    // view. No tilt, twist, contact size, coalesced or predicted point lists, and no relatedTarget.
+    // view. No tilt, twist, contact size, coalesced or predicted point lists, and no relatedTarget (focusin and focusout
+    // say which of the view's elements gained or lost focus, never where it went or came from).
     // Flow control: discrete events are posted at once, as the user raises them; continuous ones
     // (VIEW_CONTINUOUS_EVENT_TYPES) wait in the input outbox (viewInputOutbox), coalesced, and go at most once per
     // animation frame (a timer stands in where frames are throttled, as for the flush), while no frame is
