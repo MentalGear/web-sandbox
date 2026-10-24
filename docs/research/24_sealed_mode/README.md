@@ -17,8 +17,8 @@ default. The decision:
   engines run WebAssembly the same way under `'wasm-unsafe-eval'` (M1, M2), and nothing measured changes timers (M3), but
   **WebKit does not stop a pure WebAssembly loop** when the frame is removed or the worker terminated (M4, §4). An
   `allowWebAssembly: true` opt-in may follow, once that residual is accepted as a documented row or WebKit fixes it.
-- **Strict keeps its network**, with two fixes that were in progress when the design was written: no cookie carrier
-  (`wss:` and `origins.withoutCors` removed) and no read of the host page's policy. Sealed assumes both.
+- **Strict keeps its network**, with no cookie carrier (no `WebSocket`, no per-origin exception to the view's
+  `crossorigin`: #75) and the host page's policy taken only from `hostContentSecurityPolicy` (#76).
 - **The engine ledger row `webassembly-unsafe-eval` was wrong** and is corrected with this note: WebKit compiles without
   the keyword but refuses every instantiation, so no WebAssembly code runs there either (M1).
 
@@ -113,8 +113,8 @@ A policy list only narrows, so the host page's policy can make sealed refuse som
 
 Only `crossOriginIsolated`, a boolean the browser guarantees, used only to refuse (without it an isolated page builds on
 Chromium and is refused on Firefox: an engine difference, and an isolated guest would get 5 µs timers). It does not read
-the page's origin or its policy. That deletes the same-site rule, the private-network rule, the connect narrowing, the
-twin rule and the build's wait on a policy read from sealed's path. Research 22's lesson, to replace a prediction by a
+the page's origin or its policy. That takes the same-site rule, the private-network rule, the connect narrowing and the
+twin rule off sealed's path. Research 22's lesson, to replace a prediction by a
 rule that reads only what the browser guarantees, holds with no predictor left.
 
 ## 3. WebAssembly
