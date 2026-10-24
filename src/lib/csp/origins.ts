@@ -115,6 +115,15 @@ export class OriginsTypeError extends TypeError {
 }
 
 /**
+ * What a refused config's reason says after the error's `name`: for an OriginsTypeError, `: ` and the fixed text that
+ * names the option (BD3:NEW-3); for any other error, nothing. The one rule the element's reason (host.ts) and the
+ * reducer's test host apply.
+ */
+export function refusalDetail(error: unknown): string {
+    return error instanceof OriginsTypeError ? `: ${ORIGINS_REFUSAL_TEXT[error.option]}` : '';
+}
+
+/**
  * `input` (the config's `origins`, already a structured clone) as an OriginPolicy for `mode`. Throws an
  * OriginsTypeError for an input that is present but not an object, or a kind that is present but not a list: the caller
  * refuses the config. Everything else it cannot use goes to `warn`, one message per entry, and is left out.

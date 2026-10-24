@@ -143,10 +143,14 @@ export function isInertPath(path: string): boolean {
     return INERT_EXTENSIONS.includes(path.split('.').pop() ?? '');
 }
 
-/** The reason a refused config gives (the error's name only). */
+/**
+ * The reason a refused config gives: the error's name, and for an `origins` of the wrong type the library's fixed text
+ * that names the option (BD3:NEW-3). Written out here, not imported, so the model stays an oracle independent of src/.
+ */
 export function refusalOf(desc: ConfigDesc): string | null {
     if (desc.kind !== 'unusable') return null;
-    return `${CONFIG_REFUSED} (${desc.why === 'function' ? 'DataCloneError' : 'TypeError'})`;
+    const detail = { function: 'DataCloneError', notObject: 'TypeError', origins: 'TypeError: origins is not an object', originsList: 'TypeError: origins.images is not a list' }[desc.why];
+    return `${CONFIG_REFUSED} (${detail})`;
 }
 
 export function unknownModeReason(mode: string | number): string {
