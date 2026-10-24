@@ -216,44 +216,70 @@ describe("the view's event path (inSandboxView, run as stringified)", () => {
         expect(await send({ clientX: w + 1, clientY: 5, buttons: 1 })).toEqual([]);
         expect(await send({ clientX: 3, clientY: 4 })).toEqual([[3, 4]]);
     });
+
+    it("sums a wheel's deltas per element and unit, the pointer where it last was (clamped); a scroll carries the scrolled element's position and extent", async () => {
+        const { render, fire, events } = await startView();
+        render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel', 'scroll'] });
+        await settle();
+        fire('wheel', { deltaX: 1, deltaY: 40, deltaZ: 0, deltaMode: 0, clientX: 5, clientY: 5 });
+        await until(() => events().length === 1);
+        fire('wheel', { deltaX: 0, deltaY: 40, deltaZ: 0, deltaMode: 0, clientX: 6, clientY: 5 });
+        fire('wheel', { deltaX: 2, deltaY: 60, deltaZ: 0, deltaMode: 0, clientX: -50, clientY: 5, shiftKey: true });
+        fire('wheel', { deltaX: 0, deltaY: 3, deltaZ: 0, deltaMode: 1, clientX: 7, clientY: 5 });
+        const pad = document.getElementById('pad')!;
+        fire('scroll', { target: pad });
+        fire('scroll', { target: pad });
+        await settle();
+        render.postMessage({ type: 'VIEW_EVENT_ACK' });
+        await until(() => events().length === 2);
+        const [pixel, line, scroll] = events()[1].details;
+        expect(pixel).toMatchObject({ type: 'wheel', ids: ['inner', 'pad'], wheel: { dx: 2, dy: 100, dz: 0, unit: 'pixel' }, pointer: { x: 0, y: 5 }, coalesced: 2, modifiers: { shift: true } });
+        expect(line).toMatchObject({ type: 'wheel', wheel: { dx: 0, dy: 3, dz: 0, unit: 'line' }, coalesced: 1 });
+        expect(scroll).toEqual({ type: 'scroll', ids: ['pad'], target: { tag: 'div', id: 'pad', name: '', value: '', checked: false }, scroll: { top: 0, left: 0, width: 0, height: 0, clientWidth: 0, clientHeight: 0 }, time: 1235, coalesced: 2 });
+    });
 });
 
 // The strict prelude against stand-ins for the worker's platform (as in view-api.test.ts).
-describe('the prelude acknowledges each frame of events once its handlers have returned', () => {
-    class FakeEvent { stopImmediatePropagation() {} preventDefault() {} }
-    class FakeMessageEvent extends FakeEvent {
-        readonly isTrusted = true;
-        constructor(private readonly init: { data?: unknown; ports?: unknown[] }) { super(); }
-        get data() { return this.init.data; }
-        get ports() { return this.init.ports ?? []; }
-    }
-    class FakeTarget {
-        listeners: Record<string, (event: unknown) => void> = {};
-        addEventListener(type: string, listener: (event: unknown) => void) { this.listeners[type] = listener; }
-    }
-    class FakePort extends FakeTarget {
-        posted: any[] = [];
-        postMessage(frame: unknown) { this.posted.push(structuredClone(frame)); }
-        start() {}
-        deliver(data: unknown) { this.listeners.message!(new FakeMessageEvent({ data })); }
-    }
+class FakeEvent { stopImmediatePropagation() {} preventDefault() {} }
+class FakeMessageEvent extends FakeEvent {
+    readonly isTrusted = true;
+    constructor(private readonly init: { data?: unknown; ports?: unknown[] }) { super(); }
+    get data() { return this.init.data; }
+    get ports() { return this.init.ports ?? []; }
+}
+class FakeTarget {
+    listeners: Record<string, (event: unknown) => void> = {};
+    addEventListener(type: string, listener: (event: unknown) => void) { this.listeners[type] = listener; }
+}
+class FakePort extends FakeTarget {
+    posted: any[] = [];
+    postMessage(frame: unknown) { this.posted.push(structuredClone(frame)); }
+    start() {}
+    deliver(data: unknown) { this.listeners.message!(new FakeMessageEvent({ data })); }
+}
+function startPrelude() {
+    const w = new FakeTarget() as any;
+    w.URL = {};
+    const reported: unknown[] = [];
+    w.reportError = (error: unknown) => reported.push(error);
+    const run = new Function('globalThis', 'EventTarget', 'MessageEvent', 'Event', 'MessagePort', `return (${inStrictWorker.toString()})`)(w, FakeTarget, FakeMessageEvent, FakeEvent, FakePort);
+    run({ attach: () => {}, log: () => {} }, { scriptUnsafe: false, maxRender: 100, maxTarget: 50, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: VIEW_EVENT_TYPES });
+    const render = new FakePort();
+    w.listeners.message(new FakeMessageEvent({ data: { type: 'INIT_WORKER' }, ports: [new FakePort(), render] }));
+    const sent = () => render.posted.filter(frame => frame.type !== 'VIEW_STARTED' && frame.type !== 'VIEW_LISTEN' && frame.type !== 'VIEW_EVENT_ACK');
+    return { view: w.sandboxView, render, reported, sent };
+}
 
+describe('the prelude acknowledges each frame of events once its handlers have returned', () => {
     it('dispatches the details in order, a throwing handler reported, and posts one VIEW_EVENT_ACK after all of them', () => {
-        const w = new FakeTarget() as any;
-        w.URL = {};
-        const reported: unknown[] = [];
-        w.reportError = (error: unknown) => reported.push(error);
-        const run = new Function('globalThis', 'EventTarget', 'MessageEvent', 'Event', 'MessagePort', `return (${inStrictWorker.toString()})`)(w, FakeTarget, FakeMessageEvent, FakeEvent, FakePort);
-        run({ attach: () => {}, log: () => {} }, { scriptUnsafe: false, maxRender: 100, maxTarget: 50, maxElements: 100, maxDepth: 10, maxCharacters: 1000, entryDoneName: '__testEntryDone', eventTypes: VIEW_EVENT_TYPES });
-        const render = new FakePort();
-        w.listeners.message(new FakeMessageEvent({ data: { type: 'INIT_WORKER' }, ports: [new FakePort(), render] }));
+        const { view, render, reported } = startPrelude();
         const seen: string[] = [];
-        w.sandboxView.on('pointermove', null, (d: any) => {
+        view.on('pointermove', null, (d: any) => {
             seen.push('move ' + d.pointer.x);
             expect(render.posted.some(f => f.type === 'VIEW_EVENT_ACK')).toBe(false);
         });
-        w.sandboxView.on('pointerup', 'pad', () => { seen.push('up'); throw new Error('broke'); });
-        w.sandboxView.on('pointerup', null, () => seen.push('up, any'));
+        view.on('pointerup', 'pad', () => { seen.push('up'); throw new Error('broke'); });
+        view.on('pointerup', null, () => seen.push('up, any'));
         render.deliver({ type: 'VIEW_EVENT', details: [
             { type: 'pointermove', ids: ['pad'], pointer: { x: 1 } },
             { type: 'pointerup', ids: ['pad'], pointer: { x: 2 } },
@@ -263,5 +289,29 @@ describe('the prelude acknowledges each frame of events once its handlers have r
         expect(render.posted.filter(f => f.type === 'VIEW_EVENT_ACK')).toEqual([{ type: 'VIEW_EVENT_ACK' }]);
         render.deliver({ type: 'VIEW_EVENT', details: 'not a list' });
         expect(render.posted.filter(f => f.type === 'VIEW_EVENT_ACK')).toHaveLength(2); // acknowledged all the same: never a stall
+    });
+});
+
+describe('sandboxView.set({ scroll })', () => {
+    it('takes { top?, left? } of finite numbers, read once; anything else is a TypeError and nothing is sent', () => {
+        const { view, sent } = startPrelude();
+        for (const scroll of [null, 5, 'top', [1], { top: '5' }, { top: NaN }, { left: Infinity }, { bottom: 1 }]) {
+            expect(() => view.set('list', { scroll }), JSON.stringify(scroll)).toThrow(TypeError);
+        }
+        expect(sent()).toEqual([]);
+        let reads = 0;
+        view.set('list', { scroll: { get top() { reads++; return 120; }, left: 0 } });
+        expect(reads).toBe(1);
+        expect(sent()).toEqual([{ type: 'VIEW_SET', id: 'list', scroll: { top: 120, left: 0 } }]);
+    });
+
+    it('consecutive sets of one id merge their scroll key by key, the later winning', () => {
+        const { view, sent, render } = startPrelude();
+        view.set('a', { value: 'x' }); // in flight
+        view.set('list', { scroll: { top: 1 } });
+        view.set('list', { scroll: { left: 2 } });
+        view.set('list', { scroll: { top: 3 } });
+        render.deliver({ type: 'VIEW_ACK' });
+        expect(sent()).toEqual([{ type: 'VIEW_SET', id: 'a', value: 'x' }, { type: 'VIEW_SET', id: 'list', scroll: { top: 3, left: 2 } }]);
     });
 });

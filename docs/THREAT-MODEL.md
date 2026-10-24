@@ -171,7 +171,7 @@ are governed by the request gate and the policy but not logged: only the bridge'
 
 ### Channel integrity
 
-<!-- describes: frames sig:6bab -->
+<!-- describes: frames sig:bfca -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
@@ -204,7 +204,7 @@ forge or suppress them, and they differ per engine. Treat them as claims.
 
 ### Resource limits
 
-<!-- describes: budgets:channels sig:f478 -->
+<!-- describes: budgets:channels sig:a85e -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |

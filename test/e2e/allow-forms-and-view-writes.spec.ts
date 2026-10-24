@@ -180,7 +180,7 @@ test.describe('R4-5: sandboxView.text() and sandboxView.set()', () => {
             sandboxView.set('ok', { checked: true });
             sandboxView.text('r1', 'set');
             try { sandboxView.set('name', { colour: 'red' }); return 'no throw'; } catch (error) { return error.name + ': ' + error.message; }`);
-        expect(thrown).toBe('TypeError: sandboxView.set: unknown key "colour"; the keys are value, checked and focus');
+        expect(thrown).toBe('TypeError: sandboxView.set: unknown key "colour"; the keys are value, checked, focus and scroll');
         await waitInView(page, browserName, `document.getElementById('r1').textContent === 'set'`, 8000);
         expect(await inView(page, browserName, `[document.getElementById('name').value, document.getElementById('notes').value, document.getElementById('size').value, document.getElementById('ok').checked]`)).toEqual(['Ada', 'two\nlines', 'l', true]);
     });

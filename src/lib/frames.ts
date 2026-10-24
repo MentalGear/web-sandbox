@@ -270,13 +270,14 @@ export const FRAMES = {
         },
     },
     VIEW_SET: {
-        purpose: "sandboxView.set(): a form control's value or checked state, or focus.",
+        purpose: "sandboxView.set(): a form control's value or checked state, focus, or an element's scroll position.",
         routes: [{ channel: 'render-port', from: ['strict-worker'], to: ['view'] }],
         fields: {
             id: { bound: 'checked', how: 'an id of at most VIEW_TARGET_MAX_LENGTH characters' },
             value: { bound: 'checked', how: 'set by key after the literal: at most VIEW_RENDER_MAX_LENGTH characters, else set() throws' },
             checked: { bound: 'not a string', how: 'set by key after the literal: a boolean' },
             focus: { bound: 'not a string', how: 'set by key after the literal: true' },
+            scroll: { bound: 'not a string', how: 'set by key after the literal: { top?, left? }, finite numbers, read once' },
         },
     },
     VIEW_LISTEN: {

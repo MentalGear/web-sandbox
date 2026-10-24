@@ -1141,8 +1141,8 @@ assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](
 | :--- | :--- | :--- |
 | `render` | `(html: string, into?: string \| null) => void` | Replaces the view's body, or the children of the element with id `into`. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). The latest render per target wins; one operation is in flight at a time. |
 | `text` | `(id: string, text: string) => void` | Makes `text` the only content of the element with that id, as text: the view assigns it and parses nothing, so nothing needs escaping. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). Shares its slot with `render`: the latest of the two per target wins. |
-| `set` | `(id: string, fields: { value?: string, checked?: boolean, focus?: boolean }) => void` | Sets the value of an `input`, `textarea`, `select` or `output` (not a file input), the checked state of an `input`, or focuses the element. Any other key, or a field of another type, is a `TypeError`; a value past `VIEW_RENDER_MAX_LENGTH` characters a `RangeError`. |
-| `on` | `(type, id: string \| null, handler: (detail) => void) => () => void` | Subscribes to `click`, `input`, `change`, `submit`, `keydown`, `pointerdown`, `pointermove`, `pointerup` or `pointercancel` on the element with that id (or inside it), or anywhere with `null`. Returns `off`. |
+| `set` | `(id: string, fields: { value?: string, checked?: boolean, focus?: boolean, scroll?: { top?: number, left?: number } }) => void` | Sets the value of an `input`, `textarea`, `select` or `output` (not a file input), the checked state of an `input`, focuses the element, or sets its own scroll position (CSS px; never an ancestor's, never the host page's). Any other key, or a field of another type, is a `TypeError`; a value past `VIEW_RENDER_MAX_LENGTH` characters a `RangeError`. |
+| `on` | `(type, id: string \| null, handler: (detail) => void) => () => void` | Subscribes to `click`, `input`, `change`, `submit`, `keydown`, `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, `wheel` or `scroll` on the element with that id (or inside it), or anywhere with `null`. Returns `off`. |
 
 The renderer is an allowlist: what it does not list is gone before insertion.
 
@@ -1242,18 +1242,22 @@ An event handler receives:
 
 ```ts
 {
-    type: 'click' | 'input' | 'change' | 'submit' | 'keydown' | 'pointerdown' | 'pointermove' | 'pointerup' | 'pointercancel',
+    type: 'click' | 'input' | 'change' | 'submit' | 'keydown' | 'pointerdown' | 'pointermove' | 'pointerup' | 'pointercancel'
+        | 'wheel' | 'scroll',
     ids: string[],                       // ids of the target and its ancestors, nearest first
     target: { tag: string, id: string, name: string, value: string, checked: boolean },
     key?: string,                        // keydown
     form?: [name: string, value: string][], // submit
-    pointer?: {                          // pointer*: view CSS px, clamped to the view's box, rounded to 0.1
+    pointer?: {                          // pointer*, wheel (x and y only): view CSS px, clamped to the view's box, rounded to 0.1
         x: number, y: number, id: number, kind: 'mouse' | 'pen' | 'touch',
         primary: boolean, button: number, buttons: number, pressure: number,
     },
-    modifiers?: { alt: boolean, ctrl: boolean, meta: boolean, shift: boolean }, // pointer*
-    time?: number,                       // pointer*: the event's timeStamp, whole ms
-    coalesced?: number,                  // pointermove: how many raw events this one stands for
+    wheel?: { dx: number, dy: number, dz: number, unit: 'pixel' | 'line' | 'page' }, // the deltas it stands for, summed
+    scroll?: { top: number, left: number, width: number, height: number, clientWidth: number, clientHeight: number },
+                                         // scroll: the scrolled element's position and extent (the document's: its root)
+    modifiers?: { alt: boolean, ctrl: boolean, meta: boolean, shift: boolean }, // pointer*, wheel
+    time?: number,                       // pointer*, wheel, scroll: the event's timeStamp, whole ms
+    coalesced?: number,                  // pointermove, wheel, scroll: how many raw events this one stands for
     truncated?: true,                    // something in this detail was cut
 }
 ```
@@ -1412,7 +1416,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Strict: the guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT), to `sandbox-log` | `LOG_EVENTS_PER_SECOND` (1000) a second, counted in the view | each cut at `VIEW_OPTIONS.guestText.maxLength` (2048) characters in the view, before it is posted; each uncaught one counted whole against `UNCAUGHT_CHARACTERS_PER_SECOND` (1048576) characters in any second, as the worker counts the ones it sees (WebKit mutes those of a revoked script there); past it the sandbox ends | none of its own: one line each | none beyond the count and the bytes | test/unit/rpc-bounds-and-call-limits.test.ts (C-4); test/e2e/worker-port-and-view-cost.spec.ts (M-5) |
 | Strict: the view's operations (`sandboxView.render`, `text`, `set`) | one at a time; the body holds at most `VIEW_MAX_ELEMENTS` (50000) elements, `VIEW_MAX_DEPTH` (256) deep | `VIEW_RENDER_MAX_LENGTH` (262144) characters an operation; `VIEW_RENDER_CHARACTERS_PER_SECOND` (1048576) a second; `VIEW_MAX_CHARACTERS` (1048576) in the body | `VIEW_APPLY_MS_PER_SECOND` (200) ms a second on average, each operation charged in full; the second operation past `VIEW_MAX_OPERATION_MS` (2000) ms within `VIEW_OVERRUN_WINDOW_MS` (300000) ms ends the sandbox | a share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/view-bound.spec.ts; test/e2e/view-budget.spec.ts; test/unit/view-budget.prop.test.ts |
 | Strict: the view's loads (URL attributes, CSS, and what the browser reports) | `VIEW_URLS_PER_SECOND` (200) a second, each charged before it can start; `VIEW_MAX_URLS` (1000) URL attributes in the body; `VIEW_MAX_DISTINCT_URLS` (10000) distinct URLs over the view's life | what the policy's origins serve: no budget of the library's | none of its own: the rate | a rate: at most `VIEW_URLS_PER_SECOND` (200) loads a second; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/worker-port-and-view-cost.spec.ts (M-2); test/e2e/strict-view-budget.spec.ts; test/unit/view-css-loads.test.ts; test/unit/view-budget.prop.test.ts |
-| Strict: the view's events, to the guest's `sandboxView.on` handlers | of the types a handler listens to: the discrete ones as the user raises them; pointer moves coalesced to one per pointer, sent at most once per animation frame while fewer than `VIEW_INPUT_IN_FLIGHT` (1) frames are unacknowledged; `VIEW_EVENT_LIMITS.maxIds` (32) ids and `VIEW_EVENT_LIMITS.maxFields` (1000) form fields a detail | each string cut at `VIEW_EVENT_LIMITS.maxString` (65536) characters, all of one frame at `VIEW_EVENT_LIMITS.maxTotal` (262144); the rest numbers and constants | the event path charged to the view's `VIEW_APPLY_MS_PER_SECOND` (200) ms a second; continuous events wait while that budget is in debt | within the view's share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged, with its operations; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/strict-events.spec.ts; test/e2e/strict-pointer-events.spec.ts; test/unit/view-input.test.ts |
+| Strict: the view's events, to the guest's `sandboxView.on` handlers | of the types a handler listens to: the discrete ones as the user raises them; pointer moves, wheel and scroll events coalesced to one per pointer or element, sent at most once per animation frame while fewer than `VIEW_INPUT_IN_FLIGHT` (1) frames are unacknowledged; `VIEW_EVENT_LIMITS.maxIds` (32) ids and `VIEW_EVENT_LIMITS.maxFields` (1000) form fields a detail | each string cut at `VIEW_EVENT_LIMITS.maxString` (65536) characters, all of one frame at `VIEW_EVENT_LIMITS.maxTotal` (262144); the rest numbers and constants | the event path charged to the view's `VIEW_APPLY_MS_PER_SECOND` (200) ms a second; continuous events wait while that budget is in debt | within the view's share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged, with its operations; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/strict-events.spec.ts; test/e2e/strict-pointer-events.spec.ts; test/e2e/strict-scroll-and-wheel.spec.ts; test/unit/view-input.test.ts |
 | Strict: the view's overrun notices (VIEW_FIRST_OVERRUN, VIEW_OVERRUN), to `sandbox-log` and `terminated` | a first overrun's at most once per 9 s of its debt, and one host line an environment; the second ends the sandbox | none: no field | none of its own: the count | a stall past `VIEW_MAX_OPERATION_MS` (2000) ms at most once per `VIEW_OVERRUN_WINDOW_MS` (300000) ms beyond the first; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/unit/strict-view-budget.test.ts (the repeated-overrun rule); test/e2e/view-bound.spec.ts |
 | Cooperative: the guest's own document | none: the guest runs on the host page's thread wherever the engine puts its frame there | none | none: one loop can freeze the host page ([Modes](#modes)) | unbounded: a cooperative-mode limit | README (cooperative-mode limits) |
 <!-- generated:end -->
@@ -1421,7 +1425,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 counts and bytes above bound); and where the view shares the host page's thread it cannot run during a stall of the view
 ([(b)](#b-the-single-operation-bound)).
 
-<!-- describes: budgets sig:1547 -->
+<!-- describes: budgets sig:95a9 -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
 shared 4-core VM, 2026-10-19 ([R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
 of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;

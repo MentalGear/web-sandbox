@@ -89,7 +89,7 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Channels and frames
 
-<!-- describes: channels, frames sig:9d126bab -->
+<!-- describes: channels, frames sig:9d12bfca -->
 
 Realms talk on channels, and every message on them is a frame of a declared type. A frame is declared once, with the
 channels it may cross, the realms at its ends, and for each field what bounds it. What a frame carries out of a guest
@@ -152,7 +152,7 @@ How a field is bounded:
 | `VIEW_STARTED` | `render-port`: strict-worker → view | — | The worker's prelude holds the render port: the view revokes the worker's source URL. Always its first frame. |
 | `VIEW_RENDER` | `render-port`: strict-worker → view | `html` (checked), `into` (checked) | sandboxView.render(): markup for the view to clean and show. |
 | `VIEW_TEXT` | `render-port`: strict-worker → view | `into` (checked), `text` (checked) | sandboxView.text(): an element's text, as one text node. |
-| `VIEW_SET` | `render-port`: strict-worker → view | `id` (checked), `value` (checked), `checked` (not a string), `focus` (not a string) | sandboxView.set(): a form control's value or checked state, or focus. |
+| `VIEW_SET` | `render-port`: strict-worker → view | `id` (checked), `value` (checked), `checked` (not a string), `focus` (not a string), `scroll` (not a string) | sandboxView.set(): a form control's value or checked state, focus, or an element's scroll position. |
 | `VIEW_LISTEN` | `render-port`: strict-worker → view | `types` (constant) | The event types the worker's sandboxView.on() handlers listen to. |
 | `VIEW_ACK` | `render-port`: view → strict-worker | `refused` (constant) | The view applied a flush of operations: the worker's next one may go. What it refused, by name. |
 | `VIEW_EVENT` | `render-port`: view → strict-worker | `details` (cut) | Events of the types the worker listens to, as details, in the order they were raised: a discrete one behind the continuous ones the view coalesced before it, or those alone (at most one such frame unacknowledged, VIEW_INPUT_IN_FLIGHT). |
@@ -266,7 +266,7 @@ stateDiagram-v2
 
 ## Budgets
 
-<!-- describes: budgets:channels sig:f478 -->
+<!-- describes: budgets:channels sig:a85e -->
 
 Everything the guest can make the host page, the view or the network do goes through a **channel**, and every channel has
 a bound in count, bytes and time. The surfaces a guest can reach are listed once (the egress table), each with how it is

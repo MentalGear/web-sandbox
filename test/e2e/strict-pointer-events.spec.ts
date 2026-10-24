@@ -1,6 +1,6 @@
-import type { Page } from '@playwright/test';
-import { test, expect, type SandboxDriver } from './fixture';
-import { inView, waitInView } from './strict-view';
+import { test, expect } from './fixture';
+import { inView } from './strict-view';
+import { boxOf, mountInput, sleep, take, type Kept } from './view-input';
 
 /**
  * Strict mode's pointer input (research 23), on every engine. The worker subscribes with sandboxView.on() and the view
@@ -17,26 +17,6 @@ import { inView, waitInView } from './strict-view';
  * Playwright's mouse, and the view read from outside (strict-view.ts).
  */
 
-export const PAD = '<div id="pad" style="position:absolute;inset:0;touch-action:none;user-select:none"><div id="thumb" style="position:absolute;left:20px;top:20px;width:40px;height:40px;background:#c33"></div></div><p id="ready" style="position:absolute;left:0;bottom:0;margin:0">ready</p>';
-
-/** Mounts strict mode rendering `markup`, with `entry` run after it; every detail a handler made with `keep(label)` gets is kept. */
-export async function mountInput(sandbox: SandboxDriver, browserName: string, entry: string, markup = PAD) {
-    await sandbox.registerFiles({ 'main.js': `
-        const kept = [];
-        const keep = (label) => (detail) => { kept.push({ label, detail }); };
-        bridge.expose('take', () => kept.splice(0));
-        sandboxView.render(${JSON.stringify(markup)});
-        ${entry}
-    ` });
-    expect(await sandbox.mount({ mode: 'strict', entry: 'main.js' })).toBe('ready');
-    await waitInView(sandbox.page, browserName, `!!document.getElementById('ready')`);
-}
-export type Kept = { label: string; detail: any };
-export const take = (sandbox: SandboxDriver) => sandbox.call<Kept[]>('take');
-export async function boxOf(page: Page) {
-    return (await page.locator('web-sandbox').boundingBox())!;
-}
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 test('the schema: a press, a drag and a release, in order, with numbers and constants only', async ({ sandbox, page, browserName }) => {
     await mountInput(sandbox, browserName, `for (const type of ['pointerdown', 'pointermove', 'pointerup']) sandboxView.on(type, 'thumb', keep(type));`);

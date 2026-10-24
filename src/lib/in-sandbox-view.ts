@@ -280,7 +280,7 @@ export const STILL_PROPERTIES = [
 ] as const;
 
 /** The events sandboxView.on() can subscribe to (ADR-005; the pointer types: research 23). */
-export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown', 'pointerdown', 'pointermove', 'pointerup', 'pointercancel'] as const;
+export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown', 'pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'wheel', 'scroll'] as const;
 
 /**
  * The continuous event types (research 23): the view coalesces them in its input outbox (viewInputOutbox), at most one
@@ -288,7 +288,7 @@ export const VIEW_EVENT_TYPES = ['click', 'input', 'change', 'submit', 'keydown'
  * while no batch is unacknowledged (VIEW_INPUT_IN_FLIGHT). Every other type of VIEW_EVENT_TYPES is discrete: posted at
  * once, as the user raises it, behind what the outbox held.
  */
-export const VIEW_CONTINUOUS_EVENT_TYPES = ['pointermove'] as const;
+export const VIEW_CONTINUOUS_EVENT_TYPES = ['pointermove', 'wheel', 'scroll'] as const;
 
 /**
  * The most batches of the view's events the worker has not acknowledged yet (research 23). The worker's prelude answers
@@ -305,6 +305,14 @@ export const VIEW_INPUT_IN_FLIGHT = 1;
  * them says so: `truncated: true`.
  */
 export const VIEW_EVENT_LIMITS = { maxString: 65536, maxIds: 32, maxFields: 1000, maxTotal: VIEW_RENDER_MAX_LENGTH } as const;
+
+/** A VIEW_SET's fields, as the view checked them (inSandboxView, fieldsOf). */
+export interface SetFields {
+    value?: string;
+    checked?: boolean;
+    focus?: boolean;
+    scroll?: { top?: number; left?: number };
+}
 
 /** One entry of the view's input outbox (viewInputOutbox): a continuous event, or the latest of several coalesced. */
 export interface ViewInputEntry {
@@ -1588,13 +1596,39 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             entry.key = event.pointerId;
             entry.pointer = pointerOf(event);
             entry.modifiers = modifiersOf(event);
+        } else if (eventType === 'wheel') {
+            // per element and unit, the deltas summed; where the pointer was, clamped like a pointer's
+            const unit = event.deltaMode === 1 ? 'line' : event.deltaMode === 2 ? 'page' : 'pixel';
+            entry.time = Math.round(event.timeStamp);
+            entry.key = event.target;
+            entry.unit = unit;
+            entry.wheel = { dx: event.deltaX, dy: event.deltaY, dz: event.deltaZ, unit };
+            entry.pointer = { x: inputs.clamp(event.clientX, g.innerWidth), y: inputs.clamp(event.clientY, g.innerHeight) };
+            entry.modifiers = modifiersOf(event);
+        } else if (eventType === 'scroll') {
+            // per scrolled element: the document's own scrolling is its scrollingElement's; its extent is read when sent
+            const scroller = event.target instanceof Element ? event.target : scrollingElementOf ? call(scrollingElementOf, document, []) : call(rootOf, document, []);
+            entry.time = Math.round(event.timeStamp);
+            entry.key = scroller;
+            entry.target = scroller;
+            entry.scroller = scroller;
         }
         return entry;
     };
+    const scrollingDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'scrollingElement'); // every engine has it; jsdom does not
+    const scrollingElementOf = scrollingDescriptor ? scrollingDescriptor.get! : null;
+    const tenth = (value: number) => Math.round(value * 10) / 10;
+    // A scrolled element's position and extent, in CSS px: what a virtual list needs, about the guest's own layout only.
+    const extentOf = (element: any) => ({
+        top: tenth(element.scrollTop), left: tenth(element.scrollLeft), width: element.scrollWidth, height: element.scrollHeight,
+        clientWidth: element.clientWidth, clientHeight: element.clientHeight,
+    });
     const detailOf = (entry: ViewInputEntry, share: { left: number }, event: any) => {
         const detail = describe(entry.type, entry.target, share, event);
         if (!detail) return null;
         if (entry.pointer) detail.pointer = entry.pointer;
+        if (entry.wheel) detail.wheel = entry.wheel;
+        if (entry.scroller) detail.scroll = extentOf(entry.scroller);
         if (entry.modifiers) detail.modifiers = entry.modifiers;
         if (entry.time !== undefined) detail.time = entry.time;
         if (isContinuous(entry.type)) detail.coalesced = entry.coalesced;
@@ -1676,8 +1710,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     };
     for (let i = 0; i < options.events.types.length; i++) {
         const type = options.events.types[i]!;
-        // the pointer types are only read: passive, so the browser never waits for the view to scroll or pan
-        addEventListener(type, forward, type.indexOf('pointer') === 0 ? { capture: true, passive: true } : true);
+        // the pointer, wheel and scroll types are only read: passive, so the browser never waits for the view to scroll or pan
+        addEventListener(type, forward, type === 'wheel' || type === 'scroll' || type.indexOf('pointer') === 0 ? { capture: true, passive: true } : true);
     }
 
     // The view's two sinks under a host page's Trusted Types (R1:R3-1): the view inherits the host page's
@@ -2145,6 +2179,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const selectValue = setter(HTMLSelectElement.prototype, 'value');
     const outputValue = setter(HTMLOutputElement.prototype, 'value');
     const focusElement = HTMLElement.prototype.focus;
+    const setScrollTop = setter(Element.prototype, 'scrollTop');
+    const setScrollLeft = setter(Element.prototype, 'scrollLeft');
     const hasFocus = D.hasFocus;
     // How many characters `text` is as an element's content, serialized (escaped, as in every element the renderer
     // keeps but <style>, where it is raw text and so shorter: the count is an upper bound there).
@@ -2192,11 +2228,12 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // or a file input, is left as it is. checked: an input's. focus: only while this document has the user's focus, so
     // a guest can move focus within the sandbox but never take it from the host page (VIEW_FOCUS, refused); a value or
     // checked state in the same set still applies.
-    const applySet = (id: string, fields: { value?: string; checked?: boolean; focus?: boolean }) => {
+    const applySet = (id: string, fields: SetFields) => {
         const target = elementInBody(id);
-        if (!target || call(namespaceOf, target, []) !== HTML_NS) return;
+        if (!target) return;
+        const html = call(namespaceOf, target, []) === HTML_NS;
         const name = call(localNameOf, target, []);
-        const value = fields.value;
+        const value = html ? fields.value : undefined;
         if (value !== undefined) {
             if (name === 'input' && call(inputType, target, []) !== 'file') {
                 const before = counts(call(bodyOf, document, []));
@@ -2221,8 +2258,13 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
                 call(selectValue, target, [value]);
             }
         }
-        if (fields.checked !== undefined && name === 'input') call(inputChecked, target, [fields.checked]);
-        if (fields.focus !== true) return;
+        if (fields.checked !== undefined && html && name === 'input') call(inputChecked, target, [fields.checked]);
+        // scroll: the element's own scroll position, any element's (research 23). An assignment to it never scrolls an
+        // ancestor, nor the host page; the scroll event it raises is trusted, and is coalesced like the user's.
+        const scroll = fields.scroll;
+        if (scroll && scroll.top !== undefined) call(setScrollTop, target, [scroll.top]);
+        if (scroll && scroll.left !== undefined) call(setScrollLeft, target, [scroll.left]);
+        if (fields.focus !== true || !html) return;
         if (!call(hasFocus, document, [])) throw new RangeError('VIEW_FOCUS');
         call(focusElement, target, []);
     };
@@ -2277,7 +2319,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     // the host page's that the event loop runs before the meter's task is in it too: both are charged to the view and
     // count towards its operation, which slows the guest, and makes it an overrun only past VIEW_MAX_OPERATION_MS: one
     // reason why one overrun does not end the sandbox (VIEW_OVERRUN_WINDOW_MS).
-    type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: { value?: string; checked?: boolean; focus?: boolean } | null };
+    type Job = { kind: 'render' | 'text' | 'set'; target: string | null; html: string; fields: SetFields | null };
     let pending: Job[] = [];
     let scheduled = false;
     // What a measure's verdict does (viewBudget, the repeated-overrun rule; S72, class P). An overrun that is not
@@ -2435,6 +2477,18 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             if (data[key] === undefined) continue;
             if (typeof data[key] !== 'boolean') return null;
             fields[key] = data[key];
+        }
+        const scroll = data.scroll;
+        if (scroll !== undefined) {
+            if (!scroll || typeof scroll !== 'object') return null;
+            const position: { top?: number; left?: number } = {};
+            for (const key of ['top', 'left'] as const) {
+                const at = scroll[key];
+                if (at === undefined) continue;
+                if (typeof at !== 'number' || !isFinite(at)) return null;
+                position[key] = at;
+            }
+            fields.scroll = position;
         }
         return fields;
     };
@@ -2804,6 +2858,7 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
     const keysOf = Object.keys;
     const freeze = Object.freeze;
     const isArray = Array.isArray;
+    const isFiniteNumber = Number.isFinite;
     const addListener = EventTarget.prototype.addEventListener;
     const dataOf = getOwn(MessageEvent.prototype, 'data')!.get!;
     const portsOf = getOwn(MessageEvent.prototype, 'ports')!.get!;
@@ -2874,7 +2929,18 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         } else if (queue.length > 0 && queue[queue.length - 1]!.slot === operation.slot) {
             const merged = queue[queue.length - 1]!.message;
             const keys = keysOf(operation.message); // indexed, never iterated: guest code can replace the array iterator (AR:C3)
-            for (let i = 0; i < keys.length; i++) merged[keys[i]!] = operation.message[keys[i]!];
+            for (let i = 0; i < keys.length; i++) {
+                const key = keys[i]!;
+                const earlier = merged[key];
+                const later = operation.message[key];
+                // a field that is a set of its own (scroll) merges key by key: the later wins per key
+                if (key === 'scroll' && earlier && later) {
+                    const inner = keysOf(later);
+                    for (let k = 0; k < inner.length; k++) (earlier as Record<string, unknown>)[inner[k]!] = (later as Record<string, unknown>)[inner[k]!];
+                } else {
+                    merged[key] = later;
+                }
+            }
             return;
         }
         queue[queue.length] = operation;
@@ -2897,11 +2963,30 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
         if (value.length > options.maxRender) throw new RangeErrorConstructor('sandboxView.text: text is longer than ' + options.maxRender + ' characters');
         enqueue({ slot: 'content#' + id, kind: 'text', message: { type: 'VIEW_TEXT', into: id, text: value } });
     };
-    // A form control's value or checked state, or focus (R1:R4-5). Each own enumerable field of `fields` is read once,
-    // and only these three are allowed, each of its one type; what is posted is a fresh object of those primitives.
+    // An object of the guest's, as an object of its own enumerable fields, each read once, with no prototype; each key
+    // must be one of `keys`, and its value pass `check` (which throws), or the call throws `what`'s TypeError.
+    const fieldsOf = (value: unknown, what: string, keys: string, check: (key: string, field: unknown) => void) => {
+        if (value === null || typeof value !== 'object' || isArray(value)) throw new TypeErrorConstructor(what + ' must be an object: { ' + keys + ' }');
+        const out: Record<string, unknown> = setPrototype({}, null);
+        const own = keysOf(value);
+        for (let i = 0; i < own.length; i++) {
+            const field = (value as Record<string, unknown>)[own[i]!];
+            check(own[i]!, field);
+            out[own[i]!] = field;
+        }
+        return out;
+    };
+    // scroll: the element's own scroll position (research 23), in CSS px.
+    const scrollOf = (value: unknown) => fieldsOf(value, 'sandboxView.set: scroll', 'top?, left?', (key, field) => {
+        if (key !== 'top' && key !== 'left') throw new TypeErrorConstructor('sandboxView.set: unknown scroll key "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the keys are top and left');
+        if (!isFiniteNumber(field)) throw new TypeErrorConstructor('sandboxView.set: scroll.' + key + ' must be a finite number');
+    });
+    // A form control's value or checked state, focus, or an element's scroll position (R1:R4-5; research 23). Each own
+    // enumerable field of `fields` is read once, and only these are allowed, each of its one type; what is posted is a
+    // fresh object of those values.
     const set = (id: unknown, fields: unknown) => {
         if (!isId(id)) throw new TypeErrorConstructor('sandboxView.set: id must be an element id');
-        if (fields === null || typeof fields !== 'object' || isArray(fields)) throw new TypeErrorConstructor('sandboxView.set: the second argument must be an object: { value?, checked?, focus? }');
+        if (fields === null || typeof fields !== 'object' || isArray(fields)) throw new TypeErrorConstructor('sandboxView.set: the second argument must be an object: { value?, checked?, focus?, scroll? }');
         const message: Record<string, unknown> = setPrototype({ type: 'VIEW_SET', id }, null); // no inherited setter for a key (AR:C3)
         let any = false;
         const keys = keysOf(fields);
@@ -2913,8 +2998,12 @@ export function inStrictWorker(comms: { attach(port: MessagePort): void; log(lev
                 if (value.length > options.maxRender) throw new RangeErrorConstructor('sandboxView.set: value is longer than ' + options.maxRender + ' characters');
             } else if (key === 'checked' || key === 'focus') {
                 if (typeof value !== 'boolean') throw new TypeErrorConstructor('sandboxView.set: ' + key + ' must be a boolean');
+            } else if (key === 'scroll') {
+                message[key] = scrollOf(value);
+                any = true;
+                continue;
             } else {
-                throw new TypeErrorConstructor('sandboxView.set: unknown key "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the keys are value, checked and focus');
+                throw new TypeErrorConstructor('sandboxView.set: unknown key "' + apply(slice, StringConstructor(key), [0, 64]) + '"; the keys are value, checked, focus and scroll');
             }
             message[key] = value;
             any = true;
