@@ -2371,7 +2371,7 @@
             {
               "kind": "MethodSignature",
               "canonicalReference": "web-sandbox!SandboxFiles#url:member(1)",
-              "docComment": "/**\n * The file's `blob:` URL, minted in the guest's own realm (the rewritten form of a module or stylesheet).\n *\n * @param path - A registered path.\n *\n * @returns The URL.\n *\n * @throws\n *\n * An `Error` with `code: 'NOT_FOUND'`, also for a path the guest wrote.\n */\n",
+              "docComment": "/**\n * The file's `blob:` URL, minted in the guest's own realm (the rewritten form of a module or stylesheet).\n *\n * @remarks\n *\n * In strict mode's worker only a file of a type the view shows has a URL; any other is `read()` and `text()` only.\n *\n * @param path - A registered path.\n *\n * @returns The URL.\n *\n * @throws\n *\n * An `Error` with `code: 'NOT_FOUND'` for a path that is not there (its message says `no such file`), and, with\n * a message that says the file has no URL, for a file that is there and has none: a path the guest wrote, and in\n * strict mode's worker a type the view does not show.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",

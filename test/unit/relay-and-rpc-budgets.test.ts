@@ -584,6 +584,10 @@ describe('R2-4: the strict worker mints URLs only for the types the view shows',
             const entries: any = [['i.svg', 'image/svg+xml', btoa('<svg/>')], ['p.png', 'image/png', btoa('png')]];
             const files = inSandboxFiles(entries, null, VIEW_FILE_TYPES);
             expect(() => files.url('i.svg')).toThrow(expect.objectContaining({ code: 'NOT_FOUND' }));
+            // the file is there: url() says it has no URL, and a path that is not there says so (BD3:NEW-4)
+            expect(() => files.url('i.svg')).toThrow('this file has no URL (read() and text() work)');
+            expect(() => files.url('i.svg')).not.toThrow('no such file');
+            expect(() => files.url('missing.svg')).toThrow('no such file');
             expect(files.list()).toEqual(['i.svg', 'p.png']); // still the worker's to read() and text()
             expect(files.url('p.png')).toBe('blob:minted');
             expect(created).toHaveBeenCalledTimes(1);
