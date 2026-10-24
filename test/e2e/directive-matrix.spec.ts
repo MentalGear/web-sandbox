@@ -53,7 +53,9 @@ async function runCase(
     // `crossOriginIsolated` true
     const pageIsolated = await page.evaluate(() => self.crossOriginIsolated);
     expect(pageIsolated, covering(row, `${label}: the sandbox ends with the isolation reason exactly when the host page is cross-origin isolated`)).toBe(outcome.kind === 'terminates' && outcome.reason === 'environmentIsolated');
-    const events = await host.embed('strict', { fetchBridge: { allow: [ORIGIN] }, guest, ...(matrixCase.givesPolicy ? { config: { hostContentSecurityPolicy: host.csp } } : {}) });
+    // (embed() passes the page's policy as hostContentSecurityPolicy, as an embedder does: a browser without Trusted Types
+    // applies the page's Trusted Types directives from it alone, host-trusted-types.ts)
+    const events = await host.embed('strict', { fetchBridge: { allow: [ORIGIN] }, guest });
     const eventsNow = () => page.evaluate(() => (window as any).sandboxEvents as { type: string; reason: string | null }[]);
 
     if (outcome.kind === 'terminates') {

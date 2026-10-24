@@ -262,7 +262,7 @@ export class RealisticHost {
 
     /**
      * The element in a mode, as an embedder would configure it (the library's defaults, the mode named only where it is not
-     * strict), running `guest` (an async function body that returns what it saw; see `guestBattery()`):
+     * strict, and the page's policy as `hostContentSecurityPolicy`), running `guest` (an async function body that returns what it saw; see `guestBattery()`):
      * strict mode as the entry file, cooperative mode as the guest document's script, worker mode through `execute()`
      * (a page with `guestCode: 'execute'`).
      */
@@ -270,7 +270,8 @@ export class RealisticHost {
         const { sandbox } = this;
         await sandbox.clearLogs();
         const source = embed.guest === undefined ? undefined : guestProgram(embed.guest, ++this.guestCount);
-        const shared = { ...(embed.origins ? { origins: embed.origins } : {}), ...(embed.fetchBridge ? { fetchBridge: embed.fetchBridge } : {}), ...embed.config };
+        // the page's policy as an embedder passes it (docs/API.md#your-connect-src): without it the connect lists are dropped
+        const shared = { hostContentSecurityPolicy: this.csp, ...(embed.origins ? { origins: embed.origins } : {}), ...(embed.fetchBridge ? { fetchBridge: embed.fetchBridge } : {}), ...embed.config };
         if (mode === 'strict') {
             if (source !== undefined) await sandbox.registerFiles({ 'main.js': `sandboxView.render('<p id="hello">hello</p>'); ${source}` });
             else await sandbox.registerFiles({ 'main.js': `sandboxView.render('<p id="hello">hello</p>');` });

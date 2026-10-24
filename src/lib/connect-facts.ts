@@ -15,11 +15,9 @@
  *  - `upgradedSchemeWithPort`: whether `http://h:P` admits `https://h:P` (CSP3 takes the upgrade). The library takes it
  *    only when no port is written, or `:*`;
  *  - `wssSourceAdmitsHttps`: whether a `wss://h` source also admits an `https://h` request (CSP3's scheme matching); the
- *    library lists a `wss://h` entry only beside `https://h`, so that both admit both in every engine;
- *  - `decoyRefused`: the decoy request of the read of the page's policy (host-csp.ts) is refused after the policy's check
- *    and before any DNS lookup or connection;
- *  - `decoyLogsWhenAdmitted`: whether the engine logs a console line for the decoy (its restricted port) when the page's
- *    policy admits it; every engine logs a line when a policy refuses it.
+ *    library lists a `wss://h` entry only beside `https://h`, so that both admit both in every engine.
+ * These are also what a guest reaches where the library does not narrow: with `hostContentSecurityPolicy: false` the page's
+ * policy, if it sends one, is applied by the browser alone.
  *
  * Internal: not exported from the package.
  */
@@ -38,8 +36,6 @@ export interface ConnectEngineFacts {
     readonly bareHostAdmitted: BareHostReading;
     readonly upgradedSchemeWithPort: boolean;
     readonly wssSourceAdmitsHttps: boolean;
-    readonly decoyRefused: boolean;
-    readonly decoyLogsWhenAdmitted: boolean;
     /** How the row was found. */
     readonly measured: string;
 }
@@ -54,9 +50,7 @@ export const CONNECT_ENGINE_FACTS = {
         bareHostAdmitted: 'yes, not with a port',
         upgradedSchemeWithPort: false,
         wssSourceAdmitsHttps: false,
-        decoyRefused: true,
-        decoyLogsWhenAdmitted: true,
-        measured: `${RESEARCH}, Chromium 145: ${SPEC} (every source of the grammar table against fetch and WebSocket requests of a guest, the page's policy left to the browser; the decoy through a logging proxy)`,
+        measured: `${RESEARCH}, Chromium 145: ${SPEC} (every source of the grammar table against fetch and WebSocket requests of a guest, the page's policy left to the browser)`,
     },
     firefox: {
         name: 'Firefox',
@@ -64,8 +58,6 @@ export const CONNECT_ENGINE_FACTS = {
         bareHostAdmitted: 'yes',
         upgradedSchemeWithPort: true,
         wssSourceAdmitsHttps: false,
-        decoyRefused: true,
-        decoyLogsWhenAdmitted: false,
         measured: `${RESEARCH}, Firefox 146: as Chromium`,
     },
     webkit: {
@@ -74,8 +66,6 @@ export const CONNECT_ENGINE_FACTS = {
         bareHostAdmitted: 'no',
         upgradedSchemeWithPort: true,
         wssSourceAdmitsHttps: true,
-        decoyRefused: true,
-        decoyLogsWhenAdmitted: true,
         measured: `${RESEARCH}, WebKit 26: as Chromium`,
     },
 } as const satisfies Record<ConnectEngine, ConnectEngineFacts>;

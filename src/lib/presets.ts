@@ -75,6 +75,7 @@ fetch("https://jsonplaceholder.typicode.com/todos/1")
         rules: {
             mode: "cooperative",
             origins: { connect: ["https://jsonplaceholder.typicode.com"] },
+            hostContentSecurityPolicy: false,
             scriptUnsafe: true,
             capabilities: ["allow-scripts"],
         },

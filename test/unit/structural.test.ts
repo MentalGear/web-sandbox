@@ -420,12 +420,12 @@ function platformRequestUses(file: string, text: string, allowed: [number, numbe
 
 describe("the fetch bridge's requests are made by its frame, and only there (BD1:ISO-1, class E-net)", () => {
     // The functions that may name the platform's fetch: the guest bootstrap, which guards the guest's own fetch
-    // (keepalive), the bridge's frame, which makes every bridge request, and the read of the host page's policy, whose one
-    // decoy request is refused by the browser before it leaves (host-csp.ts) and is not a bridge request.
-    const MAY_FETCH: readonly [string, string][] = [['src/lib/in-sandbox-script.ts', 'inSandboxScript'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame'], ['src/lib/host-csp.ts', 'read'], ['src/lib/host-csp.ts', 'canFetch']];
+    // (keepalive), and the bridge's frame, which makes every bridge request. The host page's own realm makes no request
+    // (not even to learn the page's policy: test/unit/host-policy-source.test.ts).
+    const MAY_FETCH: readonly [string, string][] = [['src/lib/in-sandbox-script.ts', 'inSandboxScript'], ['src/lib/in-bridge-frame.ts', 'inBridgeFrame']];
     const unixOf = (file: string) => file.split(path.sep).join('/');
 
-    it("no code of src/ names the platform's fetch outside those four functions, and the bridge's host-side modules name no other request API: the host never makes a bridge request itself", () => {
+    it("no code of src/ names the platform's fetch outside those two functions, and the bridge's host-side modules name no other request API: the host never makes a bridge request itself", () => {
         const found: string[] = [];
         let inRealms = 0;
         for (const file of sourceFiles('src')) {
@@ -437,7 +437,7 @@ describe("the fetch bridge's requests are made by its frame, and only there (BD1
             inRealms += uses.inRealms;
         }
         expect(found).toEqual([]);
-        expect(inRealms).toBeGreaterThanOrEqual(4); // positive control: the scan sees the four that do
+        expect(inRealms).toBeGreaterThanOrEqual(2); // positive control: the scan sees the two that do
     });
 
     it("and that scan flags each way a host request to the target could be spelled, in the bridge's host-side modules", () => {

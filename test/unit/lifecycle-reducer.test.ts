@@ -176,8 +176,6 @@ class RecordingHost implements LifecycleHost {
     ctx: BuildContext = COOPERATIVE;
     refusal: string | null = null;
     buildThrows = false;
-    // the build's gate (lifecycle.ts, `buildGate`): absent unless a test sets it
-    buildGate?: () => Promise<void> | null;
     onBuild: (() => void) | null = null;
     onEvent: ((event: string) => void) | null = null;
     step(input: LcInput) { step(this, input); }
@@ -348,93 +346,6 @@ describe('class L, finding by finding', () => {
             const result = runReducerSequence(refused({ event: 'terminated', action: { op: 'setConfig', cfg: validConfig('strict') }, times: 1 }), { silentGuests: 0 });
             expect(result.ok, result.divergence).toBe(true);
             expect(result.stats['event:ready']).toBe(1);
-        });
-    });
-
-    describe("the build's gate: a build that has something to wait for starts when it opens", () => {
-        const opened = () => {
-            let open!: () => void;
-            const promise = new Promise<void>(resolve => { open = resolve; });
-            return { promise, open };
-        };
-        const flush = () => new Promise<void>(resolve => setTimeout(resolve, 0));
-        // what the build left in the log: the build, its attach and its deadline (a connect tears down first)
-        const built = (host: RecordingHost) => host.log.filter(line => /^(build|attach |startLoadDeadline)/.test(line));
-
-        it('without a gate, or with one that is null, the build runs inside the step, as ever', () => {
-            const plain = new RecordingHost();
-            plain.step({ t: 'connect', ctx: COOPERATIVE });
-            expect(built(plain)).toEqual(['build', 'attach {"build":1}', 'startLoadDeadline']);
-            const open = new RecordingHost();
-            open.buildGate = () => null;
-            open.step({ t: 'connect', ctx: COOPERATIVE });
-            expect(built(open)).toEqual(['build', 'attach {"build":1}', 'startLoadDeadline']);
-        });
-
-        it('with a gate, the state is `loading` at once and nothing is built or attached until the gate opens; then once, and the deadline starts after the attach', async () => {
-            const gate = opened();
-            const host = new RecordingHost();
-            host.buildGate = () => gate.promise;
-            host.step({ t: 'connect', ctx: COOPERATIVE });
-            expect(host.lc.state).toBe('loading');
-            expect(built(host)).toEqual([]);
-            await flush();
-            expect(built(host), 'a gate still shut').toEqual([]);
-            gate.open();
-            await flush();
-            expect(built(host)).toEqual(['build', 'attach {"build":1}', 'startLoadDeadline']);
-            expect(host.lc.state).toBe('loading');
-            host.step({ t: 'announced', gen: host.lc.gen, valid: true, refusal: null, port: {}, source: ANNOUNCER });
-            expect(host.lc.state).toBe('ready');
-        });
-
-        it('asks the gate once per build: the build that waited does not wait again', async () => {
-            let asked = 0;
-            const host = new RecordingHost();
-            host.buildGate = () => { asked++; return Promise.resolve(); };
-            host.step({ t: 'connect', ctx: COOPERATIVE });
-            await flush();
-            expect(asked).toBe(1);
-            expect(host.log.filter(line => line === 'build')).toHaveLength(1);
-        });
-
-        it('a termination while it waits drops the build whole: nothing is built, attached or announced after the gate opens', async () => {
-            const gate = opened();
-            const host = new RecordingHost();
-            host.buildGate = () => gate.promise;
-            host.step({ t: 'connect', ctx: COOPERATIVE });
-            host.step({ t: 'terminate', reason: 'ended by the embedder' });
-            expect(host.lc.state).toBe('terminated');
-            host.log = [];
-            gate.open();
-            await flush();
-            expect(built(host)).toEqual([]);
-            expect(host.lc.state).toBe('terminated');
-        });
-
-        it('a reset() while it waits builds once: the older build is stale, the newer one runs when the gate opens', async () => {
-            const gate = opened();
-            const host = new RecordingHost();
-            host.buildGate = () => gate.promise;
-            host.step({ t: 'connect', ctx: COOPERATIVE });
-            host.step({ t: 'build', why: 'reset', ctx: COOPERATIVE });
-            host.log = [];
-            gate.open();
-            await flush();
-            expect(built(host)).toEqual(['build', 'attach {"build":1}', 'startLoadDeadline']);
-            expect(host.lc.state).toBe('loading');
-        });
-
-        it('a build that throws after the gate is a failed build of its own generation, like any other', async () => {
-            const gate = opened();
-            const host = new RecordingHost();
-            host.buildGate = () => gate.promise;
-            host.buildThrows = true;
-            host.step({ t: 'connect', ctx: COOPERATIVE });
-            gate.open();
-            await flush();
-            host.runTasks();
-            expect(host.events).toContain('terminated failed (build)');
         });
     });
 
@@ -697,8 +608,8 @@ describe('class L in host.ts, by its source (S65 step 2)', () => {
         const inLifecycle = [...lifecycle.matchAll(GEN_COMPARISON)].map(match => match.index!);
         expect(inLifecycle.length).toBeGreaterThanOrEqual(3);
         for (const index of inLifecycle) expect(owners.some(owner => inside(index, owner)), lifecycle.slice(index - 60, index + 20)).toBe(true);
-        // and the executor's comparison is the one runEffects, runNotices and a build that waited for its gate use
-        expect([...lifecycle.matchAll(/tornDownSince\(host, stampGen\)/g)]).toHaveLength(3);
+        // and the executor's comparison is the one runEffects and runNotices use
+        expect([...lifecycle.matchAll(/tornDownSince\(host, stampGen\)/g)]).toHaveLength(2);
     });
 
     it('and the scan sees every spelling of a second predicate for "is this still our environment": loose equality, an ordering, Object.is, the identity of the state', () => {
