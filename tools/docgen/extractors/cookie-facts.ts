@@ -3,7 +3,7 @@
  * table of docs/API.md and docs/THREAT-MODEL.md and the sentence of the README. The warning of `origins` reads the same
  * table, so the wording is one.
  */
-import { COOKIE_CARRIERS, COOKIE_CARRIER_IDS, COOKIE_ENGINES, COOKIE_ENGINE_FACTS, cookieSentence, sameSiteValues, withoutCorsCookieSentence, type CookieEngineFacts } from '../../../src/lib/cookie-facts';
+import { carrierModes, COOKIE_CARRIERS, COOKIE_CARRIER_IDS, COOKIE_ENGINES, COOKIE_ENGINE_FACTS, cookieSentence, sameSiteValues, type CookieEngineFacts } from '../../../src/lib/cookie-facts';
 import { signatureOf } from '../engine';
 import { code, row, table, type Extractor } from './markdown';
 
@@ -27,7 +27,7 @@ const carriersTable = () => table(
     ['Request', 'Where', 'Why the library cannot strip it'],
     COOKIE_CARRIER_IDS.map(id => {
         const carrier = COOKIE_CARRIERS[id];
-        return row([carrier.request, carrier.modes === 'every mode' ? 'every mode' : 'cooperative mode only', carrier.unsentBy.length === 0 ? carrier.why : `${carrier.why} (${carrier.unsentBy.map(engine => facts(engine).name).join(', ')} sends none)`]);
+        return row([carrier.request, carrierModes(carrier), carrier.unsentBy.length === 0 ? carrier.why : `${carrier.why} (${carrier.unsentBy.map(engine => facts(engine).name).join(', ')} sends none)`]);
     }),
 );
 
@@ -42,6 +42,5 @@ export const cookieFacts: Extractor = {
         'cookie-facts': factsTable,
         'cookie-carriers': carriersTable,
         'cookie-sentence': () => cookieSentence(code),
-        'without-cors-cost': () => withoutCorsCookieSentence(code),
     },
 };

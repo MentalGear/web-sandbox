@@ -350,8 +350,10 @@ owner classifies), so it was not clean either (0 of 2). BD3:ISO-1, BD3:ISO-2 and
 without a probe (the host origin from `self.origin`; an entry sharing the host's last two labels is refused; no
 `document.cookie` probe) and by a host-policy read that never answers "absent" (it fails closed). BD3:NEW-7 is fixed
 after research 21 (#73): the strict view gives every element that loads `crossorigin="anonymous"` and keeps no network
-URL in CSS or a poster, so no view load carries a cookie on any engine; `origins.withoutCors` is the owner-approved
-per-origin exception. BD3:LIM-1 is availability only and is backlogged as
+URL in CSS or a poster, so no view load carries a cookie on any engine. After pass 4 (owner, 2026-10-24) strict mode
+has no cookie carrier at all: its worker opens no WebSocket, and the per-origin exception `origins.withoutCors` is
+removed (`STRICT_COOKIE_CARRIERS`).
+BD3:LIM-1 is availability only and is backlogged as
 [S83](#s83). Everything else, the docs, the lows and the test gaps, was fixed in a batch of its own, with BD2:DOC-3
 recorded as resolved (the comment in `src/lib/frame-documents.ts` names what exists) and BD2:TST-7 as fixed (tests that
 kill the `stillOurs` mutant and the fetch bridge's `FORBIDDEN_HEADER` and `MAX_HEADERS` mutants). The board's reports,

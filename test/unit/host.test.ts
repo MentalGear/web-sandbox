@@ -143,7 +143,8 @@ describe("the host page's policy applied to the connect lists (hostContentSecuri
       expect(connect, mode).not.toMatch(/ws\.example|127\.0\.0\.1/);
       expect(bridgePolicy(el), mode).toContain('connect-src https://api.example;');
       expect(dropped(warn), mode).toHaveLength(2);
-      expect(dropped(warn)[0], mode).toContain('origins.connect dropped https://ws.example, wss://ws.example, http://127.0.0.1:3001');
+      // strict mode keeps no wss:// entry at all (origins.ts), so the host policy has none of it to drop there
+      expect(dropped(warn)[0], mode).toContain(`origins.connect dropped https://ws.example, ${mode === 'strict' ? '' : 'wss://ws.example, '}http://127.0.0.1:3001`);
       expect(dropped(warn)[1], mode).toContain('fetchBridge.allow dropped');
       el.remove();
     }

@@ -1,8 +1,9 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { test, expect, type SandboxDriver } from './fixture';
-import { useRecorder } from './recorder';
-import { COOKIE_CARRIERS, COOKIE_CARRIER_IDS, COOKIE_ENGINE_FACTS, type CookieCarrierId, type CookieEngine } from '@src/lib/cookie-facts';
+import { useRecorder, wss } from './recorder';
+import { COOKIE_CARRIERS, COOKIE_CARRIER_IDS, COOKIE_ENGINE_FACTS, STRICT_COOKIE_CARRIERS, type CookieCarrierId, type CookieEngine } from '@src/lib/cookie-facts';
+import { GATE_SOURCE_FILE } from '@src/lib/violation';
 
 /**
  * The host site's cookies on a guest request (S74, class A; THREAT-MODEL, `INHERITED_CONTEXT.cookies`). Every wrapper
@@ -89,8 +90,9 @@ test('every mode: the wrapper iframe carries the credentialless attribute, and t
     }
 });
 
-/** The carriers of cooperative mode (COOKIE_CARRIERS): the requests the request gate does not cover. */
-type CooperativeCarrier = { [K in CookieCarrierId]: (typeof COOKIE_CARRIERS)[K]['modes'] extends 'cooperative mode' ? K : never }[CookieCarrierId];
+/** The carriers of cooperative mode alone (COOKIE_CARRIERS): the requests the request gate does not cover. */
+type CooperativeCarrier = { [K in CookieCarrierId]: (typeof COOKIE_CARRIERS)[K]['modes'] extends readonly ['cooperative'] ? K : never }[CookieCarrierId];
+const cooperativeOnly = (id: CookieCarrierId) => !(COOKIE_CARRIERS[id].modes as readonly string[]).includes('worker');
 
 /** One request of each, the guest's own, to `target`; a row of the table without a probe here does not compile. The ping is last: the click follows the link. */
 const PROBES = (target: string): Record<CooperativeCarrier, string> => ({
@@ -114,7 +116,7 @@ test('cooperative mode: each request the gate does not cover carries the listed 
     const carries = (COOKIE_ENGINE_FACTS[engine].sends.crossSite as readonly string[]).includes('None');
     const probes = PROBES(recorder.allowed);
     const ids = COOKIE_CARRIER_IDS.filter((id): id is CooperativeCarrier => id in probes);
-    expect(ids.sort(), 'every carrier of cooperative mode has a probe, and no other has one').toEqual(COOKIE_CARRIER_IDS.filter(id => COOKIE_CARRIERS[id].modes === 'cooperative mode').sort());
+    expect(ids.sort(), 'every carrier of cooperative mode has a probe, and no other has one').toEqual(COOKIE_CARRIER_IDS.filter(cooperativeOnly).sort());
     for (const id of [...ids].sort((a, b) => Number(a === 'ping') - Number(b === 'ping'))) {
         await sandbox.inGuest(probes[id]);
         const hits = () => recorder.hits.filter(hit => hit.path.includes(`tag=${id}`));
@@ -128,6 +130,55 @@ test('cooperative mode: each request the gate does not cover carries the listed 
             if (carries) expect(String(hit.headers.cookie), `${id} on ${engine}`).toContain('ws_none=1');
             else expect(hit.headers.cookie, `${id} on ${engine}`).toBeUndefined();
         }
+    }
+});
+
+test('strict mode, every engine: no request carries a cookie, to another site or the host site; a WebSocket is refused and reported (STRICT_COOKIE_CARRIERS)', async ({ sandbox, context, page }) => {
+    expect(STRICT_COOKIE_CARRIERS).toEqual([]);
+    await context.addCookies(cookiesFor('127.0.0.1'));
+    const listener = await sameSiteListener();
+    try {
+        // positive control: a plain sandboxed frame of the host page's carries the cookie to the cross-site listener on
+        // every engine, and its requests reach the host site's listener
+        await plainFrameRequests(sandbox, recorder.allowed, 'control');
+        await expect.poll(() => recorder.hits.filter(hit => hit.path.includes('tag=control')).length).toBe(3);
+        for (const hit of recorder.hits.filter(candidate => candidate.path.includes('tag=control'))) expect(String(hit.headers.cookie), hit.path).toContain('ws_none=1');
+        await plainFrameRequests(sandbox, listener.origin, 'control');
+        await expect.poll(() => hitsOf(listener.hits, 'control').length).toBeGreaterThan(0);
+
+        // every request maker strict mode has, to both sites, with every list naming both (the host site's entries and every
+        // wss:// one are dropped at the boundary; the gate refuses a WebSocket all the same)
+        const targets = [recorder.allowed, listener.origin];
+        const origins = { connect: [...targets, wss(recorder.allowed), listener.origin.replace('http:', 'ws:')], images: targets, media: targets, styles: targets, fonts: targets };
+        expect(await sandbox.mount({ mode: 'strict', origins })).toBe('ready');
+        const outcome = await sandbox.inGuest(`
+            const out = {};
+            let html = '';
+            for (const [name, origin] of ${JSON.stringify([['x', recorder.allowed], ['h', listener.origin]])}) {
+                const base = origin + '/probe?tag=strict-' + name;
+                await fetch(base + '&kind=include', { credentials: 'include' }).catch(() => {});
+                await fetch(base + '&kind=nocors', { mode: 'no-cors', credentials: 'include', method: 'POST', body: 'x' }).catch(() => {});
+                await new Promise((resolve) => { const x = new XMLHttpRequest(); x.open('GET', base + '&kind=xhr'); x.withCredentials = true; x.onloadend = resolve; x.send(); });
+                try { new WebSocket(origin.replace(/^http/, 'ws') + '/probe?tag=strict-' + name + '&kind=ws'); out[name] = 'made'; } catch (e) { out[name] = e.name + ': ' + e.message; }
+                html += '<img src="' + base + '&kind=img"><video src="' + base + '&kind=media" poster="' + base + '&kind=poster" preload="auto"></video><p style="width:5px;height:5px;background:url(' + base + '&kind=css)">x</p>';
+            }
+            sandboxView.render(html);
+            return out;
+        `);
+        expect(outcome).toEqual({ x: 'SecurityError: WebSocket refused by the sandbox: strict mode opens no WebSocket', h: 'SecurityError: WebSocket refused by the sandbox: strict mode opens no WebSocket' });
+        // the requests that may leave: fetch, no-cors and XMLHttpRequest to the listed cross-site origin, and the view's image
+        // and media as CORS requests; none with a cookie
+        await expect.poll(() => kinds(recorder.hits.filter(hit => hit.path.includes('tag=strict-x')).map(hit => ({ path: hit.path, cookie: undefined })))).toEqual(expect.arrayContaining(['img', 'include', 'nocors', 'xhr']));
+        await page.waitForTimeout(800);
+        const strictHits = recorder.hits.filter(hit => hit.path.includes('tag=strict-'));
+        expect(strictHits.filter(hit => hit.headers.cookie !== undefined).map(hit => `${hit.path}: ${hit.headers.cookie}`)).toEqual([]);
+        expect(strictHits.filter(hit => hit.websocket)).toEqual([]);
+        // the host site gets nothing at all: its entries were dropped, so every request there was refused
+        expect(hitsOf(listener.hits, 'strict-')).toEqual([]);
+        const sockets = (await sandbox.violations()).filter(v => v.sourceFile === GATE_SOURCE_FILE && v.blockedURI.includes('kind=ws')).map(v => v.blockedURI);
+        expect(sockets).toEqual([`${wss(recorder.allowed)}/probe?tag=strict-x&kind=ws`, `${listener.origin.replace('http:', 'ws:')}/probe?tag=strict-h&kind=ws`]);
+    } finally {
+        await listener.stop();
     }
 });
 

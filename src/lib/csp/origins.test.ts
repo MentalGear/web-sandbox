@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { NO_ORIGINS, ORIGIN_KINDS, ORIGIN_LISTS, ORIGINS_REFUSAL_TEXT, originRules, OriginsTypeError, parseOrigins, type SandboxOrigins, type StrictSandboxOrigins } from './origins';
+import { NO_ORIGINS, ORIGIN_KINDS, ORIGINS_REFUSAL_TEXT, originRules, OriginsTypeError, parseOrigins, STRICT_NO_SOCKET, type SandboxOrigins, type StrictSandboxOrigins } from './origins';
 import type { SandboxConfig } from '../../host';
 
 const parse = (input: unknown, mode: unknown = 'cooperative') => {
@@ -14,27 +14,35 @@ const parse = (input: unknown, mode: unknown = 'cooperative') => {
 describe('parseOrigins: `origins` parsed once, at the boundary (ADR-007)', () => {
     it('keeps exact origins per kind, canonical and without duplicates; every kind is present', () => {
         const { policy, warnings } = parse({ images: ['https://img.example', 'HTTPS://IMG.example:443/'], connect: ['https://ws.example', 'wss://ws.example', 'http://localhost:3000'] });
-        expect(policy).toEqual({ scripts: [], styles: [], images: ['https://img.example'], fonts: [], media: [], connect: ['https://ws.example', 'wss://ws.example', 'http://localhost:3000'], withoutCors: [] });
+        expect(policy).toEqual({ scripts: [], styles: [], images: ['https://img.example'], fonts: [], media: [], connect: ['https://ws.example', 'wss://ws.example', 'http://localhost:3000'] });
         expect(warnings).toEqual([]);
     });
 
-    it('withoutCors: strict mode only, parsed with the rules of the other lists; outside strict mode ignored with one warning', () => {
-        const strict = parse({ images: ['https://img.example'], media: ['https://media.example'], withoutCors: ['HTTPS://IMG.example:443/', 'https://media.example', 'http://localhost:3000', '*', 'wss://img.example'] }, 'strict');
-        expect(strict.policy.withoutCors).toEqual(['https://img.example', 'https://media.example', 'http://localhost:3000']);
+    it('strict mode: every wss:// entry of connect is dropped, one warning each, its https:// twin kept; the other modes keep the pair', () => {
+        const connect = ['https://ws.example', 'wss://ws.example', 'WSS://Other.example:8443/', 'ws://localhost:3000', 'http://localhost:3000'];
+        const strict = parse({ connect }, 'strict');
+        expect(strict.policy.connect).toEqual(['https://ws.example', 'http://localhost:3000']);
         expect(strict.warnings).toEqual([
-            expect.stringContaining('origins.withoutCors entry "*" was dropped'),
-            expect.stringContaining('origins.withoutCors entry "wss://img.example" was dropped'),
-            '[Sandbox] origins.withoutCors lists "http://localhost:3000", which none of images, media, styles, fonts lists: it loads nothing until one of them does.',
+            `[Sandbox] origins.connect entry "wss://ws.example" was dropped: ${STRICT_NO_SOCKET}`,
+            `[Sandbox] origins.connect entry "wss://other.example:8443" was dropped: ${STRICT_NO_SOCKET}`,
+            '[Sandbox] origins.connect entry "ws://localhost:3000" was dropped: list exact origins like "https://cdn.example" (https; http only for localhost and 127.0.0.1). Wildcards, schemes, keywords, data:, blob: and paths are not origins (see docs/API.md#origins).',
         ]);
-        // it adds nothing to a kind
-        expect(strict.policy.images).toEqual(['https://img.example']);
+        // positive control: the same list in the other modes keeps the pair (and drops the orphan wss:// and the ws:// entry)
         for (const mode of ['cooperative', 'worker']) {
-            const other = parse({ images: ['https://img.example'], withoutCors: ['https://img.example'] }, mode);
-            expect(other.policy.withoutCors, mode).toEqual([]);
-            expect(other.warnings, mode).toEqual(["[Sandbox] origins.withoutCors is used only in strict mode and was ignored: the other modes make their loads the engine's way."]);
-            expect(parse({ withoutCors: [] }, mode).warnings, mode).toEqual([]);
+            const other = parse({ connect }, mode);
+            expect(other.policy.connect, mode).toEqual(['https://ws.example', 'wss://ws.example', 'http://localhost:3000']);
+            expect(other.warnings.some(text => text.includes(STRICT_NO_SOCKET)), mode).toBe(false);
         }
-        expect(() => parse({ withoutCors: 'https://img.example' }, 'strict')).toThrow(TypeError);
+    });
+
+    it('withoutCors is not a list of origins: dropped with a warning as any key that is not a kind, in every mode, whatever its value', () => {
+        for (const mode of ['strict', 'cooperative', 'worker']) {
+            for (const value of [['https://img.example'], 'https://img.example', 7]) {
+                const { policy, warnings } = parse({ images: ['https://img.example'], withoutCors: value }, mode);
+                expect(policy, mode).toEqual({ ...NO_ORIGINS, images: ['https://img.example'] });
+                expect(warnings, mode).toEqual(['[Sandbox] origins."withoutCors" was dropped: origins takes scripts, styles, images, fonts, media, connect.']);
+            }
+        }
     });
 
     it('is frozen, its lists included', () => {
@@ -66,8 +74,8 @@ describe('parseOrigins: `origins` parsed once, at the boundary (ADR-007)', () =>
         expect(warnings).toEqual([expect.stringContaining('origins.images entry "wss://a.example"')]);
     });
 
-    it('a wss:// entry is kept only beside its https:// twin (same host and port); otherwise it is dropped with one warning that names the twin, in every mode', () => {
-        for (const mode of ['strict', 'cooperative', 'worker']) {
+    it('a wss:// entry is kept only beside its https:// twin (same host and port); otherwise it is dropped with one warning that names the twin, in cooperative and worker mode (strict mode keeps none: below)', () => {
+        for (const mode of ['cooperative', 'worker']) {
             const alone = parse({ connect: ['wss://a.example'] }, mode);
             expect(alone.policy.connect, mode).toEqual([]);
             expect(alone.warnings, mode).toEqual(['[Sandbox] origins.connect entry "wss://a.example" was dropped: it needs "https://a.example" listed as well. Some engines let a wss:// entry admit https:// requests and others do not, so the library admits the pair on every engine, or neither (see docs/API.md#origins).']);
@@ -90,9 +98,9 @@ describe('parseOrigins: `origins` parsed once, at the boundary (ADR-007)', () =>
         const { policy, warnings } = parse(JSON.parse('{"img-src": ["https://a.example"], "Images": 5, "__proto__": {"images": ["https://p.example"]}}'));
         expect(policy).toEqual(NO_ORIGINS);
         expect(warnings).toEqual([
-            '[Sandbox] origins."img-src" was dropped: origins takes scripts, styles, images, fonts, media, connect, withoutCors.',
-            '[Sandbox] origins."Images" was dropped: origins takes scripts, styles, images, fonts, media, connect, withoutCors.',
-            '[Sandbox] origins."__proto__" was dropped: origins takes scripts, styles, images, fonts, media, connect, withoutCors.',
+            '[Sandbox] origins."img-src" was dropped: origins takes scripts, styles, images, fonts, media, connect.',
+            '[Sandbox] origins."Images" was dropped: origins takes scripts, styles, images, fonts, media, connect.',
+            '[Sandbox] origins."__proto__" was dropped: origins takes scripts, styles, images, fonts, media, connect.',
         ]);
     });
 
@@ -127,13 +135,13 @@ describe('parseOrigins: `origins` parsed once, at the boundary (ADR-007)', () =>
         expect(top).toBeInstanceOf(TypeError);
         expect((top as TypeError).name).toBe('TypeError');
         expect(ORIGINS_REFUSAL_TEXT[(top as OriginsTypeError).option]).toBe('origins is not an object');
-        for (const kind of ORIGIN_LISTS) {
+        for (const kind of ORIGIN_KINDS) {
             const error = refused({ [kind]: 7 }) as OriginsTypeError;
             expect(error, kind).toBeInstanceOf(OriginsTypeError);
             expect(error.option).toBe(kind);
             expect(ORIGINS_REFUSAL_TEXT[kind]).toBe(`origins.${kind} is not a list`);
         }
-        expect(Object.keys(ORIGINS_REFUSAL_TEXT).sort()).toEqual(['origins', ...ORIGIN_LISTS].sort());
+        expect(Object.keys(ORIGINS_REFUSAL_TEXT).sort()).toEqual(['origins', ...ORIGIN_KINDS].sort());
     });
 });
 
@@ -158,11 +166,10 @@ describe('the types: what a mode cannot use does not compile', () => {
         expect([strict, strictScripts, strictFromVariable, cooperative, worker, anyMode('strict'), removed, notAList, notAKind]).toHaveLength(9);
     });
 
-    it('ORIGIN_LISTS are exactly the keys of SandboxOrigins: the kinds, and withoutCors', () => {
+    it('ORIGIN_KINDS are exactly the keys of SandboxOrigins: every list is a kind, which names a directive', () => {
         const source = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'origins.ts'), 'utf8');
         const body = source.slice(source.indexOf('export interface SandboxOrigins {'), source.indexOf('\n}', source.indexOf('export interface SandboxOrigins {')));
         const keys = [...body.matchAll(/^ {4}(\w+)\?:/gm)].map(match => match[1]);
-        expect([...keys].sort()).toEqual([...ORIGIN_LISTS].sort());
-        expect(ORIGIN_LISTS.filter(list => !(ORIGIN_KINDS as readonly string[]).includes(list))).toEqual(['withoutCors']);
+        expect([...keys].sort()).toEqual([...ORIGIN_KINDS].sort());
     });
 });

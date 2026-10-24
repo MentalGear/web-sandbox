@@ -729,14 +729,9 @@ export interface RenderContext {
     animating: readonly string[];
     /**
      * The origins the view's policy admits for each kind of load, by key (`origins`): an http(s) URL outside them is
-     * refused. Its `withoutCors` list (`origins.withoutCors`) names the origins the view loads without CORS.
+     * refused.
      */
     origins: Readonly<Record<string, readonly string[]>>;
-    /**
-     * Whether the element the fragment goes into has crossorigin="anonymous": what a top-level <source> or <track> loads
-     * through. Unknown (absent) counts as without it.
-     */
-    targetAnonymous?: boolean;
     /** Filled by the renderer: each URL it dropped because the policy refuses it, with the directive that would. */
     refused: [directive: string, url: string][];
     /** Counted by the renderer: the URL-bearing attributes it kept. */
@@ -842,7 +837,7 @@ export const RENDER_RULES: RenderRules = {
  * exposes its controls as named properties that override built-ins, so in `<form><input name="getAttribute">` the
  * form's getAttribute is the input. Should anything still throw, the caller inserts nothing (fail closed).
  */
-export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string) => { url: string; type: string } | null, isMinted: (url: string) => boolean, dropNetworkCss: (css: string, dropped: [kind: string, url: string][], keep: readonly string[]) => string, rules: RenderRules, switches: RenderSwitches, room?: { elements: number; depth: number; urls?: number }, given?: RenderContext): number {
+export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string) => { url: string; type: string } | null, isMinted: (url: string) => boolean, dropNetworkCss: (css: string, dropped: [kind: string, url: string][]) => string, rules: RenderRules, switches: RenderSwitches, room?: { elements: number; depth: number; urls?: number }, given?: RenderContext): number {
     const HTML = 'http://www.w3.org/1999/xhtml';
     const SVG = 'http://www.w3.org/2000/svg';
     const MATHML = 'http://www.w3.org/1998/Math/MathML';
@@ -971,19 +966,6 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             return value;
         }
     };
-    // `origins.withoutCors`: the origins the view loads the classic way, without CORS (and, on some engines, with that
-    // origin's own cookies: the embedder's choice, per origin). A URL of one is kept where a network URL would otherwise go
-    // (a poster, CSS), and an element whose loads are all of such origins gets no crossorigin attribute.
-    const corsFreeOrigins: readonly string[] = call(own, context.origins, ['withoutCors']) ? context.origins.withoutCors! : [];
-    const corsFree = (value: string): boolean => {
-        if (corsFreeOrigins.length === 0) return false;
-        try {
-            const url = new URL(value);
-            return corsFreeOrigins.indexOf(url.protocol + '//' + url.hostname + (url.port ? ':' + url.port : '')) >= 0;
-        } catch {
-            return false;
-        }
-    };
     // What a kept http(s) URL loads, for the count of distinct loads: the parsed URL without its fragment.
     const loadOf = (value: string): string | null => {
         try {
@@ -998,17 +980,16 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     // to nothing). The scheme is read the way the URL parser reads it: outer C0 controls and spaces stripped, tabs and
     // newlines removed. Any other scheme is dropped, and nothing is reported: no engine would have made a request for it.
     // An http(s) URL the policy refuses for a load of `kind` ('' for none) is added to `refused`, and is not allowed;
-    // one it admits is added to `loads`. With `corsFreeOnly` (RENDER_NETWORK_DROPPED, or a <source> or <track> whose
-    // loader has no crossorigin) an http(s) URL is allowed only of an origin in `origins.withoutCors`, and every other
-    // is added to `refused` all the same.
-    const urlAllowed = (value: string, kind: string, refused: string[], loads: string[], corsFreeOnly: boolean) => {
+    // one it admits is added to `loads`. With `networkDropped` (RENDER_NETWORK_DROPPED) no http(s) URL is allowed, and
+    // each is added to `refused` all the same.
+    const urlAllowed = (value: string, kind: string, refused: string[], loads: string[], networkDropped: boolean) => {
         const url = value.replace(/^[\u0000- ]+|[\u0000- ]+$/g, '').replace(/[\t\n\r]/g, '');
         const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(url);
         if (!scheme) return true;
         const name = scheme[1]!.toLowerCase();
         if (name === 'blob') return isMinted(value);
         if (name !== 'https' && name !== 'http') return false;
-        if (corsFreeOnly && !corsFree(url)) {
+        if (networkDropped) {
             refused[refused.length] = droppedUrl(url);
             return false;
         }
@@ -1160,7 +1141,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     // a url() in @font-face font-src, any other img-src. A reference to a file the view minted is a blob: URL, and stays.
     const withoutNetwork = (css: string): string => {
         const dropped = list<[string, string]>();
-        const kept = dropNetworkCss(css, dropped, corsFreeOrigins);
+        const kept = dropNetworkCss(css, dropped);
         for (let i = 0; i < dropped.length; i++) context.refused[context.refused.length] = [directiveOf(dropped[i]![0]), droppedUrl(dropped[i]![1])];
         return kept;
     };
@@ -1192,15 +1173,9 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
     };
 
     // Cleans a kept element; false when it must go after all (a <link> that names no minted file). `parent`: the local
-    // name of the element it is appended to (a <source> loads by its parent), `parentNode` that element, null for the
-    // fragment's own children (whose parent is the target).
-    const clean = (element: Element, namespace: unknown, name: string, parent: string, parentNode: Element | null): boolean => {
+    // name of the element it is appended to (a <source> loads by its parent).
+    const clean = (element: Element, namespace: unknown, name: string, parent: string): boolean => {
         const html = namespace === HTML;
-        // a <source> or <track> of a media element loads through it: through one without crossorigin (all its own loads
-        // of origins.withoutCors), only a URL of such an origin may load
-        const loaderAnonymous = parentNode ? get(parentNode, 'crossorigin') === 'anonymous' : context.targetAnonymous === true;
-        const bareLoader = html && (name === 'source' || name === 'track') && (parent === 'video' || parent === 'audio') && corsFreeOrigins.length > 0 && !loaderAnonymous;
-        const elementLoads = list<string>();
         let linkKinds: string[] = [];
         if (html && name === 'link') {
             const rel = tokens(get(element, 'rel'));
@@ -1237,7 +1212,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
             const loads = list<string>();
             const keep = attributeAllowed(namespace, name, attribute)
                 && !(/blob:/i.test(value.replace(/[\t\n\r]/g, '')) && !(html && isPair(rules.references, name, attribute) && isMinted(value)))
-                && !(isUrl && !(attribute === 'srcset' ? srcsetAllowed(value, kind, refused, loads) : urlAllowed(value, kind, refused, loads, bareLoader || isPair(rules.networkDropped, name, attribute))))
+                && !(isUrl && !(attribute === 'srcset' ? srcsetAllowed(value, kind, refused, loads) : urlAllowed(value, kind, refused, loads, isPair(rules.networkDropped, name, attribute))))
                 && !(namespace === SVG && svgLocal[attribute] && /[:\\]/.test(value))
                 && !(attribute === 'autoplay' && !switches.autoplay);
             // a URL the policy refuses: reported as the browser would have reported its load (a srcset's first one)
@@ -1254,19 +1229,14 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
                 if (context.css) context.css[context.css.length] = css; // before the still rules (cssLoadsOf)
             }
             if (!isUrl) continue;
-            for (let l = 0; l < loads.length; l++) {
-                context.loads[context.loads.length] = loads[l]!;
-                elementLoads[elementLoads.length] = loads[l]!;
-            }
+            for (let l = 0; l < loads.length; l++) context.loads[context.loads.length] = loads[l]!;
             context.urls++;
             if (context.urls > urlRoom) throw new RangeError('VIEW_MAX_URLS');
         }
         if (rules.referrerElements.indexOf(name) >= 0) set(element, 'referrerpolicy', 'no-referrer');
-        // whatever the guest wrote (its own crossorigin is on no allowlist and went above), before the element is connected;
-        // not on an element whose every load is of origins.withoutCors (an <img> in a <picture> loads its sources too: never)
-        let corsFreeElement = name !== 'link' && !(name === 'img' && parent === 'picture') && elementLoads.length > 0;
-        for (let l = 0; corsFreeElement && l < elementLoads.length; l++) corsFreeElement = corsFree(elementLoads[l]!);
-        if (html && rules.crossOrigin.indexOf(name) >= 0 && !corsFreeElement) set(element, 'crossorigin', 'anonymous');
+        // whatever the guest wrote (its own crossorigin is on no allowlist and went above), before the element is connected,
+        // on every kept element of rules.crossOrigin, with no exception: no load of the view carries a credential
+        if (html && rules.crossOrigin.indexOf(name) >= 0) set(element, 'crossorigin', 'anonymous');
         if ((name === 'a' || name === 'area') && has(element, 'rel')) {
             set(element, 'rel', tokens(get(element, 'rel')).filter((token) => rules.anchorRelations.indexOf(token) >= 0).join(' '));
         }
@@ -1330,7 +1300,7 @@ export function sanitizeRender(fragment: DocumentFragment, fileOf: (path: string
         const name = String(call(localNameOf, element, []));
         let decision = verdict(namespace, name);
         const parentName = run.parent === fragment ? context.target : String(call(localNameOf, run.parent as Element, []));
-        if (decision === KEEP && !clean(element, namespace, name, parentName, run.parent === fragment ? null : run.parent as Element)) decision = REMOVE;
+        if (decision === KEEP && !clean(element, namespace, name, parentName)) decision = REMOVE;
         if (decision === REMOVE) continue;
         if (decision === UNWRAP) {
             runs[runs.length] = { parent: run.parent, input: drain(element), index: 0, depth: run.depth, text: run.text, own: false };
@@ -2415,10 +2385,10 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
 
     // CSS without its network URLs (sanitizeRender, `dropNetworkCss`; S74), for the renderer and for what an operation
     // puts into a <style> or inside one: each one dropped goes to `refused` with its directive, as the renderer's own.
-    const dropNetworkCss = (css: string, dropped: [kind: string, url: string][], keep: readonly string[]) => dropCss(css, scanCss, dropped as [kind: 'style' | 'font' | 'image', url: string][], keep);
+    const dropNetworkCss = (css: string, dropped: [kind: string, url: string][]) => dropCss(css, scanCss, dropped as [kind: 'style' | 'font' | 'image', url: string][]);
     const cssInto = (text: string, refused: [directive: string, url: string][]): string => {
         const dropped: [string, string][] = [];
-        const kept = dropNetworkCss(text, dropped, viewOrigins.withoutCors || []);
+        const kept = dropNetworkCss(text, dropped);
         for (let i = 0; i < dropped.length; i++) refused.push([directiveOfKind(dropped[i]![0]), reportedUrl(dropped[i]![1])]);
         return kept;
     };
@@ -2442,7 +2412,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         const ownUrls = target === body ? before.urls : urlsOf(target);
         let depth = 0;
         for (let n = target; n !== body; n = call(parentOf, n, [])) depth++;
-        const context: RenderContext = { target: String(call(localNameOf, target, [])), targetAnonymous: call(E.getAttribute, target, ['crossorigin']) === 'anonymous', animating: switches.animations ? [] : animatingProperties(), origins: viewOrigins, refused: [], urls: 0, loads: [], css: [] };
+        const context: RenderContext = { target: String(call(localNameOf, target, [])), animating: switches.animations ? [] : animatingProperties(), origins: viewOrigins, refused: [], urls: 0, loads: [], css: [] };
         const room = { elements: options.render.maxElements - (before.elements - ownElements), depth: options.render.maxDepth - depth, urls: options.render.maxUrls - (before.urls - ownUrls) };
         let kept = sanitize(template.content, fileOf, isMinted, dropNetworkCss, options.render, switches, room, context);
         if (inStyle(target)) {
@@ -2519,9 +2489,8 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
         }
         if (!style) return;
         const names = Object.keys(given);
-        // Each value without its network URLs, as a style attribute the renderer keeps (S74, cssInto): one of an origin in
-        // `origins.withoutCors` stays, any other becomes `""` and is reported as refused, so set() loads nothing the
-        // renderer would not.
+        // Each value without its network URLs, as a style attribute the renderer keeps (S74, cssInto): each becomes `""`
+        // and is reported as refused, so set() loads nothing the renderer would not.
         const css: Record<string, string | null> = {};
         for (let i = 0; i < names.length; i++) {
             const value = given[names[i]!];

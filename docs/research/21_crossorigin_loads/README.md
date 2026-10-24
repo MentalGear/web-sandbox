@@ -31,6 +31,13 @@ loads, and what breaks? Defensive research: measurements only, `src/` is unchang
   and network CSS references; keep the attribute and element allowlists, which are the only thing keeping four other
   loads out.
 
+**Current state.** The renderer does what the recommendation says, with no exception: every `img`, `video`, `audio` and
+`link` it keeps gets the attribute, and no network URL stays in CSS or a poster (`RENDER_CROSSORIGIN_ELEMENTS`,
+`RENDER_NETWORK_DROPPED`, `src/lib/in-sandbox-view.ts`; docs/API.md#the-views-loads). The per-origin opt-out
+`origins.withoutCors` is removed (S74): its loads were the engine's `no-cors` ones, with the cookies these measurements
+show, so strict mode now has no cookie carrier at all (`STRICT_COOKIE_CARRIERS`, `src/lib/cookie-facts.ts`; its worker
+opens no WebSocket either). The measurements below are kept as they were taken.
+
 ## Setup
 
 - **Engines.** Playwright 1.58.1: Chromium 145.0.7632.6, Firefox 146.0.1, WebKit 26.0 (the Linux build), headless, one

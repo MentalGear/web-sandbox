@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { admitGuestCall, CALL_INVARIANTS, CALL_LIMIT_FIELDS, callBudgetOf, CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, DEFAULT_CALL_BUDGET, defaultConfig, heaviestCall, ignoredIn, normaliseConfig, PARSED_APART, SANDBOX_MODES, type CallBudget, type NormalisedConfig, type NormaliseContext, type OptionName, type OptionRule, type SandboxMode } from '@src/lib/config-schema';
-import { ORIGIN_KINDS } from '@src/lib/csp/origins';
+import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { FETCH_BRIDGE_FIELDS } from '@src/lib/fetch-bridge';
 import { createRateLimiter } from '@src/lib/rate-limit';
 import { RPC_MAX_BYTES } from '@src/lib/rpc';
@@ -382,12 +382,12 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
         }
     });
 
-    it('strict: origins.withoutCors refuses the host origin and a host of its site like every kind (no load without CORS ever reaches the host site)', () => {
-        const origins = { images: ['https://img.other.example'], withoutCors: [PAGE, 'https://api.app.example', 'https://img.other.example'] };
-        const dropped = said('strict', origins).filter(message => message.includes(' dropped '));
-        expect(dropped).toEqual([expect.stringContaining(`origins.withoutCors dropped ${PAGE} (the host page's own origin), https://api.app.example (on the host page's site):`)]);
-        expect(kept('strict', origins).withoutCors).toEqual(['https://img.other.example']);
-        expect(kept('strict', origins).images).toEqual(['https://img.other.example']);
+    it.each(SANDBOX_MODES)('%s: a config that still names withoutCors keeps nothing of it: the key is dropped with a warning, as any key that is not a kind', (mode) => {
+        const origins = { images: ['https://img.other.example'], withoutCors: [PAGE, 'https://img.other.example'] };
+        const result = normaliseConfig({ mode, origins }, { hostOrigin: PAGE });
+        expect(result.value!.origins).toEqual({ ...NO_ORIGINS, images: ['https://img.other.example'] });
+        expect(Object.keys(result.value!.origins)).not.toContain('withoutCors');
+        expect(result.warnings.filter(message => message.includes('withoutCors'))).toEqual(['[Sandbox] origins."withoutCors" was dropped: origins takes scripts, styles, images, fonts, media, connect.']);
     });
 
     it.each(SANDBOX_MODES)('%s: a loopback, private or link-local host is dropped, with one warning, from a host page that is not on one', (mode) => {

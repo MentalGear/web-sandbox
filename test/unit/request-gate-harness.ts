@@ -2,10 +2,11 @@ import { inSandboxScript } from '@src/lib/in-sandbox-script';
 import { createBroker } from '@src/lib/rpc';
 
 /**
- * The request gate's unit harness (in-sandbox-script.ts; S74): the bootstrap runs in this file's realm, in strict mode's
- * form, over stand-ins installed as the platform's fetch, XMLHttpRequest and WebSocket before it captures them. A copy of
- * the stand-in fetch also sits on the global object's prototype, where a worker's platform keeps it (BD1:ISO-2). The gate is
- * not configurable on the global object, so one gate is installed per test file, with the list `install` is given.
+ * The request gate's unit harness (in-sandbox-script.ts; S74): the bootstrap runs in this file's realm, in the form of a
+ * worker (strict mode's, or worker mode's), over stand-ins installed as the platform's fetch, XMLHttpRequest and WebSocket
+ * before it captures them, its port handed to attach() as the strict prelude does. A copy of the stand-in fetch also sits
+ * on the global object's prototype, where a worker's platform keeps it (BD1:ISO-2). The gate is not configurable on the
+ * global object, so one gate is installed per test file, with the list and the mode `install` is given.
  */
 
 class FakePort {
@@ -48,17 +49,17 @@ export function createGateHarness() {
     const prototypeOfGlobal = Object.getPrototypeOf(globalThis);
 
     /**
-     * Installs the stand-ins and the gate over `connect`, the list of the policy's connect-src. With `sealed`, the copy of
-     * fetch on the global object's prototype cannot be deleted.
+     * Installs the stand-ins and the gate over `connect`, the list of the policy's connect-src, in `mode` (strict by
+     * default). With `sealed`, the copy of fetch on the global object's prototype cannot be deleted.
      */
-    const install = (connect: readonly string[], options: { sealed?: boolean } = {}) => {
+    const install = (connect: readonly string[], options: { sealed?: boolean; mode?: 'strict' | 'worker' } = {}) => {
         g.MessagePort = FakePort;
         Object.defineProperty(globalThis, 'fetch', { value: platformFetch, writable: true, configurable: true });
         Object.defineProperty(prototypeOfGlobal, 'fetch', { value: platformFetch, writable: !options.sealed, configurable: !options.sealed });
         g.XMLHttpRequest = PlatformXMLHttpRequest;
         g.WebSocket = PlatformWebSocket;
-        // strict mode's form: the port is handed to attach() (no INIT_PORT listener), as the strict prelude does
-        const comms = inSandboxScript(false, 'strict', { log() {}, info() {}, warn() {}, error() {} } as unknown as Console, createBroker, { externalPort: true, connect: [...connect] });
+        // the port is handed to attach() (no INIT_PORT listener), as the strict prelude does
+        const comms = inSandboxScript(false, options.mode ?? 'strict', { log() {}, info() {}, warn() {}, error() {} } as unknown as Console, createBroker, { externalPort: true, connect: [...connect] });
         port = new FakePort();
         comms.attach(port as unknown as MessagePort);
     };
