@@ -179,7 +179,9 @@ describe("the host page's policy applied to the connect lists (hostContentSecuri
       expect(el._reach().origins.connect, mode).toEqual([]);
       expect(el._reach().fetchPolicy.allow, mode).toEqual([]);
       const notGiven = warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('hostContentSecurityPolicy was not given'));
-      expect(notGiven, mode).toEqual([policyNotGiven({ connect: CONFIG.origins.connect, allow: CONFIG.fetchBridge.allow })]);
+      // Strict mode has already dropped the wss:// entry (it opens no WebSocket), so the warning names the rest.
+      const listed = mode === 'strict' ? CONFIG.origins.connect.filter(o => !/^wss?:/.test(o)) : CONFIG.origins.connect;
+      expect(notGiven, mode).toEqual([policyNotGiven({ connect: listed, allow: CONFIG.fetchBridge.allow })]);
       expect(el.shadowRoot!.querySelectorAll('iframe').length, `${mode}: the wrapper and the bridge's frame, and no other`).toBe(2);
       el.remove();
     }
