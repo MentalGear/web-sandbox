@@ -30,7 +30,7 @@
  * Host-side only, never stringified into the guest, so it may use module scope freely.
  */
 import { fetchRefusal, type BridgeResponse, type BridgeTransport, type FetchErrorCode, type FetchRefusal } from './fetch-bridge';
-import { BRIDGE_FRAME_SANDBOX, buildBridgeDocument, FRAME_REFERRER_POLICY } from './frame-documents';
+import { BRIDGE_FRAME_SANDBOX, buildBridgeDocument, setWrapperFrameIsolation } from './frame-documents';
 import { bridgeFramePolicy } from './csp/csp-generator';
 import { BRIDGE_ROLE, viewBootstrapHash, viewBootstrapText } from './in-sandbox-view';
 import { setLibrarySrcdoc } from './trusted-types';
@@ -44,7 +44,7 @@ export const BRIDGE_FRAME_REFUSED = "the fetch bridge's frame did not start: the
 export function prepareBridgeFrame(allow: readonly Origin[]): HTMLIFrameElement {
     const iframe = document.createElement('iframe');
     iframe.setAttribute('sandbox', BRIDGE_FRAME_SANDBOX);
-    iframe.setAttribute('referrerpolicy', FRAME_REFERRER_POLICY);
+    setWrapperFrameIsolation(iframe); // the referrer policy and `credentialless`, as on every frame the library makes (BD3:NEW-5)
     iframe.setAttribute('aria-hidden', 'true');
     iframe.setAttribute('tabindex', '-1');
     iframe.hidden = true; // the user agent's own style: no style-src governs it

@@ -60,6 +60,20 @@ const hitsOf = (hits: Hit[], tag: string) => hits.filter(hit => hit.path.include
 const kinds = (hits: Hit[]) => hits.map(hit => /kind=(\w+)/.exec(hit.path)![1]).sort();
 const ALL_KINDS = ['img', 'include', 'nocors'];
 
+test('with fetchBridge, the bridge\'s frame carries the credentialless attribute like the wrapper, and a bridge request works on this engine (BD3:NEW-5)', async ({ sandbox, page, browserName }) => {
+    for (const mode of ['strict', 'cooperative', 'worker'] as const) {
+        const config = mode === 'cooperative' ? { mode, capabilities: ['allow-scripts' as const], fetchBridge: { allow: [recorder.allowed] } } : { mode, fetchBridge: { allow: [recorder.allowed] } };
+        expect(await sandbox.mount(config), mode).toBe('ready');
+        const frames = await page.evaluate(() => [...(document.querySelector('web-sandbox') as HTMLElement).shadowRoot!.querySelectorAll('iframe')]
+            .map(frame => ({ hidden: frame.hidden, present: frame.hasAttribute('credentialless'), reflected: 'credentialless' in frame ? (frame as any).credentialless : undefined })));
+        // ledger: cookies
+        const reflected = browserName === 'chromium' ? true : undefined;
+        expect(frames, mode).toEqual([{ hidden: false, present: true, reflected }, { hidden: true, present: true, reflected }]);
+        const response = await sandbox.inGuest(`return (await sandboxFetch('${recorder.allowed}/echo?credentialless-${mode}')).status`);
+        expect(response, `${mode}: a request through the credentialless bridge frame`).toBe(200);
+    }
+});
+
 test('every mode: the wrapper iframe carries the credentialless attribute, and the sandbox is ready on this engine', async ({ sandbox, page, browserName }) => {
     for (const mode of ['strict', 'cooperative', 'worker'] as const) {
         expect(await sandbox.mount({ mode }), mode).toBe('ready');
