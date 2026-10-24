@@ -391,6 +391,8 @@ host-policy read of the same decisions. So the same-site rule and the policy rea
 measurement (a test cookie, `location.origin`, an absent policy) before pass 4; the coordinator's note in the archive
 sets out the design that removes the class.
 
+**After pass 4:** the answer to research 22's evaluation is sealed mode, decided and not yet built (owner, 2026-10-24): [research 24](research/24_sealed_mode/README.md).
+
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
 
 *S74 board BD1:LIM-2 (with its verdict in the archived report), confirmed medium.* Class B. The 5 s view liveness ping
