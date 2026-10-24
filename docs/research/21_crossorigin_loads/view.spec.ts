@@ -4,7 +4,7 @@ import { inView } from '../../../test/e2e/strict-view';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { COOKIES, HOSTS_LINE, PNG, hostsResolve, listener, wav, type Acao } from './server';
+import { COOKIES, HOSTS_LINE, browserEnv, PNG, hostsResolve, listener, wav, type Acao } from './server';
 
 /**
  * Research 21, the real strict view: the library's own renderer and policy, with the one change the research is about.
@@ -19,8 +19,7 @@ import { COOKIES, HOSTS_LINE, PNG, hostsResolve, listener, wav, type Acao } from
  * styles and fonts, and renders one of every load the renderer lets through. Results: results/<engine>-view.json.
  */
 
-test.use({ ignoreHTTPSErrors: true });
-for (const name of ['NO_PROXY', 'no_proxy']) process.env[name] = `${process.env[name] ?? ''},.test`;
+test.use({ ignoreHTTPSErrors: true, launchOptions: { env: browserEnv() } });
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 

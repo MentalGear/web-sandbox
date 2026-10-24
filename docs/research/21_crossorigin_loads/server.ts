@@ -17,6 +17,19 @@ export const HOSTS = { H: 'app.wsprobe.test', S: 'cdn.wsprobe.test', X: 'cross.w
 export type Target = keyof typeof HOSTS;
 export const HOSTS_LINE = `127.0.0.1 ${Object.values(HOSTS).join(' ')}`;
 
+/**
+ * The environment of this probe's browsers: the machine's, with the .test names added to the proxy bypass list (a
+ * machine with HTTPS_PROXY would otherwise send them to the proxy). The specs pass it as their browsers' launch env and
+ * never write process.env: Playwright imports every spec of a run, so a write there reaches every browser of the run.
+ * The list has no empty entry: WebKit fails every page load under a NO_PROXY that has one and no proxy set.
+ */
+export function browserEnv(): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const [name, value] of Object.entries(process.env)) if (value !== undefined) env[name] = value;
+    for (const name of ['NO_PROXY', 'no_proxy']) env[name] = [...(env[name] ?? '').split(','), '.test'].map(entry => entry.trim()).filter(Boolean).join(',');
+    return env;
+}
+
 /** What the answer to a request carries: `cors` ACAO *, `nocors` no ACAO, `null` ACAO null, `creds` ACAO null + ACAC true. */
 export type Acao = 'cors' | 'nocors' | 'null' | 'creds';
 

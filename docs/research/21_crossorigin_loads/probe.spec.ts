@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { COOKIES, HOSTS_LINE, hostsResolve, listener, type Acao, type Hit, type Target } from './server';
+import { COOKIES, HOSTS_LINE, browserEnv, hostsResolve, listener, type Acao, type Hit, type Target } from './server';
 import { RUNNER, blobCases, cssCases, defeatCases, elementCases, mediaCases, type Case } from './cases';
 
 /**
@@ -22,10 +22,7 @@ import { RUNNER, blobCases, cssCases, defeatCases, elementCases, mediaCases, typ
  * Results go to results/<engine>-<structure>.json: per case, the page's outcome and the listener's view of each request.
  */
 
-// The browsers read the proxy settings from the environment: a machine with HTTPS_PROXY would send the .test names to it.
-for (const name of ['NO_PROXY', 'no_proxy']) process.env[name] = `${process.env[name] ?? ''},.test`;
-
-test.use({ ignoreHTTPSErrors: true });
+test.use({ ignoreHTTPSErrors: true, launchOptions: { env: browserEnv() } });
 test.describe.configure({ mode: 'serial' });
 
 const here = path.dirname(fileURLToPath(import.meta.url));
