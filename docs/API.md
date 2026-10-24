@@ -1342,7 +1342,7 @@ in strict mode.
 | Guest calls per second, per environment (any one-second window; default of `callLimits.maxPerSecond`) | 1000 | — |
 | Bytes of guest calls per second, per environment (any one-second window; default of `callLimits.maxBytesPerSecond`) | 67108864 (64 MiB) | — |
 | Default call timeout (ms) | 30000 | — |
-| Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget, on every engine) | 4096 | — |
+| Characters of a `Blob`'s or `File`'s `type` (longer is over every byte budget on every engine that keeps the type; Chromium empties one of 65 536 characters or more) | 4096 | — |
 | Characters of a method name | 256 | — |
 | Characters of an error message a call carries | 65536 | — |
 | Guest log lines per second, per environment | 1000 | `LOG_EVENTS_PER_SECOND` |
@@ -1393,16 +1393,19 @@ The same limits by channel of guest activity, each with the test that checks it:
 
 **What the byte measure counts.** The byte limits above (a log line, an RPC message, the arguments of calls running at
 once) are measured with the one measure of `call()`, on the snapshot a sender posts, which is the only form of a value that
-leaves a sandbox. It is a closed set of kinds, and counts every field the receiver is handed: a string two bytes a code
-unit plus 8, a `BigInt` its digits, any other primitive 8; a plain object, a `Map` and a `Set` their keys and entries;
-an array the more of its `length` times 8 and its keys, so a sparse array of 2**32 - 1 slots is past every limit; a typed
-array or a `DataView` its whole buffer, once; a `Blob` 64 plus its `type` like a string; a `File` that plus its `name`
-like a string and 8 for `lastModified`. Any other kind (an `Error`, an `ImageData`, a `SharedArrayBuffer`) is refused as
+leaves a sandbox. It is a closed set of kinds, and counts every field the receiver is handed. Every object, of any kind, costs 16, and an
+object met again 8. A string costs two bytes a code unit plus 8; a `BigInt` its two's-complement bytes plus 8 (found by its
+hexadecimal digits); any other primitive 8. A plain object adds its keys, each like a string, and their values; a `Map`
+16 an entry and its key and value; a `Set` 8 an entry and its value; a `Date` nothing more; a `RegExp` two bytes a character
+of its source plus 24; an array the more of its `length` times 8 and its keys, so a sparse array of 2**32 - 1 slots is past
+every limit; an `ArrayBuffer` its byte length; a typed array or a `DataView` its whole buffer, once; a `Blob` 64 plus its
+`type` like a string; a `File` that plus its `name` like a string and 8 for `lastModified`. Any other kind (an `Error`, an `ImageData`, a `SharedArrayBuffer`) is refused as
 unsupported. The library's own walks of a delivered value follow its own keys, never an array's `length`. A `Blob` or
-`File` whose `type` is longer than `BLOB_TYPE_MAX_LENGTH` (4096) characters is over every byte budget, on every
-engine, and is refused as one past the budget: what an engine would keep of a longer type differs (Chromium empties a
-type of 65 536 characters or more when the object is made, Firefox and WebKit keep it whole), so the limit is the
-library's, not the engine's. A type of up to 4096 characters crosses on every engine.
+`File` whose `type` is longer than `BLOB_TYPE_MAX_LENGTH` (4096) characters is over every byte budget and is refused as
+one past the budget, on every engine that keeps the type: Chromium empties a type of 65 536 characters or more when the
+object is made, so there the guest holds a `Blob` of no type, which is sent as it is (Firefox and WebKit keep it whole and
+refuse it; the [engine ledger](THREAT-MODEL.md#engine-blob-type-emptied)). The limit is the library's, not the engine's, for
+a type of 4097 to 65 535 characters. A type of up to 4096 characters crosses on every engine.
 
 ---
 
