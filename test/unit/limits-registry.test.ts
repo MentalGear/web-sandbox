@@ -43,6 +43,7 @@ const INTERNAL: Readonly<Record<string, string>> = {
     'src/lib/host-csp.ts:DECOY_PORT': "the port of the policy read's deliberate violation",
     'src/lib/host-csp.ts:SETTLE_MS': "how long the policy read waits for a report after the frame's load",
     'src/lib/host-csp.ts:READ_TIMEOUT_MS': "how long a build waits for the policy read (docs/API.md#host-page-policy states it)",
+    'src/lib/host-csp.ts:READ_FRAMES': 'how many frames one policy read may lose to a moved or removed element before its builds go on without an answer and fail closed (BD3:CHL-1); not a bound on the guest',
     'src/lib/long-timer.ts:MAX_TIMER_DELAY': "the platform's longest timer delay",
     'src/lib/rpc.ts:MAX_IN_FLIGHT': "a mirror of MAX_INBOUND_IN_FLIGHT in the stringified broker (api-docs.test.ts keeps it equal)",
     'src/lib/rpc.ts:MAX_BYTES': 'a mirror of RPC_MAX_BYTES in the stringified broker',
