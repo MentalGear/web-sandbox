@@ -374,6 +374,9 @@ is the count of those that reach strict mode. Highs are as the verifiers confirm
 | BD2 | 2026-10-21 | 5 | 3 | 3 |
 | BD3 | 2026-10-23 | 5 | 4 | 4 |
 
+The full counts per round, the analysis and the coordinator's evaluation after each pass are in
+[research 22](research/22_review_trajectory/README.md).
+
 The board's passes find more data findings than the rounds did, because they cover what the rounds did not: the host
 page's context, the browsers' own handling of a request, and an opt-in configuration. **The evaluation rule the
 coordinator applies after every pass:** if data findings reaching strict do not fall for two passes in a row, or a pass's

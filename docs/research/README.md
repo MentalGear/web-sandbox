@@ -20,7 +20,7 @@ and WebKit.
 The loose notes (comparisons, the Service-Worker virtual-files designs, early plans) and the design probe of blob-URL
 delivery are history and live in [the archive](../archive/README.md#research). What stays here is current: the
 reproductions 01 to 15 (their specs run in `bun run test:e2e` and the presets name their folders), and the design
-probes and evaluations 16 to 19 that the code and the docs cite.
+probes and evaluations 16 to 19 and 21 that the code and the docs cite, and the review trajectory (22).
 
 ## Findings
 
@@ -60,3 +60,4 @@ Measurements taken before building a planned design, each backed by an e2e spec.
 | [Formal methods (17)](17_formal_methods/README.md) | Should the library use machine-checked proofs (Lean)? | No: of 48 medium-or-higher findings, none only a proof would have caught; the 12 a proof could reach are caught as well by property tests, model-based lifecycle tests or a type plus a source scan, at a fraction of the cost. A Lean and a fast-check proof of concept on the rate limiter; the view's time budget restated as a long-run average. Planned: S61 |
 | [Finding classes (18)](18_finding_classes/README.md) | Do the findings that keep coming up share a class, and can each class be closed by construction? | Yes: 60 medium-or-higher findings fall into a few structural classes; the ones that recur had per-instance fixes, the ones closed for good were closed by an allowlist with an enumerating test. One design per class (an egress table, one boundary reader, one lifecycle reducer, one config schema, observe-and-charge for browser decisions), a probe for a trusted relay worker. Adopted: S64–S68, CONTRIBUTING.md |
 | [Relay worker (19)](19_relay_worker/README.md) | Should a library-only relay worker spawn the guest as a nested worker, so its events land off the host page's thread and are measured in a trusted realm (S66)? | Build it, with caveats: nested `blob:` workers start under the view's policy on all three engines; the guest's own `postMessage` (98% / 58–63% / 29% host busy) and its uncaught errors cost the host page 0–2% through a relay that cancels them; unhandled rejections are not closed (Firefox 96–98% busy in every layout); +1.9 MB and +14–21 ms to ready per sandbox; the relay needs a byte budget that ends the guest |
+| [Review trajectory (22)](22_review_trajectory/README.md) | Is the finding curve of the review rounds bending, and when should the approach change? | Data findings reaching strict went 2, 3, 4 over the board passes, all from the host page's context, and BD3's highs sit in code BD2's fixes added: delete the predictors rather than patch them; re-evaluated after every pass. |
