@@ -89,6 +89,7 @@ V1 …) are unique and keep no prefix.
 | **C**: config | A config's validity, including cross-field and platform-domain invariants, is decided in one place, before anything is stored or built. |
 | **B**: a browser decision re-derived | Where the library predicts a browser decision (what policy applies, what loads, what runs, what a mechanism changes later), the prediction agrees with the browser, or errs only toward refusing. |
 | **D**: derived state (lows only) | One state (the guest-write overlay) has several projections: the list, the announcement, the view's copy, the guest's answer. All of them come from one diff of that state. |
+| **A**: the host page's context a sandbox document inherits | Every piece of the host page's state that a document of the sandbox starts with (its policy container, base URL, the cookie jar's site, Service Worker scope, referrer, shared UI surfaces) is a row of one inventory (`INHERITED_CONTEXT`), with how it is neutralised or why it is documented, and a test that keeps it closed. |
 | **O**: packaging | — |
 
 ## Every medium-or-higher finding
