@@ -56,6 +56,40 @@ describe('the ledger', () => {
     });
 });
 
+/**
+ * The research specs (docs/research/NN_*) run in the same Playwright projects, and some branch on the engine (BD3:TST-8).
+ * They are reproductions and design probes that record what each engine does for the research they belong to, not pins of the
+ * library's behaviour, so their branches cite no row; a spec that is not on this list has none, or cites its rows like the
+ * suite's. A research spec that starts to branch on the engine fails here until it is listed (with why) or cites a row.
+ */
+const RESEARCH_PROBES: Readonly<Record<string, string>> = {
+    'docs/research/11_meta_csp_delivery/reproduce.spec.ts': 'asserts on the text of the console warning Chromium prints, and skips elsewhere',
+    'docs/research/12_non_fallback_directives/reproduce.spec.ts': 'records which engine refuses a form-action target',
+    'docs/research/13_popup_exfiltration/reproduce.spec.ts': 'records the popup an opt-in allows, which Chromium refuses without an opener',
+    'docs/research/15_strict_mode/probe.spec.ts': "the design probes ADR-005 rests on, each recording per engine what the design was measured against (the file's header says so)",
+    'docs/research/19_relay_worker/probe.spec.ts': 'on-demand measurements of the relay worker per engine',
+};
+
+describe('the scan of docs/research (BD3:TST-8)', () => {
+    const researchFiles = (): string[] => (readdirSync(path.join(ROOT, 'docs/research'), { recursive: true }) as string[])
+        .filter(file => file.endsWith('.spec.ts')).sort().map(file => `docs/research/${file}`);
+
+    it('a research spec that branches on the engine is listed as a probe, or cites a ledger row', () => {
+        expect(researchFiles().length).toBeGreaterThan(10);
+        const problems = researchFiles().filter(file => !(file in RESEARCH_PROBES)).flatMap(file => unledgered(file, read(file), KNOWN));
+        expect(problems).toEqual([]);
+    });
+
+    it('every probe on the list exists and is still one that branches on the engine (the list does not keep a spec that no longer needs it)', () => {
+        for (const [file, why] of Object.entries(RESEARCH_PROBES)) {
+            expect(existsSync(path.join(ROOT, file)), file).toBe(true);
+            expect(why.length, file).toBeGreaterThan(20);
+        }
+        const branching = researchFiles().filter(file => engineSites(read(file)).length > 0);
+        expect(branching).toEqual(Object.keys(RESEARCH_PROBES).sort());
+    });
+});
+
 describe('the scan of test/e2e', () => {
     it('finds the engine branches, per-engine maps and overrides, and every one cites a ledger row', () => {
         const sites = e2eFiles().flatMap(file => engineSites(read(file)).map(site => ({ file, ...site })));
@@ -84,6 +118,20 @@ describe('the scan of test/e2e', () => {
             expect(flagged("csp('script-src-elem', ['chromium'])")).toHaveLength(1);
         });
 
+        it('the other ways to name the engine: the project\'s name, an alias, a rename, a switch, a method, a regular expression, the user agent (BD3:TST-8)', () => {
+            for (const source of [
+                "if (testInfo.project.name === 'webkit') {}",
+                "const flag = test.info().project.name !== 'firefox';",
+                "const table = { a: 1 }[testInfo.project.name];",
+                'const engine = browserName;\nif (engine === "webkit") {}',
+                'test("x", async ({ browserName: engine }) => {});',
+                'switch (browserName) {\n    case "webkit": break;\n}',
+                "if (browserName.startsWith('web')) {}",
+                'if (/webkit/.test(browserName)) {}',
+                "const isWebKit = await page.evaluate(() => /AppleWebKit/.test(navigator.userAgent));",
+            ]) expect(flagged(source), source).toHaveLength(1);
+        });
+
         it('a citation of an id that is not a row', () => {
             expect(flagged("// ledger: no-such-row\nif (browserName === 'webkit') {}")).toEqual([
                 'test/e2e/example.spec.ts:2: cites no-such-row, which is not a ledger row',
@@ -105,6 +153,12 @@ describe('the scan of test/e2e', () => {
             expect(flagged("// ledger: view-thread\nif (browserName === 'webkit') {}")).toEqual([]);
             expect(flagged("if (browserName === 'webkit') {} // ledger: view-thread")).toEqual([]);
             expect(flagged("// ledger: view-thread, cookies (two rows)\nconst x = { chromium: 1, firefox: 2 };")).toEqual([]);
+        });
+
+        it('browserName passed on, in a call or in an argument list, is not a site (the callee that compares it is)', () => {
+            expect(flagged('await waitInView(sandbox.page, test.info().project.name, "x");')).toEqual([]);
+            expect(flagged('const result = await inView(page, browserName, "x");')).toEqual([]);
+            expect(flagged('const label = `${mode} on ${browserName}`;')).toEqual([]);
         });
 
         it('browserName passed as an argument, mentioned in a comment, or only named in a message', () => {
