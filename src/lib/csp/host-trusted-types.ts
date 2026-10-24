@@ -8,9 +8,8 @@
  *    browser refuses there; where the browser has no Trusted Types the library refuses it.
  * Where the browser has Trusted Types (Chromium and WebKit) the browser decides both, and these functions are not asked.
  * Where it has none the library asks them of the policy text the embedder gives (`hostContentSecurityPolicy`) and of nothing
- * else: the read of the page's policy (host-csp.ts) cannot supply them, because a browser without Trusted Types leaves the
- * directives it does not implement out of the policy text it reports (measured), so without the option nothing is applied
- * there and the sandbox builds as the browser lets it. The prediction only ever refuses what Chromium and WebKit refuse
+ * else (the library never asks the page for its policy, host-connect.ts), so without the option nothing is applied there and
+ * the sandbox builds as the browser lets it. The prediction only ever refuses what Chromium and WebKit refuse
  * (test/e2e/trusted-types-uniform.spec.ts runs the same policies on all three).
  *
  * The grammar is TRUSTED_TYPES_RULES, as values: only what Chromium and WebKit do alike. Where they differ the library follows
