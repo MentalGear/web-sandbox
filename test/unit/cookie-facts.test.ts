@@ -74,7 +74,7 @@ describe('the sentences rendered from it', () => {
     it("are what the `origins` warning says: an origin on the host page's site, in strict mode and in the others", () => {
         const context = { hostOrigin: 'https://app.example.com' };
         for (const mode of ['strict', 'cooperative', 'worker'] as const) {
-            const said = normaliseConfig({ mode, origins: { connect: ['https://api.example.com'] } }, { ...context, hostSite: () => 'example.com' }).warnings.filter(message => /^\[Sandbox\] origins\.connect (lists|dropped) /.test(message));
+            const said = normaliseConfig({ mode, origins: { connect: ['https://api.example.com'] } }, context).warnings.filter(message => /^\[Sandbox\] origins\.connect (lists|dropped) /.test(message));
             expect(said, mode).toHaveLength(1);
             expect(said[0], mode).toContain(sameSiteCookieClause());
         }

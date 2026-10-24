@@ -32,7 +32,7 @@ import { BRIDGE_FRAME_REFUSED, createBridgeFrame, prepareBridgeFrame, type Bridg
 import { buildGuestDocument, buildWrapperDocument, permissionAttributes, setWrapperFrameIsolation, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { hostRegistrableDomain } from "./lib/host-site";
+import { hostPageOrigin } from "./lib/host-site";
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
@@ -901,7 +901,7 @@ export class WebSandbox extends ElementBase {
     // element and message (the same config is set again and again: the playground applies it on every edit), those of
     // a refused config too, up to what refused it; only a config that passed every check is stored, last (FR:F6).
     private _applyConfig(copy: unknown) {
-        const { value, warnings, refusal } = normaliseConfig(copy, { hostOrigin: globalThis.location?.origin ?? "", hostSite: () => hostRegistrableDomain() });
+        const { value, warnings, refusal } = normaliseConfig(copy, { hostOrigin: hostPageOrigin() });
         for (const message of warnings) this._warnConfig(message);
         if (value === null) throw refusal;
         this._config = value.config;
@@ -1824,7 +1824,7 @@ export class WebSandbox extends ElementBase {
         this._bridgeFrame = frame;
         this._fetchBridge = createFetchBridge({
             policy,
-            hostOrigin: globalThis.location?.origin ?? '',
+            hostOrigin: hostPageOrigin(),
             onRecord: (record) => this._dispatchFetch(record),
             transport: frame.transport,
         });

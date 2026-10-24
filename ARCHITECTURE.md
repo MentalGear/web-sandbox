@@ -306,7 +306,7 @@ Each file of `src/` with the role its header comment gives.
 | `src/lib/frames.ts` | The frame table |
 | `src/lib/guest-writes.ts` | Guest writes, host side: the overlay of one environment |
 | `src/lib/host-csp.ts` | The host page's Content-Security-Policy, read once per page load when the embedder did not give it (`hostContentSecurityPolicy`; INHERITED_CONTEXT.cspFetch) |
-| `src/lib/host-site.ts` | The host page's site for cookies: which hosts get the host site's cookies with a request of the sandbox |
+| `src/lib/host-site.ts` | The host page's origin and its site for cookies |
 | `src/lib/import-map.ts` | The guest's own import maps |
 | `src/lib/in-bridge-frame.ts` | The fetch bridge's frame, frame side: the only code that performs a request of the bridge |
 | `src/lib/in-sandbox-files.ts` | The guest side of the registered files, `sandboxFiles`, and of the guest writes |
