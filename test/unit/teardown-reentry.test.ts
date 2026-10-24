@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineWebSandbox } from '@src/host';
-import { ENVIRONMENT_FIELDS, ENVIRONMENT_RELEASES, type EnvironmentField } from '@src/lib/environment';
+import { ENVIRONMENT_FIELDS, ENVIRONMENT_RELEASES, releaseEnvironment, type DetachedEnvironment, type EnvironmentField } from '@src/lib/environment';
 import { SyntaxKind, tokenize, type Token } from '../../scripts/js-tokens';
 import { checkIn } from './check-in';
 
@@ -249,6 +249,42 @@ describe('a node already detached by embedder code is not an error (NotFoundErro
         expect(() => el.terminate('x')).toThrow('boom');
         expect(closed).toHaveBeenCalled();
         expect(el._bridgeFrame).toBeNull();
+    });
+});
+
+describe('a release that throws does not stop the ones after it (BD3:TST-5, class L)', () => {
+    it('releaseEnvironment: the first failure is rethrown once every release has run, the frame removed among them', () => {
+        const closed = vi.fn();
+        const removed = vi.fn();
+        const frame = document.createElement('iframe');
+        frame.remove = removed;
+        const detached: DetachedEnvironment = [
+            ['_stopListening', () => { throw new Error('first'); }],
+            ['_port', { close: closed }],
+            ['_loadDeadline', { stop() { throw new Error('second'); } }],
+            ['_iframe', frame],
+        ];
+        expect(() => releaseEnvironment(detached)).toThrow('first');
+        expect(closed).toHaveBeenCalledTimes(1);
+        expect(removed).toHaveBeenCalledTimes(1);
+    });
+
+    it('the element: a listener the first release stops that throws leaves no port open, no frame in the document and no bridge', () => {
+        const { el, closed } = ready(false);
+        el._stopListening = () => { throw new Error('first release'); };
+        expect(() => el.terminate('x')).toThrow('first release');
+        expect(closed).toHaveBeenCalled();
+        expect(frames(el)).toEqual([]);
+        expect(el._bridgeFrame).toBeNull();
+        expect(el.state).toBe('terminated');
+    });
+
+    it('the wrapper\'s load handler is detached before the frame is removed, so a load that the removal causes finds none', () => {
+        const frame = document.createElement('iframe');
+        frame.onload = () => {};
+        frame.remove = () => { throw new Error('boom'); };
+        expect(() => ENVIRONMENT_RELEASES._iframe(frame)).toThrow('boom');
+        expect(frame.onload).toBeNull();
     });
 });
 

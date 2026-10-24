@@ -19,6 +19,8 @@ export default defineConfig({
     testMatch: ["test/e2e/**/*.spec.ts", "docs/research/**/*.spec.ts"],
     testIgnore: ["**/node_modules/**", NESTED],
     timeout: 30000,
+    // in CI a suite that has not finished in 40 minutes stops and names the tests still running (a whole run takes ~25)
+    globalTimeout: process.env.CI ? 40 * 60_000 : 0,
     forbidOnly: !!process.env.CI,
     reporter: process.env.CI ? [["list"], ["github"]] : "list",
     projects: [

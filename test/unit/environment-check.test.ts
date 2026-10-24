@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { checkSandboxEnvironment, ENVIRONMENT_CHECKS, ENVIRONMENT_EXPECTED, ENVIRONMENT_REFUSED_TYPE, type EnvironmentCheckId } from '@src/lib/environment-check';
 import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { inSandboxDocument } from './sandbox-environment';
@@ -78,13 +78,21 @@ describe('the environment check (S74, class B): one table, one function', () => 
     });
 
     it("it stops the document's parser only when asked to, and posts nothing to the window it runs in or to none", () => {
-        inSandboxDocument(record => {
-            expect(checkSandboxEnvironment(ENVIRONMENT_EXPECTED, hostWindow(), true)).toBe('base');
-            expect(record.stops).toBe(1);
-            expect(checkSandboxEnvironment(ENVIRONMENT_EXPECTED, null, false)).toBe('base');
-            expect(checkSandboxEnvironment(ENVIRONMENT_EXPECTED, window, false)).toBe('base');
-            expect(record.posted).toHaveLength(1);
-            expect(record.stops).toBe(1);
-        }, { overrides: { base: 'https://host.example/page' }, captureRefusals: true });
+        // the recorder sees only the posts made through `parent` and `parent.parent`, so a post to the window itself is
+        // watched on the window (BD3:TST-7: without the spy the assertion below held whether or not the check posted to it)
+        const own = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+        try {
+            inSandboxDocument(record => {
+                expect(checkSandboxEnvironment(ENVIRONMENT_EXPECTED, hostWindow(), true)).toBe('base');
+                expect(record.stops).toBe(1);
+                expect(checkSandboxEnvironment(ENVIRONMENT_EXPECTED, null, false)).toBe('base');
+                expect(checkSandboxEnvironment(ENVIRONMENT_EXPECTED, window, false)).toBe('base');
+                expect(record.posted).toHaveLength(1);
+                expect(record.stops).toBe(1);
+                expect(own).not.toHaveBeenCalled();
+            }, { overrides: { base: 'https://host.example/page' }, captureRefusals: true });
+        } finally {
+            own.mockRestore();
+        }
     });
 });

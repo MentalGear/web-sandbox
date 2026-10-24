@@ -60,7 +60,8 @@ import type { FileSnapshotEntry } from './files';
 // `urlTypes` (strict mode's worker, R1:R2-4): the only types url() mints a URL for, VIEW_FILE_TYPES. A URL
 // the worker minted reaches the view only as a string in rendered markup, and the view admits it as an image only for
 // a type it would show itself: a URL for any other type (an SVG) is one the view could be made to load as CSS. Any other
-// file is read() and text() only; url() of it is NOT_FOUND. Null or absent: every file gets one (cooperative, worker).
+// file is read() and text() only; url() of it is NOT_FOUND with a message of its own (it is there, it has no URL; BD3:NEW-4).
+// Null or absent: every file gets one (cooperative, worker).
 export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((request: unknown) => Promise<unknown>) | null, urlTypes?: readonly string[] | null) {
     // ---- The captured list (R2:C-1): sandboxFiles' methods run whenever guest code calls them, so what they
     // use is taken here, before any guest code runs, and nothing below reads a global or a prototype guest code can
@@ -206,6 +207,9 @@ export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((requ
         return error;
     };
     const notFound = () => coded('[sandboxFiles] NOT_FOUND: no such file', 'NOT_FOUND');
+    // A file that is there and has no URL (a type the strict view does not show; a path the guest wrote): the same code,
+    // since url() has no URL to give, and a message that does not say the file is missing (BD3:NEW-4).
+    const noUrl = () => coded('[sandboxFiles] NOT_FOUND: this file has no URL (read() and text() work)', 'NOT_FOUND');
     const notAllowed = () => coded('[sandboxFiles] FILES_NOT_ALLOWED: guest writes are off', 'FILES_NOT_ALLOWED');
     const lookup = (path: unknown) => {
         const file = typeof path === 'string' ? get(files, path) : undefined;
@@ -315,7 +319,7 @@ export function inSandboxFiles(entries: FileSnapshotEntry[], writeFiles?: ((requ
         },
         url: (path: string) => {
             const url = lookup(path).url;
-            if (url === null) throw notFound(); // a path the guest wrote has no URL
+            if (url === null) throw noUrl(); // a path the guest wrote, or a type the strict view does not show
             return url;
         },
         read: (path: string) => {

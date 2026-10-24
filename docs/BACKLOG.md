@@ -25,6 +25,7 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S80](#s80) | ⏳ open (P2 · S) · medium | The event-read scan was never built; reverting R5:N-2 and R5:N-6 passes the suite (S74 board BD1:TST-1) |
 | [S81](#s81) | ⏳ open (P3 · S) · low | Tests that fail under heavy machine load (S74 board BD1:CO-1, BD1:NEW-13) |
 | [S82](#s82) | ⏳ open (P3 · M) · low | The S74 pass 1 lows, as one checklist; the docs-only ones are marked |
+| [S83](#s83) | ⏳ open (P2 · S) · high (reviewer; medium by the availability rule) | A rejected `Symbol` or `BigInt` is counted as 0 characters by the uncaught budget; on Firefox the host page stalls (S74 board BD3:LIM-1, an incomplete part of the fix of BD1:LIM-1) |
 | [D1](#bl-d1) | 🟡 ready except the licence | An installable package; waits for H5's `LICENSE` |
 | [H5](#bl-h5) | 🟡 partly done | Missing repo basics: the `LICENSE` is the owner's choice |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
@@ -90,6 +91,9 @@ applies in strict mode, the default; worker mode shares only the reports item.
 - a worker the guest creates (from its document or a frame it creates): Firefox sends its `EventSource` and loads its
   `FontFace` past the policy (S43);
 - WebKit opens a connection for `<link rel=preconnect>` (S35);
+- requests the gate does not cover carry the browser's cookies where the engine sends them: `sendBeacon()`, `EventSource`
+  with `withCredentials`, an `<a ping>` click (Firefox sends none) and the requests of a frame the guest creates
+  (BD3:DOC-1; the table is `COOKIE_CARRIERS`, `src/lib/cookie-facts.ts`);
 - focus (Chromium, Firefox) and, in a user's click, the clipboard (`writeText()` in Firefox and, in the click's own
   handler, WebKit; `execCommand('copy')` in Chromium and Firefox) (S36);
 - messages to the host window; embedders check `event.source` (S36);
@@ -337,6 +341,52 @@ on its way to the guest; availability only, low). The board's reports and the ve
 [BOARD-PASS-2-2026-10-21.md](archive/reviews/BOARD-PASS-2-2026-10-21.md), with how each finding was resolved; each item
 cites its findings by ID (`BD2:`).
 
+**Pass 3 (2026-10-23, main be0a34a)** found confirmed findings that leak or can manipulate data and reach strict mode
+(BD3:ISO-1 and BD3:ISO-2, high: the same-site refusal fails open when the cookie-domain probe cannot write, and takes the
+host origin from `location.origin`, which is `'null'` in a `srcdoc` host; BD3:CHL-1, high: a build that waited on the
+host-policy read skips the `connect-src` narrowing when the read's frame left the document; BD3:NEW-7, medium: a
+documented residual, an image load to a listed cross-site origin carries its `SameSite=None` cookie on Firefox, which the
+owner classifies), so it was not clean either (0 of 2). BD3:ISO-1, BD3:ISO-2 and BD3:CHL-1 are fixed by the same-site rule
+without a probe (the host origin from `self.origin`; an entry sharing the host's last two labels is refused; no
+`document.cookie` probe) and by a host-policy read that never answers "absent" (it fails closed). BD3:NEW-7 waits on
+research 21 (`crossorigin="anonymous"` on the view's loads). BD3:LIM-1 is availability only and is backlogged as
+[S83](#s83). Everything else, the docs, the lows and the test gaps, was fixed in a batch of its own, with BD2:DOC-3
+recorded as resolved (the comment in `src/lib/frame-documents.ts` names what exists) and BD2:TST-7 as fixed (tests that
+kill the `stillOurs` mutant and the fetch bridge's `FORBIDDEN_HEADER` and `MAX_HEADERS` mutants). The board's reports,
+the verifiers' verdicts and the coordinator's note on the cookie class are kept in
+[BOARD-PASS-3-2026-10-23.md](archive/reviews/BOARD-PASS-3-2026-10-23.md), with how each finding was resolved; each item
+cites its findings by ID (`BD3:`).
+
+#### Trajectory
+
+The data findings of every round since the first review, as the coordinator counts them: a data finding is a confirmed
+one that leaks or can manipulate data (the board's rule, applied to the earlier rounds afterwards), and the last column
+is the count of those that reach strict mode. Highs are as the verifiers confirmed them. There were no criticals.
+
+| Round | Date | Data findings | Reaching strict | High |
+| :--- | :--- | ---: | ---: | ---: |
+| R1 | 2026-10-15 | 1 | 0 | 0 |
+| R2 | 2026-10-15 | 0 | 0 | 2 |
+| R3 | 2026-10-18 | 0 | 0 | 2 |
+| R4 | 2026-10-18 | 0 | 0 | 0 |
+| R5 | 2026-10-19 | 0 | 0 | 1 |
+| BD1 | 2026-10-21 | 3 | 2 | 4 |
+| BD2 | 2026-10-21 | 5 | 3 | 3 |
+| BD3 | 2026-10-23 | 5 | 4 | 4 |
+
+The full counts per round, the analysis and the coordinator's evaluation after each pass are in
+[research 22](research/22_review_trajectory/README.md).
+
+The board's passes find more data findings than the rounds did, because they cover what the rounds did not: the host
+page's context, the browsers' own handling of a request, and an opt-in configuration. **The evaluation rule the
+coordinator applies after every pass:** if data findings reaching strict do not fall for two passes in a row, or a pass's
+data findings sit in code added by the previous pass's fixes, the approach changes before the next pass (shrink the
+surface rather than patch it). After pass 3 both conditions hold: the count reaching strict rose from 2 to 3 to 4, and
+BD3:ISO-1 and BD3:ISO-2 are incomplete fixes of BD2:ISO-2 and BD2:NEW-2 (the same-site rule), while BD3:CHL-1 sits in the
+host-policy read of the same decisions. So the same-site rule and the policy read lose the parts that decided by a
+measurement (a test cookie, `location.origin`, an absent policy) before pass 4; the coordinator's note in the archive
+sets out the design that removes the class.
+
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
 
 *S74 board BD1:LIM-2 (with its verdict in the archived report), confirmed medium.* Class B. The 5 s view liveness ping
@@ -458,7 +508,7 @@ a finding").
   measured bytes in the frame next to `MAX_RESPONSE_HEAD`, and test with the worst head the cap admits.
 
 *Docs*
-- [ ] BD1:DOC-1: the owner enables private vulnerability reporting (repository Settings, Code security). SECURITY.md keeps
+- [ ] BD1:DOC-1 (BD3:DOC-10: still switched off, `gh api repos/MentalGear/web-sandbox/private-vulnerability-reporting` answers `enabled: false`): the owner enables private vulnerability reporting (repository Settings, Code security), or SECURITY.md gives a private address. SECURITY.md keeps
   the route and says `main` is what is supported. **[owner]**
 - [ ] BD1:DOC-2: `load(html)` does not validate; its TSDoc says a non-string is dropped with a warning, and
   `load(() => 1)` terminates strict mode (embedder-only). Code, or the TSDoc.
@@ -510,10 +560,13 @@ a finding").
 *Newcomer*
 - [x] BD1:NEW-2: cooperative mode without `allow-scripts` reaches `ready` with no guest (the TSDoc says the frame's
   load, README and API.md say the check-in). **[docs]** and TSDoc
-- [ ] BD1:NEW-3: `viewScriptHash()` does not match the view when the package runs from source under Vite (fails
-  closed; `dist` matches).
+- [x] BD1:NEW-3: `viewScriptHash()` does not match the view when the package runs from source under Vite (fails
+  closed; `dist` matches). Done (BD3:NEW-1): `viewScriptHash()` warns, once, where the baked literal is absent; the
+  README and API.md say that only the built package has one hash (`test/unit/view-script-hash-sources.test.ts`).
 - [ ] BD1:NEW-4: some config refusals name no key (`origins.images: 'https://x'` gives "(TypeError)"); list options are
-  dropped with a warning or terminate, inconsistently.
+  dropped with a warning or terminate, inconsistently. Half done (BD3:NEW-3): an `origins` of the wrong type
+  names the option in the reason (`(TypeError: origins.images is not a list)`); the other refusals and the
+  inconsistency are left.
 - [ ] BD1:NEW-5: silent config typos (`watchdogTimout`, `unsafeCapablities`); `fetchBridge` without `allow` warns not.
 - [x] BD1:NEW-6: a looping `entry` spins the worker until `terminate()` with the watchdog off by default; the quickstart
   does not say so. **[docs]**
@@ -528,6 +581,31 @@ a finding").
   strict preset; that the detail is frozen is undocumented. **[docs]** and playground Docs half done (the `detail` is deeply frozen: `WebSandboxEventMap`); the playground fix is left.
 - [x] BD1:NEW-12: the library's own lines ("strict Ready") are logged with `source: 'guest'`. **[docs]** or code
 - [ ] BD1:NEW-13: tests under heavy load: S81.
+
+### <a id="s83"></a>S83 · A rejected Symbol or BigInt is counted as 0 characters by the uncaught budget — ⏳ **open** (P2 · S · high, availability only)
+
+*S74 board BD3:LIM-1, rated high by the reviewer, as an incomplete part of the fix of BD1:LIM-1 (S78); medium by the
+availability rule (CONTRIBUTING.md, "Availability findings") if the owner prefers. No verdict.* Class P with B, and
+E-cpu: the uncaught budget counts a model of what the browser reports, and the model counts less than the browser reports
+for one kind of reason. Availability only: no data moves.
+
+**Path.** `reportOf` (`src/lib/in-sandbox-script.ts`) counts a string's length and the `name` and `message` of an object,
+and any other primitive as `characters: 0`. A guest that rejects a `Symbol('x'.repeat(2 ** 24))` once per 100 ms is
+counted by `UNCAUGHT_PER_SECOND` only (1000 a second). On Firefox the reasons are reported on the host page's thread,
+cancelled or not, and the report of a symbol carries its description: 12 rejections stalled the host page for 5.8 to 7.5 s
+in all (longest 3 s) while the sandbox stayed `ready`; the same flood of strings or errors ends the sandbox at the first.
+Chromium and WebKit show no cost. A BigInt of 60 000 digits cost nothing, but its report is the same kind of text.
+Strict and worker mode; the embedder can end it with `terminate()` or by removing the element, which is why it is
+availability only.
+
+**Fix, by construction.** `reportOf` counts an upper bound on the text the browser can make of the reason for every
+`typeof`: a symbol by its description's length (through the captured `Symbol.prototype.description` getter), a bigint by
+an upper bound of its decimal digits (its hexadecimal digits times 1.21, plus 2), every other primitive by
+`String(value).length`, objects and functions as now. Structural test: a property test over a closed list of reason
+shapes that enumerates every `typeof` (a `Complete<>` over the `typeof` union, so that a new branch must be listed),
+asserting that `characters` is at least the length of the reason's descriptive string; and Symbol rows (a 16 Mi
+description; a 1 Mi description ten times a tick) in the uncaught-flood table of `test/e2e/error-cost-and-queued-calls.spec.ts` on
+Firefox, expecting the uncaught-budget reason.
 
 ---
 

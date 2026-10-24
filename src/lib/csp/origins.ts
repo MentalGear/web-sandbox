@@ -94,13 +94,42 @@ export const shown = (value: unknown) => (typeof value === 'string' ? JSON.strin
 /** The empty policy: no origin for any kind. */
 export const NO_ORIGINS: OriginPolicy = parseOrigins(undefined, 'cooperative', () => {});
 
+/** The options whose type refuses a config: `origins` itself, and each of its kinds. */
+export type OriginsOption = 'origins' | OriginKind;
+
 /**
- * `input` (the config's `origins`, already a structured clone) as an OriginPolicy for `mode`. Throws a TypeError
- * for an input that is present but not an object, or a kind that is present but not a list: the caller refuses the
- * config. Everything else it cannot use goes to `warn`, one message per entry, and is left out.
+ * What the reason of a refused config says of an `origins` of the wrong type (BD3:NEW-3): a fixed text of the library's
+ * that names the option, one for each of them, never the value or the error's message (the one rule for every caught
+ * error, host.ts). The reason follows `TypeError: `.
+ */
+export const ORIGINS_REFUSAL_TEXT: Readonly<Record<OriginsOption, string>> = Object.freeze({
+    origins: 'origins is not an object',
+    ...(Object.fromEntries(ORIGIN_KINDS.map(kind => [kind, `origins.${kind} is not a list`])) as Record<OriginKind, string>),
+});
+
+/** The TypeError that refuses a config for the type of `option`; the element's reason names it (ORIGINS_REFUSAL_TEXT). */
+export class OriginsTypeError extends TypeError {
+    constructor(readonly option: OriginsOption) {
+        super(option === 'origins' ? 'origins must be an object of origin lists' : `origins.${option} must be a list of origins`);
+    }
+}
+
+/**
+ * What a refused config's reason says after the error's `name`: for an OriginsTypeError, `: ` and the fixed text that
+ * names the option (BD3:NEW-3); for any other error, nothing. The one rule the element's reason (host.ts) and the
+ * reducer's test host apply.
+ */
+export function refusalDetail(error: unknown): string {
+    return error instanceof OriginsTypeError ? `: ${ORIGINS_REFUSAL_TEXT[error.option]}` : '';
+}
+
+/**
+ * `input` (the config's `origins`, already a structured clone) as an OriginPolicy for `mode`. Throws an
+ * OriginsTypeError for an input that is present but not an object, or a kind that is present but not a list: the caller
+ * refuses the config. Everything else it cannot use goes to `warn`, one message per entry, and is left out.
  */
 export function parseOrigins(input: unknown, mode: unknown, warn: (message: string) => void): OriginPolicy {
-    if (input !== undefined && (!input || typeof input !== 'object' || Array.isArray(input))) throw new TypeError('origins must be an object of origin lists');
+    if (input !== undefined && (!input || typeof input !== 'object' || Array.isArray(input))) throw new OriginsTypeError('origins');
     const source = (input ?? {}) as Record<string, unknown>;
     for (const key of Object.keys(source)) {
         if (!isKind(key)) warn(`[Sandbox] origins.${shown(key)} was dropped: origins takes ${ORIGIN_KINDS.join(', ')}.`);
@@ -109,7 +138,7 @@ export function parseOrigins(input: unknown, mode: unknown, warn: (message: stri
     const policy: Record<string, readonly Origin[]> = {};
     for (const kind of ORIGIN_KINDS) {
         const entries = ownField(source, kind);
-        if (entries !== undefined && !Array.isArray(entries)) throw new TypeError(`origins.${kind} must be a list of origins`);
+        if (entries !== undefined && !Array.isArray(entries)) throw new OriginsTypeError(kind);
         defineData(policy, kind, Object.freeze(originsOf(kind, entries ?? [], mode, warn)));
     }
     return Object.freeze(policy) as OriginPolicy;

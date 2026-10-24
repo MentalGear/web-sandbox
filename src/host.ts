@@ -8,7 +8,7 @@ import { connectSources, cooperativePolicy, fileKinds, strictViewPolicy, type Po
 import { hostReach, type HostPolicySource, type NarrowedReach } from "./lib/csp/host-connect";
 import { buildRefused, executeRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
 import { hostPolicyReaderLeft, hostPolicyReadFailed, knownHostPolicies, whenHostPoliciesKnown } from "./lib/host-csp";
-import { NO_ORIGINS, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
+import { NO_ORIGINS, refusalDetail, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
@@ -24,7 +24,7 @@ import { keepOnlyWorkerGlobals, STRICT_WORKER_GLOBALS, WORKER_GLOBALS, WORKER_NA
 import { startWatchdog, watchdogBudget, type Watchdog } from "./lib/watchdog";
 import { setLongTimeout, type LongTimeout } from "./lib/long-timer";
 import { createRateLimiter, type RateLimiter } from "./lib/rate-limit";
-import { toViolationDetail, VIOLATION_DIRECTIVES, VIOLATION_EVENT_LIMIT, type SandboxViolation } from "./lib/violation";
+import { toViolationDetail, VIOLATION_EVENT_LIMIT, violationBucket, type SandboxViolation } from "./lib/violation";
 import { createLogLimiter, LOG_MAX_BYTES, LOG_OWN_LINES, toLogDetail, type SandboxLog, type SandboxLogLevel } from "./lib/sandbox-log";
 import { startAutoResize, type AutoResizer } from "./lib/auto-resize";
 import { createFetchBridge, fetchRefusal, FETCH_METHOD, type FetchBridge, type FetchBridgeConfig, type FetchPolicy, type FetchRecord } from "./lib/fetch-bridge";
@@ -125,8 +125,11 @@ export interface WorkerSandboxConfig extends SandboxConfigOptions {
  * array in it, a guest's log arguments included. What cannot be frozen stays as it is: the bytes of a typed array or an
  * `ArrayBuffer`, the entries of a `Map` or a `Set`, a `Date`'s time. Fields that come from the guest are validated and
  * clamped, but remain the guest's data: read them, do not merge them into your objects. Guest-controlled text (a log
- * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`): show it with `textContent`,
- * never in an HTML, URL (such as a link `href`), `eval` or template sink. `terminated.reason` is the library's text.
+ * line's arguments, a violation's `blockedURI` and `sourceFile`, a fetch record's `url`, and the path and type of a
+ * guest's write: `fileswritten`'s `detail.paths`, `listGuestWrites()`): show it with `textContent`, never in an HTML,
+ * URL (such as a link `href`), `eval`, template or `console` format-string sink. A valid path can hold `'`, `(`, `)`, `;`, `=`, `&`, `!`, `$`, `*`,
+ * `+`, `,` and `@`, so one written into a single-quoted attribute can end it and add one. `terminated.reason` is the
+ * library's text.
  */
 export interface WebSandboxEventMap extends HTMLElementEventMap {
     /**
@@ -183,7 +186,8 @@ export interface WebSandboxEventMap extends HTMLElementEventMap {
      * holds that one path.
      *
      * @remarks
-     * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles.
+     * At most {@link GUEST_WRITES_PER_SECOND} per environment per second. Bubbles. The path is guest-controlled text: show
+     * it with `textContent` (a valid path can end a single-quoted attribute).
      */
     fileswritten: CustomEvent<{ readonly paths: readonly string[] }>;
 }
@@ -891,7 +895,8 @@ export class WebSandbox extends ElementBase {
             return null;
         } catch (error) {
             this._lastConfig = null;
-            return reasonText('configRefused', errorName(error));
+            // an `origins` of the wrong type names the option, in a fixed text of the library's (BD3:NEW-3)
+            return reasonText('configRefused', errorName(error) + refusalDetail(error));
         }
     }
 
@@ -1178,7 +1183,7 @@ export class WebSandbox extends ElementBase {
      * start with `sandbox:` are reserved for the library and refused with a warning. The arguments are the guest's data:
      * validate them, and copy objects with spread rather than `Object.assign` or a `for...in` loop (an own `__proto__` key
      * survives the copy). Guest-controlled text: show it with `textContent`, never in an HTML, URL (such as a link `href`),
-     * `eval` or template sink.
+     * `eval`, template or `console` format-string sink.
      *
      * @param name - The method name, a string of at most 256 characters.
      * @param fn - The handler; its arguments come from the guest by structured clone.
@@ -1645,14 +1650,14 @@ export class WebSandbox extends ElementBase {
         const frame = this._iframe?.clientHeight ?? 0;
         if (this._warnedWrapperStyle || typeof height !== 'number' || height > 150 || frame <= height + 1) return;
         this._warnedWrapperStyle = true;
-        console.warn(`[Sandbox] the sandbox's view is ${height} px high in a frame of ${frame} px: the host page's style-src refuses the wrapper's style. Allow 'unsafe-inline' or '${scriptHashSource(WRAPPER_STYLE)}' in style-src (see docs/API.md#host-page-policy).`);
+        console.warn(`[Sandbox] the sandbox's view is ${height} px high in a frame of ${frame} px: the host page's style-src refuses the wrapper's style. Allow 'unsafe-inline' or ${scriptHashSource(WRAPPER_STYLE)} in style-src (see docs/API.md#host-page-policy).`);
     }
 
     // allowAnimations: false, and the host page's style-src refused the view's still stylesheet (in-sandbox-view.ts,
     // VIEW_STILL_STYLE), which a srcdoc document inherits: the view checked, and drops the guest's stylesheets instead, so
     // no guest animation runs either way. Said once per element, with the hash to allow.
     private _warnStillStyleRefused() {
-        this._warnStrictOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or '${scriptHashSource(VIEW_STILL_STYLE)}' in style-src (see docs/API.md#host-page-policy).`);
+        this._warnStrictOnce(`[Sandbox] allowAnimations is false, and the host page's style-src refuses the view's stylesheet that stops animations, so the view shows no guest stylesheet (<style>, <link rel="stylesheet">). Allow 'unsafe-inline' or ${scriptHashSource(VIEW_STILL_STYLE)} in style-src (see docs/API.md#host-page-policy).`);
     }
 
     // Flushes what was queued before the build was ready onto its port, in the order it was issued (R2:L-3): execute() code
@@ -1747,7 +1752,7 @@ export class WebSandbox extends ElementBase {
     private _dispatchViolation(frame: unknown, source: 'view' | 'logic' | null = null) {
         const detail = toViolationDetail(frame, source ?? undefined);
         if (!detail) return;
-        const key = source === 'view' ? `view:${VIOLATION_DIRECTIVES.includes(detail.directive) ? detail.directive : '*'}` : (source ?? '');
+        const key = source === 'view' ? `view:${violationBucket(detail.directive)}` : (source ?? '');
         const count = this._violationCounts.get(key) ?? 0;
         if (count > VIOLATION_EVENT_LIMIT) return;
         this._violationCounts.set(key, count + 1);

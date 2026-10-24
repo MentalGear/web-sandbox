@@ -88,7 +88,7 @@ test that enumerates the domain:
 - the worker-globals allowlist;
 - captured intrinsics with their source scan;
 - the snapshot measure and the frame builders.
-- the host page's context a sandbox document inherits (`INHERITED_CONTEXT`, `src/lib/inherited-context.ts`): a finding that
+- class A, the host page's context a sandbox document inherits (`INHERITED_CONTEXT`, `src/lib/inherited-context.ts`): a finding that
   the sandbox inherits something of the host page's adds a row, with how it is neutralised and the test that covers it.
 
 A new mitigation (a stylesheet, a rewrite, a listener) is a new cost: measure it on every engine, as the code it guards
@@ -149,6 +149,7 @@ the registry [docs/ids.ts](docs/ids.ts):
 | `R1:`, `R2:`, `R3:`, `R4:`, `R5:` and the finding's own ID | a finding of that review round | `R5:M-2`, `R1:R3-6` |
 | `BD1:` and the finding's own ID | a finding of the S74 review board's pass 1 (ISO, CHL, LIM, DOC, TST, NEW, CO) | `BD1:ISO-1` |
 | `BD2:` and the finding's own ID | a finding of the S74 review board's pass 2 (ISO, CHL, LIM, DOC, TST, NEW) | `BD2:ISO-2` |
+| `BD3:` and the finding's own ID | a finding of the S74 review board's pass 3 (ISO, CHL, LIM, DOC, TST, NEW) | `BD3:ISO-2` |
 | `AR:`, `BR:`, `FR:`, `VR:` and the finding's own ID | a finding of the adversarial, broad and focused reviews and the verification | `BR:CB1` |
 | `S<n>`, `T<n>`; `BL:` for the B, C, D and H series | a backlog item | `S76`, `BL:D1` |
 | `ADR-<nnn>`, `ADR-<nnn>#<heading anchor>` | an ADR, or one of its sections | `ADR-005` |

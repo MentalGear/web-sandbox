@@ -89,6 +89,7 @@ V1 …) are unique and keep no prefix.
 | **C**: config | A config's validity, including cross-field and platform-domain invariants, is decided in one place, before anything is stored or built. |
 | **B**: a browser decision re-derived | Where the library predicts a browser decision (what policy applies, what loads, what runs, what a mechanism changes later), the prediction agrees with the browser, or errs only toward refusing. |
 | **D**: derived state (lows only) | One state (the guest-write overlay) has several projections: the list, the announcement, the view's copy, the guest's answer. All of them come from one diff of that state. |
+| **A**: the host page's context a sandbox document inherits | Every piece of the host page's state that a document of the sandbox starts with (its policy container, base URL, the cookie jar's site, Service Worker scope, referrer, shared UI surfaces) is a row of one inventory (`INHERITED_CONTEXT`), with how it is neutralised or why it is documented, and a test that keeps it closed. |
 | **O**: packaging | — |
 
 ## Every medium-or-higher finding
@@ -156,7 +157,7 @@ Severity is as reported. "Closed by" says whether the fix closed the class ("cla
 | ID | Sev | Finding | Fix | Invariant violated | Class | Closed by |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 3:C-1 | high | Method names and error text crossed whole | Frame builders, frames measured whole | Part of the frame stood for the frame | P | class (builders; S61 brands them) |
-| 3:M-1 | high | CSS animations defeated the time budget | `allowAnimations` | Time-driven work is invisible to a per-flush measure | P | an option, default `true` |
+| 3:M-1 | high | CSS animations defeated the time budget | `allowAnimations` | Time-driven work is invisible to a per-flush measure | P | an option (`allowAnimations`; its default is now `false`) |
 | 3:C-2 | med | Hidden time was charged as work | Charge only measured rendering | The charge stood for the work | P | instance |
 | 3:M-2 | med | Call throughput was unbounded | `callLimits` | A channel dimension with no budget | E-cpu | instance |
 | 3:C-3 | med | A nested Error was reported as past the byte budget | Errors relayed | The boundary's input domain | G | instance |

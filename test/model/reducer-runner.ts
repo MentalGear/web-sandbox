@@ -27,6 +27,7 @@
  * same `state`, the same pending build termination, no 'terminated' still being dispatched, and the generation changed
  * exactly when the model's did (the element counts two teardowns for a refused build, the model one).
  */
+import { refusalDetail } from '../../src/lib/csp/origins';
 import { admits, isStale, reduce, step, type BuildContext, type Generation, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice, INITIAL_LIFECYCLE } from '../../src/lib/lifecycle';
 import { defaultConfig, normaliseConfig, unknownModeReason, type StoredConfig } from '../../src/lib/config-schema';
 import { isJavaScriptType, mimeTypeFor } from '../../src/lib/files';
@@ -207,7 +208,7 @@ export class FakeElement implements LifecycleHost {
         this.pendingCopy = null;
         const refuse = (error: unknown) => {
             this.lastKey = null;
-            return `${CONFIG_REFUSED} (${errorName(error)})`;
+            return `${CONFIG_REFUSED} (${errorName(error)}${refusalDetail(error)})`;
         };
         if (pending.error !== null) return refuse(pending.error);
         const { value, warnings, refusal } = normaliseConfig(pending.copy, { hostOrigin: ORIGIN });

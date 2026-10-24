@@ -65,8 +65,10 @@ export const FRAME_REFERRER_POLICY = 'no-referrer';
 export const FRAME_CREDENTIALLESS = 'credentialless';
 
 /**
- * The attributes both wrapper iframes (strict, and cooperative or worker mode) carry besides `sandbox` and the
- * permissions: the referrer policy (FRAME_REFERRER_POLICY) and FRAME_CREDENTIALLESS.
+ * The attributes every frame the library makes for a sandbox carries besides `sandbox` and the permissions: both wrapper
+ * iframes (strict, and cooperative or worker mode) and the fetch bridge's frame. They are the referrer policy
+ * (FRAME_REFERRER_POLICY) and FRAME_CREDENTIALLESS. A structural test (test/unit/frame-isolation.test.ts) fails for a
+ * frame made in `src/` that does not go through here.
  */
 export function setWrapperFrameIsolation(iframe: HTMLIFrameElement): void {
     iframe.setAttribute('referrerpolicy', FRAME_REFERRER_POLICY);

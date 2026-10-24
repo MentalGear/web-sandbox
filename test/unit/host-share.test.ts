@@ -22,6 +22,9 @@ const OUTSIDE: Record<string, string> = {
     'docs/research/19_relay_worker/host.html': 'measures from inside the page, with or without Playwright',
     // the relay worker's own ticks (its own busy share), counted inside the relay; and a guest's busy loop
     'docs/research/19_relay_worker/harness.ts': "counts the relay worker's own ticks, inside the worker",
+    // research 20 is a standalone script, not a spec: it reports the host timer's longest gap per run (median and range of 5,
+    // an idle case beside every loop case, a load guard before each) and asserts nothing, so no bound can fail on a loaded machine
+    'docs/research/20_served_document_mode/q4-processes.mjs': 'a standalone probe script that reports a gap per run against an idle case and bounds nothing',
 };
 
 function sources(dir: string): string[] {

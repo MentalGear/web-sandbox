@@ -88,8 +88,10 @@ sandbox.load('<h1>Hello</h1>');     // strict mode, the default: shown, and no s
 
 Importing the module registers nothing, so you choose the tag name. The element is a block by default; give it a
 height. The package is private and not published yet ([D1](docs/BACKLOG.md#bl-d1)), so `import … from 'web-sandbox'`
-resolves only in a project that links or packs a checkout; from a checkout, import `./src/index.ts`. `bun run dev` serves the
-playground on port 4444 only (`strictPort`).
+resolves only in a project that links or packs a checkout; from a checkout, import `./src/index.ts`, or build the package
+(`bun run build:lib`) and import `dist/index.js`: only the built package has the same `viewScriptHash()` in a build step and in
+the browser ([Host page policy](docs/API.md#host-page-policy)). `bun run dev` serves the playground on port 4444 only
+(`strictPort`).
 
 **Your page's own policy applies inside the sandbox.** Its frames are `srcdoc` documents, which inherit the host
 page's Content-Security-Policy, Trusted Types and Cross-Origin-Embedder-Policy. A host policy that refuses what the
@@ -150,7 +152,7 @@ A config or build the element cannot use ends in `terminated` with a reason; `se
 sandbox.addEventListener('ready', () => { /* state is 'ready' */ });
 sandbox.addEventListener('terminated', (e) => console.warn(e.detail.reason));
 sandbox.addEventListener('sandbox-log', (e) => console.log(e.detail.level, ...e.detail.args));
-sandbox.addEventListener('violation', (e) => console.warn(e.detail.directive, e.detail.blockedURI));
+sandbox.addEventListener('violation', (e) => console.warn('violation', e.detail.directive, e.detail.blockedURI));
 
 sandbox.terminate('user pressed stop');  // tears it down; 'terminated' fires once
 sandbox.reset();                         // a fresh frame and opaque origin, from any state
@@ -204,10 +206,13 @@ sandbox.reset();                         // a fresh frame and opaque origin, fro
     type `SandboxViolation`. In
     strict mode each report also carries `source`, `'view'` or `'logic'` (see [Strict mode](#strict-mode)).
 *   **Every string a guest can set is attacker text**: a log line's `args`, a violation's `blockedURI` and `sourceFile`,
-    a `fetch` record's `url` (it can be `javascript:`), the message of a call rejected by a guest handler, and the
-    arguments of a method you `expose()`. "Validated and clamped" bounds its size and shape; it does not make it safe to
+    a `fetch` record's `url` (it can be `javascript:`), the path and type of a guest's write (`fileswritten`'s
+    `detail.paths`, `listGuestWrites()`; a valid path can end a single-quoted attribute), the message of a call rejected by
+    a guest handler, and the arguments of a method you `expose()`. "Validated and clamped" bounds its size and shape; it does not make it safe to
     display. Show it with `textContent`, and never pass it to an HTML (`innerHTML`, `insertAdjacentHTML`), URL (a link
-    `href`), `eval` or template sink. (`terminated.reason` is the library's own text.)
+    `href`), `eval`, template or `console` format-string sink (as the first argument of a `console` method it is a
+    format string, `%c` styles the line and `%s` takes the next argument: put a fixed text first, as the examples do).
+    (`terminated.reason` is the library's own text.)
 *   **`state === 'terminated'` is a second, authoritative signal** next to a call's `TERMINATED`
     code: the element sets both from its own state, so the guest can produce neither.
 
@@ -380,7 +385,8 @@ sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.u
     `Referer`, and never follow redirects. Your page's `fetch` never makes them: its Service Worker never answers
     them (from your app's cache, say) and a wrapper of your `fetch` (an auth header, a tracing header) never applies
     to them. Only `method`, `headers` and `body` are read from `init`.
-    Methods: `GET`, `HEAD`, `POST`, plus `PUT`, `PATCH`, `DELETE` if listed in `methods`. Headers:
+    Methods: `GET`, `HEAD` and `POST`; `methods` replaces that list (`['PUT']` allows `PUT` alone), from `GET`, `HEAD`, `POST`,
+    `PUT`, `PATCH` and `DELETE`. Headers:
     `accept`, `accept-language`, `content-language`, `content-type`, plus names listed in `headers`
     (`Authorization` only that way; `Cookie` never). A header the guest may not set refuses the request.
 *   **Bounded.** The response body is capped at `maxBytes` (1 MiB by default, at most 32 MiB): a larger
@@ -513,7 +519,7 @@ sandbox.setConfig({ guestWrites: true, /* … */ });
 await sandboxFiles.write('out/report.json', JSON.stringify(result));  // a string, Blob, ArrayBuffer or typed array
 await sandboxFiles.remove('draft.txt');
 // on the host
-sandbox.addEventListener('fileswritten', (e) => console.log(e.detail.paths));
+sandbox.addEventListener('fileswritten', (e) => console.log('fileswritten', e.detail.paths));
 sandbox.listGuestWrites();                        // [{ path, change: 'write', type, size, content }, …]
 sandbox.commitGuestWrites(['out/report.json']);   // now a registered file, from the next build on
 sandbox.commitGuestWrites(['gen/app.js'], { code: true });  // code needs the flag
@@ -578,7 +584,7 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     spent), loads at most 10 000 distinct URLs in its life, and ends the sandbox when an operation
     takes longer than 2 s for the second time within 5 minutes (the first is charged in full, and logged once); it shows only files that never open as
     a document (no SVG, HTML or XML; no `data:` images); a URL in rendered markup is kept only when it names a listed
-    origin exactly (an image's `http:` URL may name a listed `https:` one), else dropped before the browser sees it,
+    origin exactly (an `http:` URL of a listed `https:` origin is dropped: no engine admits it), else dropped before the browser sees it,
     and an `http(s)` one reported as a `violation`; guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
     `Referer`); the worker keeps only allowlisted globals, so it can request only through `fetch`, `XMLHttpRequest` and
@@ -670,7 +676,8 @@ What remains for the default:
     code. The view's reports are complete and unforgeable up to the cap.
 *   **A worker that closes itself** is noticed only by the watchdog; **memory** is not bounded.
 *   **Cookies**: `fetch()` and `XMLHttpRequest` send none, on any engine. The sandbox's frame is credentialless, which
-    only some engines honour, for the rest: a WebSocket handshake (a listed `wss://` server must check `Origin`) and the
+    only some engines honour, for the rest: a WebSocket handshake (a listed `wss://` server must check `Origin`), in cooperative
+    mode also `sendBeacon()`, `EventSource`, an `<a ping>` click and a nested frame's requests, and the
     loads of rendered markup and CSS. Every mode drops an `origins`
     entry on the host page's site from every kind, with a warning. The site is decided from the page's origin
     (`self.origin`) with no probe: the page's host and every host that shares its last two labels (`api.example.com` for
@@ -679,7 +686,7 @@ What remains for the default:
     an API that knows the user: it sends no credentials. What the engines would send ([the table](docs/API.md#cookies-by-engine)):
 
 <!-- generated:begin cookie-sentence -->
-`fetch()` and `XMLHttpRequest` of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (a WebSocket handshake, or a load of the guest's markup or CSS) to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine.
+`fetch()` and `XMLHttpRequest` of the sandbox carry no cookie in any engine: the library sends them without credentials. A request it cannot strip (a WebSocket handshake, or a load of the guest's markup or CSS; in cooperative mode also `navigator.sendBeacon()`, `EventSource` with `withCredentials`, an `<a ping>` click and the requests of a frame the guest creates) to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine. The browser may attach credentials that are not cookies to the same requests when it holds them for the origin: cached HTTP authentication (Basic, Digest, integrated Windows or Kerberos) and a TLS client certificate; the tables do not state what each engine sends (not measured), so do not list an origin for a guest that it recognises the user by.
 <!-- generated:end -->
 
 ### Cooperative-mode limits
@@ -697,6 +704,11 @@ the default. Measured per engine and asserted by tests; worker mode shares the r
 *   **A worker the guest creates** (from the guest document or a frame it creates): in Firefox its `EventSource` and
     `FontFace` pass the policy.
 *   **WebKit's preconnect**: `<link rel=preconnect>` opens a connection to any origin.
+*   **Requests the gate does not cover** carry the browser's cookies where the engine sends them: `navigator.sendBeacon()`,
+    `new EventSource(url, { withCredentials: true })`, an `<a ping>` click (a POST; Firefox sends none) and the requests of
+    a frame or worker the guest creates (their own `fetch()` with `credentials: 'include'`). The request gate covers
+    `fetch()`, `XMLHttpRequest` and `WebSocket` only. [The table](docs/API.md#cookie-carriers) lists them, and
+    [the cookies by engine](docs/API.md#cookies-by-engine) say what each engine sends.
 *   **Focus and the clipboard**: guest code takes focus from the host page (Chromium, Firefox) and, in a user's click,
     writes the clipboard (`writeText()` in Firefox and, in the click's own handler, WebKit; `execCommand('copy')` in
     Chromium and Firefox).

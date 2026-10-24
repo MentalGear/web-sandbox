@@ -8,6 +8,8 @@ const install = (entries: unknown) => new Function(`(${inSandboxFiles.toString()
 const files = () => (globalThis as any).sandboxFiles as SandboxFiles;
 
 const NOT_FOUND = { isError: true, code: 'NOT_FOUND', keys: ['code'], message: '[sandboxFiles] NOT_FOUND: no such file' };
+// url() of a file that is there and has no URL (BD3:NEW-4): the same code, a message that does not say the file is missing
+const NO_URL = { isError: true, code: 'NOT_FOUND', keys: ['code'], message: '[sandboxFiles] NOT_FOUND: this file has no URL (read() and text() work)' };
 // jsdom's Blob has no text()/arrayBuffer(), so the blobs handed to the blob store are read with FileReader.
 const bytesOf = (blob: Blob) => new Promise<number[]>(resolve => {
     const reader = new FileReader();
@@ -228,7 +230,7 @@ describe('sandboxFiles.write() and remove(): guest writes, the guest side (backl
         expect(api.list()).toEqual(['a.txt', 'kept.txt']);
     });
 
-    it('url() of a written path is NOT_FOUND, an overwritten snapshot path included; no URL is minted for a write', async () => {
+    it('url() of a written path is NOT_FOUND with the no-URL message, an overwritten snapshot path included; no URL is minted for a write', async () => {
         const { writeFiles, accept } = host();
         const api = installWith(SNAPSHOT, writeFiles);
         const minted = (URL.createObjectURL as any).mock.calls.length;
@@ -241,7 +243,7 @@ describe('sandboxFiles.write() and remove(): guest writes, the guest side (backl
         for (const path of ['new.txt', 'kept.txt']) {
             let thrown: unknown;
             try { api.url(path); } catch (e) { thrown = e; }
-            expect(shape(thrown), path).toEqual(NOT_FOUND);
+            expect(shape(thrown), path).toEqual(NO_URL);
         }
         expect((URL.createObjectURL as any).mock.calls.length).toBe(minted);
         expect(new TextDecoder().decode(await api.read('kept.txt'))).toBe('over');
