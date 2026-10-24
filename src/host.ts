@@ -5,9 +5,9 @@
 import type { SafeCapability, UnsafeCapability } from "./csp-directives";
 import { UNSAFE_PERMISSIONS } from "./csp-directives";
 import { connectSources, cooperativePolicy, fileKinds, strictViewPolicy, type PolicyInput } from "./lib/csp/csp-generator";
-import { narrowToHostPolicy, parseHostPolicies, type NarrowedReach } from "./lib/csp/host-connect";
+import { hostReach, type HostPolicySource, type NarrowedReach } from "./lib/csp/host-connect";
 import { buildRefused, executeRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
-import { hostPolicyReadFailed, knownHostPolicies, whenHostPoliciesKnown } from "./lib/host-csp";
+import { hostPolicyReaderLeft, hostPolicyReadFailed, knownHostPolicies, whenHostPoliciesKnown } from "./lib/host-csp";
 import { NO_ORIGINS, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
@@ -32,7 +32,7 @@ import { BRIDGE_FRAME_REFUSED, createBridgeFrame, prepareBridgeFrame, type Bridg
 import { buildGuestDocument, buildWrapperDocument, permissionAttributes, setWrapperFrameIsolation, toInlineScriptLiteral, WRAPPER_STYLE } from "./lib/frame-documents";
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
-import { hostRegistrableDomain } from "./lib/host-site";
+import { hostPageOrigin } from "./lib/host-site";
 import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
@@ -901,7 +901,7 @@ export class WebSandbox extends ElementBase {
     // element and message (the same config is set again and again: the playground applies it on every edit), those of
     // a refused config too, up to what refused it; only a config that passed every check is stored, last (FR:F6).
     private _applyConfig(copy: unknown) {
-        const { value, warnings, refusal } = normaliseConfig(copy, { hostOrigin: globalThis.location?.origin ?? "", hostSite: () => hostRegistrableDomain() });
+        const { value, warnings, refusal } = normaliseConfig(copy, { hostOrigin: hostPageOrigin() });
         for (const message of warnings) this._warnConfig(message);
         if (value === null) throw refusal;
         this._config = value.config;
@@ -1824,7 +1824,7 @@ export class WebSandbox extends ElementBase {
         this._bridgeFrame = frame;
         this._fetchBridge = createFetchBridge({
             policy,
-            hostOrigin: globalThis.location?.origin ?? '',
+            hostOrigin: hostPageOrigin(),
             onRecord: (record) => this._dispatchFetch(record),
             transport: frame.transport,
         });
@@ -2056,26 +2056,15 @@ export class WebSandbox extends ElementBase {
     }
 
     // The host page's policy applied to the connect origins of this build (host-connect.ts): `origins` and the bridge's
-    // allowlist as configured, less what a policy of the page refuses. The policy is the embedder's
-    // (`hostContentSecurityPolicy`), or the page's as the first such build read it (host-csp.ts, which `_buildGate` waited
-    // for); `false`, a policy that could not be read, and a build with nothing to narrow leave the configured lists.
-    // Pure of the element's fields: a nested or stale build narrows its own (LM-2).
+    // allowlist as configured, less what a policy of the page refuses (hostReach, the one decision). The policy is the
+    // embedder's (`hostContentSecurityPolicy`), or the page's as a read whose frame stayed in the document answered it
+    // (host-csp.ts, which `_buildGate` waited for). A build that waited and got no answer drops every connect and bridge
+    // origin (fails closed); `false`, a policy that cannot be read, and a build with nothing to narrow leave the
+    // configured lists. Pure of the element's fields: a nested or stale build narrows its own (LM-2).
     private _reach(): NarrowedReach {
-        const configured = { origins: this._origins, fetchPolicy: this._fetchPolicy };
         const option = this._config.hostContentSecurityPolicy;
-        if (option === false) return configured;
-        let texts: string | readonly string[];
-        if (typeof option === 'string') {
-            texts = option;
-        } else {
-            const read = knownHostPolicies();
-            if (!read) {
-                if (read === null && hostPolicyReadFailed()) this._warnConfig("[Sandbox] the host page's Content-Security-Policy could not be read, so its connect-src is not applied to origins.connect and fetchBridge.allow by the library (the browser still applies it where its engine does). Pass hostContentSecurityPolicy to give it (docs/API.md#host-page-policy).");
-                return configured;
-            }
-            texts = read;
-        }
-        return narrowToHostPolicy(configured.origins, configured.fetchPolicy, parseHostPolicies(texts), message => this._warnConfig(message));
+        const source: HostPolicySource = option !== undefined ? { given: option } : { read: knownHostPolicies(), failed: hostPolicyReadFailed() };
+        return hostReach(this._origins, this._fetchPolicy, source, message => this._warnConfig(message));
     }
 
     // What the build waits for (the executor's gate, lifecycle.ts): the host page's policy, when the embedder gave none and
@@ -2582,8 +2571,12 @@ function restorePrototype(element: WebSandbox): boolean {
 }
 
 // Removal, and adoption into another document: the environment ends, with no 'terminated' event (the reducer's `stop`).
+// The host page's policy read (host-csp.ts) is a resource of the page that other elements' builds may wait on: a read
+// whose frame this element's shadow root held gave no answer, and starts again from another waiter, now (S74, class L).
 function disconnected(element: WebSandbox) {
     step(element, { t: 'disconnect' });
+    const root = element.shadowRoot;
+    if (root) hostPolicyReaderLeft(root);
 }
 
 function adopted(element: WebSandbox) {

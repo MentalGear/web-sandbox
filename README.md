@@ -672,8 +672,9 @@ What remains for the default:
 *   **Cookies**: `fetch()` and `XMLHttpRequest` send none, on any engine. The sandbox's frame is credentialless, which
     only some engines honour, for the rest: a WebSocket handshake (a listed `wss://` server must check `Origin`) and the
     loads of rendered markup and CSS. Every mode drops an `origins`
-    entry on the host page's site from every kind, with a warning. The site is the browser's registrable domain of the
-    page's host (`example.com` for `app.example.com`), so a sibling subdomain is on it. A loopback, private or link-local
+    entry on the host page's site from every kind, with a warning. The site is decided from the page's origin
+    (`self.origin`) with no probe: the page's host and every host that shares its last two labels (`api.example.com` for
+    `app.example.com`), which can refuse another site under a suffix such as `github.io`. A loopback, private or link-local
     host is kept, with a warning, only when the host page is itself on one, and dropped otherwise. Use the fetch bridge for
     an API that knows the user: it sends no credentials. What the engines would send ([the table](docs/API.md#cookies-by-engine)):
 

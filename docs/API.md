@@ -195,16 +195,17 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   such origin. A WebSocket handshake or a load of the guest's markup or CSS to it can carry the host site's cookies, as
   the [table below](#cookies-by-engine) says, so use [`fetchBridge`](#fetchbridge) for an API that knows the user: it
   sends no credentials in any engine.
-- **The host page's site is the browser's registrable domain of the page's host**: `example.com` for `app.example.com`,
-  `example.co.uk` for `www.example.co.uk`, and `user.github.io` for itself. On it are the host page's own origin on any
-  scheme or port, its subdomains, its parents down to that domain and its siblings (`api.example.com` for a page on
-  `app.example.com`); a public suffix (`co.uk`) is not. The element asks the browser, once per host name and only for an
-  entry that could be on the site, with a cookie-domain probe: it sets a test cookie for each parent domain of the host
-  (`Domain=co.uk`, `Domain=example.co.uk`), keeps the first the browser accepts, and removes the cookie at once, so the
-  library bundles no public-suffix list. An IP address and a name with no dot are their own site, with no cookie set.
-  Where the probe cannot run (cookies blocked, a page with no cookie jar), the check is by name alone: the page's own
-  host and the names above and below it, so a sibling is not recognised there, and a public suffix above the page
-  counts as its parent.
+- **The host page's site is decided from the page's origin by one rule, with no probe and no public-suffix list.** The
+  page's origin is `self.origin` of the realm the element runs in, so an element in a same-origin `srcdoc` or `about:blank`
+  frame has its page's origin, as its cookies do. For a host name of two labels or more, an entry is on the site when its
+  host is the page's host or shares the page's last two labels: for a page on `app.example.com`, the page's own origin on
+  any scheme or port, `api.example.com`, `deep.api.example.com` and `example.com`. A registrable domain always has at
+  least two labels, so the rule never misses an origin the browser counts as on the site; under a public suffix of
+  several labels it also refuses other sites (`bob.github.io` from a page on `alice.github.io`, `other.co.uk` from
+  `www.example.co.uk`), and the warning says so. Reach such an origin with [`fetchBridge`](#fetchbridge), which sends no
+  credentials. For an IP address, `localhost` or any other single-label host, only that host is on the site. A host page
+  whose origin is opaque (a sandboxed document: `'null'`) has no site of its own: its entries are kept, with a warning,
+  as a request from it carries only another site's own cookies.
 - **A loopback, private or link-local host is kept only when the host page is itself on one**: `localhost`, `127.0.0.1`,
   `10.x`, `192.168.x`, `169.254.x`, or a name that is private by convention (a single label such as `intranet`, and
   `*.local`, `*.internal` such as `host.docker.internal`, `*.lan`, `*.home.arpa`, `*.localdomain`, `*.corp`, `*.home`,
@@ -1669,9 +1670,17 @@ reads nothing):
 - **What it costs your page**: a console error for the refused port in some engines whatever your policy says (the table
   below says which), one more line when a policy of yours refuses the decoy, and one report to that policy's
   `report-uri`, if it has one. No request reaches the network and no name is looked up. The first such build waits for
-  it, a few tens of milliseconds (it settles 50 ms after the decoy; at most 2 s if the frame never loads, then the policy
-  is unknown, the element says so once, and nothing is narrowed). A page that does not want the errors and reports
-  passes the policy, or `false`.
+  it, a few tens of milliseconds (it settles 50 ms after the decoy; at most 2 s if the frame stays in the page and never
+  loads, then the policy is unknown, the element says so once, and nothing is narrowed by the library). A page that does
+  not want the errors and reports passes the policy, or `false`.
+- **When your page moves or removes the element that reads**: the frame is in the shadow root of the first element
+  that asked, and other sandboxes' builds wait on the same read. A read whose frame left the page (that element moved
+  by a keyed reorder, removed by an unmount, or adopted elsewhere) is no answer, and nothing of it is kept: the read
+  starts again at once, in a new frame, in another waiting sandbox still in the page. A build that waited and still has
+  no answer (no waiting sandbox left in the page, or four frames lost in a row) drops every `origins.connect` and
+  `fetchBridge.allow` entry, with a warning: its guest's requests are refused by the request gate and its
+  `sandboxFetch()` with `FETCH_NOT_ALLOWED`. It never builds with the lists unnarrowed. `reset()` builds again and reads
+  again; passing `hostContentSecurityPolicy` avoids the read altogether.
 - **What it cannot see**: a policy that restricts only `ws:` and `wss:` (every `https:` host admitted), and a policy that
   appears after the read (a `<meta>` added later). Pass `hostContentSecurityPolicy` for them.
 

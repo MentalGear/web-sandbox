@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 /**
- * The element hands the host page's origin to the config (host.ts, `normaliseConfig(copy, { hostOrigin })`), so the
- * host-reach warnings fire in a real element: an origin list naming the page's own origin or a host on its site, and
- * `fetchBridge.allow` naming the page's own origin (BD1:NEW-1; docs/API.md, `origins`). test/unit/config-schema.test.ts
- * gives the origin by hand; these go through `setConfig`.
+ * The element hands the host page's origin to the config (host.ts, `normaliseConfig(copy, { hostOrigin })`, from
+ * host-site.ts `hostPageOrigin`: `self.origin` of its realm), so the host-reach warnings fire in a real element: an origin
+ * list naming the page's own origin or a host on its site, and `fetchBridge.allow` naming the page's own origin
+ * (BD1:NEW-1; docs/API.md, `origins`). test/unit/config-schema.test.ts gives the origin by hand; these go through
+ * `setConfig`.
  */
 
 async function mount(config: Record<string, unknown>) {
@@ -24,14 +25,14 @@ afterEach(() => {
 });
 
 describe("the element tells the config the host page's origin (BD1:NEW-1)", () => {
-    it('the page has an origin', () => {
-        expect(location.origin).toMatch(/^https?:\/\//);
+    it("the page has an origin, and the element's realm reads it as self.origin", () => {
+        expect(globalThis.origin).toMatch(/^https?:\/\//);
     });
 
     it("origins.connect naming the host page's own origin is dropped with one warning, in every mode", async () => {
         for (const mode of ['strict', 'cooperative', 'worker']) {
             vi.spyOn(console, 'warn').mockImplementation(() => {});
-            const el = await mount({ mode, capabilities: [], origins: { connect: [location.origin] } });
+            const el = await mount({ mode, capabilities: [], origins: { connect: [globalThis.origin] } });
             expect(warnings().filter(m => m.includes(' dropped ') && m.includes("the host page's own origin")), mode).toHaveLength(1);
             expect(el._origins.connect, mode).toEqual([]);
             vi.restoreAllMocks();
@@ -39,59 +40,57 @@ describe("the element tells the config the host page's origin (BD1:NEW-1)", () =
         }
     });
 
-    it("origins.images on a subdomain of the host page is dropped with one warning: same site", async () => {
-        vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { images: [`https://cdn.${location.hostname}`] } });
-        expect(warnings().filter(m => m.includes('origins.images dropped') && m.includes("on the host page's site"))).toHaveLength(1);
-        expect(el._origins.images).toEqual([]);
-    });
-
     it("fetchBridge.allow naming the host page's own origin warns once", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        await mount({ fetchBridge: { allow: [location.origin] } });
+        await mount({ fetchBridge: { allow: [globalThis.origin] } });
         expect(warnings().filter(m => m.includes("fetchBridge.allow lists the host page's own origin"))).toHaveLength(1);
     });
 });
 
-describe("the element asks the browser which hosts share the page's site (S74, host-site.ts)", () => {
-    // a page at app.wiring.co.uk: a cookie jar that keeps a Domain it may set (not a public suffix), the page's location
-    const SUFFIXES = new Set(['uk', 'co.uk']);
-    const HOST = 'app.wiring.co.uk';
+describe("the element decides the host page's site from self.origin, with no probe of the page (S74, host-site.ts)", () => {
+    // A realm whose settings are https://app.wiring.co.uk while its document's URL says nothing of it (a same-origin
+    // srcdoc or a DOM-built about:blank frame: location.origin 'null', location.hostname ''), with a cookie accessor that
+    // keeps nothing (a consent manager's gate): neither is read.
+    const HOST = 'https://app.wiring.co.uk';
+    let cookieWrites = 0;
+    let cookieReads = 0;
 
-    function pageAt(host: string) {
-        const stored = new Set<string>();
-        vi.stubGlobal('location', { origin: `https://${host}`, hostname: host });
+    function realmAt(origin: string) {
+        vi.stubGlobal('origin', origin);
+        vi.stubGlobal('location', { origin: 'null', hostname: '', href: 'about:srcdoc' });
         Object.defineProperty(document, 'cookie', {
             configurable: true,
-            get: () => [...stored].map(name => `${name}=1`).join('; '),
-            set: (line: string) => {
-                const [pair, ...attributes] = line.split(';').map(part => part.trim());
-                const name = pair!.split('=')[0]!;
-                const domain = attributes.find(attribute => attribute.startsWith('Domain='))?.slice(7) ?? host;
-                if (attributes.includes('Max-Age=0')) stored.delete(name);
-                else if (domain === host || (host.endsWith(`.${domain}`) && !SUFFIXES.has(domain))) stored.add(name);
-            },
+            get: () => { cookieReads++; return ''; },
+            set: () => { cookieWrites++; },
         });
     }
 
     afterEach(() => {
         vi.unstubAllGlobals();
         delete (document as any).cookie;
+        cookieWrites = 0;
+        cookieReads = 0;
     });
 
-    it("a sibling subdomain is on the page's site: every mode drops it", async () => {
+    it("a sibling subdomain and the page's own origin are on the page's site: every mode drops them, and the cookie jar is never touched", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        pageAt(HOST);
-        const cooperative = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { connect: ['https://api.wiring.co.uk'], images: ['https://co.uk'] } });
-        expect(warnings().filter(m => m.includes("origins.connect dropped https://api.wiring.co.uk (on the host page's site)"))).toHaveLength(1);
+        realmAt(HOST);
+        const cooperative = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { connect: ['https://api.wiring.co.uk', HOST], images: ['https://cdn.other.example'] } });
+        expect(warnings().filter(m => m.includes(`origins.connect dropped https://api.wiring.co.uk (on the host page's site), ${HOST} (the host page's own origin)`))).toHaveLength(1);
         expect(cooperative._origins.connect).toEqual([]);
-        // a public suffix above the page is not on its site, though the name check would have said so
-        expect(warnings().filter(m => m.includes('origins.images'))).toEqual([]);
-        expect(cooperative._origins.images).toEqual(['https://co.uk']);
+        expect(cooperative._origins.images).toEqual(['https://cdn.other.example']);
 
-        const strict = await mount({ origins: { connect: ['https://api.wiring.co.uk'] } });
-        expect(warnings().filter(m => m.includes("origins.connect dropped https://api.wiring.co.uk (on the host page's site)"))).toHaveLength(2);
-        expect(strict._origins.connect).toEqual([]);
-        expect(document.cookie).toBe('');
+        const strict = await mount({ origins: { images: ['https://api.wiring.co.uk'] } });
+        expect(warnings().filter(m => m.includes("origins.images dropped https://api.wiring.co.uk (on the host page's site)"))).toHaveLength(1);
+        expect(strict._origins.images).toEqual([]);
+        expect({ cookieWrites, cookieReads }).toEqual({ cookieWrites: 0, cookieReads: 0 });
+    });
+
+    it("an opaque realm ('null', a sandboxed host document) keeps its entries, with the warning that says so", async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        realmAt('null');
+        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { connect: ['https://api.wiring.co.uk'] } });
+        expect(el._origins.connect).toEqual(['https://api.wiring.co.uk']);
+        expect(warnings().filter(m => m.includes('origins.connect lists https://api.wiring.co.uk from a host page whose origin is opaque'))).toHaveLength(1);
     });
 });
