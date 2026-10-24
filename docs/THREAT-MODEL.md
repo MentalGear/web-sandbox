@@ -50,7 +50,7 @@ frozen ([S49](BACKLOG.md#s49)).
 
 ## Trust boundaries
 
-<!-- describes: realms, channels sig:74bdc204 -->
+<!-- describes: realms, channels sig:1d629d12 -->
 
 The realms and the channels between them are generated from the code in [ARCHITECTURE.md](../ARCHITECTURE.md#modes-and-realms)
 (which realm runs guest code, which library functions are stringified into it) and
@@ -110,6 +110,7 @@ Specs under `test/e2e/` and `docs/research/` run on Chromium, Firefox and WebKit
 | Strict: no load of the view carries a cookie, on any engine | The browser chooses the credentials of an element's load and of a load CSS makes; the renderer takes that choice by construction: in the inert template, before an element is first connected, every `img`, `video`, `audio` and `link` it keeps gets `crossorigin="anonymous"` (the guest's own value replaced), so each of their loads, `<source>` and `<track>` included, is a CORS request with no cookie of any SameSite kind, no HTTP authentication and `Origin: null`; the loads no attribute reaches keep no network URL: a `poster` (one engine loads it without CORS), and every `url()`, `@import`, `image-set()`, `@font-face` source or string with an `https:` or `http:` URL in a `style` attribute, a `<style>` (which keeps its own text only), text set into one, and registered stylesheets. Each dropped URL, and each load that fails (a listed origin without `Access-Control-Allow-Origin`), is reported as a `violation`. `td`, `th` and `table` `background`, `input` `src`, SVG `image` and `feImage`, which no attribute reaches, are on no allowlist | `RENDER_CROSSORIGIN_ELEMENTS`, `RENDER_NETWORK_DROPPED`, `sanitizeRender`, `inSandboxView` (`src/lib/in-sandbox-view.ts`); `cssReferences`, `withoutNetworkReferences` (`src/lib/css-references.ts`); `viewStylesheets` (`src/lib/files.ts`) | `test/unit/view-credentials.test.ts` (the enumeration over the render allowlists: every attribute that fetches is a URL attribute, every URL attribute's loader gets the attribute or keeps no network URL, the loads no attribute reaches are on no list; CSS, posters, registered stylesheets, the view's reports); `test/e2e/view-credentials.spec.ts` (a cookie listener for a listed cross-site origin, and for a same-site sibling that a host page whose origin is opaque keeps listed, SameSite None, Lax, Strict and host-only: no cookie from any load kind on any engine, each with a plain frame's positive control; a CORS origin renders and seeks through Range; one without CORS fails, reported) | [S74](BACKLOG.md#s74), [BD2:ISO-2](archive/reviews/BOARD-PASS-2-2026-10-21.md#bd2-iso-2), [research 21](research/21_crossorigin_loads/README.md) |
 | A library bootstrap runs only in the document the library built | The first statement of each bootstrap (the hashed view and bridge bootstrap, the cooperative guest's, worker mode's frame's) checks the document's origin (`self.origin` is `'null'`), URL (`about:srcdoc`), base URL (`about:blank`) and cross-origin isolation (`crossOriginIsolated` is not `true`). On a difference it registers and runs nothing, posts a portless `ENVIRONMENT_REFUSED`, stops the cooperative guest's parser, and the element ends the sandbox with the reason of that row (taken from its own table, never from the message). A host page whose `base-uri` refuses the wrapper's `<base>` is caught this way (the guest would otherwise read the host page's URL), and so is a copy of a bootstrap run anywhere else. A guest never runs cross-origin isolated (owner decision, 2026-10-23): a host page that is cross-origin isolated (COOP and COEP) is not supported on any engine. The element reads the host page's `crossOriginIsolated` before it creates a frame (`_buildRefusal`, `src/host.ts`) and ends the sandbox with `environmentIsolated`, so the outcome follows the page's isolation and not what an engine's opaque-origin frames read (Chromium's read `false`); the `isolated` row in each bootstrap is defence in depth | `ENVIRONMENT_CHECKS`, `checkSandboxEnvironment` (`src/lib/environment-check.ts`); `environmentGate` (`src/lib/in-sandbox-view.ts`); `_listenForAnnouncement` (`src/host.ts`) | `test/unit/environment-gate.test.ts` (the check is each bootstrap's first and only statement; each row leaves each bootstrap inert); `test/unit/environment-check.test.ts`; `test/e2e/environment-check.spec.ts` (`base-uri` in every mode; copies outside a sandbox document); `test/e2e/realistic-host.spec.ts` and `test/e2e/directive-matrix.spec.ts` (COOP with COEP: the same outcome on every engine); `test/unit/environment-gate.test.ts` (the element's own check) | [S74](BACKLOG.md#s74) |
 | Strict: no guest script runs in any document | The view's `script-src` is the bootstrap's hash with `script-src-attr 'none'`; an allowlist renderer drops scripts, handlers, frames, `meta`, `base`, templates; markup is moved, never cloned | `strictViewPolicy` (`src/lib/csp/csp-generator.ts`); `sanitizeRender`, `RENDER_ELEMENTS`, `RENDER_ATTRIBUTES` | `test/e2e/strict.spec.ts` ("G1"); `test/e2e/strict-renderer.spec.ts`; `src/lib/in-sandbox-view.test.ts` | `ADR-005#the-renderer`; [research 15](research/15_strict_mode/README.md) |
+| Strict: the view's input tells the guest about the view only | The view forwards only trusted events of its own document, never a URL or `relatedTarget`, numbers and constants besides the target's strings; pointer coordinates are clamped to its box, and a move outside it is forwarded only during a press that began in it; no drag event carries data in (none is subscribable); the guest answers only through `set({ css, scroll })`, from closed lists, on its own elements | `inSandboxView` (`forward`), `viewInputOutbox`, `VIEW_EVENT_TYPES`, `VIEW_STYLE_PROPERTIES`, `isStyleProperty` (`src/lib/in-sandbox-view.ts`) | `test/e2e/strict-pointer-events.spec.ts` (synthetic events not forwarded; a drag that leaves the view stays in its box); `test/e2e/strict-scroll-and-wheel.spec.ts`; `test/e2e/strict-drag-and-slider.spec.ts`; `test/e2e/strict-focus-events.spec.ts`; `test/unit/view-input.test.ts` | [research 23](research/23_view_input/README.md) |
 | Strict: nothing the view shows opens as a script-running document | The view mints URLs only for `VIEW_FILE_TYPES`; `data:` is not an origin, so no image, font or media loads from it | `VIEW_FILE_TYPES` (`src/lib/in-sandbox-view.ts`); `src/lib/load-kinds.ts` | `test/e2e/strict-renderer.spec.ts` ("ST1"); `test/unit/strict.test.ts` | [BR:ST1](archive/reviews/BROAD-REVIEW-2026-10-14.md#br-st1) |
 | One sandbox's files reach neither the host page nor another sandbox | Files are `blob:` URLs minted in the guest's own realm, which resolve nowhere else | `inSandboxFiles` (`src/lib/in-sandbox-files.ts`) | `test/e2e/files.spec.ts`; `test/e2e/blob-delivery.spec.ts` | [ADR-004](ADR-004-files-as-blob-urls.md) |
 
@@ -173,7 +174,7 @@ are governed by the request gate and the policy but not logged: only the bridge'
 
 ### Channel integrity
 
-<!-- describes: frames sig:84f0 -->
+<!-- describes: frames sig:8e10 -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
@@ -206,7 +207,7 @@ forge or suppress them, and they differ per engine. Treat them as claims.
 
 ### Resource limits
 
-<!-- describes: budgets:channels sig:8864 -->
+<!-- describes: budgets:channels sig:f458 -->
 
 | Property | Mechanism | Chokepoint | Enforced by | Evidence |
 | :--- | :--- | :--- | :--- | :--- |
@@ -458,7 +459,12 @@ The open items of the [backlog](BACKLOG.md) that bear on this model:
 Residuals stated in the decisions rather than the backlog: DNS rebinding for the fetch bridge
 ([ADR-006](ADR-006-fetch-bridge.md#consequences)); CSS probing the view's own content, forgeable worker reports, a
 worker that closes itself, memory and a WebSocket handshake's cookies ([ADR-005](ADR-005-strict-mode.md#consequences)); an image from an allowed
-origin opens as that origin's document (`ADR-005#the-renderer`).
+origin opens as that origin's document (`ADR-005#the-renderer`); and, in strict mode's input
+([research 23](research/23_view_input/README.md#31-what-reaches-the-guest)), a `scroll` event is trusted without the user
+causing it (`set({ scroll })` raises one, and `rect` and the scroll extents read layout, so the guest can make its own
+readback events, at most one frame of them per animation frame, within the view's time budget), and the browser's
+find-in-page scrolls the view to a match, so a `scroll` event can tell the guest that the user searched for text it
+shows (iframes and cooperative guests learn the same).
 
 ## Reporting and fixing a finding
 

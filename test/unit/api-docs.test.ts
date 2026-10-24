@@ -312,7 +312,7 @@ describe('docs/API.md lists the public surface', () => {
         expect(viewSection).toContain(`at most ${VIEW_MAX_CHARACTERS} characters`); // R1:R1-1
         expect(viewSection).toContain(`at most ${VIEW_RENDER_CHARACTERS_PER_SECOND} characters of markup`);
         expect(VIEW_FILE_TYPES.length).toBe(27); // a new type is a new line of prose in the section, too
-        expect(viewSection.replace(/\s+/g, ' ')).toContain(`Strings are cut at ${VIEW_EVENT_LIMITS.maxString} characters, \`ids\` at ${VIEW_EVENT_LIMITS.maxIds} entries, \`form\` at ${VIEW_EVENT_LIMITS.maxFields} fields, and all strings of one detail together at ${VIEW_EVENT_LIMITS.maxTotal} characters`);
+        expect(viewSection.replace(/\s+/g, ' ')).toContain(`Strings are cut at ${VIEW_EVENT_LIMITS.maxString} characters, \`ids\` at ${VIEW_EVENT_LIMITS.maxIds} entries, \`form\` at ${VIEW_EVENT_LIMITS.maxFields} fields, and all strings of one detail together at ${VIEW_EVENT_LIMITS.maxTotal} characters (of one frame of events`);
     });
 
     it('the host page policy: the view bootstrap\'s hash through viewScriptHash(), the wrapper style\'s hash as the code computes it', () => {

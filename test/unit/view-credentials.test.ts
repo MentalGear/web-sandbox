@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { cssLoadBound, inSandboxView, INERT_HREF, RENDER_ATTRIBUTES, RENDER_CROSSORIGIN_ELEMENTS, RENDER_ELEMENTS, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES, sanitizeRender, VIEW_OPTIONS, viewBudget, type RenderContext, type RenderSwitches, type ViewOptions } from '@src/lib/in-sandbox-view';
+import { cssLoadBound, inSandboxView, INERT_HREF, isStyleProperty, RENDER_ATTRIBUTES, RENDER_CROSSORIGIN_ELEMENTS, RENDER_ELEMENTS, RENDER_NETWORK_DROPPED, RENDER_RULES, RENDER_URL_ATTRIBUTES, sanitizeRender, VIEW_OPTIONS, viewBudget, viewInputOutbox, type RenderContext, type RenderSwitches, type ViewOptions } from '@src/lib/in-sandbox-view';
 import { inSandboxFiles } from '@src/lib/in-sandbox-files';
 import { cssReferences, dropNetworkCss, withoutNetworkReferences } from '@src/lib/css-references';
 import { FileStore, viewStylesheets, type FileSnapshotEntry } from '@src/lib/files';
@@ -322,7 +322,7 @@ describe('the view: what an operation puts into a <style>, and a load that fails
             return add.call(this, type, listener, options);
         } as typeof window.addEventListener;
         try {
-            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)});`)();
+            new Function(`(${inSandboxView.toString()})(${inSandboxFiles.toString()}, ${sanitizeRender.toString()}, ${viewBudget.toString()}, ${cssLoadBound.toString()}, ${cssReferences.toString()}, ${withoutNetworkReferences.toString()}, ${JSON.stringify(options)}, ${viewInputOutbox.toString()}, ${isStyleProperty.toString()});`)();
         } finally {
             window.addEventListener = add;
         }

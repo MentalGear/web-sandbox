@@ -1201,13 +1201,13 @@ assign `globalThis.fetch = sandboxFetch` to route through the bridge. [ADR-006](
 
 ### `sandboxView` (strict mode)
 
-<!-- describes: limit:VIEW_MAX_ELEMENTS, limit:VIEW_MAX_DEPTH, limit:VIEW_MAX_CHARACTERS, limit:VIEW_RENDER_CHARACTERS_PER_SECOND, limit:VIEW_EVENT_LIMITS.maxString, limit:VIEW_EVENT_LIMITS.maxIds, limit:VIEW_EVENT_LIMITS.maxFields, limit:VIEW_EVENT_LIMITS.maxTotal sig:7329ee0cf6ced5b39f62b689f003b322 -->
+<!-- describes: limit:VIEW_MAX_ELEMENTS, limit:VIEW_MAX_DEPTH, limit:VIEW_MAX_CHARACTERS, limit:VIEW_RENDER_CHARACTERS_PER_SECOND, limit:VIEW_EVENT_LIMITS.maxString, limit:VIEW_EVENT_LIMITS.maxIds, limit:VIEW_EVENT_LIMITS.maxFields, limit:VIEW_EVENT_LIMITS.maxTotal, limit:VIEW_INPUT_IN_FLIGHT, limit:VIEW_SET_STYLE_LIMITS.maxProperties, limit:VIEW_SET_STYLE_LIMITS.maxValue sig:7329ee0cf6ced5b39f62b689f003b322330931f95934 -->
 | Member | Signature | Description |
 | :--- | :--- | :--- |
 | `render` | `(html: string, into?: string \| null) => void` | Replaces the view's body, or the children of the element with id `into`. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). The latest render per target wins; one operation is in flight at a time. |
 | `text` | `(id: string, text: string) => void` | Makes `text` the only content of the element with that id, as text: the view assigns it and parses nothing, so nothing needs escaping. At most `VIEW_RENDER_MAX_LENGTH` characters (else `RangeError`). Shares its slot with `render`: the latest of the two per target wins. |
-| `set` | `(id: string, fields: { value?: string, checked?: boolean, focus?: boolean }) => void` | Sets the value of an `input`, `textarea`, `select` or `output` (not a file input), the checked state of an `input`, or focuses the element. Any other key, or a field of another type, is a `TypeError`; a value past `VIEW_RENDER_MAX_LENGTH` characters a `RangeError`. |
-| `on` | `(type, id: string \| null, handler: (detail) => void) => () => void` | Subscribes to `click`, `input`, `change`, `submit` or `keydown` on the element with that id (or inside it), or anywhere with `null`. Returns `off`. |
+| `set` | `(id: string, fields: { value?: string, checked?: boolean, focus?: boolean, scroll?: { top?: number, left?: number }, css?: Record<string, string \| null> }) => void` | Sets the value of an `input`, `textarea`, `select` or `output` (not a file input), the checked state of an `input`, focuses the element, sets its own scroll position (CSS px; never an ancestor's, never the host page's), or sets inline style properties of it (`css`; `null` removes one): only those of `VIEW_STYLE_PROPERTIES`, at most `VIEW_SET_STYLE_LIMITS.maxProperties` a call, each value at most `VIEW_SET_STYLE_LIMITS.maxValue` characters. Any other key, property or a field of another type is a `TypeError`; a value past `VIEW_RENDER_MAX_LENGTH` characters, or past the `css` limits, a `RangeError`. |
+| `on` | `(type, id: string \| null, handler: (detail) => void, options?: { pointerCapture?: boolean, rect?: boolean, preventDefault?: boolean }) => () => void` | Subscribes to `click`, `input`, `change`, `submit`, `keydown`, `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, `wheel`, `scroll`, `focusin` or `focusout` on the element with that id (or inside it), or anywhere with `null`. Returns `off`. The options, each `true` or left out: `pointerCapture` (a `pointerdown` handler with an id), `rect` (a handler with an id; its element's rectangle arrives as the detail's `rect`) and `preventDefault` (a `wheel` handler); anything else is a `TypeError`, and more than `VIEW_EVENT_LIMITS.maxIds` elements of one type with options a `RangeError`. |
 
 The renderer is an allowlist: what it does not list is gone before insertion.
 
@@ -1310,18 +1310,74 @@ An event handler receives:
 
 ```ts
 {
-    type: 'click' | 'input' | 'change' | 'submit' | 'keydown',
+    type: 'click' | 'input' | 'change' | 'submit' | 'keydown' | 'pointerdown' | 'pointermove' | 'pointerup' | 'pointercancel'
+        | 'wheel' | 'scroll' | 'focusin' | 'focusout',
     ids: string[],                       // ids of the target and its ancestors, nearest first
     target: { tag: string, id: string, name: string, value: string, checked: boolean },
     key?: string,                        // keydown
     form?: [name: string, value: string][], // submit
+    pointer?: {                          // pointer*, wheel (x and y only): view CSS px, clamped to the view's box, rounded to 0.1
+        x: number, y: number, id: number, kind: 'mouse' | 'pen' | 'touch',
+        primary: boolean, button: number, buttons: number, pressure: number,
+    },
+    wheel?: { dx: number, dy: number, dz: number, unit: 'pixel' | 'line' | 'page' }, // the deltas it stands for, summed
+    scroll?: { top: number, left: number, width: number, height: number, clientWidth: number, clientHeight: number },
+                                         // scroll: the scrolled element's position and extent (the document's: its root)
+    rect?: { x: number, y: number, width: number, height: number }, // with the `rect` option: the handler's element, view CSS px
+    modifiers?: { alt: boolean, ctrl: boolean, meta: boolean, shift: boolean }, // pointer*, wheel
+    time?: number,                       // pointer*, wheel, scroll: the event's timeStamp, whole ms
+    coalesced?: number,                  // pointermove, wheel, scroll: how many raw events this one stands for
     truncated?: true,                    // something in this detail was cut
 }
 ```
 
 Never a URL. Strings are cut at 65536 characters, `ids` at 32 entries, `form` at 1000 fields, and all strings of
-one detail together at 262144 characters; a detail that was cut has `truncated: true`. A handler that throws is
-logged and does not stop the others. [ADR-005](ADR-005-strict-mode.md)
+one detail together at 262144 characters (of one frame of events, when the view sends several at once); a detail that
+was cut has `truncated: true`. A handler that throws is logged and does not stop the others. [ADR-005](ADR-005-strict-mode.md)
+
+**Pointer, wheel, scroll and focus input** ([research 23](research/23_view_input/README.md)), for drag-and-drop within
+the view, gestures, custom sliders and virtual lists, all of it guest code in the worker:
+
+- **Only the view's own, trusted events**, as numbers and constants besides the target's strings. Pointer coordinates
+  are in the view's CSS px, rounded to 0.1 and clamped to its box: a press that begins in the view goes on delivering
+  moves over your page until it is released, in every browser, so a move outside the view is forwarded only while such a
+  press is held, at the view's edge. Nothing of your page's own input reaches the guest. `focusin` and `focusout` say
+  which of the view's elements gained or lost focus, never where it went (no `relatedTarget`).
+- **Continuous events are coalesced**: `pointermove` per pointer, `wheel` per element and unit (its deltas summed),
+  `scroll` per scrolled element (its position and extent read when it is sent), the latest winning, `coalesced` counting
+  the raw events. The view sends what it holds at most once per animation frame, and only once the worker has
+  acknowledged the last frame of events it sent (`VIEW_INPUT_IN_FLIGHT`, 1; the worker acknowledges a frame once its
+  handlers have returned). A handler that blocks gets, when it returns, one frame with the latest state. The discrete
+  events (`pointerdown`, `pointerup`, `pointercancel`, `focusin`, `focusout` and the five others) go at once, after
+  whatever the view held, so a `pointerup` never overtakes the last move. The view's time spent on its events is charged
+  to its time budget, with its operations ([The view's cost](#a-the-long-run-bound)).
+- **`pointerCapture`**: on a trusted `pointerdown` in the element, the view captures the pointer to it, in the event, so
+  the moves and the release keep naming the element in `ids` after the pointer leaves it (a slider's thumb, a drag), and
+  cancels a native drag or a text selection inside it until the release.
+- **`rect`**: the worker cannot read layout, so the view gives a handler that asks its element's rectangle,
+  `rect: { x, y, width, height }` in view CSS px, read once per frame of events.
+- **`preventDefault`**: the view cancels the wheel's default (scrolling) inside the element, or anywhere with `null`.
+  While such a subscription exists, scrolling over the sandbox waits for the view's thread, as over any frame with a
+  wheel listener that is not passive.
+- **The answer**: `set(id, { css })` sets inline style properties of one element (HTML, SVG or MathML) from
+  `VIEW_STYLE_PROPERTIES`: `transform`, `translate`, `rotate`, `scale`, `transform-origin`, `opacity`, `visibility`,
+  `left`, `top`, `right`, `bottom`, `width`, `height`, `z-index`, `cursor` and custom properties (`--name`, letters,
+  digits, `-` and `_`); `null` removes one. At most 16 properties a call (`VIEW_SET_STYLE_LIMITS.maxProperties`), each
+  value at most 1024 characters (`VIEW_SET_STYLE_LIMITS.maxValue`). No animation or transition property, so
+  `allowAnimations: false` holds; a value that names a URL (`cursor`, a custom property) is charged to the view's loads
+  like a `style` attribute's, and the view's policy applies to it; what the `style` attribute grows by counts against the
+  view's characters, and a set past them is refused whole. `set(id, { scroll: { top, left } })` sets that element's own
+  scroll position, never an ancestor's or your page's; the `scroll` event it raises is trusted and coalesced like the
+  user's, so a guest that answers its own scroll events does so at most once a frame.
+- **Touch**: pinch and rotation come from two pointer ids. Give the element `touch-action: none` (or `pan-y`) in the
+  guest's CSS, or the browser takes the gesture for panning and sends `pointercancel`.
+- **Not available**: native drag-and-drop with data from outside the view (files, a selection of your page's), no drag
+  event is subscribable; `pointerrawupdate`, coalesced and predicted point lists, tilt, twist and contact size; `touch*`
+  and `gesture*` events; `keyup`.
+
+Measured (2026-10-24, headless, a shared 4-core VM; [research 23](research/23_view_input/README.md#23-latency)): a
+60 Hz drag answered with `set({ css })` is rendered a median 28 ms (Chromium), 25 ms (Firefox) and 50 ms (WebKit) after
+the move, one frame of it the worker's round trip, at 0–3% of your page's thread.
 
 `render`, `text` and `set` go to the view in order, one at a time: an id that names no element in the view's body is
 dropped, and the next one applies. What `text` and `set` leave in the view counts against its characters and the
@@ -1413,6 +1469,9 @@ in strict mode.
 | Strict: distinct URLs one view loads, over its life | 10000 | — |
 | Strict: nesting depth below the view's body | 256 | — |
 | Strict: characters of one event detail, all strings together | 262144 | — |
+| Strict: frames of the view's events the worker has not acknowledged, past which the view holds pointer moves, wheel and scroll events back, coalesced (at most one per pointer or element, sent at most once per animation frame) | 1 | `VIEW_INPUT_IN_FLIGHT` |
+| Strict: style properties one `sandboxView.set(id, { css })` names | 16 | — |
+| Strict: characters of one style value (or custom property name) of `set({ css })` | 1024 | — |
 | Strict: view liveness budget (ms) | 5000 | `VIEW_LIVENESS_TIMEOUT_MS` |
 | Longest `loading`, until the guest checks in (ms of host time) | 5000 | `LOAD_TIMEOUT_MS` |
 | `workerExecutionTimeout`: how long the event loop may stay busy past a deadline (ms) | 1000 | `EXECUTION_TIMEOUT_GRACE_MS` |
@@ -1480,9 +1539,9 @@ or a constant. Measured figures stand in the note under the table, with their da
 | Content heights (`autoResize`), to the frame's height | `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) a second, and one a frame | a number, at most `AUTO_RESIZE_MAX_HEIGHT` (100000) px | none of its own: one relayout of the host page's frame a change | a cap: `AUTO_RESIZE_MAX_UPDATES_PER_SECOND` (30) relayouts of the host page's frame a second | src/lib/auto-resize.test.ts; test/e2e/auto-resize.spec.ts |
 | Liveness answers (PONG, VIEW_PONG), to the host's probes | one a probe of the host's | a number | `VIEW_LIVENESS_TIMEOUT_MS` (5000) ms for the view to answer; `EXECUTION_TIMEOUT_GRACE_MS` (1000) ms past a deadline for the worker (`workerExecutionTimeout`) | none: the library's own | src/lib/watchdog.test.ts; test/e2e/watchdog.spec.ts |
 | Strict: the guest's error texts the view relays (GUEST_ERROR, GUEST_UNCAUGHT), to `sandbox-log` | `LOG_EVENTS_PER_SECOND` (1000) a second, counted in the view | each cut at `VIEW_OPTIONS.guestText.maxLength` (2048) characters in the view, before it is posted; each uncaught one counted whole against `UNCAUGHT_CHARACTERS_PER_SECOND` (1048576) characters in any second, as the worker counts the ones it sees (WebKit mutes those of a revoked script there); past it the sandbox ends | none of its own: one line each | none beyond the count and the bytes | test/unit/rpc-bounds-and-call-limits.test.ts (C-4); test/e2e/worker-port-and-view-cost.spec.ts (M-5) |
-| Strict: the view's operations (`sandboxView.render`, `text`, `set`) | one at a time; the body holds at most `VIEW_MAX_ELEMENTS` (50000) elements, `VIEW_MAX_DEPTH` (256) deep | `VIEW_RENDER_MAX_LENGTH` (262144) characters an operation; `VIEW_RENDER_CHARACTERS_PER_SECOND` (1048576) a second; `VIEW_MAX_CHARACTERS` (1048576) in the body | `VIEW_APPLY_MS_PER_SECOND` (200) ms a second on average, each operation charged in full; the second operation past `VIEW_MAX_OPERATION_MS` (2000) ms within `VIEW_OVERRUN_WINDOW_MS` (300000) ms ends the sandbox | a share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/view-bound.spec.ts; test/e2e/view-budget.spec.ts; test/unit/view-budget.prop.test.ts |
+| Strict: the view's operations (`sandboxView.render`, `text`, `set`) | one at a time; the body holds at most `VIEW_MAX_ELEMENTS` (50000) elements, `VIEW_MAX_DEPTH` (256) deep; a set names at most `VIEW_SET_STYLE_LIMITS.maxProperties` (16) style properties | `VIEW_RENDER_MAX_LENGTH` (262144) characters an operation, a style value `VIEW_SET_STYLE_LIMITS.maxValue` (1024); `VIEW_RENDER_CHARACTERS_PER_SECOND` (1048576) a second; `VIEW_MAX_CHARACTERS` (1048576) in the body | `VIEW_APPLY_MS_PER_SECOND` (200) ms a second on average, each operation charged in full; the second operation past `VIEW_MAX_OPERATION_MS` (2000) ms within `VIEW_OVERRUN_WINDOW_MS` (300000) ms ends the sandbox | a share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/view-bound.spec.ts; test/e2e/view-budget.spec.ts; test/unit/view-budget.prop.test.ts; test/unit/view-input.test.ts (set({ css })) |
 | Strict: the view's loads (URL attributes, CSS, and what the browser reports) | `VIEW_URLS_PER_SECOND` (200) a second, each charged before it can start; `VIEW_MAX_URLS` (1000) URL attributes in the body; `VIEW_MAX_DISTINCT_URLS` (10000) distinct URLs over the view's life | what the policy's origins serve: no budget of the library's | none of its own: the rate | a rate: at most `VIEW_URLS_PER_SECOND` (200) loads a second; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/worker-port-and-view-cost.spec.ts (M-2); test/e2e/strict-view-budget.spec.ts; test/unit/view-css-loads.test.ts; test/unit/view-budget.prop.test.ts |
-| Strict: the view's events, to the guest's `sandboxView.on` handlers | as the user raises them, of the types a handler listens to; `VIEW_EVENT_LIMITS.maxIds` (32) ids and `VIEW_EVENT_LIMITS.maxFields` (1000) form fields a detail | each string cut at `VIEW_EVENT_LIMITS.maxString` (65536) characters, all of one detail at `VIEW_EVENT_LIMITS.maxTotal` (262144) | none of its own: the user's input | none beyond the user's own input | test/e2e/strict-events.spec.ts |
+| Strict: the view's events, to the guest's `sandboxView.on` handlers | of the types a handler listens to: the discrete ones as the user raises them; pointer moves, wheel and scroll events coalesced to one per pointer or element, sent at most once per animation frame while fewer than `VIEW_INPUT_IN_FLIGHT` (1) frames are unacknowledged; `VIEW_EVENT_LIMITS.maxIds` (32) ids and `VIEW_EVENT_LIMITS.maxFields` (1000) form fields a detail | each string cut at `VIEW_EVENT_LIMITS.maxString` (65536) characters, all of one frame at `VIEW_EVENT_LIMITS.maxTotal` (262144); the rest numbers and constants | the event path charged to the view's `VIEW_APPLY_MS_PER_SECOND` (200) ms a second; continuous events wait while that budget is in debt | within the view's share: at most `VIEW_APPLY_MS_PER_SECOND` (200) ms of each second, averaged, with its operations; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/e2e/strict-events.spec.ts; test/e2e/strict-pointer-events.spec.ts; test/e2e/strict-scroll-and-wheel.spec.ts; test/e2e/strict-focus-events.spec.ts; test/unit/view-input.test.ts |
 | Strict: the view's overrun notices (VIEW_FIRST_OVERRUN, VIEW_OVERRUN), to `sandbox-log` and `terminated` | a first overrun's at most once per 9 s of its debt, and one host line an environment; the second ends the sandbox | none: no field | none of its own: the count | a stall past `VIEW_MAX_OPERATION_MS` (2000) ms at most once per `VIEW_OVERRUN_WINDOW_MS` (300000) ms beyond the first; see [The view's cost to the host page](#the-views-cost-to-the-host-page) | test/unit/strict-view-budget.test.ts (the repeated-overrun rule); test/e2e/view-bound.spec.ts |
 | Cooperative: the guest's own document | none: the guest runs on the host page's thread wherever the engine puts its frame there | none | none: one loop can freeze the host page ([Modes](#modes)) | unbounded: a cooperative-mode limit | README (cooperative-mode limits) |
 <!-- generated:end -->
@@ -1491,7 +1550,7 @@ or a constant. Measured figures stand in the note under the table, with their da
 counts and bytes above bound); and where the view shares the host page's thread it cannot run during a stall of the view
 ([(b)](#b-the-single-operation-bound)).
 
-<!-- describes: budgets sig:8d3f -->
+<!-- describes: budgets sig:6b89 -->
 **Measured figures** (examples within the bounds above, not part of them): on Firefox (Playwright 1.58.1's build), on a
 shared 4-core VM, 2026-10-19 ([R5:N-1](archive/reviews/REVIEW-ROUND-5-2026-10-19.md#r5-n-1)), the uncaught errors and rejections
 of the second row cost the host page's thread: 1000 cancelled a second, idle; 1000 handled a tick later, 4–7% busy;
@@ -1583,6 +1642,15 @@ per task more than the time they took; the time budget alone measured 15–23% u
 The first figure is the best of the windows, the one in parentheses their mean. The machine ran other test suites at the
 same time (load average 5–11 on 4 cores), which is why the suite asserts the best window.
 
+**The view's events** (pointer, wheel, scroll and focus input, [`sandboxView`](#sandboxview-strict-mode)) are inside
+this bound: the time the view spends on them (reading them, building their details, reading the rectangles and scroll
+extents they carry) is measured and charged to the same `VIEW_APPLY_MS_PER_SECOND` as the operations, and the
+continuous ones wait while that budget is in debt. Their count is bounded by the frame rate: at most one frame of them
+per animation frame, and none while `VIEW_INPUT_IN_FLIGHT` (1) frame is unacknowledged. Measured (2026-10-24,
+`docs/research/23_view_input/measure.spec.ts`): a 60 Hz drag answered every frame, 0% (Chromium), 1% (Firefox) and 3%
+(WebKit) busy; a burst of moves as fast as the driver sends them, 1 386 a second reaching WebKit's view, of which the
+guest received 27 to 62 a second, 0–8%.
+
 ### (b) The single-operation bound
 
 An operation that took longer than `VIEW_MAX_OPERATION_MS` (2000) ms as the meter measures it (its flush, forced layout
@@ -1637,6 +1705,7 @@ The first three rows are (a)'s and (b)'s; the rest bound what the view's meter c
 | `VIEW_MAX_CHARACTERS` | 1048576 | Characters the body holds (its serialization: text, attributes and markup). |
 | `VIEW_RENDER_CHARACTERS_PER_SECOND` | 1048576 | Characters of markup the view parses per second, refused renders included. |
 | `VIEW_RENDER_MAX_LENGTH` | 262144 | Characters of one operation. |
+| `VIEW_INPUT_IN_FLIGHT` | 1 | Frames of the view's events the worker has not acknowledged, past which the continuous ones wait, coalesced: what the guest's events cost the worker's queue and the view, whatever the engine delivers. |
 | `LOG_EVENTS_PER_SECOND` | 1000 | The guest's error texts the view posts to the host page per second (GUEST_ERROR and GUEST_UNCAUGHT frames, each cut to 2048 characters before posting). |
 | `VIOLATION_EVENT_LIMIT` | 100 | `violation` events the host page dispatches from the view, per directive; every refusal is charged to `VIEW_URLS_PER_SECOND` all the same. |
 | `UNCAUGHT_PER_SECOND` | 1000 | Uncaught errors and unhandled rejections of the guest's worker per second, which Firefox reports on the view's thread; past it the sandbox ends. |
@@ -1881,8 +1950,11 @@ Values:
 | `UNSAFE_CAPABILITIES` | The values the `unsafeCapabilities` option accepts: each reaches outside the frame and warns once when enabled. |
 | `UNSAFE_PERMISSIONS` | The Permissions Policy features among `UNSAFE_CAPABILITIES`, granted through the frames' `allow` attribute. |
 | `UNSAFE_SANDBOX_FLAGS` | The sandbox flags among `UNSAFE_CAPABILITIES`: each reaches outside the frame and needs an explicit opt-in. |
+| `VIEW_INPUT_IN_FLIGHT` | The most batches of the view's events the worker has not acknowledged yet (research 23). |
 | `VIEW_LIVENESS_TIMEOUT_MS` | How long, in ms, strict mode's view may go without answering before the sandbox terminates ([ADR-005](ADR-005-strict-mode.md)). |
 | `VIEW_RENDER_MAX_LENGTH` | The most characters (UTF-16 code units, 256 Ki) one strict-mode view operation may carry: the `html` of `sandboxView.render()`, the string of `text()` and the value of `set()`. |
+| `VIEW_SET_STYLE_LIMITS` | Limits of one `sandboxView.set(id, { css })` (research 23): the properties it names, and the characters of each value (and of a custom property's name). |
+| `VIEW_STYLE_PROPERTIES` | The inline style properties `sandboxView.set(id, { css })` may set on an element (research 23): what a drag, a gesture, a slider or a virtual list moves, and nothing else. |
 | `VIOLATION_EVENT_LIMIT` | Most `violation` events one environment can produce; later reports are dropped, with one warning. |
 <!-- generated:end -->
 

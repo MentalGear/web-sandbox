@@ -573,11 +573,18 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
 *   **Guest API (in the worker)**: `sandboxView.render(html, into?)` replaces the view's body, or the children of
     the element with id `into` (at most 256 Ki characters; the latest render per target wins);
     `sandboxView.text(id, text)` sets an element's text (assigned, never parsed: nothing to escape);
-    `sandboxView.set(id, { value?, checked?, focus? })` sets a form control, or focuses an element while the user's focus
-    is in the sandbox (never taking it from the host page); `sandboxView.on(type, id | null, handler)` returns `off`
-    and receives `click`, `input`, `change`, `submit` and `keydown` as
-    `{ type, ids, target: { tag, id, name, value, checked }, key?, form?, truncated? }`. `bridge`, `sandboxFiles` and
-    `sandboxFetch` work as in worker mode.
+    `sandboxView.set(id, { value?, checked?, focus?, scroll?, css? })` sets a form control, focuses an element while the
+    user's focus is in the sandbox (never taking it from the host page), sets an element's own scroll position, or sets
+    inline style properties of it from a closed list (transforms, opacity, visibility, geometry, `z-index`, `cursor`,
+    custom properties); `sandboxView.on(type, id | null, handler, options?)` returns `off` and receives `click`,
+    `input`, `change`, `submit`, `keydown`, `pointerdown`, `pointermove`, `pointerup`, `pointercancel`, `wheel`,
+    `scroll`, `focusin` and `focusout` as `{ type, ids, target: { tag, id, name, value, checked }, key?, form?,
+    pointer?, wheel?, scroll?, rect?, modifiers?, time?, coalesced?, truncated? }`. Pointer moves, wheel and scroll
+    events are coalesced to one per pointer or element and animation frame, and pointer coordinates are clamped to the
+    view's box; the options capture the pointer for a drag (`pointerCapture`), give the handler its element's
+    rectangle (`rect`), or cancel a wheel's scrolling (`preventDefault`). So drag-and-drop within the view, gestures,
+    custom sliders and virtual lists are guest code in the worker; native drag-and-drop with data from outside the view
+    is not available. `bridge`, `sandboxFiles` and `sandboxFetch` work as in worker mode.
 *   **Host API**: `entry` names a registered JavaScript file the worker runs first (a classic script, in a
     function scope of its own: its top-level declarations stay local, so assign `globalThis.x` to share; `this`
     is the global object); `html` and `load()` set the initial view (without an `entry` the worker runs only the
@@ -600,7 +607,10 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     `Referer`); the worker keeps only allowlisted globals, so it can request only through `fetch`, `XMLHttpRequest` and
     `WebSocket`, the library's request gate (each request checked against `origins.connect` and reported when refused,
     the same on every engine; `fetch` and `XMLHttpRequest` without credentials), and reaches its parent only through
-    the library's port (it has no `postMessage` of its own); links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
+    the library's port (it has no `postMessage` of its own); the view forwards only trusted events, never a URL, never
+    where focus went, and no pointer coordinate outside its own box (a press that began in it is clamped to its edge),
+    coalesces the continuous ones, holds them while the worker has not taken the last ones, and charges their cost to
+    its time budget; links and form submissions navigate nowhere, and every rendered link's `href` is `about:blank#`, so
     the browser's own link actions (copy, open in a new tab, drag) carry no guest URL (open external URLs through
     a method you `expose()`); the watchdog stops a looping guest on every
     browser; the view's `violation` reports (`source: 'view'`) are complete up to the cap, which counts each
