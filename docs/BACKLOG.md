@@ -558,7 +558,9 @@ a finding").
   closed; `dist` matches). Done (BD3:NEW-1): `viewScriptHash()` warns, once, where the baked literal is absent; the
   README and API.md say that only the built package has one hash (`test/unit/view-script-hash-sources.test.ts`).
 - [ ] BD1:NEW-4: some config refusals name no key (`origins.images: 'https://x'` gives "(TypeError)"); list options are
-  dropped with a warning or terminate, inconsistently.
+  dropped with a warning or terminate, inconsistently. Half done (BD3:NEW-3): an `origins` of the wrong type
+  names the option in the reason (`(TypeError: origins.images is not a list)`); the other refusals and the
+  inconsistency are left.
 - [ ] BD1:NEW-5: silent config typos (`watchdogTimout`, `unsafeCapablities`); `fetchBridge` without `allow` warns not.
 - [x] BD1:NEW-6: a looping `entry` spins the worker until `terminate()` with the watchdog off by default; the quickstart
   does not say so. **[docs]**

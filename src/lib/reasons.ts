@@ -70,7 +70,7 @@ export const reasonCauses = () => ({
     viewLost: 'Strict mode: the view did not answer for `VIEW_LIVENESS_TIMEOUT_MS` (always on).',
     viewOverrun: `Strict mode: an operation of the view (a render, \`text()\` or \`set()\` applied, with its layout and the rendering update that showed it) took longer than ${OVERRUN_MS} ms, measured as the view's time budget measures it, and another one had, at most ${OVERRUN_MINUTES} minutes before it. The first such operation only logs a \`warn\` line (see [\`sandbox-log\`](#sandbox-log--sandboxlog)); see [\`sandboxView\`](#sandboxview-strict-mode).`,
     unknownMode: "`mode` is not `strict`, `cooperative` or `worker`. For `'iframe'` the reason ends `('iframe' was renamed 'cooperative')`.",
-    configRefused: '`setConfig()` got something that is not an object or cannot be cloned, an `origins` that is not an object, or a kind of it that is not a list.',
+    configRefused: "`setConfig()` got something that is not an object or cannot be cloned (the error's name follows, as in `(DataCloneError)`), an `origins` that is not an object (`(TypeError: origins is not an object)`), or a kind of it that is not a list (`(TypeError: origins.connect is not a list)`, naming the kind).",
     buildFailed: 'Building the frame failed.',
     executionTimeout: "The guest's event loop was still busy `EXECUTION_TIMEOUT_GRACE_MS` after an `execute()` deadline.",
     secondLoad: "Something navigated or reloaded the library's frame (also before its first load, once the guest had checked in).",

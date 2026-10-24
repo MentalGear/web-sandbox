@@ -8,7 +8,7 @@ import { connectSources, cooperativePolicy, fileKinds, strictViewPolicy, type Po
 import { narrowToHostPolicy, parseHostPolicies, type NarrowedReach } from "./lib/csp/host-connect";
 import { buildRefused, executeRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
 import { hostPolicyReadFailed, knownHostPolicies, whenHostPoliciesKnown } from "./lib/host-csp";
-import { NO_ORIGINS, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
+import { NO_ORIGINS, ORIGINS_REFUSAL_TEXT, OriginsTypeError, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
@@ -891,7 +891,8 @@ export class WebSandbox extends ElementBase {
             return null;
         } catch (error) {
             this._lastConfig = null;
-            return reasonText('configRefused', errorName(error));
+            // an `origins` of the wrong type names the option, in a fixed text of the library's (BD3:NEW-3)
+            return reasonText('configRefused', error instanceof OriginsTypeError ? `${errorName(error)}: ${ORIGINS_REFUSAL_TEXT[error.option]}` : errorName(error));
         }
     }
 
