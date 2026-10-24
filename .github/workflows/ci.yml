@@ -26,6 +26,8 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    # a run takes about 25 minutes; a stuck one ends here instead of at GitHub's 6 hours, with its log
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
