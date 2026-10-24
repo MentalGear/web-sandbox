@@ -58,8 +58,8 @@ append rules to it, and the sheet must come before anything the guest renders (r
 As built (`test/e2e/view-switches.spec.ts`, all three engines): with `allowAnimations: false`, `document.getAnimations()`
 in the view is empty against every vector above plus `@property`, a registered stylesheet and the one it `@import`s,
 SVG `<style>` and an SVG `style` attribute; the host page's ticks with 5 000 animated elements equal idle (Chromium
-300/300, Firefox 286/288, WebKit 249/249 per 3 s), against 17, 27 and 26 with the default. 300 animated form-control
-parts (range thumbs, file buttons): idle with the switch; with the default Firefox lost half its ticks and WebKit a
+300/300, Firefox 286/288, WebKit 249/249 per 3 s), against 17, 27 and 26 with `allowAnimations: true`. 300 animated form-control
+parts (range thumbs, file buttons): idle with the switch; with `allowAnimations: true` Firefox lost half its ticks and WebKit a
 third (Chromium none).
 
 ## Rejected: a meter and an actuator
