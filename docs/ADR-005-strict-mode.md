@@ -195,7 +195,11 @@ refused if it contains any, or anything that would end or re-enter the script el
   the minted `link`; SVG shapes, text, structure, gradients, clip paths, masks, patterns; MathML Core presentation elements.
   Attributes: the global ones, `data-*`, `aria-*`, and per element what it needs; never a handler, a form target, an
   invoker, or a URL attribute other than `src`, `srcset`, `poster` and the minted `link` `href`, which keep only `https:`,
-  `http:`, a URL the view minted or a relative one (no `data:`, no `javascript:`).
+  `http:`, a URL the view minted or a relative one (no `data:`, no `javascript:`; a `poster` no `https:` or `http:`).
+- **No load of the view carries credentials** (S74): every `img`, `video`, `audio` and `link` the renderer keeps gets
+  `crossorigin="anonymous"` in the inert template, before it is connected, so its loads are CORS requests without
+  cookies on every engine (a listed origin must answer with CORS; a failed load is reported); CSS keeps no `https:` or
+  `http:` URL (style attributes, `<style>`, registered stylesheets), since no attribute reaches a load CSS makes.
 - **Unknown HTML elements are unwrapped**: their children take their place and are checked in turn, so obsolete or unknown
   wrappers (`center`, `font`, `marquee`) keep their text; nothing is serialised or reparsed, so unwrapping cannot change what
   a child is. The elements that hold raw text, a template or a browsing context (`script`, `noscript`, `template`,
@@ -503,18 +507,17 @@ tests in `src/lib/in-sandbox-view.test.ts`, `src/lib/worker-globals.test.ts`, `s
 - **Rendering cost on the host's thread** wherever the view shares it (Firefox, WebKit, Android, Chromium without
   sandboxed-iframe isolation): each apply is host-thread work there, and so is every CSS animation it leaves running
   (`allowAnimations`). Flow control bounds it to one apply at a time, the budgets bound the common cases, but what laying out
-  and painting it costs is not bounded: CSS is not read by the renderer, and a filter list on many elements costs their
+  and painting it costs is not bounded: the renderer reads CSS only for its URLs, and a filter list on many elements costs their
   product (S42, accepted). Strict mode protects confidentiality and egress; the host page's availability is not protected
   wherever the view shares the host's thread, and cooperative mode is no better there. The bound and the list of what is
   outside it are in [API.md, "The view's cost to the host page"](API.md#the-views-cost-to-the-host-page). The watchdog does
   not count host stalls against the guest; the bound on termination is the budget plus one apply.
-- **CSS exfiltration** within the policy (style-based probing of the view's own content, requests to allowed origins); the
-  policy governs it.
+- **CSS probing** of the view's own content by style; CSS makes no network request in the view, so it reaches nothing.
 - **The browser's own worker reports** are per engine (WebKit raises no violations in workers): what remains of them past
   the request gate, such as a redirect the browser refuses.
 - **A worker that ends itself** (`close()`) or crashes is detected only by the opt-in watchdog.
-- **Memory, timing side channels, UI spoofing** inside the element's box, and same-site cookies on requests to allowed origins
-  (every mode).
+- **Memory, timing side channels, UI spoofing** inside the element's box, and the cookies a WebSocket handshake to a listed
+  `wss://` origin carries in some engines (every mode; the view's loads carry none).
 - **Programming model.** No inline guest `<script>`, no nested frames, no `srcset`/`style` file references, no module graph;
   UI updates are whole-subtree renders and coarse events.
 

@@ -9,7 +9,7 @@
 
 import { moduleSpecifierEdits, VIRTUAL_ROOT } from './module-specifiers';
 import type { Complete, Holds } from './utils';
-import { cssUrlReferences } from './css-references';
+import { cssReferences, cssUrlReferences } from './css-references';
 import { virtualPathOf } from './markup-references';
 import { admits, type LoadKindName } from './load-kinds';
 
@@ -727,6 +727,92 @@ function utf8Length(source: string, from: number, to: number): number {
         else length += 3;
     }
     return length;
+}
+
+/** A registered stylesheet the strict view gets without its network URLs, or not at all (viewStylesheets). */
+export interface ViewStylesheetDrop {
+    path: string;
+    /** The network URLs dropped, as written; empty when the whole file was left out. */
+    urls: string[];
+    /** Why the whole file was left out, or null when only its network URLs went. */
+    unreadable: string | null;
+}
+
+// Whether `url` is of an origin in `keep`, as the URL parser serialises it.
+function keptOrigin(url: string, keep: readonly string[]): boolean {
+    if (keep.length === 0) return false;
+    try {
+        return keep.includes(new URL(url.trim()).origin);
+    } catch {
+        return false;
+    }
+}
+
+// The labels of UTF-8 (Encoding Standard), and the UTF-16 ones, which a stylesheet's @charset reads as UTF-8 (CSS Syntax).
+const UTF8_CHARSETS = ['unicode-1-1-utf-8', 'unicode11utf8', 'unicode20utf8', 'utf-8', 'utf8', 'x-unicode20utf8', 'utf-16be', 'utf-16le'];
+// The @charset rule as the browser reads it: these bytes at the very start of the file (CSS Syntax, the fallback encoding).
+const CHARSET_RULE = /^@charset "([^"]{0,1014})";/;
+
+/**
+ * Strict mode's registered stylesheets as the view gets them (S74, BD2:ISO-2; docs/research/21_crossorigin_loads/README.md): without a network URL. No attribute
+ * reaches a load that CSS makes, so it would carry the listed origin's cookies (Firefox, WebKit); every `url()`,
+ * `@import`, `image-set()` and `@font-face` source with an absolute http: or https: URL (cssReferences, `network`
+ * scope) becomes `""` through the snapshot's own edits, beside the slots of the references to registered files, which
+ * stay and become the view's blob: URLs. The browser must read the file as the tokenizer did, so a stylesheet that is
+ * not UTF-8, or whose `@charset` names another encoding, gets no URL in the view at all (its references fail closed).
+ * `entries` are the view's files (FileSnapshotEntry); every other entry is returned as it is. A URL of an origin in
+ * `keep` (`origins.withoutCors`) stays. Each stylesheet that lost something is in `dropped`, for the element's warning.
+ */
+export function viewStylesheets(entries: readonly FileSnapshotEntry[], keep: readonly string[] = []): { entries: FileSnapshotEntry[]; dropped: ViewStylesheetDrop[] } {
+    const out: FileSnapshotEntry[] = [];
+    const dropped: ViewStylesheetDrop[] = [];
+    for (const entry of entries) {
+        if (entry[1] !== 'text/css') {
+            out.push(entry);
+            continue;
+        }
+        const [path, type, base64] = entry;
+        const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+        let source: string;
+        try {
+            source = UTF8.decode(bytes);
+        } catch {
+            dropped.push({ path, urls: [], unreadable: 'it is not UTF-8' });
+            continue;
+        }
+        const charset = CHARSET_RULE.exec(source);
+        if (charset && !UTF8_CHARSETS.includes(charset[1]!.trim().toLowerCase())) {
+            dropped.push({ path, urls: [], unreadable: 'its @charset names an encoding other than UTF-8' });
+            continue;
+        }
+        const slots = entry[3] ?? [];
+        const taken = (start: number, end: number) => {
+            for (let i = 0; i < slots.length; i += 3) if ((slots[i] as number) < end && start < (slots[i + 1] as number)) return true;
+            return false;
+        };
+        const toBytes = utf8Offsets(source);
+        const drops: [start: number, end: number][] = [];
+        const urls: string[] = [];
+        for (const reference of cssReferences(source, 'network')) {
+            const start = toBytes(reference.start);
+            const end = toBytes(reference.end);
+            if (taken(start, end)) continue; // a registered file's slot (https://vfs.invalid/…): the view's blob: URL
+            if (keptOrigin(reference.url, keep)) continue; // origins.withoutCors
+            drops.push([start, end]);
+            urls.push(reference.url);
+        }
+        if (drops.length === 0) {
+            out.push(entry);
+            continue;
+        }
+        const edits: [number, number, string | FileSlot][] = [];
+        for (let i = 0; i < slots.length; i += 3) edits.push([slots[i] as number, slots[i + 1] as number, slots[i + 2] as string | FileSlot]);
+        for (const [start, end] of drops) edits.push([start, end, '""']);
+        edits.sort((a, b) => a[0] - b[0]);
+        out.push([path, type, base64, edits.flat()]);
+        dropped.push({ path, urls, unreadable: null });
+    }
+    return { entries: out, dropped };
 }
 
 interface ParsedFile {

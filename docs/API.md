@@ -135,9 +135,10 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 
 ### `origins`
 
-<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d2622797099fbb86493659f5 -->
+<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d2622797099fbb86eeaa59f5 -->
 The guest's policy is one fixed template per mode. `origins` adds exact origins to six of its directives, one list per
-kind of load, and can change nothing else:
+kind of load, and can change nothing else (its one other list, [`withoutCors`](#origins-withoutcors), opens no
+directive):
 
 ```js
 sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.example.com'], images: ['https://cdn.example.com'] } });
@@ -146,10 +147,10 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 | Kind | Directive | What loads from it |
 | :--- | :--- | :--- |
 | `connect` | `connect-src` | `fetch()`, `XMLHttpRequest`, `WebSocket` (it needs its own `wss://` entry), each through the library's [request gate](#the-request-gate). In cooperative mode also `EventSource` and `sendBeacon()`, which the browser's policy alone governs; the worker of strict and worker mode has neither. |
-| `images` | `img-src` | Images, CSS backgrounds, icons. |
-| `styles` | `style-src` | Stylesheets: `<link rel=stylesheet>`, `@import`. Inline styles are always allowed. |
-| `fonts` | `font-src` | `@font-face` fonts. |
-| `media` | `media-src` | Audio, video, text tracks. |
+| `images` | `img-src` | Images, CSS backgrounds, icons. In strict mode `<img>`, `srcset` and `<picture>` only, which the origin must answer with CORS ([below](#the-views-loads)). |
+| `styles` | `style-src` | Stylesheets: `<link rel=stylesheet>`, `@import`. Inline styles are always allowed. In strict mode nothing loads from it ([below](#the-views-loads)). |
+| `fonts` | `font-src` | `@font-face` fonts. In strict mode nothing loads from it ([below](#the-views-loads)). |
+| `media` | `media-src` | Audio, video, text tracks. In strict mode the origin must answer with CORS ([below](#the-views-loads)). |
 | `scripts` | `script-src` | `<script src>`, modules, `importScripts()`. Not in strict mode. |
 
 - **An entry is one exact origin**, `https://host[:port]`; in `connect` also `wss://host[:port]`; plain `http://` only
@@ -181,9 +182,41 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   policy, and reports nothing here.
 - **`fetch()` and `XMLHttpRequest` send no credentials, on any engine.** Every `fetch()` is made with
   `credentials: 'omit'`, whatever the guest asks for, and `withCredentials` stays `false`. A `WebSocket` handshake cannot
-  be stripped: it carries the cookies the engine attaches ([table below](#cookies-by-engine)), and so does a load of the
-  guest's markup or CSS. A server behind a listed `wss://` origin must check the `Origin` header (a sandbox sends
-  `null`), as any WebSocket server must.
+  be stripped: it carries the cookies the engine attaches ([table below](#cookies-by-engine)), and so does, in
+  cooperative mode, a load of the guest's markup or CSS. A server behind a listed `wss://` origin must check the
+  `Origin` header (a sandbox sends `null`), as any WebSocket server must.
+- <a id="the-views-loads"></a>**Strict mode's view loads without credentials, on every engine, so a listed `images` or
+  `media` origin must answer with CORS.** The renderer gives every `<img>`, `<video>`, `<audio>` and `<link>` it keeps
+  `crossorigin="anonymous"` before the element enters the document (the guest's own value, `use-credentials` included,
+  is replaced), so each of their loads (`src`, `srcset`, a `<picture>`'s `<source>`, a media element's `<source>` and
+  `<track>`) is a CORS request with no cookie of any kind, no HTTP authentication and `Origin: null`. The origin must
+  answer `Access-Control-Allow-Origin: *` (or `null`); for media WebKit also needs `206` answers to `Range` requests,
+  which a seek uses. A load that fails (no `Access-Control-Allow-Origin`, or a missing or undecodable file: the page
+  cannot tell which) is reported as a [`violation`](#violation--sandboxviolation) with the directive of its kind
+  (`img-src`, `media-src`) and its URL, within the view's cap. The loads no attribute reaches are dropped before
+  insertion: a `poster` with an `https:` or `http:` URL (one engine fetches a poster without CORS, whatever the video says;
+  a registered file stays), and every `https:` or `http:` URL in CSS (`url()`, `@import`, `image-set()`, `@font-face`
+  `src`, any string that holds one), in a `style` attribute, a `<style>` or text set into one, each reported as a
+  `violation` of its directive (`img-src`, `style-src`, `font-src`). A registered stylesheet reaches the view without its
+  network URLs as well, with one warning per file (its references to registered files stay; one that is not UTF-8, or
+  whose `@charset` names another encoding, gets no URL in the view). So nothing loads from `styles` or `fonts` in strict
+  mode: register the stylesheets and fonts the guest needs. Cooperative mode is unchanged: the guest's document makes
+  its own loads, with the cookies the engine attaches.
+- <a id="origins-withoutcors"></a>**`withoutCors`: the origins strict mode's view loads the classic way.** A list of
+  origins, not a kind: it opens no directive, and an entry loads only what `images`, `media`, `styles` or `fonts` also
+  lists (one that none lists is kept, with a warning). For a URL of such an origin the view does not set `crossorigin`
+  (on an `<img>`, `<video>` or `<audio>` whose own URLs are all of such origins; an `<img>` in a `<picture>` always gets
+  it, and a `<source>` or `<track>` of a media element without it keeps only such a URL), and keeps a `poster` and the
+  CSS `url()`, `@import`, `image-set()` and `@font-face` URLs that name it, so a server that sends no
+  `Access-Control-Allow-Origin` still serves the guest. Never the host site's cookies: an origin on the host page's
+  site is dropped from `withoutCors` as from every list. **Do not list an origin whose cookie-authenticated GET endpoints
+  act on a request**: the guest chooses the URL. Entries follow the rules of the other lists; outside strict mode the
+  list is ignored, with a warning. The cost ([by engine](#cookies-by-engine)):
+
+<!-- generated:begin without-cors-cost -->
+**A load of the view to an origin of `withoutCors` carries that origin's own cookies where the engine attaches them to a third-party request:** Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured).
+<!-- generated:end -->
+
 - **The host page's `connect-src` narrows `connect` and the bridge's `allow` on every engine.** The library applies your
   page's policy to the two lists itself, before it writes the guest's and the bridge's policies: an origin your
   `connect-src` (or `default-src`) does not admit is dropped with a warning. See
@@ -192,8 +225,8 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
   narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
 - **An origin on the host page's site is dropped in every mode**, with one warning per kind that names the kind and each
-  such origin. A WebSocket handshake or a load of the guest's markup or CSS to it can carry the host site's cookies, as
-  the [table below](#cookies-by-engine) says, so use [`fetchBridge`](#fetchbridge) for an API that knows the user: it
+  such origin. A WebSocket handshake, or in cooperative mode a load of the guest's markup or CSS, to it can carry the
+  host site's cookies, as the [table below](#cookies-by-engine) says, so use [`fetchBridge`](#fetchbridge) for an API that knows the user: it
   sends no credentials in any engine.
 - **The host page's site is decided from the page's origin by one rule, with no probe and no public-suffix list.** The
   page's origin is `self.origin` of the realm the element runs in, so an element in a same-origin `srcdoc` or `about:blank`
@@ -216,9 +249,10 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 
 <a id="cookies-by-engine"></a>
 The cookies the browser would send with a request of the sandbox that the library cannot strip, by engine, for the
-requests [listed below the table](#cookie-carriers) (`fetch()` and `XMLHttpRequest` carry none; this is why an origin on
-the host page's site is dropped; the warning is written from the same table; every wrapper frame is `credentialless`,
-which only some engines honour):
+requests [listed below the table](#cookie-carriers) (`fetch()`, `XMLHttpRequest` and every load of strict mode's view
+carry none, on any engine, but a view load to an origin of `withoutCors`; this is why an origin on the host page's site
+is dropped; the warning is written from the same table; every wrapper frame is `credentialless`, which only some
+engines honour):
 
 <!-- generated:begin cookie-facts -->
 | Engine | To an origin on the host page's site | To an origin on another site | Narrower with | Found by |
@@ -237,7 +271,7 @@ has all of them. Each row is made on every engine by `test/e2e/cookies.spec.ts`:
 | Request | Where | Why the library cannot strip it |
 | :--- | :--- | :--- |
 | A WebSocket handshake | every mode | The browser makes the handshake and attaches the cookies by site; the gate can refuse it, not strip it, so a server behind a listed `wss://` origin must check `Origin` |
-| A load of the guest's markup or CSS (an image, a stylesheet, a font, media) | every mode | The engine makes the load for the document that holds it |
+| A load of the guest's markup or CSS (an image, a stylesheet, a font, media) | cooperative mode only | The engine makes the load for the document that holds it. Strict mode's view makes each of its loads without credentials (`crossorigin="anonymous"`; no network URL in CSS or a poster), but one to an origin of `origins.withoutCors`, which carries that origin's own cookies (never the host site's) |
 | A `navigator.sendBeacon(url, data)` call | cooperative mode only | A credentialed POST. The gate covers `fetch()`, `XMLHttpRequest` and `WebSocket`; this maker is not among them, and the strict and worker-mode worker has none |
 | An `EventSource` made with `{ withCredentials: true }` | cooperative mode only | The guest chooses `withCredentials`; the gate does not cover `EventSource`, and the strict and worker-mode worker has none |
 | An `<a ping>` click | cooperative mode only | A POST made by the browser when the link is followed; Firefox sends no ping by default (Firefox sends none) |
@@ -1200,15 +1234,18 @@ goes with its content.
 **Attributes**: `id`, `class`, `style`, `title`, `lang`, `dir`, `hidden`, `tabindex`, `role`, `translate`, `inert`,
 `spellcheck`, `inputmode`, `enterkeyhint`, `autocapitalize`, `data-*` and `aria-*` everywhere, and per element the
 ones it needs (form controls, tables, lists, media, links; SVG geometry and presentation; MathML presentation).
-Never an event handler. `src`, `srcset` and `poster` keep a registered file's path, a relative URL (which loads
-nothing), or an `https:` or `http:` URL of an origin [`origins`](#origins) lists for that load (`images` for `img`,
-`srcset` and `poster`, `media` for `audio`, `video`, their `source` and `track`), never `data:` or `javascript:`. A URL
-the view's policy might refuse is dropped before insertion, so the browser never loads or refuses it: an `https:` or
-`http:` URL is kept only when its scheme, host and port are exactly those of a listed origin (an `http:` URL of a listed
-`https:` origin is refused by every engine, so it is dropped). So write URLs in the form you list them. A dropped `https:` or `http:` URL is
+Never an event handler. `src` and `srcset` keep a registered file's path, a relative URL (which loads nothing), or an
+`https:` or `http:` URL of an origin [`origins`](#origins) lists for that load (`images` for `img` and `srcset`, `media`
+for `audio`, `video`, their `source` and `track`), never `data:` or `javascript:`; `poster` keeps a registered file's
+path or a relative URL only. A URL the view's policy might refuse is dropped before insertion, so the browser never
+loads or refuses it: an `https:` or `http:` URL is kept only when its scheme, host and port are exactly those of a listed
+origin (an `http:` URL of a listed `https:` origin is refused by every engine, so it is dropped). So write URLs in the
+form you list them. Every `img`, `video`, `audio` and `link` gets `crossorigin="anonymous"`, the guest's own value
+replaced, so its loads carry no credentials ([The view's loads](#the-views-loads)). A dropped `https:` or `http:` URL is
 reported as a `violation` with the directive and the URL (without credentials or fragment), within the same cap; a URL
-of any other scheme is dropped without a report (no engine would request it). CSS is not rewritten: a URL a stylesheet
-or a `style` attribute names (`url()`, `image-set()`) is left to the browser, which refuses and reports a refused one. SVG `fill`, `stroke`, `clip-path` and `mask`
+of any other scheme is dropped without a report (no engine would request it). CSS keeps no `https:` or `http:` URL: each
+one a `style` attribute or a `<style>` names (`url()`, `@import`, `image-set()`, `@font-face`, a string) becomes `""`,
+reported the same way, and a `<style>` keeps its text only. SVG `fill`, `stroke`, `clip-path` and `mask`
 reference only `url(#id)`. Link clicks and form submissions navigate nowhere.
 
 Not available in strict mode: `use`, markers, SVG filters, SVG `image`, `foreignObject` and animation; `canvas`,
@@ -1321,7 +1358,7 @@ a mode. [ADR-005](ADR-005-strict-mode.md)
 (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation; desktop Chromium 127+ runs it in a
 process apart from the page's, which the page's other sandboxes can share): there the view's cost is the bound stated in [The view's cost to the host page](#the-views-cost-to-the-host-page),
 and what it lists as outside it. Cooperative mode is no better there. Also
-CSS within what the policy allows, the worker's own `violation` reports beyond the [request gate's](#the-request-gate) (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the cookies a WebSocket handshake or a rendered load carries in some engines (none to a same-site origin, which no mode admits; [by engine](#cookies-by-engine)).
+CSS probing the view's own content (CSS loads nothing from the network there), the worker's own `violation` reports beyond the [request gate's](#the-request-gate) (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the cookies a WebSocket handshake carries in some engines (none to a same-site origin, which no mode admits; [by engine](#cookies-by-engine)); the view's loads carry none ([The view's loads](#the-views-loads)).
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;

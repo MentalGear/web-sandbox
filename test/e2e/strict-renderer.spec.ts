@@ -91,10 +91,11 @@ test.describe('the renderer is an allowlist', () => {
             pop: ['id=pop'],
             frm: ['id=frm', 'name=f'],
             inp: ['id=inp', 'name=i', 'type=image'],
-            img: ['alt=a', 'class=c', 'id=img', 'referrerpolicy=no-referrer', 'src=https://x.example/i.png', 'style=color:red', 'width=1'],
-            dataimg: ['alt=d', 'id=dataimg', 'referrerpolicy=no-referrer'],
-            srcsetimg: ['alt=s', 'id=srcsetimg', 'referrerpolicy=no-referrer'],
-            jsimg: ['alt=j', 'id=jsimg', 'referrerpolicy=no-referrer'],
+            // crossorigin is the renderer's own, the guest's use-credentials replaced (RENDER_CROSSORIGIN_ELEMENTS, S74)
+            img: ['alt=a', 'class=c', 'crossorigin=anonymous', 'id=img', 'referrerpolicy=no-referrer', 'src=https://x.example/i.png', 'style=color:red', 'width=1'],
+            dataimg: ['alt=d', 'crossorigin=anonymous', 'id=dataimg', 'referrerpolicy=no-referrer'],
+            srcsetimg: ['alt=s', 'crossorigin=anonymous', 'id=srcsetimg', 'referrerpolicy=no-referrer'],
+            jsimg: ['alt=j', 'crossorigin=anonymous', 'id=jsimg', 'referrerpolicy=no-referrer'],
             a: ['href=about:blank#', 'hreflang=en', 'id=a', 'referrerpolicy=no-referrer'],
             div: ['aria-label=l', 'data-k=v', 'dir=ltr', 'hidden=', 'id=glob', 'lang=en', 'role=note', 'tabindex=0', 'title=t'],
             custom: ['data-x=1', 'id=custom'],
@@ -130,7 +131,7 @@ test.describe('the renderer is an allowlist', () => {
             'svg', 'defs', 'linearGradient', 'stop', 'g', 'path', 'circle', 'text', 'math', 'mfrac', 'mi', 'mn', 'my-card', 'style', 'p']);
         expect(read).toMatchObject({
             n: 'id maxlength name placeholder required type', s: 'id name', c: 'checked id name type', b: 'id name type value', f: 'autocomplete id name',
-            d: 'id open', dl: 'id open', pr: 'id max value', card: 'class data-id id', v: 'controls id muted width', icon: 'aria-label height id role viewBox width',
+            d: 'id open', dl: 'id open', pr: 'id max value', card: 'class data-id id', v: 'controls crossorigin id muted width', icon: 'aria-label height id role viewBox width',
             logo: true, styled: 'rgb(0, 0, 255)',
         });
         await expect.poll(() => inView(page, browserName, `document.getElementById('logo').naturalWidth`)).toBe(1);
