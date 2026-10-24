@@ -88,8 +88,10 @@ sandbox.load('<h1>Hello</h1>');     // strict mode, the default: shown, and no s
 
 Importing the module registers nothing, so you choose the tag name. The element is a block by default; give it a
 height. The package is private and not published yet ([D1](docs/BACKLOG.md#bl-d1)), so `import … from 'web-sandbox'`
-resolves only in a project that links or packs a checkout; from a checkout, import `./src/index.ts`. `bun run dev` serves the
-playground on port 4444 only (`strictPort`).
+resolves only in a project that links or packs a checkout; from a checkout, import `./src/index.ts`, or build the package
+(`bun run build:lib`) and import `dist/index.js`: only the built package has the same `viewScriptHash()` in a build step and in
+the browser ([Host page policy](docs/API.md#host-page-policy)). `bun run dev` serves the playground on port 4444 only
+(`strictPort`).
 
 **Your page's own policy applies inside the sandbox.** Its frames are `srcdoc` documents, which inherit the host
 page's Content-Security-Policy, Trusted Types and Cross-Origin-Embedder-Policy. A host policy that refuses what the

@@ -1632,7 +1632,7 @@ policy must allow:
 - **The view bootstrap's hash** is `viewScriptHash()`, the very value the element puts in the view's `script-src`, and in
   the fetch bridge's frame's: the library has one hashed bootstrap, which runs the view in strict mode and, with
   `fetchBridge`, the frame that makes the bridge's requests in every mode, so one hash admits both.
-  It is constant for one version of the package (the bootstrap is a string literal of the package's bundle, so your
+  It is constant for one version of the built package (the bootstrap is a string literal of the package's bundle, so your
   bundler or minifier does not change it), and it changes with the package's version, so it is not listed here: read
   it in a build step (importing the package needs no DOM, in Node or Bun) and put it in your page's policy:
 
@@ -1640,6 +1640,12 @@ policy must allow:
   import { viewScriptHash } from 'web-sandbox';
   const policy = `script-src 'self' ${viewScriptHash()}; worker-src blob:`; // viewScriptHash() is 'sha256-…', quoted
   ```
+
+  The sources are not the built package: a project that bundles `src/index.ts` from a checkout has no such literal, and its
+  bundler prints the bootstrap's functions its own way, so a build step that imports the sources computes another hash
+  than the page's bundle does, and a policy that lists it refuses the view's startup script. `viewScriptHash()` warns, once,
+  where it runs from the sources. From a checkout, build the package (`bun run build:lib`) and import `dist/index.js` in
+  both places, or read the hash in the page that runs the sources.
 
   The wrapper style's and the animation stylesheet's hashes are constants of the library, listed in the table above.
 

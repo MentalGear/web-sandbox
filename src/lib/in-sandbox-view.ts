@@ -2951,6 +2951,14 @@ let cachedText: string | null = null;
 let cachedHash: string | null = null;
 
 /**
+ * What viewScriptHash() warns, once, when the library runs from its sources and not from the built package (BD3:NEW-1):
+ * the bootstrap's text is then the functions as the bundler or runtime prints them, so the hash differs between a build
+ * step and the page's bundle of the same sources, and the page's policy would refuse the view's startup script.
+ */
+export const SOURCES_HASH_WARNING = "viewScriptHash() was computed from the library's sources, not from the built package: a bundler prints the bootstrap's functions its own way, so a build step that imports the sources gets another hash than the page that runs them, and a host policy that lists it refuses the view's startup script. Import the built package (dist/index.js, `bun run build:lib`), or read this value in the page that runs the sources (docs/API.md#host-page-policy).";
+let warnedSourcesHash = false;
+
+/**
  * The role attribute of the bootstrap's script element in the fetch bridge's frame (bridge-frame.ts,
  * buildBridgeDocument). The library has one hashed bootstrap, so one hash in the host page's policy admits both of its
  * documents (BD1:ISO-1): in a script element with this attribute it runs the bridge's frame (in-bridge-frame.ts), in any
@@ -2991,7 +2999,9 @@ export function viewBootstrapSource(options: ViewOptions): string {
  * importing the package) is the one the browser computes for the script the element injects. Hashing the functions'
  * Function.prototype.toString() would give one hash plain and another minified, and a host page that listed
  * the build-time hash would end with "the sandbox's startup script did not run". Undefined where the sources run unbundled
- * (the dev server, the unit tests): there the text is built from the functions, as it always matches the page serving it.
+ * (the dev server, the unit tests): there the text is built from the functions, as it always matches the page serving it. A consumer that
+ * bundles the sources has no literal either: its transpiler prints the functions its own way, so a build step that
+ * imports the sources computes another hash than the page's bundle does. viewScriptHash() says so (BD3:NEW-1).
  */
 declare const __WEB_SANDBOX_VIEW_BOOTSTRAP__: string | undefined;
 
@@ -3020,13 +3030,22 @@ export function viewBootstrapHash(): string {
  * @remarks
  * It is the very value the element puts in the `script-src` of both documents, and both inherit the host page's policy
  * (docs/API.md#host-page-policy), so one hash admits them both: the view in strict mode, and with `fetchBridge` the
- * frame that makes the bridge's requests, in every mode (BD1:ISO-1). The bootstrap is a string literal of the bundle, so the hash is the same in a build
- * step (importing the package needs no DOM) and in the browser, however the embedder's app is bundled or minified. It
- * changes only with the package's version.
+ * frame that makes the bridge's requests, in every mode (BD1:ISO-1). In the built package the bootstrap is a string
+ * literal of the bundle, so the hash is the same in a build step (importing the package needs no DOM) and in the browser,
+ * however the embedder's app is bundled or minified. It changes only with the package's version.
+ *
+ * The sources have no such literal: a project that bundles `src/index.ts` (not the built package) gets the hash of the
+ * functions as its own transpiler prints them, which a build step that imports the sources does not compute. There the
+ * value is right only where it is read, in the page that runs the sources, and the first call in a process or page
+ * warns (BD3:NEW-1).
  *
  * @returns The hash source, `'sha256-…'`, quotes included.
  */
 export function viewScriptHash(): string {
+    if (typeof __WEB_SANDBOX_VIEW_BOOTSTRAP__ !== 'string' && !warnedSourcesHash) {
+        warnedSourcesHash = true;
+        console.warn(SOURCES_HASH_WARNING);
+    }
     return viewBootstrapHash();
 }
 

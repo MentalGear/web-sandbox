@@ -554,8 +554,9 @@ a finding").
 *Newcomer*
 - [x] BD1:NEW-2: cooperative mode without `allow-scripts` reaches `ready` with no guest (the TSDoc says the frame's
   load, README and API.md say the check-in). **[docs]** and TSDoc
-- [ ] BD1:NEW-3: `viewScriptHash()` does not match the view when the package runs from source under Vite (fails
-  closed; `dist` matches).
+- [x] BD1:NEW-3: `viewScriptHash()` does not match the view when the package runs from source under Vite (fails
+  closed; `dist` matches). Done (BD3:NEW-1): `viewScriptHash()` warns, once, where the baked literal is absent; the
+  README and API.md say that only the built package has one hash (`test/unit/view-script-hash-sources.test.ts`).
 - [ ] BD1:NEW-4: some config refusals name no key (`origins.images: 'https://x'` gives "(TypeError)"); list options are
   dropped with a warning or terminate, inconsistently.
 - [ ] BD1:NEW-5: silent config typos (`watchdogTimout`, `unsafeCapablities`); `fetchBridge` without `allow` warns not.
