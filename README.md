@@ -385,7 +385,8 @@ sandbox.addEventListener('fetch', (e) => console.log(e.detail.method, e.detail.u
     `Referer`, and never follow redirects. Your page's `fetch` never makes them: its Service Worker never answers
     them (from your app's cache, say) and a wrapper of your `fetch` (an auth header, a tracing header) never applies
     to them. Only `method`, `headers` and `body` are read from `init`.
-    Methods: `GET`, `HEAD`, `POST`, plus `PUT`, `PATCH`, `DELETE` if listed in `methods`. Headers:
+    Methods: `GET`, `HEAD` and `POST`; `methods` replaces that list (`['PUT']` allows `PUT` alone), from `GET`, `HEAD`, `POST`,
+    `PUT`, `PATCH` and `DELETE`. Headers:
     `accept`, `accept-language`, `content-language`, `content-type`, plus names listed in `headers`
     (`Authorization` only that way; `Cookie` never). A header the guest may not set refuses the request.
 *   **Bounded.** The response body is capped at `maxBytes` (1 MiB by default, at most 32 MiB): a larger
@@ -583,7 +584,7 @@ sandbox.setConfig({ entry: 'main.js', watchdogTimeout: 2000 });
     spent), loads at most 10 000 distinct URLs in its life, and ends the sandbox when an operation
     takes longer than 2 s for the second time within 5 minutes (the first is charged in full, and logged once); it shows only files that never open as
     a document (no SVG, HTML or XML; no `data:` images); a URL in rendered markup is kept only when it names a listed
-    origin exactly (an image's `http:` URL may name a listed `https:` one), else dropped before the browser sees it,
+    origin exactly (an `http:` URL of a listed `https:` origin is dropped: no engine admits it), else dropped before the browser sees it,
     and an `http(s)` one reported as a `violation`; guest code has no
     `Worker`, no `RTCPeerConnection` (no WebRTC at all), no document, and no host URL (no request carries a
     `Referer`); the worker keeps only allowlisted globals, so it can request only through `fetch`, `XMLHttpRequest` and
