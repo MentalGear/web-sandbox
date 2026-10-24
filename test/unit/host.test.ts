@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ALLOWED_CAPABILITIES } from '@src/csp-directives';
+import { policyNotGiven } from '@src/lib/csp/host-connect';
 
 describe('WebSandbox Security Configuration', () => {
   it('should have ALLOWED_CAPABILITIES defined', () => {
@@ -54,7 +55,7 @@ describe('the guest policy built by the element: `origins` (ADR-007)', () => {
 
   it('each kind fills its directive and no other, in cooperative and worker mode, across reset()', async () => {
     for (const mode of ['cooperative', 'worker']) {
-      const el = await mount({ mode, origins: { scripts: ['https://cdn.example'], images: ['https://img.example'], connect: ['https://api.example', 'https://ws.example', 'wss://ws.example'] } });
+      const el = await mount({ mode, origins: { scripts: ['https://cdn.example'], images: ['https://img.example'], connect: ['https://api.example', 'https://ws.example', 'wss://ws.example'] }, hostContentSecurityPolicy: false });
       el.reset();
       expect(frames(el).policy, mode).toBe(COOPERATIVE_DEFAULT
         .replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' https://cdn.example")
@@ -84,9 +85,9 @@ describe('the guest policy built by the element: `origins` (ADR-007)', () => {
 
   it('connectionsAllowed was removed: one warning per instance, ignored (no origin from it), the rest of the config applied', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const el = await mount({ mode: 'cooperative', connectionsAllowed: { 'img-src': ['https://img.example'], 'default-src': ['*'] }, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
+    const el = await mount({ mode: 'cooperative', connectionsAllowed: { 'img-src': ['https://img.example'], 'default-src': ['*'] }, origins: { connect: ['https://api.example'] }, hostContentSecurityPolicy: false, html: '<p id="kept">' });
     el.reset();
-    el.setConfig({ mode: 'cooperative', connectionsAllowed: null, origins: { connect: ['https://api.example'] }, html: '<p id="kept">' });
+    el.setConfig({ mode: 'cooperative', connectionsAllowed: null, origins: { connect: ['https://api.example'] }, hostContentSecurityPolicy: false, html: '<p id="kept">' });
     expect(el.state).toBe('loading');
     expect(frames(el).policy).toBe(COOPERATIVE_DEFAULT.replace("connect-src 'none'", 'connect-src https://api.example'));
     expect(el._config.html).toBe('<p id="kept">');
@@ -151,15 +152,37 @@ describe("the host page's policy applied to the connect lists (hostContentSecuri
     warn.mockRestore();
   });
 
-  it('false skips it, a policy that refuses nothing keeps every origin, and a page that was not read (jsdom has no frame to read from) narrows nothing and says nothing', async () => {
+  it('false (the page sends none) and a policy that refuses nothing keep every origin, and say nothing', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    for (const hostContentSecurityPolicy of [false, 'connect-src *', "img-src 'none'", '', undefined]) {
+    for (const hostContentSecurityPolicy of [false, 'connect-src *', "img-src 'none'", '']) {
       warn.mockClear();
       const el = await mount({ mode: 'cooperative', ...CONFIG, hostContentSecurityPolicy });
       expect(frames(el).policy, String(hostContentSecurityPolicy)).toContain('connect-src https://api.example https://ws.example wss://ws.example http://127.0.0.1:3001;');
       expect(bridgePolicy(el), String(hostContentSecurityPolicy)).toContain('connect-src https://api.example https://other.example;');
       expect(dropped(warn), String(hostContentSecurityPolicy)).toEqual([]);
-      expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('could not be read')), String(hostContentSecurityPolicy)).toEqual([]);
+      expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('hostContentSecurityPolicy was not given')), String(hostContentSecurityPolicy)).toEqual([]);
+      el.remove();
+    }
+    warn.mockRestore();
+  });
+
+  it('left out, in every mode: every connect and bridge origin is dropped from the guest policy and the bridge frame\'s, with one warning that says what to pass, across resets (BD4:CHL-1, BD4:CHL-2)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const mode of ['cooperative', 'worker', 'strict']) {
+      warn.mockClear();
+      const el = await mount({ mode, ...CONFIG });
+      el.reset();
+      el.setConfig({ mode, ...CONFIG, html: '<p>again</p>' });
+      const connect = /connect-src ([^;]*);/.exec(mode === 'strict' ? el.shadowRoot!.querySelector('iframe')!.srcdoc : frames(el).policy)![1];
+      expect(connect, mode).not.toMatch(/example|127\.0\.0\.1/);
+      expect(bridgePolicy(el), mode).toContain("connect-src 'none';");
+      expect(el._reach().origins.connect, mode).toEqual([]);
+      expect(el._reach().fetchPolicy.allow, mode).toEqual([]);
+      const notGiven = warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('hostContentSecurityPolicy was not given'));
+      // Strict mode has already dropped the wss:// entry (it opens no WebSocket), so the warning names the rest.
+      const listed = mode === 'strict' ? CONFIG.origins.connect.filter(o => !/^wss?:/.test(o)) : CONFIG.origins.connect;
+      expect(notGiven, mode).toEqual([policyNotGiven({ connect: listed, allow: CONFIG.fetchBridge.allow })]);
+      expect(el.shadowRoot!.querySelectorAll('iframe').length, `${mode}: the wrapper and the bridge's frame, and no other`).toBe(2);
       el.remove();
     }
     warn.mockRestore();
@@ -174,11 +197,13 @@ describe("the host page's policy applied to the connect lists (hostContentSecuri
     warn.mockRestore();
   });
 
-  it('the configured lists are kept as they are: dropping is per build, so a later config without the option reads the lists whole', async () => {
+  it('the configured lists are kept as they are: dropping is per build, so a later config with false has the lists whole', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const el = await mount({ mode: 'cooperative', ...CONFIG, hostContentSecurityPolicy: "connect-src 'none'" });
     expect(frames(el).policy).toContain("connect-src 'none';");
     el.setConfig({ mode: 'cooperative', ...CONFIG });
+    expect(frames(el).policy).toContain("connect-src 'none';");
+    el.setConfig({ mode: 'cooperative', ...CONFIG, hostContentSecurityPolicy: false });
     expect(frames(el).policy).toContain('connect-src https://api.example https://ws.example wss://ws.example http://127.0.0.1:3001;');
     el.remove();
     warn.mockRestore();

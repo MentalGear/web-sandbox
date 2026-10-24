@@ -7,8 +7,7 @@ import { CONTEXT_ENGINES, INHERITED_CONTEXT } from '@src/lib/inherited-context';
 
 /**
  * The engine-facts table for `connect-src` (src/lib/connect-facts.ts): the one place that says which engine narrows a
- * sandbox document by the host page's policy, which one lets a `wss://` source admit `https://`, and what the read's decoy
- * logs. The docs are rendered from it; no document states an engine's behaviour in words of its own, which is what this
+ * sandbox document by the host page's policy, and which one lets a `wss://` source admit `https://`. The docs are rendered from it; no document states an engine's behaviour in words of its own, which is what this
  * file keeps.
  */
 
@@ -21,23 +20,21 @@ describe('CONNECT_ENGINE_FACTS', () => {
             const facts = CONNECT_ENGINE_FACTS[engine];
             expect(facts.name, engine).not.toBe('');
             expect(facts.measured, engine).toMatch(/^2026-10-23, Playwright 1\.58\.1/);
-            for (const fact of ['selfAdmitsOtherOrigins', 'upgradedSchemeWithPort', 'wssSourceAdmitsHttps', 'decoyRefused', 'decoyLogsWhenAdmitted'] as const) expect(typeof facts[fact], `${engine} ${fact}`).toBe('boolean');
+            for (const fact of ['selfAdmitsOtherOrigins', 'upgradedSchemeWithPort', 'wssSourceAdmitsHttps'] as const) expect(typeof facts[fact], `${engine} ${fact}`).toBe('boolean');
             expect(BARE_HOST_READINGS as readonly string[], engine).toContain(facts.bareHostAdmitted);
         }
     });
 
-    it("is what was measured: only WebKit lets a 'self' source admit other origins and a wss:// source admit https://; every engine refuses the decoy", () => {
+    it("is what was measured: only WebKit lets a 'self' source admit other origins and a wss:// source admit https://", () => {
         expect(enginesWhere('selfAdmitsOtherOrigins')).toEqual(['WebKit']);
         expect(enginesWhere('upgradedSchemeWithPort', false)).toEqual(['Chromium']);
         expect(Object.values(CONNECT_ENGINE_FACTS).map(facts => facts.bareHostAdmitted)).toEqual(['yes, not with a port', 'yes', 'no']);
         expect(enginesWhere('wssSourceAdmitsHttps')).toEqual(['WebKit']);
-        expect(enginesWhere('decoyRefused')).toEqual(['Chromium', 'Firefox', 'WebKit']);
-        expect(enginesWhere('decoyLogsWhenAdmitted')).toEqual(['Chromium', 'WebKit']);
     });
 
     it('the library does not rest on a fact about one engine: the rules it applies are not conditional on the table', () => {
         // src/ reads no engine: the table is for the docs and the e2e specs, which assert the same outcome on every engine
-        for (const file of ['src/host.ts', 'src/lib/csp/host-connect.ts', 'src/lib/host-csp.ts', 'src/lib/csp/origins.ts']) {
+        for (const file of ['src/host.ts', 'src/lib/csp/host-connect.ts', 'src/lib/csp/origins.ts']) {
             const code = readFileSync(path.join(root, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
             expect(code, file).not.toMatch(/CONNECT_ENGINE_FACTS|navigator\.userAgent|browserName/);
         }

@@ -6,8 +6,9 @@
  * Why the library does it: a sandbox document is a `srcdoc` frame and copies its parent's policy list, which narrows its
  * own, but the engines do not agree on what some of its sources admit there (CONNECT_ENGINE_FACTS, connect-facts.ts: a
  * `'self'` source admits other origins in one engine, a host without a scheme is read differently by each). So the
- * narrowing is not left to the browser. The policy's text is the page's own (the embedder's `hostContentSecurityPolicy`,
- * or the text a deliberate violation reports, host-csp.ts) and is read here by a parser of its own for one directive.
+ * narrowing is not left to the browser. The policy's text is the embedder's `hostContentSecurityPolicy`, and nothing
+ * else: no API returns a page's policy, and the library does not guess it from the page (BD4:CHL-1, BD4:CHL-2). It is
+ * read here by a parser of its own for one directive. hostReach is the one decision.
  *
  * The parser admits an origin only where every engine of the suite does (measured, test/e2e/connect-uniform.spec.ts): a
  * source an engine reads differently in a sandboxed frame admits nothing. So what it keeps is admitted everywhere, and what
@@ -55,7 +56,7 @@ export function connectSources(policy: string): ConnectSources {
 /**
  * A policy list as separate policies. A string is a serialized policy list as a header or a `<meta>` carries it:
  * policies separated by commas (`Content-Security-Policy: a, b` is two policies); a list is taken as it is, one policy
- * per entry (the texts a violation reports are one policy each).
+ * per entry.
  */
 export function splitPolicies(text: string | readonly string[]): string[] {
     const policies = typeof text === 'string' ? text.split(',') : text;
@@ -260,7 +261,7 @@ export const HOST_SOURCE_RULES: readonly HostSourceRule[] = [
 
 /**
  * The policies of a policy list as `connect-src` sources, ready to ask: a string (the embedder's
- * `hostContentSecurityPolicy`, header or meta syntax) or the texts a violation reported.
+ * `hostContentSecurityPolicy`, header or meta syntax) or a list of policy texts.
  */
 export function parseHostPolicies(text: string | readonly string[]): readonly ConnectSources[] {
     return Object.freeze(splitPolicies(text).map(connectSources));
@@ -312,47 +313,37 @@ export function narrowToHostPolicy(origins: OriginPolicy, fetchPolicy: FetchPoli
     return { origins: nextOrigins, fetchPolicy: nextFetch };
 }
 
-/**
- * What a build knows of the host page's policy (host.ts `_reach`): the embedder's `hostContentSecurityPolicy` (a text,
- * or `false` to apply none), or what the read of the page's policy left (host-csp.ts): the texts it read, null where the
- * page's policy cannot be read (`failed` when the read gave up), or undefined where the read gave no answer.
- */
-export type HostPolicySource =
-    | { readonly given: string | false }
-    | { readonly read: readonly string[] | null | undefined; readonly failed: boolean };
-
-/** The warning of a policy that could not be read: the library narrows nothing, and says so. */
-export const POLICY_UNREADABLE = "[Sandbox] the host page's Content-Security-Policy could not be read, so its connect-src is not applied to origins.connect and fetchBridge.allow by the library (the browser still applies it where its engine does). Pass hostContentSecurityPolicy to give it (docs/API.md#host-page-policy).";
+/** What the embedder said of the host page's policy: its text, `false` (the page sends none), or nothing (undefined). */
+export type HostPolicyOption = string | false | undefined;
 
 /**
- * The connect lists of one build under the host page's policy as it knows it, the one decision `_reach` makes:
- *  - `false`: as configured; a text: narrowed by it (narrowToHostPolicy);
- *  - nothing to narrow (no `origins.connect` and no `fetchBridge.allow` entry): as configured;
- *  - the texts read: narrowed by them;
- *  - null (the page's policy cannot be read): as configured, with POLICY_UNREADABLE when the read gave up;
- *  - undefined (a build that asked for the page's policy and got no answer: the frames that read it left the document):
- *    fails closed, every `origins.connect` and `fetchBridge.allow` entry dropped, with one warning per list. A build
- *    that asked is never narrowed by an absent answer.
+ * The warning of a build whose lists were dropped because the embedder did not give the page's policy: the entries
+ * dropped, and exactly what to pass.
  */
-export function hostReach(origins: OriginPolicy, fetchPolicy: FetchPolicy | null, source: HostPolicySource, warn: (message: string) => void): NarrowedReach {
+export function policyNotGiven(dropped: { readonly connect: readonly string[]; readonly allow: readonly string[] }): string {
+    const lists: string[] = [];
+    if (dropped.connect.length > 0) lists.push(`origins.connect dropped ${list(dropped.connect)}`);
+    if (dropped.allow.length > 0) lists.push(`fetchBridge.allow dropped ${list(dropped.allow)}`);
+    return `[Sandbox] ${lists.join('; ')}: hostContentSecurityPolicy was not given, so the library does not know your page's Content-Security-Policy, which the sandbox's frames inherit and engines apply differently. Pass hostContentSecurityPolicy: your page's policy as text (as its Content-Security-Policy header or <meta> carries it; several policies separated by commas), or false if your page sends no Content-Security-Policy (docs/API.md#your-connect-src).`;
+}
+
+/**
+ * The connect lists of one build under the host page's policy, from `hostContentSecurityPolicy` alone: the one decision
+ * host.ts `_reach` makes, and the only source of the page's policy (BD4:CHL-1, BD4:CHL-2):
+ *  - nothing to narrow (no `origins.connect` and no `fetchBridge.allow` entry): as configured, whatever the option;
+ *  - `false` (the page sends no policy): as configured;
+ *  - a text: narrowed by it (narrowToHostPolicy);
+ *  - left out: every `origins.connect` and `fetchBridge.allow` entry dropped, with one warning (policyNotGiven). It
+ *    fails closed: a list is never kept for a policy the library was not given.
+ */
+export function hostReach(origins: OriginPolicy, fetchPolicy: FetchPolicy | null, option: HostPolicyOption, warn: (message: string) => void): NarrowedReach {
     const configured = { origins, fetchPolicy };
-    if ('given' in source) return source.given === false ? configured : narrowToHostPolicy(origins, fetchPolicy, parseHostPolicies(source.given), warn);
-    if (origins.connect.length === 0 && (fetchPolicy?.allow.length ?? 0) === 0) return configured;
-    if (source.read === null) {
-        if (source.failed) warn(POLICY_UNREADABLE);
-        return configured;
-    }
-    if (source.read !== undefined) return narrowToHostPolicy(origins, fetchPolicy, parseHostPolicies(source.read), warn);
-    const because = "the host page's Content-Security-Policy is not known for this build (the frame that reads it left the document before it answered), and the library lists no connect origin it has not checked against that policy. Pass hostContentSecurityPolicy to give it (docs/API.md#host-page-policy), or build again (reset())";
-    let nextOrigins = origins;
-    if (origins.connect.length > 0) {
-        warn(`[Sandbox] origins.connect dropped ${list(origins.connect)}: ${because}.`);
-        nextOrigins = Object.freeze({ ...origins, connect: Object.freeze([]) }) as OriginPolicy;
-    }
-    let nextFetch = fetchPolicy;
-    if (fetchPolicy !== null && fetchPolicy.allow.length > 0) {
-        warn(`[Sandbox] fetchBridge.allow dropped ${list(fetchPolicy.allow)}: ${because}.`);
-        nextFetch = Object.freeze({ ...fetchPolicy, allow: Object.freeze([]) });
-    }
+    const allow = fetchPolicy?.allow ?? [];
+    if (origins.connect.length === 0 && allow.length === 0) return configured;
+    if (option === false) return configured;
+    if (typeof option === 'string') return narrowToHostPolicy(origins, fetchPolicy, parseHostPolicies(option), warn);
+    warn(policyNotGiven({ connect: origins.connect, allow }));
+    const nextOrigins = origins.connect.length === 0 ? origins : Object.freeze({ ...origins, connect: Object.freeze([]) }) as OriginPolicy;
+    const nextFetch = fetchPolicy === null || allow.length === 0 ? fetchPolicy : Object.freeze({ ...fetchPolicy, allow: Object.freeze([]) });
     return { origins: nextOrigins, fetchPolicy: nextFetch };
 }

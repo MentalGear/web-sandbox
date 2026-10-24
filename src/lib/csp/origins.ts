@@ -49,7 +49,8 @@ export interface SandboxOrigins {
      * with a warning, and the request gate refuses every `WebSocket` (a streamed `fetch()` response, or a socket the host
      * page opens and relays through `expose()`, takes its place). Cooperative mode's guest document also
      * has EventSource and sendBeacon(), which this list governs; strict and worker mode's worker has neither. The host
-     * page's own `connect-src` narrows this list in every engine (`hostContentSecurityPolicy`). The guest's fetch(),
+     * page's own `connect-src` narrows this list in every engine (`hostContentSecurityPolicy`, without which the whole
+     * list is dropped). The guest's fetch(),
      * XMLHttpRequest and WebSocket are the library's request gate: they admit exactly these origins (and `blob:` for
      * registered files), refuse anything else before the browser sees it and report it as a `violation`, the same on
      * every engine; fetch() and XMLHttpRequest send no credentials (docs/API.md#the-request-gate).

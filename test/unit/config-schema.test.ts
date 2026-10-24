@@ -489,10 +489,10 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
     });
 });
 
-describe("hostContentSecurityPolicy: the host page's policy as text, `false` to skip, or read from the page", () => {
+describe("hostContentSecurityPolicy: the host page's policy as text, `false` when it sends none, or absent", () => {
     const read = (config: Record<string, unknown>, mode = 'strict') => normaliseWhole({ mode, ...config });
 
-    it.each(['strict', 'cooperative', 'worker'])('%s: a string and false are kept as given; left out, it is absent (the page is read)', (mode) => {
+    it.each(['strict', 'cooperative', 'worker'])('%s: a string and false are kept as given; left out, it is absent (hostReach then drops the connect lists)', (mode) => {
         for (const value of ["connect-src 'self'", '', "connect-src 'none', connect-src https://api.example", false]) {
             const result = read({ hostContentSecurityPolicy: value }, mode);
             expect(result.value!.config.hostContentSecurityPolicy, `${mode} ${String(value)}`).toBe(value);
@@ -505,16 +505,16 @@ describe("hostContentSecurityPolicy: the host page's policy as text, `false` to 
         }
     });
 
-    it('any other value is ignored with one warning, and the page is read as if it were left out', () => {
+    it('any other value is ignored with one warning, as if it were left out', () => {
         for (const value of [true, 0, 5, null, {}, [], ['connect-src *'], 1n]) {
             const result = read({ hostContentSecurityPolicy: value });
             expect(Object.hasOwn(result.value!.config, 'hostContentSecurityPolicy'), String(value)).toBe(false);
-            expect(result.warnings, String(value)).toEqual([expect.stringMatching(/^\[Sandbox\] hostContentSecurityPolicy must be a string or false; .* was ignored: the host page's policy is read from the page\.$/)]);
+            expect(result.warnings, String(value)).toEqual([expect.stringMatching(/^\[Sandbox\] hostContentSecurityPolicy must be a string or false; .* was ignored, as if it were left out\.$/)]);
         }
     });
 
-    it('is documented as read from the page, in every mode, and the schema lists it among the stored options', () => {
-        expect(CONFIG_SCHEMA.hostContentSecurityPolicy.documented).toBe('read from the page');
+    it('is documented as dropping the connect lists when left out, in every mode, and the schema lists it among the stored options', () => {
+        expect(CONFIG_SCHEMA.hostContentSecurityPolicy.documented).toBe('none: `origins.connect` and `fetchBridge.allow` are dropped');
         expect([...CONFIG_SCHEMA.hostContentSecurityPolicy.modes]).toEqual([...SANDBOX_MODES]);
         expect(CONFIG_OPTIONS).toContain('hostContentSecurityPolicy');
         expect(PARSED_APART).not.toContain('hostContentSecurityPolicy');

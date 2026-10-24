@@ -65,12 +65,13 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['h
 6. **The host page's `connect-src` narrows `connect` and `fetchBridge.allow` in the library, not in the browser.** A
    sandbox frame copies its parent's policy list, which can only narrow its own, but the engines differ on what some
    sources admit there (docs/API.md#connect-src-by-engine). So the lists are cut by the page's policy before the guest's
-   and the bridge's policies are written, the same on every engine: the policy is the embedder's (`hostContentSecurityPolicy`)
-   or read once per page by a deliberate violation that reaches neither the network nor the DNS, and a parser of
-   `connect-src` alone keeps an origin only where every engine admits it (docs/API.md#your-connect-src). The parser
-   only narrows: a source it does not understand admits nothing, `'self'` among them. The read's frame is a resource of
-   the page that other elements' builds wait on, so only a frame that stayed in the document answers; a build that
-   waited and got no answer narrows its lists to nothing, never leaves them as configured.
+   and the bridge's policies are written, the same on every engine, and a parser of `connect-src` alone keeps an origin
+   only where every engine admits it (docs/API.md#your-connect-src). The parser only narrows: a source it does not
+   understand admits nothing, `'self'` among them. The policy is the embedder's `hostContentSecurityPolicy` and nothing
+   else: no API returns a page's policy, and code that learns it from the page (a request whose violation reports it, a
+   frame to make it in, a wait for the answer) predicts the browser's state and errs (BD4:CHL-1, BD4:CHL-2). So a build
+   that lists a connect or bridge origin without the option drops both lists, with one warning that says what to pass,
+   and never leaves them as configured; `false` says the page sends no policy, and keeps them.
 
 ### The accepted grammar, and why
 

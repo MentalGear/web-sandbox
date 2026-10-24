@@ -20,7 +20,6 @@ const sources = (directory: string): string[] => readdirSync(path.join(ROOT, dir
 
 /** Frames made in `src/` that are not a sandbox's, with why: the helper does not apply to them. */
 const NOT_A_SANDBOX_FRAME: Readonly<Record<string, string>> = {
-    'src/lib/host-csp.ts': "the frame that reads the host page's policy: an empty document with no guest and no request of the sandbox's",
     'src/lib/presets.ts': "the playground's preset: guest code, run inside a sandbox, makes the frame",
 };
 

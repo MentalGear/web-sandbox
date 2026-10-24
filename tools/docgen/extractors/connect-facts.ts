@@ -15,11 +15,11 @@ const yes = (value: boolean) => (value ? 'yes' : 'no');
 const factsTable = () => table(
     [
         'Engine', "A `'self'` source of your `connect-src` admits an origin it does not name", 'A host written without a scheme admits the `https://` origin it names',
-        'A `http://h:P` source admits `https://h:P`', 'A `wss://h` source also admits `https://h`', "The read's decoy logs a line though your policy admits it", 'Found by',
+        'A `http://h:P` source admits `https://h:P`', 'A `wss://h` source also admits `https://h`', 'Found by',
     ],
     CONNECT_ENGINES.map(engine => {
         const facts = CONNECT_ENGINE_FACTS[engine];
-        return row([facts.name, yes(facts.selfAdmitsOtherOrigins), facts.bareHostAdmitted, yes(facts.upgradedSchemeWithPort), yes(facts.wssSourceAdmitsHttps), yes(facts.decoyLogsWhenAdmitted), facts.measured]);
+        return row([facts.name, yes(facts.selfAdmitsOtherOrigins), facts.bareHostAdmitted, yes(facts.upgradedSchemeWithPort), yes(facts.wssSourceAdmitsHttps), facts.measured]);
     }),
 );
 

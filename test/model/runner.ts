@@ -64,7 +64,11 @@ export function configOf(desc: ConfigDesc, origin: string): unknown {
         if (desc.entry) config.entry = desc.entry;
         if (desc.html !== 'none') config.html = `<p>${desc.html}</p>`;
     }
-    if (desc.fetch) config.fetchBridge = { allow: [origin] };
+    // (the harness page sends no Content-Security-Policy, so it says so: without that the bridge's list is dropped)
+    if (desc.fetch) {
+        config.fetchBridge = { allow: [origin] };
+        config.hostContentSecurityPolicy = false;
+    }
     // the variant keeps two otherwise equal configs apart, in a field every mode keeps
     const variant = desc.variant;
     config.callLimits =

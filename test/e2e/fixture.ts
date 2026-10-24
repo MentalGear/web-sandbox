@@ -13,11 +13,14 @@ export const HARNESS = `${ORIGIN}/test/e2e/harness.html`;
 export const OFFSITE_ORIGIN = `http://127.0.0.1:${E2E_PORT}`;
 
 // What the specs need to run anything at all: scripts in the frame and execute(), in cooperative mode (the mode most
-// specs were written for; a spec for another mode names it).
+// specs were written for; a spec for another mode names it), and what the harness page's policy is: it sends none
+// (`hostContentSecurityPolicy: false`, without which `origins.connect` and `fetchBridge.allow` are dropped). A spec on a
+// page that sends a policy passes that policy's text, as docs/API.md#your-connect-src tells an embedder to.
 export const BASELINE_CONFIG: SandboxConfig = {
     mode: 'cooperative',
     capabilities: ['allow-scripts'],
     scriptUnsafe: true,
+    hostContentSecurityPolicy: false,
 };
 
 /**
