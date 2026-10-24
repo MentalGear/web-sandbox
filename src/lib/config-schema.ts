@@ -26,7 +26,7 @@ import type { CallLimits } from '../host';
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, type SafeCapability, type UnsafeCapability } from '../csp-directives';
 import { filterCapabilities } from './capabilities';
 import { sameSiteCookieClause } from './cookie-facts';
-import { NO_ORIGINS, ORIGIN_KINDS, parseOrigins, shown, type OriginPolicy } from './csp/origins';
+import { NO_ORIGINS, ORIGIN_LISTS, parseOrigins, shown, type OriginPolicy } from './csp/origins';
 import { isPrivateHost, isPrivateOrigin, PRIVATE_NETWORK_REASON, toFetchPolicy, type FetchPolicy } from './fetch-bridge';
 import { sharesHostSite, type Origin } from './origin';
 import { RPC_MAX_BYTES, type BudgetRefusal } from './rpc';
@@ -258,7 +258,7 @@ const viewSwitch = (name: ViewSwitch) => ({ given, mode, warn }: OptionInput): b
 
 /**
  * The one pass over a parsed `origins` that decides what a listed origin reaches beyond the internet at large, in every
- * kind (ORIGIN_KINDS, so a new kind is covered), with one warning per kind and reason:
+ * list (ORIGIN_LISTS: every kind, so a new kind is covered, and `withoutCors`), with one warning per list and reason:
  *  - An origin on the host page's site (sharesHostSite: the same registrable domain as the browser decides it, the host
  *    page's own origin, its subdomains, its parents and its siblings) may receive the host site's cookies with a guest
  *    request (INHERITED_CONTEXT.cookies; the engines differ, and only Chromium's wrapper frame, credentialless, sends
@@ -274,7 +274,7 @@ export function limitHostReach(policy: OriginPolicy, context: NormaliseContext, 
     const hostIsPrivate = isPrivateOrigin(hostOrigin);
     const kept: Record<string, readonly Origin[]> = {};
     let dropped = false;
-    for (const kind of ORIGIN_KINDS) {
+    for (const kind of ORIGIN_LISTS) {
         const keep: Origin[] = [];
         const siteRefused: string[] = [];
         const localRefused: string[] = [];

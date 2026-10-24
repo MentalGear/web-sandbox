@@ -34,7 +34,8 @@ import { inView, waitInView } from './strict-view';
  *
  * And the costs of the construction, on every engine: an origin that answers CORS still renders (images, media, and a
  * seek in a 7 MB video through Range requests); one that does not fails, and each failed load is reported as a
- * `violation` of its directive.
+ * `violation` of its directive. `origins.withoutCors` is the embedder's way out, per origin: such an origin is loaded
+ * the classic way, without CORS and with its own cookies where the engine sends them, and every other keeps the rule.
  */
 
 test.use({ ignoreHTTPSErrors: true });
@@ -76,7 +77,7 @@ type Hit = { host: string; k: string; cookies: string[]; origin: string; mode: s
  * `/nocors/<file>` without it; media answers Range requests (206). Anything else asked of H is the e2e server's (the
  * harness and its modules), passed through.
  */
-async function startListener() {
+async function startListener(seek = true) {
     const dir = mkdtempSync(path.join(tmpdir(), 'view-credentials-'));
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=wsprobe',
         '-addext', `subjectAltName=IP:127.0.0.1,${Object.values(NAMES).map(name => `DNS:${name}`).join(',')}`, '-keyout', path.join(dir, 'k.pem'), '-out', path.join(dir, 'c.pem')], { stdio: 'ignore' });
@@ -87,7 +88,7 @@ async function startListener() {
         'g.vtt': { type: 'text/vtt', bytes: Buffer.from(VTT) },
         'f.ttf': { type: 'font/ttf', bytes: font ? readFileSync(font) : Buffer.from('not a font') },
         's.css': { type: 'text/css', bytes: Buffer.from('*{--imported:1}') },
-        'v': { ...longMedia(dir), ranges: true },
+        'v': { ...(seek ? longMedia(dir) : { type: 'audio/wav', bytes: wav(1) }), ranges: true },
     };
     const hits: Hit[] = [];
     const server = https.createServer({ key: readFileSync(path.join(dir, 'k.pem')), cert: readFileSync(path.join(dir, 'c.pem')) }, (req, res) => {
@@ -320,3 +321,48 @@ for (const worldName of ['cross-site', 'names'] as const) {
         });
     });
 }
+
+test.describe('origins.withoutCors: a listed origin loads without CORS, with its own cookies where the engine sends them; every other keeps the rule', () => {
+    let free: Listener; // in withoutCors
+    let strict: Listener; // not
+    test.beforeAll(async () => {
+        free = await startListener(false);
+        strict = await startListener(false);
+    });
+    test.afterAll(async () => {
+        await free?.stop();
+        await strict?.stop();
+    });
+
+    test('loads of the listed origin need no Access-Control-Allow-Origin and carry its cookie (Firefox, WebKit; Chromium none); the other needs it and carries none', async ({ sandbox, page, context, browserName }) => {
+        test.setTimeout(60000);
+        const W = `https://127.0.0.1:${free.port}`;
+        const N = `https://127.0.0.1:${strict.port}`;
+        await context.addCookies([cookie('x_none', '127.0.0.1', 'None')]); // a host-only cookie of 127.0.0.1: both listeners, any port
+        const html = `<img id="w" src="${W}/nocors/a.png?k=w.img" alt=""><audio id="wa" src="${W}/nocors/e.wav?k=w.audio" preload="auto"></audio>`
+            + `<div id="wcss" style="width:5px;height:5px;background:url(${W}/nocors/a.png?k=w.css)"></div><video id="wp" poster="${W}/nocors/a.png?k=w.poster"></video>`
+            + `<img id="n" src="${N}/nocors/a.png?k=n.nocors" alt=""><img id="c" src="${N}/cors/a.png?k=n.cors" alt=""><div style="width:5px;height:5px;background:url(${N}/cors/a.png?k=n.css)"></div>`;
+        await sandbox.registerFiles({ 'main.js': `sandboxView.render(${JSON.stringify(html)});` });
+        expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', origins: { images: [W, N], media: [W, N], withoutCors: [W] } })).toBe('ready');
+
+        for (const k of ['w.img', 'w.audio', 'w.css', 'w.poster']) await expect.poll(() => seen(free, k).length, k).toBeGreaterThan(0);
+        // the listed origin, without Access-Control-Allow-Origin: rendered, loaded the classic way
+        expect(await waitInView<boolean>(page, browserName, `document.getElementById('w').naturalWidth === 3 && document.getElementById('wa').readyState >= 1`, 8000)).toBe(true);
+        expect(await inView(page, browserName, `['w', 'wa', 'wp', 'n', 'c'].map(id => document.getElementById(id).getAttribute('crossorigin'))`)).toEqual([null, null, null, 'anonymous', 'anonymous']);
+        // and its own cookie rides on it where the engine attaches third-party cookies to such a load
+        // ledger: cookies
+        const expected = browserName === 'chromium' ? [] : ['x_none'];
+        for (const k of ['w.img', 'w.audio', 'w.css']) for (const hit of seen(free, k)) expect(hit.cookies, k).toEqual(expected);
+
+        // the other origin: CORS required, no cookie, and its CSS URL is dropped
+        await expect.poll(() => seen(strict, 'n.nocors').length).toBeGreaterThan(0);
+        expect(await waitInView<boolean>(page, browserName, `document.getElementById('c').naturalWidth === 3`, 8000)).toBe(true);
+        expect(await inView<number>(page, browserName, `document.getElementById('n').naturalWidth`)).toBe(0);
+        await page.waitForTimeout(500);
+        expect(strict.hits.filter(hit => hit.cookies.length > 0)).toEqual([]);
+        expect(seen(strict, 'n.css')).toEqual([]);
+        const violations = (await sandbox.violations()).map(v => `${v.directive} ${new URL(v.blockedURI).searchParams.get('k')}`);
+        expect(violations).toEqual(expect.arrayContaining(['img-src n.nocors', 'img-src n.css']));
+        expect(violations.filter(line => line.includes(' w.'))).toEqual([]);
+    });
+});

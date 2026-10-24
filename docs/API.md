@@ -135,9 +135,10 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 
 ### `origins`
 
-<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d2622797099fbb86493659f5 -->
+<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d2622797099fbb86eeaa59f5 -->
 The guest's policy is one fixed template per mode. `origins` adds exact origins to six of its directives, one list per
-kind of load, and can change nothing else:
+kind of load, and can change nothing else (its one other list, [`withoutCors`](#origins-withoutcors), opens no
+directive):
 
 ```js
 sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.example.com'], images: ['https://cdn.example.com'] } });
@@ -201,6 +202,21 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   whose `@charset` names another encoding, gets no URL in the view). So nothing loads from `styles` or `fonts` in strict
   mode: register the stylesheets and fonts the guest needs. Cooperative mode is unchanged: the guest's document makes
   its own loads, with the cookies the engine attaches.
+- <a id="origins-withoutcors"></a>**`withoutCors`: the origins strict mode's view loads the classic way.** A list of
+  origins, not a kind: it opens no directive, and an entry loads only what `images`, `media`, `styles` or `fonts` also
+  lists (one that none lists is kept, with a warning). For a URL of such an origin the view does not set `crossorigin`
+  (on an `<img>`, `<video>` or `<audio>` whose own URLs are all of such origins; an `<img>` in a `<picture>` always gets
+  it, and a `<source>` or `<track>` of a media element without it keeps only such a URL), and keeps a `poster` and the
+  CSS `url()`, `@import`, `image-set()` and `@font-face` URLs that name it, so a server that sends no
+  `Access-Control-Allow-Origin` still serves the guest. Never the host site's cookies: an origin on the host page's
+  site is dropped from `withoutCors` as from every list. **Do not list an origin whose cookie-authenticated GET endpoints
+  act on a request**: the guest chooses the URL. Entries follow the rules of the other lists; outside strict mode the
+  list is ignored, with a warning. The cost ([by engine](#cookies-by-engine)):
+
+<!-- generated:begin without-cors-cost -->
+**A load of the view to an origin of `withoutCors` carries that origin's own cookies where the engine attaches them to a third-party request:** Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured).
+<!-- generated:end -->
+
 - **The host page's `connect-src` narrows `connect` and the bridge's `allow` on every engine.** The library applies your
   page's policy to the two lists itself, before it writes the guest's and the bridge's policies: an origin your
   `connect-src` (or `default-src`) does not admit is dropped with a warning. See

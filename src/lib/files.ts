@@ -733,6 +733,16 @@ export interface ViewStylesheetDrop {
     unreadable: string | null;
 }
 
+// Whether `url` is of an origin in `keep`, as the URL parser serialises it.
+function keptOrigin(url: string, keep: readonly string[]): boolean {
+    if (keep.length === 0) return false;
+    try {
+        return keep.includes(new URL(url.trim()).origin);
+    } catch {
+        return false;
+    }
+}
+
 // The labels of UTF-8 (Encoding Standard), and the UTF-16 ones, which a stylesheet's @charset reads as UTF-8 (CSS Syntax).
 const UTF8_CHARSETS = ['unicode-1-1-utf-8', 'unicode11utf8', 'unicode20utf8', 'utf-8', 'utf8', 'x-unicode20utf8', 'utf-16be', 'utf-16le'];
 // The @charset rule as the browser reads it: these bytes at the very start of the file (CSS Syntax, the fallback encoding).
@@ -745,10 +755,10 @@ const CHARSET_RULE = /^@charset "([^"]{0,1014})";/;
  * scope) becomes `""` through the snapshot's own edits, beside the slots of the references to registered files, which
  * stay and become the view's blob: URLs. The browser must read the file as the tokenizer did, so a stylesheet that is
  * not UTF-8, or whose `@charset` names another encoding, gets no URL in the view at all (its references fail closed).
- * `entries` are the view's files (FileSnapshotEntry); every other entry is returned as it is. Each stylesheet that lost
- * something is in `dropped`, for the element's warning.
+ * `entries` are the view's files (FileSnapshotEntry); every other entry is returned as it is. A URL of an origin in
+ * `keep` (`origins.withoutCors`) stays. Each stylesheet that lost something is in `dropped`, for the element's warning.
  */
-export function viewStylesheets(entries: readonly FileSnapshotEntry[]): { entries: FileSnapshotEntry[]; dropped: ViewStylesheetDrop[] } {
+export function viewStylesheets(entries: readonly FileSnapshotEntry[], keep: readonly string[] = []): { entries: FileSnapshotEntry[]; dropped: ViewStylesheetDrop[] } {
     const out: FileSnapshotEntry[] = [];
     const dropped: ViewStylesheetDrop[] = [];
     for (const entry of entries) {
@@ -782,6 +792,7 @@ export function viewStylesheets(entries: readonly FileSnapshotEntry[]): { entrie
             const start = toBytes(reference.start);
             const end = toBytes(reference.end);
             if (taken(start, end)) continue; // a registered file's slot (https://vfs.invalid/…): the view's blob: URL
+            if (keptOrigin(reference.url, keep)) continue; // origins.withoutCors
             drops.push([start, end]);
             urls.push(reference.url);
         }

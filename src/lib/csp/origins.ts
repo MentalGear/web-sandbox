@@ -60,6 +60,25 @@ export interface SandboxOrigins {
     media?: readonly string[];
     /** Scripts (`<script src>`, modules, importScripts()): script-src. Not in strict mode. */
     scripts?: readonly string[];
+    /**
+     * Strict mode only: origins the view loads the classic way, without CORS, so that a server which sends no
+     * `Access-Control-Allow-Origin` still serves the guest. Not a kind: it adds no origin to any directive, and an entry
+     * loads only what `images`, `media`, `styles` or `fonts` also list.
+     *
+     * @remarks
+     * For a URL of an origin listed here the view does not set `crossorigin="anonymous"` (on an `<img>`, `<video>` or
+     * `<audio>` whose own URLs are all of such origins; an `<img>` in a `<picture>` always gets it), and keeps a
+     * `poster` and the `url()`, `@import`, `image-set()` and `@font-face` URLs of CSS that name it. **The cost: on Firefox
+     * and WebKit those loads carry the listed origin's own `SameSite=None` cookies** (a third-party request, as for any
+     * page that embeds its images); Chromium sends none (the sandbox's frame is credentialless). Never the host site's
+     * cookies: an origin on the host page's site is refused here as in every list. Do not list an origin whose
+     * cookie-authenticated GET endpoints act on a request: the guest chooses the URL. Entries follow the rules of the
+     * other lists (one exact `https:` origin; `http:` only for loopback). Outside strict mode it is ignored, with a
+     * warning (cooperative and worker mode make their loads the engine's way anyway). docs/API.md#the-views-loads
+     *
+     * @defaultValue none
+     */
+    withoutCors?: readonly string[];
 }
 
 /**
@@ -70,24 +89,33 @@ export interface SandboxOrigins {
 export type StrictSandboxOrigins = Omit<SandboxOrigins, 'scripts'> & { readonly scripts?: never };
 
 /** A kind of load `origins` takes origins for. */
-export type OriginKind = keyof SandboxOrigins;
+export type OriginKind = Exclude<keyof SandboxOrigins, 'withoutCors'>;
 
 /** Every kind, in the order the policy emits their directives. */
 export const ORIGIN_KINDS = ['scripts', 'styles', 'images', 'fonts', 'media', 'connect'] as const satisfies readonly OriginKind[];
 
-/** `origins` as parsed: every kind present, every entry an Origin; frozen, lists included. */
-export type OriginPolicy = { readonly [K in OriginKind]: readonly Origin[] };
+/** A list `origins` takes: every kind, and `withoutCors`, which is no kind (it names no directive). */
+export type OriginList = keyof SandboxOrigins;
+
+/** Every list of `origins`, the kinds first. */
+export const ORIGIN_LISTS = [...ORIGIN_KINDS, 'withoutCors'] as const satisfies readonly OriginList[];
+
+/** The kinds a `withoutCors` entry loads through in the strict view: what an element or CSS there can load. */
+export const WITHOUT_CORS_KINDS = ['images', 'media', 'styles', 'fonts'] as const satisfies readonly OriginKind[];
+
+/** `origins` as parsed: every list present, every entry an Origin; frozen, lists included. */
+export type OriginPolicy = { readonly [K in OriginList]: readonly Origin[] };
 
 // https: for any host; plain http: only for loopback (local development); wss: for connections only.
 const RULES: OriginRules = { anyHost: ['https:'], loopbackOnly: ['http:'] };
 const CONNECT_RULES: OriginRules = { anyHost: ['https:', 'wss:'], loopbackOnly: ['http:'] };
 
 /** The schemes an entry of `kind` may have (origin.ts). */
-export function originRules(kind: OriginKind): OriginRules {
+export function originRules(kind: OriginList): OriginRules {
     return kind === 'connect' ? CONNECT_RULES : RULES;
 }
 
-const isKind = (key: string): key is OriginKind => (ORIGIN_KINDS as readonly string[]).includes(key);
+const isList = (key: string): key is OriginList => (ORIGIN_LISTS as readonly string[]).includes(key);
 
 // An entry as it may appear in a warning: a string clamped and JSON-quoted (control characters show), else its type.
 // Every config warning shows a value through it (R1:R1-3): JSON.stringify of a BigInt or a cyclic entry would throw
@@ -106,21 +134,29 @@ export function parseOrigins(input: unknown, mode: unknown, warn: (message: stri
     if (input !== undefined && (!input || typeof input !== 'object' || Array.isArray(input))) throw new TypeError('origins must be an object of origin lists');
     const source = (input ?? {}) as Record<string, unknown>;
     for (const key of Object.keys(source)) {
-        if (!isKind(key)) warn(`[Sandbox] origins.${shown(key)} was dropped: origins takes ${ORIGIN_KINDS.join(', ')}.`);
+        if (!isList(key)) warn(`[Sandbox] origins.${shown(key)} was dropped: origins takes ${ORIGIN_LISTS.join(', ')}.`);
     }
 
     const policy: Record<string, readonly Origin[]> = {};
-    for (const kind of ORIGIN_KINDS) {
+    for (const kind of ORIGIN_LISTS) {
         const entries = ownField(source, kind);
         if (entries !== undefined && !Array.isArray(entries)) throw new TypeError(`origins.${kind} must be a list of origins`);
         defineData(policy, kind, Object.freeze(originsOf(kind, entries ?? [], mode, warn)));
     }
+    const withoutCors = policy.withoutCors!;
+    for (const origin of withoutCors) {
+        if (!WITHOUT_CORS_KINDS.some(kind => policy[kind]!.includes(origin))) warn(`[Sandbox] origins.withoutCors lists ${shown(origin)}, which none of ${WITHOUT_CORS_KINDS.join(', ')} lists: it loads nothing until one of them does.`);
+    }
     return Object.freeze(policy) as OriginPolicy;
 }
 
-function originsOf(kind: OriginKind, entries: readonly unknown[], mode: unknown, warn: (message: string) => void): Origin[] {
+function originsOf(kind: OriginList, entries: readonly unknown[], mode: unknown, warn: (message: string) => void): Origin[] {
     if (kind === 'scripts' && mode === 'strict') {
         if (entries.length > 0) warn('[Sandbox] origins.scripts is not used in strict mode and was dropped: the view runs only the library\'s bootstrap, and the worker loads no script (see docs/ADR-005).');
+        return [];
+    }
+    if (kind === 'withoutCors' && mode !== 'strict') {
+        if (entries.length > 0) warn('[Sandbox] origins.withoutCors is used only in strict mode and was ignored: the other modes make their loads the engine\'s way.');
         return [];
     }
     const origins = new Set<Origin>();

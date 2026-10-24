@@ -400,17 +400,28 @@ export function cssReferences(source: string, scope: 'files' | 'network'): CssRe
  * `source` without its network references (cssReferences, `network` scope): each becomes the empty CSS string `""`, which
  * loads nothing (`url("")` names no resource), so the text that is left can load no http: or https: URL, whatever the
  * engine (BD2:ISO-2: no crossorigin attribute reaches a load CSS makes, so strict mode cannot make one without
- * credentials). Each one dropped is added to `dropped`: its kind of load and its URL as written. `scan` is
+ * credentials). Each one dropped is added to `dropped`: its kind of load and its URL as written. A reference to an
+ * origin in `keep` (`origins.withoutCors`: exact origins, as the URL parser serialises one) stays as written. `scan` is
  * cssReferences: given, so that this function too closes over nothing and the strict view can run it, stringified
  * (in-sandbox-view.ts, inSandboxView), as the host does for registered stylesheets (host.ts).
  */
-export function withoutNetworkReferences(source: string, scan: typeof cssReferences, dropped: [kind: CssReference['kind'], url: string][]): string {
+export function withoutNetworkReferences(source: string, scan: typeof cssReferences, dropped: [kind: CssReference['kind'], url: string][], keep: readonly string[] = []): string {
     const references = scan(source, 'network');
     if (references.length === 0) return source;
+    const kept = (url: string) => {
+        if (keep.length === 0) return false;
+        try {
+            const parsed = new URL(url);
+            return keep.indexOf(parsed.protocol + '//' + parsed.hostname + (parsed.port ? ':' + parsed.port : '')) >= 0;
+        } catch {
+            return false;
+        }
+    };
     let output = '';
     let at = 0;
     for (let i = 0; i < references.length; i++) {
         const reference = references[i]!;
+        if (kept(reference.url)) continue;
         output += source.slice(at, reference.start) + '""';
         at = reference.end;
         dropped[dropped.length] = [reference.kind, reference.url];
@@ -419,8 +430,8 @@ export function withoutNetworkReferences(source: string, scan: typeof cssReferen
 }
 
 /** withoutNetworkReferences over cssReferences, as the strict view composes them (host-side callers and the tests). */
-export function dropNetworkCss(source: string, dropped: [kind: string, url: string][]): string {
-    return withoutNetworkReferences(source, cssReferences, dropped as [kind: CssReference['kind'], url: string][]);
+export function dropNetworkCss(source: string, dropped: [kind: string, url: string][], keep: readonly string[] = []): string {
+    return withoutNetworkReferences(source, cssReferences, dropped as [kind: CssReference['kind'], url: string][], keep);
 }
 
 /** The references that can name a registered file (`files` scope of cssReferences). */

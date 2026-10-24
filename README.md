@@ -131,7 +131,9 @@ that carries no cookie, on every engine: the origin must answer `Access-Control-
 load that fails is reported as a `violation`. What no attribute reaches is dropped, and reported: a network `poster`,
 and every network URL in CSS (`url()`, `@import`, `image-set()`, `@font-face`, in style attributes, `<style>` and
 registered stylesheets). Register the stylesheets, fonts and posters the guest shows; nothing loads from `styles` or
-`fonts` in strict mode ([API](docs/API.md#the-views-loads)).
+`fonts` in strict mode ([API](docs/API.md#the-views-loads)). For a server you cannot give CORS, list its origin in
+`origins.withoutCors` as well: the view then loads it the classic way, and those loads carry that origin's own
+cookies where the engine sends third-party cookies ([API](docs/API.md#origins-withoutcors)).
 
 **Your page's `connect-src` applies to `origins.connect` and `fetchBridge.allow`, the same on every engine.** An origin
 it does not admit by scheme and host (`'self'` admits nothing) is dropped with a warning. `hostContentSecurityPolicy`
@@ -687,7 +689,7 @@ What remains for the default:
     an API that knows the user: it sends no credentials. What the engines would send ([the table](docs/API.md#cookies-by-engine)):
 
 <!-- generated:begin cookie-sentence -->
-`fetch()` and `XMLHttpRequest` of the sandbox carry no cookie in any engine: the library sends them without credentials. Neither does any load of strict mode's view: its elements load as CORS requests without credentials (`crossorigin="anonymous"`), and its CSS and posters keep no network URL. A request it cannot strip (a WebSocket handshake, or in cooperative mode a load of the guest's markup or CSS) to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine.
+`fetch()` and `XMLHttpRequest` of the sandbox carry no cookie in any engine: the library sends them without credentials. Neither does any load of strict mode's view: its elements load as CORS requests without credentials (`crossorigin="anonymous"`), and its CSS and posters keep no network URL, except for the origins the embedder lists in `origins.withoutCors`, whose own cookies those loads carry where the engine sends them. A request it cannot strip (a WebSocket handshake, or in cooperative mode a load of the guest's markup or CSS) to an origin on the host page's site carries these cookies: Chromium: none (the sandbox's frame is credentialless); Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None, Lax and Strict`. To an origin on another site it carries that site's own cookies: Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured). The fetch bridge sends none in any engine.
 <!-- generated:end -->
 
 ### Cooperative-mode limits

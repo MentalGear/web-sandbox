@@ -2811,6 +2811,33 @@
                 "startIndex": 1,
                 "endIndex": 2
               }
+            },
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!SandboxOrigins#withoutCors:member",
+              "docComment": "/**\n * Strict mode only: origins the view loads the classic way, without CORS, so that a server which sends no\n * `Access-Control-Allow-Origin` still serves the guest. Not a kind: it adds no origin to any directive, and an entry\n * loads only what `images`, `media`, `styles` or `fonts` also list.\n *\n * @remarks\n *\n * For a URL of an origin listed here the view does not set `crossorigin=\"anonymous\"` (on an `<img>`, `<video>` or\n * `<audio>` whose own URLs are all of such origins; an `<img>` in a `<picture>` always gets it), and keeps a\n * `poster` and the `url()`, `@import`, `image-set()` and `@font-face` URLs of CSS that name it. **The cost: on Firefox\n * and WebKit those loads carry the listed origin's own `SameSite=None` cookies** (a third-party request, as for any\n * page that embeds its images); Chromium sends none (the sandbox's frame is credentialless). Never the host site's\n * cookies: an origin on the host page's site is refused here as in every list. Do not list an origin whose\n * cookie-authenticated GET endpoints act on a request: the guest chooses the URL. Entries follow the rules of the\n * other lists (one exact `https:` origin; `http:` only for loopback). Outside strict mode it is ignored, with a\n * warning (cooperative and worker mode make their loads the engine's way anyway). docs/API.md#the-views-loads\n *\n * @defaultValue none\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "withoutCors?: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "readonly string[]"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "withoutCors",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
             }
           ],
           "extendsTokenRanges": []

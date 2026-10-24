@@ -16,11 +16,11 @@ const KEEP_ALL: RenderSwitches = { animations: true, autoplay: true, stylesheets
 const LISTED = 'https://cdn.example';
 const ORIGINS = { images: [LISTED], media: [LISTED], styles: [LISTED], fonts: [LISTED] };
 
-function render(html: string, target = 'body', files: Record<string, { url: string; type: string }> = {}) {
+function render(html: string, target = 'body', files: Record<string, { url: string; type: string }> = {}, origins: Record<string, readonly string[]> = ORIGINS, targetAnonymous?: boolean) {
     const template = document.createElement('template');
     template.innerHTML = html;
     const minted = new Set(Object.values(files).map(file => file.url));
-    const context: RenderContext = { target, animating: [], origins: ORIGINS, refused: [], urls: 0, loads: [], css: [] };
+    const context: RenderContext = { target, targetAnonymous, animating: [], origins, refused: [], urls: 0, loads: [], css: [] };
     sanitizeRender(template.content, path => files[path] ?? null, url => minted.has(url), dropNetworkCss, RENDER_RULES, KEEP_ALL, undefined, context);
     return { fragment: template.content, refused: context.refused };
 }
@@ -176,6 +176,52 @@ describe('CSS keeps no network URL in the view: style attributes, <style> (HTML 
         // the renderer itself keeps the <b>: the view takes the text of a render into a style (inSandboxView, below)
         expect(fragment.querySelector('b')).not.toBeNull();
         expect(refused).toEqual([]);
+    });
+});
+
+describe('origins.withoutCors: the origins the embedder lets the view load the classic way, and only those', () => {
+    const FREE = 'https://free.example';
+    const WITH_FREE = { images: [LISTED, FREE], media: [LISTED, FREE], styles: [LISTED, FREE], fonts: [LISTED, FREE], withoutCors: [FREE] };
+    const run = (html: string, target = 'body', targetAnonymous?: boolean) => render(html, target, {}, WITH_FREE, targetAnonymous);
+    const co = (fragment: DocumentFragment, id: string) => fragment.getElementById(id)!.getAttribute('crossorigin');
+
+    it('an element whose every load is of such an origin gets no crossorigin; any other, and an <img> in a <picture>, does', () => {
+        const { fragment } = run(`<img id="a" src="${FREE}/a.png"><img id="b" src="${FREE}/b.png" srcset="${LISTED}/b.png 2x"><img id="c" alt="c">`
+            + `<picture><source srcset="${FREE}/p.png"><img id="d" src="${FREE}/d.png"></picture><audio id="e" src="${FREE}/e.mp3"></audio><video id="f" src="${LISTED}/f.mp4"></video>`);
+        expect(['a', 'b', 'c', 'd', 'e', 'f'].map(id => co(fragment, id))).toEqual([null, 'anonymous', 'anonymous', 'anonymous', null, 'anonymous']);
+    });
+
+    it('a poster and CSS keep a URL of such an origin; every other network URL still goes, reported', () => {
+        const { fragment, refused } = run(`<video id="v" poster="${FREE}/p.png"></video><video id="w" poster="${LISTED}/q.png"></video>`
+            + `<p id="s" style="background: url(${FREE}/a.png), url(${LISTED}/b.png)">x</p><style id="t">@import "${FREE}/i.css"; @font-face { src: url(${LISTED}/f.woff2) }</style>`);
+        expect(fragment.getElementById('v')!.getAttribute('poster')).toBe(`${FREE}/p.png`);
+        expect(fragment.getElementById('w')!.hasAttribute('poster')).toBe(false);
+        expect(fragment.getElementById('s')!.getAttribute('style')).toBe(`background: url(${FREE}/a.png), url("")`);
+        expect(fragment.getElementById('t')!.textContent).toBe(`@import "${FREE}/i.css"; @font-face { src: url("") }`);
+        expect(refused).toEqual([['img-src', `${LISTED}/q.png`], ['img-src', `${LISTED}/b.png`], ['font-src', `${LISTED}/f.woff2`]]);
+    });
+
+    it('a <source> or <track> loads through its media element: through one without crossorigin, only a URL of such an origin stays', () => {
+        const { fragment, refused } = run(`<video id="v" src="${FREE}/v.mp4"><source id="s" src="${LISTED}/s.mp4"><source id="f" src="${FREE}/f.mp4"><track id="t" src="${LISTED}/t.vtt"></video>`
+            + `<video id="w" src="${LISTED}/w.mp4"><source id="x" src="${LISTED}/x.mp4"></video>`);
+        expect([co(fragment, 'v'), co(fragment, 'w')]).toEqual([null, 'anonymous']);
+        expect(['s', 'f', 't', 'x'].map(id => fragment.getElementById(id)!.getAttribute('src'))).toEqual([null, `${FREE}/f.mp4`, null, `${LISTED}/x.mp4`]);
+        expect(refused).toEqual([['media-src', `${LISTED}/s.mp4`], ['media-src', `${LISTED}/t.vtt`]]);
+        // a fragment's top-level <source> loads through the target: unknown or without the attribute counts as without
+        expect(run(`<source id="s" src="${LISTED}/s.mp4">`, 'video').fragment.getElementById('s')!.hasAttribute('src')).toBe(false);
+        expect(run(`<source id="s" src="${LISTED}/s.mp4">`, 'video', true).fragment.getElementById('s')!.getAttribute('src')).toBe(`${LISTED}/s.mp4`);
+    });
+
+    it('without the list nothing changes: the attribute everywhere, no network URL in CSS or a poster', () => {
+        const { fragment } = render(`<img id="a" src="${LISTED}/a.png"><video id="v" src="${LISTED}/v.mp4" poster="${LISTED}/p.png"><source id="s" src="${LISTED}/s.mp4"></video>`);
+        expect([co(fragment, 'a'), co(fragment, 'v'), fragment.getElementById('v')!.getAttribute('poster'), fragment.getElementById('s')!.getAttribute('src')]).toEqual(['anonymous', 'anonymous', null, `${LISTED}/s.mp4`]);
+    });
+
+    it('a registered stylesheet keeps the URLs of such an origin too', () => {
+        const store = new FileStore();
+        store.register({ 'a.css': `i { background: url(${FREE}/a.png), url(${LISTED}/b.png) }` });
+        const { dropped } = viewStylesheets(store.snapshot(), [FREE]);
+        expect(dropped).toEqual([{ path: 'a.css', urls: [`${LISTED}/b.png`], unreadable: null }]);
     });
 });
 

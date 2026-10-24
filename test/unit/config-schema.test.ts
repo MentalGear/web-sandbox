@@ -380,6 +380,14 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
         }
     });
 
+    it('strict: origins.withoutCors refuses the host origin and a host of its site like every kind (no load without CORS ever reaches the host site)', () => {
+        const origins = { images: ['https://img.other.example'], withoutCors: [PAGE, 'https://api.app.example', 'https://img.other.example'] };
+        const dropped = said('strict', origins).filter(message => message.includes(' dropped '));
+        expect(dropped).toEqual([expect.stringContaining(`origins.withoutCors dropped ${PAGE} (the host page's own origin), https://api.app.example (on the host page's site):`)]);
+        expect(kept('strict', origins).withoutCors).toEqual(['https://img.other.example']);
+        expect(kept('strict', origins).images).toEqual(['https://img.other.example']);
+    });
+
     it.each(SANDBOX_MODES)('%s: a loopback, private or link-local host is dropped, with one warning, from a host page that is not on one', (mode) => {
         for (const kind of kindsIn(mode)) {
             const entries = ['http://localhost:5173', 'http://127.0.0.1:9000', 'https://10.0.0.5', 'https://printer', 'https://other.example'];
