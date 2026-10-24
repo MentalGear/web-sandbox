@@ -2508,7 +2508,7 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const styleGetters = [inlineStyle(HTMLElement.prototype), inlineStyle(g.SVGElement && g.SVGElement.prototype), inlineStyle(g.MathMLElement && g.MathMLElement.prototype)];
     const setProperty = CSSStyleDeclaration.prototype.setProperty;
     const removeProperty = CSSStyleDeclaration.prototype.removeProperty;
-    const applyCss = (target: Element, css: Record<string, string | null>) => {
+    const applyCss = (target: Element, given: Record<string, string | null>, refused: [directive: string, url: string][]) => {
         let style: CSSStyleDeclaration | null = null;
         for (let i = 0; !style && i < styleGetters.length; i++) {
             try {
@@ -2518,7 +2518,15 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
             }
         }
         if (!style) return;
-        const names = Object.keys(css);
+        const names = Object.keys(given);
+        // Each value without its network URLs, as a style attribute the renderer keeps (S74, cssInto): one of an origin in
+        // `origins.withoutCors` stays, any other becomes `""` and is reported as refused, so set() loads nothing the
+        // renderer would not.
+        const css: Record<string, string | null> = {};
+        for (let i = 0; i < names.length; i++) {
+            const value = given[names[i]!];
+            css[names[i]!] = typeof value === 'string' ? cssInto(value, refused) : null;
+        }
         let loads = 0;
         for (let i = 0; i < names.length; i++) {
             const value = css[names[i]!];
@@ -2598,10 +2606,11 @@ export function inSandboxView(installFiles: typeof inSandboxFiles, sanitize: typ
     const applySet = (id: string, fields: SetFields) => {
         const target = elementInBody(id);
         if (!target) return;
-        if (fields.css) applyCss(target, fields.css);
+        const refused: [string, string][] = [];
+        // css: each value without network URLs, as the renderer's style attributes (S74; applyCss)
+        if (fields.css) applyCss(target, fields.css, refused);
         const html = call(namespaceOf, target, []) === HTML_NS;
         const name = call(localNameOf, target, []);
-        const refused: [string, string][] = [];
         // a text a sheet could read (see inStyle), without network URLs (S74); the renderer leaves no control inside a style
         const value = !html ? undefined : fields.value !== undefined && (name === 'textarea' || name === 'output') && inStyle(target) ? cssInto(fields.value, refused) : fields.value;
         if (value !== undefined) {

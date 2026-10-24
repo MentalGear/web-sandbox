@@ -1364,8 +1364,9 @@ the view, gestures, custom sliders and virtual lists, all of it guest code in th
   `left`, `top`, `right`, `bottom`, `width`, `height`, `z-index`, `cursor` and custom properties (`--name`, letters,
   digits, `-` and `_`); `null` removes one. At most 16 properties a call (`VIEW_SET_STYLE_LIMITS.maxProperties`), each
   value at most 1024 characters (`VIEW_SET_STYLE_LIMITS.maxValue`). No animation or transition property, so
-  `allowAnimations: false` holds; a value that names a URL (`cursor`, a custom property) is charged to the view's loads
-  like a `style` attribute's, and the view's policy applies to it; what the `style` attribute grows by counts against the
+  `allowAnimations: false` holds; a value that names a URL (`cursor`, a custom property) is treated like a `style`
+  attribute's: an `https:` or `http:` URL is replaced with `""` and reported as a `violation` unless its origin is in
+  `origins.withoutCors`, what remains is charged to the view's loads, and the view's policy applies to it; what the `style` attribute grows by counts against the
   view's characters, and a set past them is refused whole. `set(id, { scroll: { top, left } })` sets that element's own
   scroll position, never an ancestor's or your page's; the `scroll` event it raises is trusted and coalesced like the
   user's, so a guest that answers its own scroll events does so at most once a frame.
