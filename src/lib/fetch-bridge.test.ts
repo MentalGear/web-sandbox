@@ -337,3 +337,39 @@ describe('FetchRecord, a union keyed by outcome (S76, decision D)', () => {
         expect(seen).toHaveLength(3);
     });
 });
+
+describe('the method of a request is read once: the record names the method the check judged (BD3:LIM-2, class D)', () => {
+    // [what the guest sent as `method` (a request that has the key), the record's method, whether the default policy admits it]
+    const METHODS: Array<[string, unknown, string, boolean]> = [
+        ['undefined', undefined, 'GET', true],
+        ['null', null, '', false],
+        ['a number', 7, '', false],
+        ['an object', { toString: () => 'GET' }, '', false],
+        ['an array', ['GET'], '', false],
+        ['text that is no token', 'GE T', '', false],
+        ['too long', 'G'.repeat(17), '', false],
+        ['a lower-case method', 'post', 'POST', true],
+        ['a method the policy refuses', 'delete', 'DELETE', false],
+    ];
+
+    it.each(METHODS)('method %s: the record says %j, and the request is made: %s', async (_, method, recorded, admitted) => {
+        const records: FetchRecord[] = [];
+        const bridge = createFetchBridge({ policy: policy(), hostOrigin: HOST, onRecord: (r) => records.push(r), transport: (async () => new Response('x')) as any });
+        const result = await bridge.handle({ url: 'https://api.example/x', method }).then(() => 'made', error => refusalCode(error));
+        expect(result).toBe(admitted ? 'made' : 'FETCH_NOT_ALLOWED');
+        expect(records).toHaveLength(1);
+        expect(records[0]!.method).toBe(recorded);
+        // the record's method is the one the check judged: the validated method when there is one
+        const checked = validateRequest({ url: 'https://api.example/x', method }, policy(), HOST);
+        if (!(checked instanceof Error)) expect(checked.method).toBe(recorded);
+    });
+
+    it('an absent method is GET in the check and in the record; a request with no `method` key reads the same as one that is undefined', async () => {
+        const records: FetchRecord[] = [];
+        const bridge = createFetchBridge({ policy: policy(), hostOrigin: HOST, onRecord: (r) => records.push(r), transport: (async () => new Response('x')) as any });
+        await bridge.handle({ url: 'https://api.example/a' });
+        await bridge.handle({ url: 'https://api.example/b', method: undefined });
+        await bridge.handle('not a request').catch(() => {});
+        expect(records.map(r => r.method)).toEqual(['GET', 'GET', 'GET']);
+    });
+});
