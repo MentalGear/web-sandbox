@@ -135,41 +135,53 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 
 ### `origins`
 
-<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d2622797099fbb86eeaa59f5 -->
+<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d2622797099fbb86493659f5 -->
 The guest's policy is one fixed template per mode. `origins` adds exact origins to six of its directives, one list per
-kind of load, and can change nothing else (its one other list, [`withoutCors`](#origins-withoutcors), opens no
-directive):
+kind of load, and can change nothing else:
 
 ```js
-sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.example.com'], images: ['https://cdn.example.com'] } });
+sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] } });
 ```
 
 | Kind | Directive | What loads from it |
 | :--- | :--- | :--- |
-| `connect` | `connect-src` | `fetch()`, `XMLHttpRequest`, `WebSocket` (it needs its own `wss://` entry), each through the library's [request gate](#the-request-gate). In cooperative mode also `EventSource` and `sendBeacon()`, which the browser's policy alone governs; the worker of strict and worker mode has neither. |
+| `connect` | `connect-src` | `fetch()`, `XMLHttpRequest` and, in cooperative and worker mode, `WebSocket` (it needs its own `wss://` entry), each through the library's [request gate](#the-request-gate). Strict mode opens [no `WebSocket`](#strict-no-websocket). In cooperative mode also `EventSource` and `sendBeacon()`, which the browser's policy alone governs; the worker of strict and worker mode has neither. |
 | `images` | `img-src` | Images, CSS backgrounds, icons. In strict mode `<img>`, `srcset` and `<picture>` only, which the origin must answer with CORS ([below](#the-views-loads)). |
 | `styles` | `style-src` | Stylesheets: `<link rel=stylesheet>`, `@import`. Inline styles are always allowed. In strict mode nothing loads from it ([below](#the-views-loads)). |
 | `fonts` | `font-src` | `@font-face` fonts. In strict mode nothing loads from it ([below](#the-views-loads)). |
 | `media` | `media-src` | Audio, video, text tracks. In strict mode the origin must answer with CORS ([below](#the-views-loads)). |
 | `scripts` | `script-src` | `<script src>`, modules, `importScripts()`. Not in strict mode. |
 
-- **An entry is one exact origin**, `https://host[:port]`; in `connect` also `wss://host[:port]`; plain `http://` only
-  for `localhost` and `127.0.0.1` (local development). A request to the `http:` or `ws:` form of a listed `https:` or `wss:`
+- **An entry is one exact origin**, `https://host[:port]`; in `connect`, in cooperative and worker mode, also
+  `wss://host[:port]`; plain `http://` only for `localhost` and `127.0.0.1` (local development). A request to the `http:` or `ws:` form of a listed `https:` or `wss:`
   origin is refused by every engine: no policy of the library carries `upgrade-insecure-requests`, so nothing is upgraded
   and nothing is sent in cleartext. Case is folded and a default port dropped. The host must be written as it is meant: no IPv6 literal (a
   policy cannot name one), IPv4 shorthand, percent-encoding, non-ASCII name (write its `xn--` form) or trailing dot.
   An `xn--` label is checked by the browser's own URL parser, and engines differ on invalid Punycode: one that an engine
   refuses is dropped there, so write the form your registrar gives.
-- **A scheme is matched as written, and a `wss://` entry needs its `https://` twin.** `https://api.example.com` alone
-  admits `fetch()` and `XMLHttpRequest` to the host and no `WebSocket`. A `wss://api.example.com` entry is dropped with a
-  warning unless `https://api.example.com` (the same host and port) is listed too; with both, `fetch()` and `WebSocket`
-  reach the host. It is the same on every engine: they disagree on a `wss://` source alone (see
-  [the engines](#connect-src-by-engine)), so the library lists only the pairs they agree on.
+- **A scheme is matched as written, and a `wss://` entry needs its `https://` twin** (cooperative and worker mode).
+  `https://api.example.com` alone admits `fetch()` and `XMLHttpRequest` to the host and no `WebSocket`. A
+  `wss://api.example.com` entry is dropped with a warning unless `https://api.example.com` (the same host and port) is
+  listed too; with both, `fetch()` and `WebSocket` reach the host. It is the same on every engine: they disagree on a
+  `wss://` source alone (see [the engines](#connect-src-by-engine)), so the library lists only the pairs they agree on.
+- <a id="strict-no-websocket"></a>**Strict mode opens no `WebSocket`, on any engine.** A handshake carries the cookies
+  the browser attaches by site, which nothing can strip, so in strict mode a `wss://` entry of `connect` is dropped with
+  one warning per entry, and the request gate refuses every `new WebSocket()`, a listed origin's too, with a
+  `SecurityError` (`refused by the sandbox: strict mode opens no WebSocket`) and its own
+  [`violation`](#violation--sandboxviolation) report, as below. What takes its place:
+  - **A streamed `fetch()` response.** The worker reads `response.body` as it arrives (`getReader()`), chunk by chunk, on
+    every engine (`test/e2e/request-gate.spec.ts`), so a server that pushes events over one long response (server-sent
+    events' format, or lines of JSON) reaches the guest through `fetch()`, without credentials. Send to the server with
+    further `fetch()` requests.
+  - **A socket your page opens.** Open the `WebSocket` in the host page, with the credentials it needs there, and relay
+    what the guest may see with [`expose()`](#exposename-fn) and [`call()`](#callmethod-args): your page decides what
+    crosses, and the guest never holds the socket.
 - <a id="the-request-gate"></a>**The request gate: `fetch()`, `XMLHttpRequest` and `WebSocket` behave and report the same on
   every engine.** In every mode the guest's three request makers are the library's, put in its realm before any guest
   code runs. Each request's URL is resolved as the browser resolves it and admitted only when its scheme, host and port
   are exactly those of a `connect-src` source of the guest policy (the `connect` origins as kept, and `blob:` when files
-  are registered), which is the list the policy is written from. A refused request never reaches the browser: `fetch()`
+  are registered), which is the list the policy is written from; in strict mode a `WebSocket` is never admitted. A
+  refused request never reaches the browser: `fetch()`
   rejects with a `TypeError`, an `XMLHttpRequest` fails as a network error does (`loadstart`, then `readystatechange`,
   `error` and `loadend` with `readyState` 4 and `status` 0; a synchronous `send()` throws a `NetworkError`), and
   `new WebSocket()` throws a `SecurityError`, each with the library's own message. The library reports each one itself, as
@@ -181,10 +193,12 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   it creates); a frame or a worker it creates is a realm of its own, with the browser's request makers under the same
   policy, and reports nothing here.
 - **`fetch()` and `XMLHttpRequest` send no credentials, on any engine.** Every `fetch()` is made with
-  `credentials: 'omit'`, whatever the guest asks for, and `withCredentials` stays `false`. A `WebSocket` handshake cannot
-  be stripped: it carries the cookies the engine attaches ([table below](#cookies-by-engine)), and so does, in
-  cooperative mode, a load of the guest's markup or CSS. A server behind a listed `wss://` origin must check the
-  `Origin` header (a sandbox sends `null`), as any WebSocket server must.
+  `credentials: 'omit'`, whatever the guest asks for, and `withCredentials` stays `false`. In cooperative and worker
+  mode a `WebSocket` handshake cannot be stripped: it carries the cookies the engine attaches
+  ([table below](#cookies-by-engine)), and so does, in cooperative mode, a load of the guest's markup or CSS. A server
+  behind a listed `wss://` origin must check the `Origin` header (a sandbox sends `null`), as any WebSocket server must.
+  **No request of strict mode carries a cookie, on any engine**: its worker's `fetch()` and `XMLHttpRequest` send none,
+  it opens no `WebSocket`, and its view loads without credentials (below).
 - <a id="the-views-loads"></a>**Strict mode's view loads without credentials, on every engine, so a listed `images` or
   `media` origin must answer with CORS.** The renderer gives every `<img>`, `<video>`, `<audio>` and `<link>` it keeps
   `crossorigin="anonymous"` before the element enters the document (the guest's own value, `use-credentials` included,
@@ -200,23 +214,10 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   `violation` of its directive (`img-src`, `style-src`, `font-src`). A registered stylesheet reaches the view without its
   network URLs as well, with one warning per file (its references to registered files stay; one that is not UTF-8, or
   whose `@charset` names another encoding, gets no URL in the view). So nothing loads from `styles` or `fonts` in strict
-  mode: register the stylesheets and fonts the guest needs. Cooperative mode is unchanged: the guest's document makes
-  its own loads, with the cookies the engine attaches.
-- <a id="origins-withoutcors"></a>**`withoutCors`: the origins strict mode's view loads the classic way.** A list of
-  origins, not a kind: it opens no directive, and an entry loads only what `images`, `media`, `styles` or `fonts` also
-  lists (one that none lists is kept, with a warning). For a URL of such an origin the view does not set `crossorigin`
-  (on an `<img>`, `<video>` or `<audio>` whose own URLs are all of such origins; an `<img>` in a `<picture>` always gets
-  it, and a `<source>` or `<track>` of a media element without it keeps only such a URL), and keeps a `poster` and the
-  CSS `url()`, `@import`, `image-set()` and `@font-face` URLs that name it, so a server that sends no
-  `Access-Control-Allow-Origin` still serves the guest. Never the host site's cookies: an origin on the host page's
-  site is dropped from `withoutCors` as from every list. **Do not list an origin whose cookie-authenticated GET endpoints
-  act on a request**: the guest chooses the URL. Entries follow the rules of the other lists; outside strict mode the
-  list is ignored, with a warning. The cost ([by engine](#cookies-by-engine)):
-
-<!-- generated:begin without-cors-cost -->
-**A load of the view to an origin of `withoutCors` carries that origin's own cookies where the engine attaches them to a third-party request:** Chromium: none; Firefox: `SameSite=None` (none with Total Cookie Protection, Firefox's default); WebKit: `SameSite=None` (none with Safari, which blocks third-party cookies; not measured).
-<!-- generated:end -->
-
+  mode: register the stylesheets and fonts the guest needs. The rule has no exception, per origin or otherwise: an
+  asset whose server does not answer with CORS is either made to answer it (`Access-Control-Allow-Origin: *`), or
+  fetched by your page and [registered as a file](#registerfilesfiles), which the view shows from a `blob:` URL.
+  Cooperative mode is unchanged: the guest's document makes its own loads, with the cookies the engine attaches.
 - **The host page's `connect-src` narrows `connect` and the bridge's `allow` on every engine.** The library applies your
   page's policy to the two lists itself, before it writes the guest's and the bridge's policies: an origin your
   `connect-src` (or `default-src`) does not admit is dropped with a warning. See
@@ -225,9 +226,9 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
   `'self'` and every other keyword, `data:`, `blob:`, paths, queries, credentials, whitespace, `;`. Dropping only
   narrows: a kind left with no origin admits none (`'none'`). A key that is not a kind is dropped with a warning.
 - **An origin on the host page's site is dropped in every mode**, with one warning per kind that names the kind and each
-  such origin. A WebSocket handshake, or in cooperative mode a load of the guest's markup or CSS, to it can carry the
-  host site's cookies, as the [table below](#cookies-by-engine) says, so use [`fetchBridge`](#fetchbridge) for an API that knows the user: it
-  sends no credentials in any engine.
+  such origin. A WebSocket handshake in cooperative or worker mode, or in cooperative mode a load of the guest's markup
+  or CSS, to it can carry the host site's cookies, as the [table below](#cookies-by-engine) says, so use
+  [`fetchBridge`](#fetchbridge) for an API that knows the user: it sends no credentials in any engine.
 - **The host page's site is decided from the page's origin by one rule, with no probe and no public-suffix list.** The
   page's origin is `self.origin` of the realm the element runs in, so an element in a same-origin `srcdoc` or `about:blank`
   frame has its page's origin, as its cookies do. For a host name of two labels or more, an entry is on the site when its
@@ -249,10 +250,9 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com', 'wss://ws.ex
 
 <a id="cookies-by-engine"></a>
 The cookies the browser would send with a request of the sandbox that the library cannot strip, by engine, for the
-requests [listed below the table](#cookie-carriers) (`fetch()`, `XMLHttpRequest` and every load of strict mode's view
-carry none, on any engine, but a view load to an origin of `withoutCors`; this is why an origin on the host page's site
-is dropped; the warning is written from the same table; every wrapper frame is `credentialless`, which only some
-engines honour):
+requests [listed below the table](#cookie-carriers) (`fetch()`, `XMLHttpRequest` and every request of strict mode carry
+none, on any engine; this is why an origin on the host page's site is dropped; the warning is written from the same
+table; every wrapper frame is `credentialless`, which only some engines honour):
 
 <!-- generated:begin cookie-facts -->
 | Engine | To an origin on the host page's site | To an origin on another site | Narrower with | Found by |
@@ -263,15 +263,16 @@ engines honour):
 <!-- generated:end -->
 
 <a id="cookie-carriers"></a>
-The requests that carry them. The library's [request gate](#the-request-gate) covers the guest's `fetch()`,
-`XMLHttpRequest` and `WebSocket`; every other maker of a request is the browser's, and in cooperative mode the guest
-has all of them. Each row is made on every engine by `test/e2e/cookies.spec.ts`:
+The requests that carry them (`COOKIE_CARRIERS`), and the modes in which the guest can make each: none in strict mode.
+The library's [request gate](#the-request-gate) covers the guest's `fetch()`, `XMLHttpRequest` and `WebSocket`; every
+other maker of a request is the browser's, and in cooperative mode the guest has all of them. Each row is made on
+every engine by `test/e2e/cookies.spec.ts` or `test/e2e/request-gate.spec.ts`:
 
 <!-- generated:begin cookie-carriers -->
 | Request | Where | Why the library cannot strip it |
 | :--- | :--- | :--- |
-| A WebSocket handshake | every mode | The browser makes the handshake and attaches the cookies by site; the gate can refuse it, not strip it, so a server behind a listed `wss://` origin must check `Origin` |
-| A load of the guest's markup or CSS (an image, a stylesheet, a font, media) | cooperative mode only | The engine makes the load for the document that holds it. Strict mode's view makes each of its loads without credentials (`crossorigin="anonymous"`; no network URL in CSS or a poster), but one to an origin of `origins.withoutCors`, which carries that origin's own cookies (never the host site's) |
+| A WebSocket handshake | cooperative and worker mode | The browser makes the handshake and attaches the cookies by site; the gate can refuse it, not strip it, so a server behind a listed `wss://` origin must check `Origin`. Strict mode opens none: its gate refuses every `WebSocket`, and its `origins.connect` keeps no `wss://` entry |
+| A load of the guest's markup or CSS (an image, a stylesheet, a font, media) | cooperative mode only | The engine makes the load for the document that holds it. Strict mode's view makes each of its loads without credentials (`crossorigin="anonymous"`; no network URL in CSS or a poster) |
 | A `navigator.sendBeacon(url, data)` call | cooperative mode only | A credentialed POST. The gate covers `fetch()`, `XMLHttpRequest` and `WebSocket`; this maker is not among them, and the strict and worker-mode worker has none |
 | An `EventSource` made with `{ withCredentials: true }` | cooperative mode only | The guest chooses `withCredentials`; the gate does not cover `EventSource`, and the strict and worker-mode worker has none |
 | An `<a ping>` click | cooperative mode only | A POST made by the browser when the link is followed; Firefox sends no ping by default (Firefox sends none) |
@@ -853,8 +854,9 @@ trusted.
 
 A report is evidence that the guest attempted something the policy refused, never a host fact: guest code can suppress
 its own reports, and a frame the guest creates reports to itself. A `fetch()`, `XMLHttpRequest` or `WebSocket` request
-of the guest's realm to an origin `origins.connect` does not list is refused by the library's request gate before the
-browser sees it, and reported by the gate in every mode and on every engine, with the same fields: `directive`
+of the guest's realm to an origin `origins.connect` does not list (in strict mode, any `WebSocket`) is refused by the
+library's request gate before the browser sees it, and reported by the gate in every mode and on every engine, with
+the same fields: `directive`
 `'connect-src'`, `blockedURI` the URL without credentials or fragment, `sourceFile` `'web-sandbox:request-gate'`, no
 line or column (in strict mode `source` `'logic'`). Reports the browser raises itself depend on the engine in workers
 (WebKit raises none there), so what remains of them there, such as a redirect the browser refuses, is per engine. At
@@ -1112,7 +1114,8 @@ runs no guest code at all, and acts only on trusted events: a synthetic event is
 only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WORKER_NAVIGATOR_MEMBERS` for
 `navigator`) and deletes every other one, so a platform API that is not listed is absent. The listed globals that can
 make a request are `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`), which are the library's
-[request gate](#the-request-gate) in every mode, and in worker mode `importScripts` (`script-src`). Strict mode's worker
+[request gate](#the-request-gate) in every mode (in strict mode `WebSocket` is kept as a name but refuses every
+socket: [no `WebSocket`](#strict-no-websocket)), and in worker mode `importScripts` (`script-src`). Strict mode's worker
 has no `importScripts`: its policy's `script-src` is the view's hash, so it could never load anything. Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
 encoding, streams, `crypto`, `Blob`, `File`, `URL`, `OffscreenCanvas` with 2D and WebGL, WebCodecs,
 `performance`, `scheduler`, `BroadcastChannel`, and `indexedDB`, which is present but stores nothing: in the sandbox's opaque
@@ -1365,8 +1368,8 @@ the view, gestures, custom sliders and virtual lists, all of it guest code in th
   digits, `-` and `_`); `null` removes one. At most 16 properties a call (`VIEW_SET_STYLE_LIMITS.maxProperties`), each
   value at most 1024 characters (`VIEW_SET_STYLE_LIMITS.maxValue`). No animation or transition property, so
   `allowAnimations: false` holds; a value that names a URL (`cursor`, a custom property) is treated like a `style`
-  attribute's: an `https:` or `http:` URL is replaced with `""` and reported as a `violation` unless its origin is in
-  `origins.withoutCors`, what remains is charged to the view's loads, and the view's policy applies to it; what the `style` attribute grows by counts against the
+  attribute's: an `https:` or `http:` URL is replaced with `""` and reported as a `violation`, what remains is charged to
+  the view's loads, and the view's policy applies to it; what the `style` attribute grows by counts against the
   view's characters, and a set past them is refused whole. `set(id, { scroll: { top, left } })` sets that element's own
   scroll position, never an ancestor's or your page's; the `scroll` event it raises is trusted and coalesced like the
   user's, so a guest that answers its own scroll events does so at most once a frame.
@@ -1415,7 +1418,7 @@ a mode. [ADR-005](ADR-005-strict-mode.md)
 (Firefox, Safari and WebKit, Android, Chromium without sandboxed-iframe isolation; desktop Chromium 127+ runs it in a
 process apart from the page's, which the page's other sandboxes can share): there the view's cost is the bound stated in [The view's cost to the host page](#the-views-cost-to-the-host-page),
 and what it lists as outside it. Cooperative mode is no better there. Also
-CSS probing the view's own content (CSS loads nothing from the network there), the worker's own `violation` reports beyond the [request gate's](#the-request-gate) (per engine, guest-influenced), a worker that closes itself (only the watchdog notices), memory, and the cookies a WebSocket handshake carries in some engines (none to a same-site origin, which no mode admits; [by engine](#cookies-by-engine)); the view's loads carry none ([The view's loads](#the-views-loads)).
+CSS probing the view's own content (CSS loads nothing from the network there), the worker's own `violation` reports beyond the [request gate's](#the-request-gate) (per engine, guest-influenced), a worker that closes itself (only the watchdog notices) and memory. No request of strict mode carries a cookie: its worker opens [no `WebSocket`](#strict-no-websocket), and its view's loads carry none ([The view's loads](#the-views-loads)).
 
 **Cooperative-mode limits**, a frozen list (cooperative content only: the library adds no guest-realm patches for
 new findings there, it lists them): same-thread execution; frames and workers the guest creates; WebKit's preconnect;

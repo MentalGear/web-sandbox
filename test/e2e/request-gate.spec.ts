@@ -7,7 +7,9 @@ import { COOKIE_ENGINE_FACTS, type CookieEngine } from '@src/lib/cookie-facts';
  * The request gate (src/lib/in-sandbox-script.ts; S74): in every guest realm, fetch(), XMLHttpRequest and WebSocket admit
  * exactly the origins of the guest policy's connect-src, refuse everything else before the browser sees it, the same way
  * on every engine, and report each refusal themselves, with one shape. fetch() and XMLHttpRequest send no credentials.
- * The platform's originals cannot be recovered from the realm.
+ * Strict mode opens no WebSocket (it has no cookie carrier, STRICT_COOKIE_CARRIERS): its gate refuses every one, a listed
+ * origin's too, with the same shape, and its `origins.connect` keeps no `wss://` entry; a streamed fetch() response, read
+ * as it arrives, is what replaces a socket there. The platform's originals cannot be recovered from the realm.
  *
  * Evidence: the recorder's listeners outside the browser (recorder.ts), with a positive control beside each negative: the
  * admitted requests reach the allowed listener, and the same credentialed requests from a plain sandboxed frame of the host
@@ -17,6 +19,9 @@ import { COOKIE_ENGINE_FACTS, type CookieEngine } from '@src/lib/cookie-facts';
 const recorder = useRecorder();
 const MODES = ['cooperative', 'worker', 'strict'] as const;
 const GATE = 'refused by the sandbox: the origin is not in its origins.connect';
+const NO_SOCKET = 'refused by the sandbox: strict mode opens no WebSocket';
+/** What `new WebSocket()` to an origin connect-src does not list throws, by mode. */
+const socketRefusal = (mode: (typeof MODES)[number]) => `SecurityError: WebSocket ${mode === 'strict' ? NO_SOCKET : GATE}`;
 
 // Every refused request a guest can make with the three request makers, and how each one ended, as the guest sees it.
 const REFUSED = (blocked: string) => `
@@ -56,8 +61,8 @@ test.describe('a refused request: one outcome and one report on every engine, in
                 noCors: `TypeError: fetch() ${GATE}`,
                 xhr: ['readystatechange:1', 'loadstart:1', 'readystatechange:4', 'error:4:0', 'loadend:4'],
                 xhrSync: 'NetworkError 4',
-                webSocket: `SecurityError: WebSocket ${GATE}`,
-                webSocketHttps: `SecurityError: WebSocket ${GATE}`,
+                webSocket: socketRefusal(mode),
+                webSocketHttps: socketRefusal(mode),
             });
             const source = mode === 'strict' ? { source: 'logic' } : {};
             expect(await gateReports(sandbox)).toEqual([
@@ -72,8 +77,13 @@ test.describe('a refused request: one outcome and one report on every engine, in
 
 test.describe('an admitted request works as the platform\'s', () => {
     for (const mode of MODES) {
-        test(`${mode} mode: fetch, XMLHttpRequest and a WebSocket to the listed origin reach it, with no report`, async ({ sandbox }) => {
+        const opens = mode !== 'strict';
+        test(`${mode} mode: fetch, XMLHttpRequest${opens ? ' and a WebSocket' : ''} to the listed origin reach it, with no report${opens ? '' : '; a WebSocket to it is refused and reported, and its wss:// entry dropped with a warning'}`, async ({ sandbox, page }) => {
+            const warnings: string[] = [];
+            page.on('console', message => { if (message.type() === 'warning') warnings.push(message.text()); });
             expect(await sandbox.mount({ mode, origins: { connect: [recorder.allowed, wss(recorder.allowed)] } })).toBe('ready');
+            const dropped = `origins.connect entry "${wss(recorder.allowed)}" was dropped: strict mode opens no WebSocket`;
+            expect(warnings.filter(text => text.includes(dropped)), mode).toHaveLength(opens ? 0 : 1);
             const outcome = await sandbox.inGuest(`
                 const fetched = await fetch('${recorder.allowed}/ok-fetch').then((r) => r.status + ' ' + r.url, (e) => e.name);
                 const xhr = await new Promise((resolve) => {
@@ -85,7 +95,8 @@ test.describe('an admitted request works as the platform\'s', () => {
                 });
                 const xhrSync = (() => { const x = new XMLHttpRequest(); x.open('GET', '${recorder.allowed}/ok-xhr-sync', false); x.send(); return x.status; })();
                 const socket = await new Promise((resolve) => {
-                    const s = new WebSocket('${wss(recorder.allowed)}/ok-ws');
+                    let s;
+                    try { s = new WebSocket('${wss(recorder.allowed)}/ok-ws'); } catch (e) { resolve(e.name + ': ' + e.message); return; }
                     s.onopen = () => { resolve('open ' + (s instanceof WebSocket) + ' ' + s.url); s.close(); };
                     s.onerror = () => resolve('error');
                 });
@@ -95,12 +106,32 @@ test.describe('an admitted request works as the platform\'s', () => {
                 fetched: `200 ${recorder.allowed}/ok-fetch`,
                 xhr: '200 ok 4',
                 xhrSync: 200,
-                socket: `open true ${wss(recorder.allowed)}/ok-ws`,
+                socket: opens ? `open true ${wss(recorder.allowed)}/ok-ws` : socketRefusal(mode),
             });
-            for (const path of ['/ok-fetch', '/ok-xhr', '/ok-xhr-sync', '/ok-ws']) await recorder.waitFor('allowed', path);
-            expect(await gateReports(sandbox)).toEqual([]);
+            for (const path of ['/ok-fetch', '/ok-xhr', '/ok-xhr-sync', ...(opens ? ['/ok-ws'] : [])]) await recorder.waitFor('allowed', path);
+            expect(await gateReports(sandbox)).toEqual(opens ? [] : [{ directive: 'connect-src', blockedURI: `${wss(recorder.allowed)}/ok-ws`, sourceFile: GATE_SOURCE_FILE, source: 'logic' }]);
+            // strict mode: no handshake reached the listener, which the other modes' sockets reach (the positive control)
+            if (!opens) expect(recorder.hits.filter(hit => hit.websocket)).toEqual([]);
         });
     }
+});
+
+test.describe('strict mode: a streamed fetch() response is read as it arrives (what replaces a socket)', () => {
+    test('the first chunk of a response that never ends reaches the guest', async ({ sandbox }) => {
+        expect(await sandbox.mount({ mode: 'strict', origins: { connect: [recorder.allowed] } })).toBe('ready');
+        const outcome = await sandbox.inGuest(`
+            const response = await fetch('${recorder.allowed}/slow');
+            const reader = response.body.getReader();
+            const first = await Promise.race([reader.read(), new Promise((resolve) => setTimeout(() => resolve('timed out'), 5000))]);
+            if (first === 'timed out') return { first };
+            await reader.cancel();
+            return { status: response.status, done: first.done, text: new TextDecoder().decode(first.value) };
+        `);
+        // the listener sends one chunk and never ends the response (recorder.ts, /slow): what the guest read, it read
+        // before the end, as it arrived
+        expect(outcome).toEqual({ status: 200, done: false, text: 'first chunk; the rest never comes' });
+        expect(recorder.hits.filter(hit => hit.path === '/slow').map(hit => hit.bytesSent)).toEqual([34]);
+    });
 });
 
 test.describe('credentials: never on fetch() or XMLHttpRequest, on any engine', () => {
@@ -109,12 +140,12 @@ test.describe('credentials: never on fetch() or XMLHttpRequest, on any engine', 
         await fetch('${origin}/cred-include?tag=${tag}', { credentials: 'include' }).catch(() => {});
         await fetch('${origin}/cred-no-cors?tag=${tag}', { mode: 'no-cors', credentials: 'include', method: 'POST', body: 'x' }).catch(() => {});
         await new Promise((resolve) => { const x = new XMLHttpRequest(); x.open('GET', '${origin}/cred-xhr?tag=${tag}'); x.withCredentials = true; x.onloadend = resolve; x.send(); });
-        await new Promise((resolve) => { const s = new WebSocket('${wss(origin)}/cred-ws?tag=${tag}'); s.onopen = () => { s.close(); resolve(); }; s.onerror = resolve; });
+        await new Promise((resolve) => { let s; try { s = new WebSocket('${wss(origin)}/cred-ws?tag=${tag}'); } catch (e) { resolve(); return; } s.onopen = () => { s.close(); resolve(); }; s.onerror = resolve; });
     `;
     const cookiesOf = (tag: string) => Object.fromEntries(recorder.hits.filter(hit => hit.server === 'allowed' && hit.path.endsWith(`tag=${tag}`))
         .map(hit => [hit.path.slice(1, hit.path.indexOf('?')), String(hit.headers.cookie ?? '')]));
 
-    test('every mode: a credentialed fetch, a no-cors one and an XMLHttpRequest with withCredentials carry no cookie; a WebSocket handshake carries what the engine sends (cookie-facts.ts)', async ({ sandbox, context, browserName }) => {
+    test('every mode: a credentialed fetch, a no-cors one and an XMLHttpRequest with withCredentials carry no cookie; a WebSocket handshake carries what the engine sends (cookie-facts.ts), and strict mode makes none', async ({ sandbox, context, browserName }) => {
         await context.addCookies([COOKIE]);
         // positive control: a plain sandboxed frame of the host page's sends the cookie with a credentialed fetch
         await sandbox.page.evaluate((code) => {
@@ -131,12 +162,16 @@ test.describe('credentials: never on fetch() or XMLHttpRequest, on any engine', 
         for (const mode of MODES) {
             expect(await sandbox.mount({ mode, origins: { connect: [recorder.allowed, wss(recorder.allowed)] } }), mode).toBe('ready');
             expect(await sandbox.inGuest(credentialed(recorder.allowed, mode) + `return 'sent';`), mode).toBe('sent');
-            await expect.poll(() => Object.keys(cookiesOf(mode)).sort(), mode).toEqual(['cred-include', 'cred-no-cors', 'cred-ws', 'cred-xhr']);
+            // strict mode: no handshake at all (STRICT_COOKIE_CARRIERS); the other modes' handshakes are its positive control
+            const made = mode === 'strict' ? ['cred-include', 'cred-no-cors', 'cred-xhr'] : ['cred-include', 'cred-no-cors', 'cred-ws', 'cred-xhr'];
+            await expect.poll(() => Object.keys(cookiesOf(mode)).sort(), mode).toEqual(made);
             const seen = cookiesOf(mode);
             expect({ include: seen['cred-include'], noCors: seen['cred-no-cors'], xhr: seen['cred-xhr'] }, mode).toEqual({ include: '', noCors: '', xhr: '' });
             // the handshake cannot be stripped: as the engine's cookie facts say (engine-specific, documented)
-            expect(seen['cred-ws']!.includes('ws_gate=1'), `${mode} WebSocket handshake`).toBe(handshake);
+            if (mode !== 'strict') expect(seen['cred-ws']!.includes('ws_gate=1'), `${mode} WebSocket handshake`).toBe(handshake);
         }
+        await sandbox.page.waitForTimeout(300);
+        expect(Object.keys(cookiesOf('strict')), 'strict mode: no WebSocket handshake').not.toContain('cred-ws');
     });
 });
 

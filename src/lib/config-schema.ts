@@ -26,7 +26,7 @@ import type { CallLimits } from '../host';
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, type SafeCapability, type UnsafeCapability } from '../csp-directives';
 import { filterCapabilities } from './capabilities';
 import { sameSiteCookieClause } from './cookie-facts';
-import { NO_ORIGINS, ORIGIN_LISTS, parseOrigins, shown, type OriginPolicy } from './csp/origins';
+import { NO_ORIGINS, ORIGIN_KINDS, parseOrigins, shown, type OriginPolicy } from './csp/origins';
 import { isPrivateHost, isPrivateOrigin, PRIVATE_NETWORK_REASON, toFetchPolicy, type FetchPolicy } from './fetch-bridge';
 import { hostOriginKnown, onHostSite, OPAQUE_ORIGIN } from './host-site';
 import type { Origin } from './origin';
@@ -258,7 +258,7 @@ const viewSwitch = (name: ViewSwitch) => ({ given, mode, warn }: OptionInput): b
 
 /**
  * The one pass over a parsed `origins` that decides what a listed origin reaches beyond the internet at large, in every
- * list (ORIGIN_LISTS: every kind, so a new kind is covered, and `withoutCors`), with one warning per list and reason.
+ * list (ORIGIN_KINDS: every kind, so a new kind is covered), with one warning per list and reason.
  * Its one input about the host page is `context.hostOrigin` (host-site.ts, `hostPageOrigin`):
  *  - An origin on the host page's site (onHostSite, host-site.ts: the page's host, or a host that shares its last two
  *    labels; for an address, `localhost` or a single-label host, that host only) may receive the host site's cookies
@@ -283,7 +283,7 @@ export function limitHostReach(policy: OriginPolicy, context: NormaliseContext, 
     const siteReason = hostOriginKnown(hostOrigin) ? "on the host page's site" : "the host page's origin is not known";
     const kept: Record<string, readonly Origin[]> = {};
     let dropped = false;
-    for (const kind of ORIGIN_LISTS) {
+    for (const kind of ORIGIN_KINDS) {
         const keep: Origin[] = [];
         const siteRefused: string[] = [];
         const localRefused: string[] = [];

@@ -12,9 +12,10 @@ import { createGateHarness } from './request-gate-harness';
  * realm afterwards, at run time (jsdom) and in the text (the scan below). The browsers decide what the gate's refusals
  * look like to a guest on each engine: test/e2e/request-gate.spec.ts.
  *
- * One bootstrap runs in this file's realm (the gate is not configurable on the global object), in strict mode's form, over
- * stand-ins installed as the platform's fetch, XMLHttpRequest and WebSocket before it captures them. A copy of the
- * stand-in fetch also sits on the global object's prototype, where a worker's platform keeps it (BD1:ISO-2).
+ * One bootstrap runs in this file's realm (the gate is not configurable on the global object), in worker mode's form,
+ * where a listed `wss://` origin admits a WebSocket, over stand-ins installed as the platform's fetch, XMLHttpRequest and
+ * WebSocket before it captures them. A copy of the stand-in fetch also sits on the global object's prototype, where a
+ * worker's platform keeps it (BD1:ISO-2). Strict mode's gate, which refuses every WebSocket: request-gate-strict.test.ts.
  */
 // What the policy of a build with these `origins.connect` and a registered file writes into connect-src: the gate's list.
 const CONNECT = connectSources({
@@ -27,7 +28,7 @@ const gate = createGateHarness();
 const { fetched, opened, sent, sockets, credentialsSet, platformFetch, PlatformXMLHttpRequest, PlatformWebSocket, PLATFORM_MEMBERS, prototypeOfGlobal, reports, clear } = gate;
 const g = globalThis as any;
 
-beforeAll(() => gate.install(CONNECT));
+beforeAll(() => gate.install(CONNECT, { mode: 'worker' }));
 
 describe('the list is the policy\'s: the connect-src sources, exactly', () => {
     it('the gate is given what the policy writes into connect-src', () => {
@@ -222,7 +223,7 @@ describe('the URL checked is the URL sent: a guest value is read once', () => {
 });
 
 describe('a relative URL resolves against the realm\'s base, as the platform resolves it (BD3:TST-3)', () => {
-    // strict mode's form is a worker's: it has no document, so the base is its location (a document's is its baseURI,
+    // the harness's form is a worker's: it has no document, so the base is its location (a document's is its baseURI,
     // read the same way). A relative URL that did not resolve would throw a SyntaxError from open() and the constructor
     // instead of being checked, refused and reported as the URL it names.
     it('XMLHttpRequest and WebSocket refuse a relative URL as the absolute URL it resolves to, and report that', () => {

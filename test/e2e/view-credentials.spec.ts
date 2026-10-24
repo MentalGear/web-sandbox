@@ -10,7 +10,10 @@ import { test, expect, ORIGIN } from './fixture';
 import { inView, waitInView } from './strict-view';
 
 /**
- * Strict mode's view makes no load with a cookie, on any engine (S74, BD2:ISO-2, docs/research/21_crossorigin_loads/README.md; class A). The engine chooses the
+ * No request of strict mode carries a cookie, on any engine (S74, class A: STRICT_COOKIE_CARRIERS is empty). Its two
+ * would-be carriers are the view's loads and a WebSocket handshake of its worker.
+ *
+ * The view makes no load with a cookie (BD2:ISO-2, docs/research/21_crossorigin_loads/README.md). The engine chooses the
  * credentials of an element's load and of a load CSS makes; the renderer takes the choice: every img, video, audio and
  * link it keeps carries crossorigin="anonymous" from before it is connected (RENDER_CROSSORIGIN_ELEMENTS), and the
  * loads no attribute reaches keep no network URL (a poster, which Firefox loads without CORS; every url(), @import,
@@ -35,12 +38,14 @@ import { inView, waitInView } from './strict-view';
  *                target is listed at all; the loads that reach S show that the construction, not the site rule, keeps
  *                the cookies off. The names reach the listener through a CONNECT proxy of this spec's
  *                (startNameProxy), so no DNS entry is needed.
- * Both run on every engine.
+ * Both run on every engine. In each, the worker also tries a WebSocket to every target (and, in opaque-host, to the host
+ * page's own origin H, whose host-only cookies are in the jar too): strict mode keeps no `wss://` entry and its request
+ * gate refuses every WebSocket, so each attempt is a SecurityError with the gate's report, and no handshake reaches the
+ * listener, which records one (the positive control: a plain sandboxed frame's handshakes reach it).
  *
  * And the costs of the construction, on every engine: an origin that answers CORS still renders (images, media, and a
  * seek in a 7 MB video through Range requests); one that does not fails, and each failed load is reported as a
- * `violation` of its directive. `origins.withoutCors` is the embedder's way out, per origin: such an origin is loaded
- * the classic way, without CORS and with its own cookies where the engine sends them, and every other keeps the rule.
+ * `violation` of its directive.
  */
 
 test.use({ ignoreHTTPSErrors: true });
@@ -109,7 +114,7 @@ function longMedia(dir: string): { type: string; bytes: Buffer } {
     }
 }
 
-type Hit = { host: string; k: string; cookies: string[]; origin: string; mode: string; range: string; status: number };
+type Hit = { host: string; k: string; cookies: string[]; origin: string; mode: string; range: string; status: number; websocket?: true };
 
 /**
  * One HTTPS listener for 127.0.0.1 and the three names. `/cors/<file>?k=<id>` answers with `Access-Control-Allow-Origin: *`,
@@ -171,7 +176,13 @@ async function startListener(seek = true) {
         res.writeHead(200, { ...headers, 'content-length': asset.bytes.length, ...(asset.ranges ? { 'accept-ranges': 'bytes' } : {}) });
         res.end(asset.bytes);
     });
-    server.on('upgrade', (_req, socket) => socket.destroy());
+    // a WebSocket handshake is recorded with its cookies, then refused: the evidence of a socket's attempt
+    server.on('upgrade', (req, socket) => {
+        const url = new URL(req.url ?? '/', 'https://listener');
+        const cookie = String(req.headers.cookie ?? '');
+        hits.push({ host: String(req.headers.host ?? '').replace(/:\d+$/, ''), k: url.searchParams.get('k') ?? '', cookies: cookie ? cookie.split(/;\s*/).map(part => part.split('=')[0]!) : [], origin: String(req.headers.origin ?? '-'), mode: 'websocket', range: '-', status: 0, websocket: true });
+        socket.destroy();
+    });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
     return {
@@ -189,19 +200,22 @@ type Listener = Awaited<ReturnType<typeof startListener>>;
 
 const cookie = (name: string, domain: string, sameSite: 'None' | 'Lax' | 'Strict') => ({ name, value: '1', domain, path: '/', secure: true, sameSite });
 
-/** A world: which origins are listed, and the cookies the jar holds for them. */
+/** A world: which origins are listed, the cookies the jar holds for them, and the origins a WebSocket is tried to. */
 interface World {
     targets: Record<string, string>; // name → listed origin
     cookies: ReturnType<typeof cookie>[];
+    sockets: Record<string, string>; // name → origin: the targets, and in opaque-host the host page's own
 }
 
 const crossSiteWorld = (listener: Listener): World => ({
     targets: { X: `https://127.0.0.1:${listener.port}` },
     cookies: [cookie('x_none', '127.0.0.1', 'None')],
+    sockets: { X: `https://127.0.0.1:${listener.port}` },
 });
 
 const opaqueHostWorld = (listener: Listener): World => ({
     targets: { S: `https://${NAMES.S}:${listener.port}`, X: `https://${NAMES.X}:${listener.port}` },
+    sockets: { H: `https://${NAMES.H}:${listener.port}`, S: `https://${NAMES.S}:${listener.port}`, X: `https://${NAMES.X}:${listener.port}` },
     cookies: [
         ...(['None', 'Lax', 'Strict'] as const).flatMap(site => [cookie(`d_${site.toLowerCase()}`, '.wsprobe.test', site), cookie(`xd_${site.toLowerCase()}`, '.wsprobe2.test', site)]),
         ...(['None', 'Lax'] as const).flatMap(site => [cookie(`h_${site.toLowerCase()}`, NAMES.H, site), cookie(`s_${site.toLowerCase()}`, NAMES.S, site), cookie(`x_${site.toLowerCase()}`, NAMES.X, site)]),
@@ -249,7 +263,7 @@ async function controlFrame(page: Page, targets: Record<string, string>, tag: st
 const seen = (listener: Listener, k: string) => listener.hits.filter(hit => hit.k === k);
 
 for (const worldName of ['cross-site', 'opaque-host'] as const) {
-    test.describe(`strict view loads carry no cookie (${worldName})`, () => {
+    test.describe(`strict mode: no request carries a cookie (${worldName})`, () => {
         let listener: Listener;
         let world: World;
         let siteWarnings: string[];
@@ -328,6 +342,40 @@ for (const worldName of ['cross-site', 'opaque-host'] as const) {
             expect(warnings.filter(text => text.includes('registered stylesheet "own.css"'))).toHaveLength(1);
         });
 
+        test('the worker opens no WebSocket: each one, to every target and the host page\'s own origin, is refused and reported, and no handshake leaves', async ({ sandbox, page, browserName }) => {
+            test.setTimeout(60000);
+            const tag = `${worldName}-${browserName}-ws`;
+            const sockets = Object.entries(world.sockets);
+            const wssOf = (origin: string) => origin.replace(/^https:/, 'wss:');
+            // positive control: a plain sandboxed frame of the host page opens a handshake to each, which the listener records
+            // (with the cookies its engine attaches, which a strict guest's handshake would carry)
+            // ledger: cookies
+            await page.evaluate((urls) => {
+                const frame = document.createElement('iframe');
+                frame.setAttribute('sandbox', 'allow-scripts');
+                frame.srcdoc = `<script>for (const url of ${JSON.stringify(urls)}) { try { new WebSocket(url); } catch (e) {} }<\/script>`;
+                document.body.appendChild(frame);
+            }, sockets.map(([name, origin]) => `${wssOf(origin)}/ws?k=${tag}.${name}.control`));
+            for (const [name] of sockets) await expect.poll(() => seen(listener, `${tag}.${name}.control`).filter(hit => hit.websocket).length, `control ${name}`).toBeGreaterThan(0);
+
+            // every target listed for fetch() and with its wss:// twin, as cooperative and worker mode would take a socket
+            const listed = Object.values(world.sockets);
+            const connect = [...listed, ...listed.map(wssOf)];
+            expect(await sandbox.mount({ mode: 'strict', origins: { connect }, ...(worldName === 'opaque-host' ? { hostContentSecurityPolicy: false } : {}) })).toBe('ready');
+            const outcome = await sandbox.inGuest(`
+                const out = {};
+                for (const [name, url] of ${JSON.stringify(sockets.map(([name, origin]) => [name, `${wssOf(origin)}/ws?k=${tag}.${name}.sandbox`]))}) {
+                    try { new WebSocket(url); out[name] = 'made'; } catch (e) { out[name] = e.name + ': ' + e.message; }
+                }
+                return out;
+            `);
+            expect(outcome).toEqual(Object.fromEntries(sockets.map(([name]) => [name, 'SecurityError: WebSocket refused by the sandbox: strict mode opens no WebSocket'])));
+            const reports = (await sandbox.violations()).filter(v => v.directive === 'connect-src' && v.blockedURI.includes('.sandbox')).map(v => new URL(v.blockedURI).searchParams.get('k'));
+            expect(reports.sort()).toEqual(sockets.map(([name]) => `${tag}.${name}.sandbox`).sort());
+            await page.waitForTimeout(800);
+            expect(listener.hits.filter(hit => hit.k.endsWith('.sandbox'))).toEqual([]);
+        });
+
         test('an origin that answers CORS plays and seeks through Range requests; one that does not fails, reported', async ({ sandbox, page, browserName }) => {
             test.setTimeout(60000);
             const tag = `${worldName}-${browserName}-media`;
@@ -355,48 +403,3 @@ for (const worldName of ['cross-site', 'opaque-host'] as const) {
         });
     });
 }
-
-test.describe('origins.withoutCors: a listed origin loads without CORS, with its own cookies where the engine sends them; every other keeps the rule', () => {
-    let free: Listener; // in withoutCors
-    let strict: Listener; // not
-    test.beforeAll(async () => {
-        free = await startListener(false);
-        strict = await startListener(false);
-    });
-    test.afterAll(async () => {
-        await free?.stop();
-        await strict?.stop();
-    });
-
-    test('loads of the listed origin need no Access-Control-Allow-Origin and carry its cookie (Firefox, WebKit; Chromium none); the other needs it and carries none', async ({ sandbox, page, context, browserName }) => {
-        test.setTimeout(60000);
-        const W = `https://127.0.0.1:${free.port}`;
-        const N = `https://127.0.0.1:${strict.port}`;
-        await context.addCookies([cookie('x_none', '127.0.0.1', 'None')]); // a host-only cookie of 127.0.0.1: both listeners, any port
-        const html = `<img id="w" src="${W}/nocors/a.png?k=w.img" alt=""><audio id="wa" src="${W}/nocors/e.wav?k=w.audio" preload="auto"></audio>`
-            + `<div id="wcss" style="width:5px;height:5px;background:url(${W}/nocors/a.png?k=w.css)"></div><video id="wp" poster="${W}/nocors/a.png?k=w.poster"></video>`
-            + `<img id="n" src="${N}/nocors/a.png?k=n.nocors" alt=""><img id="c" src="${N}/cors/a.png?k=n.cors" alt=""><div style="width:5px;height:5px;background:url(${N}/cors/a.png?k=n.css)"></div>`;
-        await sandbox.registerFiles({ 'main.js': `sandboxView.render(${JSON.stringify(html)});` });
-        expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', origins: { images: [W, N], media: [W, N], withoutCors: [W] } })).toBe('ready');
-
-        for (const k of ['w.img', 'w.audio', 'w.css', 'w.poster']) await expect.poll(() => seen(free, k).length, k).toBeGreaterThan(0);
-        // the listed origin, without Access-Control-Allow-Origin: rendered, loaded the classic way
-        expect(await waitInView<boolean>(page, browserName, `document.getElementById('w').naturalWidth === 3 && document.getElementById('wa').readyState >= 1`, 8000)).toBe(true);
-        expect(await inView(page, browserName, `['w', 'wa', 'wp', 'n', 'c'].map(id => document.getElementById(id).getAttribute('crossorigin'))`)).toEqual([null, null, null, 'anonymous', 'anonymous']);
-        // and its own cookie rides on it where the engine attaches third-party cookies to such a load
-        // ledger: cookies
-        const expected = browserName === 'chromium' ? [] : ['x_none'];
-        for (const k of ['w.img', 'w.audio', 'w.css']) for (const hit of seen(free, k)) expect(hit.cookies, k).toEqual(expected);
-
-        // the other origin: CORS required, no cookie, and its CSS URL is dropped
-        await expect.poll(() => seen(strict, 'n.nocors').length).toBeGreaterThan(0);
-        expect(await waitInView<boolean>(page, browserName, `document.getElementById('c').naturalWidth === 3`, 8000)).toBe(true);
-        expect(await inView<number>(page, browserName, `document.getElementById('n').naturalWidth`)).toBe(0);
-        await page.waitForTimeout(500);
-        expect(strict.hits.filter(hit => hit.cookies.length > 0)).toEqual([]);
-        expect(seen(strict, 'n.css')).toEqual([]);
-        const violations = (await sandbox.violations()).map(v => `${v.directive} ${new URL(v.blockedURI).searchParams.get('k')}`);
-        expect(violations).toEqual(expect.arrayContaining(['img-src n.nocors', 'img-src n.css']));
-        expect(violations.filter(line => line.includes(' w.'))).toEqual([]);
-    });
-});

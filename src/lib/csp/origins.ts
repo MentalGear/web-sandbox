@@ -19,8 +19,9 @@ import { defineData, ownField } from "../utils";
  * origins to six directives of the guest's policy and can change nothing else.
  *
  * @remarks
- * An entry is one exact origin, `https://host[:port]`; in `connect` also `wss://host[:port]`, which is kept only beside
- * its `https://host[:port]` twin (the pair admits both `fetch()` and `WebSocket` on every engine); plain `http://` only
+ * An entry is one exact origin, `https://host[:port]`; in `connect`, outside strict mode, also `wss://host[:port]`, which
+ * is kept only beside its `https://host[:port]` twin (the pair admits both `fetch()` and `WebSocket` on every engine; strict
+ * mode opens no WebSocket and drops such an entry with a warning); plain `http://` only
  * for `localhost` and `127.0.0.1`. Case is folded and a default port is dropped. Anything else is dropped with one warning
  * per entry (other schemes, `*`, `'self'` and other keywords, paths, credentials, an IPv6 literal, a non-ASCII or
  * percent-encoded host), and a key that is not a kind is dropped too. Dropping only narrows: a kind with no origin left
@@ -34,15 +35,19 @@ import { defineData, ownField } from "../utils";
  * directive of each kind of load their type is for, whatever is listed here. In strict mode the view loads images and
  * media without credentials, as CORS requests (`crossorigin="anonymous"`), so those origins must answer with
  * `Access-Control-Allow-Origin` (`*` or `null`), and a failed load is reported as a `violation`; CSS and posters keep no
- * network URL there, so nothing loads from `styles` or `fonts` (docs/API.md#the-views-loads). See ADR-007.
+ * network URL there, so nothing loads from `styles` or `fonts` (docs/API.md#the-views-loads). So no request of strict
+ * mode carries a cookie, on any engine. See ADR-007.
  *
  * @defaultValue none
  */
 export interface SandboxOrigins {
     /**
-     * fetch(), XMLHttpRequest and WebSocket: connect-src. A WebSocket needs an entry of its own (`wss://host`), and that
-     * entry is dropped with a warning unless `https://host` is listed too: the pair admits `fetch()` and `WebSocket` to
-     * the host on every engine, and `https://host` alone admits `fetch()` only. Cooperative mode's guest document also
+     * fetch(), XMLHttpRequest and WebSocket: connect-src. In cooperative and worker mode a WebSocket needs an entry of
+     * its own (`wss://host`), and that entry is dropped with a warning unless `https://host` is listed too: the pair
+     * admits `fetch()` and `WebSocket` to the host on every engine, and `https://host` alone admits `fetch()` only. Strict
+     * mode opens no WebSocket, since a handshake carries the cookies the browser attaches: a `wss://` entry is dropped
+     * with a warning, and the request gate refuses every `WebSocket` (a streamed `fetch()` response, or a socket the host
+     * page opens and relays through `expose()`, takes its place). Cooperative mode's guest document also
      * has EventSource and sendBeacon(), which this list governs; strict and worker mode's worker has neither. The host
      * page's own `connect-src` narrows this list in every engine (`hostContentSecurityPolicy`). The guest's fetch(),
      * XMLHttpRequest and WebSocket are the library's request gate: they admit exactly these origins (and `blob:` for
@@ -60,25 +65,6 @@ export interface SandboxOrigins {
     media?: readonly string[];
     /** Scripts (`<script src>`, modules, importScripts()): script-src. Not in strict mode. */
     scripts?: readonly string[];
-    /**
-     * Strict mode only: origins the view loads the classic way, without CORS, so that a server which sends no
-     * `Access-Control-Allow-Origin` still serves the guest. Not a kind: it adds no origin to any directive, and an entry
-     * loads only what `images`, `media`, `styles` or `fonts` also list.
-     *
-     * @remarks
-     * For a URL of an origin listed here the view does not set `crossorigin="anonymous"` (on an `<img>`, `<video>` or
-     * `<audio>` whose own URLs are all of such origins; an `<img>` in a `<picture>` always gets it), and keeps a
-     * `poster` and the `url()`, `@import`, `image-set()` and `@font-face` URLs of CSS that name it. **The cost: on Firefox
-     * and WebKit those loads carry the listed origin's own `SameSite=None` cookies** (a third-party request, as for any
-     * page that embeds its images); Chromium sends none (the sandbox's frame is credentialless). Never the host site's
-     * cookies: an origin on the host page's site is refused here as in every list. Do not list an origin whose
-     * cookie-authenticated GET endpoints act on a request: the guest chooses the URL. Entries follow the rules of the
-     * other lists (one exact `https:` origin; `http:` only for loopback). Outside strict mode it is ignored, with a
-     * warning (cooperative and worker mode make their loads the engine's way anyway). docs/API.md#the-views-loads
-     *
-     * @defaultValue none
-     */
-    withoutCors?: readonly string[];
 }
 
 /**
@@ -88,34 +74,25 @@ export interface SandboxOrigins {
  */
 export type StrictSandboxOrigins = Omit<SandboxOrigins, 'scripts'> & { readonly scripts?: never };
 
-/** A kind of load `origins` takes origins for. */
-export type OriginKind = Exclude<keyof SandboxOrigins, 'withoutCors'>;
+/** A kind of load `origins` takes origins for: every list of `origins`. */
+export type OriginKind = keyof SandboxOrigins;
 
 /** Every kind, in the order the policy emits their directives. */
 export const ORIGIN_KINDS = ['scripts', 'styles', 'images', 'fonts', 'media', 'connect'] as const satisfies readonly OriginKind[];
 
-/** A list `origins` takes: every kind, and `withoutCors`, which is no kind (it names no directive). */
-export type OriginList = keyof SandboxOrigins;
-
-/** Every list of `origins`, the kinds first. */
-export const ORIGIN_LISTS = [...ORIGIN_KINDS, 'withoutCors'] as const satisfies readonly OriginList[];
-
-/** The kinds a `withoutCors` entry loads through in the strict view: what an element or CSS there can load. */
-export const WITHOUT_CORS_KINDS = ['images', 'media', 'styles', 'fonts'] as const satisfies readonly OriginKind[];
-
-/** `origins` as parsed: every list present, every entry an Origin; frozen, lists included. */
-export type OriginPolicy = { readonly [K in OriginList]: readonly Origin[] };
+/** `origins` as parsed: every kind present, every entry an Origin; frozen, lists included. */
+export type OriginPolicy = { readonly [K in OriginKind]: readonly Origin[] };
 
 // https: for any host; plain http: only for loopback (local development); wss: for connections only.
 const RULES: OriginRules = { anyHost: ['https:'], loopbackOnly: ['http:'] };
 const CONNECT_RULES: OriginRules = { anyHost: ['https:', 'wss:'], loopbackOnly: ['http:'] };
 
 /** The schemes an entry of `kind` may have (origin.ts). */
-export function originRules(kind: OriginList): OriginRules {
+export function originRules(kind: OriginKind): OriginRules {
     return kind === 'connect' ? CONNECT_RULES : RULES;
 }
 
-const isList = (key: string): key is OriginList => (ORIGIN_LISTS as readonly string[]).includes(key);
+const isKind = (key: string): key is OriginKind => (ORIGIN_KINDS as readonly string[]).includes(key);
 
 // An entry as it may appear in a warning: a string clamped and JSON-quoted (control characters show), else its type.
 // Every config warning shows a value through it (R1:R1-3): JSON.stringify of a BigInt or a cyclic entry would throw
@@ -125,8 +102,8 @@ export const shown = (value: unknown) => (typeof value === 'string' ? JSON.strin
 /** The empty policy: no origin for any kind. */
 export const NO_ORIGINS: OriginPolicy = parseOrigins(undefined, 'cooperative', () => {});
 
-/** The options whose type refuses a config: `origins` itself, and each of its lists (every kind, and `withoutCors`). */
-export type OriginsOption = 'origins' | OriginList;
+/** The options whose type refuses a config: `origins` itself, and each of its kinds. */
+export type OriginsOption = 'origins' | OriginKind;
 
 /**
  * What the reason of a refused config says of an `origins` of the wrong type (BD3:NEW-3): a fixed text of the library's
@@ -135,7 +112,7 @@ export type OriginsOption = 'origins' | OriginList;
  */
 export const ORIGINS_REFUSAL_TEXT: Readonly<Record<OriginsOption, string>> = Object.freeze({
     origins: 'origins is not an object',
-    ...(Object.fromEntries(ORIGIN_LISTS.map(kind => [kind, `origins.${kind} is not a list`])) as Record<OriginList, string>),
+    ...(Object.fromEntries(ORIGIN_KINDS.map(kind => [kind, `origins.${kind} is not a list`])) as Record<OriginKind, string>),
 });
 
 /** The TypeError that refuses a config for the type of `option`; the element's reason names it (ORIGINS_REFUSAL_TEXT). */
@@ -163,36 +140,35 @@ export function parseOrigins(input: unknown, mode: unknown, warn: (message: stri
     if (input !== undefined && (!input || typeof input !== 'object' || Array.isArray(input))) throw new OriginsTypeError('origins');
     const source = (input ?? {}) as Record<string, unknown>;
     for (const key of Object.keys(source)) {
-        if (!isList(key)) warn(`[Sandbox] origins.${shown(key)} was dropped: origins takes ${ORIGIN_LISTS.join(', ')}.`);
+        if (!isKind(key)) warn(`[Sandbox] origins.${shown(key)} was dropped: origins takes ${ORIGIN_KINDS.join(', ')}.`);
     }
 
     const policy: Record<string, readonly Origin[]> = {};
-    for (const kind of ORIGIN_LISTS) {
+    for (const kind of ORIGIN_KINDS) {
         const entries = ownField(source, kind);
         if (entries !== undefined && !Array.isArray(entries)) throw new OriginsTypeError(kind);
         defineData(policy, kind, Object.freeze(originsOf(kind, entries ?? [], mode, warn)));
     }
-    const withoutCors = policy.withoutCors!;
-    for (const origin of withoutCors) {
-        if (!WITHOUT_CORS_KINDS.some(kind => policy[kind]!.includes(origin))) warn(`[Sandbox] origins.withoutCors lists ${shown(origin)}, which none of ${WITHOUT_CORS_KINDS.join(', ')} lists: it loads nothing until one of them does.`);
-    }
     return Object.freeze(policy) as OriginPolicy;
 }
 
-function originsOf(kind: OriginList, entries: readonly unknown[], mode: unknown, warn: (message: string) => void): Origin[] {
+function originsOf(kind: OriginKind, entries: readonly unknown[], mode: unknown, warn: (message: string) => void): Origin[] {
     if (kind === 'scripts' && mode === 'strict') {
         if (entries.length > 0) warn('[Sandbox] origins.scripts is not used in strict mode and was dropped: the view runs only the library\'s bootstrap, and the worker loads no script (see docs/ADR-005).');
-        return [];
-    }
-    if (kind === 'withoutCors' && mode !== 'strict') {
-        if (entries.length > 0) warn('[Sandbox] origins.withoutCors is used only in strict mode and was ignored: the other modes make their loads the engine\'s way.');
         return [];
     }
     const origins = new Set<Origin>();
     for (const entry of entries) {
         const origin = parseOrigin(entry, originRules(kind));
         if (origin === null) {
-            warn(`[Sandbox] origins.${kind} entry ${shown(entry)} was dropped: list exact origins like "https://cdn.example" (https; http only for localhost and 127.0.0.1${kind === 'connect' ? '; wss' : ''}). Wildcards, schemes, keywords, data:, blob: and paths are not origins (see docs/API.md#origins).`);
+            warn(`[Sandbox] origins.${kind} entry ${shown(entry)} was dropped: list exact origins like "https://cdn.example" (https; http only for localhost and 127.0.0.1${kind === 'connect' && mode !== 'strict' ? '; wss' : ''}). Wildcards, schemes, keywords, data:, blob: and paths are not origins (see docs/API.md#origins).`);
+            continue;
+        }
+        // strict mode has no cookie carrier (COOKIE_CARRIERS, cookie-facts.ts): a WebSocket handshake carries the cookies
+        // the browser attaches by site, which nothing can strip, so its entries go (and the request gate refuses every
+        // WebSocket there all the same)
+        if (kind === 'connect' && mode === 'strict' && origin.startsWith('wss://')) {
+            warn(`[Sandbox] origins.connect entry ${shown(origin)} was dropped: ${STRICT_NO_SOCKET}`);
             continue;
         }
         origins.add(origin);
@@ -204,6 +180,12 @@ function originsOf(kind: OriginList, entries: readonly unknown[], mode: unknown,
     }
     return kept;
 }
+
+/**
+ * Why strict mode keeps no `wss://` entry and opens no WebSocket (S74, class A): what the warning of a dropped
+ * entry says, and what replaces the socket.
+ */
+export const STRICT_NO_SOCKET = "strict mode opens no WebSocket: a handshake carries the cookies the browser attaches by site, which the library cannot strip. Stream a fetch() response instead, or open the socket in the host page and relay it to the guest with expose() (see docs/API.md#origins).";
 
 /** The `https://` origin that a `wss://` origin needs beside it: the same host and port. */
 export function httpsTwin(origin: string): string {

@@ -142,11 +142,14 @@ for (const mode of ['strict', 'cooperative'] as const) {
                 await openHost(page, policy(`connect-src 'self' ${recorder.allowed} ${wss(recorder.allowed)}`));
                 expect(await mountConnect(sandbox, mode, { origins: { connect: [recorder.allowed, wss(recorder.allowed)] }, fetchBridge: { allow: [recorder.allowed] } })).toBe('ready');
 
-                expect(await guestConnectSrc(page)).toBe(`${recorder.allowed} ${wss(recorder.allowed)}`);
+                // strict mode opens no WebSocket: its wss:// entry is dropped at the boundary, with the one warning that says so,
+                // and the socket is refused (docs/API.md#strict-no-websocket); cooperative mode's is the socket's positive control
+                const strict = mode === 'strict';
+                expect(await guestConnectSrc(page)).toBe(strict ? recorder.allowed : `${recorder.allowed} ${wss(recorder.allowed)}`);
                 expect(await bridgeConnectSrc(page)).toBe(recorder.allowed);
-                expect(warnings.filter(text => /dropped/.test(text))).toEqual([]);
-                expect(await guestRequests(sandbox, recorder.allowed)).toEqual({ fetch: 'ok', socket: 'open', bridge: 'ok' });
-                expect(reached(recorder)).toEqual(['/guest-bridge', '/guest-fetch', '/guest-socket']);
+                expect(warnings.filter(text => /dropped/.test(text) && !text.includes('strict mode opens no WebSocket'))).toEqual([]);
+                expect(await guestRequests(sandbox, recorder.allowed)).toEqual({ fetch: 'ok', socket: strict ? 'threw SecurityError' : 'open', bridge: 'ok' });
+                expect(reached(recorder)).toEqual(strict ? ['/guest-bridge', '/guest-fetch'] : ['/guest-bridge', '/guest-fetch', '/guest-socket']);
             });
         });
     }
@@ -387,13 +390,16 @@ test.describe('the decoy on an https page', () => {
 
 test.describe('a wss:// entry needs its https:// twin, and the pair admits both on every engine', () => {
     for (const mode of ['strict', 'cooperative'] as const) {
-        test(`${mode} mode: wss:// alone is dropped with a warning, https:// alone admits fetch() only, the pair admits both`, async ({ sandbox, page }) => {
+        test(`${mode} mode: wss:// alone is dropped with a warning, https:// alone admits fetch() only, the pair admits both${mode === 'strict' ? ' but a socket (strict mode opens none)' : ''}`, async ({ sandbox, page }) => {
             const { warnings } = watch(page);
             await openHost(page);
 
-            // wss alone: dropped, so neither a fetch() nor a socket arrives (on WebKit a wss:// source alone would have admitted the fetch())
+            // wss alone: dropped, so neither a fetch() nor a socket arrives (on WebKit a wss:// source alone would have admitted the fetch());
+            // strict mode drops every wss:// entry, with a warning of its own (docs/API.md#strict-no-websocket)
+            const strict = mode === 'strict';
             expect(await mountConnect(sandbox, mode, { origins: { connect: [wss(recorder.allowed)] } })).toBe('ready');
-            expect(warnings.filter(text => text.startsWith('[Sandbox] origins.connect entry') && text.includes('needs')), 'the warning names the twin').toEqual([expect.stringContaining(`"${recorder.allowed}"`)]);
+            if (strict) expect(warnings.filter(text => text.startsWith('[Sandbox] origins.connect entry')), 'strict mode opens no WebSocket').toEqual([expect.stringContaining('strict mode opens no WebSocket')]);
+            else expect(warnings.filter(text => text.startsWith('[Sandbox] origins.connect entry') && text.includes('needs')), 'the warning names the twin').toEqual([expect.stringContaining(`"${recorder.allowed}"`)]);
             expect(await guestConnectSrc(page)).toBe("'none'");
             expect(await guestRequests(sandbox, recorder.allowed)).toMatchObject({ fetch: 'TypeError', socket: expect.stringMatching(/^(error|threw)/) });
             await page.waitForTimeout(200);
@@ -405,12 +411,13 @@ test.describe('a wss:// entry needs its https:// twin, and the pair admits both 
             await page.waitForTimeout(200);
             expect(reached(recorder), 'https:// alone admits the fetch() and no socket').toEqual(['/guest-fetch']);
 
-            // the pair: both
+            // the pair: both (strict mode: the fetch() only; its gate refuses every socket)
             recorder.clear();
             expect(await mountConnect(sandbox, mode, { origins: { connect: [recorder.allowed, wss(recorder.allowed)] } })).toBe('ready');
-            expect(await guestRequests(sandbox, recorder.allowed)).toMatchObject({ fetch: 'ok', socket: 'open' });
-            expect(reached(recorder), 'the pair admits both').toEqual(['/guest-fetch', '/guest-socket']);
-            expect(recorder.hits.find(hit => hit.path.startsWith('/guest-socket'))?.websocket).toBe(true);
+            expect(await guestRequests(sandbox, recorder.allowed)).toMatchObject({ fetch: 'ok', socket: strict ? 'threw SecurityError' : 'open' });
+            await page.waitForTimeout(200);
+            expect(reached(recorder), 'the pair admits both').toEqual(strict ? ['/guest-fetch'] : ['/guest-fetch', '/guest-socket']);
+            if (!strict) expect(recorder.hits.find(hit => hit.path.startsWith('/guest-socket'))?.websocket).toBe(true);
         });
     }
 

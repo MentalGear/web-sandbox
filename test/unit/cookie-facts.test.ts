@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AMBIENT_CREDENTIALS, ambientCredentialsSentence, carrierClause, COOKIE_CARRIER_IDS, COOKIE_CARRIERS, COOKIE_ENGINE_FACTS, COOKIE_ENGINES, cookieSentence, engineClause, engineClauses, SAME_SITE_VALUES, sameSiteCookieClause, sameSiteValues, withCode } from '@src/lib/cookie-facts';
-import { normaliseConfig } from '@src/lib/config-schema';
+import { AMBIENT_CREDENTIALS, ambientCredentialsSentence, carrierClause, carrierModes, COOKIE_CARRIER_IDS, COOKIE_CARRIERS, COOKIE_ENGINE_FACTS, COOKIE_ENGINES, cookieCarriersIn, cookieSentence, engineClause, engineClauses, SAME_SITE_VALUES, sameSiteCookieClause, sameSiteValues, STRICT_COOKIE_CARRIERS, withCode } from '@src/lib/cookie-facts';
+import { normaliseConfig, SANDBOX_MODES, type SandboxMode } from '@src/lib/config-schema';
+import { connectSources } from '@src/lib/csp/csp-generator';
+import { ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { CONTEXT_ENGINES, INHERITED_CONTEXT } from '@src/lib/inherited-context';
 
 /**
@@ -48,9 +50,14 @@ describe('COOKIE_ENGINE_FACTS', () => {
 });
 
 describe('COOKIE_CARRIERS: the requests the library cannot strip (BD3:DOC-1)', () => {
-    it('names the request of every mode, and the five that only cooperative mode has, which the gate does not cover', () => {
-        expect(COOKIE_CARRIER_IDS.filter(id => COOKIE_CARRIERS[id].modes === 'every mode')).toEqual(['websocket']);
-        expect(COOKIE_CARRIER_IDS.filter(id => COOKIE_CARRIERS[id].modes === 'cooperative mode')).toEqual(['markup', 'beacon', 'eventsource', 'ping', 'frames']);
+    it('names the request of cooperative and worker mode, and the five that only cooperative mode has, which the gate does not cover; strict mode has none', () => {
+        expect(cookieCarriersIn('worker')).toEqual(['websocket']);
+        expect(cookieCarriersIn('cooperative')).toEqual(['websocket', 'markup', 'beacon', 'eventsource', 'ping', 'frames']);
+        expect(cookieCarriersIn('strict')).toEqual([]);
+        expect(STRICT_COOKIE_CARRIERS).toEqual([]);
+        expect(Object.isFrozen(STRICT_COOKIE_CARRIERS)).toBe(true);
+        for (const id of COOKIE_CARRIER_IDS) expect(COOKIE_CARRIERS[id].modes as readonly string[], id).not.toContain('strict');
+        expect(COOKIE_CARRIER_IDS.map(id => carrierModes(COOKIE_CARRIERS[id]))).toEqual(['cooperative and worker mode', ...Array(5).fill('cooperative mode only')]);
     });
 
     it('each row is said, and the spec that makes it exists (a cooperative-mode row\'s reads the table)', () => {
@@ -59,7 +66,7 @@ describe('COOKIE_CARRIERS: the requests the library cannot strip (BD3:DOC-1)', (
             for (const text of [carrier.request, carrier.short, carrier.why]) expect(text, id).not.toBe('');
             for (const engine of carrier.unsentBy) expect(COOKIE_ENGINES, `${id} ${engine}`).toContain(engine);
             const spec = readFileSync(path.join(root, carrier.test), 'utf8');
-            if (carrier.modes === 'cooperative mode') expect(spec, `${id}: its spec makes the request from the table`).toContain('COOKIE_CARRIERS');
+            if (carrier.modes.length === 1) expect(spec, `${id}: its spec makes the request from the table`).toContain('COOKIE_CARRIERS');
         }
     });
 
@@ -68,7 +75,61 @@ describe('COOKIE_CARRIERS: the requests the library cannot strip (BD3:DOC-1)', (
         const sentence = cookieSentence(tick);
         expect(sentence).toContain(carrierClause(tick));
         for (const id of COOKIE_CARRIER_IDS) expect(sentence, id).toContain(withCode(COOKIE_CARRIERS[id].short, tick));
-        expect(carrierClause()).toBe("a WebSocket handshake; in cooperative mode also a load of the guest's markup or CSS, navigator.sendBeacon(), EventSource with withCredentials, an <a ping> click and the requests of a frame the guest creates");
+        expect(carrierClause()).toBe("a WebSocket handshake in cooperative and worker mode; in cooperative mode also a load of the guest's markup or CSS, navigator.sendBeacon(), EventSource with withCredentials, an <a ping> click and the requests of a frame the guest creates");
+        expect(sentence).toContain('No request of strict mode carries a cookie, on any engine');
+    });
+});
+
+/**
+ * The structural test of the class's chokepoint for strict mode (S74, class A): STRICT_COOKIE_CARRIERS is empty, and what
+ * makes it so holds for every config. Strict mode's two would-be carriers are a WebSocket handshake and a view load
+ * made without CORS: the strict config after normalisation keeps no `ws:` or `wss:` entry in any kind, so the policy's
+ * connect-src and the request gate's list name none (the gate refuses every WebSocket there besides,
+ * test/unit/request-gate-strict.test.ts), and the renderer has no exception to the forced `crossorigin`
+ * (test/unit/view-credentials.test.ts). Each part has its positive control: the same configs in worker mode keep the
+ * `wss://` entries.
+ */
+describe('strict mode has no cookie carrier: the config after normalisation', () => {
+    const HOSTS = ['https://app.example.com', 'http://localhost:4444', 'null', ''];
+    const ENTRIES = ['https://api.other.example', 'wss://api.other.example', 'WSS://API.other.example:443', 'wss://ws.other.example', 'https://ws.other.example:8443', 'wss://ws.other.example:8443',
+        'ws://api.other.example', 'ws://localhost:3000', 'http://localhost:3000', 'wss://localhost:3000', 'https://app.example.com', 'wss://app.example.com', 'https://203.0.113.7', 'wss://203.0.113.7'];
+    // every subset of a window of the entries, in every kind and in a key that is no kind: enough to reach each rule
+    const configs = (): Record<string, string[]>[] => {
+        const out: Record<string, string[]>[] = [];
+        for (let start = 0; start < ENTRIES.length; start++) {
+            for (let mask = 1; mask < 16; mask++) {
+                const picked = [0, 1, 2, 3].filter(bit => mask & (1 << bit)).map(bit => ENTRIES[(start + bit) % ENTRIES.length]!);
+                out.push({ connect: picked });
+                out.push(Object.fromEntries([...ORIGIN_KINDS, 'withoutCors'].map(kind => [kind, picked])));
+            }
+        }
+        return out;
+    };
+    const socketEntries = (mode: SandboxMode, hostOrigin: string, origins: Record<string, string[]>) => {
+        const value = normaliseConfig({ mode, origins, hostContentSecurityPolicy: false }, { hostOrigin }).value!;
+        const listed = [...Object.values(value.origins).flat(), ...connectSources({ origins: value.origins, fileKinds: new Set(['connect']), scriptUnsafe: false })];
+        return { keys: Object.keys(value.origins), sockets: listed.filter(entry => /^wss?:/i.test(entry)) };
+    };
+
+    it('keeps no ws: or wss: entry in any kind, for any host page, and no list but the kinds', () => {
+        let checked = 0;
+        for (const hostOrigin of HOSTS) {
+            for (const origins of configs()) {
+                const { keys, sockets } = socketEntries('strict', hostOrigin, origins);
+                expect(sockets, `${hostOrigin} ${JSON.stringify(origins)}`).toEqual([]);
+                expect(keys.sort(), hostOrigin).toEqual([...ORIGIN_KINDS].sort());
+                checked++;
+            }
+        }
+        expect(checked).toBeGreaterThan(400);
+    });
+
+    it('positive control: the same configs keep wss:// entries in worker and cooperative mode, so the check sees one', () => {
+        for (const mode of SANDBOX_MODES.filter(mode => mode !== 'strict')) {
+            const found = configs().filter(origins => socketEntries(mode, 'https://app.example.com', origins).sockets.length > 0);
+            expect(found.length, mode).toBeGreaterThan(10);
+            expect(socketEntries(mode, 'https://app.example.com', { connect: ['https://api.other.example', 'wss://api.other.example'] }).sockets, mode).toEqual(['wss://api.other.example', 'wss://api.other.example']);
+        }
     });
 });
 

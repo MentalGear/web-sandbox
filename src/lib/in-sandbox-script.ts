@@ -426,7 +426,7 @@ export function inSandboxScript(
     // fetch and XMLHttpRequest never carry credentials (class A, S74): every fetch is made from a Request built again
     // with `credentials: 'omit'`, and an XMLHttpRequest's `withCredentials` stays false (its setter changes nothing), so
     // no cookie of a listed origin's site rides on either, on any engine. A WebSocket handshake cannot be stripped, and
-    // carries what the engine sends (cookie-facts.ts).
+    // carries what the engine sends (cookie-facts.ts): in strict mode the gate refuses every one (below).
     //
     // BR:PD2, keepalive: Firefox sends `fetch(url, { keepalive: true })` without checking connect-src, so the gate also
     // refuses a keepalive request. It reads `keepalive` and `url` from the Request it built with the captured constructor,
@@ -668,11 +668,16 @@ export function inSandboxScript(
     }
 
     // WebSocket: the URL resolved, an http(s) one taken as its ws(s) form, as the constructor does; checked; the
-    // platform's constructor given the resolved URL.
+    // platform's constructor given the resolved URL. Strict mode has no cookie carrier (COOKIE_CARRIERS, cookie-facts.ts;
+    // S74): a handshake carries the cookies the browser attaches by site, so there the gate refuses every WebSocket,
+    // whatever its list says, and never calls the platform's constructor.
+    const socketsRefused = mode === 'strict';
+    const socketRefusal = 'refused by the sandbox: strict mode opens no WebSocket';
     if (typeof NativeWebSocket === 'function' && DOMExceptionConstructor && urlReady) {
         const gatedWebSocket = function WebSocket(this: unknown, url: unknown, protocols?: unknown) {
             if (new.target === undefined) throw construct(TypeErrorConstructor, [NEW_REQUIRED]);
             const count = arguments.length;
+            if (count === 0 && socketsRefused) throw construct(TypeErrorConstructor, ["Failed to construct 'WebSocket': 1 argument required"]);
             if (count === 0) return construct(NativeWebSocket, [], new.target);
             const target = resolved(url);
             const protocol = apply(protocolOf!, target, []);
@@ -680,9 +685,9 @@ export function inSandboxScript(
             else if (protocol === 'http:') apply(protocolTo!, target, ['ws:']);
             else if (protocol !== 'wss:' && protocol !== 'ws:') throw construct(DOMExceptionConstructor!, ['a WebSocket URL is ws:, wss:, http: or https:', 'SyntaxError']);
             const href = apply(urlHref!, target, []) as string;
-            if (!admits(href)) {
+            if (socketsRefused || !admits(href)) {
                 refuse(href);
-                throw construct(DOMExceptionConstructor!, ['WebSocket ' + refusal, 'SecurityError']);
+                throw construct(DOMExceptionConstructor!, ['WebSocket ' + (socketsRefused ? socketRefusal : refusal), 'SecurityError']);
             }
             return construct(NativeWebSocket, count < 2 ? [href] : [href, protocols], new.target);
         };
