@@ -163,8 +163,9 @@ test.describe('without hostContentSecurityPolicy', () => {
 
         expect(await guestConnectSrc(page), 'the policy lists no origin').toBe("'none'");
         expect(await bridgeConnectSrc(page), "nor does the bridge's").toBe("'none'");
+        // Strict mode has already dropped the wss:// entry (it opens no WebSocket), so the warning names the rest.
         expect(warnings.filter(text => /hostContentSecurityPolicy was not given/.test(text)), 'one warning, for both lists').toEqual([
-            policyNotGiven({ connect: [recorder.allowed, wss(recorder.allowed)], allow: [recorder.allowed] }),
+            policyNotGiven({ connect: [recorder.allowed], allow: [recorder.allowed] }),
         ]);
         expect(warnings[warnings.length - 1], 'it says what to pass').toContain("Pass hostContentSecurityPolicy: your page's policy as text");
 
