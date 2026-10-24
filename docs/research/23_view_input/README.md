@@ -199,7 +199,7 @@ reaches the guest through `keydown`, as before.
 | P | a count of events standing in for their cost | the event path's time is charged to the time budget; the frame rate and the acknowledgement only bound the message rate |
 | G | `on()`'s options object, `set()`'s `css` and `scroll` objects | each read once, as a snapshot, into objects with no prototype, through intrinsics captured before guest code (the capture-point scan; `isStyleProperty` is given a captured `charCodeAt`) |
 | B | "trusted" read as "user-caused" (`scroll` raised by `set`); implicit capture per engine; WebKit's uncoalesced delivery | no bound depends on an event being the user's; clamping does not predict the browser's routing, it clips whatever arrives; the outbox makes the rate the same on every engine |
-| E-net | `set({ css })` values that can name a URL (`cursor`, `--*`) | the chokepoint of style attributes: each value without its network URLs unless of an origin in `origins.withoutCors` (`cssInto`, as the renderer's; research 21), then `cssLoadBound` and the load budget (S73); the view's policy |
+| E-net | `set({ css })` values that can name a URL (`cursor`, `--*`) | the chokepoint of style attributes: each value without its network URLs (`cssInto`, as the renderer's; research 21), then `cssLoadBound` and the load budget (S73); the view's policy |
 | C | an opt-in such as native drop data, if one is ever added | `CONFIG_SCHEMA`, a literal `true` only, like `allowAnimations` |
 | L | pointer capture across `reset()` | capture ends with the view's document; subscriptions are per worker |
 

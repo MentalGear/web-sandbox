@@ -205,7 +205,8 @@ refused if it contains any, or anything that would end or re-enter the script el
 - **No load of the view carries credentials** (S74; [research 21](research/21_crossorigin_loads/README.md)): every `img`, `video`, `audio` and `link` the renderer keeps gets
   `crossorigin="anonymous"` in the inert template, before it is connected, so its loads are CORS requests without
   cookies on every engine (a listed origin must answer with CORS; a failed load is reported); CSS keeps no `https:` or
-  `http:` URL (style attributes, `<style>`, registered stylesheets), since no attribute reaches a load CSS makes.
+  `http:` URL (style attributes, `<style>`, registered stylesheets), since no attribute reaches a load CSS makes. There
+  is no exception, per origin or otherwise: an asset whose server does not answer CORS is registered as a file.
 - **Unknown HTML elements are unwrapped**: their children take their place and are checked in turn, so obsolete or unknown
   wrappers (`center`, `font`, `marquee`) keep their text; nothing is serialised or reparsed, so unwrapping cannot change what
   a child is. The elements that hold raw text, a template or a browsing context (`script`, `noscript`, `template`,
@@ -305,7 +306,11 @@ is resolved as the platform resolves it and admitted only when its exact origin 
 there) is a source of the policy's `connect-src`: the list the host writes that directive from (`connectSources`). A refused
 request never reaches the browser; it fails as a refused request does, with the library's own message, and the gate
 reports it on the logic port, so its `violation` (`source: 'logic'`, `sourceFile` `'web-sandbox:request-gate'`) arrives on
-every engine, WebKit included, with the same fields. `fetch` and `XMLHttpRequest` never send credentials. The originals
+every engine, WebKit included, with the same fields. `fetch` and `XMLHttpRequest` never send credentials. In strict mode
+the gate refuses every `WebSocket`, a listed origin's too, and `origins.connect` keeps no `wss://` entry: a handshake
+carries the cookies the browser attaches by site, which nothing strips, so strict mode has no cookie carrier at all
+(`STRICT_COOKIE_CARRIERS`, `src/lib/cookie-facts.ts`); a streamed `fetch()` response, or a socket the host page opens
+and relays through `expose()`, takes its place. The originals
 cannot be reached: every copy on the global object's prototype chain is removed (a worker's `fetch` lives on
 `WorkerGlobalScope.prototype`), and each prototype's `constructor` names the gated constructor. The browser's policy stays
 underneath: what the gate admits it still checks, and a redirect it refuses is reported per engine.
@@ -522,8 +527,8 @@ tests in `src/lib/in-sandbox-view.test.ts`, `src/lib/worker-globals.test.ts`, `s
 - **The browser's own worker reports** are per engine (WebKit raises no violations in workers): what remains of them past
   the request gate, such as a redirect the browser refuses.
 - **A worker that ends itself** (`close()`) or crashes is detected only by the opt-in watchdog.
-- **Memory, timing side channels, UI spoofing** inside the element's box, and the cookies a WebSocket handshake to a listed
-  `wss://` origin carries in some engines (every mode; the view's loads carry none).
+- **Memory, timing side channels, UI spoofing** inside the element's box. No request of strict mode carries a cookie:
+  the view's loads carry none, and the worker opens no WebSocket.
 - **Programming model.** No inline guest `<script>`, no nested frames, no `srcset`/`style` file references, no module graph;
   UI updates are whole-subtree renders and coarse events.
 

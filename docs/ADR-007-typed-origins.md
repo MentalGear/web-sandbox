@@ -77,7 +77,7 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['h
 | Accepted | Why |
 | :--- | :--- |
 | `https://host[:port]` | the one scheme a guest load may use. No policy carries `upgrade-insecure-requests`: the engines disagree on what it does to the `http:` form of a listed `https:` origin (refuse, upgrade, send in cleartext), so every engine refuses that form |
-| `wss://host[:port]`, in `connect` only, beside `https://host[:port]` | WebSocket; meaningless for any other kind. A scheme is matched as written, and the engines disagree on a `wss://host` source alone (docs/API.md#connect-src-by-engine), so an entry without its `https://` twin is dropped with a warning and the pair admits `fetch()` and `WebSocket` on every engine |
+| `wss://host[:port]`, in `connect` only, beside `https://host[:port]`, not in strict mode | WebSocket; meaningless for any other kind. A scheme is matched as written, and the engines disagree on a `wss://host` source alone (docs/API.md#connect-src-by-engine), so an entry without its `https://` twin is dropped with a warning and the pair admits `fetch()` and `WebSocket` on every engine. Strict mode opens no WebSocket (a handshake carries the cookies the browser attaches), so there every `wss://` entry is dropped with a warning (docs/API.md#strict-no-websocket) |
 | `http://localhost[:port]`, `http://127.0.0.1[:port]` | local development. Loopback only: a plain-http public origin is a network attacker's |
 
 Refused, each dropped with a warning: scheme-wide sources (`https:`), wildcards (`*`, `*.example.com`, `:*`), every keyword
