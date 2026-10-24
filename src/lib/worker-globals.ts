@@ -13,7 +13,8 @@
  * and WebKit (test/e2e/worker-globals-and-termination.spec.ts, "V1"): fetch and XMLHttpRequest and WebSocket (connect-src),
  * which the bootstrap then replaces with the request gate's (in-sandbox-script.ts, S74), and importScripts (script-src),
  * which strict mode's worker does not have (STRICT_WORKER_GLOBALS). Everything else listed makes no request: the language's built-ins, timers, events,
- * messaging inside the worker, encoding, streams, crypto, blobs and URLs, IndexedDB, canvas and WebGL on an
+ * messaging inside the worker, encoding, streams, crypto, blobs and URLs, IndexedDB (present, but `open()` is denied in
+ * the opaque origin on every engine), canvas and WebGL on an
  * OffscreenCanvas (no URL), WebCodecs (bytes in, frames out), performance and scheduling. WebAssembly's streaming
  * compilation reads a Response the guest's fetch already made. `Request`, `Response` and `Headers` are values, and
  * `BroadcastChannel` reaches only the guest's own opaque origin.

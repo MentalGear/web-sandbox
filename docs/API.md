@@ -1054,8 +1054,10 @@ only the names listed in `src/lib/worker-globals.ts` (`WORKER_GLOBALS`, and `WOR
 make a request are `fetch`, `XMLHttpRequest` and `WebSocket` (`connect-src`), which are the library's
 [request gate](#the-request-gate) in every mode, and in worker mode `importScripts` (`script-src`). Strict mode's worker
 has no `importScripts`: its policy's `script-src` is the view's hash, so it could never load anything. Kept: the language's built-ins, timers, events, `MessageChannel` within the worker,
-encoding, streams, `crypto`, `Blob`, `File`, `URL`, IndexedDB, `OffscreenCanvas` with 2D and WebGL, WebCodecs,
-`performance`, `scheduler`, `BroadcastChannel`. Absent: `EventSource`, `WebTransport`, `WebSocketStream`, `FontFace`
+encoding, streams, `crypto`, `Blob`, `File`, `URL`, `OffscreenCanvas` with 2D and WebGL, WebCodecs,
+`performance`, `scheduler`, `BroadcastChannel`, and `indexedDB`, which is present but stores nothing: in the sandbox's opaque
+origin `indexedDB.open()` rejects with a `SecurityError` on all three engines (measured on Chromium 145, Firefox 146 and
+WebKit 26). Absent: `EventSource`, `WebTransport`, `WebSocketStream`, `FontFace`
 and `fonts`, `caches`, `Notification`, `Worker` and `SharedWorker` (no nested workers), the Service Worker, Push, RTC,
 MediaSource and Reporting interfaces, `navigator.serviceWorker` and `navigator.connection`; and the worker's own
 `postMessage`, `onmessage` and `onmessageerror`: the library's port, with its budgets, is the only way from the worker
