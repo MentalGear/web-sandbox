@@ -19,7 +19,7 @@ import { MAX_FILES, MAX_PATH_LENGTH, MAX_TOTAL_BYTES } from './files';
 import { MAX_RESPONSE_HEAD } from './in-bridge-frame';
 import { GUEST_WRITE_BYTES_PER_SECOND, GUEST_WRITES_PER_SECOND } from './guest-writes';
 import {
-    VIEW_APPLY_MS_PER_SECOND, VIEW_EVENT_LIMITS, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS,
+    VIEW_APPLY_MS_PER_SECOND, VIEW_EVENT_LIMITS, VIEW_INPUT_IN_FLIGHT, VIEW_SET_STYLE_LIMITS, VIEW_MAX_CHARACTERS, VIEW_MAX_DEPTH, VIEW_MAX_DISTINCT_URLS, VIEW_MAX_ELEMENTS,
     VIEW_MAX_OPERATION_MS, VIEW_MAX_URLS, VIEW_OPTIONS, VIEW_OVERRUN_WINDOW_MS, VIEW_RENDER_CHARACTERS_PER_SECOND,
     VIEW_RENDER_MAX_LENGTH, VIEW_TARGET_MAX_LENGTH, VIEW_URLS_PER_SECOND,
 } from './in-sandbox-view';
@@ -93,6 +93,9 @@ export const LIMITS = {
     'VIEW_EVENT_LIMITS.maxString': { value: VIEW_EVENT_LIMITS.maxString, unit: 'characters', label: null, enforced: `${VIEW}, before posting a VIEW_EVENT`, exported: false },
     'VIEW_EVENT_LIMITS.maxIds': { value: VIEW_EVENT_LIMITS.maxIds, unit: 'count', label: null, enforced: `${VIEW}, before posting a VIEW_EVENT`, exported: false },
     'VIEW_EVENT_LIMITS.maxFields': { value: VIEW_EVENT_LIMITS.maxFields, unit: 'count', label: null, enforced: `${VIEW}, before posting a VIEW_EVENT`, exported: false },
+    VIEW_INPUT_IN_FLIGHT: { value: VIEW_INPUT_IN_FLIGHT, unit: 'count', label: "Strict: frames of the view's events the worker has not acknowledged, past which the view holds pointer moves, wheel and scroll events back, coalesced (at most one per pointer or element, sent at most once per animation frame)", enforced: `${VIEW}, the input outbox (viewInputOutbox); the strict prelude acknowledges each frame (VIEW_EVENT_ACK)`, exported: true },
+    'VIEW_SET_STYLE_LIMITS.maxProperties': { value: VIEW_SET_STYLE_LIMITS.maxProperties, unit: 'count', label: 'Strict: style properties one `sandboxView.set(id, { css })` names', enforced: PRELUDE, exported: false },
+    'VIEW_SET_STYLE_LIMITS.maxValue': { value: VIEW_SET_STYLE_LIMITS.maxValue, unit: 'characters', label: 'Strict: characters of one style value (or custom property name) of `set({ css })`', enforced: PRELUDE, exported: false },
     'VIEW_OPTIONS.guestText.maxLength': { value: VIEW_OPTIONS.guestText.maxLength, unit: 'characters', label: null, enforced: `${VIEW}, before posting a GUEST_ERROR or GUEST_UNCAUGHT; host.ts, again on receipt`, exported: false },
     VIEW_LIVENESS_TIMEOUT_MS: { value: VIEW_LIVENESS_TIMEOUT_MS, unit: 'ms', label: 'Strict: view liveness budget (ms)', enforced: "host.ts, the view's watchdog (watchdog.ts)", exported: true },
     LOAD_TIMEOUT_MS: { value: LOAD_TIMEOUT_MS, unit: 'ms', label: 'Longest `loading`, until the guest checks in (ms of host time)', enforced: 'lifecycle.ts, loadDeadline; host.ts arms it (watchdog.ts)', exported: true },

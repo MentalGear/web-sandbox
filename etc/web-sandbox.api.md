@@ -258,10 +258,22 @@ export type UnsafeCapability = (typeof UNSAFE_CAPABILITIES)[number];
 export type UnsafePermission = (typeof UNSAFE_PERMISSIONS)[number];
 
 // @public
+export const VIEW_INPUT_IN_FLIGHT = 1;
+
+// @public
 export const VIEW_LIVENESS_TIMEOUT_MS = 5000;
 
 // @public
 export const VIEW_RENDER_MAX_LENGTH = 262144;
+
+// @public
+export const VIEW_SET_STYLE_LIMITS: {
+    readonly maxProperties: 16;
+    readonly maxValue: 1024;
+};
+
+// @public
+export const VIEW_STYLE_PROPERTIES: readonly ['transform', 'translate', 'rotate', 'scale', 'transform-origin', 'opacity', 'visibility', 'left', 'top', 'right', 'bottom', 'width', 'height', 'z-index', 'cursor', '--*'];
 
 // @public
 export function viewScriptHash(): string;
