@@ -26,9 +26,13 @@ import { defineData, ownField } from "../utils";
  * per entry (other schemes, `*`, `'self'` and other keywords, paths, credentials, an IPv6 literal, a non-ASCII or
  * percent-encoded host), and a key that is not a kind is dropped too. Dropping only narrows: a kind with no origin left
  * admits none. An `origins` that is not an object, or a kind that is not a list, cannot be read and refuses the whole
- * config. An origin on the host page's site (the registrable domain of its host as the browser decides it: the page's
- * own origin on any scheme or port, its subdomains, its parents and its siblings) is dropped in every mode, with one
- * warning per kind: some engines send the host site's cookies with a guest request to it. A loopback, private or
+ * config. An origin on the host page's site is dropped in every mode, with one warning per kind: some engines send the
+ * host site's cookies with a guest request to it. That site is the registrable domain of the page's own origin, of its
+ * top-level URL and of every page that frames it (any scheme or port, subdomains, parents and siblings), since an engine
+ * may decide a request's site from any of them. Where one of those origins is opaque (a sandboxed document) or cannot be
+ * read (a page of another origin above the host page, without `location.ancestorOrigins`), the site is undecided, and
+ * every entry a request that carries cookies can reach in the mode is dropped as well, with one warning per kind: a
+ * `wss://` entry in worker mode, every entry in cooperative mode, none in strict mode. A loopback, private or
  * link-local host reaches the user's own machine or network, and engines differ on whether a page of the public web may
  * do that: it is kept, with one warning per kind, only when the host page is itself on one, and dropped, with a warning,
  * otherwise. The fetch bridge sends no credentials. Registered files add `blob:` to the

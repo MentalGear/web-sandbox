@@ -173,8 +173,8 @@ export const ENGINE_DIFFERENCES = {
         chromium: cookie('chromium'),
         firefox: cookie('firefox'),
         webkit: cookie('webkit'),
-        why: "Only Chromium honours `credentialless` on the wrapper frame. A same-site entry of `origins` is dropped in every mode; `fetchBridge` sends no cookie on any engine, and neither do `fetch()`, `XMLHttpRequest` and every request of strict mode, whose view loads without credentials and whose worker opens no WebSocket (made uniform: `test/e2e/view-credentials.spec.ts`, `test/e2e/request-gate.spec.ts`)",
-        tests: [`${E2E}cookies.spec.ts`, `${E2E}request-gate.spec.ts`, `${E2E}view-credentials.spec.ts`],
+        why: "Only Chromium honours `credentialless` on the wrapper frame. A same-site entry of `origins` is dropped in every mode, where the host page's site is that of its origin, its top-level URL and every page that frames it (the engines decide a request's site from different ones), and where it cannot be decided (an opaque or unreadable origin among them) every entry a request of COOKIE_CARRIERS reaches in the mode is dropped (`test/e2e/host-site-layouts.spec.ts`); `fetchBridge` sends no cookie on any engine, and neither do `fetch()`, `XMLHttpRequest` and every request of strict mode, whose view loads without credentials and whose worker opens no WebSocket (made uniform: `test/e2e/view-credentials.spec.ts`, `test/e2e/request-gate.spec.ts`)",
+        tests: [`${E2E}cookies.spec.ts`, `${E2E}request-gate.spec.ts`, `${E2E}view-credentials.spec.ts`, `${E2E}host-site-layouts.spec.ts`],
     },
     'connect-src': {
         what: "What the host page's `connect-src` sources admit in a sandbox document",

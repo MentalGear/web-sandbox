@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AMBIENT_CREDENTIALS, ambientCredentialsSentence, carrierClause, carrierModes, COOKIE_CARRIER_IDS, COOKIE_CARRIERS, COOKIE_ENGINE_FACTS, COOKIE_ENGINES, cookieCarriersIn, cookieSentence, engineClause, engineClauses, SAME_SITE_VALUES, sameSiteCookieClause, sameSiteValues, STRICT_COOKIE_CARRIERS, withCode } from '@src/lib/cookie-facts';
+import { AMBIENT_CREDENTIALS, ambientCredentialsSentence, carriedTo, carrierClause, carrierModes, COOKIE_CARRIER_IDS, COOKIE_CARRIERS, COOKIE_ENGINE_FACTS, COOKIE_ENGINES, cookieCarriersIn, cookieSentence, engineClause, engineClauses, SAME_SITE_VALUES, sameSiteCookieClause, sameSiteValues, STRICT_COOKIE_CARRIERS, withCode } from '@src/lib/cookie-facts';
 import { normaliseConfig, SANDBOX_MODES, type SandboxMode } from '@src/lib/config-schema';
 import { connectSources } from '@src/lib/csp/csp-generator';
 import { ORIGIN_KINDS } from '@src/lib/csp/origins';
@@ -42,6 +42,13 @@ describe('COOKIE_ENGINE_FACTS', () => {
         }
     });
 
+    it('says where each engine takes the host page\'s site from, and whether a framed page can read its ancestors (BD4:ISO-1, BD4:ISO-3)', () => {
+        for (const engine of COOKIE_ENGINES) expect(COOKIE_ENGINE_FACTS[engine].siteFrom, engine).not.toBe('');
+        // test/e2e/host-site-layouts.spec.ts reads `'ancestorOrigins' in location` on every engine against these
+        expect(COOKIE_ENGINES.filter(engine => COOKIE_ENGINE_FACTS[engine].hasAncestorOrigins)).toEqual(['chromium', 'webkit']);
+        expect(COOKIE_ENGINE_FACTS.webkit.siteFrom).toContain("the top-level document's URL");
+    });
+
     it('Chromium is the engine that honours credentialless, and the facts are the ones the S74 board measured', () => {
         expect(COOKIE_ENGINES.filter(engine => COOKIE_ENGINE_FACTS[engine].credentialless)).toEqual(['chromium']);
         expect(COOKIE_ENGINE_FACTS.firefox.sends).toEqual({ sameSite: ['None'], crossSite: ['None'] });
@@ -58,6 +65,20 @@ describe('COOKIE_CARRIERS: the requests the library cannot strip (BD3:DOC-1)', (
         expect(Object.isFrozen(STRICT_COOKIE_CARRIERS)).toBe(true);
         for (const id of COOKIE_CARRIER_IDS) expect(COOKIE_CARRIERS[id].modes as readonly string[], id).not.toContain('strict');
         expect(COOKIE_CARRIER_IDS.map(id => carrierModes(COOKIE_CARRIERS[id]))).toEqual(['cooperative and worker mode', ...Array(5).fill('cooperative mode only')]);
+    });
+
+    it('each row names the entries it can be made to: lists of origins, with any scheme or a scheme of them (BD4:ISO-1)', () => {
+        for (const id of COOKIE_CARRIER_IDS) {
+            const { kinds, schemes } = COOKIE_CARRIERS[id].reaches as { kinds: readonly string[]; schemes: readonly string[] | null };
+            expect(kinds.length, id).toBeGreaterThan(0);
+            for (const kind of kinds) expect(ORIGIN_KINDS as readonly string[], `${id} ${kind}`).toContain(kind);
+            if (schemes !== null) for (const scheme of schemes) expect(scheme, id).toMatch(/^[a-z]+:$/);
+        }
+        // what an undecided host site refuses, by mode: a WebSocket's wss:// entries in worker mode; every list in cooperative mode
+        const reached = (mode: SandboxMode) => ORIGIN_KINDS.flatMap(kind => ['https://a.example', 'wss://a.example'].filter(origin => carriedTo(cookieCarriersIn(mode), kind, origin)).map(origin => `${kind} ${origin.slice(0, origin.indexOf(':'))}`));
+        expect(reached('strict')).toEqual([]);
+        expect(reached('worker')).toEqual(['connect wss']);
+        expect(reached('cooperative')).toEqual([...ORIGIN_KINDS.filter(kind => kind !== 'connect').flatMap(kind => [`${kind} https`, `${kind} wss`]), 'connect https', 'connect wss']);
     });
 
     it('each row is said, and the spec that makes it exists (a cooperative-mode row\'s reads the table)', () => {
@@ -106,7 +127,7 @@ describe('strict mode has no cookie carrier: the config after normalisation', ()
         return out;
     };
     const socketEntries = (mode: SandboxMode, hostOrigin: string, origins: Record<string, string[]>) => {
-        const value = normaliseConfig({ mode, origins, hostContentSecurityPolicy: false }, { hostOrigin }).value!;
+        const value = normaliseConfig({ mode, origins, hostContentSecurityPolicy: false }, { hostOrigin, hostSites: [hostOrigin] }).value!;
         const listed = [...Object.values(value.origins).flat(), ...connectSources({ origins: value.origins, fileKinds: new Set(['connect']), scriptUnsafe: false })];
         return { keys: Object.keys(value.origins), sockets: listed.filter(entry => /^wss?:/i.test(entry)) };
     };
@@ -183,7 +204,7 @@ describe('the sentences rendered from it', () => {
     });
 
     it("are what the `origins` warning says: an origin on the host page's site, in strict mode and in the others", () => {
-        const context = { hostOrigin: 'https://app.example.com' };
+        const context = { hostOrigin: 'https://app.example.com', hostSites: ['https://app.example.com'] };
         for (const mode of ['strict', 'cooperative', 'worker'] as const) {
             const said = normaliseConfig({ mode, origins: { connect: ['https://api.example.com'] } }, context).warnings.filter(message => /^\[Sandbox\] origins\.connect (lists|dropped) /.test(message));
             expect(said, mode).toHaveLength(1);

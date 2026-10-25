@@ -88,16 +88,16 @@ describe('isPrivateHost: the names that are private by convention (PRIVATE_NAME_
             const warnings: string[] = [];
             toFetchPolicy({ allow: [origin] }, (message) => warnings.push(message), LOCAL_PAGE);
             expect(warnings, origin).toEqual([expect.stringContaining(`fetchBridge.allow lists ${origin}, a loopback, private or link-local host`)]);
-            const reach = normaliseConfig({ mode: 'cooperative', origins: { connect: [origin] } }, { hostOrigin: LOCAL_PAGE }).warnings.filter(message => message.includes(' lists '));
+            const reach = normaliseConfig({ mode: 'cooperative', origins: { connect: [origin] } }, { hostOrigin: LOCAL_PAGE, hostSites: [LOCAL_PAGE] }).warnings.filter(message => message.includes(' lists '));
             expect(reach, origin).toEqual([expect.stringContaining(`origins.connect lists ${origin} (a loopback, private or link-local host)`)]);
             const away: string[] = [];
             expect(toFetchPolicy({ allow: [origin] }, (message) => away.push(message), HOST)!.allow, origin).toEqual([]);
             expect(away, origin).toEqual([expect.stringContaining(`fetchBridge.allow dropped ${origin}, a loopback, private or link-local host`)]);
-            const dropped = normaliseConfig({ mode: 'cooperative', origins: { connect: [origin] } }, { hostOrigin: HOST });
+            const dropped = normaliseConfig({ mode: 'cooperative', origins: { connect: [origin] } }, { hostOrigin: HOST, hostSites: [HOST] });
             expect(dropped.value!.origins.connect, origin).toEqual([]);
             expect(dropped.warnings.filter(message => message.includes(' dropped ')), origin).toEqual([expect.stringContaining(`origins.connect dropped ${origin} (a loopback, private or link-local host)`)]);
         }
-        const none = normaliseConfig({ mode: 'cooperative', origins: { connect: ['https://api.example'] } }, { hostOrigin: HOST }).warnings.filter(message => message.includes(' lists '));
+        const none = normaliseConfig({ mode: 'cooperative', origins: { connect: ['https://api.example'] } }, { hostOrigin: HOST, hostSites: [HOST] }).warnings.filter(message => message.includes(' lists '));
         expect(none).toEqual([]);
     });
 });
