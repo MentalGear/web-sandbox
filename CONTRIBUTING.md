@@ -200,6 +200,9 @@ docs/API.md and the port table of ADR-005 are built this way.
   its own, in any Markdown file) are rewritten from the extractor called NAME by `bun run docs:gen`. Text outside a
   region is never touched. Do not edit a region: change the value in the code (or the extractor's own words, for the
   Configuration table's prose, `tools/docgen/extractors/config-docs.ts`), and run `bun run docs:gen`.
+- **Examples.** The code blocks of docs/API.md's "Building an app in sealed mode" are regions named `example:…`, rendered
+  from the files of `examples/sealed-app/` by `tools/docgen/extractors/examples.ts`; edit the files, never the block.
+  `test/e2e/sealed-app.spec.ts` runs those files on all three engines, so the page shows code that works.
 - **The public API's reference** (docs/API.md's registration, the element's property and methods, the events and their
   details, the `fetchBridge` and `callLimits` tables and the lists of exports) is rendered from the TSDoc of the exports,
   by `tools/docgen/extractors/api.ts`, from api-extractor's doc model: [etc/web-sandbox.api.json](etc/web-sandbox.api.json),
