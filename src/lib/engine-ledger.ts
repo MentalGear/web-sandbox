@@ -105,11 +105,11 @@ export const ENGINE_DIFFERENCES = {
         tests: [`${E2E}worker-globals-and-termination.spec.ts`],
     },
     'webassembly-unsafe-eval': {
-        what: "Compiling WebAssembly without `'unsafe-eval'`",
-        chromium: "Refused",
-        firefox: "Refused",
-        webkit: "Compiles",
-        why: "WebKit's policy check. The library deletes `WebAssembly` from the worker unless `scriptUnsafe`",
+        what: "WebAssembly under a policy without `'unsafe-eval'` or `'wasm-unsafe-eval'`",
+        chromium: "Compiling is refused; nothing runs",
+        firefox: "Compiling is refused; nothing runs",
+        webkit: "Compiles, but every instantiation is refused; nothing runs",
+        why: "WebKit checks the policy when it instantiates, not when it compiles (research 24). The library deletes `WebAssembly` from the worker unless `scriptUnsafe`, which keeps WebKit's compiler away from guest bytes and hides the compile-only difference",
         tests: [`${E2E}strict-entry-scope-and-links.spec.ts`],
     },
     'coep-require-corp': {
