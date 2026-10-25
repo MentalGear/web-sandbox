@@ -73,7 +73,7 @@ export const INHERITED_CONTEXT = {
         how: "The embedder allows the bootstrap's hash (`viewScriptHash()`), or `'unsafe-inline'` for cooperative and worker mode; a startup script the policy refuses ends the build with the reason that names the host page's policy",
         by: ['reason', 'documented'],
         engines: ALL,
-        tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts'],
+        tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/e2e/directive-matrix.spec.ts'],
         sealed: { standing: 'remains', note: "the view's bootstrap, by its hash" },
     },
     cspWorker: {
@@ -82,7 +82,7 @@ export const INHERITED_CONTEXT = {
         how: 'A worker the policy refuses ends the build with the worker reason, never "the guest entry failed to start"',
         by: ['reason', 'documented'],
         engines: ALL,
-        tests: ['test/e2e/host-policy.spec.ts'],
+        tests: ['test/e2e/host-policy.spec.ts', 'test/e2e/directive-matrix.spec.ts'],
         sealed: { standing: 'remains' },
     },
     cspStyle: {
@@ -91,7 +91,7 @@ export const INHERITED_CONTEXT = {
         how: 'The wrapper style and the animation stylesheet have documented hashes; a policy that refuses them leaves the frame 150 px high (or drops the guest stylesheets) and the element warns once, naming the hash',
         by: ['warn', 'documented'],
         engines: ALL,
-        tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts'],
+        tests: ['test/e2e/host-policy.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/e2e/directive-matrix.spec.ts'],
         sealed: { standing: 'remains' },
     },
     cspBaseUri: {
@@ -101,7 +101,7 @@ export const INHERITED_CONTEXT = {
         by: ['check', 'reason'],
         engines: ALL,
         environmentChecks: ['base'],
-        tests: ['test/e2e/environment-check.spec.ts', 'test/unit/environment-check.test.ts', 'test/unit/environment-gate.test.ts'],
+        tests: ['test/e2e/environment-check.spec.ts', 'test/unit/environment-check.test.ts', 'test/unit/environment-gate.test.ts', 'test/e2e/directive-matrix.spec.ts'],
         sealed: { standing: 'remains', note: "defence in depth: the view's policy admits no network source, so a wrong base can load nothing" },
     },
     cspFetch: {
@@ -110,7 +110,7 @@ export const INHERITED_CONTEXT = {
         how: "`connect-src` (else `default-src`) is neutralised by the library, uniformly, from the page's policy as the embedder gives it (`hostContentSecurityPolicy`) and from nothing else: every origin of `origins.connect` and `fetchBridge.allow` that the given policy refuses is dropped, with a warning, before the guest's and the bridge's policies are written, on every engine; without the option both lists are dropped, with one warning that says what to pass, so the library never guesses the page's policy (host-connect.ts, hostReach); `false` says the page sends none, and keeps the lists, and a policy the page does send is then applied by the browser alone, per engine (connect-facts.ts); a `wss://` entry is kept only beside its `https://` twin. The guest's `fetch()`, `XMLHttpRequest` and `WebSocket` then admit exactly the sources of the guest policy's `connect-src` (the bootstrap's request gate, S74), refuse anything else before the browser sees it, the same way on every engine, and report it as a `violation` of the library's own, so a refusal is reported on an engine that raises no report in a worker (WebKit); the browser's policy stays underneath, and a redirect it refuses is reported per engine. No policy of the library carries `upgrade-insecure-requests` (the engines disagree on what it does to the http: form of a listed https: origin, and one sent it in cleartext), so every engine refuses that form; a host page that sends the directive itself is inherited and is the embedder's choice. A policy text the parser does not understand admits nothing. The other fetch directives narrow in the browser, where the engine applies the inherited list, and are documented under `origins` and in the host-page policy section; a policy list only narrows (CSP3 intersects the lists), so the sandbox's own policy is never weakened",
         by: ['refuse', 'documented'],
         engines: ALL,
-        tests: ['test/unit/host-connect.test.ts', 'test/unit/host-policy-source.test.ts', 'test/unit/host.test.ts', 'test/unit/connect-facts.test.ts', 'test/e2e/connect-uniform.spec.ts', 'test/e2e/no-plaintext.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/unit/policy-guarantees.test.ts', 'test/unit/request-gate.test.ts', 'test/e2e/request-gate.spec.ts', 'test/unit/sealed-build.test.ts'],
+        tests: ['test/unit/host-connect.test.ts', 'test/unit/host-policy-source.test.ts', 'test/unit/host.test.ts', 'test/unit/connect-facts.test.ts', 'test/e2e/connect-uniform.spec.ts', 'test/e2e/no-plaintext.spec.ts', 'test/unit/host-page-policy.test.ts', 'test/unit/policy-guarantees.test.ts', 'test/unit/request-gate.test.ts', 'test/e2e/request-gate.spec.ts', 'test/unit/sealed-build.test.ts', 'test/e2e/directive-matrix.spec.ts', 'test/e2e/sealed-no-network.spec.ts'],
         sealed: { standing: 'reduced', note: "no origin is narrowed and no `connect-src` is read: the view's policy has no network source and the request gate admits nothing. Left: the page's `img-src`, `font-src`, `media-src` and `style-src` must admit `blob:` for registered files of that kind, or those loads are refused in the view and reported as `violation`" },
     },
     trustedTypesRequirement: {
@@ -147,7 +147,7 @@ export const INHERITED_CONTEXT = {
         how: "The frames are `no-referrer`, the wrapper carries a `no-referrer` meta and `<base href=\"about:blank\">`, and the strict renderer forces `referrerpolicy=\"no-referrer\"`; cooperative mode's residuals (a guest asking for `unsafe-url`) are documented",
         by: ['construct', 'documented'],
         engines: ALL,
-        tests: ['test/e2e/host-url.spec.ts'],
+        tests: ['test/e2e/host-url.spec.ts', 'test/e2e/sealed-no-network.spec.ts'],
         sealed: { standing: 'not-applicable', because: 'no-network', note: 'no request leaves; the `no-referrer` settings stay' },
     },
     ancestorOrigins: {
@@ -175,7 +175,7 @@ export const INHERITED_CONTEXT = {
         how: `The guest's \`fetch()\` and \`XMLHttpRequest\` never send credentials, on any engine: the bootstrap's request gate makes every fetch with \`credentials: 'omit'\` and keeps \`withCredentials\` false (in-sandbox-script.ts, S74). Strict mode's view makes no load with credentials, on any engine, by construction: the renderer gives every \`img\`, \`video\`, \`audio\` and \`link\` it keeps \`crossorigin="anonymous"\` before the element is connected (a CORS request carries no cookie of any SameSite kind), and keeps no network URL where no attribute reaches (a \`poster\`, which Firefox loads without CORS; every URL of CSS, registered stylesheets included), reporting each one dropped and each load that fails (in-sandbox-view.ts, RENDER_CROSSORIGIN_ELEMENTS; docs/research/21_crossorigin_loads). Strict mode's worker opens no WebSocket: \`origins.connect\` keeps no \`wss://\` entry there, and the request gate refuses every \`WebSocket\` (origins.ts, in-sandbox-script.ts). In cooperative and worker mode a WebSocket handshake, and in cooperative mode a load of an element or of CSS and the other requests of COOKIE_CARRIERS, cannot be stripped. The wrapper iframe is \`credentialless\` in every mode: where the engine honours it (${CREDENTIALLESS_ENGINES}) it, and everything nested in it, has an empty cookie jar, so no request of the sandbox carries a cookie (its popups open without an opener). Elsewhere those requests would carry it, so an \`origins\` entry on the host page's site is dropped in every mode, with a warning (once per kind), where the host page's site is that of every origin an engine may decide it from: the page's origin as the element's realm has it (\`self.origin\`), its top-level URL's and every ancestor's (\`location.ancestorOrigins\`, else read up \`parent\`), with no probe, by a rule that never misses an origin the browser counts as on the site (host-site.ts: the page's host, or a host that shares its last two labels; an address, \`localhost\` or a single label only itself). Where one of those origins is opaque or cannot be read, the site is undecided, and every entry a request of COOKIE_CARRIERS can reach in the mode is dropped too, with a warning (BD4:ISO-1, BD4:ISO-3); to another site they carry that site's own cookies where the engine sends them (documented: a listed \`wss://\` server must check \`Origin\`). The fetch bridge (\`credentials: 'omit'\`) is the way to reach an API that knows the user. What each engine sends: cookie-facts.ts`,
         by: ['construct', 'credentialless', 'refuse', 'warn', 'documented'],
         engines: ALL,
-        tests: ['test/e2e/cookies.spec.ts', 'test/e2e/request-gate.spec.ts', 'test/e2e/view-credentials.spec.ts', 'test/e2e/host-site.spec.ts', 'test/e2e/host-site-layouts.spec.ts', 'test/unit/view-credentials.test.ts', 'test/unit/cookie-facts.test.ts', 'test/unit/request-gate.test.ts', 'test/unit/host-site.test.ts', 'test/unit/host.test.ts', 'test/unit/config-schema.test.ts', 'test/unit/host-origin-wiring.test.ts', 'test/e2e/fetch-bridge.spec.ts'],
+        tests: ['test/e2e/cookies.spec.ts', 'test/e2e/request-gate.spec.ts', 'test/e2e/view-credentials.spec.ts', 'test/e2e/host-site.spec.ts', 'test/e2e/host-site-layouts.spec.ts', 'test/unit/view-credentials.test.ts', 'test/unit/cookie-facts.test.ts', 'test/unit/request-gate.test.ts', 'test/unit/host-site.test.ts', 'test/unit/host.test.ts', 'test/unit/config-schema.test.ts', 'test/unit/host-origin-wiring.test.ts', 'test/e2e/fetch-bridge.spec.ts', 'test/e2e/sealed-no-network.spec.ts'],
         sealed: { standing: 'not-applicable', because: 'no-network', note: "no request leaves, and the host page's site is never read; the wrapper stays `credentialless`" },
     },
     serviceWorker: {
@@ -184,7 +184,7 @@ export const INHERITED_CONTEXT = {
         how: "A sandboxed frame has an opaque origin, which no Service Worker controls; the fetch bridge runs in a frame of its own, so the host page's Service Worker and `fetch` wrappers never apply to it",
         by: ['construct'],
         engines: ALL,
-        tests: ['test/e2e/fetch-bridge-isolation.spec.ts', 'test/e2e/security.spec.ts'],
+        tests: ['test/e2e/fetch-bridge-isolation.spec.ts', 'test/e2e/security.spec.ts', 'test/e2e/sealed-no-network.spec.ts'],
         sealed: { standing: 'not-applicable', because: 'no-network', note: 'no request and no bridge frame' },
     },
     hostRealmGlobals: {
@@ -220,7 +220,7 @@ export const INHERITED_CONTEXT = {
         how: "The teardown detaches the old environment before it releases anything, so a listener that calls `reset()` or `terminate()` re-enters a consistent element",
         by: ['construct'],
         engines: ALL,
-        tests: ['test/e2e/teardown-reentry.spec.ts', 'test/unit/teardown-reentry.test.ts'],
+        tests: ['test/e2e/teardown-reentry.spec.ts', 'test/unit/teardown-reentry.test.ts', 'test/e2e/realistic-host.spec.ts'],
         sealed: { standing: 'remains' },
     },
     thread: {
@@ -229,7 +229,7 @@ export const INHERITED_CONTEXT = {
         how: 'Documented: availability is a stated bound (the view\'s budgets, the repeated-overrun rule), and `terminate()` or removing the element gives the host page back',
         by: ['documented'],
         engines: ALL,
-        tests: ['test/e2e/view-bound.spec.ts', 'test/unit/view-bound.test.ts'],
+        tests: ['test/e2e/view-bound.spec.ts', 'test/unit/view-bound.test.ts', 'test/e2e/view-budget.spec.ts'],
         sealed: { standing: 'remains', note: "the view shares the host page's thread as strict mode's does" },
     },
 } as const satisfies Record<string, InheritedContextRow>;
