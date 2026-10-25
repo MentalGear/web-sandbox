@@ -3,8 +3,10 @@ import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 
 /**
  * The host page's site in each engine (S74, class A; src/lib/host-site.ts): every mode drops an `origins` entry on the
- * host page's site, decided from `self.origin` of the element's realm by a rule that reads nothing of the page's cookie
- * jar or of its document's URL. So a host page that changes either decides the same:
+ * host page's site, decided from `self.origin` of the element's realm and the origins of the pages above it (the
+ * document's URL only for a top-level document) by a rule that reads nothing of the page's cookie jar. So a host page
+ * that wraps the jar, or whose frame's URL says nothing of its origin, decides the same (the other layouts:
+ * host-site-layouts.spec.ts):
  *   cookie-gate  a page whose `document.cookie` setter keeps back every name it does not know (a consent manager's gate)
  *   srcdoc       the element in a same-origin `srcdoc` frame of the page (`location.origin` is 'null' there)
  *   blank-dom    the element in an `about:blank` frame the page built with DOM calls (the same)

@@ -120,7 +120,7 @@ describe('callLimits: one normalisation, its cross-field invariants', () => {
 // ---- The whole configuration (backlog S67): one schema, its invariants, and docs/API.md's Configuration table.
 
 const HOST = 'https://host.example';
-const normaliseWhole = (config: unknown) => normaliseConfig(config, { hostOrigin: HOST });
+const normaliseWhole = (config: unknown) => normaliseConfig(config, { hostOrigin: HOST, hostSites: [HOST] });
 
 // Values for each option: its edges and what is not its type at all.
 const ANY: unknown[] = [undefined, null, 0, 1, -1, NaN, Infinity, '', 'x', true, false, {}, [], [1], 1n];
@@ -359,8 +359,8 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
     const PAGE = 'https://app.example:8443';
     const LOCAL_PAGE = 'http://localhost:3000';
     const SAID = /^\[Sandbox\] origins\.\w+ (lists|dropped) /;
-    const said = (mode: SandboxMode, origins: Record<string, string[]>, context: NormaliseContext = { hostOrigin: PAGE }) => normaliseConfig({ mode, origins }, context).warnings.filter(message => SAID.test(message));
-    const kept = (mode: SandboxMode, origins: Record<string, string[]>, context: NormaliseContext = { hostOrigin: PAGE }) => normaliseConfig({ mode, origins }, context).value!.origins;
+    const said = (mode: SandboxMode, origins: Record<string, string[]>, context: NormaliseContext = { hostOrigin: PAGE, hostSites: [PAGE] }) => normaliseConfig({ mode, origins }, context).warnings.filter(message => SAID.test(message));
+    const kept = (mode: SandboxMode, origins: Record<string, string[]>, context: NormaliseContext = { hostOrigin: PAGE, hostSites: [PAGE] }) => normaliseConfig({ mode, origins }, context).value!.origins;
     // strict mode drops `scripts`, so no origin of that kind is left to warn about there
     const kindsIn = (mode: SandboxMode) => ORIGIN_KINDS.filter(kind => !(kind === 'scripts' && mode === 'strict'));
 
@@ -377,14 +377,14 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
             // a single label above the page is a public suffix, not on its site; it is private by name (isPrivateHost), and dropped for that
             expect(said(mode, { [kind]: ['https://example'] })).toEqual([expect.stringContaining(`origins.${kind} dropped https://example (a loopback, private or link-local host):`)]);
             // a host on the page's site that is also private by name says both reasons
-            expect(said(mode, { [kind]: ['https://x.app.internal'] }, { hostOrigin: 'https://app.internal' })).toEqual([expect.stringContaining(`origins.${kind} dropped https://x.app.internal (on the host page's site, a loopback, private or link-local host):`)]);
+            expect(said(mode, { [kind]: ['https://x.app.internal'] }, { hostOrigin: 'https://app.internal', hostSites: ['https://app.internal'] })).toEqual([expect.stringContaining(`origins.${kind} dropped https://x.app.internal (on the host page's site, a loopback, private or link-local host):`)]);
             expect(kept(mode, { [kind]: ['https://example'] })[kind]).toEqual([]);
         }
     });
 
     it.each(SANDBOX_MODES)('%s: a config that still names withoutCors keeps nothing of it: the key is dropped with a warning, as any key that is not a kind', (mode) => {
         const origins = { images: ['https://img.other.example'], withoutCors: [PAGE, 'https://img.other.example'] };
-        const result = normaliseConfig({ mode, origins }, { hostOrigin: PAGE });
+        const result = normaliseConfig({ mode, origins }, { hostOrigin: PAGE, hostSites: [PAGE] });
         expect(result.value!.origins).toEqual({ ...NO_ORIGINS, images: ['https://img.other.example'] });
         expect(Object.keys(result.value!.origins)).not.toContain('withoutCors');
         expect(result.warnings.filter(message => message.includes('withoutCors'))).toEqual(['[Sandbox] origins."withoutCors" was dropped: origins takes scripts, styles, images, fonts, media, connect.']);
@@ -400,7 +400,7 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
     });
 
     it.each(SANDBOX_MODES)('%s: from a host page that is on one, a loopback host is kept, with one warning; the page\'s own site is still dropped', (mode) => {
-        const context: NormaliseContext = { hostOrigin: LOCAL_PAGE };
+        const context: NormaliseContext = { hostOrigin: LOCAL_PAGE, hostSites: [LOCAL_PAGE] };
         for (const kind of kindsIn(mode)) {
             const loopback = said(mode, { [kind]: ['http://127.0.0.1:9000', 'https://10.0.0.5'] }, context);
             expect(loopback, `${kind} loopback`).toEqual([expect.stringContaining(`origins.${kind} lists http://127.0.0.1:9000 (a loopback, private or link-local host), https://10.0.0.5 (a loopback, private or link-local host):`)]);
@@ -408,18 +408,18 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
             expect(kept(mode, { [kind]: [LOCAL_PAGE, 'http://localhost:5173'] }, context)[kind], `${kind} the page's site`).toEqual([]);
         }
         // a page of unknown origin is not on one
-        expect(kept('cooperative', { images: ['http://127.0.0.1:9000'] }, { hostOrigin: '' }).images).toEqual([]);
+        expect(kept('cooperative', { images: ['http://127.0.0.1:9000'] }, { hostOrigin: '', hostSites: [''] }).images).toEqual([]);
     });
 
     it('strict is the default mode: a config that names none drops the host origin; the dropped policy is frozen, and an untouched one is the parsed one', () => {
-        const result = normaliseConfig({ origins: { connect: [PAGE], images: ['https://img.other.example'] } }, { hostOrigin: PAGE });
+        const result = normaliseConfig({ origins: { connect: [PAGE], images: ['https://img.other.example'] } }, { hostOrigin: PAGE, hostSites: [PAGE] });
         expect(result.value!.origins.connect).toEqual([]);
         expect(result.value!.origins.images).toEqual(['https://img.other.example']);
         expect(Object.isFrozen(result.value!.origins)).toBe(true);
         expect(Object.isFrozen(result.value!.origins.connect)).toBe(true);
         expect(Object.isFrozen(result.value!.origins.images)).toBe(true);
         expect(result.warnings.filter(message => SAID.test(message))).toEqual([expect.stringContaining('origins.connect dropped')]);
-        const untouched = normaliseConfig({ origins: { images: ['https://img.other.example'] } }, { hostOrigin: PAGE }).value!.origins;
+        const untouched = normaliseConfig({ origins: { images: ['https://img.other.example'] } }, { hostOrigin: PAGE, hostSites: [PAGE] }).value!.origins;
         expect(Object.isFrozen(untouched) && Object.isFrozen(untouched.images)).toBe(true);
     });
 
@@ -429,9 +429,11 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
         expect(both).toHaveLength(3); // images: the site, then the loopback host; fonts: the site
         expect(both.filter(message => message.includes('origins.images'))).toHaveLength(2);
         expect(both.filter(message => message.includes('origins.fonts'))).toHaveLength(1);
-        // a host origin that is not known refuses every entry, with one warning that says so
-        expect(said('cooperative', { connect: [PAGE] }, { hostOrigin: '' })).toEqual([expect.stringContaining(`origins.connect dropped ${PAGE} (the host page's origin is not known):`)]);
-        expect(kept('strict', { connect: [PAGE] }, { hostOrigin: '' }).connect).toEqual([]);
+        // a host origin that is not known leaves the site undecided: every entry a cookie carrier of the mode reaches is
+        // refused, with one warning that says so; strict mode has no carrier
+        expect(said('cooperative', { connect: [PAGE] }, { hostOrigin: '', hostSites: [''] })).toEqual([expect.stringContaining(`origins.connect dropped ${PAGE} (the host page's site is undecided): the host page's origin is not known`)]);
+        expect(kept('cooperative', { connect: [PAGE] }, { hostOrigin: '', hostSites: [''] }).connect).toEqual([]);
+        expect(kept('strict', { connect: [PAGE] }, { hostOrigin: '', hostSites: [''] }).connect).toEqual([PAGE]);
     });
 
     it("the rule (host-site.ts): same host with another scheme or port and a subdomain are on the site of a two-label page; another name under its top-level label, an IP address and a lookalike are not", () => {
@@ -453,7 +455,7 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
         const SUFFIX_PAGE = 'https://app.example.co.uk';
 
         it.each(SANDBOX_MODES)('%s: a sibling, its subdomain and the parent are on the site; a name of another site is not', (mode) => {
-            const context: NormaliseContext = { hostOrigin: SIBLING_PAGE };
+            const context: NormaliseContext = { hostOrigin: SIBLING_PAGE, hostSites: [SIBLING_PAGE] };
             for (const origin of ['https://api.example.com', 'https://deep.api.example.com', 'https://example.com', 'https://app.example.com:8080']) {
                 expect(said(mode, { connect: [origin] }, context), `${mode} ${origin}`).toEqual([expect.stringContaining(`origins.connect dropped ${origin} (on the host page's site)`)]);
                 expect(kept(mode, { connect: [origin] }, context).connect, `${mode} ${origin}`).toEqual([]);
@@ -464,7 +466,7 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
         });
 
         it.each(SANDBOX_MODES)('%s: under a public suffix of several labels (co.uk) every name under it is refused, the over-refusal the warning names', (mode) => {
-            const context: NormaliseContext = { hostOrigin: SUFFIX_PAGE };
+            const context: NormaliseContext = { hostOrigin: SUFFIX_PAGE, hostSites: [SUFFIX_PAGE] };
             for (const origin of ['https://api.example.co.uk', 'https://example.co.uk', 'https://co.uk', 'https://other.co.uk', 'https://evilexample.co.uk']) {
                 const result = said(mode, { connect: [origin] }, context);
                 expect(result, `${mode} ${origin}`).toEqual([expect.stringContaining(`origins.connect dropped ${origin} (on the host page's site)`)]);
@@ -477,13 +479,13 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
 
     it('fetchBridge.allow: a loopback, private or link-local host is dropped with one warning from a host page that is not on one, kept with a warning from one that is; the host page\'s own origin is still honoured', () => {
         const allow = ['https://api.example', 'http://127.0.0.1:8080', 'https://10.0.0.5'];
-        const publicPage = normaliseConfig({ fetchBridge: { allow } }, { hostOrigin: PAGE });
+        const publicPage = normaliseConfig({ fetchBridge: { allow } }, { hostOrigin: PAGE, hostSites: [PAGE] });
         expect(publicPage.value!.fetchPolicy!.allow).toEqual(['https://api.example']);
         expect(publicPage.warnings.filter(message => message.startsWith('[Sandbox] fetchBridge.allow dropped'))).toHaveLength(2);
-        const localPage = normaliseConfig({ fetchBridge: { allow } }, { hostOrigin: LOCAL_PAGE });
+        const localPage = normaliseConfig({ fetchBridge: { allow } }, { hostOrigin: LOCAL_PAGE, hostSites: [LOCAL_PAGE] });
         expect(localPage.value!.fetchPolicy!.allow).toEqual(allow);
         expect(localPage.warnings.filter(message => message.startsWith('[Sandbox] fetchBridge.allow lists'))).toHaveLength(2);
-        const own = normaliseConfig({ fetchBridge: { allow: [PAGE] } }, { hostOrigin: PAGE });
+        const own = normaliseConfig({ fetchBridge: { allow: [PAGE] } }, { hostOrigin: PAGE, hostSites: [PAGE] });
         expect(own.value!.fetchPolicy!.allow).toEqual([PAGE]);
         expect(own.warnings).toEqual([expect.stringContaining("lists the host page's own origin")]);
     });

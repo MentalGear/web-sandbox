@@ -37,6 +37,7 @@ const INTERNAL: Readonly<Record<string, string>> = {
     'src/lib/config-schema.ts:FETCH_RESULT_OVERHEAD': 'a term of the same invariant: what a fetch result adds to its body (the head is capped by MAX_RESPONSE_HEAD)',
     'src/lib/config-schema.ts:WRITE_OVERHEAD': 'a term of the same invariant for a guest write',
     'src/lib/css-references.ts:BACKSLASH': 'the character code of a backslash, a constant of the CSS scanner',
+    'src/lib/host-site.ts:MAX_ANCESTORS': "how far up the parent chain the host page's site is read: past it the rest counts as unreadable, so the site is undecided (refused), never wider; a browser nests frames far less deep",
     'src/lib/files.ts:EDIT_OVERHEAD': "a term of the quota's cost model for a rewritten file, not a bound",
     'src/lib/files.ts:SLOT_URL_BYTES': "a term of the quota's cost model for a rewritten stylesheet, not a bound",
     'src/lib/files.ts:CHUNK': 'the size of the slices a byte array is turned into text in, an implementation detail',
