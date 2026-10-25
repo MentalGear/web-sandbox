@@ -330,6 +330,15 @@
             },
             {
               "kind": "Content",
+              "text": ", "
+            },
+            {
+              "kind": "Reference",
+              "text": "NetworkSandboxOptions",
+              "canonicalReference": "web-sandbox!NetworkSandboxOptions:interface"
+            },
+            {
+              "kind": "Content",
               "text": " "
             }
           ],
@@ -341,7 +350,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!CooperativeSandboxConfig#allowAnimations:member",
-              "docComment": "/**\n * Strict mode only (the guest document is the guest's own): ignored with a warning at run time.\n */\n",
+              "docComment": "/**\n * Strict and sealed mode only (the guest document is the guest's own): ignored with a warning at run time.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -368,7 +377,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!CooperativeSandboxConfig#allowAutoplay:member",
-              "docComment": "/**\n * Strict mode only: ignored with a warning at run time.\n */\n",
+              "docComment": "/**\n * Strict and sealed mode only: ignored with a warning at run time.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -395,7 +404,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!CooperativeSandboxConfig#entry:member",
-              "docComment": "/**\n * Strict mode only (R1:R3-6): ignored with a warning at run time.\n */\n",
+              "docComment": "/**\n * Strict and sealed mode only (R1:R3-6): ignored with a warning at run time.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -448,36 +457,8 @@
             },
             {
               "kind": "PropertySignature",
-              "canonicalReference": "web-sandbox!CooperativeSandboxConfig#origins:member",
-              "docComment": "/**\n * The exact origins the guest may load each kind from (ADR-007).\n *\n * @defaultValue none\n */\n",
-              "excerptTokens": [
-                {
-                  "kind": "Content",
-                  "text": "origins?: "
-                },
-                {
-                  "kind": "Reference",
-                  "text": "SandboxOrigins",
-                  "canonicalReference": "web-sandbox!SandboxOrigins:interface"
-                },
-                {
-                  "kind": "Content",
-                  "text": ";"
-                }
-              ],
-              "isReadonly": false,
-              "isOptional": true,
-              "releaseTag": "Public",
-              "name": "origins",
-              "propertyTypeTokenRange": {
-                "startIndex": 1,
-                "endIndex": 2
-              }
-            },
-            {
-              "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!CooperativeSandboxConfig#workerExecutionTimeout:member",
-              "docComment": "/**\n * Worker and strict mode only (the guest document may share the host's thread, so no timer could fire; R1:R3-6): ignored.\n */\n",
+              "docComment": "/**\n * Worker, strict and sealed mode only (the guest document may share the host's thread, so no timer could fire; R1:R3-6): ignored.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -506,6 +487,10 @@
             {
               "startIndex": 1,
               "endIndex": 2
+            },
+            {
+              "startIndex": 3,
+              "endIndex": 4
             }
           ]
         },
@@ -1360,6 +1345,80 @@
         },
         {
           "kind": "Interface",
+          "canonicalReference": "web-sandbox!NetworkSandboxOptions:interface",
+          "docComment": "/**\n * The options that open the network: `origins` and `fetchBridge`. Strict, cooperative and worker mode take them; sealed\n * mode does not.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "export interface NetworkSandboxOptions "
+            }
+          ],
+          "fileUrlPath": "dist/host.d.ts",
+          "releaseTag": "Public",
+          "name": "NetworkSandboxOptions",
+          "preserveMemberOrder": false,
+          "members": [
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!NetworkSandboxOptions#fetchBridge:member",
+              "docComment": "/**\n * Opens `sandboxFetch()` in the guest: the host decides each request under a fixed discipline (exact-origin\n * allowlist, no credentials, no redirects, capped body and time), a hidden frame of the library's with an opaque\n * origin makes it (the target sees `Origin: null`), and the host reports it as a `fetch` event. The guest's\n * policy is unchanged. Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. See ADR-006.\n *\n * @defaultValue off\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "fetchBridge?: "
+                },
+                {
+                  "kind": "Reference",
+                  "text": "FetchBridgeConfig",
+                  "canonicalReference": "web-sandbox!FetchBridgeConfig:interface"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "fetchBridge",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            },
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!NetworkSandboxOptions#origins:member",
+              "docComment": "/**\n * The exact origins the guest may load each kind from (ADR-007). Strict mode's have no `scripts`\n * ({@link StrictSandboxConfig}).\n *\n * @defaultValue none\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "origins?: "
+                },
+                {
+                  "kind": "Reference",
+                  "text": "SandboxOrigins",
+                  "canonicalReference": "web-sandbox!SandboxOrigins:interface"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "origins",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            }
+          ],
+          "extendsTokenRanges": []
+        },
+        {
+          "kind": "Interface",
           "canonicalReference": "web-sandbox!RpcError:interface",
           "docComment": "/**\n * The shape of every rejection of `call()` and `callWithTimeout()`: a plain `Error` with an\n * own `code`. Branch on the code, never on the message.\n *\n * @remarks\n *\n * When the other side reported the code (`HANDLER_ERROR` and the rest of the reported group), the message is its text.\n * Guest-controlled text when the guest handled the call: show it with `textContent`, never in an HTML, URL (such as a\n * link `href`), `eval`, template or `console` format-string sink.\n */\n",
           "excerptTokens": [
@@ -1571,7 +1630,7 @@
         {
           "kind": "TypeAlias",
           "canonicalReference": "web-sandbox!SandboxConfig:type",
-          "docComment": "/**\n * The configuration `setConfig()` takes: a union keyed by `mode`.\n *\n * @remarks\n *\n * Every option left out takes its default, not its previous value. The union narrows each mode, so an option a mode\n * cannot use does not type-check (strict mode's `origins` has no `scripts`; ADR-007). A config from JSON is held to the\n * same rules at run time: an option outside its modes is ignored and holds its default, mostly with one warning. A\n * config that names no `mode` is a strict config. Defaults, bounds and modes of every option: docs/API.md#configuration.\n */\n",
+          "docComment": "/**\n * The configuration `setConfig()` takes: a union keyed by `mode`.\n *\n * @remarks\n *\n * Every option left out takes its default, not its previous value. The union narrows each mode, so an option a mode\n * cannot use does not type-check (strict mode's `origins` has no `scripts`; ADR-007; a sealed config takes no\n * `origins` and no `fetchBridge`). A config from JSON is held to the same rules at run time: an option outside its modes\n * is ignored and holds its default, mostly with one warning, except that a sealed config naming `origins` or\n * `fetchBridge` is refused: the sandbox terminates with a reason that names the fix, `mode: 'strict'`\n * (docs/API.md#terminated-reasons). A config that names no `mode` is a strict config. Defaults, bounds and modes of every option: docs/API.md#configuration.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -1581,6 +1640,15 @@
               "kind": "Reference",
               "text": "StrictSandboxConfig",
               "canonicalReference": "web-sandbox!StrictSandboxConfig:interface"
+            },
+            {
+              "kind": "Content",
+              "text": " | "
+            },
+            {
+              "kind": "Reference",
+              "text": "SealedSandboxConfig",
+              "canonicalReference": "web-sandbox!SealedSandboxConfig:interface"
             },
             {
               "kind": "Content",
@@ -1610,7 +1678,7 @@
           "name": "SandboxConfig",
           "typeTokenRange": {
             "startIndex": 1,
-            "endIndex": 6
+            "endIndex": 8
           }
         },
         {
@@ -1631,7 +1699,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#allowAnimations:member",
-              "docComment": "/**\n * Strict mode only: whether CSS animations and transitions run in the view. Only a literal `true` keeps them; left\n * out, `false` or any other value (with one warning when it is not a boolean) removes them. Ignored with a warning\n * in other modes.\n *\n * @remarks\n *\n * While `true`, animations run on the host page's main thread wherever the browser runs the view there, and the\n * view's time budget does not bound them: a guest can keep the page busy for as long as they run. `false` removes\n * them (elements show their end state), which keeps the default configuration inside the documented bound on every\n * engine. While `false`, a host page whose `style-src` refuses inline styles must allow the view's stylesheet by\n * its hash (docs/API.md#host-page-policy).\n *\n * @defaultValue `false`\n */\n",
+              "docComment": "/**\n * Strict and sealed mode only: whether CSS animations and transitions run in the view. Only a literal `true` keeps them; left\n * out, `false` or any other value (with one warning when it is not a boolean) removes them. Ignored with a warning\n * in other modes.\n *\n * @remarks\n *\n * While `true`, animations run on the host page's main thread wherever the browser runs the view there, and the\n * view's time budget does not bound them: a guest can keep the page busy for as long as they run. `false` removes\n * them (elements show their end state), which keeps the default configuration inside the documented bound on every\n * engine. While `false`, a host page whose `style-src` refuses inline styles must allow the view's stylesheet by\n * its hash (docs/API.md#host-page-policy).\n *\n * @defaultValue `false`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1658,7 +1726,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#allowAutoplay:member",
-              "docComment": "/**\n * Strict mode only: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Only a literal\n * `true` keeps `autoplay`; left out, `false` or any other value (with one warning when it is not a boolean) removes\n * it, and media then plays only when the user starts it. Ignored with a warning in other modes.\n *\n * @remarks\n *\n * With `true`, playing media costs the host page's main thread where the view shares it, outside the view's time\n * budget.\n *\n * @defaultValue `false`\n */\n",
+              "docComment": "/**\n * Strict and sealed mode only: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Only a literal\n * `true` keeps `autoplay`; left out, `false` or any other value (with one warning when it is not a boolean) removes\n * it, and media then plays only when the user starts it. Ignored with a warning in other modes.\n *\n * @remarks\n *\n * With `true`, playing media costs the host page's main thread where the view shares it, outside the view's time\n * budget.\n *\n * @defaultValue `false`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1685,7 +1753,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#autoResize:member",
-              "docComment": "/**\n * Whether the element's height follows the guest's content height, from `ready` on; the height is validated,\n * clamped to {@link AUTO_RESIZE_MAX_HEIGHT} and changes at most {@link AUTO_RESIZE_MAX_UPDATES_PER_SECOND} times a\n * second. Only a literal `true` enables it. Strict and cooperative mode; in worker mode it does nothing, with one\n * warning.\n *\n * @defaultValue `false`\n */\n",
+              "docComment": "/**\n * Whether the element's height follows the guest's content height, from `ready` on; the height is validated,\n * clamped to {@link AUTO_RESIZE_MAX_HEIGHT} and changes at most {@link AUTO_RESIZE_MAX_UPDATES_PER_SECOND} times a\n * second. Only a literal `true` enables it. Strict, sealed and cooperative mode; in worker mode it does nothing, with one\n * warning.\n *\n * @defaultValue `false`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1740,7 +1808,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#capabilities:member",
-              "docComment": "/**\n * Sandbox flags that keep the guest inside the frame, from {@link SAFE_CAPABILITIES}. An entry that is not one is\n * dropped with a warning. Worker mode always adds `allow-scripts`; strict mode's view always has `allow-scripts` and\n * `allow-forms`, so listing either there changes nothing.\n *\n * @defaultValue `[]`\n */\n",
+              "docComment": "/**\n * Sandbox flags that keep the guest inside the frame, from {@link SAFE_CAPABILITIES}. An entry that is not one is\n * dropped with a warning. Worker mode always adds `allow-scripts`; the view of strict and sealed mode always has\n * `allow-scripts` and `allow-forms`, so listing either there changes nothing.\n *\n * @defaultValue `[]`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1772,7 +1840,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#entry:member",
-              "docComment": "/**\n * Strict mode only: the path of a registered JavaScript file (see `registerFiles()`) that the worker\n * runs first, as a classic script. Ignored with a warning in other modes. If it is not a registered JavaScript file\n * the sandbox terminates.\n *\n * @defaultValue none\n */\n",
+              "docComment": "/**\n * Strict and sealed mode only: the path of a registered JavaScript file (see `registerFiles()`) that the worker\n * runs first, as a classic script. Ignored with a warning in other modes. If it is not a registered JavaScript file\n * the sandbox terminates.\n *\n * @defaultValue none\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1791,34 +1859,6 @@
               "isOptional": true,
               "releaseTag": "Public",
               "name": "entry",
-              "propertyTypeTokenRange": {
-                "startIndex": 1,
-                "endIndex": 2
-              }
-            },
-            {
-              "kind": "PropertySignature",
-              "canonicalReference": "web-sandbox!SandboxConfigOptions#fetchBridge:member",
-              "docComment": "/**\n * Opens `sandboxFetch()` in the guest: the host decides each request under a fixed discipline (exact-origin\n * allowlist, no credentials, no redirects, capped body and time), a hidden frame of the library's with an opaque\n * origin makes it (the target sees `Origin: null`), and the host reports it as a `fetch` event. The guest's\n * policy is unchanged. Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. See ADR-006.\n *\n * @defaultValue off\n */\n",
-              "excerptTokens": [
-                {
-                  "kind": "Content",
-                  "text": "fetchBridge?: "
-                },
-                {
-                  "kind": "Reference",
-                  "text": "FetchBridgeConfig",
-                  "canonicalReference": "web-sandbox!FetchBridgeConfig:interface"
-                },
-                {
-                  "kind": "Content",
-                  "text": ";"
-                }
-              ],
-              "isReadonly": false,
-              "isOptional": true,
-              "releaseTag": "Public",
-              "name": "fetchBridge",
               "propertyTypeTokenRange": {
                 "startIndex": 1,
                 "endIndex": 2
@@ -1881,7 +1921,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#html:member",
-              "docComment": "/**\n * The initial HTML: the initial view in strict mode (its `<script>` elements and event-handler attributes never\n * run, and markup that holds any warns once per element), the guest document in cooperative mode. Ignored in worker\n * mode. `load()` sets it too. Empty means `<div id=\"root\"></div>`. A value that is not a string is\n * dropped with a warning.\n *\n * @defaultValue `''`\n */\n",
+              "docComment": "/**\n * The initial HTML: the initial view in strict and sealed mode (its `<script>` elements and event-handler attributes never\n * run, and markup that holds any warns once per element), the guest document in cooperative mode. Ignored in worker\n * mode. `load()` sets it too. Empty means `<div id=\"root\"></div>`. A value that is not a string is\n * dropped with a warning.\n *\n * @defaultValue `''`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1935,7 +1975,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#unsafeCapabilities:member",
-              "docComment": "/**\n * Capabilities that act outside the frame, from {@link UNSAFE_CAPABILITIES} (popups, modals, downloads, forms,\n * presentation, pointer lock, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;\n * dropped with a warning in strict mode.\n *\n * @remarks\n *\n * On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups` lets the guest open has no\n * opener: the guest's `window.open()` returns `null`, though the page opens.\n *\n * @defaultValue `[]`\n */\n",
+              "docComment": "/**\n * Capabilities that act outside the frame, from {@link UNSAFE_CAPABILITIES} (popups, modals, downloads, forms,\n * presentation, pointer lock, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;\n * dropped with a warning in strict and sealed mode.\n *\n * @remarks\n *\n * On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups` lets the guest open has no\n * opener: the guest's `window.open()` returns `null`, though the page opens.\n *\n * @defaultValue `[]`\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -1994,7 +2034,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#workerExecutionTimeout:member",
-              "docComment": "/**\n * A deadline in ms for each `execute()`, in worker and strict mode. At the deadline the guest's event\n * loop must be free: the element pings the guest, and if no answer arrives within\n * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).\n * Anything but a finite number above 0 is off. Not read in cooperative mode.\n *\n * @defaultValue `0` (off)\n */\n",
+              "docComment": "/**\n * A deadline in ms for each `execute()`, in worker, strict and sealed mode. At the deadline the guest's event\n * loop must be free: the element pings the guest, and if no answer arrives within\n * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).\n * Anything but a finite number above 0 is off. Not read in cooperative mode.\n *\n * @defaultValue `0` (off)\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -3023,6 +3063,146 @@
         },
         {
           "kind": "Interface",
+          "canonicalReference": "web-sandbox!SealedSandboxConfig:interface",
+          "docComment": "/**\n * The configuration of sealed mode: strict mode with no network. Guest code runs only in a worker that a view document\n * spawns, as in strict mode, and the view's policy admits no network source: every fetch directive is `'none'` or\n * `blob:` for registered files, and `connect-src` is `'none'`.\n *\n * @remarks\n *\n * `mode: 'sealed'` must be named. A sealed config that names `origins` or `fetchBridge` does not type-check, and from\n * JSON it is refused: nothing of it is applied, and the sandbox terminates with a reason that names the fix,\n * `mode: 'strict'` (docs/API.md#terminated-reasons). `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`.\n */\n",
+          "excerptTokens": [
+            {
+              "kind": "Content",
+              "text": "export interface SealedSandboxConfig extends "
+            },
+            {
+              "kind": "Reference",
+              "text": "SandboxConfigOptions",
+              "canonicalReference": "web-sandbox!SandboxConfigOptions:interface"
+            },
+            {
+              "kind": "Content",
+              "text": " "
+            }
+          ],
+          "fileUrlPath": "dist/host.d.ts",
+          "releaseTag": "Public",
+          "name": "SealedSandboxConfig",
+          "preserveMemberOrder": false,
+          "members": [
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!SealedSandboxConfig#fetchBridge:member",
+              "docComment": "/**\n * Not in sealed mode, which has no network: a config that names it is refused.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "fetchBridge?: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "never"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "fetchBridge",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            },
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!SealedSandboxConfig#mode:member",
+              "docComment": "/**\n * Names the mode.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "mode: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "'sealed'"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": false,
+              "releaseTag": "Public",
+              "name": "mode",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            },
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!SealedSandboxConfig#origins:member",
+              "docComment": "/**\n * Not in sealed mode, which has no network: a config that names it is refused.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "origins?: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "never"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "origins",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            },
+            {
+              "kind": "PropertySignature",
+              "canonicalReference": "web-sandbox!SealedSandboxConfig#unsafeCapabilities:member",
+              "docComment": "/**\n * Not in sealed mode: no capability reaches outside the view. Dropped at run time.\n */\n",
+              "excerptTokens": [
+                {
+                  "kind": "Content",
+                  "text": "unsafeCapabilities?: "
+                },
+                {
+                  "kind": "Content",
+                  "text": "never"
+                },
+                {
+                  "kind": "Content",
+                  "text": ";"
+                }
+              ],
+              "isReadonly": false,
+              "isOptional": true,
+              "releaseTag": "Public",
+              "name": "unsafeCapabilities",
+              "propertyTypeTokenRange": {
+                "startIndex": 1,
+                "endIndex": 2
+              }
+            }
+          ],
+          "extendsTokenRanges": [
+            {
+              "startIndex": 1,
+              "endIndex": 2
+            }
+          ]
+        },
+        {
+          "kind": "Interface",
           "canonicalReference": "web-sandbox!StrictSandboxConfig:interface",
           "docComment": "/**\n * The configuration of strict mode (ADR-005), the default: guest code runs only in a worker that a view document\n * spawns, and the worker draws into the view with `sandboxView.render()`. `html` is the initial view, rendered without\n * its scripts and event-handler attributes.\n */\n",
           "excerptTokens": [
@@ -3034,6 +3214,15 @@
               "kind": "Reference",
               "text": "SandboxConfigOptions",
               "canonicalReference": "web-sandbox!SandboxConfigOptions:interface"
+            },
+            {
+              "kind": "Content",
+              "text": ", "
+            },
+            {
+              "kind": "Reference",
+              "text": "NetworkSandboxOptions",
+              "canonicalReference": "web-sandbox!NetworkSandboxOptions:interface"
             },
             {
               "kind": "Content",
@@ -3132,6 +3321,10 @@
             {
               "startIndex": 1,
               "endIndex": 2
+            },
+            {
+              "startIndex": 3,
+              "endIndex": 4
             }
           ]
         },
@@ -5132,6 +5325,15 @@
             },
             {
               "kind": "Content",
+              "text": ", "
+            },
+            {
+              "kind": "Reference",
+              "text": "NetworkSandboxOptions",
+              "canonicalReference": "web-sandbox!NetworkSandboxOptions:interface"
+            },
+            {
+              "kind": "Content",
               "text": " "
             }
           ],
@@ -5143,7 +5345,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!WorkerSandboxConfig#allowAnimations:member",
-              "docComment": "/**\n * Strict mode only (a worker has no document): ignored with a warning at run time.\n */\n",
+              "docComment": "/**\n * Strict and sealed mode only (a worker has no document): ignored with a warning at run time.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -5170,7 +5372,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!WorkerSandboxConfig#allowAutoplay:member",
-              "docComment": "/**\n * Strict mode only: ignored with a warning at run time.\n */\n",
+              "docComment": "/**\n * Strict and sealed mode only: ignored with a warning at run time.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -5224,7 +5426,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!WorkerSandboxConfig#entry:member",
-              "docComment": "/**\n * Strict mode only (R1:R3-6): ignored with a warning at run time.\n */\n",
+              "docComment": "/**\n * Strict and sealed mode only (R1:R3-6): ignored with a warning at run time.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -5301,40 +5503,16 @@
                 "startIndex": 1,
                 "endIndex": 2
               }
-            },
-            {
-              "kind": "PropertySignature",
-              "canonicalReference": "web-sandbox!WorkerSandboxConfig#origins:member",
-              "docComment": "/**\n * The exact origins the guest may load each kind from (ADR-007).\n *\n * @defaultValue none\n */\n",
-              "excerptTokens": [
-                {
-                  "kind": "Content",
-                  "text": "origins?: "
-                },
-                {
-                  "kind": "Reference",
-                  "text": "SandboxOrigins",
-                  "canonicalReference": "web-sandbox!SandboxOrigins:interface"
-                },
-                {
-                  "kind": "Content",
-                  "text": ";"
-                }
-              ],
-              "isReadonly": false,
-              "isOptional": true,
-              "releaseTag": "Public",
-              "name": "origins",
-              "propertyTypeTokenRange": {
-                "startIndex": 1,
-                "endIndex": 2
-              }
             }
           ],
           "extendsTokenRanges": [
             {
               "startIndex": 1,
               "endIndex": 2
+            },
+            {
+              "startIndex": 3,
+              "endIndex": 4
             }
           ]
         }

@@ -29,7 +29,7 @@
  */
 import { refusalDetail } from '../../src/lib/csp/origins';
 import { admits, isStale, reduce, step, type BuildContext, type Generation, type LcInput, type LcOutput, type LcState, type LifecycleHost, type Notice, INITIAL_LIFECYCLE } from '../../src/lib/lifecycle';
-import { defaultConfig, normaliseConfig, unknownModeReason, type StoredConfig } from '../../src/lib/config-schema';
+import { ConfigRefusal, defaultConfig, hasStrictView, normaliseConfig, unknownModeReason, type StoredConfig } from '../../src/lib/config-schema';
 import { isJavaScriptType, mimeTypeFor } from '../../src/lib/files';
 import { CONFIG_REFUSED, DEFAULT_TERMINATE_REASON, LifecycleModel, type Cmd, type ConfigDesc, type Sequence } from './lifecycle-model';
 import { Rng } from './generator';
@@ -208,6 +208,7 @@ export class FakeElement implements LifecycleHost {
         this.pendingCopy = null;
         const refuse = (error: unknown) => {
             this.lastKey = null;
+            if (error instanceof ConfigRefusal) return error.reason;
             return `${CONFIG_REFUSED} (${errorName(error)}${refusalDetail(error)})`;
         };
         if (pending.error !== null) return refuse(pending.error);
@@ -221,7 +222,7 @@ export class FakeElement implements LifecycleHost {
 
     buildContext(): BuildContext {
         const mode = this.config.mode as unknown;
-        const strict = mode === 'strict';
+        const strict = hasStrictView(mode);
         const capabilities = (this.config.capabilities ?? []) as readonly string[];
         const announces = mode === 'worker' || (mode === 'cooperative' && capabilities.includes('allow-scripts'));
         return { buildsHere: this.parent === 'own' && this.ownerDoc === 'own', blocked: unknownModeReason(mode) ?? this.entryRefusal(), strict, announces };
@@ -229,7 +230,7 @@ export class FakeElement implements LifecycleHost {
 
     private entryRefusal(): string | null {
         const entry = this.config.entry;
-        if (this.config.mode !== 'strict' || typeof entry !== 'string' || entry === '') return null;
+        if (!hasStrictView(this.config.mode) || typeof entry !== 'string' || entry === '') return null;
         if (entry in this.files && isJavaScriptType(mimeTypeFor(entry))) return null;
         return `the guest entry "${entry.slice(0, 256)}" is not a registered JavaScript file`;
     }

@@ -4,7 +4,7 @@
  */
 import type { SafeCapability, UnsafeCapability } from "./csp-directives";
 import { UNSAFE_PERMISSIONS } from "./csp-directives";
-import { connectSources, cooperativePolicy, fileKinds, strictViewPolicy, type PolicyInput } from "./lib/csp/csp-generator";
+import { connectSources, cooperativePolicy, fileKinds, SEALED_FILE_KINDS, sealedViewPolicy, strictViewPolicy, type PolicyInput, type SealedFileKind } from "./lib/csp/csp-generator";
 import { hostReach, type NarrowedReach } from "./lib/csp/host-connect";
 import { buildRefused, executeRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
 import { NO_ORIGINS, refusalDetail, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
@@ -32,7 +32,7 @@ import { buildGuestDocument, buildWrapperDocument, permissionAttributes, setWrap
 import { scriptHashSource } from "./lib/csp/script-hash";
 import { browserHasTrustedTypes, setLibrarySrcdoc, TRUSTED_TYPES_POLICY, TrustedTypesRefusal } from "./lib/trusted-types";
 import { hostPageOrigin } from "./lib/host-site";
-import { admitGuestCall, DEFAULT_CALL_BUDGET, defaultConfig, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
+import { admitGuestCall, ConfigRefusal, DEFAULT_CALL_BUDGET, defaultConfig, hasStrictView, normaliseConfig, STRICT_VIEW_FLAGS, unknownModeReason, type CallBudget, type StoredConfig } from "./lib/config-schema";
 import { bootstrapListeners, UNCAUGHT_BUDGET, type BootstrapListener } from "./lib/egress";
 import { elementEvent } from "./lib/element-events";
 import { detachEnvironment, releaseEnvironment, type EnvironmentFields } from "./lib/environment";
@@ -46,18 +46,64 @@ import { assertEntryScoped, buildViewDocument, entryDoneName, environmentGate, i
  *
  * @remarks
  * Every option left out takes its default, not its previous value. The union narrows each mode, so an option a mode
- * cannot use does not type-check (strict mode's `origins` has no `scripts`; ADR-007). A config from JSON is held to the
- * same rules at run time: an option outside its modes is ignored and holds its default, mostly with one warning. A
- * config that names no `mode` is a strict config. Defaults, bounds and modes of every option: docs/API.md#configuration.
+ * cannot use does not type-check (strict mode's `origins` has no `scripts`; ADR-007; a sealed config takes no
+ * `origins` and no `fetchBridge`). A config from JSON is held to the same rules at run time: an option outside its modes
+ * is ignored and holds its default, mostly with one warning, except that a sealed config naming `origins` or
+ * `fetchBridge` is refused: the sandbox terminates with a reason that names the fix, `mode: 'strict'`
+ * (docs/API.md#terminated-reasons). A config that names no `mode` is a strict config. Defaults, bounds and modes of every option: docs/API.md#configuration.
  */
-export type SandboxConfig = StrictSandboxConfig | CooperativeSandboxConfig | WorkerSandboxConfig;
+export type SandboxConfig = StrictSandboxConfig | SealedSandboxConfig | CooperativeSandboxConfig | WorkerSandboxConfig;
+
+/**
+ * The options that open the network: `origins` and `fetchBridge`. Strict, cooperative and worker mode take them; sealed
+ * mode does not.
+ */
+export interface NetworkSandboxOptions {
+    /**
+     * The exact origins the guest may load each kind from (ADR-007). Strict mode's have no `scripts`
+     * ({@link StrictSandboxConfig}).
+     *
+     * @defaultValue none
+     */
+    origins?: SandboxOrigins;
+    /**
+     * Opens `sandboxFetch()` in the guest: the host decides each request under a fixed discipline (exact-origin
+     * allowlist, no credentials, no redirects, capped body and time), a hidden frame of the library's with an opaque
+     * origin makes it (the target sees `Origin: null`), and the host reports it as a `fetch` event. The guest's
+     * policy is unchanged. Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. See ADR-006.
+     *
+     * @defaultValue off
+     */
+    fetchBridge?: FetchBridgeConfig;
+}
+
+/**
+ * The configuration of sealed mode: strict mode with no network. Guest code runs only in a worker that a view document
+ * spawns, as in strict mode, and the view's policy admits no network source: every fetch directive is `'none'` or
+ * `blob:` for registered files, and `connect-src` is `'none'`.
+ *
+ * @remarks
+ * `mode: 'sealed'` must be named. A sealed config that names `origins` or `fetchBridge` does not type-check, and from
+ * JSON it is refused: nothing of it is applied, and the sandbox terminates with a reason that names the fix,
+ * `mode: 'strict'` (docs/API.md#terminated-reasons). `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`.
+ */
+export interface SealedSandboxConfig extends SandboxConfigOptions {
+    /** Names the mode. */
+    mode: 'sealed';
+    /** Not in sealed mode, which has no network: a config that names it is refused. */
+    origins?: never;
+    /** Not in sealed mode, which has no network: a config that names it is refused. */
+    fetchBridge?: never;
+    /** Not in sealed mode: no capability reaches outside the view. Dropped at run time. */
+    unsafeCapabilities?: never;
+}
 
 /**
  * The configuration of strict mode (ADR-005), the default: guest code runs only in a worker that a view document
  * spawns, and the worker draws into the view with `sandboxView.render()`. `html` is the initial view, rendered without
  * its scripts and event-handler attributes.
  */
-export interface StrictSandboxConfig extends SandboxConfigOptions {
+export interface StrictSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
     /**
      * Names the mode; strict when left out. A value that is not a mode starts no environment: the sandbox terminates
      * with a reason that names it (AR:A4).
@@ -73,21 +119,16 @@ export interface StrictSandboxConfig extends SandboxConfigOptions {
  * The configuration of cooperative mode, for content that cooperates: guest code runs in the guest document, within the
  * documented limits of the mode (README, "Cooperative-mode limits"). `'iframe'` is not a mode: it is refused like any other unknown value.
  */
-export interface CooperativeSandboxConfig extends SandboxConfigOptions {
+export interface CooperativeSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
     /** Names the mode. */
     mode: 'cooperative';
-    /**
-     * The exact origins the guest may load each kind from (ADR-007).
-     * @defaultValue none
-     */
-    origins?: SandboxOrigins;
-    /** Strict mode only (R1:R3-6): ignored with a warning at run time. */
+    /** Strict and sealed mode only (R1:R3-6): ignored with a warning at run time. */
     entry?: never;
-    /** Strict mode only (the guest document is the guest's own): ignored with a warning at run time. */
+    /** Strict and sealed mode only (the guest document is the guest's own): ignored with a warning at run time. */
     allowAnimations?: never;
-    /** Strict mode only: ignored with a warning at run time. */
+    /** Strict and sealed mode only: ignored with a warning at run time. */
     allowAutoplay?: never;
-    /** Worker and strict mode only (the guest document may share the host's thread, so no timer could fire; R1:R3-6): ignored. */
+    /** Worker, strict and sealed mode only (the guest document may share the host's thread, so no timer could fire; R1:R3-6): ignored. */
     workerExecutionTimeout?: never;
 }
 
@@ -95,19 +136,14 @@ export interface CooperativeSandboxConfig extends SandboxConfigOptions {
  * The configuration of worker mode: guest code runs in a worker inside the frame. The mode is frozen and is to be folded
  * into strict mode (S49).
  */
-export interface WorkerSandboxConfig extends SandboxConfigOptions {
+export interface WorkerSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
     /** Names the mode. */
     mode: 'worker';
-    /**
-     * The exact origins the guest may load each kind from (ADR-007).
-     * @defaultValue none
-     */
-    origins?: SandboxOrigins;
-    /** Strict mode only (R1:R3-6): ignored with a warning at run time. */
+    /** Strict and sealed mode only (R1:R3-6): ignored with a warning at run time. */
     entry?: never;
-    /** Strict mode only (a worker has no document): ignored with a warning at run time. */
+    /** Strict and sealed mode only (a worker has no document): ignored with a warning at run time. */
     allowAnimations?: never;
-    /** Strict mode only: ignored with a warning at run time. */
+    /** Strict and sealed mode only: ignored with a warning at run time. */
     allowAutoplay?: never;
     /** A worker has no document (R1:R3-6): ignored. */
     html?: never;
@@ -260,8 +296,8 @@ export interface SandboxConfigOptions {
     scriptUnsafe?: boolean;
     /**
      * Sandbox flags that keep the guest inside the frame, from {@link SAFE_CAPABILITIES}. An entry that is not one is
-     * dropped with a warning. Worker mode always adds `allow-scripts`; strict mode's view always has `allow-scripts` and
-     * `allow-forms`, so listing either there changes nothing.
+     * dropped with a warning. Worker mode always adds `allow-scripts`; the view of strict and sealed mode always has
+     * `allow-scripts` and `allow-forms`, so listing either there changes nothing.
      *
      * @defaultValue `[]`
      */
@@ -269,7 +305,7 @@ export interface SandboxConfigOptions {
     /**
      * Capabilities that act outside the frame, from {@link UNSAFE_CAPABILITIES} (popups, modals, downloads, forms,
      * presentation, pointer lock, fullscreen): an explicit opt-in, and each one enabled warns once. Cooperative and worker mode only;
-     * dropped with a warning in strict mode.
+     * dropped with a warning in strict and sealed mode.
      *
      * @remarks
      * On Chromium the sandbox's frame is credentialless, so a popup that `allow-popups` lets the guest open has no
@@ -279,7 +315,7 @@ export interface SandboxConfigOptions {
      */
     unsafeCapabilities?: UnsafeCapability[];
     /**
-     * The initial HTML: the initial view in strict mode (its `<script>` elements and event-handler attributes never
+     * The initial HTML: the initial view in strict and sealed mode (its `<script>` elements and event-handler attributes never
      * run, and markup that holds any warns once per element), the guest document in cooperative mode. Ignored in worker
      * mode. `load()` sets it too. Empty means `<div id="root"></div>`. A value that is not a string is
      * dropped with a warning.
@@ -288,7 +324,7 @@ export interface SandboxConfigOptions {
      */
     html?: string;
     /**
-     * Strict mode only: the path of a registered JavaScript file (see `registerFiles()`) that the worker
+     * Strict and sealed mode only: the path of a registered JavaScript file (see `registerFiles()`) that the worker
      * runs first, as a classic script. Ignored with a warning in other modes. If it is not a registered JavaScript file
      * the sandbox terminates.
      *
@@ -296,7 +332,7 @@ export interface SandboxConfigOptions {
      */
     entry?: string;
     /**
-     * Strict mode only: whether CSS animations and transitions run in the view. Only a literal `true` keeps them; left
+     * Strict and sealed mode only: whether CSS animations and transitions run in the view. Only a literal `true` keeps them; left
      * out, `false` or any other value (with one warning when it is not a boolean) removes them. Ignored with a warning
      * in other modes.
      *
@@ -311,7 +347,7 @@ export interface SandboxConfigOptions {
      */
     allowAnimations?: boolean;
     /**
-     * Strict mode only: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Only a literal
+     * Strict and sealed mode only: whether `<video autoplay>` and `<audio autoplay>` in the view start on their own. Only a literal
      * `true` keeps `autoplay`; left out, `false` or any other value (with one warning when it is not a boolean) removes
      * it, and media then plays only when the user starts it. Ignored with a warning in other modes.
      *
@@ -323,7 +359,7 @@ export interface SandboxConfigOptions {
      */
     allowAutoplay?: boolean;
     /**
-     * A deadline in ms for each `execute()`, in worker and strict mode. At the deadline the guest's event
+     * A deadline in ms for each `execute()`, in worker, strict and sealed mode. At the deadline the guest's event
      * loop must be free: the element pings the guest, and if no answer arrives within
      * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).
      * Anything but a finite number above 0 is off. Not read in cooperative mode.
@@ -342,21 +378,12 @@ export interface SandboxConfigOptions {
     /**
      * Whether the element's height follows the guest's content height, from `ready` on; the height is validated,
      * clamped to {@link AUTO_RESIZE_MAX_HEIGHT} and changes at most {@link AUTO_RESIZE_MAX_UPDATES_PER_SECOND} times a
-     * second. Only a literal `true` enables it. Strict and cooperative mode; in worker mode it does nothing, with one
+     * second. Only a literal `true` enables it. Strict, sealed and cooperative mode; in worker mode it does nothing, with one
      * warning.
      *
      * @defaultValue `false`
      */
     autoResize?: boolean;
-    /**
-     * Opens `sandboxFetch()` in the guest: the host decides each request under a fixed discipline (exact-origin
-     * allowlist, no credentials, no redirects, capped body and time), a hidden frame of the library's with an opaque
-     * origin makes it (the target sees `Origin: null`), and the host reports it as a `fetch` event. The guest's
-     * policy is unchanged. Without it, `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`. See ADR-006.
-     *
-     * @defaultValue off
-     */
-    fetchBridge?: FetchBridgeConfig;
     /**
      * The host page's Content-Security-Policy as text, so that the library drops the origins it refuses from
      * `origins.connect` and `fetchBridge.allow`: a string (one or more policies, as a header or a `<meta>` carries them),
@@ -626,6 +653,9 @@ interface StrictInit {
     // renderer drops an http(s) URL outside them, so the browser never processes a refusal.
     origins: { images: readonly string[]; media: readonly string[] };
 }
+
+// Sealed mode's reach (docs/research/24_sealed_mode): no origin and no fetch bridge, so no bridge frame either.
+const SEALED_REACH: NarrowedReach = Object.freeze({ origins: NO_ORIGINS, fetchPolicy: null });
 
 // The warning for a registered stylesheet strict mode's view gets without its network URLs, or not at all (files.ts,
 // viewStylesheets): once per element and text, as the build's other warnings about the files (_warnOnce).
@@ -901,6 +931,8 @@ export class WebSandbox extends ElementBase {
             return null;
         } catch (error) {
             this._lastConfig = null;
+            // a refusal with a reason of its own (a sealed config that names a network option) is that reason alone
+            if (error instanceof ConfigRefusal) return error.reason;
             // an `origins` of the wrong type names the option, in a fixed text of the library's (BD3:NEW-3)
             return reasonText('configRefused', errorName(error) + refusalDetail(error));
         }
@@ -1343,7 +1375,7 @@ export class WebSandbox extends ElementBase {
     // tearing the frame down stops it. Cooperative mode has no such budget: the guest document can share the host's
     // thread, so no timer could fire meanwhile.
     private _armExecutionBudget() {
-        if (this._config.mode !== 'worker' && this._config.mode !== 'strict') return;
+        if (this._config.mode !== 'worker' && !hasStrictView(this._config.mode)) return;
         const budget = watchdogBudget(this._config.workerExecutionTimeout); // a finite number > 0, else off
         if (budget === 0) return;
         const gen = this._lc.gen; // the environment the code was posted to: its timeout ends that one only
@@ -1911,7 +1943,7 @@ export class WebSandbox extends ElementBase {
     // nothing else here is asked there.
     private _buildContext(): BuildContext {
         if (!buildsHere(this)) return NOT_HERE;
-        const strict = this._config.mode === 'strict';
+        const strict = hasStrictView(this._config.mode);
         // a bootstrap runs, and announces its port, exactly where the inline script can run (_getMarkupPlan's test, BR:CB1)
         return { buildsHere: true, blocked: this._buildRefusal(), strict, announces: !strict && this._getSandboxFlags().split(' ').includes('allow-scripts') };
     }
@@ -1948,7 +1980,7 @@ export class WebSandbox extends ElementBase {
         // as defence in depth: an engine's opaque-origin frames need not read an isolated page's isolation.
         if (String(window.crossOriginIsolated === true) !== ENVIRONMENT_EXPECTED.isolated) return reasonText(ENVIRONMENT_CHECKS.isolated.reason);
         const entry = this._config.entry;
-        if (this._config.mode === 'strict' && typeof entry === 'string' && entry !== '') {
+        if (hasStrictView(this._config.mode) && typeof entry === 'string' && entry !== '') {
             const file = this._files.list().find(candidate => candidate.path === entry);
             if (!file || !isJavaScriptType(file.type)) return reasonText('entryNotRegistered', entry.slice(0, 256));
         }
@@ -2015,8 +2047,8 @@ export class WebSandbox extends ElementBase {
     }
 
     private _getSandboxFlags(): string {
-        // Strict mode (ADR-005): STRICT_VIEW_FLAGS, plus the safe capabilities configured. No unsafe capability.
-        if (this._config.mode === 'strict') return [...new Set<string>([...STRICT_VIEW_FLAGS, ...(this._config.capabilities || [])])].join(' ');
+        // Strict and sealed mode (ADR-005): STRICT_VIEW_FLAGS, plus the safe capabilities configured. No unsafe capability.
+        if (hasStrictView(this._config.mode)) return [...new Set<string>([...STRICT_VIEW_FLAGS, ...(this._config.capabilities || [])])].join(' ');
         const flags = new Set<string>(this._config.capabilities || []);
         for (const capability of this._config.unsafeCapabilities || []) {
             if (this._isPermission(capability)) continue; // goes into the allow attribute instead
@@ -2032,7 +2064,7 @@ export class WebSandbox extends ElementBase {
     // Permissions Policy features for the iframe `allow` attribute (e.g. fullscreen)
     private _getPermissions(): string[] {
         const permissions: string[] = [];
-        if (this._config.mode === 'strict') return permissions;
+        if (hasStrictView(this._config.mode)) return permissions;
         for (const capability of this._config.unsafeCapabilities || []) {
             if (this._isPermission(capability)) permissions.push(capability);
         }
@@ -2042,22 +2074,28 @@ export class WebSandbox extends ElementBase {
     // The guest policy of this build (csp-generator.ts, ADR-007): the mode's template, the parsed origins, and blob:
     // for the kinds of load this build's files need (the snapshot's types, through the one load-kind table). The one
     // place a guest policy is made; worker mode's worker and strict mode's worker inherit their frame's.
+    // Sealed mode's view takes no origins at all (sealedViewPolicy): only the kinds of its files.
     private _guestPolicy(files: FileSnapshotEntry[], origins: OriginPolicy): string {
         const input = this._policyInput(files, origins);
+        if (this._config.mode === 'sealed') {
+            const kinds = new Set<SealedFileKind>(SEALED_FILE_KINDS.filter(kind => input.fileKinds.has(kind)));
+            return sealedViewPolicy({ fileKinds: kinds, bootstrapHash: viewBootstrapHash(), scriptUnsafe: input.scriptUnsafe });
+        }
         if (this._config.mode !== 'strict') return cooperativePolicy(input);
         return strictViewPolicy({ ...input, bootstrapHash: viewBootstrapHash() });
     }
 
     // The sources of that policy's connect-src, from the same input: what the bootstrap's request gate admits (S74), so
-    // the gate and the browser read one list.
+    // the gate and the browser read one list. Sealed mode's connect-src is 'none': the gate admits nothing.
     private _gateConnect(files: FileSnapshotEntry[], origins: OriginPolicy): string[] {
+        if (this._config.mode === 'sealed') return [];
         return connectSources(this._policyInput(files, origins));
     }
 
     private _policyInput(files: FileSnapshotEntry[], origins: OriginPolicy): PolicyInput {
         const types = files.map(entry => entry[1]);
         const scriptUnsafe = this._config.scriptUnsafe === true;
-        if (this._config.mode !== 'strict') return { origins, fileKinds: fileKinds(types), scriptUnsafe };
+        if (!hasStrictView(this._config.mode)) return { origins, fileKinds: fileKinds(types), scriptUnsafe };
         // A type the view mints no URL for (isViewFileType, BR:ST1) is only fetched, by the worker.
         const viewTypes = types.map(type => (isViewFileType(type) ? type : FALLBACK_TYPE));
         const kinds = fileKinds(viewTypes);
@@ -2144,11 +2182,12 @@ export class WebSandbox extends ElementBase {
         // guest-write overlay answers from it (BR:CB4). Later registerFiles() calls reach the guest only through the next build.
         const built = this._files.copy();
         const files = built.snapshot();
-        const reach = this._reach();
+        // sealed mode has no network: nothing to narrow, so the host page's policy is not applied to anything (SEALED_REACH)
+        const reach = this._config.mode === 'sealed' ? SEALED_REACH : this._reach();
         // where the browser has no Trusted Types: the page's list that does not name the library's policy ends the build, as it does where it has them
         const trustedTypes = this._trustedTypes();
         if (trustedTypes && buildRefused(trustedTypes, this._config.mode as TrustedTypesMode)) throw new TrustedTypesRefusal("the host page's trusted-types directive does not name the policy");
-        if (this._config.mode === 'strict') return this._prepareStrictFrame(built, files, reach);
+        if (hasStrictView(this._config.mode)) return this._prepareStrictFrame(built, files, reach);
 
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
@@ -2220,7 +2259,7 @@ export class WebSandbox extends ElementBase {
             autoResize: this._autoResizeEnabled(),
             allowAnimations: this._config.allowAnimations === true,
             allowAutoplay: this._config.allowAutoplay === true,
-            origins: { images: [...this._origins.images], media: [...this._origins.media] },
+            origins: { images: [...reach.origins.images], media: [...reach.origins.media] },
         };
         const view = buildViewDocument(policy, viewBootstrapText());
 

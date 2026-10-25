@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { admitGuestCall, CALL_INVARIANTS, CALL_LIMIT_FIELDS, callBudgetOf, CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, DEFAULT_CALL_BUDGET, defaultConfig, heaviestCall, ignoredIn, normaliseConfig, PARSED_APART, SANDBOX_MODES, type CallBudget, type NormalisedConfig, type NormaliseContext, type OptionName, type OptionRule, type SandboxMode } from '@src/lib/config-schema';
+import { admitGuestCall, CALL_INVARIANTS, CALL_LIMIT_FIELDS, callBudgetOf, CONFIG_INVARIANTS, CONFIG_OPTIONS, CONFIG_SCHEMA, DEFAULT_CALL_BUDGET, defaultConfig, heaviestCall, ignoredIn, NETWORK_MODES, NETWORK_OPTIONS, normaliseConfig, PARSED_APART, SANDBOX_MODES, type CallBudget, type NormalisedConfig, type NormaliseContext, type OptionName, type OptionRule, type SandboxMode } from '@src/lib/config-schema';
 import { NO_ORIGINS, ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { FETCH_BRIDGE_FIELDS } from '@src/lib/fetch-bridge';
 import { createRateLimiter } from '@src/lib/rate-limit';
@@ -174,7 +174,8 @@ function argumentOf(value: NormalisedConfig): Record<string, unknown> {
     // what the mode ignores is left out: it holds its default, and naming it would only say again that it is ignored
     const argument: Record<string, unknown> = Object.fromEntries(Object.entries(value.config).filter(([name]) => !ignoredIn(name as OptionName, value.config.mode)));
     argument.callLimits = { maxPerSecond: value.callBudget.calls, maxBytesPerSecond: value.callBudget.bytes };
-    argument.origins = Object.fromEntries(Object.entries(value.origins).map(([kind, list]) => [kind, [...list]]));
+    // sealed mode takes no network option at all: naming one, even empty, refuses the config
+    if (!ignoredIn('origins', value.config.mode)) argument.origins = Object.fromEntries(Object.entries(value.origins).map(([kind, list]) => [kind, [...list]]));
     if (value.fetchPolicy) {
         const { allow, maxBytes, timeoutMs, methods, headers, maxConcurrent } = value.fetchPolicy;
         argument.fetchBridge = { allow: [...allow], maxBytes, timeoutMs, methods: [...methods], headers: [...headers], maxConcurrent };
@@ -295,7 +296,8 @@ describe("the config schema, which docs/API.md's Configuration table is generate
         expect(said).not.toBeNull();
         const names = (text: string) => [...text.matchAll(/`(\w+)`/g)].map(match => match[1]!).sort();
         const rules = CONFIG_SCHEMA as Record<string, OptionRule>;
-        const ignored = CONFIG_OPTIONS.filter(name => rules[name]!.ignoredIn !== undefined);
+        // origins and fetchBridge are outside sealed mode only, where naming one refuses the config (sealedNetworkRefusal)
+        const ignored = CONFIG_OPTIONS.filter(name => rules[name]!.ignoredIn !== undefined && !(NETWORK_OPTIONS as readonly string[]).includes(name));
         expect(names(said![1]!)).toEqual(ignored.filter(name => rules[name]!.ignoredWarning !== undefined).sort());
         expect(names(said![2]!)).toEqual(ignored.filter(name => rules[name]!.ignoredWarning === undefined).sort());
     });
@@ -314,9 +316,17 @@ describe("the config schema, which docs/API.md's Configuration table is generate
         ['capabilities', ['allow-pointer-lock'], 'strict', [], '"allow-pointer-lock" is not allowed in "capabilities" and was dropped. It reaches outside the sandbox'],
         ['unsafeCapabilities', ['allow-pointer-lock'], 'worker', ['allow-pointer-lock'], 'unsafe capability "allow-pointer-lock" is enabled'],
         ['unsafeCapabilities', ['allow-pointer-lock'], 'strict', [], 'unsafeCapabilities are not available in strict mode and were dropped: allow-pointer-lock.'],
+        ['unsafeCapabilities', ['allow-popups'], 'sealed', [], 'unsafeCapabilities are not available in sealed mode and were dropped: allow-popups.'],
+        ['capabilities', ['allow-forms', 'allow-scripts'], 'sealed', ['allow-forms', 'allow-scripts'], null],
+        ['html', '<p>', 'sealed', '<p>', null],
+        ['entry', 'main.js', 'sealed', 'main.js', null],
+        ['allowAnimations', true, 'sealed', true, null],
+        ['allowAutoplay', 'no', 'sealed', false, 'allowAutoplay must be a boolean; "no" was taken as false'],
+        ['workerExecutionTimeout', 1500, 'sealed', 1500, null],
+        ['autoResize', true, 'sealed', true, null],
         ['scriptUnsafe', 'true', 'cooperative', false, null],
         ['scriptUnsafe', true, 'cooperative', true, 'scriptUnsafe is enabled'],
-        ['entry', 'main.js', 'cooperative', undefined, '"entry" is used only in strict mode and was ignored.'],
+        ['entry', 'main.js', 'cooperative', undefined, '"entry" is used only in strict and sealed mode and was ignored.'],
         ['entry', 5, 'strict', undefined, null],
         ['watchdogTimeout', -1, 'worker', 0, null],
         ['watchdogTimeout', Infinity, 'worker', 0, null],
@@ -327,10 +337,10 @@ describe("the config schema, which docs/API.md's Configuration table is generate
         ['autoResize', 1, 'cooperative', false, null],
         ['autoResize', true, 'worker', false, 'autoResize has no effect in worker mode'],
         ['allowAnimations', 'no', 'strict', false, 'allowAnimations must be a boolean; "no" was taken as false'],
-        ['allowAnimations', true, 'cooperative', false, '"allowAnimations" is used only in strict mode and was ignored.'],
+        ['allowAnimations', true, 'cooperative', false, '"allowAnimations" is used only in strict and sealed mode and was ignored.'],
         ['allowAutoplay', 1, 'strict', false, 'allowAutoplay must be a boolean; a value of type number was taken as false'],
         ['allowAutoplay', true, 'strict', true, null],
-        ['allowAutoplay', true, 'worker', false, '"allowAutoplay" is used only in strict mode and was ignored.'],
+        ['allowAutoplay', true, 'worker', false, '"allowAutoplay" is used only in strict and sealed mode and was ignored.'],
         ['guestWrites', 'true', 'strict', false, null],
         ['guestWrites', true, 'worker', true, null],
     ];
@@ -364,7 +374,8 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
     // strict mode drops `scripts`, so no origin of that kind is left to warn about there
     const kindsIn = (mode: SandboxMode) => ORIGIN_KINDS.filter(kind => !(kind === 'scripts' && mode === 'strict'));
 
-    it.each(SANDBOX_MODES)('%s: every kind drops the host origin and a host of its site with one warning, and leaves the rest', (mode) => {
+    // every mode that takes `origins`: a sealed config that names it is refused (sealed-mode.test.ts)
+    it.each(NETWORK_MODES)('%s: every kind drops the host origin and a host of its site with one warning, and leaves the rest', (mode) => {
         for (const kind of kindsIn(mode)) {
             const dropped = said(mode, { [kind]: [PAGE, 'https://api.app.example', 'https://other.example'] });
             expect(dropped, `${kind} site`).toHaveLength(1);
@@ -382,7 +393,7 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
         }
     });
 
-    it.each(SANDBOX_MODES)('%s: a config that still names withoutCors keeps nothing of it: the key is dropped with a warning, as any key that is not a kind', (mode) => {
+    it.each(NETWORK_MODES)('%s: a config that still names withoutCors keeps nothing of it: the key is dropped with a warning, as any key that is not a kind', (mode) => {
         const origins = { images: ['https://img.other.example'], withoutCors: [PAGE, 'https://img.other.example'] };
         const result = normaliseConfig({ mode, origins }, { hostOrigin: PAGE });
         expect(result.value!.origins).toEqual({ ...NO_ORIGINS, images: ['https://img.other.example'] });
@@ -390,7 +401,7 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
         expect(result.warnings.filter(message => message.includes('withoutCors'))).toEqual(['[Sandbox] origins."withoutCors" was dropped: origins takes scripts, styles, images, fonts, media, connect.']);
     });
 
-    it.each(SANDBOX_MODES)('%s: a loopback, private or link-local host is dropped, with one warning, from a host page that is not on one', (mode) => {
+    it.each(NETWORK_MODES)('%s: a loopback, private or link-local host is dropped, with one warning, from a host page that is not on one', (mode) => {
         for (const kind of kindsIn(mode)) {
             const entries = ['http://localhost:5173', 'http://127.0.0.1:9000', 'https://10.0.0.5', 'https://printer', 'https://other.example'];
             const result = said(mode, { [kind]: entries });
@@ -399,7 +410,7 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
         }
     });
 
-    it.each(SANDBOX_MODES)('%s: from a host page that is on one, a loopback host is kept, with one warning; the page\'s own site is still dropped', (mode) => {
+    it.each(NETWORK_MODES)('%s: from a host page that is on one, a loopback host is kept, with one warning; the page\'s own site is still dropped', (mode) => {
         const context: NormaliseContext = { hostOrigin: LOCAL_PAGE };
         for (const kind of kindsIn(mode)) {
             const loopback = said(mode, { [kind]: ['http://127.0.0.1:9000', 'https://10.0.0.5'] }, context);
@@ -435,7 +446,7 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
     });
 
     it("the rule (host-site.ts): same host with another scheme or port and a subdomain are on the site of a two-label page; another name under its top-level label, an IP address and a lookalike are not", () => {
-        for (const mode of SANDBOX_MODES) {
+        for (const mode of NETWORK_MODES) {
             const onSite = (origin: string) => said(mode, { connect: [origin] }).length === 1 && kept(mode, { connect: [origin] }).connect.length === 0;
             for (const origin of ['https://app.example', 'https://app.example:1', 'https://x.app.example']) expect(onSite(origin), `${mode} ${origin}`).toBe(true);
             // a wss:// origin is listed beside its https:// twin (origins.ts), and the pair is on the site as one origin is
@@ -452,7 +463,7 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
         const SIBLING_PAGE = 'https://app.example.com';
         const SUFFIX_PAGE = 'https://app.example.co.uk';
 
-        it.each(SANDBOX_MODES)('%s: a sibling, its subdomain and the parent are on the site; a name of another site is not', (mode) => {
+        it.each(NETWORK_MODES)('%s: a sibling, its subdomain and the parent are on the site; a name of another site is not', (mode) => {
             const context: NormaliseContext = { hostOrigin: SIBLING_PAGE };
             for (const origin of ['https://api.example.com', 'https://deep.api.example.com', 'https://example.com', 'https://app.example.com:8080']) {
                 expect(said(mode, { connect: [origin] }, context), `${mode} ${origin}`).toEqual([expect.stringContaining(`origins.connect dropped ${origin} (on the host page's site)`)]);
@@ -463,7 +474,7 @@ describe('origins: the host page\'s site and loopback hosts, in every mode, once
             }
         });
 
-        it.each(SANDBOX_MODES)('%s: under a public suffix of several labels (co.uk) every name under it is refused, the over-refusal the warning names', (mode) => {
+        it.each(NETWORK_MODES)('%s: under a public suffix of several labels (co.uk) every name under it is refused, the over-refusal the warning names', (mode) => {
             const context: NormaliseContext = { hostOrigin: SUFFIX_PAGE };
             for (const origin of ['https://api.example.co.uk', 'https://example.co.uk', 'https://co.uk', 'https://other.co.uk', 'https://evilexample.co.uk']) {
                 const result = said(mode, { connect: [origin] }, context);

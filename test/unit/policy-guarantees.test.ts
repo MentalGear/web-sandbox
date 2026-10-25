@@ -125,7 +125,7 @@ describe('A4: an unknown mode fails closed', () => {
         el.reset();
         el.load('<p>x</p>');
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
-        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('is not one of strict, cooperative, worker'))).toHaveLength(1);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('is not one of strict, sealed, cooperative, worker'))).toHaveLength(1);
         el.setConfig({ mode: 'strict' });
         expect(el.state).toBe('loading');
         expect(wrapperOf(el)).not.toBeNull();
@@ -142,7 +142,7 @@ describe('A4: an unknown mode fails closed', () => {
         await settled();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
         expect(reasons).toEqual([`unknown mode "iframe" ('iframe' was renamed 'cooperative')`, `unknown mode "iframe" ('iframe' was renamed 'cooperative')`]);
-        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.startsWith('[Sandbox] mode "iframe" is not one of strict, cooperative, worker (\'iframe\' was renamed \'cooperative\')'))).toHaveLength(1);
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.startsWith('[Sandbox] mode "iframe" is not one of strict, sealed, cooperative, worker (\'iframe\' was renamed \'cooperative\')'))).toHaveLength(1);
         // only that old name gets the note, never one the prototype chain answers
         el.setConfig({ mode: 'toString' });
         await settled();

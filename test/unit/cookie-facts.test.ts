@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AMBIENT_CREDENTIALS, ambientCredentialsSentence, carrierClause, carrierModes, COOKIE_CARRIER_IDS, COOKIE_CARRIERS, COOKIE_ENGINE_FACTS, COOKIE_ENGINES, cookieCarriersIn, cookieSentence, engineClause, engineClauses, SAME_SITE_VALUES, sameSiteCookieClause, sameSiteValues, STRICT_COOKIE_CARRIERS, withCode } from '@src/lib/cookie-facts';
-import { normaliseConfig, SANDBOX_MODES, type SandboxMode } from '@src/lib/config-schema';
+import { NETWORK_MODES, normaliseConfig, type SandboxMode } from '@src/lib/config-schema';
 import { connectSources } from '@src/lib/csp/csp-generator';
 import { ORIGIN_KINDS } from '@src/lib/csp/origins';
 import { CONTEXT_ENGINES, INHERITED_CONTEXT } from '@src/lib/inherited-context';
@@ -125,7 +125,7 @@ describe('strict mode has no cookie carrier: the config after normalisation', ()
     });
 
     it('positive control: the same configs keep wss:// entries in worker and cooperative mode, so the check sees one', () => {
-        for (const mode of SANDBOX_MODES.filter(mode => mode !== 'strict')) {
+        for (const mode of NETWORK_MODES.filter(mode => mode !== 'strict')) {
             const found = configs().filter(origins => socketEntries(mode, 'https://app.example.com', origins).sockets.length > 0);
             expect(found.length, mode).toBeGreaterThan(10);
             expect(socketEntries(mode, 'https://app.example.com', { connect: ['https://api.other.example', 'wss://api.other.example'] }).sockets, mode).toEqual(['wss://api.other.example', 'wss://api.other.example']);

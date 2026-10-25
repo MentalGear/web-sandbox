@@ -22,6 +22,10 @@ import type { OriginKind, OriginPolicy } from "./origins";
  *   worker-src blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'none'
  *                                                      (the same for both)
  *
+ * Sealed mode's view (sealedViewPolicy) is the strict view's template with no network: its input has no origins, so
+ * every fetch directive is 'none' or blob: (for the build's registered files, by kind) and connect-src is 'none', always.
+ * Its worker reads its files with sandboxFiles.read(), which makes no request, so it needs no blob: there.
+ *
  * The fetch bridge's frame has a template of its own (bridgeFramePolicy): default-src 'none', script-src the
  * bootstrap's hash, connect-src the origins of fetchBridge.allow, every other directive 'none'.
  *
@@ -115,6 +119,41 @@ export function strictViewPolicy(input: PolicyInput & { bootstrapHash: string })
         ['script-src-attr', []],
         ['style-src', [UNSAFE_INLINE, ...sourcesOf(input, 'styles')]],
         ...fetchDirectives(input),
+        ...FIXED,
+    ]);
+}
+
+/** The kinds of load a sealed view's registered files add `blob:` for: never `connect`, never `scripts`. */
+export const SEALED_FILE_KINDS = ['styles', 'images', 'fonts', 'media'] as const satisfies readonly OriginKind[];
+export type SealedFileKind = (typeof SEALED_FILE_KINDS)[number];
+
+/** What sealed mode's view policy is made from. No origins: there is no input a network source could come from. */
+export interface SealedPolicyInput {
+    /** The kinds of load this build's registered files need blob: for. */
+    fileKinds: ReadonlySet<SealedFileKind>;
+    bootstrapHash: string;
+    /** Adds 'unsafe-eval' to script-src. */
+    scriptUnsafe: boolean;
+}
+
+/**
+ * Sealed mode: the strict view's policy with no network (docs/research/24_sealed_mode). Every fetch directive is
+ * 'none' or blob:, connect-src is 'none' always, and no source names a scheme other than blob:, a host, `*`, 'self' or
+ * data:. The worker inherits it.
+ */
+export function sealedViewPolicy(input: SealedPolicyInput): string {
+    if (!HASH_SOURCE.test(input.bootstrapHash)) throw new Error('[Sandbox] the sealed view policy needs the bootstrap as one sha256 hash source.');
+    // only the four kinds are read, whatever else a cast set holds
+    const files = (kind: SealedFileKind): string[] => (input.fileKinds.has(kind) ? [BLOB] : []);
+    return format([
+        ['default-src', []],
+        ['script-src', [input.bootstrapHash, ...(input.scriptUnsafe ? [UNSAFE_EVAL] : [])]],
+        ['script-src-attr', []],
+        ['style-src', [UNSAFE_INLINE, ...files('styles')]],
+        ['img-src', files('images')],
+        ['font-src', files('fonts')],
+        ['media-src', files('media')],
+        ['connect-src', []],
         ...FIXED,
     ]);
 }

@@ -104,6 +104,7 @@ browsers ignore next to a hash or a nonce: they cost a page its own nonce- or ha
 | Mode | Guest code runs in | For |
 | :--- | :--- | :--- |
 | `strict` (default) | a worker; the view runs only the library's own script, admitted by its hash, and shows what the worker renders | content you do not trust ([Strict mode](#strict-mode)) |
+| `sealed` | as strict, with no network: the view's policy admits only `blob:` for registered files, `connect-src 'none'`, and a config that names `origins` or `fetchBridge` is refused (named with `mode: 'sealed'`) | content you do not trust that needs no network ([API](docs/API.md#modes)) |
 | `cooperative` | the guest document: its scripts, handlers and `execute()` | cooperative content: code that does not attack the page, such as your own, within the [cooperative-mode limits](#cooperative-mode-limits) |
 | `worker` | a worker inside a hidden frame; no markup, code through `execute()` | headless code; frozen, to be folded into strict mode |
 
