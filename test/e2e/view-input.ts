@@ -1,17 +1,18 @@
 import type { Page } from '@playwright/test';
 import { expect, type SandboxDriver } from './fixture';
 import { waitInView } from './strict-view';
+import type { ViewMode } from './view-modes';
 
 /**
- * Helpers of the strict view input specs (research 23): a strict sandbox whose worker keeps what its handlers receive,
- * read back through the bridge.
+ * Helpers of the strict view input specs (research 23): a sandbox of strict or sealed mode (VIEW_MODES) whose worker
+ * keeps what its handlers receive, read back through the bridge.
  */
 
 /** A pad filling the view, with a thumb in it. */
 export const PAD = '<div id="pad" style="position:absolute;inset:0;touch-action:none;user-select:none"><div id="thumb" style="position:absolute;left:20px;top:20px;width:40px;height:40px;background:#c33"></div></div><p id="ready" style="position:absolute;left:0;bottom:0;margin:0">ready</p>';
 
-/** Mounts strict mode rendering `markup`, with `entry` run after it; every detail a handler made with `keep(label)` gets is kept. */
-export async function mountInput(sandbox: SandboxDriver, browserName: string, entry: string, markup = PAD) {
+/** Mounts `mode` (strict or sealed) rendering `markup`, with `entry` run after it; every detail a handler made with `keep(label)` gets is kept. */
+export async function mountInput(mode: ViewMode, sandbox: SandboxDriver, browserName: string, entry: string, markup = PAD) {
     await sandbox.registerFiles({ 'main.js': `
         const kept = [];
         const keep = (label) => (detail) => { kept.push({ label, detail }); };
@@ -19,7 +20,7 @@ export async function mountInput(sandbox: SandboxDriver, browserName: string, en
         sandboxView.render(${JSON.stringify(markup)});
         ${entry}
     ` });
-    expect(await sandbox.mount({ mode: 'strict', entry: 'main.js' })).toBe('ready');
+    expect(await sandbox.mount({ mode, entry: 'main.js' })).toBe('ready');
     await waitInView(sandbox.page, browserName, `!!document.getElementById('ready')`);
 }
 

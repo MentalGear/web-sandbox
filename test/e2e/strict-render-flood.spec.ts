@@ -1,6 +1,7 @@
 import { test, expect } from './fixture';
 import { inView, waitInView } from './strict-view';
 import { lag, oneApplyStall, startLag } from './host-share';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * Strict mode's render flow control (ADR-005, amendment A4; research 15 P7). Firefox and WebKit run the
@@ -20,78 +21,83 @@ import { lag, oneApplyStall, startLag } from './host-share';
  *   pathological markup costs (20 000 nested elements: ≈ 0.7 s per apply in Firefox and WebKit).
  * Evidence: applies counted in the view by a MutationObserver installed from outside (DevTools, never
  * the library); host lag from a 10 ms interval in the host page; round trips through call().
+ *
+ * Each test runs in strict and in sealed mode (VIEW_MODES, view-modes.ts): sealed mode is strict mode's view and worker
+ * with no network.
  */
 
 const COUNT_APPLIES = `(() => { globalThis.__applies = 0; new MutationObserver((records) => { globalThis.__applies += records.length; }).observe(document.body, { childList: true }); return true; })()`;
 
-test('10 000 synchronous render() calls reach the view as exactly two applies, the first and the last', async ({ sandbox, page, browserName }) => {
-    expect(await sandbox.mount({ mode: 'strict' })).toBe('ready');
-    expect(await inView(page, browserName, COUNT_APPLIES)).toBe(true);
-    await sandbox.run(`for (let i = 0; i < 10000; i++) sandboxView.render('<p id="n' + i + '">' + i + '</p>');`);
-    await waitInView(page, browserName, `!!document.getElementById('n9999')`);
-    await page.waitForTimeout(500); // anything else in flight would have been applied by now
-    expect(await inView(page, browserName, '[globalThis.__applies, document.body.innerHTML]')).toEqual([2, '<p id="n9999">9999</p>']);
-});
-
-test('per target: the latest html for each element id, one render in flight across targets', async ({ sandbox, page, browserName }) => {
-    expect(await sandbox.mount({ mode: 'strict', html: '<div id="a"></div><div id="b"></div>' })).toBe('ready');
-    await waitInView(page, browserName, `!!document.getElementById('b')`);
-    expect(await inView(page, browserName, COUNT_APPLIES.replace('{ childList: true }', '{ childList: true, subtree: true }'))).toBe(true);
-    await sandbox.run(`for (let i = 0; i < 1000; i++) { sandboxView.render('<i>a' + i + '</i>', 'a'); sandboxView.render('<i>b' + i + '</i>', 'b'); }`);
-    await waitInView(page, browserName, `document.getElementById('a').textContent === 'a999' && document.getElementById('b').textContent === 'b999'`);
-    await page.waitForTimeout(500);
-    // a0 went out at once; then a999 and b999 (coalesced while a0 was in flight), one after the other
-    expect(await inView(page, browserName, 'globalThis.__applies')).toBe(3);
-});
-
-const FLOODS: Record<string, string> = {
-    'one word': `'<p>' + 'x'.repeat(262144 - 40) + '</p>'`,
-    markup: `'<p>The quick brown fox jumps over the lazy dog, again and again.</p>'.repeat(3700)`,
-};
-// The bound is one apply as it costs here and now (./host-share.ts, oneApplyStall: three times the most of the
-// calibrations taken before and after the flood, the machine's own gap, and a margin), not a number per engine: a
-// loaded machine raises the stall and its calibration together (T9). A call waits for at most that and its own trip.
-const ROUND_TRIP_MARGIN = 1000;
-
-for (const [name, expression] of Object.entries(FLOODS)) {
-    test(`a 3 s flood of maximal renders (${name}): the host's largest stall is one apply, calls keep being answered, the last render wins`, async ({ sandbox, page, browserName }) => {
-        test.setTimeout(30000);
-        await sandbox.registerFiles({ 'flood.js': `
-            const html = ${expression};
-            bridge.expose('ping', () => 'pong');
-            bridge.expose('flood', (ms) => new Promise((resolve) => {
-                let n = 0;
-                const end = Date.now() + ms;
-                const tick = () => {
-                    sandboxView.render(html + '<i id="last-' + n + '"></i>');
-                    n++;
-                    if (Date.now() < end) setTimeout(tick, 0);
-                    else resolve(n);
-                };
-                tick();
-            }));` });
-        // the html the view applies: the flood's, with the marker of its number (the longest of them)
-        const html = (new Function(`return ${expression}`)() as string) + '<i id="last-99999"></i>';
-        const before = await oneApplyStall(page, html);
-        expect(await sandbox.mount({ mode: 'strict', entry: 'flood.js' })).toBe('ready');
-        await startLag(page);
-        const flood = page.evaluate(() => (document.querySelector('web-sandbox') as any).call('flood', 3000));
-        const roundTrips: number[] = [];
-        const started = Date.now();
-        while (Date.now() - started < 3000) {
-            const t = Date.now();
-            expect(await sandbox.call('ping')).toBe('pong');
-            roundTrips.push(Date.now() - t);
-            await page.waitForTimeout(100);
-        }
-        const rendered = await flood as number;
-        await waitInView(page, browserName, `!!document.getElementById('last-${rendered - 1}')`, 8000); // the last render wins
-        const stall = await lag(page);
-        const after = await oneApplyStall(page, html, 2);
-        const bound = Math.max(before.bound, after.bound);
-        console.log(`MEASURED ${browserName} flood ${name} ${JSON.stringify({ rendered, lag: stall, roundTripMax: Math.max(...roundTrips), applyCosts: [...before.costs, ...after.costs], bound })}`);
-        expect(rendered).toBeGreaterThan(10);
-        expect(stall).toBeLessThan(bound);
-        expect(Math.max(...roundTrips)).toBeLessThan(bound + ROUND_TRIP_MARGIN);
+for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test('10 000 synchronous render() calls reach the view as exactly two applies, the first and the last', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount({ mode })).toBe('ready');
+        expect(await inView(page, browserName, COUNT_APPLIES)).toBe(true);
+        await sandbox.run(`for (let i = 0; i < 10000; i++) sandboxView.render('<p id="n' + i + '">' + i + '</p>');`);
+        await waitInView(page, browserName, `!!document.getElementById('n9999')`);
+        await page.waitForTimeout(500); // anything else in flight would have been applied by now
+        expect(await inView(page, browserName, '[globalThis.__applies, document.body.innerHTML]')).toEqual([2, '<p id="n9999">9999</p>']);
     });
-}
+
+    test('per target: the latest html for each element id, one render in flight across targets', async ({ sandbox, page, browserName }) => {
+        expect(await sandbox.mount({ mode, html: '<div id="a"></div><div id="b"></div>' })).toBe('ready');
+        await waitInView(page, browserName, `!!document.getElementById('b')`);
+        expect(await inView(page, browserName, COUNT_APPLIES.replace('{ childList: true }', '{ childList: true, subtree: true }'))).toBe(true);
+        await sandbox.run(`for (let i = 0; i < 1000; i++) { sandboxView.render('<i>a' + i + '</i>', 'a'); sandboxView.render('<i>b' + i + '</i>', 'b'); }`);
+        await waitInView(page, browserName, `document.getElementById('a').textContent === 'a999' && document.getElementById('b').textContent === 'b999'`);
+        await page.waitForTimeout(500);
+        // a0 went out at once; then a999 and b999 (coalesced while a0 was in flight), one after the other
+        expect(await inView(page, browserName, 'globalThis.__applies')).toBe(3);
+    });
+
+    const FLOODS: Record<string, string> = {
+        'one word': `'<p>' + 'x'.repeat(262144 - 40) + '</p>'`,
+        markup: `'<p>The quick brown fox jumps over the lazy dog, again and again.</p>'.repeat(3700)`,
+    };
+    // The bound is one apply as it costs here and now (./host-share.ts, oneApplyStall: three times the most of the
+    // calibrations taken before and after the flood, the machine's own gap, and a margin), not a number per engine: a
+    // loaded machine raises the stall and its calibration together (T9). A call waits for at most that and its own trip.
+    const ROUND_TRIP_MARGIN = 1000;
+
+    for (const [name, expression] of Object.entries(FLOODS)) {
+        test(`a 3 s flood of maximal renders (${name}): the host's largest stall is one apply, calls keep being answered, the last render wins`, async ({ sandbox, page, browserName }) => {
+            test.setTimeout(30000);
+            await sandbox.registerFiles({ 'flood.js': `
+                const html = ${expression};
+                bridge.expose('ping', () => 'pong');
+                bridge.expose('flood', (ms) => new Promise((resolve) => {
+                    let n = 0;
+                    const end = Date.now() + ms;
+                    const tick = () => {
+                        sandboxView.render(html + '<i id="last-' + n + '"></i>');
+                        n++;
+                        if (Date.now() < end) setTimeout(tick, 0);
+                        else resolve(n);
+                    };
+                    tick();
+                }));` });
+            // the html the view applies: the flood's, with the marker of its number (the longest of them)
+            const html = (new Function(`return ${expression}`)() as string) + '<i id="last-99999"></i>';
+            const before = await oneApplyStall(page, html);
+            expect(await sandbox.mount({ mode, entry: 'flood.js' })).toBe('ready');
+            await startLag(page);
+            const flood = page.evaluate(() => (document.querySelector('web-sandbox') as any).call('flood', 3000));
+            const roundTrips: number[] = [];
+            const started = Date.now();
+            while (Date.now() - started < 3000) {
+                const t = Date.now();
+                expect(await sandbox.call('ping')).toBe('pong');
+                roundTrips.push(Date.now() - t);
+                await page.waitForTimeout(100);
+            }
+            const rendered = await flood as number;
+            await waitInView(page, browserName, `!!document.getElementById('last-${rendered - 1}')`, 8000); // the last render wins
+            const stall = await lag(page);
+            const after = await oneApplyStall(page, html, 2);
+            const bound = Math.max(before.bound, after.bound);
+            console.log(`MEASURED ${browserName} flood ${name} ${JSON.stringify({ rendered, lag: stall, roundTripMax: Math.max(...roundTrips), applyCosts: [...before.costs, ...after.costs], bound })}`);
+            expect(rendered).toBeGreaterThan(10);
+            expect(stall).toBeLessThan(bound);
+            expect(Math.max(...roundTrips)).toBeLessThan(bound + ROUND_TRIP_MARGIN);
+        });
+    }
+});

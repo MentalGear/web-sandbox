@@ -2,6 +2,7 @@ import { test, expect, type SandboxDriver } from './fixture';
 import type { MountConfig } from './fixture';
 import { useRecorder } from './recorder';
 import { busyShare, describeShare, MARGIN } from './host-share';
+import { VIEW_MODES } from './view-modes';
 
 const recorder = useRecorder();
 
@@ -15,6 +16,7 @@ const MODES: Record<string, MountConfig> = {
     cooperative: { mode: 'cooperative' },
     worker: { mode: 'worker' },
     strict: { mode: 'strict', scriptUnsafe: true },
+    sealed: { mode: 'sealed', scriptUnsafe: true },
 };
 
 // What structured clone refuses, per realm: a document has nodes; every realm has Events, Responses, Proxies,
@@ -36,12 +38,14 @@ test.describe('R4-1: the console relay never throws', () => {
         });
     }
 
-    test('strict mode, before the worker is attached: an entry that logs unclonable values at its top level starts, and its lines arrive', async ({ sandbox }) => {
-        await sandbox.registerFiles({ 'main.js': `console.log('R41 entry', ${UNCLONABLE}[0], ${UNCLONABLE}[3]); console.log('R41 entry done');` });
-        expect(await sandbox.mount({ mode: 'strict', entry: 'main.js' })).toBe('ready');
-        await sandbox.waitForLog('R41 entry done');
-        expect(await sandbox.logs()).toContain('R41 entry [function] [object Response]');
-        expect(await sandbox.state()).toBe('ready');
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('before the worker is attached: an entry that logs unclonable values at its top level starts, and its lines arrive', async ({ sandbox }) => {
+            await sandbox.registerFiles({ 'main.js': `console.log('R41 entry', ${UNCLONABLE}[0], ${UNCLONABLE}[3]); console.log('R41 entry done');` });
+            expect(await sandbox.mount({ mode, entry: 'main.js' })).toBe('ready');
+            await sandbox.waitForLog('R41 entry done');
+            expect(await sandbox.logs()).toContain('R41 entry [function] [object Response]');
+            expect(await sandbox.state()).toBe('ready');
+        });
     });
 });
 
@@ -72,7 +76,7 @@ test.describe('R4-2, R4-6, R4-7: uncaught errors and unhandled rejections reach 
         expect(logs.filter(line => line.startsWith('Uncaught Uncaught'))).toEqual([]);
     });
 
-    for (const mode of ['worker', 'strict'] as const) {
+    for (const mode of ['worker', ...VIEW_MODES] as const) {
         test(`${mode} mode: a later uncaught error and an unhandled rejection are one line each, "Uncaught" once (WebKit's worker mode: muted)`, async ({ sandbox, browserName }) => {
             expect(await sandbox.mount(MODES[mode]!)).toBe('ready');
             await sandbox.run(`setTimeout(() => { throw new Error('later') }); Promise.reject(new TypeError('promised'));`);
@@ -88,44 +92,48 @@ test.describe('R4-2, R4-6, R4-7: uncaught errors and unhandled rejections reach 
         });
     }
 
-    test('an Error argument arrives as { name, message, stack }', async ({ sandbox, page }) => {
-        expect(await sandbox.mount({ mode: 'strict', scriptUnsafe: true })).toBe('ready');
-        // a plain object with its own name, message and stack (a cloned Error has no own enumerable fields)
-        const detail = page.evaluate(() => new Promise(resolve => {
-            window.addEventListener('sandbox-log', (event: any) => {
-                const arg = event.detail.args[1];
-                if (event.detail.args[0] === 'R47') resolve({ plain: Object.getPrototypeOf(arg) === Object.prototype, keys: Object.keys(arg).sort(), name: arg.name, message: arg.message, stack: typeof arg.stack });
-            });
-        }));
-        await sandbox.run(`console.error('R47', new RangeError('out'))`);
-        expect(await detail).toEqual({ plain: true, keys: ['message', 'name', 'stack'], name: 'RangeError', message: 'out', stack: 'string' });
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('an Error argument arrives as { name, message, stack }', async ({ sandbox, page }) => {
+            expect(await sandbox.mount({ mode, scriptUnsafe: true })).toBe('ready');
+            // a plain object with its own name, message and stack (a cloned Error has no own enumerable fields)
+            const detail = page.evaluate(() => new Promise(resolve => {
+                window.addEventListener('sandbox-log', (event: any) => {
+                    const arg = event.detail.args[1];
+                    if (event.detail.args[0] === 'R47') resolve({ plain: Object.getPrototypeOf(arg) === Object.prototype, keys: Object.keys(arg).sort(), name: arg.name, message: arg.message, stack: typeof arg.stack });
+                });
+            }));
+            await sandbox.run(`console.error('R47', new RangeError('out'))`);
+            expect(await detail).toEqual({ plain: true, keys: ['message', 'name', 'stack'], name: 'RangeError', message: 'out', stack: 'string' });
+        });
     });
 });
 
 test.describe('R3-3: byte budgets on log lines and RPC messages', () => {
-    test('strict mode: a 64 MiB typed array logged by the guest crosses as a few bytes; an RPC call past the budget is refused in the guest', async ({ sandbox }) => {
-        expect(await sandbox.mount({ mode: 'strict', scriptUnsafe: true })).toBe('ready');
-        await sandbox.exposeHost('sink', '(...args) => args.length');
-        const outcome = await sandbox.inGuest(`
-            console.log('R33', new Uint8Array(64 * 1024 * 1024));
-            try { await bridge.call('sink', new Uint8Array(34 * 1024 * 1024)); return 'sent'; } catch (error) { return error.code; }`);
-        expect(outcome).toBe('ARGS_NOT_TRANSFERABLE');
-        expect(await sandbox.waitForLog(/^R33 /)).toMatch(/^R33 \[Uint8Array: past the log line's byte budget/);
-        // a positive control: a call within the budget is answered
-        expect(await sandbox.inGuest(`return bridge.call('sink', new Uint8Array(1024 * 1024), 2)`)).toBe(2);
-    });
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('a 64 MiB typed array logged by the guest crosses as a few bytes; an RPC call past the budget is refused in the guest', async ({ sandbox }) => {
+            expect(await sandbox.mount({ mode, scriptUnsafe: true })).toBe('ready');
+            await sandbox.exposeHost('sink', '(...args) => args.length');
+            const outcome = await sandbox.inGuest(`
+                console.log('R33', new Uint8Array(64 * 1024 * 1024));
+                try { await bridge.call('sink', new Uint8Array(34 * 1024 * 1024)); return 'sent'; } catch (error) { return error.code; }`);
+            expect(outcome).toBe('ARGS_NOT_TRANSFERABLE');
+            expect(await sandbox.waitForLog(/^R33 /)).toMatch(/^R33 \[Uint8Array: past the log line's byte budget/);
+            // a positive control: a call within the budget is answered
+            expect(await sandbox.inGuest(`return bridge.call('sink', new Uint8Array(1024 * 1024), 2)`)).toBe(2);
+        });
 
-    test('strict mode: a 3 s flood of maximal log lines (64 strings of 64 Ki characters each) leaves the host page responsive', async ({ sandbox, page, browserName }) => {
-        test.setTimeout(30000);
-        expect(await sandbox.mount({ mode: 'strict', scriptUnsafe: true })).toBe('ready');
-        // the control: the same page with the guest idle; then the 3 s flood, measured within it (./host-share.ts)
-        const share = await busyShare(page, () => sandbox.run(`const s = 'x'.repeat(65536); const args = new Array(64).fill(s); const end = Date.now() + 3000;
-            while (Date.now() < end) console.log(...args);
-            setTimeout(() => console.log('R33 flood done'), 1100); // the budget refills: a line right after a flood is dropped`), { windows: 2, ms: 1250 }, 300);
-        await sandbox.waitForLog('R33 flood done', 10000);
-        console.log(`MEASURED ${browserName} R3-3 during a log flood: ${describeShare(share)}`);
-        // docs/API.md: "a flood never reaches the host page's thread", so nothing past the measure's own margin
-        expect(share.busy).toBeLessThanOrEqual(MARGIN);
+        test('a 3 s flood of maximal log lines (64 strings of 64 Ki characters each) leaves the host page responsive', async ({ sandbox, page, browserName }) => {
+            test.setTimeout(30000);
+            expect(await sandbox.mount({ mode, scriptUnsafe: true })).toBe('ready');
+            // the control: the same page with the guest idle; then the 3 s flood, measured within it (./host-share.ts)
+            const share = await busyShare(page, () => sandbox.run(`const s = 'x'.repeat(65536); const args = new Array(64).fill(s); const end = Date.now() + 3000;
+                while (Date.now() < end) console.log(...args);
+                setTimeout(() => console.log('R33 flood done'), 1100); // the budget refills: a line right after a flood is dropped`), { windows: 2, ms: 1250 }, 300);
+            await sandbox.waitForLog('R33 flood done', 10000);
+            console.log(`MEASURED ${browserName} R3-3 during a log flood: ${describeShare(share)}`);
+            // docs/API.md: "a flood never reaches the host page's thread", so nothing past the measure's own margin
+            expect(share.busy).toBeLessThanOrEqual(MARGIN);
+        });
     });
 });
 
@@ -137,13 +145,15 @@ test.describe('R4-8, R2-4: the guest globals say what the docs say', () => {
         });
     }
 
-    test('strict mode: the worker mints no URL for a type the view would not show (SVG): NOT_FOUND; its bytes stay readable; a PNG gets one', async ({ sandbox }) => {
-        await sandbox.registerFiles({ 'i.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>', 'p.png': { base64: 'iVBORw0KGgo=' } });
-        expect(await sandbox.mount({ mode: 'strict', scriptUnsafe: true })).toBe('ready');
-        expect(await sandbox.inGuest(`
-            let svg;
-            try { svg = sandboxFiles.url('i.svg'); } catch (error) { svg = error.code; }
-            return [svg, (await sandboxFiles.text('i.svg')).length > 0, sandboxFiles.url('p.png').startsWith('blob:')];`)).toEqual(['NOT_FOUND', true, true]);
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('the worker mints no URL for a type the view would not show (SVG): NOT_FOUND; its bytes stay readable; a PNG gets one', async ({ sandbox }) => {
+            await sandbox.registerFiles({ 'i.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>', 'p.png': { base64: 'iVBORw0KGgo=' } });
+            expect(await sandbox.mount({ mode, scriptUnsafe: true })).toBe('ready');
+            expect(await sandbox.inGuest(`
+                let svg;
+                try { svg = sandboxFiles.url('i.svg'); } catch (error) { svg = error.code; }
+                return [svg, (await sandboxFiles.text('i.svg')).length > 0, sandboxFiles.url('p.png').startsWith('blob:')];`)).toEqual(['NOT_FOUND', true, true]);
+        });
     });
 });
 

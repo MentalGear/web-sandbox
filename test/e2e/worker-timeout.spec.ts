@@ -1,5 +1,6 @@
 import { test, expect } from './fixture';
 import { fromPreset } from './presets';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * workerExecutionTimeout (BL:B8; ADR-003): each execute() gets its own deadline, at which
@@ -23,7 +24,7 @@ async function watch(page: import('@playwright/test').Page) {
     });
 }
 
-for (const mode of ['worker', 'strict'] as const) {
+for (const mode of ['worker', ...VIEW_MODES] as const) {
     test.describe(`${mode} mode`, () => {
         test('code still running at the deadline terminates the sandbox: the host line, then terminated with the reason; reset() recovers', async ({ sandbox, page }) => {
             expect(await sandbox.mount({ ...preset.rules, mode })).toBe('ready');

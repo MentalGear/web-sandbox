@@ -1,7 +1,8 @@
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type SandboxDriver, type MountConfig } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inFrames, inView, waitInView } from './strict-view';
 import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
+import { VIEW_MODES, type ViewMode } from './view-modes';
 
 /**
  * Strict mode (ADR-005; backlog S6, S13, S17). Guest code runs only in a worker; the view document runs only
@@ -19,6 +20,9 @@ import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
  * Evidence (T5): what ran and what exists is read from every document from outside (strict-view.ts, never
  * through the library); violations as the host dispatches them; network on the recorder's listeners, with
  * positive controls in this file.
+ *
+ * The tests that use no network run in sealed mode too (VIEW_MODES, view-modes.ts): sealed mode is strict mode's view
+ * and worker with no network. A test that needs `origins` or `fetchBridge` stays strict mode's.
  */
 
 const recorder = useRecorder();
@@ -30,6 +34,8 @@ const srcdoc = (doc: string) => `srcdoc="${escapeAttribute(doc)}"`;
 const at = (left: number, top: number) => `position:absolute;left:${left}px;top:${top}px;width:80px;height:40px;display:block;margin:0`;
 
 const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): StrictSandboxConfig & { mode: 'strict' } => ({ mode: 'strict', ...config });
+/** A config of `mode` (strict or sealed: VIEW_MODES), applied over the fixture's baseline. */
+const inMode = (mode: ViewMode, config: Omit<MountConfig, 'mode'> = {}): MountConfig => ({ ...config, mode });
 
 /** Renders from the worker (execute() runs there) and waits until the view shows `doneId`. */
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done', into: string | null = null) {
@@ -122,23 +128,25 @@ test.describe('G1 rendered markup', () => {
         expect(recorder.paths('allowed')).toEqual(['/rendered.svg']);
     });
 
-    test('DOM clobbering by rendered markup changes nothing the view does: forms and named elements shadowing the methods it uses are still cleaned, links inside them still cancelled, later renders still applied', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount(strict())).toBe('ready');
-        // Document and HTMLFormElement let named elements override built-ins: document.body, form.hasAttribute …
-        const shadow = (names: string[]) => names.map(n => `<input name="${n}">`).join('');
-        await render(sandbox, browserName, [
-            '<img name="body"><img name="getElementById"><img name="createElement"><img name="documentElement">',
-            `<form id="f">${shadow(['getAttributeNames', 'getAttribute', 'localName', 'namespaceURI', 'remove', 'replaceChildren', 'hasAttribute', 'setAttribute', 'removeAttribute', 'id', 'parentNode', 'nodeType', 'contains'])}<iframe></iframe><script>${M('clobber')}</script></form>`,
-            `<a href="${recorder.blocked}/clobbered"><form>${shadow(['hasAttribute', 'hasAttributeNS', 'localName', 'parentNode', 'nodeType'])}<span style="${at(0, 0)}">x</span></form></a>`,
-        ].join(''));
-        expect(await inView(page, browserName, `[Document.prototype.querySelectorAll.call(document, 'body iframe, body script').length, !!Document.prototype.getElementById.call(document, 'f')]`)).toEqual([0, true]);
-        await clickInSandbox(page, 20, 20);
-        await page.waitForTimeout(1500);
-        expect(recorder.paths('blocked')).toEqual([]);
-        expect(await inView(page, browserName, 'location.href + " " + globalThis.__sandboxViewRuns')).toBe('about:srcdoc 1');
-        await render(sandbox, browserName, '<b>inside the clobbering form</b>', 'into-form', 'f');
-        await render(sandbox, browserName, '<p>after</p>', 'after');
-        expect(await markers(sandbox, browserName)).toEqual([]);
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('DOM clobbering by rendered markup changes nothing the view does: forms and named elements shadowing the methods it uses are still cleaned, links inside them still cancelled, later renders still applied', async ({ sandbox, page, browserName }) => {
+            expect(await sandbox.mount(inMode(mode))).toBe('ready');
+            // Document and HTMLFormElement let named elements override built-ins: document.body, form.hasAttribute …
+            const shadow = (names: string[]) => names.map(n => `<input name="${n}">`).join('');
+            await render(sandbox, browserName, [
+                '<img name="body"><img name="getElementById"><img name="createElement"><img name="documentElement">',
+                `<form id="f">${shadow(['getAttributeNames', 'getAttribute', 'localName', 'namespaceURI', 'remove', 'replaceChildren', 'hasAttribute', 'setAttribute', 'removeAttribute', 'id', 'parentNode', 'nodeType', 'contains'])}<iframe></iframe><script>${M('clobber')}</script></form>`,
+                `<a href="${recorder.blocked}/clobbered"><form>${shadow(['hasAttribute', 'hasAttributeNS', 'localName', 'parentNode', 'nodeType'])}<span style="${at(0, 0)}">x</span></form></a>`,
+            ].join(''));
+            expect(await inView(page, browserName, `[Document.prototype.querySelectorAll.call(document, 'body iframe, body script').length, !!Document.prototype.getElementById.call(document, 'f')]`)).toEqual([0, true]);
+            await clickInSandbox(page, 20, 20);
+            await page.waitForTimeout(1500);
+            expect(recorder.paths('blocked')).toEqual([]);
+            expect(await inView(page, browserName, 'location.href + " " + globalThis.__sandboxViewRuns')).toBe('about:srcdoc 1');
+            await render(sandbox, browserName, '<b>inside the clobbering form</b>', 'into-form', 'f');
+            await render(sandbox, browserName, '<p>after</p>', 'after');
+            expect(await markers(sandbox, browserName)).toEqual([]);
+        });
     });
 
     test('positive control for the marker channel: the same inline script in a cooperative-mode sandbox runs and is read from outside', async ({ sandbox, page, browserName }) => {
@@ -146,69 +154,73 @@ test.describe('G1 rendered markup', () => {
         await expect.poll(() => markers(sandbox, browserName)).toEqual(['main/wrapper/view:control']);
     });
 
-    test('renders replace the body or the element named by `into`; a target outside the body or missing is ignored; the initial html is the first view', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount(strict({ html: '<main id="app"><p id="initial">initial</p></main>' }))).toBe('ready');
-        await waitInView(page, browserName, `!!document.getElementById('initial')`);
-        await render(sandbox, browserName, '<b>first</b>', 'into-app', 'app');
-        expect(await inView(page, browserName, `document.body.innerHTML`)).toBe('<main id="app"><b>first</b><p id="into-app">done</p></main>');
-        await sandbox.run(`sandboxView.render('<i>never</i>', 'missing'); sandboxView.render('<p id="last">last</p>')`);
-        await waitInView(page, browserName, `!!document.getElementById('last')`);
-        expect(await inView(page, browserName, `document.body.innerHTML`)).toBe('<p id="last">last</p>');
-    });
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('renders replace the body or the element named by `into`; a target outside the body or missing is ignored; the initial html is the first view', async ({ sandbox, page, browserName }) => {
+            expect(await sandbox.mount(inMode(mode, { html: '<main id="app"><p id="initial">initial</p></main>' }))).toBe('ready');
+            await waitInView(page, browserName, `!!document.getElementById('initial')`);
+            await render(sandbox, browserName, '<b>first</b>', 'into-app', 'app');
+            expect(await inView(page, browserName, `document.body.innerHTML`)).toBe('<main id="app"><b>first</b><p id="into-app">done</p></main>');
+            await sandbox.run(`sandboxView.render('<i>never</i>', 'missing'); sandboxView.render('<p id="last">last</p>')`);
+            await waitInView(page, browserName, `!!document.getElementById('last')`);
+            expect(await inView(page, browserName, `document.body.innerHTML`)).toBe('<p id="last">last</p>');
+        });
 
-    test('sandboxView.render refuses what the view would not apply: html over 256 Ki characters, a non-string, a bad target', async ({ sandbox }) => {
-        expect(await sandbox.mount(strict())).toBe('ready');
-        const r = await sandbox.inGuest(`
-            const attempt = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
-            return {
-                max: attempt(() => sandboxView.render('x'.repeat(262144))),
-                over: attempt(() => sandboxView.render('x'.repeat(262145))),
-                nonString: attempt(() => sandboxView.render({ toString() { return '<p>'; } })),
-                badTarget: attempt(() => sandboxView.render('<p>', 42)),
-                emptyTarget: attempt(() => sandboxView.render('<p>', '')),
-                frozen: Object.isFrozen(sandboxView),
-            };
-        `);
-        expect(r).toEqual({ max: 'ok', over: 'RangeError', nonString: 'TypeError', badTarget: 'TypeError', emptyTarget: 'TypeError', frozen: true });
+        test('sandboxView.render refuses what the view would not apply: html over 256 Ki characters, a non-string, a bad target', async ({ sandbox }) => {
+            expect(await sandbox.mount(inMode(mode))).toBe('ready');
+            const r = await sandbox.inGuest(`
+                const attempt = (f) => { try { f(); return 'ok'; } catch (e) { return e.name; } };
+                return {
+                    max: attempt(() => sandboxView.render('x'.repeat(262144))),
+                    over: attempt(() => sandboxView.render('x'.repeat(262145))),
+                    nonString: attempt(() => sandboxView.render({ toString() { return '<p>'; } })),
+                    badTarget: attempt(() => sandboxView.render('<p>', 42)),
+                    emptyTarget: attempt(() => sandboxView.render('<p>', '')),
+                    frozen: Object.isFrozen(sandboxView),
+                };
+            `);
+            expect(r).toEqual({ max: 'ok', over: 'RangeError', nonString: 'TypeError', badTarget: 'TypeError', emptyTarget: 'TypeError', frozen: true });
+        });
     });
 });
 
 // ---- G4: no navigation ----------------------------------------------------------------------------------
 
 test.describe('G4 navigation', () => {
-    test('link, area, SVG and MathML links, fragment links and form submits are cancelled: the view stays, nothing reaches the listener', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount(strict())).toBe('ready');
-        const B = recorder.blocked;
-        await render(sandbox, browserName, [
-            `<a href="${B}/link" style="${at(0, 0)}">a</a>`,
-            `<a href="${B}/blank" target="_blank" style="${at(100, 0)}">blank</a>`,
-            `<a href="#fragment" style="${at(200, 0)}">frag</a>`,
-            `<svg style="${at(0, 50)}" width="80" height="40"><a href="${B}/svg"><rect width="80" height="40"/></a></svg>`,
-            `<svg style="${at(100, 50)}" width="80" height="40"><a><animate attributeName="href" values="${B}/animated" dur="1s" repeatCount="indefinite"/><rect width="80" height="40"/></a></svg>`,
-            `<math style="${at(200, 50)}" href="${B}/mathml"><mi>mathml</mi></math>`,
-            `<img usemap="#m" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="80" height="40" style="${at(0, 100)}"><map name="m"><area shape="rect" coords="0,0,80,40" href="${B}/area"></map>`,
-            `<form action="${B}/form" method="post"><button style="${at(100, 100)}">submit</button></form>`,
-            `<form action="${B}/form-get"><input name="q" value="x" style="${at(200, 100)}"></form>`,
-        ].join(''));
-        for (const [x, y] of [[20, 20], [120, 20], [220, 20], [20, 70], [120, 70], [220, 70], [20, 120], [120, 120]]) {
-            await clickInSandbox(page, x!, y!);
-            await page.waitForTimeout(150);
-        }
-        await clickInSandbox(page, 220, 120); // focus the input, then implicit submission
-        // Only press Enter once the input has focus: otherwise the key never reaches the form and the
-        // "no navigation" assertion below would pass without testing implicit submission at all.
-        await waitInView(page, browserName, `document.activeElement && document.activeElement.name === 'q'`);
-        await page.keyboard.press('Enter');
-        await clickInSandbox(page, 20, 20); // and a middle click on a link
-        await page.mouse.click((await page.locator('web-sandbox').boundingBox())!.x + 20, (await page.locator('web-sandbox').boundingBox())!.y + 20, { button: 'middle' });
-        await page.waitForTimeout(2000);
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('link, area, SVG and MathML links, fragment links and form submits are cancelled: the view stays, nothing reaches the listener', async ({ sandbox, page, browserName }) => {
+            expect(await sandbox.mount(inMode(mode))).toBe('ready');
+            const B = recorder.blocked;
+            await render(sandbox, browserName, [
+                `<a href="${B}/link" style="${at(0, 0)}">a</a>`,
+                `<a href="${B}/blank" target="_blank" style="${at(100, 0)}">blank</a>`,
+                `<a href="#fragment" style="${at(200, 0)}">frag</a>`,
+                `<svg style="${at(0, 50)}" width="80" height="40"><a href="${B}/svg"><rect width="80" height="40"/></a></svg>`,
+                `<svg style="${at(100, 50)}" width="80" height="40"><a><animate attributeName="href" values="${B}/animated" dur="1s" repeatCount="indefinite"/><rect width="80" height="40"/></a></svg>`,
+                `<math style="${at(200, 50)}" href="${B}/mathml"><mi>mathml</mi></math>`,
+                `<img usemap="#m" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="80" height="40" style="${at(0, 100)}"><map name="m"><area shape="rect" coords="0,0,80,40" href="${B}/area"></map>`,
+                `<form action="${B}/form" method="post"><button style="${at(100, 100)}">submit</button></form>`,
+                `<form action="${B}/form-get"><input name="q" value="x" style="${at(200, 100)}"></form>`,
+            ].join(''));
+            for (const [x, y] of [[20, 20], [120, 20], [220, 20], [20, 70], [120, 70], [220, 70], [20, 120], [120, 120]]) {
+                await clickInSandbox(page, x!, y!);
+                await page.waitForTimeout(150);
+            }
+            await clickInSandbox(page, 220, 120); // focus the input, then implicit submission
+            // Only press Enter once the input has focus: otherwise the key never reaches the form and the
+            // "no navigation" assertion below would pass without testing implicit submission at all.
+            await waitInView(page, browserName, `document.activeElement && document.activeElement.name === 'q'`);
+            await page.keyboard.press('Enter');
+            await clickInSandbox(page, 20, 20); // and a middle click on a link
+            await page.mouse.click((await page.locator('web-sandbox').boundingBox())!.x + 20, (await page.locator('web-sandbox').boundingBox())!.y + 20, { button: 'middle' });
+            await page.waitForTimeout(2000);
 
-        expect(recorder.paths('blocked')).toEqual([]);
-        expect(page.context().pages()).toHaveLength(1);
-        // the view is the same document, still applying renders
-        expect(await inView(page, browserName, 'location.href + " " + globalThis.__sandboxViewRuns')).toBe('about:srcdoc 1');
-        await render(sandbox, browserName, '<p>after</p>', 'after');
-        expect(await sandbox.state()).toBe('ready');
+            expect(recorder.paths('blocked')).toEqual([]);
+            expect(page.context().pages()).toHaveLength(1);
+            // the view is the same document, still applying renders
+            expect(await inView(page, browserName, 'location.href + " " + globalThis.__sandboxViewRuns')).toBe('about:srcdoc 1');
+            await render(sandbox, browserName, '<p>after</p>', 'after');
+            expect(await sandbox.state()).toBe('ready');
+        });
     });
 
     test('positive control for the listener and the click: the same link on the host page reaches it', async ({ sandbox, page }) => {
@@ -227,35 +239,37 @@ test.describe('G4 navigation', () => {
 // ---- G2: the worker ----------------------------------------------------------------------------------------
 
 test.describe('G2 the worker', () => {
-    test('guest code runs in a worker with no Worker, SharedWorker, URL.createObjectURL, RTCPeerConnection or document; its location is its own blob: URL', async ({ sandbox }) => {
-        expect(await sandbox.mount(strict())).toBe('ready');
-        const r = await sandbox.inGuest(`return {
-            names: ['Worker', 'SharedWorker', 'WebAssembly', 'RTCPeerConnection', 'webkitRTCPeerConnection', 'document', 'window', 'parent'].filter(n => n in globalThis),
-            createObjectURL: typeof URL.createObjectURL,
-            onPrototype: 'Worker' in Object.getPrototypeOf(globalThis),
-            href: location.href.replace(/[0-9a-f-]{36}$/, 'UUID'),
-            importScripts: typeof importScripts,
-            sandboxView: typeof sandboxView, bridge: typeof bridge, sandboxFiles: typeof sandboxFiles,
-            stringCode: (() => { try { return eval('1 + 1'); } catch (e) { return e.name; } })(),
-        }`);
-        // scriptUnsafe is on in the baseline config, so eval and WebAssembly stay; the next test turns it off
-        // no importScripts: the strict policy's script-src is the bootstrap's hash, so it could never load anything (S74)
-        expect(r).toEqual({ names: ['WebAssembly'], createObjectURL: 'undefined', onPrototype: false, href: 'blob:null/UUID', importScripts: 'undefined', sandboxView: 'object', bridge: 'object', sandboxFiles: 'object', stringCode: 2 });
-    });
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('guest code runs in a worker with no Worker, SharedWorker, URL.createObjectURL, RTCPeerConnection or document; its location is its own blob: URL', async ({ sandbox }) => {
+            expect(await sandbox.mount(inMode(mode))).toBe('ready');
+            const r = await sandbox.inGuest(`return {
+                names: ['Worker', 'SharedWorker', 'WebAssembly', 'RTCPeerConnection', 'webkitRTCPeerConnection', 'document', 'window', 'parent'].filter(n => n in globalThis),
+                createObjectURL: typeof URL.createObjectURL,
+                onPrototype: 'Worker' in Object.getPrototypeOf(globalThis),
+                href: location.href.replace(/[0-9a-f-]{36}$/, 'UUID'),
+                importScripts: typeof importScripts,
+                sandboxView: typeof sandboxView, bridge: typeof bridge, sandboxFiles: typeof sandboxFiles,
+                stringCode: (() => { try { return eval('1 + 1'); } catch (e) { return e.name; } })(),
+            }`);
+            // scriptUnsafe is on in the baseline config, so eval and WebAssembly stay; the next test turns it off
+            // no importScripts: the strict policy's script-src is the bootstrap's hash, so it could never load anything (S74)
+            expect(r).toEqual({ names: ['WebAssembly'], createObjectURL: 'undefined', onPrototype: false, href: 'blob:null/UUID', importScripts: 'undefined', sandboxView: 'object', bridge: 'object', sandboxFiles: 'object', stringCode: 2 });
+        });
 
-    test('without scriptUnsafe: no eval, Function or WebAssembly in the worker; an entry reports through the bridge', async ({ sandbox, page }) => {
-        await sandbox.registerFiles({ 'main.js': `
-            const attempt = (f) => { try { return 'ran ' + f(); } catch (e) { return e.name; } };
-            bridge.call('report', {
-                eval: attempt(() => eval('1 + 1')),
-                fn: attempt(() => new Function('return 2')()),
-                wasm: typeof WebAssembly,
-                worker: typeof Worker,
-            });` });
-        await sandbox.exposeHost('report', '(value) => { window.strictReport = value; return true; }');
-        expect(await sandbox.mount(strict({ scriptUnsafe: false, entry: 'main.js' }))).toBe('ready');
-        await page.waitForFunction(() => (window as any).strictReport !== undefined);
-        expect(await page.evaluate(() => (window as any).strictReport)).toEqual({ eval: 'EvalError', fn: 'EvalError', wasm: 'undefined', worker: 'undefined' });
+        test('without scriptUnsafe: no eval, Function or WebAssembly in the worker; an entry reports through the bridge', async ({ sandbox, page }) => {
+            await sandbox.registerFiles({ 'main.js': `
+                const attempt = (f) => { try { return 'ran ' + f(); } catch (e) { return e.name; } };
+                bridge.call('report', {
+                    eval: attempt(() => eval('1 + 1')),
+                    fn: attempt(() => new Function('return 2')()),
+                    wasm: typeof WebAssembly,
+                    worker: typeof Worker,
+                });` });
+            await sandbox.exposeHost('report', '(value) => { window.strictReport = value; return true; }');
+            expect(await sandbox.mount(inMode(mode, { scriptUnsafe: false, entry: 'main.js' }))).toBe('ready');
+            await page.waitForFunction(() => (window as any).strictReport !== undefined);
+            expect(await page.evaluate(() => (window as any).strictReport)).toEqual({ eval: 'EvalError', fn: 'EvalError', wasm: 'undefined', worker: 'undefined' });
+        });
     });
 
     test('the worker has no importScripts, and fetch obeys connect-src: refused off the list, allowed to it (positive control)', async ({ sandbox }) => {
@@ -272,157 +286,163 @@ test.describe('G2 the worker', () => {
         expect(recorder.paths('blocked')).toEqual([]);
     });
 
-    test('the render port is out of guest reach: patching MessagePort, MessageEvent, EventTarget and Function prototypes, and listening for messages, yields no port that reaches the view', async ({ sandbox, page, browserName }) => {
-        await sandbox.registerFiles({ 'main.js': `
-            const seen = new Set();
-            const keep = (port) => { if (port instanceof MessagePort) seen.add(port); };
-            const original = MessagePort.prototype.postMessage;
-            MessagePort.prototype.postMessage = function (...args) { keep(this); return original.apply(this, args); };
-            const onmessage = Object.getOwnPropertyDescriptor(MessagePort.prototype, 'onmessage');
-            Object.defineProperty(MessagePort.prototype, 'onmessage', { configurable: true, get() { return onmessage.get.call(this); }, set(v) { keep(this); onmessage.set.call(this, v); } });
-            const ports = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'ports');
-            Object.defineProperty(MessageEvent.prototype, 'ports', { configurable: true, get() { const p = ports.get.call(this); p.forEach(keep); return p; } });
-            const add = EventTarget.prototype.addEventListener;
-            EventTarget.prototype.addEventListener = function (...args) { if (this instanceof MessagePort) keep(this); return add.apply(this, args); };
-            const reflectApply = Reflect.apply;
-            Function.prototype.call = function (self, ...args) { keep(self); return reflectApply(this, self, args); };
-            Function.prototype.apply = function (self, args) { keep(self); return reflectApply(this, self, args || []); };
-            Reflect.apply = function (f, self, args) { keep(self); return reflectApply(f, self, args); };
-            self.addEventListener('message', (e) => { keep(e.ports[0]); keep(e.ports[1]); }, true);
-            self.onmessage = (e) => { keep(e.ports[0]); keep(e.ports[1]); };
-            globalThis.tryAllPorts = () => {
-                for (const port of seen) reflectApply(original, port, [{ type: 'VIEW_RENDER', html: '<p id="bypass">bypass</p>', into: null }]);
-                return seen.size;
-            };
-        ` });
-        expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
-        await render(sandbox, browserName, '<p>honest</p>', 'honest');
-        const tried = await sandbox.inGuest('return tryAllPorts()');
-        await page.waitForTimeout(800);
-        // the guest saw no port at all: the logic port is as far out of reach as the render port (AR:B2)
-        expect(tried).toBe(0);
-        expect(await inView(page, browserName, `!!document.getElementById('bypass')`)).toBe(false);
-        await render(sandbox, browserName, '<p>still honest</p>', 'honest-2'); // positive control: the library's path still works
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('the render port is out of guest reach: patching MessagePort, MessageEvent, EventTarget and Function prototypes, and listening for messages, yields no port that reaches the view', async ({ sandbox, page, browserName }) => {
+            await sandbox.registerFiles({ 'main.js': `
+                const seen = new Set();
+                const keep = (port) => { if (port instanceof MessagePort) seen.add(port); };
+                const original = MessagePort.prototype.postMessage;
+                MessagePort.prototype.postMessage = function (...args) { keep(this); return original.apply(this, args); };
+                const onmessage = Object.getOwnPropertyDescriptor(MessagePort.prototype, 'onmessage');
+                Object.defineProperty(MessagePort.prototype, 'onmessage', { configurable: true, get() { return onmessage.get.call(this); }, set(v) { keep(this); onmessage.set.call(this, v); } });
+                const ports = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'ports');
+                Object.defineProperty(MessageEvent.prototype, 'ports', { configurable: true, get() { const p = ports.get.call(this); p.forEach(keep); return p; } });
+                const add = EventTarget.prototype.addEventListener;
+                EventTarget.prototype.addEventListener = function (...args) { if (this instanceof MessagePort) keep(this); return add.apply(this, args); };
+                const reflectApply = Reflect.apply;
+                Function.prototype.call = function (self, ...args) { keep(self); return reflectApply(this, self, args); };
+                Function.prototype.apply = function (self, args) { keep(self); return reflectApply(this, self, args || []); };
+                Reflect.apply = function (f, self, args) { keep(self); return reflectApply(f, self, args); };
+                self.addEventListener('message', (e) => { keep(e.ports[0]); keep(e.ports[1]); }, true);
+                self.onmessage = (e) => { keep(e.ports[0]); keep(e.ports[1]); };
+                globalThis.tryAllPorts = () => {
+                    for (const port of seen) reflectApply(original, port, [{ type: 'VIEW_RENDER', html: '<p id="bypass">bypass</p>', into: null }]);
+                    return seen.size;
+                };
+            ` });
+            expect(await sandbox.mount(inMode(mode, { entry: 'main.js' }))).toBe('ready');
+            await render(sandbox, browserName, '<p>honest</p>', 'honest');
+            const tried = await sandbox.inGuest('return tryAllPorts()');
+            await page.waitForTimeout(800);
+            // the guest saw no port at all: the logic port is as far out of reach as the render port (AR:B2)
+            expect(tried).toBe(0);
+            expect(await inView(page, browserName, `!!document.getElementById('bypass')`)).toBe(false);
+            await render(sandbox, browserName, '<p>still honest</p>', 'honest-2'); // positive control: the library's path still works
+        });
     });
 });
 
 // ---- the entry ----------------------------------------------------------------------------------------------
 
-test.describe('the entry', () => {
-    test('the entry runs first, as a classic script in a function scope of its own: its top-level declarations are local (review C2), `this` is the global object', async ({ sandbox, page, browserName }) => {
-        await sandbox.registerFiles({ 'app.js': `var declared = 'local'; function greet() { return 'hi'; } globalThis.shared = 'global';
-            sandboxView.render('<h1 id="title">' + greet() + '</h1>');
-            bridge.expose('declared', () => [typeof declared, self.declared, typeof greet, self.shared, this === self]);` });
-        expect(await sandbox.mount(strict({ entry: 'app.js' }))).toBe('ready');
-        await waitInView(page, browserName, `document.getElementById('title') && document.getElementById('title').textContent === 'hi'`);
-        expect(await sandbox.call('declared')).toEqual(['string', undefined, 'function', 'global', true]);
-    });
-
-    for (const [label, source] of [['a syntax error', 'let = ;'], ['a throw at its top level', 'throw new Error("entry broke")']] as const) {
-        test(`an entry with ${label} ends the sandbox: terminated with "the guest entry failed to start", the error logged`, async ({ sandbox, page }) => {
-            await sandbox.registerFiles({ 'bad.js': source });
-            await page.evaluate(() => {
-                const s = document.querySelector('web-sandbox') as any;
-                (window as any).termination = null;
-                s.addEventListener('terminated', (e: CustomEvent) => { (window as any).termination = e.detail.reason; }, { once: true });
-            });
-            await sandbox.mount(strict({ entry: 'bad.js' }));
-            await page.waitForFunction(() => (window as any).termination !== null, null, { timeout: 5000 });
-            expect(await page.evaluate(() => (window as any).termination)).toBe('the guest entry failed to start');
-            expect(await sandbox.state()).toBe('terminated');
-            expect(await sandbox.waitForLog('the guest entry failed to start')).toBe('[Sandbox] the guest entry failed to start');
-            expect(await sandbox.waitForLog(/^Uncaught /)).toBeTruthy(); // the error's text, as a guest line (FR:F3)
+for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.describe('the entry', () => {
+        test('the entry runs first, as a classic script in a function scope of its own: its top-level declarations are local (review C2), `this` is the global object', async ({ sandbox, page, browserName }) => {
+            await sandbox.registerFiles({ 'app.js': `var declared = 'local'; function greet() { return 'hi'; } globalThis.shared = 'global';
+                sandboxView.render('<h1 id="title">' + greet() + '</h1>');
+                bridge.expose('declared', () => [typeof declared, self.declared, typeof greet, self.shared, this === self]);` });
+            expect(await sandbox.mount(inMode(mode, { entry: 'app.js' }))).toBe('ready');
+            await waitInView(page, browserName, `document.getElementById('title') && document.getElementById('title').textContent === 'hi'`);
+            expect(await sandbox.call('declared')).toEqual(['string', undefined, 'function', 'global', true]);
         });
-    }
 
-    test('an entry that does not parse: the same reason, host line and state on every engine; the guest line carries the engine\'s own SyntaxError text, and on Firefox, which gives none, the library\'s stated placeholder', async ({ sandbox, browserName }) => {
-        await sandbox.registerFiles({ 'bad.js': 'var a = ;\n\nvar b = (;' });
-        await sandbox.mount(strict({ entry: 'bad.js' }));
-        expect(await sandbox.waitForLog('the guest entry failed to start')).toBe('[Sandbox] the guest entry failed to start');
-        const line = await sandbox.waitForLog(/^Uncaught /);
-        expect(await sandbox.state()).toBe('terminated');
-        // ledger: entry-parse-detail
-        if (browserName === 'firefox') expect(line).toBe('Uncaught the entry did not parse (this browser gives no detail)');
-        else expect(line).toMatch(/^Uncaught SyntaxError: \S/);
-    });
+        for (const [label, source] of [['a syntax error', 'let = ;'], ['a throw at its top level', 'throw new Error("entry broke")']] as const) {
+            test(`an entry with ${label} ends the sandbox: terminated with "the guest entry failed to start", the error logged`, async ({ sandbox, page }) => {
+                await sandbox.registerFiles({ 'bad.js': source });
+                await page.evaluate(() => {
+                    const s = document.querySelector('web-sandbox') as any;
+                    (window as any).termination = null;
+                    s.addEventListener('terminated', (e: CustomEvent) => { (window as any).termination = e.detail.reason; }, { once: true });
+                });
+                await sandbox.mount(inMode(mode, { entry: 'bad.js' }));
+                await page.waitForFunction(() => (window as any).termination !== null, null, { timeout: 5000 });
+                expect(await page.evaluate(() => (window as any).termination)).toBe('the guest entry failed to start');
+                expect(await sandbox.state()).toBe('terminated');
+                expect(await sandbox.waitForLog('the guest entry failed to start')).toBe('[Sandbox] the guest entry failed to start');
+                expect(await sandbox.waitForLog(/^Uncaught /)).toBeTruthy(); // the error's text, as a guest line (FR:F3)
+            });
+        }
 
-    test('an error after the entry ran is logged and does not end the sandbox', async ({ sandbox, page }) => {
-        await sandbox.registerFiles({ 'later.js': `setTimeout(() => { throw new Error('later failure'); }, 50); bridge.expose('alive', () => true);` });
-        expect(await sandbox.mount(strict({ entry: 'later.js' }))).toBe('ready');
-        expect(await sandbox.waitForLog('later failure')).toContain('Uncaught');
-        await page.waitForTimeout(300);
-        expect(await sandbox.state()).toBe('ready');
-        expect(await sandbox.call('alive')).toBe(true);
-    });
+        test('an entry that does not parse: the same reason, host line and state on every engine; the guest line carries the engine\'s own SyntaxError text, and on Firefox, which gives none, the library\'s stated placeholder', async ({ sandbox, browserName }) => {
+            await sandbox.registerFiles({ 'bad.js': 'var a = ;\n\nvar b = (;' });
+            await sandbox.mount(inMode(mode, { entry: 'bad.js' }));
+            expect(await sandbox.waitForLog('the guest entry failed to start')).toBe('[Sandbox] the guest entry failed to start');
+            const line = await sandbox.waitForLog(/^Uncaught /);
+            expect(await sandbox.state()).toBe('terminated');
+            // ledger: entry-parse-detail
+            if (browserName === 'firefox') expect(line).toBe('Uncaught the entry did not parse (this browser gives no detail)');
+            else expect(line).toMatch(/^Uncaught SyntaxError: \S/);
+        });
 
-    // S75 (class B). WebKit mutes, inside the worker, the errors of code compiled from a string (Function, eval,
-    // execute()) from the start, so they reach the view's Worker object with their text. The view reads the end of
-    // the entry from the marker error that ends it, in the order of the Worker object's errors, not from VIEW_STARTED on
-    // another channel: such an error that reached the view first would be taken for the entry's own, "the guest entry
-    // failed to start", for an entry that had run to its end.
-    for (const [label, source] of [
-        ['a microtask', `queueMicrotask(() => { throw new Error('late one'); });`],
-        ['a microtask of code compiled from a string', `queueMicrotask(new Function("throw new Error('late one')"));`],
-        ['a timer of code compiled from a string', `setTimeout(new Function("throw new Error('late one')"), 0);`],
-    ] as const) {
-        test(`an error of ${label} the entry queued, raised once its script ran to its end, is logged once and does not end the sandbox`, async ({ sandbox, page }) => {
-            await sandbox.registerFiles({ 'late.js': `${source} bridge.expose('alive', () => true);` });
-            expect(await sandbox.mount(strict({ entry: 'late.js', scriptUnsafe: true }))).toBe('ready');
-            await sandbox.waitForLog('late one');
+        test('an error after the entry ran is logged and does not end the sandbox', async ({ sandbox, page }) => {
+            await sandbox.registerFiles({ 'later.js': `setTimeout(() => { throw new Error('later failure'); }, 50); bridge.expose('alive', () => true);` });
+            expect(await sandbox.mount(inMode(mode, { entry: 'later.js' }))).toBe('ready');
+            expect(await sandbox.waitForLog('later failure')).toContain('Uncaught');
             await page.waitForTimeout(300);
-            const logs = await sandbox.logs();
-            expect(logs.filter(line => line.includes('late one'))).toEqual(['Uncaught Error: late one']);
-            expect(logs.filter(line => line.includes('__sandboxEntryRan_') || line.includes('entry failed'))).toEqual([]);
             expect(await sandbox.state()).toBe('ready');
             expect(await sandbox.call('alive')).toBe(true);
         });
-    }
 
-    test("the marker error that ends the entry reaches none of the guest's own error listeners, nor its log", async ({ sandbox }) => {
-        await sandbox.registerFiles({ 'listens.js': `const seen = [];
-            self.addEventListener('error', (event) => { seen.push('capture ' + event.message); }, true);
-            self.addEventListener('error', (event) => { seen.push('bubble ' + event.message); });
-            self.onerror = (message) => { seen.push('onerror ' + message); };
-            setTimeout(() => { throw new Error('later failure'); }, 50);
-            bridge.expose('seen', () => seen);` });
-        expect(await sandbox.mount(strict({ entry: 'listens.js' }))).toBe('ready');
-        await sandbox.waitForLog('later failure');
-        const seen: string[] = await sandbox.call('seen');
-        expect(seen).toHaveLength(3); // the later error, once per listener (WebKit's worker: muted, "Script error.")
-        expect(seen.filter(line => line.includes('__sandboxEntryRan_'))).toEqual([]);
-        expect((await sandbox.logs()).filter(line => line.includes('__sandboxEntryRan_'))).toEqual([]);
-        expect(await sandbox.state()).toBe('ready');
-    });
+        // S75 (class B). WebKit mutes, inside the worker, the errors of code compiled from a string (Function, eval,
+        // execute()) from the start, so they reach the view's Worker object with their text. The view reads the end of
+        // the entry from the marker error that ends it, in the order of the Worker object's errors, not from VIEW_STARTED on
+        // another channel: such an error that reached the view first would be taken for the entry's own, "the guest entry
+        // failed to start", for an entry that had run to its end.
+        for (const [label, source] of [
+            ['a microtask', `queueMicrotask(() => { throw new Error('late one'); });`],
+            ['a microtask of code compiled from a string', `queueMicrotask(new Function("throw new Error('late one')"));`],
+            ['a timer of code compiled from a string', `setTimeout(new Function("throw new Error('late one')"), 0);`],
+        ] as const) {
+            test(`an error of ${label} the entry queued, raised once its script ran to its end, is logged once and does not end the sandbox`, async ({ sandbox, page }) => {
+                await sandbox.registerFiles({ 'late.js': `${source} bridge.expose('alive', () => true);` });
+                expect(await sandbox.mount(inMode(mode, { entry: 'late.js', scriptUnsafe: true }))).toBe('ready');
+                await sandbox.waitForLog('late one');
+                await page.waitForTimeout(300);
+                const logs = await sandbox.logs();
+                expect(logs.filter(line => line.includes('late one'))).toEqual(['Uncaught Error: late one']);
+                expect(logs.filter(line => line.includes('__sandboxEntryRan_') || line.includes('entry failed'))).toEqual([]);
+                expect(await sandbox.state()).toBe('ready');
+                expect(await sandbox.call('alive')).toBe(true);
+            });
+        }
 
-    test('an entry that is not a registered JavaScript file ends the build with a reason', async ({ sandbox }) => {
-        await sandbox.registerFiles({ 'data.json': '{}' });
-        expect(await sandbox.mount(strict({ entry: 'missing.js' }))).toBe('terminated');
-        expect(await sandbox.mount(strict({ entry: 'data.json' }))).toBe('terminated');
-        expect(await sandbox.page.evaluate(() => new Promise(resolve => {
-            const s = document.querySelector('web-sandbox') as any;
-            s.addEventListener('terminated', (e: CustomEvent) => resolve(e.detail.reason), { once: true });
-            s.setConfig({ mode: 'strict', entry: 'nope.js' });
-        }))).toBe('the guest entry "nope.js" is not a registered JavaScript file');
+        test("the marker error that ends the entry reaches none of the guest's own error listeners, nor its log", async ({ sandbox }) => {
+            await sandbox.registerFiles({ 'listens.js': `const seen = [];
+                self.addEventListener('error', (event) => { seen.push('capture ' + event.message); }, true);
+                self.addEventListener('error', (event) => { seen.push('bubble ' + event.message); });
+                self.onerror = (message) => { seen.push('onerror ' + message); };
+                setTimeout(() => { throw new Error('later failure'); }, 50);
+                bridge.expose('seen', () => seen);` });
+            expect(await sandbox.mount(inMode(mode, { entry: 'listens.js' }))).toBe('ready');
+            await sandbox.waitForLog('later failure');
+            const seen: string[] = await sandbox.call('seen');
+            expect(seen).toHaveLength(3); // the later error, once per listener (WebKit's worker: muted, "Script error.")
+            expect(seen.filter(line => line.includes('__sandboxEntryRan_'))).toEqual([]);
+            expect((await sandbox.logs()).filter(line => line.includes('__sandboxEntryRan_'))).toEqual([]);
+            expect(await sandbox.state()).toBe('ready');
+        });
+
+        test('an entry that is not a registered JavaScript file ends the build with a reason', async ({ sandbox }) => {
+            await sandbox.registerFiles({ 'data.json': '{}' });
+            expect(await sandbox.mount(inMode(mode, { entry: 'missing.js' }))).toBe('terminated');
+            expect(await sandbox.mount(inMode(mode, { entry: 'data.json' }))).toBe('terminated');
+            expect(await sandbox.page.evaluate((mode) => new Promise(resolve => {
+                const s = document.querySelector('web-sandbox') as any;
+                s.addEventListener('terminated', (e: CustomEvent) => resolve(e.detail.reason), { once: true });
+                s.setConfig({ mode, entry: 'nope.js' });
+            }), mode)).toBe('the guest entry "nope.js" is not a registered JavaScript file');
+        });
     });
 });
 
 // ---- A5: a view that stops answering ----------------------------------------------------------------------
 
-test('A5: a view that is gone (reloaded, so it never gets its ports back) ends the sandbox with "the sandbox view stopped responding"', async ({ sandbox, page, browserName }) => {
-    test.setTimeout(30000);
-    expect(await sandbox.mount(strict())).toBe('ready');
-    await page.evaluate(() => {
-        const s = document.querySelector('web-sandbox') as any;
-        (window as any).termination = null;
-        (window as any).started = performance.now();
-        s.addEventListener('terminated', (e: CustomEvent) => { (window as any).termination = { reason: e.detail.reason, after: performance.now() - (window as any).started }; }, { once: true });
+for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test('A5: a view that is gone (reloaded, so it never gets its ports back) ends the sandbox with "the sandbox view stopped responding"', async ({ sandbox, page, browserName }) => {
+        test.setTimeout(30000);
+        expect(await sandbox.mount(inMode(mode))).toBe('ready');
+        await page.evaluate(() => {
+            const s = document.querySelector('web-sandbox') as any;
+            (window as any).termination = null;
+            (window as any).started = performance.now();
+            s.addEventListener('terminated', (e: CustomEvent) => { (window as any).termination = { reason: e.detail.reason, after: performance.now() - (window as any).started }; }, { once: true });
+        });
+        await inView(page, browserName, 'location.reload()');
+        await page.waitForFunction(() => (window as any).termination !== null, null, { timeout: 12000 });
+        const termination = await page.evaluate(() => (window as any).termination);
+        expect(termination.reason).toBe('the sandbox view stopped responding');
+        // VIEW_LIVENESS_TIMEOUT_MS (5 s): between one and 1.25 budgets after the last answer, plus slack
+        expect(termination.after).toBeLessThan(5000 * 1.25 + 2000);
     });
-    await inView(page, browserName, 'location.reload()');
-    await page.waitForFunction(() => (window as any).termination !== null, null, { timeout: 12000 });
-    const termination = await page.evaluate(() => (window as any).termination);
-    expect(termination.reason).toBe('the sandbox view stopped responding');
-    // VIEW_LIVENESS_TIMEOUT_MS (5 s): between one and 1.25 budgets after the last answer, plus slack
-    expect(termination.after).toBeLessThan(5000 * 1.25 + 2000);
 });
 
 // ---- files in the view (A8, ADR-004 amendment) ------------------------------------------------------------
@@ -430,52 +450,54 @@ test('A5: a view that is gone (reloaded, so it never gets its ports back) ends t
 // a 3 × 5 PNG: the view mints URLs only for types that never open as a document (BR:ST1), so no SVG
 const PNG_3X5 = { base64: 'iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAYAAACAcVaiAAAAEklEQVR4nGP4z8DwH4YZyOAAAMufHeOcQ//1AAAAAElFTkSuQmCC' };
 
-test.describe('files', () => {
-    test('rendered markup names registered files by path: the view mints its own blob: URLs for images and stylesheets (with their url() references); the worker gets every file through sandboxFiles', async ({ sandbox, page, browserName }) => {
-        await sandbox.registerFiles({
-            'img/logo.png': PNG_3X5,
-            'css/site.css': '#styled { width: 7px; height: 9px; display: block; background: url(../img/logo.png); }',
-            'lib.js': 'export const x = 1;',
-            'data.json': '{"answer":42}',
+for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.describe('files', () => {
+        test('rendered markup names registered files by path: the view mints its own blob: URLs for images and stylesheets (with their url() references); the worker gets every file through sandboxFiles', async ({ sandbox, page, browserName }) => {
+            await sandbox.registerFiles({
+                'img/logo.png': PNG_3X5,
+                'css/site.css': '#styled { width: 7px; height: 9px; display: block; background: url(../img/logo.png); }',
+                'lib.js': 'export const x = 1;',
+                'data.json': '{"answer":42}',
+            });
+            expect(await sandbox.mount(inMode(mode))).toBe('ready');
+            await render(sandbox, browserName, '<link rel="stylesheet" href="css/site.css"><img id="logo" src="./img/logo.png"><i id="styled"></i><img id="unregistered" src="img/missing.png">');
+            await waitInView(page, browserName, `document.getElementById('logo').complete && document.getElementById('logo').naturalWidth === 3`);
+            const r = await inView<any>(page, browserName, `({
+                logo: document.getElementById('logo').getAttribute('src').slice(0, 10),
+                sheet: document.querySelector('link').getAttribute('href').slice(0, 10),
+                styled: getComputedStyle(document.getElementById('styled')).width,
+                unregistered: document.getElementById('unregistered').getAttribute('src'),
+                viewFiles: sandboxFiles.list(),
+            })`);
+            // the view holds only the files it may show: no JavaScript, no JSON (VIEW_FILE_TYPES, BR:ST1)
+            expect(r).toEqual({ logo: 'blob:null/', sheet: 'blob:null/', styled: '7px', unregistered: 'img/missing.png', viewFiles: ['css/site.css', 'img/logo.png'] });
+            // the worker reads every file; it mints URLs only for the types the view shows (R1:R2-4)
+            const worker = await sandbox.inGuest(`let js, jsMessage, gone; try { js = sandboxFiles.url('lib.js'); } catch (error) { js = error.code; jsMessage = error.message; }
+                try { sandboxFiles.url('nothing.js'); } catch (error) { gone = error.message; }
+                return { list: sandboxFiles.list(), json: JSON.parse(await sandboxFiles.text('data.json')).answer, js, jsMessage, gone, png: sandboxFiles.url('img/logo.png').slice(0, 10) }`);
+            // a file that is there and has no URL does not say it is missing (BD3:NEW-4)
+            expect(worker).toEqual({
+                list: ['css/site.css', 'data.json', 'img/logo.png', 'lib.js'], json: 42, js: 'NOT_FOUND', png: 'blob:null/',
+                jsMessage: '[sandboxFiles] NOT_FOUND: this file has no URL (read() and text() work)', gone: '[sandboxFiles] NOT_FOUND: no such file',
+            });
+            expect((await sandbox.violations()).filter(v => v.source === 'view')).toEqual([]);
         });
-        expect(await sandbox.mount(strict())).toBe('ready');
-        await render(sandbox, browserName, '<link rel="stylesheet" href="css/site.css"><img id="logo" src="./img/logo.png"><i id="styled"></i><img id="unregistered" src="img/missing.png">');
-        await waitInView(page, browserName, `document.getElementById('logo').complete && document.getElementById('logo').naturalWidth === 3`);
-        const r = await inView<any>(page, browserName, `({
-            logo: document.getElementById('logo').getAttribute('src').slice(0, 10),
-            sheet: document.querySelector('link').getAttribute('href').slice(0, 10),
-            styled: getComputedStyle(document.getElementById('styled')).width,
-            unregistered: document.getElementById('unregistered').getAttribute('src'),
-            viewFiles: sandboxFiles.list(),
-        })`);
-        // the view holds only the files it may show: no JavaScript, no JSON (VIEW_FILE_TYPES, BR:ST1)
-        expect(r).toEqual({ logo: 'blob:null/', sheet: 'blob:null/', styled: '7px', unregistered: 'img/missing.png', viewFiles: ['css/site.css', 'img/logo.png'] });
-        // the worker reads every file; it mints URLs only for the types the view shows (R1:R2-4)
-        const worker = await sandbox.inGuest(`let js, jsMessage, gone; try { js = sandboxFiles.url('lib.js'); } catch (error) { js = error.code; jsMessage = error.message; }
-            try { sandboxFiles.url('nothing.js'); } catch (error) { gone = error.message; }
-            return { list: sandboxFiles.list(), json: JSON.parse(await sandboxFiles.text('data.json')).answer, js, jsMessage, gone, png: sandboxFiles.url('img/logo.png').slice(0, 10) }`);
-        // a file that is there and has no URL does not say it is missing (BD3:NEW-4)
-        expect(worker).toEqual({
-            list: ['css/site.css', 'data.json', 'img/logo.png', 'lib.js'], json: 42, js: 'NOT_FOUND', png: 'blob:null/',
-            jsMessage: '[sandboxFiles] NOT_FOUND: this file has no URL (read() and text() work)', gone: '[sandboxFiles] NOT_FOUND: no such file',
-        });
-        expect((await sandbox.violations()).filter(v => v.source === 'view')).toEqual([]);
-    });
 
-    test('A8: a blob: URL the view did not mint is removed from rendered markup, wherever it appears; the policy has blob: only where a registered type needs it, never in script-src', async ({ sandbox, page, browserName }) => {
-        await sandbox.registerFiles({ 'img/logo.png': PNG_3X5, 'app.js': 'void 0' });
-        expect(await sandbox.mount(strict())).toBe('ready');
-        const workerUrl = await sandbox.inGuest(`return sandboxFiles.url('img/logo.png')`);
-        await render(sandbox, browserName, `<img id="w" src="${workerUrl}"><img id="t" src=" b\tlob:${workerUrl.slice(5)}"><a id="a" href="${workerUrl}">x</a><img id="ok" src="img/logo.png">`);
-        const r = await inView<any>(page, browserName, `({
-            w: document.getElementById('w').hasAttribute('src'), t: document.getElementById('t').hasAttribute('src'),
-            a: document.getElementById('a').getAttribute('href'), ok: document.getElementById('ok').getAttribute('src').startsWith('blob:'),
-            policy: document.querySelector('meta[http-equiv]').content,
-        })`);
-        expect(r).toMatchObject({ w: false, t: false, a: 'about:blank#', ok: true }); // a link's href is the inert constant (S24)
-        expect(r.policy).toMatch(/script-src 'sha256-[A-Za-z0-9+/]+=' 'unsafe-eval'; /);
-        expect(r.policy).not.toMatch(/script-src[^;]*blob:/);
-        expect(r.policy).toContain('img-src blob:');
+        test('A8: a blob: URL the view did not mint is removed from rendered markup, wherever it appears; the policy has blob: only where a registered type needs it, never in script-src', async ({ sandbox, page, browserName }) => {
+            await sandbox.registerFiles({ 'img/logo.png': PNG_3X5, 'app.js': 'void 0' });
+            expect(await sandbox.mount(inMode(mode))).toBe('ready');
+            const workerUrl = await sandbox.inGuest(`return sandboxFiles.url('img/logo.png')`);
+            await render(sandbox, browserName, `<img id="w" src="${workerUrl}"><img id="t" src=" b\tlob:${workerUrl.slice(5)}"><a id="a" href="${workerUrl}">x</a><img id="ok" src="img/logo.png">`);
+            const r = await inView<any>(page, browserName, `({
+                w: document.getElementById('w').hasAttribute('src'), t: document.getElementById('t').hasAttribute('src'),
+                a: document.getElementById('a').getAttribute('href'), ok: document.getElementById('ok').getAttribute('src').startsWith('blob:'),
+                policy: document.querySelector('meta[http-equiv]').content,
+            })`);
+            expect(r).toMatchObject({ w: false, t: false, a: 'about:blank#', ok: true }); // a link's href is the inert constant (S24)
+            expect(r.policy).toMatch(/script-src 'sha256-[A-Za-z0-9+/]+=' 'unsafe-eval'; /);
+            expect(r.policy).not.toMatch(/script-src[^;]*blob:/);
+            expect(r.policy).toContain('img-src blob:');
+        });
     });
 });
 
@@ -512,25 +534,27 @@ test.describe('configuration', () => {
         expect(recorder.paths('blocked')).toEqual([]);
     });
 
-    test('autoResize: the view reports its height (B6); the worker cannot post a RESIZE on the logic port', async ({ sandbox, page, browserName }) => {
-        await page.addStyleTag({ content: 'web-sandbox { height: 50px }' });
-        expect(await sandbox.mount(strict({ autoResize: true }))).toBe('ready');
-        await render(sandbox, browserName, '<div style="height: 420px"></div>', 'tall');
-        await expect.poll(() => page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).getBoundingClientRect().height), { timeout: 5000 }).toBeGreaterThan(420);
-        const before = await page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).style.height);
-        // only the view's reports count; the worker cannot even reach its own (logic) port to post one (AR:B2)
-        await sandbox.run(`globalThis.__port = null; const o = MessagePort.prototype.postMessage; MessagePort.prototype.postMessage = function (m, ...r) { globalThis.__port = this; this.postMessage = o; return o.call(this, m, ...r); }; console.log('forge')`);
-        await sandbox.waitForLog('forge');
-        expect(await sandbox.inGuest('return globalThis.__port')).toBeNull();
-        await page.waitForTimeout(400);
-        expect(await page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).style.height)).toBe(before);
-    });
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('autoResize: the view reports its height (B6); the worker cannot post a RESIZE on the logic port', async ({ sandbox, page, browserName }) => {
+            await page.addStyleTag({ content: 'web-sandbox { height: 50px }' });
+            expect(await sandbox.mount(inMode(mode, { autoResize: true }))).toBe('ready');
+            await render(sandbox, browserName, '<div style="height: 420px"></div>', 'tall');
+            await expect.poll(() => page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).getBoundingClientRect().height), { timeout: 5000 }).toBeGreaterThan(420);
+            const before = await page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).style.height);
+            // only the view's reports count; the worker cannot even reach its own (logic) port to post one (AR:B2)
+            await sandbox.run(`globalThis.__port = null; const o = MessagePort.prototype.postMessage; MessagePort.prototype.postMessage = function (m, ...r) { globalThis.__port = this; this.postMessage = o; return o.call(this, m, ...r); }; console.log('forge')`);
+            await sandbox.waitForLog('forge');
+            expect(await sandbox.inGuest('return globalThis.__port')).toBeNull();
+            await page.waitForTimeout(400);
+            expect(await page.evaluate(() => (document.querySelector('web-sandbox') as HTMLElement).style.height)).toBe(before);
+        });
 
-    test('workerExecutionTimeout terminates the sandbox when executed code is still running in strict mode too; reset() recovers', async ({ sandbox }) => {
-        expect(await sandbox.mount(strict({ workerExecutionTimeout: 300 }))).toBe('ready');
-        await sandbox.run('while (true) {}');
-        expect(await sandbox.waitForLog('Execution Timeout', 4000)).toBeTruthy();
-        await expect.poll(() => sandbox.state(), { timeout: 4000 }).toBe('terminated');
-        expect(await sandbox.reset()).toBe('ready');
+        test('workerExecutionTimeout terminates the sandbox when executed code is still running in strict mode too; reset() recovers', async ({ sandbox }) => {
+            expect(await sandbox.mount(inMode(mode, { workerExecutionTimeout: 300 }))).toBe('ready');
+            await sandbox.run('while (true) {}');
+            expect(await sandbox.waitForLog('Execution Timeout', 4000)).toBeTruthy();
+            await expect.poll(() => sandbox.state(), { timeout: 4000 }).toBe('terminated');
+            expect(await sandbox.reset()).toBe('ready');
+        });
     });
 });

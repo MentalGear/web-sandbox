@@ -7,7 +7,7 @@ import type { Page } from '@playwright/test';
  * base about:blank). Three things only a browser shows, on all three engines:
  *   - a host page whose Content-Security-Policy has `base-uri 'self'` or `'none'` refuses the `<base>` the wrapper sets
  *     (frames inherit the host page's policy), so the guest's base URL would be the host page's URL: the bootstrap stays
- *     inert, the guest's markup after it never runs, and the sandbox ends with the named reason, in strict, cooperative
+ *     inert, the guest's markup after it never runs, and the sandbox ends with the named reason, in strict, sealed, cooperative
  *     and worker mode and with the fetch bridge; with `about:` allowed (or the directive omitted) all of them run;
  *   - a copy of a bootstrap placed outside a sandbox document (the host page, a frame of its own origin, a sandboxed
  *     frame under the host page's base, one loaded from a blob: URL) registers nothing and builds nothing, and the
@@ -25,6 +25,7 @@ const ENTRY = `sandboxView.render('<p id="hello">hi</p>'); console.log('ENTRY RA
 const GUEST_SCRIPT = `<script>top.postMessage({ guestRan: true }, '*')</script>`;
 const MODES: readonly [name: string, config: object][] = [
     ['strict', { entry: 'main.js' }],
+    ['sealed', { mode: 'sealed', entry: 'main.js' }],
     ['strict with the fetch bridge', { entry: 'main.js', fetchBridge: { allow: ['https://api.example'] } }],
     ['cooperative', { mode: 'cooperative', capabilities: ['allow-scripts'], html: `<p>x</p>${GUEST_SCRIPT}` }],
     ['worker', { mode: 'worker' }],

@@ -6,6 +6,7 @@ import {
     type Directives,
 } from './realistic-host';
 import type { Page } from '@playwright/test';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * The library's core flows on a host page that looks like a production application (realistic-host.ts: a strict CSP that
@@ -96,28 +97,30 @@ async function ownRequestControl(host: RealisticHost, name: string, browserName:
 }
 
 test.describe('strict mode (the default)', () => {
-    test('the default configuration starts on the production host, renders, runs its worker, and stops cleanly', async ({ sandbox, page, browserName }) => {
-        const host = await RealisticHost.open(sandbox, { mode: 'strict' });
-        const baseline = await quietBaseline(host);
-        await host.page.evaluate(() => { (window as any).sandboxEvents.length = 0; });
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('the default configuration starts on the production host, renders, runs its worker, and stops cleanly', async ({ sandbox, page, browserName }) => {
+            const host = await RealisticHost.open(sandbox, { mode });
+            const baseline = await quietBaseline(host);
+            await host.page.evaluate(() => { (window as any).sandboxEvents.length = 0; });
 
-        const events = await host.embed('strict', { guest: "return { origin: self.origin, isolated: self.crossOriginIsolated, document: typeof document };" });
-        expect(events, covering('cspScript', "the view bootstrap's hash in the page's script-src admits strict mode: ready, and it stays ready")).toEqual(READY);
-        await waitInView(page, browserName, `!!document.getElementById('hello')`);
-        expect(await host.guestResult(), covering('cspWorker', "the guest's worker started under worker-src 'self' blob:")).toEqual({ origin: 'null', isolated: false, document: 'undefined' });
-        expect(await frameHeights(page, browserName), covering('cspStyle', "the wrapper style's hash admits the wrapper's style: the frames fill the element")).toEqual([300, 300]);
-        expect(await host.state(), covering('cspBaseUri', "base-uri 'self' about: admits the wrapper's <base>: the sandbox is ready")).toBe('ready');
-        expect(await host.sandbox.terminations(), covering('cspBaseUri', 'and no termination was recorded')).toEqual([]);
-        expect(host.consoleWarnings.filter(line => line.startsWith('[Sandbox]')), covering('cspStyle', 'and the element warned of no refused style')).toEqual([]);
-        await expectQuiet(host, baseline, 'strict mode, default configuration');
+            const events = await host.embed(mode, { guest: "return { origin: self.origin, isolated: self.crossOriginIsolated, document: typeof document };" });
+            expect(events, covering('cspScript', "the view bootstrap's hash in the page's script-src admits strict mode: ready, and it stays ready")).toEqual(READY);
+            await waitInView(page, browserName, `!!document.getElementById('hello')`);
+            expect(await host.guestResult(), covering('cspWorker', "the guest's worker started under worker-src 'self' blob:")).toEqual({ origin: 'null', isolated: false, document: 'undefined' });
+            expect(await frameHeights(page, browserName), covering('cspStyle', "the wrapper style's hash admits the wrapper's style: the frames fill the element")).toEqual([300, 300]);
+            expect(await host.state(), covering('cspBaseUri', "base-uri 'self' about: admits the wrapper's <base>: the sandbox is ready")).toBe('ready');
+            expect(await host.sandbox.terminations(), covering('cspBaseUri', 'and no termination was recorded')).toEqual([]);
+            expect(host.consoleWarnings.filter(line => line.startsWith('[Sandbox]')), covering('cspStyle', 'and the element warned of no refused style')).toEqual([]);
+            await expectQuiet(host, baseline, 'strict mode, default configuration');
 
-        // stops cleanly: terminate() ends the environment, leaves no frame, and the host page is its own again
-        await page.evaluate(() => (document.querySelector('web-sandbox') as any).terminate());
-        expect(await host.state(), covering('thread', 'terminate() ends the sandbox')).toBe('terminated');
-        expect(await host.frames(), covering('thread', 'and removes every frame it held')).toBe(0);
-        expect((await host.sandbox.terminations()).map(entry => entry.reason), covering('thread', 'with the reason the host gave')).toEqual([TERMINATED_BY_HOST]);
-        expect(await page.evaluate(() => 1 + 1), covering('thread', 'the host page answers')).toBe(2);
-        expect(await host.hostFetch('after'), covering('thread', "and its own API works after the sandbox ended")).toMatchObject({ status: 200 });
+            // stops cleanly: terminate() ends the environment, leaves no frame, and the host page is its own again
+            await page.evaluate(() => (document.querySelector('web-sandbox') as any).terminate());
+            expect(await host.state(), covering('thread', 'terminate() ends the sandbox')).toBe('terminated');
+            expect(await host.frames(), covering('thread', 'and removes every frame it held')).toBe(0);
+            expect((await host.sandbox.terminations()).map(entry => entry.reason), covering('thread', 'with the reason the host gave')).toEqual([TERMINATED_BY_HOST]);
+            expect(await page.evaluate(() => 1 + 1), covering('thread', 'the host page answers')).toBe(2);
+            expect(await host.hostFetch('after'), covering('thread', "and its own API works after the sandbox ended")).toMatchObject({ status: 200 });
+        });
     });
 
     test('with origins and a fetchBridge: no request of the guest or of the bridge carries a host cookie or the Authorization header, none passes through the host Service Worker, and the bridge answers from the network', async ({ sandbox, browserName }) => {
@@ -372,7 +375,7 @@ test.describe('cross-origin isolation (COOP same-origin, COEP require-corp): not
     // true). The outcome is the same on all three engines: no frame, nothing of the guest ran.
     const ISOLATED = TERMINATION_REASONS.environmentIsolated.text;
 
-    for (const mode of ['strict', 'cooperative', 'worker'] as const) {
+    for (const mode of [...VIEW_MODES, 'cooperative', 'worker'] as const) {
         test(`${mode} mode on an isolated host: ends with the isolation reason, builds no frame, runs nothing of the guest`, async ({ sandbox, page, browserName }) => {
             const host = await RealisticHost.open(sandbox, { mode, isolation: true, guestCode: mode === 'worker' ? 'execute' : 'none' });
             expect(await page.evaluate(() => self.crossOriginIsolated), 'the host page is cross-origin isolated').toBe(true);
@@ -389,7 +392,7 @@ test.describe('cross-origin isolation (COOP same-origin, COEP require-corp): not
 });
 
 test.describe('teardown', () => {
-    for (const mode of ['cooperative', 'strict'] as const) {
+    for (const mode of ['cooperative', ...VIEW_MODES] as const) {
         test(`${mode}: removing the element while the host has focus and lifecycle listeners throws nothing at the host, leaves no frame, and the host page answers`, async ({ sandbox, page }) => {
             const host = await RealisticHost.open(sandbox, { mode });
             // positive control: the host's own focus reaches its listeners
