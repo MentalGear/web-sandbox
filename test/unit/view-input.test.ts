@@ -247,6 +247,49 @@ describe("the view's event path (inSandboxView, run as stringified)", () => {
         }
     });
 
+    // BD4:TST-7: the view runs no guest script, so no untrusted event reaches these listeners; the guards are defence in depth
+    // (class B, "trusted" is not "user-caused"), and an event a script dispatches must not cancel a scroll, a drag or a selection.
+    it('a wheel is cancelled inside an element with a preventDefault mark, anywhere for a null id, and only by a trusted event', async () => {
+        const { render, fire } = await startView();
+        const cancelled = (init: Record<string, unknown>) => {
+            let prevented = 0;
+            fire('wheel', { deltaX: 0, deltaY: 40, deltaZ: 0, deltaMode: 0, preventDefault: () => { prevented++; }, ...init });
+            return prevented;
+        };
+        render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel'], marks: [['wheel', 'pad', 4]] });
+        await settle();
+        expect(cancelled({})).toBe(1); // the target is inside #pad
+        expect(cancelled({ isTrusted: false })).toBe(0);
+        expect(cancelled({ target: document.body })).toBe(0); // outside it
+        render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel'], marks: [['wheel', null, 4]] });
+        await settle();
+        expect(cancelled({ target: document.body })).toBe(1); // anywhere
+        expect(cancelled({ target: document.body, isTrusted: false })).toBe(0);
+    });
+
+    it('a drag or a selection is cancelled inside a captured element, and only when the event is trusted', async () => {
+        (Element.prototype as any).setPointerCapture = function () {};
+        try {
+            const { render, fire, events } = await startView();
+            render.postMessage({ type: 'VIEW_LISTEN', types: ['pointerdown'], marks: [['pointerdown', 'pad', 1]] });
+            await settle();
+            fire('pointerdown', { pointerId: 4, buttons: 1 });
+            await until(() => events().length === 1);
+            const inner = document.getElementById('inner')!;
+            let prevented = 0;
+            const preventDefault = () => { prevented++; };
+            for (const type of ['dragstart', 'selectstart']) {
+                fire(type, { target: inner, isTrusted: false, preventDefault });
+                expect(prevented, `${type} by a script`).toBe(0);
+                fire(type, { target: inner, preventDefault });
+                expect(prevented, `${type} by the user`).toBe(1);
+                prevented = 0;
+            }
+        } finally {
+            delete (Element.prototype as any).setPointerCapture;
+        }
+    });
+
     it("sums a wheel's deltas per element and unit, the pointer where it last was (clamped); a scroll carries the scrolled element's position and extent", async () => {
         const { render, fire, events } = await startView();
         render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel', 'scroll'] });

@@ -257,6 +257,49 @@ describe('cssReferences, network scope, and withoutNetworkReferences', () => {
     it('the files scope is unchanged: closed tokens only, strings only where they name a file', () => {
         expect(cssReferences('a{b:"x.png"; c:url(y.png)} d{e:url(z.png', 'files').map(reference => reference.url)).toEqual(['y.png']);
     });
+
+    // BD4:TST-2: a scheme is read as the URL parser reads it (isNetwork); a tab or newline inside it is removed by that
+    // parser, and the engines load the result (Chromium, Firefox and WebKit each requested these in the S74 board's probe).
+    it('the scheme is read as the URL parser reads it: a tab, newline or carriage return inside it, written raw or as a CSS escape, is still a network URL', () => {
+        expect(network('a{b:"ht\ttps://x/1"}')).toEqual([['image', 'ht\ttps://x/1']]); // a raw tab
+        expect(network('a{b:"h\nttps://x/2"}')).toEqual([]); // a raw newline ends the string badly: no string token, and no load
+        expect(network('a{b:"ht\\9 tps://x/3"}')).toEqual([['image', 'ht\ttps://x/3']]); // \9, \a and \d are a tab, a newline and a CR
+        expect(network('a{b:"ht\\a tps://x/4"}')).toEqual([['image', 'ht\ntps://x/4']]);
+        expect(network('a{b:image-set("h\\d ttps://x/5" 1x)}')).toEqual([['image', 'h\rttps://x/5']]);
+        expect(network('a{b:url("ht\ttp://x/6")}')).toEqual([['image', 'ht\ttp://x/6']]);
+        expect(network('a{b:"\t \u0001HTTPS://x/7"}')).toEqual([['image', '\t \u0001HTTPS://x/7']]); // leading controls and spaces, any case
+        // the same text through the drop: nothing of it is left for the engine to load
+        const dropped: [string, string][] = [];
+        expect(withoutNetworkReferences('a{b:"ht\\9 tps://x/3"}', cssReferences, dropped as any)).toBe('a{b:""}');
+        expect(dropped).toEqual([['image', 'ht\ttps://x/3']]);
+    });
+
+    it('agrees with the URL parser: a value is a network reference exactly when `new URL(value, "about:blank")` is http: or https:', () => {
+        const values = ['https://x/a', 'HtTpS://x/a', 'ht\ttps://x/a', 'h\nt\rtps://x/a', '\t https://x/a', '\u0001\u0002https://x/a', ' https://x/a ', 'http:x', 'https:/x', 'blob:null/a', 'data:,x', 'javascript:x', 'ftp://x/a', 'x.png', '//x/a', '/x/a', 'ht tps://x/a', 'https\u00a0://x/a', 'https\u0000://x/a'];
+        for (const value of values) {
+            const expected = (() => { try { return /^https?:$/.test(new URL(value, 'about:blank').protocol); } catch { return false; } })();
+            // a raw newline ends a CSS string badly, so every control character is written as a hex escape
+            const escaped = `a{b:"${[...value].map(ch => (ch.charCodeAt(0) < 32 ? `\\${ch.charCodeAt(0).toString(16)} ` : ch === '"' ? '\\"' : ch === '\\' ? '\\\\' : ch)).join('')}"}`;
+            expect(cssReferences(escaped, 'network').length > 0, JSON.stringify(value)).toBe(expected);
+        }
+    });
+
+    // BD4:TST-6: `@import src("https://…")` (CSS Values 4's other <url>); no engine loads it in an @import today, so this is
+    // the scan being ready for the day one does, as it is for the first token that is a string or url().
+    it('@import takes its URL from the first token, a string, url() or any function such as src(); a later token names nothing', () => {
+        expect(network('@import url("https://x/1.css"); @import "https://x/2.css";')).toEqual([['style', 'https://x/1.css'], ['style', 'https://x/2.css']]);
+        expect(network('@import src("https://x/3.css");')).toEqual([['style', 'https://x/3.css']]);
+        expect(network('@import src("https://x/4.css") layer(a) supports(display: grid);')).toEqual([['style', 'https://x/4.css']]);
+        expect(network('@import src(url("https://x/5.css")) screen;')).toEqual([['style', 'https://x/5.css']]);
+        expect(network('@import image-set("https://x/6.css" 1x);')).toEqual([['style', 'https://x/6.css']]);
+        expect(network('@import src("https://x/7.css"); a { b: url(https://x/8.png) }')).toEqual([['style', 'https://x/7.css'], ['image', 'https://x/8.png']]); // the rule after it is an image again
+        expect(network('@import layer(a) src("https://x/9.css");')).toEqual([]); // not the first token: no engine reads it as the URL
+        const dropped: [string, string][] = [];
+        expect(withoutNetworkReferences('@import src("https://x/3.css") layer(a);', cssReferences, dropped as any)).toBe('@import src("") layer(a);');
+        expect(dropped).toEqual([['style', 'https://x/3.css']]);
+        expect(cssReferences('@import src("x.css");', 'files')).toEqual([]); // the files scope is as it was
+    });
+
 });
 
 describe('registered stylesheets reach the view without their network URLs (files.ts, viewStylesheets)', () => {
