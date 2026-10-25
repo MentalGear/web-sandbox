@@ -3,8 +3,9 @@
 How `web-sandbox` is put together, on one page. It is the map; the [API reference](docs/API.md) is the surface, and the
 decision records say why each part is built the way it is: [ADR-002](docs/ADR-002-host-guest-broker.md) (the broker),
 [ADR-003](docs/ADR-003-lifecycle-and-liveness.md) (lifecycle and liveness), [ADR-004](docs/ADR-004-files-as-blob-urls.md)
-(files), [ADR-005](docs/ADR-005-strict-mode.md) (strict mode), [ADR-006](docs/ADR-006-fetch-bridge.md) (the fetch bridge)
-and [ADR-007](docs/ADR-007-typed-origins.md) (typed origins). What the design defends, and what it leaves to the
+(files), [ADR-005](docs/ADR-005-strict-mode.md) (strict mode), [ADR-006](docs/ADR-006-fetch-bridge.md) (the fetch bridge),
+[ADR-007](docs/ADR-007-typed-origins.md) (typed origins) and [ADR-008](docs/ADR-008-sealed-mode.md) (sealed mode, the
+default). What the design defends, and what it leaves to the
 embedder and the browser, is the [threat model](docs/THREAT-MODEL.md).
 
 The tables below are generated from the values the code declares (`bun run docs:gen`), so they cannot drift from it.
@@ -20,9 +21,11 @@ an inert base URL, no referrer) and puts the guest inside it, in a frame with an
 that is one fixed template per mode, to which the embedder adds only exact origins ([ADR-007](docs/ADR-007-typed-origins.md)).
 What differs between the modes is which realm the guest's code runs in, and whether it has a network:
 
-- **strict** (the default): in a worker. The frame around it, the view, runs one script, the library's own, admitted by its
-  hash, and draws what the worker renders. No guest script ever runs in a document.
-- **sealed**: strict mode's view and worker, with no network ([below](#sealed-mode-strict-mode-with-no-network)). Opt-in.
+- **sealed** (the default): strict mode's view and worker, with no network
+  ([below](#sealed-mode-strict-mode-with-no-network), [ADR-008](docs/ADR-008-sealed-mode.md)).
+- **strict**: in a worker. The frame around it, the view, runs one script, the library's own, admitted by its hash, and
+  draws what the worker renders. No guest script ever runs in a document. Named with `mode: 'strict'`; it adds the
+  network options, `origins` and `fetchBridge`.
 - **cooperative**: in the guest document, for content that cooperates, within a frozen list of documented limits.
 - **worker**: in a worker spawned by a frame with no guest markup. Frozen, to be folded into strict mode.
 
@@ -93,14 +96,14 @@ it is applied. See [ADR-005](docs/ADR-005-strict-mode.md) and, for the render pa
 
 ## Sealed mode: strict mode with no network
 
-<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e555ebd6070c7 -->
+<!-- describes: csp:sealed, options, inherited-context, budgets:channels sig:818e2dafbd6070c7 -->
 
-Sealed mode (`mode: 'sealed'`, opt-in) is strict mode's view and worker with no network
-([research 24](docs/research/24_sealed_mode/README.md)). It is not strict mode with its network options left empty: the
-sealed path never reaches the code that would read or open a network, so there is nothing to leave empty.
+Sealed mode, the default (no `mode`, or `mode: 'sealed'`), is strict mode's view and worker with no network
+([research 24](docs/research/24_sealed_mode/README.md), [ADR-008](docs/ADR-008-sealed-mode.md)). It is not strict mode
+with its network options left empty: the sealed path never reaches the code that would read or open a network, so there is nothing to leave empty.
 
-- **The config.** `origins` and `fetchBridge` are not sealed options: a sealed config that names either is refused whole,
-  with its reason, and their rules never run in sealed mode (`readIn`, `src/lib/config-schema.ts`). Those two rules are
+- **The config.** `origins` and `fetchBridge` are not sealed options: a sealed config that names either, with the mode
+  written or left out, is refused whole, with its reason, and their rules never run in sealed mode (`readIn`, `src/lib/config-schema.ts`). Those two rules are
   the only ones that read the host page (its origin and its site, from `src/lib/host-site.ts`, through `readHostPage` in
   `src/host.ts`, which `normaliseConfig` calls only when such a rule asks), so a sealed `setConfig()` reads nothing of it.
 - **The build.** `_prepareBuild` turns to sealed mode's own path, `_prepareSealedFrame`, before anything of the network

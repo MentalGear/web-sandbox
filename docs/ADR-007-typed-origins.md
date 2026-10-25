@@ -16,7 +16,7 @@ bad states unrepresentable, with one chokepoint; a list of removals is the oppos
 **The policy is a fixed template per mode. The embedder lists exact origins per kind of load, and nothing else.**
 
 ```js
-sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] } });
+sandbox.setConfig({ mode: 'strict', origins: { connect: ['https://api.example.com'], images: ['https://cdn.example.com'] } });
 ```
 
 1. **`origins: SandboxOrigins`.** Its keys are kinds of load, not directives: `connect` (connect-src), `images` (img-src),
@@ -48,12 +48,13 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['h
    that may name it ([ADR-004](ADR-004-files-as-blob-urls.md)). Strict mode never reads `scripts` and never adds `blob:` to
    `script-src`. `'unsafe-eval'` comes from `scriptUnsafe` only, in `script-src` only. The generator takes only `Origin`s and
    checks each against the origin pattern again, so even a cast cannot carry a source expression into a policy.
-4. **Mode-discriminated types.** `SandboxConfig` is a union keyed by `mode`: `StrictSandboxConfig` (`mode?: 'strict'`, the
-   default, `origins?: StrictSandboxOrigins`, which has no `scripts`), `CooperativeSandboxConfig` (`mode: 'cooperative'`) and
-   `WorkerSandboxConfig` (`mode: 'worker'`), the last two with `origins?: SandboxOrigins`. `scripts` in strict mode is a
-   compile error, and dropped with a warning at run time (a config from JSON). A config without `mode` is a strict config,
-   and at run time `origins` is parsed for the mode the merged config has, the default included, so `scripts` is dropped with
-   the strict warning. `setConfig(config: SandboxConfig)` takes the union directly (every option is optional, so `Partial<>`
+4. **Mode-discriminated types.** `SandboxConfig` is a union keyed by `mode`: `SealedSandboxConfig` (`mode?: 'sealed'`, the
+   default, with no `origins` and no `fetchBridge`: [ADR-008](ADR-008-sealed-mode.md)), `StrictSandboxConfig`
+   (`mode: 'strict'`, `origins?: StrictSandboxOrigins`, which has no `scripts`), `CooperativeSandboxConfig`
+   (`mode: 'cooperative'`) and `WorkerSandboxConfig` (`mode: 'worker'`), the last two with `origins?: SandboxOrigins`.
+   `scripts` in strict mode is a compile error, and dropped with a warning at run time (a config from JSON). A config
+   without `mode` is a sealed config, so one that names `origins` is a compile error, and refused at run time; `origins`
+   is parsed for the mode the config has, so `scripts` is dropped with the strict warning. `setConfig(config: SandboxConfig)` takes the union directly (every option is optional, so `Partial<>`
    is not needed). A config whose mode is chosen at run time type-checks when its `origins` is a `StrictSandboxOrigins`:
    TypeScript then checks it against each mode. The playground's presets are typed that way (`PresetRules`), since the
    playground and the specs run a preset in any mode.

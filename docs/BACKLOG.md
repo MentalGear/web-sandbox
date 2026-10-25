@@ -314,8 +314,9 @@ board is **clean** (owner, 2026-10-21) when none of a pass's confirmed findings 
 any severity, a documentation gap that leads embedders into such a leak included. DoS and availability-only findings
 are backlogged and do not count against a pass. Docs drift, test gaps and correctness bugs with no data effect do not
 count either, and are fixed right away where that makes sense. The board clears after **two consecutive clean passes**.
-**Scope (owner, 2026-10-21): strict mode first.** Strict mode at its default configuration, with its two opt-ins
-(`origins` and `fetchBridge`), is the supported baseline: only findings that reach it count toward a clean pass.
+**Scope (owner, 2026-10-21; replaced on 2026-10-24 by sealed mode, below): strict mode first.** Strict mode at its
+default configuration, with its two opt-ins (`origins` and `fetchBridge`), was the supported baseline: only findings
+that reached it counted toward a clean pass.
 Findings that reach only cooperative or worker mode are fixed when cheap, and otherwise documented as those modes'
 limits. Findings are
 fixed as before: by class, each naming its class and extending its chokepoint and structural test (CONTRIBUTING.md,
@@ -413,9 +414,13 @@ verifiers' verdicts and how each finding was resolved are kept in
 
 **After pass 4: the board's scope is sealed mode (owner, 2026-10-24; D5).** Strict mode's network stays as the two fixes
 above leave it, but data findings that reach only its opt-ins (`origins`, `fetchBridge`) no longer count against a clean
-pass: they are fixed or documented. Sealed mode, strict with no network at all ([research 24](research/24_sealed_mode/README.md)),
-exists as an opt-in mode and becomes the default in the last step of the plan (PR 4). **Pass 5 runs after that**, on sealed
-mode at its default, and it is the first pass of the new scope. The brief for pass 5 is written with that PR.
+pass: they are fixed or documented. Sealed mode, strict with no network at all ([research 24](research/24_sealed_mode/README.md),
+[ADR-008](ADR-008-sealed-mode.md)), is the default: a config that names no `mode` is sealed, and one with no `mode` that
+names `origins` or `fetchBridge` is refused with a reason that names `mode: 'strict'`. **Pass 5 reviews sealed mode, the
+new default**, at its default configuration with its own opt-ins (`allowAnimations`, `allowAutoplay`, `guestWrites`,
+`autoResize`, `watchdogTimeout`, `workerExecutionTimeout`, `capabilities`, `callLimits`; `scriptUnsafe` stays out of
+scope), and it is the first pass of the new scope. Strict mode's network options are a second tier: a finding there is
+fixed or documented as a limit of those options, and does not count against the pass.
 
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
 
