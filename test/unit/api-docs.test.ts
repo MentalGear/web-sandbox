@@ -85,7 +85,7 @@ function interfaceKeys(file: string, name: string): string[] {
     const source = read(file);
     const alias = source.indexOf(`export type ${name} = `);
     if (alias >= 0) return [...new Set([...source.slice(alias, source.indexOf('\n);', alias)).matchAll(/(?:^|[{;])\s*(\w+)\??:/gm)].map(match => match[1]!))];
-    const start = source.search(new RegExp(`export interface ${name}(?: extends \\w+)? \\{`));
+    const start = source.search(new RegExp(`export interface ${name}(?: extends \\w+(?:, \\w+)*)? \\{`));
     if (start < 0) throw new Error(`${file} has no interface ${name}`);
     const body = source.slice(start, source.indexOf('\n}', start));
     const keys: string[] = [];
@@ -136,7 +136,7 @@ describe('docs/API.md lists the public surface', () => {
 
     it('every config option of the schema is one of the option interfaces, and no other', () => {
         const documented = (Object.keys(CONFIG_SCHEMA) as (keyof typeof CONFIG_SCHEMA)[]).filter(name => !('removed' in CONFIG_SCHEMA[name]));
-        const keys = ['SandboxConfigOptions', 'CooperativeSandboxConfig', 'WorkerSandboxConfig', 'StrictSandboxConfig'].flatMap(name => interfaceKeys('src/host.ts', name));
+        const keys = ['SandboxConfigOptions', 'NetworkSandboxOptions', 'SealedSandboxConfig', 'CooperativeSandboxConfig', 'WorkerSandboxConfig', 'StrictSandboxConfig'].flatMap(name => interfaceKeys('src/host.ts', name));
         expect(sorted(documented)).toEqual(sorted(keys));
         expect(sorted(rowKeys(section('## Configuration', true)))).toEqual(sorted(keys));
     });

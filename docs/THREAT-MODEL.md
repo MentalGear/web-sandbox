@@ -31,23 +31,23 @@ fragment) and, as far as engines allow, its origin; the host page's thread (avai
 methods and whatever data it hands the guest (which must leave only to listed origins); other sandboxes' state.
 
 **What the library promises the embedder, per mode.** Strict mode is the default and is for content you do not trust;
-cooperative mode is for content that cooperates, with a frozen list of limits ([S44](BACKLOG.md#s44)); worker mode is
-frozen ([S49](BACKLOG.md#s49)).
+sealed mode (`mode: 'sealed'`) is strict mode with no network; cooperative mode is for content that cooperates, with a
+frozen list of limits ([S44](BACKLOG.md#s44)); worker mode is frozen ([S49](BACKLOG.md#s49)).
 
-| Promise | `strict` (default) | `cooperative` | `worker` |
-| :--- | :--- | :--- | :--- |
-| Guest code cannot read or change the host page's DOM, scripts, storage, Service Workers or `document.cookie` | ✓ | ✓ | ✓ |
-| No guest script runs in any document | ✓ | — (by design) | ✓ (the frame runs only the library's bootstrap) |
-| Guest code cannot navigate the host page, the tab or its own frame | ✓ | ✓, except the user's modifier clicks and the guest's synthesized ones on a link ([R1:R2-2](archive/reviews/REVIEW-ROUND-1-2026-10-15.md#r1-r2-2)) and session-history entries | ✓ |
-| The guest reaches the network only through the policy (`origins`) or the fetch bridge | ✓ | ✓, except frames and workers the guest creates, WebKit's preconnect and the pre-policy window ([S8](BACKLOG.md#s8)) | ✓ |
-| A `fetch()`, `XMLHttpRequest` or `WebSocket` the policy does not admit fails, and is reported, the same on every engine | ✓ | ✓, except frames and workers the guest creates | ✓ |
-| `fetch()` and `XMLHttpRequest` carry no cookie | ✓ | ✓, except frames and workers the guest creates | ✓ |
-| The loads of rendered markup and CSS carry no cookie | ✓ (CORS without credentials; no network URL in CSS or a poster) | — (the engine's) | ✓ (no document) |
-| No request carries a cookie, on any engine | ✓ (no cookie carrier: the above, and no `WebSocket`) | — ([the carriers](#cookie-carriers)) | — (a `WebSocket` handshake) |
-| Nothing the guest reads reveals the host page's URL | ✓ | partly: [S15](archive/backlog/BACKLOG-done.md#s15), [S17](archive/backlog/BACKLOG-done.md#s17), [S18](archive/backlog/BACKLOG-done.md#s18) | ✓ |
-| The host can always stop the guest | ✓, but `terminate()` waits for a stall of the view where it shares the host page's thread, and for reports already queued ([Availability](#availability)) | only where the frame has its own process | ✓, but it waits for reports already queued |
-| The host page's availability | a stated bound where the view shares its thread ([Availability](#availability)) | none where the frame shares its thread | the worker is off the thread; Firefox's rejection reports are bounded |
-| `violation` reports cannot be forged | the view's (`source: 'view'`) | no | no |
+| Promise | `strict` (default) | `sealed` | `cooperative` | `worker` |
+| :--- | :--- | :--- | :--- | :--- |
+| Guest code cannot read or change the host page's DOM, scripts, storage, Service Workers or `document.cookie` | ✓ | ✓ | ✓ | ✓ |
+| No guest script runs in any document | ✓ | ✓ | — (by design) | ✓ (the frame runs only the library's bootstrap) |
+| Guest code cannot navigate the host page, the tab or its own frame | ✓ | ✓ | ✓, except the user's modifier clicks and the guest's synthesized ones on a link ([R1:R2-2](archive/reviews/REVIEW-ROUND-1-2026-10-15.md#r1-r2-2)) and session-history entries | ✓ |
+| The guest reaches the network only through the policy (`origins`) or the fetch bridge | ✓ | stronger: no network (the view's fetch directives are `'none'` or `blob:` for registered files, `connect-src 'none'`, the request gate admits nothing, and a config that names `origins` or `fetchBridge` is refused) | ✓, except frames and workers the guest creates, WebKit's preconnect and the pre-policy window ([S8](BACKLOG.md#s8)) | ✓ |
+| A `fetch()`, `XMLHttpRequest` or `WebSocket` the policy does not admit fails, and is reported, the same on every engine | ✓ | ✓ (every one) | ✓, except frames and workers the guest creates | ✓ |
+| `fetch()` and `XMLHttpRequest` carry no cookie | ✓ | N/A: none leaves | ✓, except frames and workers the guest creates | ✓ |
+| The loads of rendered markup and CSS carry no cookie | ✓ (CORS without credentials; no network URL in CSS or a poster) | N/A: `blob:` loads only | — (the engine's) | ✓ (no document) |
+| No request carries a cookie, on any engine | ✓ (no cookie carrier: the above, and no `WebSocket`) | ✓ (no request leaves) | — ([the carriers](#cookie-carriers)) | — (a `WebSocket` handshake) |
+| Nothing the guest reads reveals the host page's URL | ✓ | ✓ | partly: [S15](archive/backlog/BACKLOG-done.md#s15), [S17](archive/backlog/BACKLOG-done.md#s17), [S18](archive/backlog/BACKLOG-done.md#s18) | ✓ |
+| The host can always stop the guest | ✓, but `terminate()` waits for a stall of the view where it shares the host page's thread, and for reports already queued ([Availability](#availability)) | as strict | only where the frame has its own process | ✓, but it waits for reports already queued |
+| The host page's availability | a stated bound where the view shares its thread ([Availability](#availability)) | as strict | none where the frame shares its thread | the worker is off the thread; Firefox's rejection reports are bounded |
+| `violation` reports cannot be forged | the view's (`source: 'view'`) | the view's (`source: 'view'`) | no | no |
 
 ## Trust boundaries
 

@@ -2,7 +2,7 @@ import { test as base, expect, type Page } from '@playwright/test';
 import type { SandboxConfig, SandboxConfigOptions } from '@src/host';
 import type { SandboxOrigins } from '@src/lib/csp/origins';
 import type { SandboxViolation } from '@src/lib/violation';
-import type { FetchRecord } from '@src/lib/fetch-bridge';
+import type { FetchBridgeConfig, FetchRecord } from '@src/lib/fetch-bridge';
 import { E2E_ORIGIN, E2E_PORT } from './server';
 
 // The e2e server's origin: the one serving this checkout (server.ts; 4444 in CI, a port of the checkout's own locally).
@@ -30,7 +30,7 @@ export const BASELINE_CONFIG: SandboxConfig = {
  * SandboxConfig, which narrows each mode's options (R1:R3-6): specs also mount what a mode drops at run
  * time, to assert that it is dropped.
  */
-export type MountConfig = SandboxConfigOptions & { mode?: 'strict' | 'cooperative' | 'worker'; origins?: SandboxOrigins };
+export type MountConfig = SandboxConfigOptions & { mode?: 'strict' | 'sealed' | 'cooperative' | 'worker'; origins?: SandboxOrigins; fetchBridge?: FetchBridgeConfig };
 
 export type MountResult = 'ready' | 'terminated';
 
