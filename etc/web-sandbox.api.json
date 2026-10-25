@@ -2007,7 +2007,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#watchdogTimeout:member",
-              "docComment": "/**\n * Terminates a guest that stops answering for this long, in ms; anything but a finite number above 0 is off. It\n * starts at `ready`. Off by default because legitimate synchronous work longer than the budget is stopped too.\n * In cooperative mode it bounds a looping guest only where the browser runs the frame in its own process.\n *\n * @defaultValue `0` (off)\n */\n",
+              "docComment": "/**\n * Terminates a guest that stops answering for this long, in ms; anything but a finite number above 0 is off, with a\n * warning unless it is `0`. It starts at `ready`. Off by default because legitimate synchronous work longer than the budget is stopped too.\n * In cooperative mode it bounds a looping guest only where the browser runs the frame in its own process.\n *\n * @defaultValue `0` (off)\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -2034,7 +2034,7 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SandboxConfigOptions#workerExecutionTimeout:member",
-              "docComment": "/**\n * A deadline in ms for each `execute()`, in worker, strict and sealed mode. At the deadline the guest's event\n * loop must be free: the element pings the guest, and if no answer arrives within\n * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).\n * Anything but a finite number above 0 is off. Not read in cooperative mode.\n *\n * @defaultValue `0` (off)\n */\n",
+              "docComment": "/**\n * A deadline in ms for each `execute()`, in worker, strict and sealed mode. At the deadline the guest's event\n * loop must be free: the element pings the guest, and if no answer arrives within\n * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).\n * Anything but a finite number above 0 is off, with a warning unless it is `0`. Not read in cooperative mode.\n *\n * @defaultValue `0` (off)\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -3510,7 +3510,7 @@
         {
           "kind": "Variable",
           "canonicalReference": "web-sandbox!VIEW_INPUT_IN_FLIGHT:var",
-          "docComment": "/**\n * The most batches of the view's events the worker has not acknowledged yet (research 23). The worker's prelude answers\n * each batch with VIEW_EVENT_ACK once the handlers it dispatched to have returned, and the view sends the continuous\n * events it coalesced (VIEW_CONTINUOUS_EVENT_TYPES) only while fewer than this many are unacknowledged: a guest whose\n * handler blocks gets the latest state when it returns, and neither the worker's queue nor the host page's thread grows\n * with a stuck guest. A discrete event is posted at once, whatever is in flight: it is bounded by the user's own input.\n */\n",
+          "docComment": "/**\n * The most batches of the view's events the worker has not acknowledged yet (research 23). The worker's prelude answers\n * each batch with VIEW_EVENT_ACK once the handlers it dispatched to have returned, and the view sends the continuous\n * events it coalesced (VIEW_CONTINUOUS_EVENT_TYPES) only while fewer than this many are unacknowledged: a guest whose\n * handler blocks gets the latest state when it returns, and neither the worker's queue nor the host page's thread grows\n * with a stuck guest. A discrete event is posted at once, whatever is in flight. The user's own input bounds it, except\n * `focusin` and `focusout`, which the guest raises too with `set({ focus })` (applySet), one `set` a flush, each\n * charged to the time budget (BD4:LIM-4).\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
