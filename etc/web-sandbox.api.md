@@ -17,12 +17,11 @@ export interface CallLimits {
 }
 
 // @public
-export interface CooperativeSandboxConfig extends SandboxConfigOptions {
+export interface CooperativeSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
     allowAnimations?: never;
     allowAutoplay?: never;
     entry?: never;
     mode: 'cooperative';
-    origins?: SandboxOrigins;
     workerExecutionTimeout?: never;
 }
 
@@ -137,6 +136,12 @@ export const LOG_MAX_STRING = 65536;
 export const MAX_INBOUND_IN_FLIGHT = 256;
 
 // @public
+export interface NetworkSandboxOptions {
+    fetchBridge?: FetchBridgeConfig;
+    origins?: SandboxOrigins;
+}
+
+// @public
 export interface RpcError extends Error {
     code: RpcErrorCode;
 }
@@ -157,7 +162,7 @@ export type SafeCapability = (typeof SAFE_CAPABILITIES)[number];
 export type SandboxCapability = SafeCapability | (typeof UNSAFE_SANDBOX_FLAGS)[number];
 
 // @public
-export type SandboxConfig = StrictSandboxConfig | CooperativeSandboxConfig | WorkerSandboxConfig;
+export type SandboxConfig = StrictSandboxConfig | SealedSandboxConfig | CooperativeSandboxConfig | WorkerSandboxConfig;
 
 // @public
 export interface SandboxConfigOptions {
@@ -167,7 +172,6 @@ export interface SandboxConfigOptions {
     callLimits?: CallLimits;
     capabilities?: SafeCapability[];
     entry?: string;
-    fetchBridge?: FetchBridgeConfig;
     guestWrites?: boolean;
     hostContentSecurityPolicy?: string | false;
     html?: string;
@@ -230,7 +234,15 @@ export interface SandboxViolation {
 }
 
 // @public
-export interface StrictSandboxConfig extends SandboxConfigOptions {
+export interface SealedSandboxConfig extends SandboxConfigOptions {
+    fetchBridge?: never;
+    mode: 'sealed';
+    origins?: never;
+    unsafeCapabilities?: never;
+}
+
+// @public
+export interface StrictSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
     mode?: 'strict';
     origins?: StrictSandboxOrigins;
     unsafeCapabilities?: never;
@@ -330,14 +342,13 @@ export interface WebSandboxEventMap extends HTMLElementEventMap {
 }
 
 // @public
-export interface WorkerSandboxConfig extends SandboxConfigOptions {
+export interface WorkerSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
     allowAnimations?: never;
     allowAutoplay?: never;
     autoResize?: never;
     entry?: never;
     html?: never;
     mode: 'worker';
-    origins?: SandboxOrigins;
 }
 
 // (No @packageDocumentation comment for this package)

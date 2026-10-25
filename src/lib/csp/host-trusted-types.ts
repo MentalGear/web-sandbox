@@ -22,7 +22,7 @@
  */
 import { splitPolicies } from './host-connect';
 
-export type TrustedTypesMode = 'strict' | 'cooperative' | 'worker';
+export type TrustedTypesMode = 'strict' | 'sealed' | 'cooperative' | 'worker';
 
 /** What a policy list says of Trusted Types. */
 export interface TrustedTypesStance {
