@@ -47,5 +47,8 @@
     "typescript": "^7.0.2",
     "vite": "^6.0.0",
     "vitest": "^4.0.18"
+  },
+  "patchedDependencies": {
+    "playwright-core@1.58.1": "patches/playwright-core@1.58.1.patch"
   }
 }

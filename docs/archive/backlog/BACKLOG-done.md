@@ -1973,6 +1973,27 @@ by the tag: no budget decision reads `Symbol.toStringTag`. Tests: `test/unit/egr
 shapes, the source order), and the N-1 rows with a tagged error and a tagged `Error.prototype` in
 `test/e2e/error-cost-and-queued-calls.spec.ts`.
 
+### <a id="s86"></a>S86 · Playwright's Firefox driver crashes on a navigation commit for a frame it has not seen attach — ✅ **done** (P2 · S · low, test tooling)
+
+*Seen once in a full Firefox run (2026-10-25, sealed PR 4's branch; 160 of 160 when the case was repeated alone).* The
+case `directive-matrix.spec.ts` › strict mode › headers of the host page › `cross-origin-opener-policy: same-origin`
+failed with `TypeError: Cannot read properties of undefined (reading 'childFrames')` and no stack in the test, during the
+300 ms wait after `setConfig()` (`test/e2e/realistic-host.ts`, `configure`). The cause is in Playwright 1.58.1, not the
+library: `FrameManager.frameCommittedNewDocumentNavigation` (`playwright-core/lib/server/frames.js`) looks the frame up by
+id and calls `removeChildFramesRecursively(frame)` without checking it, so a navigation commit that reaches the driver
+before that frame's attach crashes the test worker. The page is a COOP page, which Firefox puts in a browsing context
+group of its own; `setConfig()` detaches and recreates the sandbox's frames at once, and under load the driver's events
+for a new frame can arrive in that order. `realistic-host.ts` already leaves the harness page for `about:blank` before a
+COOP page for the same class of driver error at navigation; this one is later, at a frame's creation.
+
+**Fixed (2026-10-25)** by the repo's one patch of its test tooling, `patches/playwright-core@1.58.1.patch`
+(`patchedDependencies` in package.json, applied by `bun install`): `frameCommittedNewDocumentNavigation` returns early for
+a frame the manager does not know, whose attach follows. The newest release then, 1.64.1, still has the unguarded lookup,
+so an upgrade does not remove it. `test/unit/playwright-patch.test.ts` pins it: an unknown frame's commit does not throw
+(it fails without the patch), a known frame still commits, and the patch names the installed version, so an upgrade
+that drops it fails there. The case was neither retried nor skipped: it was seen twice in full Firefox runs on the sealed
+default's branch (#83), once in its CI.
+
 ### <a id="t6"></a>T6 · Two CPU-heavy unit tests failed once on a loaded machine — ✅ **done**
 
 `review-round-2.test.ts` (C-7: past the comparison cap the sandbox rebuilds) and `review-round-5.test.ts` (5:L-1: the
