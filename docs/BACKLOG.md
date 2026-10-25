@@ -28,6 +28,7 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S83](#s83) | ⏳ open (P2 · S) · high (reviewer; medium by the availability rule) | A rejected `Symbol` or `BigInt` is counted as 0 characters by the uncaught budget; on Firefox the host page stalls (S74 board BD3:LIM-1, an incomplete part of the fix of BD1:LIM-1) |
 | [S84](#s84) | ⏳ open (P2 · S) · medium | The strict view's `VIEW_LISTEN` has no flow control: an `on()`/`off()` loop is uncounted (S74 board BD4:LIM-3; availability only) |
 | [S85](#s85) | ⏳ open (P3 · S) · low | The strict view's input outbox scans every slot on each event (S74 board BD4:LIM-5; availability only) |
+| [S86](#s86) | ⏳ open (P2 · S) · low | Playwright's Firefox driver crashes on a navigation commit for a frame it has not seen attach (a COOP host page, under load; test tooling) |
 | [D1](#bl-d1) | 🟡 ready except the licence | An installable package; waits for H5's `LICENSE` |
 | [H5](#bl-h5) | 🟡 partly done | Missing repo basics: the `LICENSE` is the owner's choice |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
@@ -314,8 +315,9 @@ board is **clean** (owner, 2026-10-21) when none of a pass's confirmed findings 
 any severity, a documentation gap that leads embedders into such a leak included. DoS and availability-only findings
 are backlogged and do not count against a pass. Docs drift, test gaps and correctness bugs with no data effect do not
 count either, and are fixed right away where that makes sense. The board clears after **two consecutive clean passes**.
-**Scope (owner, 2026-10-21): strict mode first.** Strict mode at its default configuration, with its two opt-ins
-(`origins` and `fetchBridge`), is the supported baseline: only findings that reach it count toward a clean pass.
+**Scope (owner, 2026-10-21; replaced on 2026-10-24 by sealed mode, below): strict mode first.** Strict mode at its
+default configuration, with its two opt-ins (`origins` and `fetchBridge`), was the supported baseline: only findings
+that reached it counted toward a clean pass.
 Findings that reach only cooperative or worker mode are fixed when cheap, and otherwise documented as those modes'
 limits. Findings are
 fixed as before: by class, each naming its class and extending its chokepoint and structural test (CONTRIBUTING.md,
@@ -413,9 +415,13 @@ verifiers' verdicts and how each finding was resolved are kept in
 
 **After pass 4: the board's scope is sealed mode (owner, 2026-10-24; D5).** Strict mode's network stays as the two fixes
 above leave it, but data findings that reach only its opt-ins (`origins`, `fetchBridge`) no longer count against a clean
-pass: they are fixed or documented. Sealed mode, strict with no network at all ([research 24](research/24_sealed_mode/README.md)),
-exists as an opt-in mode and becomes the default in the last step of the plan (PR 4). **Pass 5 runs after that**, on sealed
-mode at its default, and it is the first pass of the new scope. The brief for pass 5 is written with that PR.
+pass: they are fixed or documented. Sealed mode, strict with no network at all ([research 24](research/24_sealed_mode/README.md),
+[ADR-008](ADR-008-sealed-mode.md)), is the default: a config that names no `mode` is sealed, and one with no `mode` that
+names `origins` or `fetchBridge` is refused with a reason that names `mode: 'strict'`. **Pass 5 reviews sealed mode, the
+new default**, at its default configuration with its own opt-ins (`allowAnimations`, `allowAutoplay`, `guestWrites`,
+`autoResize`, `watchdogTimeout`, `workerExecutionTimeout`, `capabilities`, `callLimits`; `scriptUnsafe` stays out of
+scope), and it is the first pass of the new scope. Strict mode's network options are a second tier: a finding there is
+fixed or documented as a limit of those options, and does not count against the pass.
 
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
 
@@ -672,6 +678,24 @@ burst is a host stall larger than one apply of the same elements. Availability o
 **Fix, by construction.** Key the slots with a `Map` on (type, key, unit) that keeps insertion order, so `put` is O(1). Unit
 test: 10 000 puts with distinct keys complete within a bound that a linear scan misses, and the outbox's order and
 coalescing are unchanged (the existing property test).
+
+### <a id="s86"></a>S86 · Playwright's Firefox driver crashes on a navigation commit for a frame it has not seen attach — ⏳ **open** (P2 · S · low, test tooling)
+
+*Seen once in a full Firefox run (2026-10-25, sealed PR 4's branch; 160 of 160 when the case was repeated alone).* The
+case `directive-matrix.spec.ts` › strict mode › headers of the host page › `cross-origin-opener-policy: same-origin`
+failed with `TypeError: Cannot read properties of undefined (reading 'childFrames')` and no stack in the test, during the
+300 ms wait after `setConfig()` (`test/e2e/realistic-host.ts`, `configure`). The cause is in Playwright 1.58.1, not the
+library: `FrameManager.frameCommittedNewDocumentNavigation` (`playwright-core/lib/server/frames.js`) looks the frame up by
+id and calls `removeChildFramesRecursively(frame)` without checking it, so a navigation commit that reaches the driver
+before that frame's attach crashes the test worker. The page is a COOP page, which Firefox puts in a browsing context
+group of its own; `setConfig()` detaches and recreates the sandbox's frames at once, and under load the driver's events
+for a new frame can arrive in that order. `realistic-host.ts` already leaves the harness page for `about:blank` before a
+COOP page for the same class of driver error at navigation; this one is later, at a frame's creation.
+
+**Fix.** A `bun patch` of `playwright-core` that returns early from `frameCommittedNewDocumentNavigation` when the frame is
+unknown (the frame's own attach follows), with a unit test of the patched function; or the Playwright release that fixes
+it upstream (check its changelog first, and drop the patch then). No retry and no skip of the case: it tests a property
+of the library, and the crash is the driver's.
 
 ---
 

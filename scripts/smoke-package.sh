@@ -42,14 +42,17 @@ bun add -d typescript >/dev/null
 cat > consumer.ts <<'TS'
 import { defineWebSandbox, WebSandbox, SAFE_CAPABILITIES, type SandboxConfig } from 'web-sandbox';
 
-const strict: SandboxConfig = { html: '<p>hi</p>', origins: { images: ['https://cdn.example'] } }; // no mode: strict, the default
+const sealed: SandboxConfig = { html: '<p>hi</p>' }; // no mode: sealed, the default
+const strict: SandboxConfig = { mode: 'strict', html: '<p>hi</p>', origins: { images: ['https://cdn.example'] } };
+// @ts-expect-error no mode is sealed mode, which has no network: origins need mode: 'strict'
+const unnamed: SandboxConfig = { html: '<p>hi</p>', origins: { images: ['https://cdn.example'] } };
 const config: SandboxConfig = { mode: 'cooperative', capabilities: ['allow-scripts'], unsafeCapabilities: ['fullscreen'] };
 // @ts-expect-error 'iframe' was renamed 'cooperative'
 const renamed: SandboxConfig = { mode: 'iframe' };
 // @ts-expect-error strict mode's origins have no scripts: were the package's types `any`, this line would not be an error
 const scripted: SandboxConfig = { mode: 'strict', origins: { scripts: ['https://cdn.example'] } };
 const element: typeof WebSandbox = defineWebSandbox('consumer-sandbox');
-console.log(element.name, SAFE_CAPABILITIES.length, strict, config, renamed, scripted);
+console.log(element.name, SAFE_CAPABILITIES.length, sealed, strict, unnamed, config, renamed, scripted);
 TS
 cat > tsconfig.json <<'JSON'
 { "compilerOptions": { "target": "ESNext", "module": "Preserve", "moduleResolution": "bundler", "lib": ["ESNext", "DOM"], "strict": true, "noEmit": true, "skipLibCheck": false }, "include": ["consumer.ts"] }

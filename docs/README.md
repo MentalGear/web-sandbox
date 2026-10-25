@@ -31,8 +31,8 @@ Each ADR states its decision as it stands; how it changed is in [the archive](ar
 - [**ADR-004 — Files are guest-realm blob URLs**](ADR-004-files-as-blob-urls.md) — why the
   virtual-files Service Worker was removed, how registered files reach the guest, and the
   alternatives rejected.
-- [**ADR-005 — Strict mode**](ADR-005-strict-mode.md) — the default mode: guest logic in a worker, a view that runs
-  only the library's hash-admitted bootstrap: the guarantees, the renderer, flow control, the probe findings that
+- [**ADR-005 — Strict mode**](ADR-005-strict-mode.md) — guest logic in a worker, a view that runs
+  only the library's hash-admitted bootstrap (the default, sealed mode, is it with no network): the guarantees, the renderer, flow control, the probe findings that
   shaped it, the residuals, and why cooperative mode's limits are a frozen list.
 - [**ADR-006 — A host-mediated fetch bridge**](ADR-006-fetch-bridge.md) — `sandboxFetch()`: why a
   reserved broker method, the bridge discipline (no credentials, no redirects, exact origins, caps), the
@@ -40,6 +40,9 @@ Each ADR states its decision as it stands; how it changed is in [the archive](ar
 - [**ADR-007 — Typed origins**](ADR-007-typed-origins.md) — the guest policy is a fixed template per mode and the
   embedder lists exact origins per kind of load (`origins`); why that replaced the raw-CSP `connectionsAllowed` and
   its guard rails, the accepted origin grammar, what became unrepresentable.
+- [**ADR-008 — Sealed mode**](ADR-008-sealed-mode.md) — the default has no network: strict mode's view and worker with
+  no network code on its path, a config with no mode that names `origins` or `fetchBridge` refused with a reason that
+  names `mode: 'strict'`, and the review board's scope.
 
 ## Planning
 

@@ -7,12 +7,13 @@ import { viewBootstrapHash } from '@src/lib/in-sandbox-view';
 import { reasonText, TERMINATION_REASONS } from '@src/lib/reasons';
 
 /**
- * Sealed mode (docs/research/24_sealed_mode): strict mode with no network, named with `mode: 'sealed'`. "No network"
- * is a construction, held here at three places: the type (T1), the schema (T2) and the view's policy template (T3).
- * A sealed config that names `origins` or `fetchBridge` is refused with its reason, never read as strict, never stripped.
+ * Sealed mode (docs/research/24_sealed_mode, ADR-008): strict mode with no network, and the default. "No network" is a
+ * construction, held here at three places: the type (T1), the schema (T2) and the view's policy template (T3). A sealed
+ * config, with the mode written or left out, that names `origins` or `fetchBridge` is refused with its reason, never
+ * read as strict, never stripped.
  */
 
-const REASON = "origins and fetchBridge open the network, which sealed mode does not have: set `mode: 'strict'`";
+const REASON = "origins and fetchBridge open the network, which sealed mode (the default) does not have: set `mode: 'strict'`";
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
 const wrapperOf = (el: HTMLElement) => el.shadowRoot!.querySelector('iframe');
@@ -47,11 +48,25 @@ describe('T1: the types: a sealed config cannot name a network option', () => {
         const sealed: SealedSandboxConfig = { mode: 'sealed', html: '<p>hi</p>', entry: 'main.js', guestWrites: true };
         const asUnion: SandboxConfig = { mode: 'sealed', allowAnimations: true };
         const strict: SandboxConfig = { mode: 'strict', origins: { images: ['https://cdn.example'] }, fetchBridge: { allow: ['https://api.example'] } };
-        // the default is still strict: a config without a mode is a strict config, and takes both
-        const noMode: StrictSandboxConfig = { origins: { connect: ['https://api.example'] }, fetchBridge: { allow: [] } };
+        const typedStrict: StrictSandboxConfig = { mode: 'strict', origins: { connect: ['https://api.example'] }, fetchBridge: { allow: [] } };
         const cooperative: SandboxConfig = { mode: 'cooperative', origins: { scripts: ['https://cdn.example'] }, fetchBridge: { allow: [] } };
         const worker: SandboxConfig = { mode: 'worker', fetchBridge: { allow: [] } };
-        expect([sealedOrigins, sealedBridge, typedOrigins, spread, sealed, asUnion, strict, noMode, cooperative, worker]).toHaveLength(10);
+        expect([sealedOrigins, sealedBridge, typedOrigins, spread, sealed, asUnion, strict, typedStrict, cooperative, worker]).toHaveLength(10);
+    });
+
+    it('sealed is the default: a config without a mode is a sealed config, so it names no network option either', () => {
+        // @ts-expect-error no mode is sealed mode: no origins
+        const noModeOrigins: SandboxConfig = { origins: { images: ['https://cdn.example'] } };
+        // @ts-expect-error no mode is sealed mode: no fetchBridge
+        const noModeBridge: SandboxConfig = { fetchBridge: { allow: ['https://api.example'] } };
+        // @ts-expect-error nor both, nor with other options
+        const noModeBoth: SandboxConfig = { html: '<p>hi</p>', origins: {}, fetchBridge: { allow: [] } };
+        // @ts-expect-error strict mode must be named
+        const unnamedStrict: StrictSandboxConfig = { origins: { connect: ['https://api.example'] } };
+        const empty: SealedSandboxConfig = {};
+        const html: SealedSandboxConfig = { html: '<p>hi</p>', entry: 'main.js' };
+        const asUnion: SandboxConfig = {};
+        expect([noModeOrigins, noModeBridge, noModeBoth, unnamedStrict, empty, html, asUnion]).toHaveLength(7);
     });
 });
 
@@ -74,11 +89,13 @@ describe('T2: the schema: no network option reaches sealed mode', () => {
         ['fetchBridge: null', { fetchBridge: null }],
         ['both', { origins: { connect: ['https://api.example'] }, fetchBridge: { allow: [] } }],
     ])('a sealed config that names %s is refused with the reason, and nothing of it is read', (_, network) => {
-        const { value, warnings, refusal } = normaliseConfig({ mode: 'sealed', capabilities: 5, ...network }, { hostOrigin: 'https://app.example', hostSites: ['https://app.example'] });
-        expect(value).toBeNull();
-        expect(warnings).toEqual([]); // refused before any option is read: not even the bad `capabilities` is said
-        expect(refusal).toBeInstanceOf(Error);
-        expect((refusal as { reason: string }).reason).toBe(REASON);
+        for (const mode of [{ mode: 'sealed' }, {}, { mode: undefined }]) {
+            const { value, warnings, refusal } = normaliseConfig({ ...mode, capabilities: 5, ...network }, { hostOrigin: 'https://app.example', hostSites: ['https://app.example'] });
+            expect(value, JSON.stringify(mode)).toBeNull();
+            expect(warnings).toEqual([]); // refused before any option is read: not even the bad `capabilities` is said
+            expect(refusal).toBeInstanceOf(Error);
+            expect((refusal as { reason: string }).reason).toBe(REASON);
+        }
     });
 
     it('the reason is the registry\'s, decided by the config, and its text is the one docs/API.md lists', () => {
@@ -86,10 +103,11 @@ describe('T2: the schema: no network option reaches sealed mode', () => {
         expect(TERMINATION_REASONS.sealedNetwork.decidedBy).toBe('config');
     });
 
-    it('a network option left undefined names nothing; outside sealed mode, and with no mode (still strict), both are taken', () => {
+    it('a network option left undefined names nothing; outside sealed mode both are taken', () => {
         const context = { hostOrigin: 'https://app.example', hostSites: ['https://app.example'] };
         expect(normaliseConfig({ mode: 'sealed', origins: undefined, fetchBridge: undefined }, context).refusal).toBeNull();
-        for (const mode of [undefined, 'strict', 'cooperative', 'worker']) {
+        expect(normaliseConfig({ origins: undefined, fetchBridge: undefined }, context).refusal).toBeNull();
+        for (const mode of ['strict', 'cooperative', 'worker']) {
             const { value, refusal } = normaliseConfig({ mode, origins: { images: ['https://cdn.example'] }, fetchBridge: { allow: ['https://api.example'] } }, context);
             expect(refusal, String(mode)).toBeNull();
             expect(value!.origins.images, String(mode)).toEqual(['https://cdn.example']);
@@ -180,14 +198,16 @@ describe('T3: sealedViewPolicy can carry no network source', () => {
 
 describe('the refusal, at the element: terminated at once with the reason', () => {
     it.each([
-        ['origins', { origins: { images: ['https://cdn.example'] } }],
-        ['fetchBridge', { fetchBridge: { allow: ['https://api.example'] } }],
-    ])('a sealed config naming %s: no frame, state terminated, the reason; reset() keeps it closed; a sealed config without it builds', async (_, network) => {
+        ['origins', { mode: 'sealed' }, { origins: { images: ['https://cdn.example'] } }],
+        ['fetchBridge', { mode: 'sealed' }, { fetchBridge: { allow: ['https://api.example'] } }],
+        ['origins, with no mode (sealed is the default)', {}, { origins: { images: ['https://cdn.example'] } }],
+        ['fetchBridge, with no mode (sealed is the default)', {}, { fetchBridge: { allow: ['https://api.example'] } }],
+    ])('a sealed config naming %s: no frame, state terminated, the reason; reset() keeps it closed; a sealed config without it builds', async (_, mode, network) => {
         const el = await mount();
         el.setConfig({ mode: 'cooperative', capabilities: ['allow-scripts'] });
         const reasons: string[] = [];
         el.addEventListener('terminated', (e: CustomEvent) => reasons.push(e.detail.reason));
-        el.setConfig({ mode: 'sealed', ...network });
+        el.setConfig({ ...mode, ...network });
         expect(el.state).toBe('terminated');
         expect(wrapperOf(el)).toBeNull();
         expect(el._config.mode).toBe('cooperative'); // nothing of the refused config was applied

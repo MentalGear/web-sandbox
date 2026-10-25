@@ -89,12 +89,12 @@ describe('presets drive the regression specs (backlog T4)', () => {
 
 describe('modes: every preset names its own, and the playground opens in the default', () => {
     it('every preset names the mode it was written for (the type requires it; a preset from JSON is checked here)', () => {
-        for (const preset of presets) expect(['strict', 'cooperative', 'worker'], preset.id).toContain(preset.rules.mode);
+        for (const preset of presets) expect(['sealed', 'strict', 'cooperative', 'worker'], preset.id).toContain(preset.rules.mode);
     });
 
-    it('the playground opens on a strict demo whose entry is one of its files', () => {
+    it('the playground opens on a sealed demo whose entry is one of its files', () => {
         const preset: Preset = PRESETS[DEFAULT_PRESET];
-        expect([preset.category, preset.rules.mode]).toEqual(['demo', 'strict']);
+        expect([preset.category, preset.rules.mode]).toEqual(['demo', 'sealed']);
         expect(Object.keys(preset.files ?? {})).toContain(preset.rules.entry);
     });
 });

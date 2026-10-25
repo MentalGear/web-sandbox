@@ -18,15 +18,18 @@ that is same-site with the host page (S18).
 
 None of these has a single chokepoint in cooperative mode: frames can be created through `innerHTML`, `document.write`,
 `setHTMLUnsafe`, the parser, closed declarative shadow roots and `javascript:` URLs, and a same-thread loop is a platform
-limit. The structural answer is to take guest script out of every document. It is also why strict mode is the default:
+limit. The structural answer is to take guest script out of every document. It is also why strict mode's view and
+worker are the default (sealed mode, [ADR-008](ADR-008-sealed-mode.md), is them with no network):
 every review found its new issues in the mode where guest script runs in a document, and each was the same class — a
 realm the library does not reach, or a platform behaviour no policy governs — so each fix was a guest-realm patch and the
 next finding was another. Strict mode closes that class by construction.
 
 ## Decision
 
-**`mode: 'strict'` is the default.** Guest code runs only in a dedicated classic worker. The DOM frame — the *view* —
-runs exactly one script, the library's bootstrap, admitted by its SHA-256 hash, and shows what the worker renders.
+**`mode: 'strict'`: guest code runs only in a dedicated classic worker.** The DOM frame — the *view* — runs exactly one
+script, the library's bootstrap, admitted by its SHA-256 hash, and shows what the worker renders. Sealed mode, the default
+([ADR-008](ADR-008-sealed-mode.md)), is this view and worker with no network: what this record decides holds for it too,
+except what names `origins` or `fetchBridge`.
 
 ```
 host page
@@ -60,16 +63,18 @@ creates the render port, spawns the worker from a `blob:` URL (`worker-src blob:
 
 ### The modes
 
-- **The modes are `'strict' | 'cooperative' | 'worker'`**, in the config schema (`CONFIG_SCHEMA`, `mode`; the default is
-  strict). A config without `mode` is a strict config, in the types too (`StrictSandboxConfig.mode` is optional;
-  `CooperativeSandboxConfig.mode` is required), and `origins` is parsed for the mode the build will have, so a config that
-  names no mode drops `scripts`. A default element with only `html` renders the cleaned html in the view and runs no guest
-  script: without an `entry` the worker runs only the prelude. The mode that runs guest script in a document is
+- **The modes are `'sealed' | 'strict' | 'cooperative' | 'worker'`**, in the config schema (`CONFIG_SCHEMA`, `mode`; the
+  default is sealed, [ADR-008](ADR-008-sealed-mode.md)). A config without `mode` is a sealed config, in the types too
+  (`SealedSandboxConfig.mode` is optional; `StrictSandboxConfig.mode` and `CooperativeSandboxConfig.mode` are required),
+  and `origins` is parsed for the mode the build will have, so a strict config drops `scripts`. A default element with
+  only `html` renders the cleaned html in the view and runs no guest script: without an `entry` the worker runs only the
+  prelude. The mode that runs guest script in a document is
   `'cooperative'`: it is for cooperative content. `'iframe'` is not a mode and is not aliased: it fails closed like any
   unknown mode, and the reason and the one warning say `('iframe' was renamed 'cooperative')`, the text the code gives.
-- **Markup written for cooperative mode is said to run nothing.** When a strict build's `html` holds a script element or an
-  `on…` handler attribute, the element warns once: ``strict mode (the default) runs no script in `html`; name a registered
-  file in `entry`, or choose `mode: 'cooperative'`.`` It reads the markup with the host's `DOMParser`, which runs and loads
+- **Markup written for cooperative mode is said to run nothing.** When a strict or sealed build's `html` holds a script
+  element or an `on…` handler attribute, the element warns once, in the mode's words: ``strict mode runs no script in
+  `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.`` (``sealed mode (the default) runs no
+  script in `html`; …`` in sealed mode). It reads the markup with the host's `DOMParser`, which runs and loads
   nothing (`src/lib/markup-scripts.ts`), and never changes what is rendered: the renderer drops both.
 - **Cooperative mode's limits are a frozen list.** No new guest-realm patch is made in cooperative mode; a new finding there
   is documented as a limit (README "Cooperative-mode limits", the same in API.md and backlog S44). The list: the
@@ -507,9 +512,9 @@ asserted absent; G4 navigation; G2 worker; the entry; A5; files and A8; configur
 the fan-out with host lag and the budgets), `worker-globals-and-termination.spec.ts` (every worker global on the list, every network API of
 every engine aimed at a blocked listener), `view-switches.spec.ts` (every vector, the host's ticks with 5 000 animated
 elements, the host page's `style-src`, autoplay), `view-budget.spec.ts`, `view-bound.spec.ts`, `allow-forms-and-view-writes.spec.ts`,
-`strict-default.spec.ts`, `host-policy.spec.ts`, and the strict cases of `broker`, `lifecycle` and `events.spec.ts`; unit
+`default-mode.spec.ts`, `host-policy.spec.ts`, and the strict cases of `broker`, `lifecycle` and `events.spec.ts`; unit
 tests in `src/lib/in-sandbox-view.test.ts`, `src/lib/worker-globals.test.ts`, `src/lib/csp/script-hash.test.ts`,
-`src/lib/csp/csp-generator.test.ts`, `test/unit/strict.test.ts`, `test/unit/strict-default.test.ts`,
+`src/lib/csp/csp-generator.test.ts`, `test/unit/strict.test.ts`, `test/unit/default-mode.test.ts`,
 `test/unit/view-switches.test.ts`, `test/unit/view-api.test.ts`, `test/unit/entry-end-marker.test.ts` and
 `test/unit/view-bound.test.ts`.
 

@@ -25,8 +25,8 @@ export const BASELINE_CONFIG: SandboxConfig = {
 
 /**
  * A config for mount(): applied over BASELINE_CONFIG, so one that names no mode is a cooperative config (the baseline's
- * mode), as the specs were written; a strict or worker config names its mode. To apply a config as an embedder would,
- * with the library's defaults (strict mode), call setConfig() itself (strict-default.spec.ts). Deliberately looser than
+ * mode), as the specs were written; a sealed, strict or worker config names its mode. To apply a config as an embedder
+ * would, with the library's defaults (sealed mode), call setConfig() itself (default-mode.spec.ts). Deliberately looser than
  * SandboxConfig, which narrows each mode's options (R1:R3-6): specs also mount what a mode drops at run
  * time, to assert that it is dropped.
  */
