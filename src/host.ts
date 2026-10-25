@@ -362,14 +362,14 @@ export interface SandboxConfigOptions {
      * A deadline in ms for each `execute()`, in worker, strict and sealed mode. At the deadline the guest's event
      * loop must be free: the element pings the guest, and if no answer arrives within
      * {@link EXECUTION_TIMEOUT_GRACE_MS} the sandbox ends (a `sandbox-log` line `Execution Timeout`, then `terminated`).
-     * Anything but a finite number above 0 is off. Not read in cooperative mode.
+     * Anything but a finite number above 0 is off, with a warning unless it is `0`. Not read in cooperative mode.
      *
      * @defaultValue `0` (off)
      */
     workerExecutionTimeout?: number;
     /**
-     * Terminates a guest that stops answering for this long, in ms; anything but a finite number above 0 is off. It
-     * starts at `ready`. Off by default because legitimate synchronous work longer than the budget is stopped too.
+     * Terminates a guest that stops answering for this long, in ms; anything but a finite number above 0 is off, with a
+     * warning unless it is `0`. It starts at `ready`. Off by default because legitimate synchronous work longer than the budget is stopped too.
      * In cooperative mode it bounds a looping guest only where the browser runs the frame in its own process.
      *
      * @defaultValue `0` (off)
