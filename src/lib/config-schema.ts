@@ -228,7 +228,11 @@ export interface NormalisedConfig {
     callBudget: Readonly<CallBudget>;
 }
 
-/** What normalising reads besides the argument: the host page, from host-site.ts, whose rules are about it. */
+/**
+ * What normalising reads besides the argument: the host page, from host-site.ts, whose rules are about it. Only the
+ * rules of the options that open the network (NETWORK_OPTIONS) read it, and sealed mode runs neither of them (readIn),
+ * so a sealed config asks nothing of the host page.
+ */
 export interface NormaliseContext {
     /**
      * The host page's origin (host-site.ts, `hostPageOrigin`: `self.origin` of the element's realm): the input of the
@@ -251,9 +255,16 @@ export interface OptionInput {
     present: boolean;
     /** the mode as stored (the argument's, or the default) */
     mode: unknown;
-    context: NormaliseContext;
+    /** the host page (NormaliseContext), read when a rule first asks for it, at most once per argument */
+    host: () => NormaliseContext;
     warn: (message: string) => void;
 }
+
+/**
+ * The host page as normaliseConfig() takes it: its values, or a function that reads them, called only when a rule asks
+ * (the network options' rules), and at most once per argument.
+ */
+export type HostPage = NormaliseContext | (() => NormaliseContext);
 
 /**
  * One option, declared once: its default, the modes that read it, and how a given value becomes the stored one.
@@ -418,10 +429,10 @@ export const CONFIG_SCHEMA = {
         },
     },
     // Not in sealed mode, which has no network: a sealed config that names it is refused before any option is read
-    // (sealedNetworkRefusal), so in sealed mode it is never read, and neither is the host page's origin.
+    // (sealedNetworkRefusal), and sealed mode never runs its rule (readIn), so the host page is not asked.
     fetchBridge: {
         default: null, documented: 'off', modes: NETWORK_MODES, ignoredIn: (mode) => mode === 'sealed',
-        read: ({ given, mode, warn, context }) => (mode === 'sealed' ? null : toFetchPolicy(given, warn, context.hostOrigin)),
+        read: ({ given, warn, host }) => toFetchPolicy(given, warn, host().hostOrigin),
     },
     callLimits: {
         default: DEFAULT_CALL_BUDGET, documented: `${DEFAULT_CALL_BUDGET.calls} calls and ${DEFAULT_CALL_BUDGET.bytes / 1048576} MiB per second`, modes: ALL_MODES,
@@ -435,8 +446,8 @@ export const CONFIG_SCHEMA = {
         default: NO_ORIGINS, documented: 'none', modes: NETWORK_MODES, ignoredIn: (mode) => mode === 'sealed',
         // parsed for the mode the build will have, the default included, so strict mode drops `scripts` whether the
         // config names it or not; a value that cannot be read refuses the config (origins.ts). Never read in sealed
-        // mode, as fetchBridge.
-        read: ({ given, mode, warn, context }) => (mode === 'sealed' ? NO_ORIGINS : limitHostReach(parseOrigins(given, mode, warn), context, warn, mode)),
+        // mode (readIn), as fetchBridge.
+        read: ({ given, mode, warn, host }) => limitHostReach(parseOrigins(given, mode, warn), host(), warn, mode),
     },
     hostContentSecurityPolicy: {
         default: undefined, documented: 'none: `origins.connect` and `fetchBridge.allow` are dropped', modes: ALL_MODES,
@@ -488,6 +499,15 @@ export const CONFIG_OPTIONS: readonly OptionName[] = SCHEMA_NAMES.filter(name =>
 /** The options parsed into a policy or a budget of their own (NormalisedConfig), never into StoredConfig. */
 export const PARSED_APART: readonly OptionName[] = ['fetchBridge', 'callLimits', 'origins'];
 
+/**
+ * The options whose rules normaliseConfig() runs for an argument of `mode`, in the schema's order: every one, except in
+ * sealed mode NETWORK_OPTIONS, which hold their defaults there (no origin, no fetch bridge) without their rules running.
+ * Their rules are the only ones that read the host page, so a sealed config reads none of it; a sealed config that
+ * names either option was refused before (sealedNetworkRefusal).
+ */
+export const readIn = (mode: unknown): readonly OptionName[] => (mode === 'sealed' ? SEALED_READ : SCHEMA_NAMES);
+const SEALED_READ: readonly OptionName[] = Object.freeze(SCHEMA_NAMES.filter(name => !(NETWORK_OPTIONS as readonly string[]).includes(name)));
+
 /** Whether `option` is ignored in `mode`, where it holds its default. */
 export const ignoredIn = (option: OptionName, mode: unknown): boolean => RULES[option].ignoredIn?.(mode) ?? false;
 
@@ -507,21 +527,24 @@ export interface Normalised {
  * (FR:F6). Reads own keys only and writes only defined data properties (AR:A7, FR:F4), so no
  * key of the argument reaches a prototype, and nothing but the schema's options reaches the stored config.
  */
-export function normaliseConfig(copy: unknown, context: NormaliseContext): Normalised {
+export function normaliseConfig(copy: unknown, hostPage: HostPage): Normalised {
     const warnings: string[] = [];
     const warn = (message: string) => { warnings.push(message); };
     if (!copy || typeof copy !== 'object' || Array.isArray(copy)) return { value: null, warnings, refusal: new TypeError('setConfig() takes an object') };
     const source = copy as Record<string, unknown>;
+    let asked: NormaliseContext | null = null;
+    const host = (): NormaliseContext => (asked ??= typeof hostPage === 'function' ? hostPage() : hostPage);
     const inputOf = (name: OptionName, mode: unknown): OptionInput => {
         const present = hasOwnField(source, name);
-        return { given: ownField(source, name), present, mode, context, warn };
+        return { given: ownField(source, name), present, mode, host, warn };
     };
     const mode = RULES.mode.read!(inputOf('mode', undefined));
     const sealedNetwork = sealedNetworkRefusal(mode, source);
     if (sealedNetwork !== null) return { value: null, warnings, refusal: sealedNetwork };
     const values = Object.create(null) as Record<OptionName, unknown>;
+    for (const name of SCHEMA_NAMES) values[name] = RULES[name].default; // what readIn(mode) leaves out holds its default
     try {
-        for (const name of SCHEMA_NAMES) {
+        for (const name of readIn(mode)) {
             const rule = RULES[name];
             if (rule.removed !== undefined) {
                 if (hasOwnField(source, name)) warn(rule.removed);

@@ -170,7 +170,7 @@ describe('T3: sealedViewPolicy can carry no network source', () => {
         expect(policyOf(el)).toBe(sealedViewPolicy({ fileKinds: kinds, bootstrapHash: HASH, scriptUnsafe: false }));
         expect([...fileKinds(['application/json'])]).toEqual(['connect']); // what strict would add blob: to connect-src for
         expect(el.shadowRoot.querySelectorAll('iframe')).toHaveLength(1); // no bridge frame
-        expect(el._strictInit.origins).toEqual({ images: [], media: [] });
+        expect(Object.keys(el._strictInit)).not.toContain('origins'); // T4, test/unit/sealed-build.test.ts
         expect(el._strictInit.workerSource).toContain('"connect":[]');
         expect(wrapperOf(el)!.getAttribute('sandbox')).toBe('allow-scripts allow-forms');
         el.setConfig({ mode: 'sealed', guestWrites: true });

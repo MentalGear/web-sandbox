@@ -49,7 +49,7 @@ class RejectionEventLike extends TrustedEvent {
 
 // The bootstrap of `mode`, as the host builds it (its listeners from the table), on a stand-in global: what it registers
 // on it, and what it posts on its port.
-function bootstrap(mode: EgressMode) {
+function bootstrap(mode: Exclude<EgressMode, 'sealed'>) {
     const registered: { type: string; listener: (event: unknown) => void; capture: unknown }[] = [];
     vi.stubGlobal('addEventListener', (type: string, listener: (event: unknown) => void, capture: unknown) => { registered.push({ type, listener, capture }); });
     vi.stubGlobal('Event', TrustedEvent);

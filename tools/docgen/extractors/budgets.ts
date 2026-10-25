@@ -7,8 +7,8 @@ import type { Extractor } from './markdown';
 export const budgets: Extractor = {
     items: () => [
         { id: 'budgets', signature: signatureOf(budgetsTable(limitValues())), render: () => '' },
-        // the channels and the surfaces they cross, without the bounds' values
-        { id: 'budgets:channels', signature: signatureOf(CHANNEL_BUDGETS.map(row => [row.channel, row.surfaces])), render: () => '' },
+        // the channels, the surfaces they cross and their network in sealed mode, without the bounds' values
+        { id: 'budgets:channels', signature: signatureOf(CHANNEL_BUDGETS.map(row => [row.channel, row.surfaces, row.sealed])), render: () => '' },
     ],
     regions: { budgets: () => budgetsTable(limitValues()) },
 };
