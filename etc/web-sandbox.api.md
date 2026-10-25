@@ -236,14 +236,14 @@ export interface SandboxViolation {
 // @public
 export interface SealedSandboxConfig extends SandboxConfigOptions {
     fetchBridge?: never;
-    mode: 'sealed';
+    mode?: 'sealed';
     origins?: never;
     unsafeCapabilities?: never;
 }
 
 // @public
 export interface StrictSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
-    mode?: 'strict';
+    mode: 'strict';
     origins?: StrictSandboxOrigins;
     unsafeCapabilities?: never;
 }

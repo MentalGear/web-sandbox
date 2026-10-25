@@ -51,7 +51,9 @@ import { assertEntryScoped, buildViewDocument, entryDoneName, environmentGate, i
  * `origins` and no `fetchBridge`). A config from JSON is held to the same rules at run time: an option outside its modes
  * is ignored and holds its default, mostly with one warning, except that a sealed config naming `origins` or
  * `fetchBridge` is refused: the sandbox terminates with a reason that names the fix, `mode: 'strict'`
- * (docs/API.md#terminated-reasons). A config that names no `mode` is a strict config. Defaults, bounds and modes of every option: docs/API.md#configuration.
+ * (docs/API.md#terminated-reasons). A config that names no `mode` is a sealed config (sealed is the default; ADR-008),
+ * so `{ origins }` or `{ fetchBridge }` without `mode: 'strict'` does not type-check, and from JSON is refused the same
+ * way. Defaults, bounds and modes of every option: docs/API.md#configuration.
  */
 export type SandboxConfig = StrictSandboxConfig | SealedSandboxConfig | CooperativeSandboxConfig | WorkerSandboxConfig;
 
@@ -79,18 +81,22 @@ export interface NetworkSandboxOptions {
 }
 
 /**
- * The configuration of sealed mode: strict mode with no network. Guest code runs only in a worker that a view document
- * spawns, as in strict mode, and the view's policy admits no network source: every fetch directive is `'none'` or
- * `blob:` for registered files, and `connect-src` is `'none'`.
+ * The configuration of sealed mode, the default (ADR-008): strict mode with no network. Guest code runs only in a worker
+ * that a view document spawns, as in strict mode, and the view's policy admits no network source: every fetch directive
+ * is `'none'` or `blob:` for registered files, and `connect-src` is `'none'`.
  *
  * @remarks
- * `mode: 'sealed'` must be named. A sealed config that names `origins` or `fetchBridge` does not type-check, and from
- * JSON it is refused: nothing of it is applied, and the sandbox terminates with a reason that names the fix,
- * `mode: 'strict'` (docs/API.md#terminated-reasons). `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`.
+ * A config that names no `mode` is a sealed config. A sealed config that names `origins` or `fetchBridge`, with the mode
+ * written or left out, does not type-check, and from JSON it is refused: nothing of it is applied, and the sandbox
+ * terminates with a reason that names the fix, `mode: 'strict'` (docs/API.md#terminated-reasons). `sandboxFetch()`
+ * rejects with `FETCH_NOT_ALLOWED`.
  */
 export interface SealedSandboxConfig extends SandboxConfigOptions {
-    /** Names the mode. */
-    mode: 'sealed';
+    /**
+     * Names the mode; sealed when left out. A value that is not a mode starts no environment: the sandbox terminates
+     * with a reason that names it (AR:A4).
+     */
+    mode?: 'sealed';
     /** Not in sealed mode, which has no network: a config that names it is refused. */
     origins?: never;
     /** Not in sealed mode, which has no network: a config that names it is refused. */
@@ -100,16 +106,17 @@ export interface SealedSandboxConfig extends SandboxConfigOptions {
 }
 
 /**
- * The configuration of strict mode (ADR-005), the default: guest code runs only in a worker that a view document
- * spawns, and the worker draws into the view with `sandboxView.render()`. `html` is the initial view, rendered without
- * its scripts and event-handler attributes.
+ * The configuration of strict mode (ADR-005): sealed mode's view and worker, with the network options. Guest code runs
+ * only in a worker that a view document spawns, and the worker draws into the view with `sandboxView.render()`. `html`
+ * is the initial view, rendered without its scripts and event-handler attributes.
+ *
+ * @remarks
+ * `mode: 'strict'` must be named: a config that names no mode is sealed ({@link SealedSandboxConfig}, ADR-008), which
+ * has no `origins` and no `fetchBridge`.
  */
 export interface StrictSandboxConfig extends SandboxConfigOptions, NetworkSandboxOptions {
-    /**
-     * Names the mode; strict when left out. A value that is not a mode starts no environment: the sandbox terminates
-     * with a reason that names it (AR:A4).
-     */
-    mode?: 'strict';
+    /** Names the mode. */
+    mode: 'strict';
     /** The origins the view's policy admits: as in the other modes, but without `scripts`, since the view runs only the library's bootstrap. */
     origins?: StrictSandboxOrigins;
     /** Not in strict mode (R1:R3-6): no capability reaches outside the view. Dropped at run time. */
@@ -278,8 +285,8 @@ declare global {
 }
 
 /**
- * The options every mode takes, and the ones a mode's config narrows ({@link StrictSandboxConfig},
- * {@link CooperativeSandboxConfig}, {@link WorkerSandboxConfig}).
+ * The options every mode takes, and the ones a mode's config narrows ({@link SealedSandboxConfig},
+ * {@link StrictSandboxConfig}, {@link CooperativeSandboxConfig}, {@link WorkerSandboxConfig}).
  *
  * @remarks
  * An option left out takes its default, whatever `setConfig()` was given before. An option a mode does not
@@ -495,8 +502,8 @@ const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
 // owner's move of allow-forms leaves strict mode as it was.
 // (STRICT_VIEW_FLAGS, declared with the config schema, which keeps them in `capabilities` there.)
 
-const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
-const SEALED_HTML_SCRIPT_WARNING = "[Sandbox] sealed mode runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
+const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
+const SEALED_HTML_SCRIPT_WARNING = "[Sandbox] sealed mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 
 // Every reason the element gives, and every line it dispatches itself, is the texts registry's (src/lib/reasons.ts).
 // What worker mode's frame may announce instead of a port (worker-bootstrap.ts), and the reason each ends the build with.
@@ -1151,7 +1158,7 @@ export class WebSandbox extends ElementBase {
     }
 
     /**
-     * Sets `html` (the guest document, or the initial view in strict mode), keeps the rest of the configuration and
+     * Sets `html` (the guest document, or the initial view in sealed and strict mode), keeps the rest of the configuration and
      * rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still
      * rebuilds.
      *
@@ -1164,7 +1171,7 @@ export class WebSandbox extends ElementBase {
 
     /**
      * Runs `code` in the guest's global scope as the body of a function: in the guest document in cooperative mode, in
-     * the worker in worker and strict mode. It is compiled with the `Function` the bootstrap captured before any guest
+     * the worker in worker, strict and sealed mode. It is compiled with the `Function` the bootstrap captured before any guest
      * code ran. Nothing reaches the host: no return value and no report that it returned.
      *
      * @remarks
@@ -1174,7 +1181,7 @@ export class WebSandbox extends ElementBase {
      * - While `'loading'` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the
      *   guest document is parsed (see docs/API.md#ready-and-the-startup-gate), in order with calls.
      * - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).
-     * - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
+     * - In worker, strict and sealed mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:
      *   the guest's event loop is free at the deadline. The element pings the guest there; the bootstrap answers from a
      *   handler guest code cannot reach, and only a free event loop can run it. No answer within
      *   {@link EXECUTION_TIMEOUT_GRACE_MS} terminates the sandbox.
@@ -1274,8 +1281,8 @@ export class WebSandbox extends ElementBase {
      * - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and
      *   `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a
      *   call's timeout.
-     * - Calls made while `'loading'` are queued and sent when the build becomes `ready`, in every mode (strict mode
-     *   included, whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue
+     * - Calls made while `'loading'` are queued and sent when the build becomes `ready`, in every mode (strict and
+     *   sealed mode included, whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue
      *   and never runs. In cooperative mode a call reaches the guest's method once the guest document is parsed (see
      *   docs/API.md#ready-and-the-startup-gate).
      * - Calls made while `'idle'` (not in the document) or `'terminated'` reject at once with `TERMINATED`, as
@@ -2392,8 +2399,8 @@ export class WebSandbox extends ElementBase {
         console.warn(message);
     }
 
-    // Strict mode is the default, so markup written for cooperative mode reaches it unchanged, and sealed mode's view is
-    // strict mode's: its scripts and handlers never run (the renderer drops them, and the view's policy admits only the
+    // Sealed mode is the default and its view is strict mode's, so markup written for cooperative mode reaches that view
+    // unchanged: its scripts and handlers never run (the renderer drops them, and the view's policy admits only the
     // bootstrap). Said once per element and mode, in the mode's words, read with an inert parser (markup-scripts.ts); not
     // again once said, so a big view is parsed only until then.
     private _warnAboutStrictHtml(mode: 'strict' | 'sealed', html: string) {

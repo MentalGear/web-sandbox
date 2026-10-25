@@ -51,7 +51,7 @@ for (const rule of TRUSTED_TYPES_RULES) {
             await openWithPolicy(page, policy);
             const given = { hostContentSecurityPolicy: policy };
             await sandbox.registerFiles({ 'main.js': ENTRY });
-            expect(await configure(sandbox, { entry: 'main.js', ...given }), 'strict').toEqual(verdict(strictAndWorker));
+            expect(await configure(sandbox, { mode: 'strict', entry: 'main.js', ...given }), 'strict').toEqual(verdict(strictAndWorker));
             expect(await configure(sandbox, { mode: 'sealed', entry: 'main.js', ...given }), 'sealed: strict mode\'s view and worker').toEqual(verdict(strictAndWorker));
             expect(await configure(sandbox, { mode: 'worker', scriptUnsafe: true, ...given }), 'worker').toEqual(verdict(strictAndWorker));
             expect(await configure(sandbox, { mode: 'cooperative', scriptUnsafe: true, capabilities: ['allow-scripts'], html: '<p>x</p>', ...given }), 'cooperative').toEqual(verdict(cooperative));
@@ -70,7 +70,7 @@ for (const rule of TRUSTED_TYPES_RULES) {
 async function outcomes(sandbox: SandboxDriver, extra: object = {}) {
     await sandbox.registerFiles({ 'main.js': ENTRY });
     return {
-        strict: await configure(sandbox, { entry: 'main.js', ...extra }),
+        strict: await configure(sandbox, { mode: 'strict', entry: 'main.js', ...extra }),
         sealed: await configure(sandbox, { mode: 'sealed', entry: 'main.js', ...extra }),
         worker: await configure(sandbox, { mode: 'worker', scriptUnsafe: true, ...extra }),
         cooperative: await configure(sandbox, { mode: 'cooperative', scriptUnsafe: true, capabilities: ['allow-scripts'], html: '<p>x</p>', ...extra }),

@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { viewBootstrapHash, viewBootstrapText } from '@src/lib/in-sandbox-view';
+import { sealedViewPolicy, strictViewPolicy } from '@src/lib/csp/csp-generator';
+import { NO_ORIGINS, type SandboxOrigins } from '@src/lib/csp/origins';
 import { scriptInMarkup } from '@src/lib/markup-scripts';
 import type { SandboxConfig } from '@src/host';
-import type { SandboxOrigins } from '@src/lib/csp/origins';
 
 /**
- * Strict mode is the default (ADR-005 amendment "strict is the default"): a config that names no mode builds the
- * strict view, and markup that would run script in cooperative mode is said, once per element, to run none.
+ * Sealed mode is the default (ADR-008; T8 of docs/research/24_sealed_mode): a config that names no mode builds strict
+ * mode's view with sealed mode's policy, and markup that would run script in cooperative mode is said, once per
+ * element, to run none. Strict mode, named, builds the same view with its own policy: the same property, held for it.
  */
 
 const parse = (html: string) => new DOMParser().parseFromString(html, 'text/html');
@@ -20,49 +22,78 @@ async function element() {
     return document.createElement('web-sandbox') as any;
 }
 
-const SCRIPT_WARNING = "[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
+const SCRIPT_WARNING = "[Sandbox] sealed mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
+const STRICT_SCRIPT_WARNING = "[Sandbox] strict mode runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 const scriptWarnings = (warn: { mock: { calls: unknown[][] } }) => warn.mock.calls.map(c => String(c[0])).filter(m => m === SCRIPT_WARNING);
+
+// A registered JSON file: strict mode admits blob: in connect-src for it, sealed mode never does (connect-src 'none'),
+// so the two modes' policies differ and policy equality tells them apart.
+const FILES = { 'data.json': '{}' };
+const SEALED_POLICY = () => sealedViewPolicy({ fileKinds: new Set(), bootstrapHash: viewBootstrapHash(), scriptUnsafe: false });
+const STRICT_POLICY = () => strictViewPolicy({ origins: NO_ORIGINS, fileKinds: new Set(['connect']), bootstrapHash: viewBootstrapHash(), scriptUnsafe: false });
+
+/** What the element built: the view's scripts, its policy, its body, the wrapper's flags, the frames of the shadow root. */
+function built(el: any) {
+    const inner = innerOf(el);
+    return {
+        scripts: [...inner.querySelectorAll('script')].map(script => script.textContent),
+        policy: inner.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content'),
+        body: inner.body.children.length, // no guest bytes: the html travels to the view in INIT_VIEW
+        flags: wrapperOf(el)!.getAttribute('sandbox'),
+        frames: el.shadowRoot.querySelectorAll('iframe').length, // the wrapper only: no bridge frame
+    };
+}
 
 afterEach(() => {
     vi.restoreAllMocks();
     document.body.replaceChildren();
 });
 
-describe('a config that names no mode is strict', () => {
-    it.each([['inserted, never configured', undefined], ['setConfig({})', {}], ['setConfig with html only', { html: '<p>hi</p>' }]])('%s: the view document holds only the policy and the hashed bootstrap', async (_, config) => {
+describe('T8: a config that names no mode is sealed', () => {
+    it.each([['inserted, never configured', undefined], ['setConfig({})', {}], ['setConfig with html only', { html: '<p>hi</p>' }]])('%s: the view document holds only the sealed policy and the hashed bootstrap', async (_, config) => {
         const el = await element();
+        el.registerFiles(FILES);
         document.body.appendChild(el);
         if (config) el.setConfig(config);
-        expect(el._config.mode).toBe('strict');
-        const inner = innerOf(el);
-        const scripts = [...inner.querySelectorAll('script')].map(script => script.textContent);
-        expect(scripts).toEqual([viewBootstrapText()]);
-        expect(inner.querySelector('meta[http-equiv="Content-Security-Policy"]')!.getAttribute('content')).toContain(`script-src ${viewBootstrapHash()}; script-src-attr 'none'`);
-        expect(inner.body.children).toHaveLength(0); // no guest bytes: the html travels to the view in INIT_VIEW
-        expect(wrapperOf(el)!.getAttribute('sandbox')).toBe('allow-scripts allow-forms');
+        expect(el._config.mode).toBe('sealed');
+        expect(built(el)).toEqual({ scripts: [viewBootstrapText()], policy: SEALED_POLICY(), body: 0, flags: 'allow-scripts allow-forms', frames: 1 });
+        expect(Object.keys(el._strictInit)).not.toContain('origins'); // sealed mode's INIT_VIEW names no origins
     });
 
-    it("origins.scripts with no mode is dropped (strict takes none), with one warning; with mode 'cooperative' it is kept", async () => {
+    it.each([['mode only', { mode: 'strict' }], ['mode and html', { mode: 'strict', html: '<p>hi</p>' }]])("strict, named (%s): the same view and bootstrap, with strict mode's policy", async (_, config) => {
+        expect(STRICT_POLICY()).not.toBe(SEALED_POLICY());
+        const el = await element();
+        el.registerFiles(FILES);
+        document.body.appendChild(el);
+        el.setConfig(config);
+        expect(el._config.mode).toBe('strict');
+        expect(built(el)).toEqual({ scripts: [viewBootstrapText()], policy: STRICT_POLICY(), body: 0, flags: 'allow-scripts allow-forms', frames: 1 });
+    });
+
+    it("origins.scripts with mode 'strict' is dropped (strict takes none), with one warning; with mode 'cooperative' it is kept", async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await element();
         document.body.appendChild(el);
-        el.setConfig({ origins: { scripts: ['https://cdn.example'] } });
+        el.setConfig({ mode: 'strict', origins: { scripts: ['https://cdn.example'] } });
         expect(el._origins.scripts).toEqual([]);
         expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.startsWith('[Sandbox] origins.scripts is not used in strict mode'))).toHaveLength(1);
         el.setConfig({ mode: 'cooperative', origins: { scripts: ['https://cdn.example'] } });
         expect(el._origins.scripts).toEqual(['https://cdn.example']);
     });
 
-    it('the types say the same: a config without a mode is a strict config', () => {
+    it('the types say the same: a config without a mode is a sealed config, and strict mode is named', () => {
         // @ts-expect-error 'iframe' was renamed 'cooperative'
         const renamed: SandboxConfig = { mode: 'iframe' };
-        // @ts-expect-error no mode means strict mode, which takes no origins.scripts
-        const strictScripts: SandboxConfig = { origins: { scripts: ['https://cdn.example'] } };
+        // @ts-expect-error no mode means sealed mode, which takes no origins (test/unit/sealed-mode.test.ts, T1)
+        const noModeOrigins: SandboxConfig = { html: '<p>hi</p>', origins: { images: ['https://cdn.example'] } };
+        // @ts-expect-error strict mode takes no origins.scripts
+        const strictScripts: SandboxConfig = { mode: 'strict', origins: { scripts: ['https://cdn.example'] } };
         // @ts-expect-error not even through a variable
-        const strictFromVariable: SandboxConfig = { origins: { scripts: ['https://cdn.example'] } as SandboxOrigins };
-        const strict: SandboxConfig = { html: '<p>hi</p>', origins: { images: ['https://cdn.example'] } };
+        const strictFromVariable: SandboxConfig = { mode: 'strict', origins: { scripts: ['https://cdn.example'] } as SandboxOrigins };
+        const sealed: SandboxConfig = { html: '<p>hi</p>' };
+        const strict: SandboxConfig = { mode: 'strict', html: '<p>hi</p>', origins: { images: ['https://cdn.example'] } };
         const cooperative: SandboxConfig = { mode: 'cooperative', origins: { scripts: ['https://cdn.example'] } };
-        expect([renamed, strictScripts, strictFromVariable, strict, cooperative]).toHaveLength(5);
+        expect([renamed, noModeOrigins, strictScripts, strictFromVariable, sealed, strict, cooperative]).toHaveLength(7);
     });
 });
 
@@ -113,7 +144,7 @@ describe('scriptInMarkup: script elements and handler attributes, read with an i
     });
 });
 
-describe('strict html that holds script warns once per element', () => {
+describe('html that holds script warns once per element, in the default mode and in strict mode', () => {
     it('a script, then a handler, across setConfig(), reset() and load(): one warning', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const el = await element();
@@ -123,8 +154,18 @@ describe('strict html that holds script warns once per element', () => {
         el.setConfig({ html: '<script>console.log(1)</script>' });
         el.reset();
         el.load('<button onclick="go()">go</button>');
-        el.setConfig({ mode: 'strict', html: '<svg onload="1"></svg>' });
+        el.setConfig({ mode: 'sealed', html: '<svg onload="1"></svg>' });
         expect(scriptWarnings(warn)).toEqual([SCRIPT_WARNING]);
+    });
+
+    it('strict mode, named, says it in its own words, once per element', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const el = await element();
+        document.body.appendChild(el);
+        el.setConfig({ mode: 'strict', html: '<script>console.log(1)</script>' });
+        el.reset();
+        el.load('<button onclick="go()">go</button>');
+        expect(warn.mock.calls.map(c => String(c[0])).filter(m => m.includes('runs no script in `html`'))).toEqual([STRICT_SCRIPT_WARNING]);
     });
 
     it('each element warns for itself', async () => {

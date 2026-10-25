@@ -164,7 +164,7 @@ test.describe('the host page policy', () => {
         const hash = await page.evaluate(() => (window as any).viewScriptHash());
         const policy = `script-src 'self' 'unsafe-eval' ${hash}; worker-src blob:`;
         await openWithPolicy(page, policy);
-        expect(await configure(sandbox, { scriptUnsafe: true, hostContentSecurityPolicy: policy, ...bridgeTo(recorder.allowed) })).toEqual([{ type: 'ready', reason: null }]);
+        expect(await configure(sandbox, { mode: 'strict', scriptUnsafe: true, hostContentSecurityPolicy: policy, ...bridgeTo(recorder.allowed) })).toEqual([{ type: 'ready', reason: null }]);
         expect(await sandbox.inGuest(fetchInGuest(`${recorder.allowed}/iso-hash`))).toEqual({ status: 200, text: 'ok' });
         expect(recorder.paths('allowed')).toEqual(['/iso-hash']);
     });
@@ -172,7 +172,7 @@ test.describe('the host page policy', () => {
     test('without the hash, the sandbox fails closed with the documented startup reason, and no request is made', async ({ sandbox, page }) => {
         const policy = "script-src 'self' 'unsafe-eval'; worker-src blob:";
         await openWithPolicy(page, policy);
-        expect(await configure(sandbox, { scriptUnsafe: true, hostContentSecurityPolicy: policy, ...bridgeTo(recorder.allowed) })).toEqual([{ type: 'terminated', reason: STARTUP_BLOCKED }]);
+        expect(await configure(sandbox, { mode: 'strict', scriptUnsafe: true, hostContentSecurityPolicy: policy, ...bridgeTo(recorder.allowed) })).toEqual([{ type: 'terminated', reason: STARTUP_BLOCKED }]);
         await page.waitForTimeout(300);
         expect(recorder.paths('allowed')).toEqual([]);
         expect(await sandbox.fetches()).toEqual([]);

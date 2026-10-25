@@ -260,7 +260,12 @@ describe('A7: a merge never writes prototypes, with no list of keys', () => {
 
     it('a JSON config with "__proto__" keys gives the element no inherited settings', async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const config = JSON.parse('{"capabilities": ["allow-scripts"], "__proto__": {"scriptUnsafe": true, "mode": "worker", "entry": "x.js"}, "origins": {"__proto__": {"images": ["https://p.example"]}}}');
+        // no mode: the planted one is not inherited, so the config is the default mode's (sealed)
+        const sealed = await mount(JSON.parse('{"capabilities": ["allow-scripts"], "__proto__": {"scriptUnsafe": true, "mode": "worker", "entry": "x.js"}}'));
+        expect(Object.getPrototypeOf(sealed._config)).toBe(Object.prototype);
+        expect([sealed._config.scriptUnsafe, sealed._config.mode, sealed._config.entry]).toEqual([false, 'sealed', undefined]);
+        // strict mode, which takes origins: none planted in them is inherited either
+        const config = JSON.parse('{"mode": "strict", "capabilities": ["allow-scripts"], "__proto__": {"scriptUnsafe": true, "entry": "x.js"}, "origins": {"__proto__": {"images": ["https://p.example"]}}}');
         const el = await mount(config);
         expect(Object.getPrototypeOf(el._config)).toBe(Object.prototype);
         expect(Object.getPrototypeOf(el._origins)).toBe(Object.prototype);
@@ -282,7 +287,7 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         const reasons = terminations(el);
         const build = el._guestPolicy;
         el._guestPolicy = () => { throw new Error('the policy could not be made'); };
-        expect(() => el.setConfig({ capabilities: ['allow-scripts'] })).not.toThrow();
+        expect(() => el.setConfig({ mode: 'strict', capabilities: ['allow-scripts'] })).not.toThrow();
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
         await settled();
         expect(reasons).toEqual(['the environment could not be built (Error)']);
@@ -290,17 +295,17 @@ describe('Every build failure is a termination (follow-up audit 2026-10-14)', ()
         expect([el.state, wrapperOf(el)]).toEqual(['terminated', null]);
         expect(warn.mock.calls.some(c => String(c[0]).startsWith('[Sandbox] terminated: the environment could not be built'))).toBe(true);
         el._guestPolicy = build;
-        el.setConfig({ capabilities: ['allow-scripts'] });
+        el.setConfig({ mode: 'strict', capabilities: ['allow-scripts'] });
         expect(el.state).toBe('loading');
         expect(wrapperOf(el)).not.toBeNull();
     });
 
     it.each([
-        ['a Proxy array', () => ({ origins: { connect: new Proxy(['https://a.example'], {}) } }), 'DataCloneError'],
-        ['origins that is not an object', () => ({ origins: 'https://a.example' }), 'TypeError: origins is not an object'],
-        ['origins: null', () => ({ origins: null }), 'TypeError: origins is not an object'],
-        ['a kind that is not a list (a string)', () => ({ origins: { images: "x; script-src *" } }), 'TypeError: origins.images is not a list'],
-        ['a kind that is not a list (a number)', () => ({ origins: { connect: 7 } }), 'TypeError: origins.connect is not a list'],
+        ['a Proxy array', () => ({ mode: 'strict', origins: { connect: new Proxy(['https://a.example'], {}) } }), 'DataCloneError'],
+        ['origins that is not an object', () => ({ mode: 'strict', origins: 'https://a.example' }), 'TypeError: origins is not an object'],
+        ['origins: null', () => ({ mode: 'strict', origins: null }), 'TypeError: origins is not an object'],
+        ['a kind that is not a list (a string)', () => ({ mode: 'strict', origins: { images: "x; script-src *" } }), 'TypeError: origins.images is not a list'],
+        ['a kind that is not a list (a number)', () => ({ mode: 'strict', origins: { connect: 7 } }), 'TypeError: origins.connect is not a list'],
         ['a function value', () => ({ html: () => '<p>' }), 'DataCloneError'],
         ['null', () => null, 'TypeError'],
         ['an array', () => [], 'TypeError'],

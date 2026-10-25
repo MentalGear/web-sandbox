@@ -316,7 +316,7 @@ const OUTLIVE = (origin: string) => `
     if (typeof Worker === 'function') new Worker(URL.createObjectURL(new Blob(["setInterval(() => fetch('${origin}/l1-worker').catch(() => {}), 50)"], { type: 'text/javascript' })));
 `;
 
-// Every mode (strict, the default, ends with its view's document; cooperative with its frame; worker with its frame's
+// Every mode (strict ends with its view's document, as sealed, the default, does; cooperative with its frame; worker with its frame's
 // worker) against every ending: terminate(), reset() and the element's removal (BD1:CHL-3).
 test.describe('L1: a guest cannot outlive terminate(), reset() or the element\'s removal', () => {
     for (const mode of ['strict', 'cooperative', 'worker'] as const) {

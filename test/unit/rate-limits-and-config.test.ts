@@ -235,10 +235,10 @@ describe('F3: a reason, event or host line never carries the text of a caught er
         const el = await mount();
         const reasons = terminations(el);
         const settled = () => new Promise(resolve => setTimeout(resolve, 0));
-        el.setConfig({ origins: { images: `x; ${SECRET}` } });
+        el.setConfig({ mode: 'strict', origins: { images: `x; ${SECRET}` } });
         await settled();
         el._guestPolicy = () => { throw new Error(SECRET); };
-        el.setConfig({});
+        el.setConfig({ mode: 'strict' });
         await settled();
         expect(reasons).toEqual(['the configuration could not be used (TypeError: origins.images is not a list)', 'the environment could not be built (Error)']);
         for (const call of warn.mock.calls) expect(String(call[0])).not.toContain(SECRET);
@@ -354,14 +354,14 @@ describe('F6: a refused config is never stored', () => {
         // the reason names the option (BD3:NEW-3)
         const refusals = ['origins is not an object', 'origins is not an object', 'origins is not an object', 'origins is not an object', 'origins.images is not a list', 'origins.connect is not a list'];
         expect(reasons).toEqual(['cooperative', 'worker', 'strict'].flatMap(() => refusals.map(refusal => `the configuration could not be used (TypeError: ${refusal})`)));
-        el.setConfig({ origins: { images: ['https://a.example'] } });
+        el.setConfig({ mode: 'strict', origins: { images: ['https://a.example'] } });
         expect(el.state).toBe('loading'); // positive control
     });
 });
 
 describe('Hardening: sandbox:fetch is bound to the build it belongs to, like sandbox:write', () => {
     it("a request that arrived in environment N but runs after a rebuild is refused by N's closed bridge, never served by N+1's", async () => {
-        const el = await mount({ fetchBridge: { allow: ['https://api.example'] }, hostContentSecurityPolicy: false });
+        const el = await mount({ mode: 'strict', fetchBridge: { allow: ['https://api.example'] }, hostContentSecurityPolicy: false });
         const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('ok'));
         const { port1 } = new MessageChannel();
         el._port = port1;

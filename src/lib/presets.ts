@@ -17,7 +17,7 @@ import type { StrictSandboxOrigins } from "./csp/origins";
  * is. A spec may still run a preset in another mode (`{ ...preset.rules, mode }`), so its origins are ones every mode
  * can take: no `scripts`, which strict mode does not take.
  */
-export type PresetRules = SandboxConfigOptions & { mode: 'strict' | 'cooperative' | 'worker'; origins?: StrictSandboxOrigins };
+export type PresetRules = SandboxConfigOptions & { mode: 'sealed' | 'strict' | 'cooperative' | 'worker'; origins?: StrictSandboxOrigins };
 
 export interface Preset {
     id: string;
@@ -42,14 +42,36 @@ export interface Preset {
 const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40" viewBox="0 0 120 40"><rect width="120" height="40" rx="6" fill="#4338ca"/><text x="60" y="26" font-family="sans-serif" font-size="16" fill="#fff" text-anchor="middle">logo.svg</text></svg>';
 
 export const PRESETS = {
-    "strict-demo": {
-        id: "strict-demo",
-        label: "Strict Mode (the default): a counter",
+    "sealed-demo": {
+        id: "sealed-demo",
+        label: "Sealed Mode (the default): a counter",
         category: "demo",
         run: "markup",
-        // Strict mode, the default (ADR-005): main.js, the entry, runs in a worker and draws into the view through
-        // sandboxView; the view runs no guest script. `code` is the initial view ("Run as HTML" loads it, and the entry
-        // draws over it). The playground opens on this preset.
+        // Sealed mode, the default (ADR-008): strict mode's worker and view with no network. main.js, the entry, runs in
+        // a worker and draws into the view through sandboxView; the view runs no guest script, and nothing of either
+        // reaches the network. `code` is the initial view ("Run as HTML" loads it, and the entry draws over it). The
+        // playground opens on this preset.
+        code: `<main><p>Loading…</p></main>`,
+        files: {
+            "main.js": `let count = 0;
+const draw = () => sandboxView.render(
+  '<main><h1>Sealed mode</h1>' +
+  '<p>This code runs in a worker with no network; the view shows what it renders and runs no guest script.</p>' +
+  '<button id="add">Clicked ' + count + ' times</button></main>');
+sandboxView.on('click', 'add', () => { count++; draw(); console.log('clicked', count); });
+draw();
+console.log('sealed demo: the entry ran in the worker');`,
+        },
+        rules: { mode: "sealed", entry: "main.js", watchdogTimeout: 2000 },
+    },
+    "strict-demo": {
+        id: "strict-demo",
+        label: "Strict Mode: a counter",
+        category: "demo",
+        run: "markup",
+        // Strict mode (ADR-005): sealed mode's worker and view, with the network options. main.js, the entry, runs in a
+        // worker and draws into the view through sandboxView; the view runs no guest script. `code` is the initial view
+        // ("Run as HTML" loads it, and the entry draws over it).
         code: `<main><p>Loading…</p></main>`,
         files: {
             "main.js": `let count = 0;
@@ -546,5 +568,5 @@ console.log('POPUP ' + outcome);`,
 
 export type PresetId = keyof typeof PRESETS;
 
-/** The preset the playground opens on: strict mode, the default. */
-export const DEFAULT_PRESET: PresetId = "strict-demo";
+/** The preset the playground opens on: sealed mode, the default. */
+export const DEFAULT_PRESET: PresetId = "sealed-demo";

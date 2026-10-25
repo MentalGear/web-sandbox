@@ -1630,7 +1630,7 @@
         {
           "kind": "TypeAlias",
           "canonicalReference": "web-sandbox!SandboxConfig:type",
-          "docComment": "/**\n * The configuration `setConfig()` takes: a union keyed by `mode`.\n *\n * @remarks\n *\n * Every option left out takes its default, not its previous value. The union narrows each mode, so an option a mode\n * cannot use does not type-check (strict mode's `origins` has no `scripts`; ADR-007; a sealed config takes no\n * `origins` and no `fetchBridge`). A config from JSON is held to the same rules at run time: an option outside its modes\n * is ignored and holds its default, mostly with one warning, except that a sealed config naming `origins` or\n * `fetchBridge` is refused: the sandbox terminates with a reason that names the fix, `mode: 'strict'`\n * (docs/API.md#terminated-reasons). A config that names no `mode` is a strict config. Defaults, bounds and modes of every option: docs/API.md#configuration.\n */\n",
+          "docComment": "/**\n * The configuration `setConfig()` takes: a union keyed by `mode`.\n *\n * @remarks\n *\n * Every option left out takes its default, not its previous value. The union narrows each mode, so an option a mode\n * cannot use does not type-check (strict mode's `origins` has no `scripts`; ADR-007; a sealed config takes no\n * `origins` and no `fetchBridge`). A config from JSON is held to the same rules at run time: an option outside its modes\n * is ignored and holds its default, mostly with one warning, except that a sealed config naming `origins` or\n * `fetchBridge` is refused: the sandbox terminates with a reason that names the fix, `mode: 'strict'`\n * (docs/API.md#terminated-reasons). A config that names no `mode` is a sealed config (sealed is the default; ADR-008),\n * so `{ origins }` or `{ fetchBridge }` without `mode: 'strict'` does not type-check, and from JSON is refused the same\n * way. Defaults, bounds and modes of every option: docs/API.md#configuration.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -1684,7 +1684,7 @@
         {
           "kind": "Interface",
           "canonicalReference": "web-sandbox!SandboxConfigOptions:interface",
-          "docComment": "/**\n * The options every mode takes, and the ones a mode's config narrows ({@link StrictSandboxConfig},\n * {@link CooperativeSandboxConfig}, {@link WorkerSandboxConfig}).\n *\n * @remarks\n *\n * An option left out takes its default, whatever `setConfig()` was given before. An option a mode does not\n * read holds its default in that mode. Each option's accepted values, bounds, warnings and modes are declared once, in\n * the config schema (`CONFIG_SCHEMA`, src/lib/config-schema.ts), and docs/API.md#configuration renders them.\n */\n",
+          "docComment": "/**\n * The options every mode takes, and the ones a mode's config narrows ({@link SealedSandboxConfig},\n * {@link StrictSandboxConfig}, {@link CooperativeSandboxConfig}, {@link WorkerSandboxConfig}).\n *\n * @remarks\n *\n * An option left out takes its default, whatever `setConfig()` was given before. An option a mode does not\n * read holds its default in that mode. Each option's accepted values, bounds, warnings and modes are declared once, in\n * the config schema (`CONFIG_SCHEMA`, src/lib/config-schema.ts), and docs/API.md#configuration renders them.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -3064,7 +3064,7 @@
         {
           "kind": "Interface",
           "canonicalReference": "web-sandbox!SealedSandboxConfig:interface",
-          "docComment": "/**\n * The configuration of sealed mode: strict mode with no network. Guest code runs only in a worker that a view document\n * spawns, as in strict mode, and the view's policy admits no network source: every fetch directive is `'none'` or\n * `blob:` for registered files, and `connect-src` is `'none'`.\n *\n * @remarks\n *\n * `mode: 'sealed'` must be named. A sealed config that names `origins` or `fetchBridge` does not type-check, and from\n * JSON it is refused: nothing of it is applied, and the sandbox terminates with a reason that names the fix,\n * `mode: 'strict'` (docs/API.md#terminated-reasons). `sandboxFetch()` rejects with `FETCH_NOT_ALLOWED`.\n */\n",
+          "docComment": "/**\n * The configuration of sealed mode, the default (ADR-008): strict mode with no network. Guest code runs only in a worker\n * that a view document spawns, as in strict mode, and the view's policy admits no network source: every fetch directive\n * is `'none'` or `blob:` for registered files, and `connect-src` is `'none'`.\n *\n * @remarks\n *\n * A config that names no `mode` is a sealed config. A sealed config that names `origins` or `fetchBridge`, with the mode\n * written or left out, does not type-check, and from JSON it is refused: nothing of it is applied, and the sandbox\n * terminates with a reason that names the fix, `mode: 'strict'` (docs/API.md#terminated-reasons). `sandboxFetch()`\n * rejects with `FETCH_NOT_ALLOWED`.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -3115,11 +3115,11 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!SealedSandboxConfig#mode:member",
-              "docComment": "/**\n * Names the mode.\n */\n",
+              "docComment": "/**\n * Names the mode; sealed when left out. A value that is not a mode starts no environment: the sandbox terminates\n * with a reason that names it (AR:A4).\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
-                  "text": "mode: "
+                  "text": "mode?: "
                 },
                 {
                   "kind": "Content",
@@ -3131,7 +3131,7 @@
                 }
               ],
               "isReadonly": false,
-              "isOptional": false,
+              "isOptional": true,
               "releaseTag": "Public",
               "name": "mode",
               "propertyTypeTokenRange": {
@@ -3204,7 +3204,7 @@
         {
           "kind": "Interface",
           "canonicalReference": "web-sandbox!StrictSandboxConfig:interface",
-          "docComment": "/**\n * The configuration of strict mode (ADR-005), the default: guest code runs only in a worker that a view document\n * spawns, and the worker draws into the view with `sandboxView.render()`. `html` is the initial view, rendered without\n * its scripts and event-handler attributes.\n */\n",
+          "docComment": "/**\n * The configuration of strict mode (ADR-005): sealed mode's view and worker, with the network options. Guest code runs\n * only in a worker that a view document spawns, and the worker draws into the view with `sandboxView.render()`. `html`\n * is the initial view, rendered without its scripts and event-handler attributes.\n *\n * @remarks\n *\n * `mode: 'strict'` must be named: a config that names no mode is sealed ({@link SealedSandboxConfig}, ADR-008), which\n * has no `origins` and no `fetchBridge`.\n */\n",
           "excerptTokens": [
             {
               "kind": "Content",
@@ -3237,11 +3237,11 @@
             {
               "kind": "PropertySignature",
               "canonicalReference": "web-sandbox!StrictSandboxConfig#mode:member",
-              "docComment": "/**\n * Names the mode; strict when left out. A value that is not a mode starts no environment: the sandbox terminates\n * with a reason that names it (AR:A4).\n */\n",
+              "docComment": "/**\n * Names the mode.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
-                  "text": "mode?: "
+                  "text": "mode: "
                 },
                 {
                   "kind": "Content",
@@ -3253,7 +3253,7 @@
                 }
               ],
               "isReadonly": false,
-              "isOptional": true,
+              "isOptional": false,
               "releaseTag": "Public",
               "name": "mode",
               "propertyTypeTokenRange": {
@@ -3763,7 +3763,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#call:member(1)",
-              "docComment": "/**\n * Calls a method the guest exposed with `bridge.expose()` and resolves with its result. It works without\n * `scriptUnsafe`: it never evaluates code.\n *\n * @remarks\n *\n * - Arguments and results are copied by structured clone, at most `RPC_MAX_BYTES` (33 MiB) per message, counted on\n *  both sides on the copy that is sent: past it a call is refused before anything is sent (`ARGS_NOT_TRANSFERABLE`)\n *  and a result is answered `RESULT_NOT_TRANSFERABLE`. The measure knows primitives, plain objects and arrays, `Map`,\n *  `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and `DataView`, `Blob` and `File`, and `String`, `Number`,\n *  `Boolean` and `BigInt` objects. Any other value (an `Error`, an `ImageData` or another platform object, a\n *  `SharedArrayBuffer`) is refused the same way, with a message that names the value rather than the budget; send what\n *  you need of it instead: an error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole\n *  message is counted, the method name included, and a name is at most 256 characters (`INVALID_CALL`).\n * - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and\n *  `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a\n *  call's timeout.\n * - Calls made while `'loading'` are queued and sent when the build becomes `ready`, in every mode (strict mode\n *  included, whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue\n *  and never runs. In cooperative mode a call reaches the guest's method once the guest document is parsed (see\n *  docs/API.md#ready-and-the-startup-gate).\n * - Calls made while `'idle'` (not in the document) or `'terminated'` reject at once with `TERMINATED`, as\n *  `execute()` does nothing then; so do pending ones when the environment goes away.\n *\n * @param method - The name the guest exposed.\n *\n * @param args - The arguments, copied by structured clone.\n *\n * @typeParam T - The type of the result, which the caller asserts: the guest's value is not checked against it.\n *\n * @returns The guest method's return value (awaited if it is a promise).\n *\n * @throws\n *\n * Never synchronously: the promise rejects with an {@link RpcError}, an `Error` whose `code` is an\n * {@link RpcErrorCode}. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and\n * their message is the guest's text.\n */\n",
+              "docComment": "/**\n * Calls a method the guest exposed with `bridge.expose()` and resolves with its result. It works without\n * `scriptUnsafe`: it never evaluates code.\n *\n * @remarks\n *\n * - Arguments and results are copied by structured clone, at most `RPC_MAX_BYTES` (33 MiB) per message, counted on\n *  both sides on the copy that is sent: past it a call is refused before anything is sent (`ARGS_NOT_TRANSFERABLE`)\n *  and a result is answered `RESULT_NOT_TRANSFERABLE`. The measure knows primitives, plain objects and arrays, `Map`,\n *  `Set`, `Date`, `RegExp`, `ArrayBuffer`, typed arrays and `DataView`, `Blob` and `File`, and `String`, `Number`,\n *  `Boolean` and `BigInt` objects. Any other value (an `Error`, an `ImageData` or another platform object, a\n *  `SharedArrayBuffer`) is refused the same way, with a message that names the value rather than the budget; send what\n *  you need of it instead: an error's `{ name, message, stack }`, an image's `data`, `width` and `height`. The whole\n *  message is counted, the method name included, and a name is at most 256 characters (`INVALID_CALL`).\n * - The default timeout is 30 s (`TIMEOUT`). The element's timers and its copy of the arguments use the `setTimeout` and\n *  `structuredClone` it took when it was constructed: fake timers installed after that (a test's) do not control a\n *  call's timeout.\n * - Calls made while `'loading'` are queued and sent when the build becomes `ready`, in every mode (strict and\n *  sealed mode included, whose view has its ports before it checks in); one that settles while queued (its timeout) leaves the queue\n *  and never runs. In cooperative mode a call reaches the guest's method once the guest document is parsed (see\n *  docs/API.md#ready-and-the-startup-gate).\n * - Calls made while `'idle'` (not in the document) or `'terminated'` reject at once with `TERMINATED`, as\n *  `execute()` does nothing then; so do pending ones when the environment goes away.\n *\n * @param method - The name the guest exposed.\n *\n * @param args - The arguments, copied by structured clone.\n *\n * @typeParam T - The type of the result, which the caller asserts: the guest's value is not checked against it.\n *\n * @returns The guest method's return value (awaited if it is a promise).\n *\n * @throws\n *\n * Never synchronously: the promise rejects with an {@link RpcError}, an `Error` whose `code` is an\n * {@link RpcErrorCode}. `UNKNOWN_METHOD`, `HANDLER_ERROR` and `RESULT_NOT_TRANSFERABLE` are reported by the guest and\n * their message is the guest's text.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4085,7 +4085,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#execute:member(1)",
-              "docComment": "/**\n * Runs `code` in the guest's global scope as the body of a function: in the guest document in cooperative mode, in\n * the worker in worker and strict mode. It is compiled with the `Function` the bootstrap captured before any guest\n * code ran. Nothing reaches the host: no return value and no report that it returned.\n *\n * @remarks\n *\n * - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.\n * - While the element is `'idle'` (not in the document) or `'terminated'` there is no environment: it warns and does\n *  nothing, where `call()` rejects.\n * - While `'loading'` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the\n *  guest document is parsed (see docs/API.md#ready-and-the-startup-gate), in order with calls.\n * - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).\n * - In worker and strict mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:\n *  the guest's event loop is free at the deadline. The element pings the guest there; the bootstrap answers from a\n *  handler guest code cannot reach, and only a free event loop can run it. No answer within\n *  {@link EXECUTION_TIMEOUT_GRACE_MS} terminates the sandbox.\n * - Code that is still running at the deadline, or that returned but left work running then (a loop in a\n *  `setTimeout`), is terminated. Code that ran to its end and left the loop free stays ready, whatever it scheduled\n *  for later.\n * - Several calls each have their own deadline, and every deadline checks the one event loop: a loop started by any\n *  code ends the sandbox at the first deadline it blocks.\n * - A loop that starts after the last deadline is not bounded by it: `watchdogTimeout` checks the event loop\n *  continuously and covers that case.\n *\n * @param code - The function body to run.\n */\n",
+              "docComment": "/**\n * Runs `code` in the guest's global scope as the body of a function: in the guest document in cooperative mode, in\n * the worker in worker, strict and sealed mode. It is compiled with the `Function` the bootstrap captured before any guest\n * code ran. Nothing reaches the host: no return value and no report that it returned.\n *\n * @remarks\n *\n * - Needs `scriptUnsafe: true` and a string; otherwise it warns and does nothing.\n * - While the element is `'idle'` (not in the document) or `'terminated'` there is no environment: it warns and does\n *  nothing, where `call()` rejects.\n * - While `'loading'` the code is queued and sent when the build becomes `ready`. In cooperative mode it runs once the\n *  guest document is parsed (see docs/API.md#ready-and-the-startup-gate), in order with calls.\n * - A synchronous throw becomes a `sandbox-log` line (`level: 'error'`, `source: 'guest'`).\n * - In worker, strict and sealed mode each call has its own `workerExecutionTimeout` deadline. What it bounds is precise:\n *  the guest's event loop is free at the deadline. The element pings the guest there; the bootstrap answers from a\n *  handler guest code cannot reach, and only a free event loop can run it. No answer within\n *  {@link EXECUTION_TIMEOUT_GRACE_MS} terminates the sandbox.\n * - Code that is still running at the deadline, or that returned but left work running then (a loop in a\n *  `setTimeout`), is terminated. Code that ran to its end and left the loop free stays ready, whatever it scheduled\n *  for later.\n * - Several calls each have their own deadline, and every deadline checks the one event loop: a loop started by any\n *  code ends the sandbox at the first deadline it blocks.\n * - A loop that starts after the last deadline is not bounded by it: `watchdogTimeout` checks the event loop\n *  continuously and covers that case.\n *\n * @param code - The function body to run.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
@@ -4269,7 +4269,7 @@
             {
               "kind": "Method",
               "canonicalReference": "web-sandbox!WebSandbox#load:member(1)",
-              "docComment": "/**\n * Sets `html` (the guest document, or the initial view in strict mode), keeps the rest of the configuration and\n * rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still\n * rebuilds.\n *\n * @param html - The markup, as for the `html` option of {@link SandboxConfigOptions}.\n */\n",
+              "docComment": "/**\n * Sets `html` (the guest document, or the initial view in sealed and strict mode), keeps the rest of the configuration and\n * rebuilds the environment now (while the element is in the document). Worker mode ignores the markup but still\n * rebuilds.\n *\n * @param html - The markup, as for the `html` option of {@link SandboxConfigOptions}.\n */\n",
               "excerptTokens": [
                 {
                   "kind": "Content",
