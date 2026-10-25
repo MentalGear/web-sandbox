@@ -73,12 +73,12 @@ export const ENGINE_DIFFERENCES = {
         tests: [`${E2E}relay-and-rpc-budgets.spec.ts`, `${E2E}error-cost-and-queued-calls.spec.ts`],
     },
     'worker-violation-reports': {
-        what: "`securitypolicyviolation` reports raised inside a worker (`source: 'logic'`) for `importScripts` (a refused `fetch()`, `XMLHttpRequest` or `WebSocket` is the request gate's own report on every engine)",
-        chromium: "Raises the `importScripts` refusal in the worker (`script-src-elem`)",
-        firefox: "The refusal reaches the creating document (in strict mode, the view's report)",
+        what: "`securitypolicyviolation` reports raised inside a worker (`source: 'logic'`) for `importScripts` or a module `import()` (a refused `fetch()`, `XMLHttpRequest` or `WebSocket` is the request gate's own report on every engine)",
+        chromium: "Raises the refusal in the worker (`script-src-elem`)",
+        firefox: "The refusal reaches the creating document (in strict and sealed mode, the view's report)",
         webkit: "None",
-        why: "WebKit raises no violation event in workers, and Firefox routes `importScripts` refusals to the creating document. Reports from the guest's realm are claims, and the refusal itself is the same on every engine",
-        tests: [`${E2E}violations.spec.ts`, `${E2E}worker-security.spec.ts`, `${E2E}blob-delivery.spec.ts`],
+        why: "WebKit raises no violation event in workers, and Firefox routes these refusals to the creating document. Reports from the guest's realm are claims, and the refusal itself is the same on every engine",
+        tests: [`${E2E}violations.spec.ts`, `${E2E}worker-security.spec.ts`, `${E2E}blob-delivery.spec.ts`, `${E2E}sealed-no-network.spec.ts`],
     },
     'entry-parse-detail': {
         what: "The guest line for a strict entry that does not parse (the reason, the host line and the state are the same on every engine)",
