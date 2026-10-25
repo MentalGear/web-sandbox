@@ -1,6 +1,5 @@
-import http from 'node:http';
 import https from 'node:https';
-import net, { type AddressInfo } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +7,7 @@ import path from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect, ORIGIN } from './fixture';
 import { inView, waitInView } from './strict-view';
+import { startNameProxy } from './name-proxy';
 
 /**
  * No request of strict mode carries a cookie, on any engine (S74, class A: STRICT_COOKIE_CARRIERS is empty). Its two
@@ -29,15 +29,12 @@ import { inView, waitInView } from './strict-view';
  *   cross-site   the harness page on localhost; the listed origin https://127.0.0.1:P, another site, with its
  *                SameSite=None cookie.
  *   opaque-host  the harness page served as https://app.wsprobe.test (H) with `Content-Security-Policy: sandbox
- *                allow-scripts`, as a site of user content serves its pages: the page's origin is opaque, so it has no
- *                site of its own and the library keeps every entry, with a warning (host-site.ts, limitHostReach).
- *                Listed: a sibling, https://cdn.wsprobe.test (S, the site of the page's URL, with domain cookies of
- *                every SameSite kind and host-only ones) and https://cross.wsprobe2.test (X, another site). A page with
- *                a tuple origin cannot list an origin on its own site (onHostSite refuses it from `self.origin` alone,
- *                with nothing of the page to deceive), so a sandboxed host page is the one through which a same-site
- *                target is listed at all; the loads that reach S show that the construction, not the site rule, keeps
- *                the cookies off. The names reach the listener through a CONNECT proxy of this spec's
- *                (startNameProxy), so no DNS entry is needed.
+ *                allow-scripts`, as a site of user content serves its pages: the page's origin is opaque, and its top-level
+ *                URL's site is still the host page's site (host-site.ts, hostSiteOrigins), so a sibling,
+ *                https://cdn.wsprobe.test (S, with domain cookies of every SameSite kind and host-only ones), is
+ *                dropped with the warning, in strict mode as in every mode; https://cross.wsprobe2.test (X, another
+ *                site, with cookies of every SameSite kind) is listed and kept. The names reach the listener through a
+ *                CONNECT proxy (name-proxy.ts), so no DNS entry is needed.
  * Both run on every engine. In each, the worker also tries a WebSocket to every target (and, in opaque-host, to the host
  * page's own origin H, whose host-only cookies are in the jar too): strict mode keeps no `wss://` entry and its request
  * gate refuses every WebSocket, so each attempt is a SecurityError with the gate's report, and no handshake reaches the
@@ -53,41 +50,6 @@ const NAMES = { H: 'app.wsprobe.test', S: 'cdn.wsprobe.test', X: 'cross.wsprobe2
 
 /** The host page's header in the opaque-host world: a sandboxed document, whose origin is opaque. */
 const OPAQUE_HOST_CSP = 'sandbox allow-scripts';
-
-/**
- * The names' resolver: an HTTP proxy that tunnels a CONNECT to any `.test` host to the same port on 127.0.0.1 and
- * refuses everything else. The opaque-host world's context uses it (`proxy`), on every engine, for every host but
- * localhost and 127.0.0.1; the browser never resolves the names itself.
- */
-async function startNameProxy() {
-    const server = http.createServer((_req, res) => { res.writeHead(403); res.end(); });
-    const tunnels = new Set<net.Socket>(); // a tunnel leaves the server's connections: closed by stop() itself
-    server.on('connect', (req: http.IncomingMessage, client: net.Socket, head: Buffer) => {
-        tunnels.add(client);
-        client.on('close', () => tunnels.delete(client));
-        const target = /^([a-z0-9.-]+\.test):(\d+)$/i.exec(req.url ?? '');
-        if (!target) { client.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
-        const upstream = net.connect(Number(target[2]), '127.0.0.1', () => {
-            tunnels.add(upstream);
-            upstream.on('close', () => tunnels.delete(upstream));
-            client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-            if (head.length > 0) upstream.write(head);
-            upstream.pipe(client);
-            client.pipe(upstream);
-        });
-        upstream.on('error', () => client.destroy());
-        client.on('error', () => upstream.destroy());
-    });
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    return {
-        server: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-        stop: () => new Promise<void>(resolve => {
-            server.close(() => resolve());
-            server.closeAllConnections();
-            for (const socket of tunnels) socket.destroy();
-        }),
-    };
-}
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAIAAAAPE8H1AAAAEElEQVR4nGP4z8AAQQxEsgCEuw7yxezkBQAAAABJRU5ErkJggg==', 'base64');
 const VTT = 'WEBVTT\n\n00:00.000 --> 00:05.000\nhello\n';
@@ -202,19 +164,22 @@ const cookie = (name: string, domain: string, sameSite: 'None' | 'Lax' | 'Strict
 
 /** A world: which origins are listed, the cookies the jar holds for them, and the origins a WebSocket is tried to. */
 interface World {
-    targets: Record<string, string>; // name → listed origin
+    targets: Record<string, string>; // name → listed origin, kept
+    refused: Record<string, string>; // name → listed origin on the host page's site: dropped with the warning
     cookies: ReturnType<typeof cookie>[];
     sockets: Record<string, string>; // name → origin: the targets, and in opaque-host the host page's own
 }
 
 const crossSiteWorld = (listener: Listener): World => ({
     targets: { X: `https://127.0.0.1:${listener.port}` },
+    refused: {},
     cookies: [cookie('x_none', '127.0.0.1', 'None')],
     sockets: { X: `https://127.0.0.1:${listener.port}` },
 });
 
 const opaqueHostWorld = (listener: Listener): World => ({
-    targets: { S: `https://${NAMES.S}:${listener.port}`, X: `https://${NAMES.X}:${listener.port}` },
+    targets: { X: `https://${NAMES.X}:${listener.port}` },
+    refused: { S: `https://${NAMES.S}:${listener.port}` },
     sockets: { H: `https://${NAMES.H}:${listener.port}`, S: `https://${NAMES.S}:${listener.port}`, X: `https://${NAMES.X}:${listener.port}` },
     cookies: [
         ...(['None', 'Lax', 'Strict'] as const).flatMap(site => [cookie(`d_${site.toLowerCase()}`, '.wsprobe.test', site), cookie(`xd_${site.toLowerCase()}`, '.wsprobe2.test', site)]),
@@ -286,7 +251,7 @@ for (const worldName of ['cross-site', 'opaque-host'] as const) {
             world = worldName === 'opaque-host' ? opaqueHostWorld(listener) : crossSiteWorld(listener);
             await context.addCookies(world.cookies);
             siteWarnings = [];
-            page.on('console', message => { if (message.type() === 'warning' && message.text().includes('whose origin is opaque')) siteWarnings.push(message.text()); });
+            page.on('console', message => { if (message.type() === 'warning' && message.text().includes("(on the host page's site)")) siteWarnings.push(message.text()); });
             if (worldName === 'opaque-host') {
                 await page.goto(`https://${NAMES.H}:${listener.port}/test/e2e/harness.html?opaque`);
                 await page.waitForFunction(() => (window as any).harnessReady === true);
@@ -308,10 +273,12 @@ for (const worldName of ['cross-site', 'opaque-host'] as const) {
             const warnings: string[] = [];
             page.on('console', message => { if (message.type() === 'warning') warnings.push(message.text()); });
             await sandbox.registerFiles({ 'main.js': `sandboxView.render(${JSON.stringify(run.html)});`, 'own.css': run.stylesheet });
-            const origins = Object.values(world.targets);
+            const origins = [...Object.values(world.targets), ...Object.values(world.refused)];
             expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', origins: { images: origins, media: origins, styles: origins, fonts: origins } })).toBe('ready');
-            // the opaque host page keeps the same-site target listed, and says so (#71); a page with a tuple origin lists none
-            if (worldName === 'opaque-host') expect(siteWarnings.some(text => text.includes(`origins.images lists ${world.targets.S}`)), siteWarnings.join('\n')).toBe(true);
+            // the opaque host page's URL site is its site: the sibling is dropped from every kind, with the warning
+            for (const [name, origin] of Object.entries(world.refused)) {
+                for (const kind of ['images', 'media', 'styles', 'fonts']) expect(siteWarnings.filter(text => text.startsWith(`[Sandbox] origins.${kind} dropped ${origin} (on the host page's site)`)), `${name} ${kind}`).toHaveLength(1);
+            }
             for (const k of run.kept) await expect.poll(() => seen(listener, k).length, k).toBeGreaterThan(0);
             await page.waitForTimeout(1500); // what CSS would load once styled, and the media's later requests
 

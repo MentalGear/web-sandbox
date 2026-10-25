@@ -21,6 +21,7 @@
  */
 
 import type { SandboxMode } from './config-schema';
+import { ORIGIN_KINDS, type OriginKind } from './csp/origins';
 
 /** The SameSite values a cookie can have. */
 export const SAME_SITE_VALUES = ['None', 'Lax', 'Strict'] as const;
@@ -28,7 +29,7 @@ export type SameSiteValue = (typeof SAME_SITE_VALUES)[number];
 
 /** What an engine sends, by where the request goes. */
 export interface CookieReach {
-    /** To an origin on the host page's site. */
+    /** To an origin on the host page's site: the site of the page's origin, of its top-level URL or of a page that frames it (host-site.ts). */
     readonly sameSite: readonly SameSiteValue[];
     /** To an origin on another site (its own cookies, as for any third-party request). */
     readonly crossSite: readonly SameSiteValue[];
@@ -45,6 +46,17 @@ export interface CookieEngineFacts {
     readonly protectedBy: { readonly configuration: string; readonly measured: boolean; readonly sends: CookieReach } | null;
     /** How the row was found. */
     readonly measured: string;
+    /**
+     * Which page's site it decides a request of the sandbox's frames is same-site with, as measured: the site rule's
+     * input (host-site.ts, hostSiteOrigins) takes in every page it may be. `siteMeasured` says how it was found.
+     */
+    readonly siteFrom: string;
+    readonly siteMeasured: string;
+    /**
+     * Whether it has `location.ancestorOrigins`, through which a framed host page reads the origins of the pages above
+     * it. Without it a page framed by another origin cannot read that origin, so its site is undecided.
+     */
+    readonly hasAncestorOrigins: boolean;
 }
 
 export const COOKIE_ENGINES = ['chromium', 'firefox', 'webkit'] as const;
@@ -57,6 +69,9 @@ export const COOKIE_ENGINE_FACTS = {
         sends: { sameSite: [], crossSite: [] },
         protectedBy: null,
         measured: 'test/e2e/cookies.spec.ts: a listener of the same site and one of another, fetch with credentials, a no-cors POST and an image, in every mode; the same requests from a frame without the attribute carry the cookie',
+        siteFrom: 'not measured: it sends no cookie with a request of the sandbox',
+        siteMeasured: 'test/e2e/host-site-layouts.spec.ts: no cookie on a request of the guest in any layout',
+        hasAncestorOrigins: true,
     },
     firefox: {
         name: 'Firefox',
@@ -64,6 +79,9 @@ export const COOKIE_ENGINE_FACTS = {
         sends: { sameSite: ['None'], crossSite: ['None'] },
         protectedBy: { configuration: "Total Cookie Protection, Firefox's default", measured: true, sends: { sameSite: [], crossSite: [] } },
         measured: "S74 board, 2026-10-21, Playwright's Firefox (cookieBehavior 4): a SameSite=None cookie in every mode, Lax and Strict none; with cookieBehavior 5 none. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23",
+        siteFrom: 'not measured: in every layout it sends `SameSite=None` only, as to any third party',
+        siteMeasured: "S74 board, BD4:ISO-1 and BD4:ISO-3, 2026-10-24, Playwright's Firefox: a host page whose origin is opaque, one in a sandboxed frame and one framed by another site send what a third-party page sends; test/e2e/host-site-layouts.spec.ts: no Lax or Strict cookie in any layout",
+        hasAncestorOrigins: false,
     },
     webkit: {
         name: 'WebKit',
@@ -71,6 +89,9 @@ export const COOKIE_ENGINE_FACTS = {
         sends: { sameSite: ['None', 'Lax', 'Strict'], crossSite: ['None'] },
         protectedBy: { configuration: 'Safari, which blocks third-party cookies', measured: false, sends: { sameSite: ['None', 'Lax', 'Strict'], crossSite: [] } },
         measured: "S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23",
+        siteFrom: "the top-level document's URL, whatever the host page's own origin",
+        siteMeasured: "S74 board, BD4:ISO-1 and BD4:ISO-3, 2026-10-24, Playwright's WebKit: a request to the top-level URL's site carries its `SameSite=None, Lax and Strict` cookies from a host page whose origin is opaque and from one framed by that site; test/e2e/host-site-layouts.spec.ts: a plain sandboxed frame's handshake carries them, the guest's none",
+        hasAncestorOrigins: true,
     },
 } as const satisfies Record<CookieEngine, CookieEngineFacts>;
 
@@ -88,32 +109,32 @@ export type Reach = keyof CookieReach;
  */
 export const COOKIE_CARRIERS = {
     websocket: {
-        request: 'A WebSocket handshake', short: 'a WebSocket handshake', modes: ['cooperative', 'worker'], unsentBy: [],
+        request: 'A WebSocket handshake', short: 'a WebSocket handshake', modes: ['cooperative', 'worker'], unsentBy: [], reaches: { kinds: ['connect'], schemes: ['wss:'] },
         why: "The browser makes the handshake and attaches the cookies by site; the gate can refuse it, not strip it, so a server behind a listed `wss://` origin must check `Origin`. Strict mode opens none: its gate refuses every `WebSocket`, and its `origins.connect` keeps no `wss://` entry",
         test: 'test/e2e/request-gate.spec.ts',
     },
     markup: {
-        request: "A load of the guest's markup or CSS (an image, a stylesheet, a font, media)", short: "a load of the guest's markup or CSS", modes: ['cooperative'], unsentBy: [],
+        request: "A load of the guest's markup or CSS (an image, a stylesheet, a font, media)", short: "a load of the guest's markup or CSS", modes: ['cooperative'], unsentBy: [], reaches: { kinds: ['scripts', 'styles', 'images', 'fonts', 'media'], schemes: null },
         why: "The engine makes the load for the document that holds it. Strict mode's view makes each of its loads without credentials (`crossorigin=\"anonymous\"`; no network URL in CSS or a poster)",
         test: 'test/e2e/cookies.spec.ts',
     },
     beacon: {
-        request: 'A `navigator.sendBeacon(url, data)` call', short: '`navigator.sendBeacon()`', modes: ['cooperative'], unsentBy: [],
+        request: 'A `navigator.sendBeacon(url, data)` call', short: '`navigator.sendBeacon()`', modes: ['cooperative'], unsentBy: [], reaches: { kinds: ['connect'], schemes: null },
         why: 'A credentialed POST. The gate covers `fetch()`, `XMLHttpRequest` and `WebSocket`; this maker is not among them, and the strict and worker-mode worker has none',
         test: 'test/e2e/cookies.spec.ts',
     },
     eventsource: {
-        request: 'An `EventSource` made with `{ withCredentials: true }`', short: '`EventSource` with `withCredentials`', modes: ['cooperative'], unsentBy: [],
+        request: 'An `EventSource` made with `{ withCredentials: true }`', short: '`EventSource` with `withCredentials`', modes: ['cooperative'], unsentBy: [], reaches: { kinds: ['connect'], schemes: null },
         why: 'The guest chooses `withCredentials`; the gate does not cover `EventSource`, and the strict and worker-mode worker has none',
         test: 'test/e2e/cookies.spec.ts',
     },
     ping: {
-        request: 'An `<a ping>` click', short: 'an `<a ping>` click', modes: ['cooperative'], unsentBy: ['firefox'],
+        request: 'An `<a ping>` click', short: 'an `<a ping>` click', modes: ['cooperative'], unsentBy: ['firefox'], reaches: { kinds: ['connect'], schemes: null },
         why: 'A POST made by the browser when the link is followed; Firefox sends no ping by default',
         test: 'test/e2e/cookies.spec.ts',
     },
     frames: {
-        request: "A request of a frame or worker the guest creates (its own `fetch()` with `credentials: 'include'`)", short: 'the requests of a frame the guest creates', modes: ['cooperative'], unsentBy: [],
+        request: "A request of a frame or worker the guest creates (its own `fetch()` with `credentials: 'include'`)", short: 'the requests of a frame the guest creates', modes: ['cooperative'], unsentBy: [], reaches: { kinds: ORIGIN_KINDS, schemes: null },
         why: 'A realm of its own with the platform\'s `fetch`: a limit of cooperative mode (S44)',
         test: 'test/e2e/cookies.spec.ts',
     },
@@ -131,6 +152,12 @@ export interface CookieCarrier {
     readonly modes: readonly CookieCarrierMode[];
     /** The engines that send no such request at all. */
     readonly unsentBy: readonly CookieEngine[];
+    /**
+     * The `origins` entries it can be made to: those of `kinds` (the lists whose directives admit it), with a scheme of
+     * `schemes` (null: any). An entry one of the mode's carriers reaches is what an undecided host site refuses
+     * (limitHostReach, config-schema.ts).
+     */
+    readonly reaches: { readonly kinds: readonly OriginKind[]; readonly schemes: readonly string[] | null };
     /** Why the library cannot strip its credentials. */
     readonly why: string;
     /** The spec that makes it on every engine. */
@@ -155,6 +182,18 @@ export const COOKIE_CARRIER_IDS = Object.keys(COOKIE_CARRIERS) as CookieCarrierI
 /** The carriers the guest can make in `mode`, in table order. */
 export const cookieCarriersIn = (mode: SandboxMode): CookieCarrierId[] =>
     COOKIE_CARRIER_IDS.filter(id => (COOKIE_CARRIERS[id].modes as readonly SandboxMode[]).includes(mode));
+
+/**
+ * Whether one of `carriers` can be made to `origin`, an entry of the `kind` list (its `reaches`): the entries a host page
+ * whose site is undecided refuses (limitHostReach, config-schema.ts). Strict mode has no carrier, so none there.
+ */
+export function carriedTo(carriers: readonly CookieCarrierId[], kind: OriginKind, origin: string): boolean {
+    const scheme = origin.slice(0, origin.indexOf(':') + 1);
+    return carriers.some(id => {
+        const { kinds, schemes } = COOKIE_CARRIERS[id].reaches as CookieCarrier['reaches'];
+        return kinds.includes(kind) && (schemes === null || schemes.includes(scheme));
+    });
+}
 
 /**
  * Strict mode's cookie carriers: none, on any engine (S74, class A). No request of strict mode carries a cookie: the
@@ -210,6 +249,30 @@ export const engineClauses = (reach: Reach, code?: (text: string) => string, cre
 export const sameSiteCookieClause = (code?: (text: string) => string): string =>
     `a guest's WebSocket handshake in cooperative or worker mode, or in cooperative mode a load of its markup or CSS, to the host page's site can carry the host site's cookies (${engineClauses('sameSite', code)}; fetch(), XMLHttpRequest and every request of strict mode carry none)`;
 
+/** The engines without `location.ancestorOrigins`, as a sentence names them. */
+const enginesWithout = (): string => COOKIE_ENGINES.filter(engine => !COOKIE_ENGINE_FACTS[engine].hasAncestorOrigins).map(engine => COOKIE_ENGINE_FACTS[engine].name).join(', ');
+
+/**
+ * What "the host page's site" is, and what the library drops for it (host-site.ts; limitHostReach, config-schema.ts):
+ * the sentence of the README, and the paragraph above the engines' table in docs/API.md and docs/THREAT-MODEL.md.
+ */
+export const hostSiteSentence = (code: (text: string) => string = text => text): string =>
+    `The host page's site is the site of its own origin, of its top-level URL and of every page that frames it: an engine may decide a request's site from any of them (${COOKIE_ENGINES.map(engine => `${COOKIE_ENGINE_FACTS[engine].name}: ${withCode(COOKIE_ENGINE_FACTS[engine].siteFrom, code)}`).join('; ')}). An ${code('origins')} entry on it is dropped in every mode. Where one of those origins is opaque (a sandboxed document) or cannot be read (a page of another origin above the host page, on an engine without ${code('location.ancestorOrigins')}: ${enginesWithout()}), the site is undecided, and every entry that such a request can reach in the mode is dropped as well, with a warning that says why: ${(['worker', 'cooperative', 'strict'] as const satisfies readonly SandboxMode[]).map(mode => `${reachedEntries(mode, code)} in ${mode} mode`).join(', ')}.`;
+
+/** The entries the carriers of `mode` can reach (their `reaches`), as a sentence names them: "none" for strict mode. */
+export function reachedEntries(mode: SandboxMode, code: (text: string) => string = text => text): string {
+    const carriers = cookieCarriersIn(mode);
+    const lists = ORIGIN_KINDS.flatMap(kind => {
+        const reaching = carriers.map(id => COOKIE_CARRIERS[id].reaches as CookieCarrier['reaches']).filter(reach => reach.kinds.includes(kind));
+        if (reaching.length === 0) return [];
+        const schemes = reaching.some(reach => reach.schemes === null) ? null : [...new Set(reaching.flatMap(reach => reach.schemes!))];
+        return [{ kind, schemes }];
+    });
+    if (lists.length === 0) return 'none';
+    if (lists.length === ORIGIN_KINDS.length && lists.every(list => list.schemes === null)) return 'every entry';
+    return lists.map(({ kind, schemes }) => (schemes === null ? `every ${code(kind)} entry` : `the ${schemes.map(scheme => code(`${scheme}//`)).join(' and ')} entries of ${code(kind)}`)).join(', ');
+}
+
 /** The sentence the README states: both kinds of origin, every engine. */
 export const cookieSentence = (code: (text: string) => string): string =>
-    `${code('fetch()')} and ${code('XMLHttpRequest')} of the sandbox carry no cookie in any engine: the library sends them without credentials. No request of strict mode carries a cookie, on any engine: its view's elements load as CORS requests without credentials (${code('crossorigin="anonymous"')}), its CSS and posters keep no network URL, and its worker opens no WebSocket. A request the library cannot strip in the other modes (${carrierClause(code)}) to an origin on the host page's site carries these cookies: ${engineClauses('sameSite', code)}. To an origin on another site it carries that site's own cookies: ${engineClauses('crossSite', code, false)}. The fetch bridge sends none in any engine. ${ambientCredentialsSentence()}`;
+    `${code('fetch()')} and ${code('XMLHttpRequest')} of the sandbox carry no cookie in any engine: the library sends them without credentials. No request of strict mode carries a cookie, on any engine: its view's elements load as CORS requests without credentials (${code('crossorigin="anonymous"')}), its CSS and posters keep no network URL, and its worker opens no WebSocket. A request the library cannot strip in the other modes (${carrierClause(code)}) to an origin on the host page's site carries these cookies: ${engineClauses('sameSite', code)}. To an origin on another site it carries that site's own cookies: ${engineClauses('crossSite', code, false)}. ${hostSiteSentence(code)} The fetch bridge sends none in any engine. ${ambientCredentialsSentence()}`;
