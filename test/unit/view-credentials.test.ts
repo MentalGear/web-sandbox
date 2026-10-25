@@ -300,6 +300,43 @@ describe('cssReferences, network scope, and withoutNetworkReferences', () => {
         expect(cssReferences('@import src("x.css");', 'files')).toEqual([]); // the files scope is as it was
     });
 
+    // BD4:LIM-2 (refuted after #75): every string that is an absolute http(s) URL is dropped wherever CSS holds it, so no
+    // route (a custom property read through var() in image-set(), content, cursor, list-style-image, src(), an escaped
+    // scheme) is a load the view's counters would have to see. The verifier's table of routes; the engines' side is the
+    // "CSS makes no load" test of test/e2e/view-credentials.spec.ts.
+    describe('BD4:LIM-2: no route makes a network load', () => {
+        const X = 'https://x.example';
+        const routes: [name: string, css: string, dropped: boolean][] = [
+            ['a bare string in a custom property', `--u: "${X}/a.png"`, true],
+            ['a custom property read by image-set(var())', `#t{--u:"${X}/a.png"} #t{background-image:image-set(var(--u) 1x)}`, true],
+            ['an image-set() string', `background-image:image-set("${X}/a.png" 1x)`, true],
+            ['a content string', `content:"${X}/a.png"`, true],
+            ['a cursor string', `cursor:"${X}/c.png"`, true],
+            ['a list-style-image string', `list-style-image:"${X}/l.png"`, true],
+            ['url(), bare', `background:url(${X}/a.png)`, true],
+            ['url(), quoted', `background:url("${X}/a.png")`, true],
+            ['@import, a string', `@import "${X}/s.css"`, true],
+            ['@import, url()', `@import url("${X}/s.css")`, true],
+            ['@import, src() (BD4:TST-6)', `@import src("${X}/s.css")`, true],
+            ['@font-face, url()', `@font-face{font-family:F;src:url("${X}/f.woff2")}`, true],
+            ['@font-face, src()', `@font-face{font-family:F;src:src("${X}/f.woff2")}`, true],
+            ['an escape in the host name', `--u:"${X.replace('x', '\\78')}/a.png"`, true],
+            ['an escaped scheme', `--u:"${X.replace('https', 'htt\\70 s')}/a.png"`, true],
+            ['a comment before a url()', `background:/* ${X}/x */url("${X}/a.png")`, true],
+            ['attr(), which cannot make a string', 'content:attr(data-u)', false],
+            ['a relative url()', 'background:url(/a.png)', false],
+            ['a relative string', '--u:"/a.png"', false],
+        ];
+        for (const [name, css, dropped] of routes) {
+            it(`${name}: ${dropped ? 'dropped and reported' : 'nothing to drop'}`, () => {
+                const list: [string, string][] = [];
+                const kept = dropNetworkCss(css, list);
+                expect(list.length > 0).toBe(dropped);
+                expect(list.every(([, url]) => /^https?:/i.test(url))).toBe(true);
+                expect(/https?:/i.test(kept.replace(/\/\*[^]*?\*\//g, ''))).toBe(false); // no http(s) string is left outside a comment
+            });
+        }
+    });
 });
 
 describe('registered stylesheets reach the view without their network URLs (files.ts, viewStylesheets)', () => {
@@ -427,6 +464,18 @@ describe('the view: what an operation puts into a <style>, and a load that fails
         expect(style().getPropertyValue('cursor')).not.toContain(FREE);
         expect(violations.length).toBe(5);
         expect(violations[4]).toEqual(['img-src', `${FREE}/c.png`]);
+        close();
+    });
+
+    it('set({ css }) cannot load through a bare string in a custom property read by image-set(var()), however many URLs it names (BD4:LIM-2)', async () => {
+        const { send, violations, close } = await startView();
+        await send({ type: 'VIEW_RENDER', html: `<style>#t{background-image:image-set(var(--u) 1x)}</style><div id="t"></div>`, into: 'a' });
+        const style = () => document.getElementById('t')!.style;
+        for (let i = 0; i < 5; i++) {
+            await send({ type: 'VIEW_SET', id: 't', css: { '--u': `"${LISTED}/n${i}.png"` } });
+            expect(style().getPropertyValue('--u'), `set ${i}`).not.toContain(LISTED);
+        }
+        expect(violations).toEqual([0, 1, 2, 3, 4].map(i => ['img-src', `${LISTED}/n${i}.png`]));
         close();
     });
 
