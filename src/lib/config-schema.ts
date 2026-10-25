@@ -25,10 +25,10 @@
 import type { CallLimits } from '../host';
 import { SAFE_CAPABILITIES, UNSAFE_CAPABILITIES, type SafeCapability, type UnsafeCapability } from '../csp-directives';
 import { filterCapabilities } from './capabilities';
-import { sameSiteCookieClause } from './cookie-facts';
+import { carriedTo, COOKIE_CARRIER_IDS, COOKIE_CARRIERS, cookieCarriersIn, sameSiteCookieClause, withCode, type CookieCarrierId } from './cookie-facts';
 import { NO_ORIGINS, ORIGIN_KINDS, parseOrigins, shown, type OriginPolicy } from './csp/origins';
 import { isPrivateHost, isPrivateOrigin, PRIVATE_NETWORK_REASON, toFetchPolicy, type FetchPolicy } from './fetch-bridge';
-import { hostOriginKnown, onHostSite, OPAQUE_ORIGIN } from './host-site';
+import { hostSiteUndecided, onHostSite } from './host-site';
 import type { Origin } from './origin';
 import { RPC_MAX_BYTES, type BudgetRefusal } from './rpc';
 import { MAX_TOTAL_BYTES } from './files';
@@ -194,14 +194,19 @@ export interface NormalisedConfig {
     callBudget: Readonly<CallBudget>;
 }
 
-/** What normalising reads besides the argument. */
+/** What normalising reads besides the argument: the host page, from host-site.ts, whose rules are about it. */
 export interface NormaliseContext {
     /**
-     * The host page's origin (host-site.ts, `hostPageOrigin`: `self.origin` of the element's realm), the one input of every
-     * rule about the host page: the same-site and private-network rules of every `origins` kind (limitHostReach) and of
+     * The host page's origin (host-site.ts, `hostPageOrigin`: `self.origin` of the element's realm): the input of the
+     * rules about that origin, the private-network rule of every `origins` kind (limitHostReach) and the rules of
      * fetchBridge.allow (fetch-bridge.ts).
      */
     hostOrigin: string;
+    /**
+     * The origins whose sites count as the host page's site (host-site.ts, `hostSiteOrigins`: `self.origin`, the
+     * top-level document's URL's origin, every ancestor's): the one input of the same-site rule (limitHostReach).
+     */
+    hostSites: readonly string[];
 }
 
 /** What an option's rules see while one argument is normalised. */
@@ -259,64 +264,84 @@ const viewSwitch = (name: ViewSwitch) => ({ given, mode, warn }: OptionInput): b
 /**
  * The one pass over a parsed `origins` that decides what a listed origin reaches beyond the internet at large, in every
  * list (ORIGIN_KINDS: every kind, so a new kind is covered), with one warning per list and reason.
- * Its one input about the host page is `context.hostOrigin` (host-site.ts, `hostPageOrigin`):
- *  - An origin on the host page's site (onHostSite, host-site.ts: the page's host, or a host that shares its last two
- *    labels; for an address, `localhost` or a single-label host, that host only) may receive the host site's cookies
- *    with a guest request (INHERITED_CONTEXT.cookies; the engines differ, and only Chromium's wrapper frame,
- *    credentialless, sends none), so it is dropped from the policy in every mode. The rule needs no probe of the page,
- *    and it can only refuse more than the browser's public-suffix list would (two sites under a suffix of several
- *    labels, such as `github.io`), which the warning says (SITE_RULE). A host origin that is not known (not an origin)
- *    refuses every entry.
- *  - An opaque host origin (`'null'`, a sandboxed host document) has no site of its own: its entries are kept, with a
- *    warning, since a request from it carries only another site's own cookies, as any cross-site request does.
+ * Its inputs about the host page are `context.hostSites` (host-site.ts, `hostSiteOrigins`) and `context.hostOrigin`:
+ *  - An origin on the host page's site (onHostSite, host-site.ts: on the site of the page's origin, of its top-level
+ *    URL or of a page that frames it; the site of a host is the host, or every host that shares its last two labels;
+ *    for an address, `localhost` or a single-label host, that host only) may receive the host site's cookies with a
+ *    guest request (INHERITED_CONTEXT.cookies; the engines differ, and only Chromium's wrapper frame, credentialless,
+ *    sends none), so it is dropped from the policy in every mode. The rule needs no probe of the page, and it can only
+ *    refuse more than the browser's public-suffix list would (two sites under a suffix of several labels, such as
+ *    `github.io`), which the warning says (SITE_RULE).
+ *  - When the host page's site is undecided (hostSiteUndecided: an opaque origin, or one that cannot be read, among
+ *    them; BD4:ISO-1, BD4:ISO-3), the rule cannot say which hosts an engine counts as the host page's site, so every
+ *    entry that a request carrying cookies can reach in the mode is dropped too (COOKIE_CARRIERS, its `modes` and
+ *    `reaches`, cookie-facts.ts: `wss://` entries in worker mode; in cooperative mode every list; none in strict
+ *    mode, which has no carrier), with a warning that says why (UNDECIDED_SITE_RULE).
  *  - A loopback, private or link-local host (isPrivateHost) is a machine or network of the user's, which the guest then
  *    reaches, and engines differ on whether a page of the public web may do that: kept, with a warning, only when the
- *    host page is itself on one; dropped, with a warning, otherwise (PRIVATE_NETWORK_REASON).
+ *    host page is itself on one (`hostOrigin`); dropped, with a warning, otherwise (PRIVATE_NETWORK_REASON).
  * fetchBridge.allow says the same for its entries (toFetchPolicy); the fetch bridge sends no credentials, so it is what
  * the warnings point to. Returns `policy` itself when nothing is dropped.
  */
-export function limitHostReach(policy: OriginPolicy, context: NormaliseContext, warn: (message: string) => void): OriginPolicy {
-    const { hostOrigin } = context;
+export function limitHostReach(policy: OriginPolicy, context: NormaliseContext, warn: (message: string) => void, mode: unknown): OriginPolicy {
+    const { hostOrigin, hostSites } = context;
     const hostIsPrivate = isPrivateOrigin(hostOrigin);
-    const hostIsOpaque = hostOrigin === OPAQUE_ORIGIN;
-    // a host origin that is not known puts every entry on its site (onHostSite): refused, and the warning says why
-    const siteReason = hostOriginKnown(hostOrigin) ? "on the host page's site" : "the host page's origin is not known";
+    const undecided = hostSiteUndecided(hostSites);
+    // a mode that is not one refuses every build; until then it counts as every mode
+    const carriers = undecided === null ? [] : isSandboxMode(mode) ? cookieCarriersIn(mode) : COOKIE_CARRIER_IDS;
     const kept: Record<string, readonly Origin[]> = {};
     let dropped = false;
     for (const kind of ORIGIN_KINDS) {
         const keep: Origin[] = [];
         const siteRefused: string[] = [];
+        const undecidedRefused: string[] = [];
         const localRefused: string[] = [];
         const listed: string[] = [];
-        const opaqueKept: string[] = [];
         for (const origin of policy[kind]) {
             // one entry per origin, with every reason it is listed for
             const reasons: string[] = [];
-            const onSite = onHostSite(origin, hostOrigin);
+            const onSite = onHostSite(origin, hostSites);
+            const carried = !onSite && carriedTo(carriers, kind, origin);
             const onLocal = isPrivateHost(new URL(origin).hostname);
-            if (onSite) reasons.push(origin === hostOrigin ? "the host page's own origin" : siteReason);
+            if (onSite) reasons.push(origin === hostOrigin ? "the host page's own origin" : "on the host page's site");
+            if (carried) reasons.push("the host page's site is undecided");
             if (onLocal) reasons.push('a loopback, private or link-local host');
             const entry = `${origin} (${reasons.join(', ')})`;
             if (onSite) { siteRefused.push(entry); continue; }
+            if (carried) { undecidedRefused.push(entry); continue; }
             if (onLocal && !hostIsPrivate) { localRefused.push(entry); continue; }
             keep.push(origin);
             if (onLocal) listed.push(entry);
-            else if (hostIsOpaque) opaqueKept.push(origin);
         }
         kept[kind] = Object.freeze(keep);
         if (siteRefused.length > 0) {
             dropped = true;
             warn(`[Sandbox] origins.${kind} dropped ${siteRefused.join(', ')}: ${SITE_COOKIES}; the library admits no origin on the host page's site, in any mode. ${SITE_RULE}`);
         }
+        if (undecidedRefused.length > 0) {
+            dropped = true;
+            warn(`[Sandbox] origins.${kind} dropped ${undecidedRefused.join(', ')}: ${undecided}, so no entry is admitted that ${carrierNames(carriers)} can reach, as it could be on that site: ${SITE_COOKIES}. ${UNDECIDED_SITE_RULE}`);
+        }
         if (localRefused.length > 0) {
             dropped = true;
             warn(`[Sandbox] origins.${kind} dropped ${localRefused.join(', ')}: ${PRIVATE_NETWORK_REASON}.`);
         }
         if (listed.length > 0) warn(`[Sandbox] origins.${kind} lists ${listed.join(', ')}: a loopback, private or link-local host is the user's own machine or network, which the guest then reaches. Prefer the fetch bridge (fetchBridge.allow), whose requests carry no credentials.`);
-        if (opaqueKept.length > 0) warn(`[Sandbox] origins.${kind} lists ${opaqueKept.join(', ')} from a host page whose origin is opaque (a sandboxed document): it has no site of its own, so no entry is on its site, and a request there carries only that site's own cookies, as any cross-site request does.`);
     }
     return dropped ? (Object.freeze(kept) as OriginPolicy) : policy;
 }
+
+/** The carriers a warning names, as a sentence names each (COOKIE_CARRIERS `short`). */
+const carrierNames = (carriers: readonly CookieCarrierId[]): string => {
+    const names = carriers.map(id => withCode(COOKIE_CARRIERS[id].short, text => text));
+    return names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`;
+};
+
+/**
+ * What the warning of an undecided host site says of its rule (host-site.ts, hostSiteUndecided): what leaves the site
+ * undecided, and the way to reach such an origin.
+ */
+export const UNDECIDED_SITE_RULE = "The host page's site is that of its own origin, of its top-level URL and of every page that frames it; an opaque origin among them (a sandboxed document), or one the browser does not give (a page of another origin above the host page, where the browser has no location.ancestorOrigins), leaves it undecided. Use the fetch bridge (fetchBridge.allow), whose requests carry no credentials, to reach such an origin.";
 
 /**
  * What the same-site drop warning says of its rule (host-site.ts, onHostSite): where it can refuse more than the
@@ -374,7 +399,7 @@ export const CONFIG_SCHEMA = {
         default: NO_ORIGINS, documented: 'none', modes: ALL_MODES,
         // parsed for the mode the build will have, the default included, so strict mode drops `scripts` whether the
         // config names it or not; a value that cannot be read refuses the config (origins.ts)
-        read: ({ given, mode, warn, context }) => limitHostReach(parseOrigins(given, mode, warn), context, warn),
+        read: ({ given, mode, warn, context }) => limitHostReach(parseOrigins(given, mode, warn), context, warn, mode),
     },
     hostContentSecurityPolicy: {
         default: undefined, documented: 'none: `origins.connect` and `fetchBridge.allow` are dropped', modes: ALL_MODES,
@@ -569,4 +594,4 @@ export const CONFIG_INVARIANTS: readonly ConfigInvariant[] = [
 ];
 
 /** The stored config of an argument that names nothing: every default. */
-export const defaultConfig = (): StoredConfig => normaliseConfig({}, { hostOrigin: '' }).value!.config;
+export const defaultConfig = (): StoredConfig => normaliseConfig({}, { hostOrigin: '', hostSites: [] }).value!.config;

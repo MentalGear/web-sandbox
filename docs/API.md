@@ -135,7 +135,7 @@ How a call is applied (over the defaults, copied, validated, and what a config t
 
 ### `origins`
 
-<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d2622797099fbb86493659f5 -->
+<!-- describes: origins, cookie-facts, csp:cooperative, csp:strict, api:SandboxOrigins, api:StrictSandboxOrigins sig:d26274f1099fbb86493659f5 -->
 The guest's policy is one fixed template per mode. `origins` adds exact origins to six of its directives, one list per
 kind of load, and can change nothing else:
 
@@ -229,17 +229,29 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['h
   such origin. A WebSocket handshake in cooperative or worker mode, or in cooperative mode a load of the guest's markup
   or CSS, to it can carry the host site's cookies, as the [table below](#cookies-by-engine) says, so use
   [`fetchBridge`](#fetchbridge) for an API that knows the user: it sends no credentials in any engine.
-- **The host page's site is decided from the page's origin by one rule, with no probe and no public-suffix list.** The
-  page's origin is `self.origin` of the realm the element runs in, so an element in a same-origin `srcdoc` or `about:blank`
-  frame has its page's origin, as its cookies do. For a host name of two labels or more, an entry is on the site when its
-  host is the page's host or shares the page's last two labels: for a page on `app.example.com`, the page's own origin on
-  any scheme or port, `api.example.com`, `deep.api.example.com` and `example.com`. A registrable domain always has at
-  least two labels, so the rule never misses an origin the browser counts as on the site; under a public suffix of
-  several labels it also refuses other sites (`bob.github.io` from a page on `alice.github.io`, `other.co.uk` from
-  `www.example.co.uk`), and the warning says so. Reach such an origin with [`fetchBridge`](#fetchbridge), which sends no
-  credentials. For an IP address, `localhost` or any other single-label host, only that host is on the site. A host page
-  whose origin is opaque (a sandboxed document: `'null'`) has no site of its own: its entries are kept, with a warning,
-  as a request from it carries only another site's own cookies.
+- **The host page's site is the site of every origin a browser may decide a request's site from**: the page's own
+  origin (`self.origin` of the realm the element runs in, so an element in a same-origin `srcdoc` or `about:blank` frame
+  has its page's origin, as its cookies do), the origin of its top-level URL when the page is the top-level document, and
+  the origin of every page that frames it (`location.ancestorOrigins`, or each ancestor's `origin` read up `parent`).
+  An entry on the site of any of them is dropped. So a page framed by another site's page cannot list that site, and a
+  page served with `Content-Security-Policy: sandbox` cannot list its URL's site. Each engine's part is in the
+  [table below](#host-site-by-engine).
+- **The site of an origin is decided by one rule, with no probe and no public-suffix list.** For a host name of two
+  labels or more, an entry is on the site when its host is that host or shares its last two labels: for a page on
+  `app.example.com`, the page's own origin on any scheme or port, `api.example.com`, `deep.api.example.com` and
+  `example.com`. A registrable domain always has at least two labels, so the rule never misses an origin the browser
+  counts as on the site; under a public suffix of several labels it also refuses other sites (`bob.github.io` from a
+  page on `alice.github.io`, `other.co.uk` from `www.example.co.uk`), and the warning says so. Reach such an origin with
+  [`fetchBridge`](#fetchbridge), which sends no credentials. For an IP address, `localhost` or any other single-label
+  host, only that host is on the site.
+- **Where the host page's site cannot be decided, every entry a cookie-carrying request can reach is dropped as well**,
+  with one warning per kind that names each entry (`the host page's site is undecided`), says why, and names the
+  requests. The site is undecided when one of the origins above is opaque (a page served with
+  `Content-Security-Policy: sandbox`, one inside `<iframe sandbox>`, or a page under such a page) or cannot be read (a
+  page of another origin above the host page, on an engine without `location.ancestorOrigins`). The entries are those
+  the [requests below the table](#cookie-carriers) can reach in the mode, as the [table below](#host-site-by-engine)
+  lists them by mode; strict mode, whose requests carry no cookie, has none. Entries on the site of an origin that can
+  be read are dropped as on the site, in every mode.
 - **A loopback, private or link-local host is kept only when the host page is itself on one**: `localhost`, `127.0.0.1`,
   `10.x`, `192.168.x`, `169.254.x`, or a name that is private by convention (a single label such as `intranet`, and
   `*.local`, `*.internal` such as `host.docker.internal`, `*.lan`, `*.home.arpa`, `*.localdomain`, `*.corp`, `*.home`,
@@ -252,7 +264,8 @@ sandbox.setConfig({ origins: { connect: ['https://api.example.com'], images: ['h
 The cookies the browser would send with a request of the sandbox that the library cannot strip, by engine, for the
 requests [listed below the table](#cookie-carriers) (`fetch()`, `XMLHttpRequest` and every request of strict mode carry
 none, on any engine; this is why an origin on the host page's site is dropped; the warning is written from the same
-table; every wrapper frame is `credentialless`, which only some engines honour):
+table; every wrapper frame is `credentialless`, which only some engines honour). The host page's site is that of its
+origin, of its top-level URL and of every page that frames it ([below](#host-site-by-engine)):
 
 <!-- generated:begin cookie-facts -->
 | Engine | To an origin on the host page's site | To an origin on another site | Narrower with | Found by |
@@ -260,6 +273,19 @@ table; every wrapper frame is `credentialless`, which only some engines honour):
 | Chromium (the sandbox's frame is credentialless) | none | none | — | test/e2e/cookies.spec.ts: a listener of the same site and one of another, fetch with credentials, a no-cors POST and an image, in every mode; the same requests from a frame without the attribute carry the cookie |
 | Firefox | `SameSite=None` | `SameSite=None` | Total Cookie Protection, Firefox's default: none to the host page's site, none to another | S74 board, 2026-10-21, Playwright's Firefox (cookieBehavior 4): a SameSite=None cookie in every mode, Lax and Strict none; with cookieBehavior 5 none. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23 |
 | WebKit | `SameSite=None, Lax and Strict` | `SameSite=None` | Safari, which blocks third-party cookies (not measured): `SameSite=None, Lax and Strict` to the host page's site, none to another | S74 board, 2026-10-21, Playwright's WebKit: None, Lax and Strict to a same-site origin and None to another site, in every mode. The WebSocket handshake to another site: test/e2e/request-gate.spec.ts, 2026-10-23 |
+<!-- generated:end -->
+
+<a id="host-site-by-engine"></a>
+**The host page's site, by engine**, and what is dropped where it cannot be decided:
+
+<!-- generated:begin host-site-facts -->
+The host page's site is the site of its own origin, of its top-level URL and of every page that frames it: an engine may decide a request's site from any of them (Chromium: not measured: it sends no cookie with a request of the sandbox; Firefox: not measured: in every layout it sends `SameSite=None` only, as to any third party; WebKit: the top-level document's URL, whatever the host page's own origin). An `origins` entry on it is dropped in every mode. Where one of those origins is opaque (a sandboxed document) or cannot be read (a page of another origin above the host page, on an engine without `location.ancestorOrigins`: Firefox), the site is undecided, and every entry that such a request can reach in the mode is dropped as well, with a warning that says why: the `wss://` entries of `connect` in worker mode, every entry in cooperative mode, none in strict mode.
+
+| Engine | A request's site is decided from | A host page framed by another origin | Found by |
+| :--- | :--- | :--- | :--- |
+| Chromium | not measured: it sends no cookie with a request of the sandbox | decided: its ancestors' origins come from `location.ancestorOrigins` (an opaque one leaves it undecided) | test/e2e/host-site-layouts.spec.ts: no cookie on a request of the guest in any layout |
+| Firefox | not measured: in every layout it sends `SameSite=None` only, as to any third party | undecided (no `location.ancestorOrigins`): dropped as well, the `wss://` entries of `connect` in worker mode, every entry in cooperative mode | S74 board, BD4:ISO-1 and BD4:ISO-3, 2026-10-24, Playwright's Firefox: a host page whose origin is opaque, one in a sandboxed frame and one framed by another site send what a third-party page sends; test/e2e/host-site-layouts.spec.ts: no Lax or Strict cookie in any layout |
+| WebKit | the top-level document's URL, whatever the host page's own origin | decided: its ancestors' origins come from `location.ancestorOrigins` (an opaque one leaves it undecided) | S74 board, BD4:ISO-1 and BD4:ISO-3, 2026-10-24, Playwright's WebKit: a request to the top-level URL's site carries its `SameSite=None, Lax and Strict` cookies from a host page whose origin is opaque and from one framed by that site; test/e2e/host-site-layouts.spec.ts: a plain sandboxed frame's handshake carries them, the guest's none |
 <!-- generated:end -->
 
 <a id="cookie-carriers"></a>

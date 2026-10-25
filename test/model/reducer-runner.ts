@@ -211,7 +211,7 @@ export class FakeElement implements LifecycleHost {
             return `${CONFIG_REFUSED} (${errorName(error)}${refusalDetail(error)})`;
         };
         if (pending.error !== null) return refuse(pending.error);
-        const { value, warnings, refusal } = normaliseConfig(pending.copy, { hostOrigin: ORIGIN });
+        const { value, warnings, refusal } = normaliseConfig(pending.copy, { hostOrigin: ORIGIN, hostSites: [ORIGIN] });
         this.warns += warnings.length;
         if (value === null) return refuse(refusal);
         this.config = value.config;

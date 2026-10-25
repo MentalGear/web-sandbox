@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 /**
- * The element hands the host page's origin to the config (host.ts, `normaliseConfig(copy, { hostOrigin })`, from
- * host-site.ts `hostPageOrigin`: `self.origin` of its realm), so the host-reach warnings fire in a real element: an origin
+ * The element hands the host page to the config (host.ts, `normaliseConfig(copy, { hostOrigin, hostSites })`, from
+ * host-site.ts `hostPageOrigin` and `hostSiteOrigins`: `self.origin` of its realm, its top-level URL's and its ancestors'),
+ * so the host-reach warnings fire in a real element: an origin
  * list naming the page's own origin or a host on its site, and `fetchBridge.allow` naming the page's own origin
  * (BD1:NEW-1; docs/API.md, `origins`). test/unit/config-schema.test.ts gives the origin by hand; these go through
  * `setConfig`.
@@ -47,17 +48,20 @@ describe("the element tells the config the host page's origin (BD1:NEW-1)", () =
     });
 });
 
-describe("the element decides the host page's site from self.origin, with no probe of the page (S74, host-site.ts)", () => {
+describe("the element decides the host page's site from its realm, with no probe of the page (S74, host-site.ts)", () => {
     // A realm whose settings are https://app.wiring.co.uk while its document's URL says nothing of it (a same-origin
-    // srcdoc or a DOM-built about:blank frame: location.origin 'null', location.hostname ''), with a cookie accessor that
-    // keeps nothing (a consent manager's gate): neither is read.
+    // srcdoc or a DOM-built about:blank frame: location.origin 'null', location.hostname ''), framed by a page of its own
+    // origin, with a cookie accessor that keeps nothing (a consent manager's gate): neither the URL nor the jar is read.
     const HOST = 'https://app.wiring.co.uk';
     let cookieWrites = 0;
     let cookieReads = 0;
 
-    function realmAt(origin: string) {
+    function realmAt(origin: string, framedBy: string) {
+        const top = { origin: framedBy };
         vi.stubGlobal('origin', origin);
-        vi.stubGlobal('location', { origin: 'null', hostname: '', href: 'about:srcdoc' });
+        vi.stubGlobal('location', { origin: 'null', hostname: '', href: 'about:srcdoc', ancestorOrigins: [framedBy] });
+        vi.stubGlobal('top', top);
+        vi.stubGlobal('parent', top);
         Object.defineProperty(document, 'cookie', {
             configurable: true,
             get: () => { cookieReads++; return ''; },
@@ -74,7 +78,7 @@ describe("the element decides the host page's site from self.origin, with no pro
 
     it("a sibling subdomain and the page's own origin are on the page's site: every mode drops them, and the cookie jar is never touched", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        realmAt(HOST);
+        realmAt(HOST, HOST);
         const cooperative = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { connect: ['https://api.wiring.co.uk', HOST], images: ['https://cdn.other.example'] } });
         expect(warnings().filter(m => m.includes(`origins.connect dropped https://api.wiring.co.uk (on the host page's site), ${HOST} (the host page's own origin)`))).toHaveLength(1);
         expect(cooperative._origins.connect).toEqual([]);
@@ -86,11 +90,22 @@ describe("the element decides the host page's site from self.origin, with no pro
         expect({ cookieWrites, cookieReads }).toEqual({ cookieWrites: 0, cookieReads: 0 });
     });
 
-    it("an opaque realm ('null', a sandboxed host document) keeps its entries, with the warning that says so", async () => {
+    it("the site of the page that frames it counts too (BD4:ISO-3): an origin on it is dropped in every mode", async () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
-        realmAt('null');
-        const el = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { connect: ['https://api.wiring.co.uk'] } });
-        expect(el._origins.connect).toEqual(['https://api.wiring.co.uk']);
-        expect(warnings().filter(m => m.includes('origins.connect lists https://api.wiring.co.uk from a host page whose origin is opaque'))).toHaveLength(1);
+        realmAt(HOST, 'https://www.framer.example');
+        const worker = await mount({ mode: 'worker', origins: { connect: ['https://api.framer.example', 'wss://api.framer.example', 'https://api.other.example'] } });
+        expect(worker._origins.connect).toEqual(['https://api.other.example']);
+        expect(warnings().filter(m => m.includes("origins.connect dropped https://api.framer.example (on the host page's site), wss://api.framer.example (on the host page's site)"))).toHaveLength(1);
+    });
+
+    it("an opaque realm ('null', a sandboxed host document) leaves the site undecided: every entry a cookie carrier of the mode reaches is dropped, with the warning that says why", async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        realmAt('null', HOST);
+        const worker = await mount({ mode: 'worker', origins: { connect: ['https://api.wiring.co.uk', 'https://api.other.example', 'wss://api.other.example'] } });
+        expect(worker._origins.connect).toEqual(['https://api.other.example']);
+        expect(warnings().filter(m => m.includes("origins.connect dropped https://api.wiring.co.uk (on the host page's site)"))).toHaveLength(1);
+        expect(warnings().filter(m => m.includes("origins.connect dropped wss://api.other.example (the host page's site is undecided): the host page's site cannot be decided"))).toHaveLength(1);
+        const cooperative = await mount({ mode: 'cooperative', capabilities: ['allow-scripts'], origins: { images: ['https://cdn.other.example'] } });
+        expect(cooperative._origins.images).toEqual([]);
     });
 });
