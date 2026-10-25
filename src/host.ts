@@ -4,10 +4,11 @@
  */
 import type { SafeCapability, UnsafeCapability } from "./csp-directives";
 import { UNSAFE_PERMISSIONS } from "./csp-directives";
-import { connectSources, cooperativePolicy, fileKinds, SEALED_FILE_KINDS, sealedViewPolicy, strictViewPolicy, type PolicyInput, type SealedFileKind } from "./lib/csp/csp-generator";
+import { connectSources, cooperativePolicy, fileKinds, SEALED_FILE_KINDS, sealedViewPolicy, strictViewPolicy, type PolicyInput } from "./lib/csp/csp-generator";
 import { hostReach, type NarrowedReach } from "./lib/csp/host-connect";
 import { buildRefused, executeRefused, trustedTypesStance, type TrustedTypesMode, type TrustedTypesStance } from "./lib/csp/host-trusted-types";
-import { NO_ORIGINS, refusalDetail, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
+import { NO_ORIGINS, refusalDetail, type OriginKind, type OriginPolicy, type SandboxOrigins, type StrictSandboxOrigins } from "./lib/csp/origins";
+import type { NormaliseContext } from "./lib/config-schema";
 import { FALLBACK_TYPE, fileError, FileStore, isJavaScriptType, viewStylesheets, type FileEntry, type FileInfo, type FileSnapshotEntry } from "./lib/files";
 import { createGuestWrites, parseCommitArguments, WRITE_METHOD, type GuestWrite, type GuestWriteAnswer, type GuestWrites } from "./lib/guest-writes";
 import { inSandboxFiles, inSandboxImportMap, inSandboxMarkup } from "./lib/in-sandbox-files";
@@ -495,6 +496,7 @@ const NO_MARKUP_PLAN: GuestMarkupPlan = { parts: null, importMap: null };
 // (STRICT_VIEW_FLAGS, declared with the config schema, which keeps them in `capabilities` there.)
 
 const STRICT_HTML_SCRIPT_WARNING = "[Sandbox] strict mode (the default) runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
+const SEALED_HTML_SCRIPT_WARNING = "[Sandbox] sealed mode runs no script in `html`; name a registered file in `entry`, or choose `mode: 'cooperative'`.";
 
 // Every reason the element gives, and every line it dispatches itself, is the texts registry's (src/lib/reasons.ts).
 // What worker mode's frame may announce instead of a port (worker-bootstrap.ts), and the reason each ends the build with.
@@ -636,6 +638,7 @@ interface BootstrapFeatures {
     listeners: BootstrapListener[];
     uncaught?: { count: number; characters: number };
     connect: string[];
+    sealed?: true;
 }
 
 // What the host posts to a strict view with its two ports (INIT_VIEW).
@@ -650,21 +653,34 @@ interface StrictInit {
     allowAnimations: boolean;
     allowAutoplay: boolean;
     // The origins the view's policy admits for the loads its markup makes, by kind key (R4:M-2): the
-    // renderer drops an http(s) URL outside them, so the browser never processes a refusal.
-    origins: { images: readonly string[]; media: readonly string[] };
+    // renderer drops an http(s) URL outside them, so the browser never processes a refusal. Sealed mode has no
+    // origins, so its INIT_VIEW has no such field: the renderer then admits no http(s) URL at all.
+    origins?: { images: readonly string[]; media: readonly string[] };
 }
 
-// Sealed mode's reach (docs/research/24_sealed_mode): no origin and no fetch bridge, so no bridge frame either.
-const SEALED_REACH: NarrowedReach = Object.freeze({ origins: NO_ORIGINS, fetchPolicy: null });
+// What a strict view's build takes of the network options (_prepareStrictFrame), and sealed mode's takes nothing of
+// (_prepareSealedFrame: null): the request gate's list, the origins the renderer admits, the bridge's timeout.
+interface ViewNetwork {
+    connect: string[];
+    origins: OriginPolicy;
+    fetchBridge: { timeoutMs: number } | null;
+}
 
-// The warning for a registered stylesheet strict mode's view gets without its network URLs, or not at all (files.ts,
-// viewStylesheets): once per element and text, as the build's other warnings about the files (_warnOnce).
-function viewStylesheetWarning(path: string, urls: readonly string[], unreadable: string | null): string {
-    const file = `[Sandbox] strict mode: the registered stylesheet ${JSON.stringify(path.slice(0, 256))}`;
+// The warning for a registered stylesheet the view of strict or sealed mode gets without its network URLs, or not at all
+// (files.ts, viewStylesheets): once per element and text, as the build's other warnings about the files (_warnOnce).
+// Sealed mode has no origin to show such a file from, so it names none.
+function viewStylesheetWarning(mode: 'strict' | 'sealed', path: string, urls: readonly string[], unreadable: string | null): string {
+    const file = `[Sandbox] ${mode} mode: the registered stylesheet ${JSON.stringify(path.slice(0, 256))}`;
     if (unreadable !== null) return `${file} gets no URL in the view: ${unreadable}, so the view could not take its network URLs out of it.`;
     const first = JSON.stringify(urls[0]!.slice(0, 256));
-    return `${file} names ${urls.length === 1 ? 'a network URL' : `${urls.length} network URLs`} (${first}${urls.length > 1 ? ', …' : ''}); the view drops ${urls.length === 1 ? 'it' : 'them'}: a load that CSS makes cannot be sent without cookies. Register the file instead, or show it with an element (<img>, <video>) from an origin listed in origins.`;
+    const names = `${file} names ${urls.length === 1 ? 'a network URL' : `${urls.length} network URLs`} (${first}${urls.length > 1 ? ', …' : ''}); the view drops ${urls.length === 1 ? 'it' : 'them'}`;
+    if (mode === 'sealed') return `${names}: sealed mode has no network. Register the file instead.`;
+    return `${names}: a load that CSS makes cannot be sent without cookies. Register the file instead, or show it with an element (<img>, <video>) from an origin listed in origins.`;
 }
+
+// The host page as the config's rules about it read it (config-schema.ts, NormaliseContext), read only when such a rule
+// asks: only the network options' rules do, and sealed mode runs neither (readIn), so a sealed config reads nothing of it.
+const readHostPage = (): NormaliseContext => ({ hostOrigin: hostPageOrigin(), hostSites: hostSiteOrigins() });
 
 // What the element extends: HTMLElement where there is a DOM. Importing the package must not need one (R2:C-8):
 // an embedder reads viewScriptHash() in a build step, in Node or Bun, and the class declaration is the only thing
@@ -944,7 +960,7 @@ export class WebSandbox extends ElementBase {
     // element and message (the same config is set again and again: the playground applies it on every edit), those of
     // a refused config too, up to what refused it; only a config that passed every check is stored, last (FR:F6).
     private _applyConfig(copy: unknown) {
-        const { value, warnings, refusal } = normaliseConfig(copy, { hostOrigin: hostPageOrigin(), hostSites: hostSiteOrigins() });
+        const { value, warnings, refusal } = normaliseConfig(copy, readHostPage);
         for (const message of warnings) this._warnConfig(message);
         if (value === null) throw refusal;
         this._config = value.config;
@@ -1851,7 +1867,8 @@ export class WebSandbox extends ElementBase {
     // Closed over its own bridge, it reaches the one teardown closed, and is refused there.
     // Its requests are made by its own frame (bridge-frame.ts; BD1:ISO-1, class E-net), prepared by the build and put in
     // the shadow root after the wrapper: the bridge's only transport. The host page's fetch makes none of them.
-    private _startFetchBridge(prepared: HTMLIFrameElement | null, policy: FetchPolicy | null) {
+    private _startFetchBridge(network: PreparedNetwork) {
+        const { bridgeFrame: prepared, fetchPolicy: policy } = network;
         if (!policy || !prepared) {
             this._fetchBridge = null;
             this._exposeFetch(null);
@@ -2073,35 +2090,40 @@ export class WebSandbox extends ElementBase {
 
     // The guest policy of this build (csp-generator.ts, ADR-007): the mode's template, the parsed origins, and blob:
     // for the kinds of load this build's files need (the snapshot's types, through the one load-kind table). The one
-    // place a guest policy is made; worker mode's worker and strict mode's worker inherit their frame's.
-    // Sealed mode's view takes no origins at all (sealedViewPolicy): only the kinds of its files.
+    // place a guest policy of strict, cooperative and worker mode is made; worker mode's worker and strict mode's worker
+    // inherit their frame's. Sealed mode's is not made here: _sealedPolicy, which takes no origins.
     private _guestPolicy(files: FileSnapshotEntry[], origins: OriginPolicy): string {
         const input = this._policyInput(files, origins);
-        if (this._config.mode === 'sealed') {
-            const kinds = new Set<SealedFileKind>(SEALED_FILE_KINDS.filter(kind => input.fileKinds.has(kind)));
-            return sealedViewPolicy({ fileKinds: kinds, bootstrapHash: viewBootstrapHash(), scriptUnsafe: input.scriptUnsafe });
-        }
         if (this._config.mode !== 'strict') return cooperativePolicy(input);
         return strictViewPolicy({ ...input, bootstrapHash: viewBootstrapHash() });
     }
 
+    // Sealed mode's view policy (sealedViewPolicy, docs/research/24_sealed_mode): the strict view's template with no
+    // origins input, so no network source; blob: only for the kinds of load the view's files need, as in strict mode.
+    private _sealedPolicy(files: FileSnapshotEntry[]): string {
+        const kinds = this._viewFileKinds(files);
+        return sealedViewPolicy({ fileKinds: new Set(SEALED_FILE_KINDS.filter(kind => kinds.has(kind))), bootstrapHash: viewBootstrapHash(), scriptUnsafe: this._config.scriptUnsafe === true });
+    }
+
     // The sources of that policy's connect-src, from the same input: what the bootstrap's request gate admits (S74), so
-    // the gate and the browser read one list. Sealed mode's connect-src is 'none': the gate admits nothing.
+    // the gate and the browser read one list. Sealed mode has no such list: its gate admits nothing (_prepareSealedFrame).
     private _gateConnect(files: FileSnapshotEntry[], origins: OriginPolicy): string[] {
-        if (this._config.mode === 'sealed') return [];
         return connectSources(this._policyInput(files, origins));
     }
 
     private _policyInput(files: FileSnapshotEntry[], origins: OriginPolicy): PolicyInput {
-        const types = files.map(entry => entry[1]);
         const scriptUnsafe = this._config.scriptUnsafe === true;
-        if (!hasStrictView(this._config.mode)) return { origins, fileKinds: fileKinds(types), scriptUnsafe };
+        if (!hasStrictView(this._config.mode)) return { origins, fileKinds: fileKinds(files.map(entry => entry[1])), scriptUnsafe };
+        return { origins, fileKinds: this._viewFileKinds(files), scriptUnsafe };
+    }
+
+    // The kinds of load the files of a view of strict or sealed mode need blob: for (the one load-kind table).
+    private _viewFileKinds(files: FileSnapshotEntry[]): Set<OriginKind> {
         // A type the view mints no URL for (isViewFileType, BR:ST1) is only fetched, by the worker.
-        const viewTypes = types.map(type => (isViewFileType(type) ? type : FALLBACK_TYPE));
-        const kinds = fileKinds(viewTypes);
+        const kinds = fileKinds(files.map(entry => (isViewFileType(entry[1]) ? entry[1] : FALLBACK_TYPE)));
         // With guest writes the view may mint URLs for raster images during the environment (R1:R4-4): image loads only.
         if (this._config.guestWrites === true) kinds.add(LOAD_KINDS.image.key);
-        return { origins, fileKinds: kinds, scriptUnsafe };
+        return kinds;
     }
 
     // The host page's policy applied to the connect origins of this build (host-connect.ts): `origins` and the bridge's
@@ -2182,12 +2204,16 @@ export class WebSandbox extends ElementBase {
         // guest-write overlay answers from it (BR:CB4). Later registerFiles() calls reach the guest only through the next build.
         const built = this._files.copy();
         const files = built.snapshot();
-        // sealed mode has no network: nothing to narrow, so the host page's policy is not applied to anything (SEALED_REACH)
-        const reach = this._config.mode === 'sealed' ? SEALED_REACH : this._reach();
-        // where the browser has no Trusted Types: the page's list that does not name the library's policy ends the build, as it does where it has them
-        const trustedTypes = this._trustedTypes();
-        if (trustedTypes && buildRefused(trustedTypes, this._config.mode as TrustedTypesMode)) throw new TrustedTypesRefusal("the host page's trusted-types directive does not name the policy");
-        if (hasStrictView(this._config.mode)) return this._prepareStrictFrame(built, files, reach);
+        // Sealed mode has no network (docs/research/24_sealed_mode): a path of its own from here, which takes nothing of
+        // `origins` or `fetchBridge` and makes no bridge (_prepareSealedFrame), so the host page's policy is applied to
+        // nothing (no _reach) and only its Trusted Types list is read.
+        if (this._config.mode === 'sealed') {
+            this._refuseByTrustedTypes();
+            return this._prepareSealedFrame(built, files);
+        }
+        const reach = this._reach();
+        this._refuseByTrustedTypes();
+        if (this._config.mode === 'strict') return this._prepareStrictFrame(built, files, reach);
 
         const sandboxFlags = this._getSandboxFlags();
         const permissions = this._getPermissions();
@@ -2225,16 +2251,50 @@ export class WebSandbox extends ElementBase {
         // srcdoc goes in before the frame is inserted: an iframe inserted without one first
         // loads about:blank, which would count as the frame's one load (see _frameLoadHandler)
         setLibrarySrcdoc(iframe, buildWrapperDocument(guestDocument, sandboxFlags, permissions));
-        return { iframe, built, strictInit: null, bridgeFrame: this._prepareBridgeFrame(reach.fetchPolicy), fetchPolicy: reach.fetchPolicy };
+        return { iframe, built, strictInit: null, network: this._prepareNetwork(reach.fetchPolicy) };
+    }
+
+    // Where the browser has no Trusted Types: the page's list that does not name the library's policy ends the build, as
+    // it does where it has them.
+    private _refuseByTrustedTypes() {
+        const trustedTypes = this._trustedTypes();
+        if (trustedTypes && buildRefused(trustedTypes, this._config.mode as TrustedTypesMode)) throw new TrustedTypesRefusal("the host page's trusted-types directive does not name the policy");
     }
 
     /**
-     * Strict mode (ADR-005). The view document is the policy and the hashed bootstrap, nothing of the guest's;
-     * the worker's source (comms, files, the strict prelude, then the entry) and the initial markup travel in
-     * INIT_VIEW once the wrapper has loaded. The view mints its own blob: URLs for the registered files it may
-     * show, so no JavaScript file is ever given to it.
+     * Strict mode (ADR-005): the view (_prepareViewFrame) under the strict template with this build's origins, the request
+     * gate's list from the same input, the origins the renderer admits, and the fetch bridge's frame.
      */
     private _prepareStrictFrame(built: FileStore, files: FileSnapshotEntry[], reach: NarrowedReach): PreparedBuild {
+        const network: ViewNetwork = {
+            connect: this._gateConnect(files, reach.origins),
+            origins: reach.origins,
+            fetchBridge: this._fetchPolicy ? { timeoutMs: this._fetchPolicy.timeoutMs } : null,
+        };
+        const prepared = this._prepareViewFrame(built, files, this._guestPolicy(files, reach.origins), network);
+        return { ...prepared, network: this._prepareNetwork(reach.fetchPolicy) };
+    }
+
+    /**
+     * Sealed mode (docs/research/24_sealed_mode): the strict view with no network, by construction. The view's policy is
+     * sealedViewPolicy (no origins input: every fetch directive 'none' or blob:, connect-src 'none'); the request gate
+     * gets no list, so it admits nothing; INIT_VIEW carries no origins; the worker's sandboxFetch() refuses in the guest
+     * and sends nothing; and the build has no network to start (no bridge frame). Nothing here reads `origins`,
+     * `fetchBridge` or the host page.
+     */
+    private _prepareSealedFrame(built: FileStore, files: FileSnapshotEntry[]): PreparedBuild {
+        return this._prepareViewFrame(built, files, this._sealedPolicy(files), null);
+    }
+
+    /**
+     * The view of strict and sealed mode (ADR-005). The view document is the policy and the hashed bootstrap, nothing of
+     * the guest's; the worker's source (comms, files, the strict prelude, then the entry) and the initial markup travel in
+     * INIT_VIEW once the wrapper has loaded. The view mints its own blob: URLs for the registered files it may
+     * show, so no JavaScript file is ever given to it. `network` is what strict mode takes of the network options, and
+     * null in sealed mode; the build it returns has no network of its own (the caller adds strict mode's).
+     */
+    private _prepareViewFrame(built: FileStore, files: FileSnapshotEntry[], policy: string, network: ViewNetwork | null): PreparedBuild {
+        const mode = network ? 'strict' : 'sealed';
         let entrySource = '';
         const entry = this._config.entry;
         if (typeof entry === 'string' && entry !== '') {
@@ -2244,23 +2304,22 @@ export class WebSandbox extends ElementBase {
         }
 
         const html = this._config.html || '<div id="root"></div>';
-        this._warnAboutStrictHtml(html);
+        this._warnAboutStrictHtml(mode, html);
         const sandboxFlags = this._getSandboxFlags();
-        const policy = this._guestPolicy(files, reach.origins);
         const marker = entryDoneName(); // drawn per build: an entry cannot declare a binding of its name (BR:ST4)
         // never a type that opens as a document (BR:ST1); stylesheets without a network URL (S74, files.ts viewStylesheets)
         const viewFiles = viewStylesheets(files.filter(candidate => isViewFileType(candidate[1])));
-        for (const drop of viewFiles.dropped) this._warnOnce(viewStylesheetWarning(drop.path, drop.urls, drop.unreadable));
+        for (const drop of viewFiles.dropped) this._warnOnce(viewStylesheetWarning(mode, drop.path, drop.urls, drop.unreadable));
         const strictInit: StrictInit = {
-            workerSource: this._getStrictWorkerSource(files, entrySource, marker, this._gateConnect(files, reach.origins)),
+            workerSource: this._getStrictWorkerSource(files, entrySource, marker, network),
             entryDone: marker,
             viewFiles: viewFiles.entries,
             html,
             autoResize: this._autoResizeEnabled(),
             allowAnimations: this._config.allowAnimations === true,
             allowAutoplay: this._config.allowAutoplay === true,
-            origins: { images: [...reach.origins.images], media: [...reach.origins.media] },
         };
+        if (network) strictInit.origins = { images: [...network.origins.images], media: [...network.origins.media] };
         const view = buildViewDocument(policy, viewBootstrapText());
 
         const iframe = document.createElement("iframe");
@@ -2268,12 +2327,13 @@ export class WebSandbox extends ElementBase {
         setWrapperFrameIsolation(iframe);
         iframe.style.cssText = "width:100%;height:100%;border:none";
         setLibrarySrcdoc(iframe, buildWrapperDocument(view, sandboxFlags, []));
-        return { iframe, built, strictInit, bridgeFrame: this._prepareBridgeFrame(reach.fetchPolicy), fetchPolicy: reach.fetchPolicy };
+        return { iframe, built, strictInit, network: null };
     }
 
-    // The fetch bridge's frame of this build, written detached like the wrapper, or null with the bridge off.
-    private _prepareBridgeFrame(policy: FetchPolicy | null): HTMLIFrameElement | null {
-        return policy ? prepareBridgeFrame(policy.allow) : null;
+    // The network of a build of strict, cooperative or worker mode: the fetch bridge's frame, written detached like the
+    // wrapper (or none with the bridge off), and the bridge's policy. _attachBuild starts it (_startFetchBridge).
+    private _prepareNetwork(policy: FetchPolicy | null): PreparedNetwork {
+        return { bridgeFrame: policy ? prepareBridgeFrame(policy.allow) : null, fetchPolicy: policy };
     }
 
     // The executor's `attach` effect: the prepared build becomes the element's, every per-build resource made here (the
@@ -2291,9 +2351,12 @@ export class WebSandbox extends ElementBase {
         // The guest announces its port from its first statement (BR:CB1), so the listener is in place before the frame is
         // inserted. Strict mode's view checks in on its own port instead (R1:R3-1); every mode's bootstraps may refuse an
         // environment other than the one built (environment-check.ts), the fetch bridge's frame included.
-        this._listenForAnnouncement(iframe, prepared.bridgeFrame, prepared.strictInit === null);
+        this._listenForAnnouncement(iframe, prepared.network ? prepared.network.bridgeFrame : null, prepared.strictInit === null);
         this.shadowRoot!.appendChild(iframe);
-        this._startFetchBridge(prepared.bridgeFrame, prepared.fetchPolicy); // its frame after the wrapper, which stays the shadow root's first
+        // The bridge's frame after the wrapper, which stays the shadow root's first. A sealed build has no network: no
+        // bridge, and the reserved method refuses, as before the first build (its guest's sandboxFetch() never calls it).
+        if (prepared.network) this._startFetchBridge(prepared.network);
+        else this._exposeFetch(null);
     }
 
     // The worker's source in strict mode: the scope check, the globals allowlist, the comms script (bridge, logs, violations, execute,
@@ -2304,9 +2367,13 @@ export class WebSandbox extends ElementBase {
     // replace a global before the prelude has captured or deleted it; an entry that wants a global assigns it
     // (globalThis.x = …). `this` inside is the global object, as at a script's top level. The scope check
     // (assertEntryScoped) refuses to start a worker whose entry escaped that scope.
-    private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string, marker = entryDoneName(), connect: readonly string[] = []): string {
-        const features: BootstrapFeatures = { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [...connect] };
-        if (this._fetchPolicy) features.fetchBridge = { timeoutMs: this._fetchPolicy.timeoutMs };
+    // `network`: what strict mode takes of the network options (the request gate's list, the bridge's timeout); null, the
+    // default, in sealed mode, whose bootstrap gets an empty list and `sealed`, so its sandboxFetch() refuses in the guest.
+    private _getStrictWorkerSource(files: FileSnapshotEntry[], entrySource: string, marker = entryDoneName(), network: ViewNetwork | null = null): string {
+        const features: BootstrapFeatures = network
+            ? { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('strict'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [...network.connect] }
+            : { externalPort: true, callBudget: { ...this._callBudget }, listeners: bootstrapListeners('sealed'), uncaught: { ...UNCAUGHT_BUDGET }, connect: [], sealed: true };
+        if (network?.fetchBridge) features.fetchBridge = { ...network.fetchBridge };
         if (this._config.guestWrites === true) features.guestWrites = true;
         const options = { scriptUnsafe: this._config.scriptUnsafe === true, maxRender: VIEW_RENDER_MAX_LENGTH, maxTarget: VIEW_TARGET_MAX_LENGTH, maxElements: VIEW_MAX_ELEMENTS, maxDepth: VIEW_MAX_DEPTH, maxCharacters: VIEW_MAX_CHARACTERS, maxUrls: VIEW_MAX_URLS, maxDistinctUrls: VIEW_MAX_DISTINCT_URLS, entryDoneName: marker, eventTypes: VIEW_EVENT_TYPES, maxMarks: VIEW_EVENT_LIMITS.maxIds, style: { properties: VIEW_STYLE_PROPERTIES, ...VIEW_SET_STYLE_LIMITS } };
         const prelude = '(function (g) {'
@@ -2325,13 +2392,15 @@ export class WebSandbox extends ElementBase {
         console.warn(message);
     }
 
-    // Strict mode is the default, so markup written for cooperative mode reaches it unchanged: its scripts and
-    // handlers never run (the renderer drops them, and the view's policy admits only the bootstrap). Said once per
-    // element, read with an inert parser (markup-scripts.ts); not again once said, so a big view is parsed only until then.
-    private _warnAboutStrictHtml(html: string) {
-        if (this._warnedStrict.has(STRICT_HTML_SCRIPT_WARNING) || !scriptInMarkup(html)) return;
-        this._warnedStrict.add(STRICT_HTML_SCRIPT_WARNING);
-        console.warn(STRICT_HTML_SCRIPT_WARNING);
+    // Strict mode is the default, so markup written for cooperative mode reaches it unchanged, and sealed mode's view is
+    // strict mode's: its scripts and handlers never run (the renderer drops them, and the view's policy admits only the
+    // bootstrap). Said once per element and mode, in the mode's words, read with an inert parser (markup-scripts.ts); not
+    // again once said, so a big view is parsed only until then.
+    private _warnAboutStrictHtml(mode: 'strict' | 'sealed', html: string) {
+        const warning = mode === 'sealed' ? SEALED_HTML_SCRIPT_WARNING : STRICT_HTML_SCRIPT_WARNING;
+        if (this._warnedStrict.has(warning) || !scriptInMarkup(html)) return;
+        this._warnedStrict.add(warning);
+        console.warn(warning);
     }
 
     // The view liveness check (ADR-005): the view answers VIEW_PING on its port; silence for the budget ends the sandbox.
@@ -2452,7 +2521,12 @@ interface LifecycleFields {
 interface PreparedBuild {
     iframe: HTMLIFrameElement; // the wrapper, its srcdoc written, not in the document
     built: FileStore; // the copy of the store this build delivers (BR:CB4)
-    strictInit: StrictInit | null; // strict mode: what the wrapper's load hands the view
+    strictInit: StrictInit | null; // strict and sealed mode: what the wrapper's load hands the view
+    network: PreparedNetwork | null; // the build's network, which _attachBuild starts; none in sealed mode
+}
+
+// The network of a build of strict, cooperative or worker mode (_prepareNetwork).
+interface PreparedNetwork {
     bridgeFrame: HTMLIFrameElement | null; // the fetch bridge's frame, its srcdoc written, not in the document (BD1:ISO-1)
     fetchPolicy: FetchPolicy | null; // the bridge's policy with the host page's policy applied (_reach): what its requests are checked against
 }

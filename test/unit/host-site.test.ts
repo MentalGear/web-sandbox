@@ -367,10 +367,11 @@ describe('host-side code reads the host page only through host-site.ts', () => {
         expect(offending).toEqual([]);
     });
 
-    it('the element hands the config the host page from host-site.ts, read when the config is set, and from nowhere else', () => {
+    it('the element hands the config the host page from host-site.ts, read when a rule of the config asks, and from nowhere else', () => {
         const host = readFileSync(path.join(ROOT, 'src/host.ts'), 'utf8');
         expect(host.match(/normaliseConfig\(/g)).toHaveLength(1);
-        expect(host).toContain('normaliseConfig(copy, { hostOrigin: hostPageOrigin(), hostSites: hostSiteOrigins() })');
+        expect(host).toContain('normaliseConfig(copy, readHostPage)');
+        expect(host).toContain('const readHostPage = (): NormaliseContext => ({ hostOrigin: hostPageOrigin(), hostSites: hostSiteOrigins() });');
         const callers = hostSide().filter(file => file !== 'src/lib/host-site.ts' && /\bhostSiteOrigins\(/.test(readFileSync(path.join(ROOT, file), 'utf8')));
         expect(callers).toEqual(['src/host.ts']);
     });

@@ -28,7 +28,7 @@ const REGIONS: Record<string, string[]> = {
     'docs/ADR-005-strict-mode.md': ['adr005-ports', 'adr005-init-view'],
     'docs/THREAT-MODEL.md': ['cookie-facts', 'host-site-facts', 'cookie-carriers', 'connect-facts', 'inherited-context', 'engine-ledger'],
     'README.md': ['cookie-sentence', 'connect-sentence'],
-    'ARCHITECTURE.md': ['realms', 'stringified', 'channels', 'frames', 'lifecycle-states', 'lifecycle-diagram', 'lifecycle-inputs', 'lifecycle-effects', 'module-map'],
+    'ARCHITECTURE.md': ['realms', 'stringified', 'csp-sealed', 'channels', 'frames', 'lifecycle-states', 'lifecycle-diagram', 'lifecycle-inputs', 'lifecycle-effects', 'module-map'],
 };
 
 describe('the generated docs', () => {

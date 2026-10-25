@@ -53,10 +53,12 @@ export function inSandboxScript(
     // rejections (worker and strict mode; egress.ts), past which it tells the element, which ends the sandbox.
     // `connect`: the sources of the guest policy's connect-src, exactly (csp-generator.ts, connectSources): the request
     // gate admits these and nothing else; absent, it admits nothing.
+    // `sealed` (sealed mode, strict mode's worker with no network): sandboxFetch() refuses here, FETCH_NOT_ALLOWED, and
+    // sends nothing to the host.
     features?: {
         autoResize?: boolean; fetchBridge?: { timeoutMs: number }; externalPort?: boolean; guestWrites?: boolean; callBudget?: { calls: number; bytes: number };
         listeners?: readonly { type: string; relay: boolean; cancel: boolean; budget: boolean }[]; uncaught?: { count: number; characters: number };
-        connect?: readonly string[];
+        connect?: readonly string[]; sealed?: boolean;
     },
     // The byte measure (structured-size.ts), stringified in like createBroker: the console relay's budget and the
     // broker's are measured with it, made before any guest code runs.
@@ -113,6 +115,7 @@ export function inSandboxScript(
     const then = Promise.prototype.then;
     const promiseCatch = Promise.prototype.catch;
     const StringConstructor = String;
+    const ErrorConstructor = Error;
     const TypeErrorConstructor = TypeError;
     const DOMExceptionConstructor = typeof DOMException === 'function' ? DOMException : null;
     // What execute() compiles with (FR:F2): captured now, so guest code that replaces
@@ -816,8 +819,16 @@ export function inSandboxScript(
     // Whole responses only: the answer becomes a Response here, with its body in memory.
     // Defined in every environment (R1:R4-8): without the bridge the host refuses every request with FETCH_NOT_ALLOWED
     // ("the fetch bridge is off"), as docs/API.md says, rather than a call throwing a ReferenceError. One path either way:
-    // the host decides.
-    if (bridge) {
+    // the host decides. Except in sealed mode, which has no network (docs/research/24_sealed_mode): there it refuses
+    // every request here, with the code the host would give, reads nothing of its arguments and sends nothing, so no
+    // request of the guest's reaches the host's reserved method.
+    if (features?.sealed === true) {
+        publish('sandboxFetch', () => {
+            const refusal = construct(ErrorConstructor, ['[sandboxFetch] FETCH_NOT_ALLOWED: sealed mode has no network']);
+            defineOwn(refusal, 'code', { value: 'FETCH_NOT_ALLOWED', writable: true, enumerable: true, configurable: true });
+            return apply(rejected, PromiseConstructor, [refusal]);
+        });
+    } else if (bridge) {
         const callWithTimeout = bridgeCall!;
         const fetchBridgeFeature = features?.fetchBridge;
         const callTimeoutMs = (fetchBridgeFeature ? fetchBridgeFeature.timeoutMs : 10000) + 5000;

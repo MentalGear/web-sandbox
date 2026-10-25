@@ -146,8 +146,10 @@ describe('docs/API.md lists the public surface', () => {
         const mode = CONFIG_SCHEMA.mode.default; // the config schema declares every default (S67)
         const options = section('## Configuration', true);
         expect(row(options, '`mode`').split(/(?<!\\)\|/)[3]!.trim()).toBe(`\`'${mode}'\``);
-        const warning = source.match(/const STRICT_HTML_SCRIPT_WARNING = "\[Sandbox\] ([^;]+);/)![1]!;
-        expect(row(options, '`html`')).toContain(`${warning};`);
+        for (const name of ['STRICT_HTML_SCRIPT_WARNING', 'SEALED_HTML_SCRIPT_WARNING']) {
+            const warning = source.match(new RegExp(`const ${name} = "\\[Sandbox\\] ([^;]+);`))![1]!;
+            expect(row(options, '`html`'), name).toContain(`${warning};`);
+        }
     });
 
     it('every fetchBridge field, and no other, with the defaults and bounds the code applies', () => {
