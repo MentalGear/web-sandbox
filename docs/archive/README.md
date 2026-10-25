@@ -27,6 +27,7 @@ The security review reports, newest last. Each finding has an anchor, and a pref
 | [S74 review board, pass 1](reviews/BOARD-PASS-1-2026-10-20.md) | `BD1:` | Six reviewers (isolation, channels, limits, docs, tests, a newcomer) and three verifiers: 4 confirmed high; the owner's decision, 2026-10-21: fix what leaks data, backlog the rest (S77 to S82) |
 | [S74 review board, pass 2](reviews/BOARD-PASS-2-2026-10-21.md) | `BD2:` | Six reviewers and three verifiers on the pass 1 fixes: not clean (BD2:NEW-1, BD2:ISO-2 with BD2:NEW-2 and BD2:CHL-1 high, BD2:ISO-1 medium), so 0 of 2 clean passes; the fixes, and the class review of both passes |
 | [S74 review board, pass 3](reviews/BOARD-PASS-3-2026-10-23.md) | `BD3:` | Six reviewers and two verifiers on the pass 2 fixes: not clean (BD3:CHL-1, BD3:ISO-1 and BD3:ISO-2 high, BD3:NEW-7 medium), so 0 of 2 clean passes; the fixes, and the coordinator's note on the cookie class |
+| [S74 review board, pass 4](reviews/BOARD-PASS-4-2026-10-24.md) | `BD4:` | Six reviewers and five verifiers on the pass 3 fixes and the strict view's input: not clean (BD4:ISO-1, BD4:ISO-3 and BD4:CHL-2 high, BD4:DOC-2 and BD4:DOC-3 medium), so 0 of 2 clean passes; strict mode loses its cookie carriers and its policy read, and sealed mode becomes the board's scope |
 
 ## Renamed test files
 

@@ -26,6 +26,8 @@ Whether this project should continue at all, rather than adopting an existing so
 | [S81](#s81) | ⏳ open (P3 · S) · low | Tests that fail under heavy machine load (S74 board BD1:CO-1, BD1:NEW-13) |
 | [S82](#s82) | ⏳ open (P3 · M) · low | The S74 pass 1 lows, as one checklist; the docs-only ones are marked |
 | [S83](#s83) | ⏳ open (P2 · S) · high (reviewer; medium by the availability rule) | A rejected `Symbol` or `BigInt` is counted as 0 characters by the uncaught budget; on Firefox the host page stalls (S74 board BD3:LIM-1, an incomplete part of the fix of BD1:LIM-1) |
+| [S84](#s84) | ⏳ open (P2 · S) · medium | The strict view's `VIEW_LISTEN` has no flow control: an `on()`/`off()` loop is uncounted (S74 board BD4:LIM-3; availability only) |
+| [S85](#s85) | ⏳ open (P3 · S) · low | The strict view's input outbox scans every slot on each event (S74 board BD4:LIM-5; availability only) |
 | [D1](#bl-d1) | 🟡 ready except the licence | An installable package; waits for H5's `LICENSE` |
 | [H5](#bl-h5) | 🟡 partly done | Missing repo basics: the `LICENSE` is the owner's choice |
 | [S8](#s8), [S25](#s25), [S36](#s36), [S44](#s44) | documented | Limits stated as accepted: the pre-policy egress window, guest `__proto__` keys, focus and clipboard, and cooperative mode's frozen list of limits |
@@ -377,6 +379,7 @@ is the count of those that reach strict mode. Highs are as the verifiers confirm
 | BD1 | 2026-10-21 | 3 | 2 | 4 |
 | BD2 | 2026-10-21 | 5 | 3 | 3 |
 | BD3 | 2026-10-23 | 5 | 4 | 4 |
+| BD4 | 2026-10-24 | 5 | 5 | 3 |
 
 The full counts per round, the analysis and the coordinator's evaluation after each pass are in
 [research 22](research/22_review_trajectory/README.md).
@@ -391,7 +394,28 @@ host-policy read of the same decisions. So the same-site rule and the policy rea
 measurement (a test cookie, `location.origin`, an absent policy) before pass 4; the coordinator's note in the archive
 sets out the design that removes the class.
 
-**After pass 4:** the answer to research 22's evaluation is sealed mode, decided (owner, 2026-10-24); it exists as an opt-in mode, not yet the default: [research 24](research/24_sealed_mode/README.md).
+**Pass 4 (2026-10-24, main 46eb358)** found confirmed findings that leak or can manipulate data and reach strict mode
+(BD4:ISO-1 and BD4:ISO-3, high: a host page with an opaque origin, or framed by a page of another site, keeps entries on a
+site the browser sends cookies to, and on WebKit the guest's WebSocket carries Lax, Strict and host-only cookies;
+BD4:CHL-2, high: a 2 s stall of the host page during the policy read caches "cannot be read" and every build keeps its
+connect lists; BD4:DOC-2 and BD4:DOC-3, medium: the cost of `origins.withoutCors` was stated wrongly, since the layout
+readback of #74 lets the guest read what the user's cookie shows and a redirect reaches the other listed origins), so it
+was not clean either (0 of 2). Three of the five sit in the code of #71, two in `withoutCors` (#73): the evaluation rule
+triggered a second time. Fixed: strict mode has no cookie carrier on any engine, no `WebSocket` and no `origins.withoutCors`
+(#75); the host page's policy comes only from `hostContentSecurityPolicy`, and the read is deleted (#76, which fixes
+BD4:CHL-1, BD4:ISO-2 and BD4:TST-1 too); the same-site rule refuses every entry when it cannot decide the host page's site
+(an opaque origin, a framed page whose ancestors cannot be read) and counts the ancestors' sites, in cooperative and worker
+mode (#78). BD4:LIM-2 is refuted after #75. The docs, the code and the test pins that remain (BD4:NEW-1 to BD4:NEW-3,
+BD4:DOC-5, BD4:LIM-1, BD4:LIM-4, BD4:TST-2, BD4:TST-6, BD4:TST-7) are fixed in the batch that archives the pass. The
+availability findings are backlogged: BD4:LIM-3 as [S84](#s84), BD4:LIM-5 as [S85](#s85). The board's reports, the
+verifiers' verdicts and how each finding was resolved are kept in
+[BOARD-PASS-4-2026-10-24.md](archive/reviews/BOARD-PASS-4-2026-10-24.md); each item cites its findings by ID (`BD4:`).
+
+**After pass 4: the board's scope is sealed mode (owner, 2026-10-24; D5).** Strict mode's network stays as the two fixes
+above leave it, but data findings that reach only its opt-ins (`origins`, `fetchBridge`) no longer count against a clean
+pass: they are fixed or documented. Sealed mode, strict with no network at all ([research 24](research/24_sealed_mode/README.md)),
+exists as an opt-in mode and becomes the default in the last step of the plan (PR 4). **Pass 5 runs after that**, on sealed
+mode at its default, and it is the first pass of the new scope. The brief for pass 5 is written with that PR.
 
 ### <a id="s79"></a>S79 · Desktop Chromium: the view's liveness ping ends a healthy sandbox on one documented stall — ⏳ **open** (P2 · M · medium)
 
@@ -612,6 +636,42 @@ shapes that enumerates every `typeof` (a `Complete<>` over the `typeof` union, s
 asserting that `characters` is at least the length of the reason's descriptive string; and Symbol rows (a 16 Mi
 description; a 1 Mi description ten times a tick) in the uncaught-flood table of `test/e2e/error-cost-and-queued-calls.spec.ts` on
 Firefox, expecting the uncaught-budget reason.
+
+### <a id="s84"></a>S84 · The strict view's `VIEW_LISTEN` has no flow control: an `on()`/`off()` loop is uncounted — ⏳ **open** (P2 · S · medium, availability only)
+
+*S74 board BD4:LIM-3, rated medium by the reviewer; no verdict.* Class E-cpu (host-thread work outside the chokepoint).
+Availability only: no data moves, and `terminate()` or removing the element ends it (CONTRIBUTING.md, "Availability
+findings").
+
+**Path.** Guest code loops `const off = sandboxView.on(type, id, handler, options); off();`. Each call changes the
+subscription key, so each one posts a `VIEW_LISTEN` to the view (`syncListen`, `src/lib/in-sandbox-view.ts`). Nothing holds
+these back: they are not one-in-flight like the view's operations, no budget counts them, and the view's work for them
+(`listen()` adds or removes a non-passive wheel listener when `preventDefault` is set) is never measured. `CHANNEL_BUDGETS`
+(`src/lib/egress.ts`) has no row for the subscription messages, and `frames.ts` bounds the fields of `VIEW_LISTEN`, not its
+rate.
+
+**Evidence** (the reviewer's probe, at load about 5, host busy share against the page's idle baseline; the suite asserted 30 %,
+the 20 % time bound plus a margin): with options (`wheel`, `preventDefault`) Chromium 30 % best window, Firefox 41 %, WebKit
+36 %; without options Chromium 9 %, Firefox 32 %, WebKit 8 %. At load 7 to 10 Firefox reached 50 % and WebKit 76 %. The
+sandbox stayed `ready`.
+
+**Fix, by construction.** Put `VIEW_LISTEN` under the render port's one-in-flight rule: the prelude's queue coalesces the
+subscription to its latest state, so at most one `VIEW_LISTEN` is queued, the view acknowledges it with the flush's
+`VIEW_ACK`, and its time is charged with the flush. Structural test: every frame type of `FRAMES` routed from the strict
+worker to the view is flow-controlled (a queue slot) or an acknowledgement, with a scan over `frames.ts`, and an e2e flood of
+each such type measured with `host-share.ts`.
+
+### <a id="s85"></a>S85 · The strict view's input outbox scans every slot on each event — ⏳ **open** (P3 · S · low, availability only)
+
+*S74 board BD4:LIM-5, rated low by the reviewer; no reproduction, no verdict.* Class E-cpu with P. `viewInputOutbox`'s `put`
+(`src/lib/in-sandbox-view.ts`) scans every slot for each event, so one burst of events with many distinct keys (scroll
+anchoring or a re-snap across many scrolled containers after one render) costs time quadratic in the keys in one `forward`
+call. The time is charged afterwards (`inputWork`) and the overrun rule ends the sandbox at its second overrun, but one such
+burst is a host stall larger than one apply of the same elements. Availability only.
+
+**Fix, by construction.** Key the slots with a `Map` on (type, key, unit) that keeps insertion order, so `put` is O(1). Unit
+test: 10 000 puts with distinct keys complete within a bound that a linear scan misses, and the outbox's order and
+coalescing are unchanged (the existing property test).
 
 ---
 
