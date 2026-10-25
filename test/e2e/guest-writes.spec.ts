@@ -6,6 +6,7 @@ import { MAX_FILES, MAX_TOTAL_BYTES } from '@src/lib/files';
 import { GUEST_WRITES_PER_SECOND, GUEST_WRITE_BYTES_PER_SECOND } from '@src/lib/guest-writes';
 import type { SandboxConfig, SandboxConfigOptions } from '@src/host';
 import type { StrictSandboxOrigins } from '@src/lib/csp/origins';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * Guest writes (backlog C5, src/lib/guest-writes.ts, ADR-004 amendment "guest writes"), in cooperative, worker and
@@ -30,7 +31,7 @@ import type { StrictSandboxOrigins } from '@src/lib/csp/origins';
 
 const recorder = useRecorder();
 
-const MODES = ['cooperative', 'worker', 'strict'] as const;
+const MODES = ['cooperative', 'worker', ...VIEW_MODES] as const;
 type Mode = typeof MODES[number];
 
 // One guest-side helper: how a promise (or a function returning one) settled, by exact code.
@@ -419,40 +420,43 @@ for (const mode of MODES) {
     });
 }
 
-test.describe('strict mode: the view and the overlay', () => {
-    test('8. C1, as the owner widened it (R4-4): the view renders no blob: content but registered files and raster-image guest writes, decoded only. The worker mints no URL for a written file; the view shows a written PNG from its own URL and never a written SVG; a registered file renders (positive control)', async ({ sandbox, page, browserName }) => {
-        await sandbox.registerFiles({ 'registered.png': { base64: Buffer.from(PNG_3x5).toString('base64') } });
-        expect(await sandbox.mount(writesOn('strict'))).toBe('ready');
-        const r = await inGuest(sandbox, `
-            await sandboxFiles.write('written.png', new Uint8Array(${JSON.stringify(PNG_3x5)}));
-            await sandboxFiles.write('written.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="5"></svg>');
-            return {
-                urls: await Promise.all(['written.png', 'written.svg'].map((p) => outcome(() => sandboxFiles.url(p)))),
-                mint: typeof URL.createObjectURL,
-            };`);
-        expect(r).toEqual({ urls: new Array(2).fill({ code: 'NOT_FOUND', isError: true, keys: ['code'] }), mint: 'undefined' });
-        await sandbox.run(`sandboxView.render('<img id="w" src="written.png"><img id="s" src="written.svg"><img id="r" src="registered.png"><p id="done">done</p>')`);
-        await waitInView(page, browserName, `!!document.getElementById('done') && document.getElementById('r').complete && document.getElementById('r').naturalWidth === 3 && document.getElementById('w').naturalWidth === 3`, 8000);
-        const view = await inView<any>(page, browserName, `({
-            written: document.getElementById('w').getAttribute('src').slice(0, 5) + ' ' + document.getElementById('w').naturalWidth,
-            svg: document.getElementById('s').getAttribute('src') + ' ' + document.getElementById('s').naturalWidth,
-            registered: document.getElementById('r').getAttribute('src').slice(0, 5),
-        })`);
-        expect(view).toEqual({ written: 'blob: 3', svg: 'written.svg 0', registered: 'blob:' });
-    });
+test.describe('the view and the overlay', () => {
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('8. C1, as the owner widened it (R4-4): the view renders no blob: content but registered files and raster-image guest writes, decoded only. The worker mints no URL for a written file; the view shows a written PNG from its own URL and never a written SVG; a registered file renders (positive control)', async ({ sandbox, page, browserName }) => {
+            await sandbox.registerFiles({ 'registered.png': { base64: Buffer.from(PNG_3x5).toString('base64') } });
+            expect(await sandbox.mount(writesOn(mode))).toBe('ready');
+            const r = await inGuest(sandbox, `
+                await sandboxFiles.write('written.png', new Uint8Array(${JSON.stringify(PNG_3x5)}));
+                await sandboxFiles.write('written.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="3" height="5"></svg>');
+                return {
+                    urls: await Promise.all(['written.png', 'written.svg'].map((p) => outcome(() => sandboxFiles.url(p)))),
+                    mint: typeof URL.createObjectURL,
+                };`);
+            expect(r).toEqual({ urls: new Array(2).fill({ code: 'NOT_FOUND', isError: true, keys: ['code'] }), mint: 'undefined' });
+            await sandbox.run(`sandboxView.render('<img id="w" src="written.png"><img id="s" src="written.svg"><img id="r" src="registered.png"><p id="done">done</p>')`);
+            await waitInView(page, browserName, `!!document.getElementById('done') && document.getElementById('r').complete && document.getElementById('r').naturalWidth === 3 && document.getElementById('w').naturalWidth === 3`, 8000);
+            const view = await inView<any>(page, browserName, `({
+                written: document.getElementById('w').getAttribute('src').slice(0, 5) + ' ' + document.getElementById('w').naturalWidth,
+                svg: document.getElementById('s').getAttribute('src') + ' ' + document.getElementById('s').naturalWidth,
+                registered: document.getElementById('r').getAttribute('src').slice(0, 5),
+            })`);
+            expect(view).toEqual({ written: 'blob: 3', svg: 'written.svg 0', registered: 'blob:' });
+        });
 
-    test('5b. a committed image is a registered file at the next build: the view renders it from its own URL', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount(writesOn('strict'))).toBe('ready');
-        await inGuest(sandbox, `await sandboxFiles.write('img/pic.png', new Uint8Array(${JSON.stringify(PNG_3x5)})); return true;`);
-        expect(await commit(sandbox, ['img/pic.png'])).toEqual({ ok: true, changed: [['img/pic.png']] });
-        expect(await sandbox.reset()).toBe('ready');
-        await sandbox.run(`sandboxView.render('<img id="pic" src="img/pic.png"><p id="done">done</p>')`);
-        expect(await waitInView(page, browserName, `document.getElementById('pic') && document.getElementById('pic').complete && document.getElementById('pic').naturalWidth + 'x' + document.getElementById('pic').naturalHeight`, 8000)).toBe('3x5');
+        test('5b. a committed image is a registered file at the next build: the view renders it from its own URL', async ({ sandbox, page, browserName }) => {
+            expect(await sandbox.mount(writesOn(mode))).toBe('ready');
+            await inGuest(sandbox, `await sandboxFiles.write('img/pic.png', new Uint8Array(${JSON.stringify(PNG_3x5)})); return true;`);
+            expect(await commit(sandbox, ['img/pic.png'])).toEqual({ ok: true, changed: [['img/pic.png']] });
+            expect(await sandbox.reset()).toBe('ready');
+            await sandbox.run(`sandboxView.render('<img id="pic" src="img/pic.png"><p id="done">done</p>')`);
+            expect(await waitInView(page, browserName, `document.getElementById('pic') && document.getElementById('pic').complete && document.getElementById('pic').naturalWidth + 'x' + document.getElementById('pic').naturalHeight`, 8000)).toBe('3x5');
+        });
     });
 });
 
 test.describe('9. writing adds no egress', () => {
-    for (const mode of MODES) {
+    // (sealed mode has no network to add to: a sealed config that names origins is refused; sealed-no-network.spec.ts)
+    for (const mode of MODES.filter(mode => mode !== 'sealed')) {
         test(`${mode} mode: written code never runs, so it reaches no listener; committed with { code: true } and loaded at the next build, the same file does (positive control)`, async ({ sandbox }) => {
             const policy = { origins: { connect: [recorder.allowed] } };
             expect(await sandbox.mount(writesOn(mode, policy))).toBe('ready');

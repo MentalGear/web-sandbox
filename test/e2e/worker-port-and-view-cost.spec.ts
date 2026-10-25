@@ -3,6 +3,7 @@ import { inView, waitInView } from './strict-view';
 import { busyShare, describeShare, floodControl, IDLE_MS, IDLE_WINDOWS, interleavedShare, LOAD_SHARE, pausableFlood, ticks, TIME_SHARE, WARMUP_MS } from './host-share';
 import type { Page } from '@playwright/test';
 import { STILL_PROPERTIES, STILL_PROPERTY_PATTERN, VIEW_MAX_URLS, VIEW_STILL_PSEUDO_ELEMENTS, VIEW_URLS_PER_SECOND } from '@src/lib/in-sandbox-view';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * Findings of R4 where the browser decides, on Chromium, Firefox and WebKit: what reaches the host page's
@@ -51,10 +52,12 @@ test.describe("M-1: the guest worker's own postMessage is gone; the library's po
         expect(await sandbox.inGuest(FIND_POST)).toEqual([]);
     });
 
-    test("strict mode: none, from the entry's top level on (before the worker has its port) and after", async ({ sandbox }) => {
-        await mountEntry(sandbox, `console.log('AT ENTRY ' + typeof postMessage + ' ' + typeof self.postMessage + ' ' + ('onmessage' in self));`);
-        await sandbox.waitForLog('AT ENTRY undefined undefined false');
-        expect(await sandbox.inGuest(FIND_POST)).toEqual([]);
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test("none, from the entry's top level on (before the worker has its port) and after", async ({ sandbox }) => {
+            await mountEntry(sandbox, `console.log('AT ENTRY ' + typeof postMessage + ' ' + typeof self.postMessage + ' ' + ('onmessage' in self));`, { mode });
+            await sandbox.waitForLog('AT ENTRY undefined undefined false');
+            expect(await sandbox.inGuest(FIND_POST)).toEqual([]);
+        });
     });
 
     for (const mode of ['worker', 'strict'] as const) {
@@ -163,34 +166,36 @@ test.describe("C-2: with allowAnimations false the renderer's style rewrite mult
         expect(gaps['all:unset false']!).toBeLessThan(gaps['plain false']! * 2 + 300);
     });
 
-    test('a style attribute that names no animation is left exactly as written; one that does loses only its animations', async ({ sandbox, page, browserName }) => {
-        await mountEntry(sandbox, `sandboxView.render('<p id="a" style="all:unset">a</p><p id="b" style="COLOR:red;margin:0">b</p><p id="c" style="color: red; transition: color 1s; animation: spin 1s">c</p><p id="d" style="all:unset;animation:spin 1s">d</p><p id="e" style="transform: rotate(1deg); color: transparent">e</p>');`, { allowAnimations: false });
-        await waitInView(page, browserName, `!!document.getElementById('e')`);
-        const styles = await inView<(string | null)[]>(page, browserName, `['a', 'b', 'c', 'd', 'e'].map(id => document.getElementById(id).getAttribute('style'))`);
-        expect(styles.slice(0, 3)).toEqual(['all:unset', 'COLOR:red;margin:0', 'color: red;']);
-        // `all` beside an animation: gone whole, on every engine (R5:L-2: Chromium kept `all: unset;`, as it
-        // stores `all` as one property)
-        expect(styles[3]).toBeNull();
-        // no "animation" or "transition" in it: as written (R5:N-7: "trans" in transform and transparent)
-        expect(styles[4]).toBe('transform: rotate(1deg); color: transparent');
-    });
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('a style attribute that names no animation is left exactly as written; one that does loses only its animations', async ({ sandbox, page, browserName }) => {
+            await mountEntry(sandbox, `sandboxView.render('<p id="a" style="all:unset">a</p><p id="b" style="COLOR:red;margin:0">b</p><p id="c" style="color: red; transition: color 1s; animation: spin 1s">c</p><p id="d" style="all:unset;animation:spin 1s">d</p><p id="e" style="transform: rotate(1deg); color: transparent">e</p>');`, { ...{ allowAnimations: false }, mode });
+            await waitInView(page, browserName, `!!document.getElementById('e')`);
+            const styles = await inView<(string | null)[]>(page, browserName, `['a', 'b', 'c', 'd', 'e'].map(id => document.getElementById(id).getAttribute('style'))`);
+            expect(styles.slice(0, 3)).toEqual(['all:unset', 'COLOR:red;margin:0', 'color: red;']);
+            // `all` beside an animation: gone whole, on every engine (R5:L-2: Chromium kept `all: unset;`, as it
+            // stores `all` as one property)
+            expect(styles[3]).toBeNull();
+            // no "animation" or "transition" in it: as written (R5:N-7: "trans" in transform and transparent)
+            expect(styles[4]).toBe('transform: rotate(1deg); color: transparent');
+        });
 
-    test("the engine's animation and transition longhands are all among the ones the view reads", async ({ sandbox, page, browserName }) => {
-        await mountEntry(sandbox, `sandboxView.render('<p id="p">p</p>');`);
-        await waitInView(page, browserName, `!!document.getElementById('p')`);
-        // what every animating shorthand, alias and prefix declares in this engine, against the view's own list
-        const missing = await inView<string[]>(page, browserName, `(() => {
-            const pattern = new RegExp(${JSON.stringify(STILL_PROPERTY_PATTERN)});
-            const listed = new Set(${JSON.stringify(STILL_PROPERTIES)});
-            const computed = getComputedStyle(document.documentElement);
-            for (let i = 0; i < computed.length; i++) if (pattern.test(computed.item(i))) listed.add(computed.item(i));
-            const probe = document.createElement('i');
-            probe.setAttribute('style', 'animation: a 1s; transition: all 1s; -webkit-animation: a 1s; -webkit-transition: all 1s; animation-range: normal; animation-trigger: none; animation-timeline: auto; animation-composition: add; transition-behavior: allow-discrete');
-            const missing = [];
-            for (let i = 0; i < probe.style.length; i++) if (!listed.has(probe.style.item(i))) missing.push(probe.style.item(i));
-            return missing;
-        })()`);
-        expect(missing).toEqual([]);
+        test("the engine's animation and transition longhands are all among the ones the view reads", async ({ sandbox, page, browserName }) => {
+            await mountEntry(sandbox, `sandboxView.render('<p id="p">p</p>');`, { mode });
+            await waitInView(page, browserName, `!!document.getElementById('p')`);
+            // what every animating shorthand, alias and prefix declares in this engine, against the view's own list
+            const missing = await inView<string[]>(page, browserName, `(() => {
+                const pattern = new RegExp(${JSON.stringify(STILL_PROPERTY_PATTERN)});
+                const listed = new Set(${JSON.stringify(STILL_PROPERTIES)});
+                const computed = getComputedStyle(document.documentElement);
+                for (let i = 0; i < computed.length; i++) if (pattern.test(computed.item(i))) listed.add(computed.item(i));
+                const probe = document.createElement('i');
+                probe.setAttribute('style', 'animation: a 1s; transition: all 1s; -webkit-animation: a 1s; -webkit-transition: all 1s; animation-range: normal; animation-trigger: none; animation-timeline: auto; animation-composition: add; transition-behavior: allow-discrete');
+                const missing = [];
+                for (let i = 0; i < probe.style.length; i++) if (!listed.has(probe.style.item(i))) missing.push(probe.style.item(i));
+                return missing;
+            })()`);
+            expect(missing).toEqual([]);
+        });
     });
 
     // The renderer reads a style attribute only when its text has "animation", "transition" or a backslash
@@ -288,22 +293,24 @@ const imageFlood = (prefix: string, perRender: number) => `
     };`;
 
 test.describe('M-2: what the browser does with the URLs a render holds is bounded', () => {
-    test('a refused source: the renderer drops every refused URL, and the view reports each as the browser did (img-src, the URL), at most 100', async ({ sandbox, page, browserName }) => {
-        await mountEntry(sandbox, `sandboxView.render('<img id="i" src="https://u:p@r.example:8443/p/a.png?q=1#f" alt="x"><video id="v" src="https://r.example/v.mp4" poster="https://r.example/p.png"></video><picture><source id="s" srcset="https://r.example/s.png"><img alt="y"></picture>' + '<img src="https://r.example/many.png">'.repeat(150));`);
-        await waitInView(page, browserName, `!!document.getElementById('s')`);
-        const kept = await inView<(string | null)[]>(page, browserName, `[['i', 'src'], ['v', 'src'], ['v', 'poster'], ['s', 'srcset']].map(([id, name]) => document.getElementById(id).getAttribute(name)).concat(String(document.querySelectorAll('[src], [srcset], [poster]').length))`);
-        expect(kept).toEqual([null, null, null, null, '0']);
-        await page.waitForTimeout(500);
-        const violations = await sandbox.violations();
-        const summary = violations.map(v => [v.directive, v.blockedURI, v.source]);
-        expect(summary.slice(0, 4)).toEqual([
-            ['img-src', 'https://r.example:8443/p/a.png?q=1', 'view'],
-            ['media-src', 'https://r.example/v.mp4', 'view'],
-            ['img-src', 'https://r.example/p.png', 'view'],
-            ['img-src', 'https://r.example/s.png', 'view'],
-        ]);
-        expect(violations.filter(v => v.directive === 'img-src')).toHaveLength(100); // VIOLATION_EVENT_LIMIT per directive
-        expect(violations.filter(v => v.directive === 'media-src')).toHaveLength(1);
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('a refused source: the renderer drops every refused URL, and the view reports each as the browser did (img-src, the URL), at most 100', async ({ sandbox, page, browserName }) => {
+            await mountEntry(sandbox, `sandboxView.render('<img id="i" src="https://u:p@r.example:8443/p/a.png?q=1#f" alt="x"><video id="v" src="https://r.example/v.mp4" poster="https://r.example/p.png"></video><picture><source id="s" srcset="https://r.example/s.png"><img alt="y"></picture>' + '<img src="https://r.example/many.png">'.repeat(150));`, { mode });
+            await waitInView(page, browserName, `!!document.getElementById('s')`);
+            const kept = await inView<(string | null)[]>(page, browserName, `[['i', 'src'], ['v', 'src'], ['v', 'poster'], ['s', 'srcset']].map(([id, name]) => document.getElementById(id).getAttribute(name)).concat(String(document.querySelectorAll('[src], [srcset], [poster]').length))`);
+            expect(kept).toEqual([null, null, null, null, '0']);
+            await page.waitForTimeout(500);
+            const violations = await sandbox.violations();
+            const summary = violations.map(v => [v.directive, v.blockedURI, v.source]);
+            expect(summary.slice(0, 4)).toEqual([
+                ['img-src', 'https://r.example:8443/p/a.png?q=1', 'view'],
+                ['media-src', 'https://r.example/v.mp4', 'view'],
+                ['img-src', 'https://r.example/p.png', 'view'],
+                ['img-src', 'https://r.example/s.png', 'view'],
+            ]);
+            expect(violations.filter(v => v.directive === 'img-src')).toHaveLength(100); // VIOLATION_EVENT_LIMIT per directive
+            expect(violations.filter(v => v.directive === 'media-src')).toHaveLength(1);
+        });
     });
 
     test('an admitted origin, and a relative URL, are kept; an http: URL of an admitted https: origin is dropped and reported (no policy upgrades it)', async ({ sandbox, page, browserName }) => {
@@ -346,39 +353,41 @@ test.describe('M-2: what the browser does with the URLs a render holds is bounde
         });
     }
 
-    test(`the view holds at most VIEW_MAX_URLS (${VIEW_MAX_URLS}) URL-bearing attributes: a render past it is refused whole, and said`, async ({ sandbox, page, browserName }) => {
-        await mountEntry(sandbox, `
-            sandboxView.render('<div id="a"></div><div id="b"></div>');
-            globalThis.fill = (n, into) => sandboxView.render('<img src="x.png">'.repeat(n), into);`);
-        await waitInView(page, browserName, `!!document.getElementById('b')`);
-        await sandbox.run(`fill(${VIEW_MAX_URLS - 1}, 'a'); fill(1, 'b')`);
-        await waitInView(page, browserName, `document.querySelectorAll('img').length === ${VIEW_MAX_URLS}`, 15000);
-        await sandbox.run(`fill(2, 'b')`); // one past: refused, and #b keeps its one
-        await sandbox.waitForLog(`[Sandbox] sandboxView.render: the view refused a render: the view would hold more than ${VIEW_MAX_URLS} URLs (src, srcset, poster, href); nothing of it was applied.`, 15000);
-        expect(await inView(page, browserName, `document.querySelectorAll('#b img').length + ' ' + document.querySelectorAll('img').length`)).toBe(`1 ${VIEW_MAX_URLS}`);
-        await sandbox.run(`fill(1, 'a')`); // replacing #a frees its URLs: room again
-        await waitInView(page, browserName, `document.querySelectorAll('#a img').length === 1`, 15000);
-        await sandbox.run(`fill(2, 'b')`);
-        await waitInView(page, browserName, `document.querySelectorAll('#b img').length === 2`, 15000);
-    });
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test(`the view holds at most VIEW_MAX_URLS (${VIEW_MAX_URLS}) URL-bearing attributes: a render past it is refused whole, and said`, async ({ sandbox, page, browserName }) => {
+            await mountEntry(sandbox, `
+                sandboxView.render('<div id="a"></div><div id="b"></div>');
+                globalThis.fill = (n, into) => sandboxView.render('<img src="x.png">'.repeat(n), into);`, { mode });
+            await waitInView(page, browserName, `!!document.getElementById('b')`);
+            await sandbox.run(`fill(${VIEW_MAX_URLS - 1}, 'a'); fill(1, 'b')`);
+            await waitInView(page, browserName, `document.querySelectorAll('img').length === ${VIEW_MAX_URLS}`, 15000);
+            await sandbox.run(`fill(2, 'b')`); // one past: refused, and #b keeps its one
+            await sandbox.waitForLog(`[Sandbox] sandboxView.render: the view refused a render: the view would hold more than ${VIEW_MAX_URLS} URLs (src, srcset, poster, href); nothing of it was applied.`, 15000);
+            expect(await inView(page, browserName, `document.querySelectorAll('#b img').length + ' ' + document.querySelectorAll('img').length`)).toBe(`1 ${VIEW_MAX_URLS}`);
+            await sandbox.run(`fill(1, 'a')`); // replacing #a frees its URLs: room again
+            await waitInView(page, browserName, `document.querySelectorAll('#a img').length === 1`, 15000);
+            await sandbox.run(`fill(2, 'b')`);
+            await waitInView(page, browserName, `document.querySelectorAll('#b img').length === 2`, 15000);
+        });
 
-    test(`the view takes at most VIEW_URLS_PER_SECOND (${VIEW_URLS_PER_SECOND}) URL-bearing attributes per second: the operation after a render past it waits`, async ({ sandbox, page, browserName }) => {
-        await mountEntry(sandbox, `
-            sandboxView.render('<div id="a"></div><p id="b">0</p>');
-            globalThis.burst = (n) => { sandboxView.render('<img src="x.png">'.repeat(n), 'a'); sandboxView.text('b', String(n)); };`);
-        await waitInView(page, browserName, `!!document.getElementById('b')`);
-        const delays: number[] = [];
-        // within the budget: the text after the render applies at once; twice the budget: it waits about a second
-        for (const n of [1, 2 * VIEW_URLS_PER_SECOND]) {
-            await page.waitForTimeout(2500); // the budget refills
-            const started = Date.now();
-            await sandbox.run(`burst(${n})`);
-            await waitInView(page, browserName, `document.getElementById('b').textContent === '${n}'`, 15000);
-            delays.push(Date.now() - started);
-        }
-        console.log(`MEASURED ${browserName} M-2 rate: the operation after a render of 1 URL applied after ${delays[0]} ms, after one of ${2 * VIEW_URLS_PER_SECOND} after ${delays[1]} ms`);
-        expect(delays[0]).toBeLessThan(600);
-        expect(delays[1]).toBeGreaterThan(800);
+        test(`the view takes at most VIEW_URLS_PER_SECOND (${VIEW_URLS_PER_SECOND}) URL-bearing attributes per second: the operation after a render past it waits`, async ({ sandbox, page, browserName }) => {
+            await mountEntry(sandbox, `
+                sandboxView.render('<div id="a"></div><p id="b">0</p>');
+                globalThis.burst = (n) => { sandboxView.render('<img src="x.png">'.repeat(n), 'a'); sandboxView.text('b', String(n)); };`, { mode });
+            await waitInView(page, browserName, `!!document.getElementById('b')`);
+            const delays: number[] = [];
+            // within the budget: the text after the render applies at once; twice the budget: it waits about a second
+            for (const n of [1, 2 * VIEW_URLS_PER_SECOND]) {
+                await page.waitForTimeout(2500); // the budget refills
+                const started = Date.now();
+                await sandbox.run(`burst(${n})`);
+                await waitInView(page, browserName, `document.getElementById('b').textContent === '${n}'`, 15000);
+                delays.push(Date.now() - started);
+            }
+            console.log(`MEASURED ${browserName} M-2 rate: the operation after a render of 1 URL applied after ${delays[0]} ms, after one of ${2 * VIEW_URLS_PER_SECOND} after ${delays[1]} ms`);
+            expect(delays[0]).toBeLessThan(600);
+            expect(delays[1]).toBeGreaterThan(800);
+        });
     });
 });
 

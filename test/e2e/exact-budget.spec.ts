@@ -16,6 +16,7 @@ const MODES: Record<string, MountConfig> = {
     cooperative: { mode: 'cooperative' },
     worker: { mode: 'worker' },
     strict: { mode: 'strict', scriptUnsafe: true },
+    sealed: { mode: 'sealed', scriptUnsafe: true },
 };
 
 type Case = { kind: 'file' | 'blob' | 'sparse'; nameLength: number; typeLength: number; modified: number; length: number; at: number[]; wrap: 'none' | 'array' | 'object' | 'map' };

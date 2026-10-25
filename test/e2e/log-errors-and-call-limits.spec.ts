@@ -11,6 +11,7 @@ const MODES: Record<string, MountConfig> = {
     cooperative: { mode: 'cooperative' },
     worker: { mode: 'worker' },
     strict: { mode: 'strict', scriptUnsafe: true },
+    sealed: { mode: 'sealed', scriptUnsafe: true },
 };
 
 test.describe('C-3: an error nested in a logged value crosses as { name, message, stack }', () => {

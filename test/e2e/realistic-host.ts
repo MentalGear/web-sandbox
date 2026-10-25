@@ -48,7 +48,7 @@ export type Directives = Record<string, string[]>;
 
 export const serializeCsp = (directives: Directives) => Object.entries(directives).map(([directive, sources]) => [directive, ...sources].join(' ')).join('; ');
 
-export type HostMode = 'strict' | 'cooperative' | 'worker';
+export type HostMode = 'strict' | 'sealed' | 'cooperative' | 'worker';
 
 export interface HostOptions {
     /** The mode the page embeds: the script-src and style-src profile the docs name for it. */
@@ -81,7 +81,8 @@ export const POLICY_HASHES = {
 
 /** What the page's `script-src` and `style-src` carry for a mode (docs/API.md#host-page-policy). */
 export function policyProfile(mode: HostMode, viewHash: string): { script: string[]; style: string[] } {
-    if (mode === 'strict') return { script: [viewHash], style: [POLICY_HASHES.wrapperStyle, POLICY_HASHES.animationStyle] };
+    // sealed mode is strict mode's view and worker: the same profile
+    if (mode === 'strict' || mode === 'sealed') return { script: [viewHash], style: [POLICY_HASHES.wrapperStyle, POLICY_HASHES.animationStyle] };
     return { script: ["'unsafe-inline'"], style: ["'unsafe-inline'"] };
 }
 
@@ -263,7 +264,7 @@ export class RealisticHost {
     /**
      * The element in a mode, as an embedder would configure it (the library's defaults, the mode named only where it is not
      * strict, and the page's policy as `hostContentSecurityPolicy`), running `guest` (an async function body that returns what it saw; see `guestBattery()`):
-     * strict mode as the entry file, cooperative mode as the guest document's script, worker mode through `execute()`
+     * strict and sealed mode as the entry file, cooperative mode as the guest document's script, worker mode through `execute()`
      * (a page with `guestCode: 'execute'`).
      */
     async embed(mode: HostMode, embed: { origins?: object; fetchBridge?: object; guest?: string; config?: SandboxConfigOptions & Record<string, unknown> } = {}): Promise<HostEvent[]> {
@@ -272,10 +273,10 @@ export class RealisticHost {
         const source = embed.guest === undefined ? undefined : guestProgram(embed.guest, ++this.guestCount);
         // the page's policy as an embedder passes it (docs/API.md#your-connect-src): without it the connect lists are dropped
         const shared = { hostContentSecurityPolicy: this.csp, ...(embed.origins ? { origins: embed.origins } : {}), ...(embed.fetchBridge ? { fetchBridge: embed.fetchBridge } : {}), ...embed.config };
-        if (mode === 'strict') {
+        if (mode === 'strict' || mode === 'sealed') {
             if (source !== undefined) await sandbox.registerFiles({ 'main.js': `sandboxView.render('<p id="hello">hello</p>'); ${source}` });
             else await sandbox.registerFiles({ 'main.js': `sandboxView.render('<p id="hello">hello</p>');` });
-            return this.configure({ entry: 'main.js', ...shared });
+            return this.configure({ ...(mode === 'sealed' ? { mode } : {}), entry: 'main.js', ...shared });
         }
         if (mode === 'cooperative') {
             const html = `<p>guest document</p>${source === undefined ? '' : `<script>${source.replace(/<\/script/gi, '<\\/script')}</script>`}`;

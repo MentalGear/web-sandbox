@@ -1,5 +1,6 @@
 import { test, expect } from './fixture';
 import { GATE_SOURCE_FILE } from '@src/lib/violation';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * Backlog S5: CSP violations in the guest reach the host as a 'violation' event on the element.
@@ -166,32 +167,34 @@ test.describe('4. worker mode', () => {
 });
 
 
-test.describe('5. strict mode', () => {
-    test('view reports are labelled view, the request gate\'s logic (the same on every engine); a flood on the logic port is logic and uses up only the logic cap', async ({ sandbox, page }) => {
-        expect(await sandbox.mount({ mode: 'strict' })).toBe('ready');
-        // the worker's own refusal, by the request gate; the strict worker has no importScripts
-        const outcome = await sandbox.inGuest(`
-            const fetched = await fetch('${ATTACKER}/worker-fetch').then(() => 'reached', () => 'refused');
-            return { fetched, importScripts: typeof importScripts };
-        `);
-        expect(outcome).toEqual({ fetched: 'refused', importScripts: 'undefined' });
-        await page.waitForTimeout(800);
-        // then a flood of refusals in the worker, past the cap (guest code cannot post on the port itself, AR:B2: the
-        // flood is the gate's reports of what it refused)
-        await sandbox.run(`for (let i = 0; i < 150; i++) fetch('${ATTACKER}/flood-' + i).catch(() => {}); console.log('flooded')`);
-        await sandbox.waitForLog('flooded');
-        await page.waitForTimeout(800);
-        // the view's own refusal still arrives, labelled view
-        await sandbox.run(`sandboxView.render('<img src="${ATTACKER}/view.svg">')`);
-        expect((await sandbox.waitForViolation('img-src', `${ATTACKER}/view.svg`)).source).toBe('view');
+test.describe('5. strict and sealed mode', () => {
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('view reports are labelled view, the request gate\'s logic (the same on every engine); a flood on the logic port is logic and uses up only the logic cap', async ({ sandbox, page }) => {
+            expect(await sandbox.mount({ mode })).toBe('ready');
+            // the worker's own refusal, by the request gate; the strict worker has no importScripts
+            const outcome = await sandbox.inGuest(`
+                const fetched = await fetch('${ATTACKER}/worker-fetch').then(() => 'reached', () => 'refused');
+                return { fetched, importScripts: typeof importScripts };
+            `);
+            expect(outcome).toEqual({ fetched: 'refused', importScripts: 'undefined' });
+            await page.waitForTimeout(800);
+            // then a flood of refusals in the worker, past the cap (guest code cannot post on the port itself, AR:B2: the
+            // flood is the gate's reports of what it refused)
+            await sandbox.run(`for (let i = 0; i < 150; i++) fetch('${ATTACKER}/flood-' + i).catch(() => {}); console.log('flooded')`);
+            await sandbox.waitForLog('flooded');
+            await page.waitForTimeout(800);
+            // the view's own refusal still arrives, labelled view
+            await sandbox.run(`sandboxView.render('<img src="${ATTACKER}/view.svg">')`);
+            expect((await sandbox.waitForViolation('img-src', `${ATTACKER}/view.svg`)).source).toBe('view');
 
-        const all = await sandbox.violations();
-        const worker = all.filter(v => v.blockedURI.startsWith(`${ATTACKER}/worker`)).map(v => `${v.source} ${v.directive} ${v.sourceFile}`);
-        expect(worker).toEqual([`logic connect-src ${GATE_SOURCE_FILE}`]);
-        // the logic port's cap: its first report, then the flood up to 100, every one labelled logic; the view's
-        // report above arrived after it, on its own count
-        const flood = all.filter(v => v.blockedURI.startsWith(`${ATTACKER}/flood-`));
-        expect(all.filter(v => v.source === 'logic')).toHaveLength(100);
-        expect(new Set(flood.map(v => v.source))).toEqual(new Set(['logic']));
+            const all = await sandbox.violations();
+            const worker = all.filter(v => v.blockedURI.startsWith(`${ATTACKER}/worker`)).map(v => `${v.source} ${v.directive} ${v.sourceFile}`);
+            expect(worker).toEqual([`logic connect-src ${GATE_SOURCE_FILE}`]);
+            // the logic port's cap: its first report, then the flood up to 100, every one labelled logic; the view's
+            // report above arrived after it, on its own count
+            const flood = all.filter(v => v.blockedURI.startsWith(`${ATTACKER}/flood-`));
+            expect(all.filter(v => v.source === 'logic')).toHaveLength(100);
+            expect(new Set(flood.map(v => v.source))).toEqual(new Set(['logic']));
+        });
     });
 });

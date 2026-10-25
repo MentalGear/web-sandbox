@@ -1,6 +1,7 @@
 import { test, expect, ORIGIN, type SandboxDriver } from './fixture';
 import { useRecorder, wss } from './recorder';
 import { WORKER_GLOBALS, WORKER_NAVIGATOR_MEMBERS } from '@src/lib/worker-globals';
+import { isViewMode, VIEW_MODES } from './view-modes';
 
 /**
  * The worker's globals and the guest's termination (V1 to V3 are cited as VR:V1 to VR:V3), where browser behaviour decides:
@@ -106,7 +107,7 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
         firefox: ['deviceMemory', 'gpu'],
         webkit: ['deviceMemory', 'globalPrivacyControl', 'storage', 'gpu'],
     };
-    for (const mode of ['worker', 'strict'] as const) {
+    for (const mode of ['worker', ...VIEW_MODES] as const) {
         test(`${mode} mode: the allowlisted globals and navigator members an engine does not have are exactly the ones the ledger states (worker-global-set); nothing outside the allowlist is present`, async ({ sandbox, browserName }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             const seen = await sandbox.inGuest(`
@@ -116,14 +117,14 @@ test.describe('V1: a guest worker keeps only the allowlisted globals; every requ
             `);
             const have = new Set<string>(seen.names);
             // ledger: worker-global-set
-            const expectedAbsentGlobals = [...ABSENT_GLOBALS[browserName]!, 'SharedArrayBuffer', ...(mode === 'strict' ? ['importScripts'] : [])].sort();
+            const expectedAbsentGlobals = [...ABSENT_GLOBALS[browserName]!, 'SharedArrayBuffer', ...(isViewMode(mode) ? ['importScripts'] : [])].sort();
             expect(WORKER_GLOBALS.filter(name => !have.has(name)).sort()).toEqual(expectedAbsentGlobals);
             expect(WORKER_NAVIGATOR_MEMBERS.filter(name => !seen.navigatorMembers.includes(name)).sort()).toEqual([...ABSENT_NAVIGATOR_MEMBERS[browserName]!].sort());
         });
     }
 
     // docs/API.md lists indexedDB among the kept globals and says it stores nothing (BD3:NEW-6): the worker's origin is opaque.
-    for (const mode of ['worker', 'strict'] as const) {
+    for (const mode of ['worker', ...VIEW_MODES] as const) {
         test(`${mode} mode: indexedDB is kept, and open() is denied with a SecurityError on every engine, so the sandbox stores nothing in it`, async ({ sandbox }) => {
             expect(await sandbox.mount({ mode })).toBe('ready');
             expect(WORKER_GLOBALS).toContain('indexedDB');
@@ -170,7 +171,7 @@ const BC_GUEST = (label: string, name: string) => `
 `;
 
 test.describe('V4: a guest\'s BroadcastChannel reaches only its own opaque origin (cooperative, worker and strict mode)', () => {
-    for (const mode of ['cooperative', 'worker', 'strict'] as const) {
+    for (const mode of ['cooperative', 'worker', ...VIEW_MODES] as const) {
         test(`${mode} mode: messages cross neither from the host page nor from a second sandbox into the guest, nor from the guest out; each party's own channels hear each other (positive controls)`, async ({ sandbox, page }) => {
             const name = `v4-${mode}-${Date.now()}`;
             expect(await sandbox.mount({ mode })).toBe('ready');
@@ -207,11 +208,13 @@ test.describe('V4: a guest\'s BroadcastChannel reaches only its own opaque origi
 
 // ---- V2: a strict entry's synchronous console lines -------------------------------------------------------------
 
-test('V2: a strict entry\'s synchronous console lines arrive as sandbox-log, in order, before its asynchronous ones (before: only the asynchronous ones did)', async ({ sandbox }) => {
-    await sandbox.registerFiles({ 'main.js': `console.log('V2 sync 1'); console.info('V2 sync 2'); console.warn('V2 sync 3'); setTimeout(() => console.log('V2 async'), 0);` });
-    expect(await sandbox.mount({ mode: 'strict', entry: 'main.js' })).toBe('ready');
-    await sandbox.waitForLog('V2 async');
-    expect((await sandbox.logs()).filter(line => line.startsWith('V2 '))).toEqual(['V2 sync 1', 'V2 sync 2', 'V2 sync 3', 'V2 async']);
+for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test('V2: an entry\'s synchronous console lines arrive as sandbox-log, in order, before its asynchronous ones (before: only the asynchronous ones did)', async ({ sandbox }) => {
+        await sandbox.registerFiles({ 'main.js': `console.log('V2 sync 1'); console.info('V2 sync 2'); console.warn('V2 sync 3'); setTimeout(() => console.log('V2 async'), 0);` });
+        expect(await sandbox.mount({ mode, entry: 'main.js' })).toBe('ready');
+        await sandbox.waitForLog('V2 async');
+        expect((await sandbox.logs()).filter(line => line.startsWith('V2 '))).toEqual(['V2 sync 1', 'V2 sync 2', 'V2 sync 3', 'V2 async']);
+    });
 });
 
 // ---- V3: modifier clicks and Enter on a guest link (a cooperative-mode limit, measured) ------------------------
@@ -289,14 +292,16 @@ test.describe('V3: the user\'s modifier clicks and Enter on a guest link (cooper
         expect([opened, recorder.paths('blocked').includes('/v3-html')]).toEqual(browserName === 'webkit' ? [0, false] : [1, true]);
     });
 
-    test('strict mode: every rendered link is inert (about:blank#): no action opens a tab or reaches the guest\'s URL, on any engine', async ({ sandbox }) => {
-        expect(await sandbox.mount({ mode: 'strict' })).toBe('ready');
-        await sandbox.run(`sandboxView.render(${JSON.stringify(LINKS(recorder.blocked))})`);
-        await sandbox.page.waitForTimeout(500);
-        const page = sandbox.page;
-        const box = (await page.locator('web-sandbox').boundingBox())!;
-        const results = await userLinkActions(sandbox, async () => { await page.mouse.click(box.x + 350, box.y + 150); await page.keyboard.press('Tab'); });
-        expect(results).toEqual(linkActionsOpen(false));
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('every rendered link is inert (about:blank#): no action opens a tab or reaches the guest\'s URL, on any engine', async ({ sandbox }) => {
+            expect(await sandbox.mount({ mode })).toBe('ready');
+            await sandbox.run(`sandboxView.render(${JSON.stringify(LINKS(recorder.blocked))})`);
+            await sandbox.page.waitForTimeout(500);
+            const page = sandbox.page;
+            const box = (await page.locator('web-sandbox').boundingBox())!;
+            const results = await userLinkActions(sandbox, async () => { await page.mouse.click(box.x + 350, box.y + 150); await page.keyboard.press('Tab'); });
+            expect(results).toEqual(linkActionsOpen(false));
+        });
     });
 });
 

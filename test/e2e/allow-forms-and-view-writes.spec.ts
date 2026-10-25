@@ -2,6 +2,7 @@ import { deflateSync } from 'node:zlib';
 import { test, expect, type MountConfig, type SandboxDriver } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inView, waitInView } from './strict-view';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * The owner's decisions on the open findings R1:R2-2, R1:R4-4 and R1:R4-5, where
@@ -77,51 +78,53 @@ test.describe('R4-4: the strict view shows the raster images the guest writes, f
     // nothing: Firefox never marks such an image complete), and what its src attribute holds.
     const image = (id: string) => `(() => { const i = document.getElementById('${id}'); return i && (i.complete || !/^blob:/.test(i.getAttribute('src'))) ? { size: i.naturalWidth + 'x' + i.naturalHeight, src: i.getAttribute('src') } : null; })()`;
 
-    test('a chart the guest draws on an OffscreenCanvas and writes as PNG shows in an <img> named by its path, without a rebuild; the worker gets no URL for it', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount(WRITES)).toBe('ready');
-        const url = await sandbox.inGuest(`
-            const canvas = new OffscreenCanvas(7, 4);
-            const context = canvas.getContext('2d');
-            context.fillStyle = '#c00';
-            context.fillRect(0, 0, 7, 4);
-            await sandboxFiles.write('gen/chart.png', await canvas.convertToBlob({ type: 'image/png' }));
-            sandboxView.render('<figure><img id="chart" src="gen/chart.png" alt="chart"></figure>');
-            try { return sandboxFiles.url('gen/chart.png'); } catch (error) { return error.code; }`);
-        expect(url).toBe('NOT_FOUND');
-        const shown = await waitInView<{ size: string; src: string }>(page, browserName, image('chart'), 8000);
-        expect(shown.size).toBe('7x4');
-        expect(shown.src).toMatch(/^blob:/);
-        expect(await sandbox.page.evaluate(() => (document.querySelector('web-sandbox') as any).listGuestWrites().map((w: any) => [w.path, w.type]))).toEqual([['gen/chart.png', 'image/png']]);
-    });
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('a chart the guest draws on an OffscreenCanvas and writes as PNG shows in an <img> named by its path, without a rebuild; the worker gets no URL for it', async ({ sandbox, page, browserName }) => {
+            expect(await sandbox.mount({ ...WRITES, mode })).toBe('ready');
+            const url = await sandbox.inGuest(`
+                const canvas = new OffscreenCanvas(7, 4);
+                const context = canvas.getContext('2d');
+                context.fillStyle = '#c00';
+                context.fillRect(0, 0, 7, 4);
+                await sandboxFiles.write('gen/chart.png', await canvas.convertToBlob({ type: 'image/png' }));
+                sandboxView.render('<figure><img id="chart" src="gen/chart.png" alt="chart"></figure>');
+                try { return sandboxFiles.url('gen/chart.png'); } catch (error) { return error.code; }`);
+            expect(url).toBe('NOT_FOUND');
+            const shown = await waitInView<{ size: string; src: string }>(page, browserName, image('chart'), 8000);
+            expect(shown.size).toBe('7x4');
+            expect(shown.src).toMatch(/^blob:/);
+            expect(await sandbox.page.evaluate(() => (document.querySelector('web-sandbox') as any).listGuestWrites().map((w: any) => [w.path, w.type]))).toEqual([['gen/chart.png', 'image/png']]);
+        });
 
-    test('a later write to the path shows the new image from a new URL and revokes the old one; a removal revokes it and the path names nothing', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount(WRITES)).toBe('ready');
-        let renders = 0;
-        const show = async (bytes: number[] | null) => {
-            const token = `render${++renders}`;
-            await sandbox.inGuest(`
-                ${bytes ? `await sandboxFiles.write('gen/chart.png', new Uint8Array(${JSON.stringify(bytes)}));` : `await sandboxFiles.remove('gen/chart.png');`}
-                sandboxView.render('<img id="chart" src="gen/chart.png"><p id="${token}">${token}</p>');
-                return true;`);
-            return waitInView<{ size: string; src: string }>(page, browserName, `document.getElementById('${token}') && ${image('chart')}`, 8000);
-        };
-        const first = await show(png(3, 5));
-        expect(first.size).toBe('3x5');
-        const second = await show(png(7, 4));
-        expect(second.size).toBe('7x4');
-        expect(second.src).toMatch(/^blob:/);
-        expect(second.src).not.toBe(first.src);
-        // A revoked URL is not the view's: markup that names it keeps no src (AR:A8); the live one stays (the control).
-        // (Whether a revoked URL still loads is the engine's image cache: Firefox serves what it already decoded.)
-        const named = async (urls: string[]) => {
-            await sandbox.run(`sandboxView.render(${JSON.stringify(urls.map((url, i) => `<img id="u${i}" src="${url}">`).join('') + '<p id="named">n</p>')}, null)`);
-            await waitInView(page, browserName, `!!document.getElementById('named')`, 8000);
-            return inView<(string | null)[]>(page, browserName, `${JSON.stringify(urls.map((_, i) => `u${i}`))}.map((id) => document.getElementById(id).getAttribute('src'))`);
-        };
-        expect(await named([first.src, second.src])).toEqual([null, second.src]);
-        const removed = await show(null);
-        expect(removed).toEqual({ size: '0x0', src: 'gen/chart.png' });
-        expect(await named([second.src])).toEqual([null]);
+        test('a later write to the path shows the new image from a new URL and revokes the old one; a removal revokes it and the path names nothing', async ({ sandbox, page, browserName }) => {
+            expect(await sandbox.mount({ ...WRITES, mode })).toBe('ready');
+            let renders = 0;
+            const show = async (bytes: number[] | null) => {
+                const token = `render${++renders}`;
+                await sandbox.inGuest(`
+                    ${bytes ? `await sandboxFiles.write('gen/chart.png', new Uint8Array(${JSON.stringify(bytes)}));` : `await sandboxFiles.remove('gen/chart.png');`}
+                    sandboxView.render('<img id="chart" src="gen/chart.png"><p id="${token}">${token}</p>');
+                    return true;`);
+                return waitInView<{ size: string; src: string }>(page, browserName, `document.getElementById('${token}') && ${image('chart')}`, 8000);
+            };
+            const first = await show(png(3, 5));
+            expect(first.size).toBe('3x5');
+            const second = await show(png(7, 4));
+            expect(second.size).toBe('7x4');
+            expect(second.src).toMatch(/^blob:/);
+            expect(second.src).not.toBe(first.src);
+            // A revoked URL is not the view's: markup that names it keeps no src (AR:A8); the live one stays (the control).
+            // (Whether a revoked URL still loads is the engine's image cache: Firefox serves what it already decoded.)
+            const named = async (urls: string[]) => {
+                await sandbox.run(`sandboxView.render(${JSON.stringify(urls.map((url, i) => `<img id="u${i}" src="${url}">`).join('') + '<p id="named">n</p>')}, null)`);
+                await waitInView(page, browserName, `!!document.getElementById('named')`, 8000);
+                return inView<(string | null)[]>(page, browserName, `${JSON.stringify(urls.map((_, i) => `u${i}`))}.map((id) => document.getElementById(id).getAttribute('src'))`);
+            };
+            expect(await named([first.src, second.src])).toEqual([null, second.src]);
+            const removed = await show(null);
+            expect(removed).toEqual({ size: '0x0', src: 'gen/chart.png' });
+            expect(await named([second.src])).toEqual([null]);
+        });
     });
 
     test('an SVG, HTML or JavaScript write named in an <img> (or as an icon, a video, a stylesheet) does not resolve and reaches no listener; a PNG write in the same render does (positive control)', async ({ sandbox, page, browserName }) => {
@@ -170,39 +173,41 @@ test.describe('R4-5: sandboxView.text() and sandboxView.set()', () => {
         expect((await sandbox.logs()).filter(line => line.includes('sandboxView.text'))).toEqual([]);
     });
 
-    test('set(): the values of an input, a textarea and a select, the checked state of a checkbox, read from outside; the guest\'s TypeError for an unknown key', async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount(STRICT)).toBe('ready');
-        await render(sandbox, '<input id="name"><textarea id="notes"></textarea><select id="size"><option value="s">s</option><option value="l">l</option></select><input id="ok" type="checkbox">', 'r1');
-        const thrown = await sandbox.inGuest(`
-            sandboxView.set('name', { value: 'Ada' });
-            sandboxView.set('notes', { value: 'two\\nlines' });
-            sandboxView.set('size', { value: 'l' });
-            sandboxView.set('ok', { checked: true });
-            sandboxView.text('r1', 'set');
-            try { sandboxView.set('name', { colour: 'red' }); return 'no throw'; } catch (error) { return error.name + ': ' + error.message; }`);
-        expect(thrown).toBe('TypeError: sandboxView.set: unknown key "colour"; the keys are value, checked, focus, scroll and css');
-        await waitInView(page, browserName, `document.getElementById('r1').textContent === 'set'`, 8000);
-        expect(await inView(page, browserName, `[document.getElementById('name').value, document.getElementById('notes').value, document.getElementById('size').value, document.getElementById('ok').checked]`)).toEqual(['Ada', 'two\nlines', 'l', true]);
-    });
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('set(): the values of an input, a textarea and a select, the checked state of a checkbox, read from outside; the guest\'s TypeError for an unknown key', async ({ sandbox, page, browserName }) => {
+            expect(await sandbox.mount({ ...STRICT, mode })).toBe('ready');
+            await render(sandbox, '<input id="name"><textarea id="notes"></textarea><select id="size"><option value="s">s</option><option value="l">l</option></select><input id="ok" type="checkbox">', 'r1');
+            const thrown = await sandbox.inGuest(`
+                sandboxView.set('name', { value: 'Ada' });
+                sandboxView.set('notes', { value: 'two\\nlines' });
+                sandboxView.set('size', { value: 'l' });
+                sandboxView.set('ok', { checked: true });
+                sandboxView.text('r1', 'set');
+                try { sandboxView.set('name', { colour: 'red' }); return 'no throw'; } catch (error) { return error.name + ': ' + error.message; }`);
+            expect(thrown).toBe('TypeError: sandboxView.set: unknown key "colour"; the keys are value, checked, focus, scroll and css');
+            await waitInView(page, browserName, `document.getElementById('r1').textContent === 'set'`, 8000);
+            expect(await inView(page, browserName, `[document.getElementById('name').value, document.getElementById('notes').value, document.getElementById('size').value, document.getElementById('ok').checked]`)).toEqual(['Ada', 'two\nlines', 'l', true]);
+        });
 
-    test('set({ focus }): refused while the host page has the user\'s focus (the host keeps it and its keystrokes, on every engine); after the user clicks into the sandbox, focus moves within it (the positive control)', async ({ sandbox, page, browserName }) => {
-        await page.evaluate(() => { const input = document.createElement('input'); input.id = 'host-input'; document.body.prepend(input); });
-        expect(await sandbox.mount(STRICT)).toBe('ready');
-        await render(sandbox, '<button id="b" style="position:absolute;left:0;top:0;width:120px;height:40px">b</button><input id="name" style="position:absolute;left:0;top:60px">', 'r1');
-        await sandbox.run(`sandboxView.on('click', 'b', () => sandboxView.set('name', { focus: true }));`);
-        await page.focus('#host-input');
-        await sandbox.run(`sandboxView.set('name', { focus: true }); sandboxView.text('r1', 'asked');`);
-        await waitInView(page, browserName, `document.getElementById('r1').textContent === 'asked'`, 8000);
-        await page.waitForTimeout(300);
-        await page.keyboard.type('abc');
-        expect(await page.evaluate(() => [document.activeElement?.id, (document.getElementById('host-input') as HTMLInputElement).value])).toEqual(['host-input', 'abc']);
-        expect(await inView(page, browserName, `[document.activeElement.localName, document.getElementById('name').value]`)).toEqual(['body', '']);
-        await sandbox.waitForLog("sandboxView.set: the view refused focus: the user's focus is not in the sandbox");
+        test('set({ focus }): refused while the host page has the user\'s focus (the host keeps it and its keystrokes, on every engine); after the user clicks into the sandbox, focus moves within it (the positive control)', async ({ sandbox, page, browserName }) => {
+            await page.evaluate(() => { const input = document.createElement('input'); input.id = 'host-input'; document.body.prepend(input); });
+            expect(await sandbox.mount({ ...STRICT, mode })).toBe('ready');
+            await render(sandbox, '<button id="b" style="position:absolute;left:0;top:0;width:120px;height:40px">b</button><input id="name" style="position:absolute;left:0;top:60px">', 'r1');
+            await sandbox.run(`sandboxView.on('click', 'b', () => sandboxView.set('name', { focus: true }));`);
+            await page.focus('#host-input');
+            await sandbox.run(`sandboxView.set('name', { focus: true }); sandboxView.text('r1', 'asked');`);
+            await waitInView(page, browserName, `document.getElementById('r1').textContent === 'asked'`, 8000);
+            await page.waitForTimeout(300);
+            await page.keyboard.type('abc');
+            expect(await page.evaluate(() => [document.activeElement?.id, (document.getElementById('host-input') as HTMLInputElement).value])).toEqual(['host-input', 'abc']);
+            expect(await inView(page, browserName, `[document.activeElement.localName, document.getElementById('name').value]`)).toEqual(['body', '']);
+            await sandbox.waitForLog("sandboxView.set: the view refused focus: the user's focus is not in the sandbox");
 
-        await clickInSandbox(page, 60, 20); // the user clicks the guest's button: its handler asks for focus
-        await waitInView(page, browserName, `document.activeElement && document.activeElement.id === 'name'`, 8000);
-        await page.keyboard.type('xyz');
-        expect(await inView(page, browserName, `document.getElementById('name').value`)).toBe('xyz');
-        expect(await page.evaluate(() => [document.activeElement?.localName, (document.getElementById('host-input') as HTMLInputElement).value])).toEqual(['web-sandbox', 'abc']);
+            await clickInSandbox(page, 60, 20); // the user clicks the guest's button: its handler asks for focus
+            await waitInView(page, browserName, `document.activeElement && document.activeElement.id === 'name'`, 8000);
+            await page.keyboard.type('xyz');
+            expect(await inView(page, browserName, `document.getElementById('name').value`)).toBe('xyz');
+            expect(await page.evaluate(() => [document.activeElement?.localName, (document.getElementById('host-input') as HTMLInputElement).value])).toEqual(['web-sandbox', 'abc']);
+        });
     });
 });

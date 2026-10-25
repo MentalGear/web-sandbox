@@ -5,6 +5,7 @@ import { cssLoadBound, RENDER_RULES, sanitizeRender, VIEW_MAX_DISTINCT_URLS, VIE
 import { cssReferences, withoutNetworkReferences } from '@src/lib/css-references';
 import { VIOLATION_EVENT_LIMIT } from '@src/lib/violation';
 import { busyOf, busyShare, describeShare, idleBaseline, lag, loadedShare, operationCost, startLag, viewBound } from './host-share';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * The strict view's findings of R5 where the browser decides, on Chromium, Firefox and WebKit: loads that only
@@ -49,20 +50,22 @@ test.describe('N-3 (class B): the renderer keeps a URL only where every engine a
 
 test.describe("N-2 (class G): the strict prelude's error listener reads no getter the guest replaced", () => {
     const THROW = `() => { throw new Error('guest getter'); }`;
-    for (const [name, error, message] of [['throwing', THROW, THROW], ['spoofed as muted', '() => null', `() => 'Script error.'`]] as const) {
-        test(`ErrorEvent.prototype's error and message ${name}: a later error is cancelled and logged, and the sandbox stays ready`, async ({ sandbox }) => {
-            await mountEntry(sandbox, `
-                Object.defineProperty(ErrorEvent.prototype, 'error', { configurable: true, get: ${error} });
-                Object.defineProperty(ErrorEvent.prototype, 'message', { configurable: true, get: ${message} });
-                globalThis.later = () => setTimeout(() => { throw new Error('later'); }, 0);`);
-            await sandbox.run('later()');
-            // not throwing: it would end the sandbox in Firefox with "the guest entry failed to start"
-            await sandbox.waitForLog(/^Uncaught .*later/);
-            await new Promise(resolve => setTimeout(resolve, 500));
-            expect(await sandbox.state()).toBe('ready');
-            expect((await sandbox.logs()).filter(line => line.includes('later'))).toHaveLength(1);
-        });
-    }
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        for (const [name, error, message] of [['throwing', THROW, THROW], ['spoofed as muted', '() => null', `() => 'Script error.'`]] as const) {
+            test(`ErrorEvent.prototype's error and message ${name}: a later error is cancelled and logged, and the sandbox stays ready`, async ({ sandbox }) => {
+                await mountEntry(sandbox, `
+                    Object.defineProperty(ErrorEvent.prototype, 'error', { configurable: true, get: ${error} });
+                    Object.defineProperty(ErrorEvent.prototype, 'message', { configurable: true, get: ${message} });
+                    globalThis.later = () => setTimeout(() => { throw new Error('later'); }, 0);`, { mode });
+                await sandbox.run('later()');
+                // not throwing: it would end the sandbox in Firefox with "the guest entry failed to start"
+                await sandbox.waitForLog(/^Uncaught .*later/);
+                await new Promise(resolve => setTimeout(resolve, 500));
+                expect(await sandbox.state()).toBe('ready');
+                expect((await sandbox.logs()).filter(line => line.includes('later'))).toHaveLength(1);
+            });
+        }
+    });
 });
 
 // Renders `perRender` elements into #a, as fast as the view acknowledges them, each with a CSS background of its own,

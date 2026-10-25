@@ -1,6 +1,7 @@
 import { test, expect, type SandboxDriver } from './fixture';
 import { inFrames } from './strict-view';
 import { EGRESS, REPORTED_EVENT_TYPES, type EgressMode, type EgressRealm } from '@src/lib/egress';
+import { VIEW_MODES, type ViewMode } from './view-modes';
 
 /**
  * The egress table, enumerated on every engine (class E-cpu, R5:N-1; src/lib/egress.ts): in each realm guest
@@ -33,20 +34,20 @@ function unlisted(found: readonly string[] | null, realm: EgressRealm, mode: Egr
     return [...new Set([...found, ...reported])].filter(surface => !rows.has(surface)).map(surface => `${realm}: ${surface}`);
 }
 
-async function mountMode(sandbox: SandboxDriver, mode: 'worker' | 'strict') {
+async function mountMode(sandbox: SandboxDriver, mode: 'worker' | ViewMode) {
     if (mode === 'worker') {
         expect(await sandbox.mount({ mode: 'worker', scriptUnsafe: true })).toBe('ready');
         return;
     }
     await sandbox.registerFiles({ 'main.js': 'void 0' });
-    expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', scriptUnsafe: true })).toBe('ready');
+    expect(await sandbox.mount({ mode, entry: 'main.js', scriptUnsafe: true })).toBe('ready');
 }
 
-for (const mode of ['worker', 'strict'] as const) {
+for (const mode of ['worker', ...VIEW_MODES] as const) {
     test(`${mode} mode: every surface of the guest's worker, of its parent document and of the Worker and MessagePort objects is a row of the egress table`, async ({ sandbox, page, browserName }) => {
         await mountMode(sandbox, mode);
         const worker = await sandbox.inGuest<Surfaces>(`return ${SURFACES};`);
-        // the worker's parent document: worker mode's frame, strict mode's view (main/wrapper/view either way)
+        // the worker's parent document: worker mode's frame, the view of strict and sealed mode (main/wrapper/view either way)
         const parent = (await inFrames<Surfaces>(page, browserName, SURFACES, path => path === 'main/wrapper/view')).find(frame => frame.path === 'main/wrapper/view')?.value;
         expect(parent && parent !== 'no-context', 'the parent document was read').toBe(true);
         const document = parent as Surfaces;

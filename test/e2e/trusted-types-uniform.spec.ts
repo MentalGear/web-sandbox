@@ -8,8 +8,9 @@ import { TRUSTED_TYPES_RULES } from '@src/lib/csp/host-trusted-types';
  * ends the build with the Trusted Types reason, and `execute()`'s string is not evaluated. Firefox, at the version measured,
  * has none, so the library reads the same two directives from the host page's policy and refuses as the browsers do.
  *
- * Each rule of TRUSTED_TYPES_RULES runs here in all three modes on a real host page (vite.config.ts, /__host-policy, with
- * a Trusted Types default policy of its own where the engine has any), with the policy given as `hostContentSecurityPolicy`
+ * Each rule of TRUSTED_TYPES_RULES runs here in every mode (sealed mode answers as strict mode) on a real host page
+ * (vite.config.ts, /__host-policy, with a Trusted Types default policy of its own where the engine has any), with the
+ * policy given as `hostContentSecurityPolicy`
  * so that all engines have it. The browsers that have Trusted Types are the oracle: the table is what they do, and Firefox
  * has to equal it. Then without the option: a browser without Trusted Types applies none (the library never asks the page
  * for its policy), and the browsers that have them go on applying theirs.
@@ -51,6 +52,7 @@ for (const rule of TRUSTED_TYPES_RULES) {
             const given = { hostContentSecurityPolicy: policy };
             await sandbox.registerFiles({ 'main.js': ENTRY });
             expect(await configure(sandbox, { entry: 'main.js', ...given }), 'strict').toEqual(verdict(strictAndWorker));
+            expect(await configure(sandbox, { mode: 'sealed', entry: 'main.js', ...given }), 'sealed: strict mode\'s view and worker').toEqual(verdict(strictAndWorker));
             expect(await configure(sandbox, { mode: 'worker', scriptUnsafe: true, ...given }), 'worker').toEqual(verdict(strictAndWorker));
             expect(await configure(sandbox, { mode: 'cooperative', scriptUnsafe: true, capabilities: ['allow-scripts'], html: '<p>x</p>', ...given }), 'cooperative').toEqual(verdict(cooperative));
             if (cooperative === 'ready') expect(await executeRuns(sandbox, `COOPERATIVE-EXEC-${execute}`), `execute() in cooperative mode ${execute}`).toBe(execute === 'runs');
@@ -64,18 +66,19 @@ for (const rule of TRUSTED_TYPES_RULES) {
 
 // ---- without the option -----------------------------------------------------------------------------------------------
 
-/** The three modes' outcomes for a config: with no `hostContentSecurityPolicy` the browser decides, where it has Trusted Types. */
+/** The four modes' outcomes for a config: with no `hostContentSecurityPolicy` the browser decides, where it has Trusted Types. */
 async function outcomes(sandbox: SandboxDriver, extra: object = {}) {
     await sandbox.registerFiles({ 'main.js': ENTRY });
     return {
         strict: await configure(sandbox, { entry: 'main.js', ...extra }),
+        sealed: await configure(sandbox, { mode: 'sealed', entry: 'main.js', ...extra }),
         worker: await configure(sandbox, { mode: 'worker', scriptUnsafe: true, ...extra }),
         cooperative: await configure(sandbox, { mode: 'cooperative', scriptUnsafe: true, capabilities: ['allow-scripts'], html: '<p>x</p>', ...extra }),
     };
 }
 
-const ALL_ENDED = { strict: ENDED, worker: ENDED, cooperative: ENDED };
-const ALL_READY = { strict: READY, worker: READY, cooperative: READY };
+const ALL_ENDED = { strict: ENDED, sealed: ENDED, worker: ENDED, cooperative: ENDED };
+const ALL_READY = { strict: READY, sealed: READY, worker: READY, cooperative: READY };
 
 test.describe('without hostContentSecurityPolicy', () => {
     const POLICY = "require-trusted-types-for 'script'; trusted-types other; connect-src 'self'";

@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixture';
 import { useRecorder } from './recorder';
 import { inView, waitInView } from './strict-view';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * A configured value or key cannot add a directive to a guest policy (AR:A1): only exact origins reach it, each in its kind's directive of a fixed
@@ -99,12 +100,14 @@ test.describe('A3 class: registered files load under the directive of their kind
         });
     });
 
-    test("strict mode: a registered stylesheet applies in the view, with blob: in the view's style-src and no -elem directive", async ({ sandbox, page, browserName }) => {
-        await sandbox.registerFiles({ 'app.css': '#probe { width: 123px; }' });
-        expect(await sandbox.mount({ mode: 'strict' })).toBe('ready');
-        await sandbox.run(`sandboxView.render('<div id="probe"></div><link rel="stylesheet" href="app.css"><p id="done">done</p>')`);
-        await waitInView(page, browserName, `getComputedStyle(document.getElementById('probe')).width === '123px'`, 8000);
-        const policy = await policyOf(page, browserName);
-        expect([policy['style-src'], policy['style-src-elem']]).toEqual(["'unsafe-inline' blob:", undefined]);
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test("a registered stylesheet applies in the view, with blob: in the view's style-src and no -elem directive", async ({ sandbox, page, browserName }) => {
+            await sandbox.registerFiles({ 'app.css': '#probe { width: 123px; }' });
+            expect(await sandbox.mount({ mode })).toBe('ready');
+            await sandbox.run(`sandboxView.render('<div id="probe"></div><link rel="stylesheet" href="app.css"><p id="done">done</p>')`);
+            await waitInView(page, browserName, `getComputedStyle(document.getElementById('probe')).width === '123px'`, 8000);
+            const policy = await policyOf(page, browserName);
+            expect([policy['style-src'], policy['style-src-elem']]).toEqual(["'unsafe-inline' blob:", undefined]);
+        });
     });
 });

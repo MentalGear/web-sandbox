@@ -10,6 +10,7 @@ const MODES: Record<string, MountConfig> = {
     cooperative: { mode: 'cooperative' },
     worker: { mode: 'worker' },
     strict: { mode: 'strict', scriptUnsafe: true },
+    sealed: { mode: 'sealed', scriptUnsafe: true },
 };
 
 // RPC_MAX_BYTES is 33 MiB: 18 million UTF-16 code units are past it.

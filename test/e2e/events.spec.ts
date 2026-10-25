@@ -1,4 +1,5 @@
 import { test, expect } from './fixture';
+import { VIEW_MODES } from './view-modes';
 
 /**
  * Per-instance events (backlog B3, ADR-003). 'sandbox-log' is dispatched on the sandbox element and
@@ -7,7 +8,7 @@ import { test, expect } from './fixture';
  * sandbox's logs and no other's.
  */
 
-const MODES = ['cooperative', 'worker', 'strict'] as const;
+const MODES = ['cooperative', 'worker', ...VIEW_MODES] as const;
 
 for (const mode of MODES) {
     test(`each sandbox element receives only its own logs; a window listener receives both, targeted at their element (${mode})`, async ({ sandbox, page }) => {

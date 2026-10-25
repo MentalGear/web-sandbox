@@ -4,6 +4,7 @@ import { TERMINATION_REASONS } from '@src/lib/reasons';
 import { inFrames, waitInView } from './strict-view';
 import { RealisticHost, covering, guestBattery, hitsNamed, type Directives, type HostOptions } from './realistic-host';
 import { DIRECTIVE_CASES, HEADER_CASES, outcomeOn, type MatrixCase, type MatrixWarning, type Outcome } from './directive-matrix';
+import { VIEW_MODES, type ViewMode } from './view-modes';
 import type { Page } from '@playwright/test';
 
 /**
@@ -16,6 +17,10 @@ import type { Page } from '@playwright/test';
  *   - `terminates`: the last lifecycle event is `terminated` with the named reason, nothing of the guest ran, no frame is left.
  * The positive control of every case is the base policy itself (realistic-host.spec.ts, and the `works` cases here): the
  * same page with the directive at the base's value works.
+ *
+ * Every case runs in sealed mode too (docs/research/24_sealed_mode, step 3): strict mode's view and worker with no network, so
+ * no fetch bridge. Its outcome is the table's, and its `sandboxFetch()` is refused in the guest whatever the page's policy
+ * (FETCH_NOT_ALLOWED: nothing reaches the server): a host page's directive narrows sealed mode the same way on every engine.
  */
 
 const WARNINGS: Record<MatrixWarning, string> = {
@@ -35,13 +40,14 @@ async function frameHeights(page: Page, browserName: string): Promise<number[]> 
 
 async function runCase(
     { sandbox, page, browserName }: { sandbox: Parameters<typeof RealisticHost.open>[0]; page: Page; browserName: 'chromium' | 'firefox' | 'webkit' },
+    mode: ViewMode,
     matrixCase: MatrixCase,
     label: string,
     hostOptions: Pick<HostOptions, 'directives' | 'headers'>,
 ) {
     const outcome: Outcome = outcomeOn(matrixCase, browserName);
     const row = matrixCase.row;
-    const host = await RealisticHost.open(sandbox, { mode: 'strict', ...hostOptions });
+    const host = await RealisticHost.open(sandbox, { mode, ...hostOptions });
     // (the page's own first build, before the sandbox below, can already have ended on a policy that refuses the library's)
     const terminatedBefore = (await host.sandbox.terminations()).length;
     // the server records what reaches it: this request, from the test process, is the control for every absence below
@@ -55,7 +61,7 @@ async function runCase(
     expect(pageIsolated, covering(row, `${label}: the sandbox ends with the isolation reason exactly when the host page is cross-origin isolated`)).toBe(outcome.kind === 'terminates' && outcome.reason === 'environmentIsolated');
     // (embed() passes the page's policy as hostContentSecurityPolicy, as an embedder does: a browser without Trusted Types
     // applies the page's Trusted Types directives from it alone, host-trusted-types.ts)
-    const events = await host.embed('strict', { fetchBridge: { allow: [ORIGIN] }, guest });
+    const events = await host.embed(mode, mode === 'strict' ? { fetchBridge: { allow: [ORIGIN] }, guest } : { guest });
     const eventsNow = () => page.evaluate(() => (window as any).sandboxEvents as { type: string; reason: string | null }[]);
 
     if (outcome.kind === 'terminates') {
@@ -82,7 +88,8 @@ async function runCase(
     expect(hitsNamed(hits, 'matrix-direct'), covering(row, `${label}: the guest's own request to the host API is not sent (egress is governed)`)).toEqual([]);
     const bridged = hitsNamed(hits, 'matrix-bridge');
     const bridgeResult = (result as Record<string, unknown>)['matrix-bridge:bridge'];
-    if (outcome.bridge === 'ok') {
+    // sealed mode has no fetch bridge: its sandboxFetch() is refused in the guest, whatever the page's policy
+    if (mode === 'strict' && outcome.bridge === 'ok') {
         expect(bridgeResult, covering(row, `${label}: the bridge's request is answered`)).toEqual({ name: 'matrix-bridge', n: 1 });
         expect(bridged, covering(row, `${label}: and reached the server`)).toHaveLength(1);
     } else {
@@ -107,22 +114,24 @@ async function runCase(
     expect(await host.frames(), covering(row, `${label}: and leaves no frame`)).toBe(0);
 }
 
-test.describe('directive matrix: CSP directives', () => {
-    for (const [directive, cases] of Object.entries(DIRECTIVE_CASES)) {
-        for (const matrixCase of cases as readonly MatrixCase[]) {
-            test(`${directive} ${matrixCase.value}`, async ({ sandbox, page, browserName }) => {
-                await runCase({ sandbox, page, browserName }, matrixCase, `${directive} ${matrixCase.value} (${browserName})`, { directives: replacing(directive, matrixCase.value) });
+for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.describe('directive matrix: CSP directives', () => {
+        for (const [directive, cases] of Object.entries(DIRECTIVE_CASES)) {
+            for (const matrixCase of cases as readonly MatrixCase[]) {
+                test(`${directive} ${matrixCase.value}`, async ({ sandbox, page, browserName }) => {
+                    await runCase({ sandbox, page, browserName }, mode, matrixCase, `${directive} ${matrixCase.value} (${mode}, ${browserName})`, { directives: replacing(directive, matrixCase.value) });
+                });
+            }
+        }
+    });
+
+    test.describe('directive matrix: headers of the host page', () => {
+        for (const headerCase of HEADER_CASES) {
+            const also: { readonly 'cross-origin-opener-policy'?: 'same-origin' } = 'also' in headerCase ? headerCase.also : {};
+            const named = [`${headerCase.header}: ${headerCase.value}`, ...Object.entries(also).map(([header, value]) => `${header}: ${value}`)].join(' + ');
+            test(named, async ({ sandbox, page, browserName }) => {
+                await runCase({ sandbox, page, browserName }, mode, headerCase, `${named} (${mode}, ${browserName})`, { directives: matrixBase, headers: { [headerCase.header]: headerCase.value, ...also } });
             });
         }
-    }
-});
-
-test.describe('directive matrix: headers of the host page', () => {
-    for (const headerCase of HEADER_CASES) {
-        const also: { readonly 'cross-origin-opener-policy'?: 'same-origin' } = 'also' in headerCase ? headerCase.also : {};
-        const named = [`${headerCase.header}: ${headerCase.value}`, ...Object.entries(also).map(([header, value]) => `${header}: ${value}`)].join(' + ');
-        test(named, async ({ sandbox, page, browserName }) => {
-            await runCase({ sandbox, page, browserName }, headerCase, `${named} (${browserName})`, { directives: matrixBase, headers: { [headerCase.header]: headerCase.value, ...also } });
-        });
-    }
+    });
 });

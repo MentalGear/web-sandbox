@@ -1,9 +1,10 @@
-import { test, expect, type SandboxDriver } from './fixture';
+import { test, expect, type SandboxDriver, type MountConfig } from './fixture';
 import { useRecorder } from './recorder';
 import { clickInSandbox, inView, waitInView } from './strict-view';
 import { lag, quietStall, startLag } from './host-share';
 import { VIEW_EVENT_LIMITS, VIEW_MAX_DEPTH, VIEW_MAX_ELEMENTS } from '@src/lib/in-sandbox-view';
-import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
+import type { StrictSandboxConfig } from '@src/host';
+import { VIEW_MODES, type ViewMode } from './view-modes';
 
 /**
  * The strict renderer and view (each label below is cited as BR:<label>), where browser
@@ -20,6 +21,9 @@ import type { SandboxConfig, StrictSandboxConfig } from '@src/host';
  * Evidence (T5): the view's DOM read from outside (strict-view.ts), host lag read on the host page, new pages
  * read from outside, the recorder's listener, the host's own record of bridge calls; a positive control beside each
  * negative.
+ *
+ * The tests that use no network run in sealed mode too (VIEW_MODES, view-modes.ts): sealed mode is strict mode's view
+ * and worker with no network. A test that needs `origins` or `fetchBridge` stays strict mode's.
  */
 
 const recorder = useRecorder();
@@ -29,6 +33,8 @@ const MAX_DEPTH = VIEW_MAX_DEPTH; // 256
 const MAX_DETAIL = VIEW_EVENT_LIMITS.maxTotal; // 262 144
 
 const strict = (config: Omit<StrictSandboxConfig, 'mode'> = {}): StrictSandboxConfig & { mode: 'strict' } => ({ mode: 'strict', ...config });
+/** A config of `mode` (strict or sealed: VIEW_MODES), applied over the fixture's baseline. */
+const inMode = (mode: ViewMode, config: Omit<MountConfig, 'mode'> = {}): MountConfig => ({ ...config, mode });
 
 async function render(sandbox: SandboxDriver, browserName: string, html: string, doneId = 'done', into: string | null = null, timeout = 8000) {
     await sandbox.run(`sandboxView.render(${JSON.stringify(html + `<p id="${doneId}">done</p>`)}, ${JSON.stringify(into)})`);
@@ -102,39 +108,41 @@ test.describe('the renderer is an allowlist', () => {
         });
     });
 
-    test('positive control: an everyday UI keeps its elements and attributes: forms and controls, tables, lists, details, media, an inline SVG icon with a gradient, a MathML formula, a custom element', async ({ sandbox, page, browserName }) => {
-        await sandbox.registerFiles({ 'logo.png': { base64: PNG_1X1 } });
-        expect(await sandbox.mount(strict())).toBe('ready');
-        const ui = '<header class="top"><h1 id="t">Title</h1><nav aria-label="main"><ul><li><a id="l" href="#x" rel="noopener">x</a></li></ul></nav></header>'
-            + '<main><form id="f" name="f" autocomplete="off"><fieldset><legend>L</legend><label for="n">Name</label><input id="n" name="n" type="text" placeholder="p" required maxlength="20">'
-            + '<select id="s" name="s"><optgroup label="g"><option value="1" selected>1</option></optgroup></select><textarea id="ta" name="ta" rows="2"></textarea>'
-            + '<input id="c" type="checkbox" name="c" checked><button id="b" type="submit" name="go" value="1">Go</button><output id="o" for="n">0</output></fieldset></form>'
-            + '<table><caption>c</caption><thead><tr><th scope="col" colspan="2">h</th></tr></thead><tbody><tr><td rowspan="1">1</td><td>2</td></tr></tbody></table>'
-            + '<details id="d" open><summary>s</summary><p>p</p></details><dialog id="dl" open>dlg</dialog><progress id="pr" value="1" max="2"></progress><meter id="me" value="1" min="0" max="2"></meter>'
-            + '<figure><picture><img id="logo" src="logo.png" alt="logo" width="1" height="1"></picture><figcaption>f</figcaption></figure><video id="v" controls muted width="10"></video>'
-            + '<svg id="icon" viewBox="0 0 10 10" width="10" height="10" role="img" aria-label="i"><defs><linearGradient id="lg"><stop offset="0" stop-color="#000"/></linearGradient></defs><g transform="scale(1)"><path d="M0 0L10 10" stroke="url(#lg)" stroke-width="2"/><circle cx="5" cy="5" r="2" fill="currentColor"/><text x="1" y="9">t</text></g></svg>'
-            + '<math display="block"><mfrac><mi>a</mi><mn>2</mn></mfrac></math><my-card id="card" class="k" data-id="7">card</my-card><style>.top { color: blue }</style></main>';
-        await render(sandbox, browserName, ui);
-        const read = await inView<any>(page, browserName, `(() => {
-            const names = Array.from(document.body.querySelectorAll('*')).map((e) => e.localName);
-            const attrs = (id) => { const e = document.getElementById(id); return e.getAttributeNames().sort().join(' '); };
-            return {
-                names,
-                n: attrs('n'), s: attrs('s'), c: attrs('c'), b: attrs('b'), f: attrs('f'), d: attrs('d'), dl: attrs('dl'), pr: attrs('pr'), card: attrs('card'), v: attrs('v'), icon: attrs('icon'),
-                logo: document.getElementById('logo').getAttribute('src').startsWith('blob:'),
-                decoded: document.getElementById('logo').complete && document.getElementById('logo').naturalWidth,
-                styled: getComputedStyle(document.querySelector('.top')).color,
-            };
-        })()`);
-        expect(read.names).toEqual(['header', 'h1', 'nav', 'ul', 'li', 'a', 'main', 'form', 'fieldset', 'legend', 'label', 'input', 'select', 'optgroup', 'option', 'textarea', 'input', 'button', 'output',
-            'table', 'caption', 'thead', 'tr', 'th', 'tbody', 'tr', 'td', 'td', 'details', 'summary', 'p', 'dialog', 'progress', 'meter', 'figure', 'picture', 'img', 'figcaption', 'video',
-            'svg', 'defs', 'linearGradient', 'stop', 'g', 'path', 'circle', 'text', 'math', 'mfrac', 'mi', 'mn', 'my-card', 'style', 'p']);
-        expect(read).toMatchObject({
-            n: 'id maxlength name placeholder required type', s: 'id name', c: 'checked id name type', b: 'id name type value', f: 'autocomplete id name',
-            d: 'id open', dl: 'id open', pr: 'id max value', card: 'class data-id id', v: 'controls crossorigin id muted width', icon: 'aria-label height id role viewBox width',
-            logo: true, styled: 'rgb(0, 0, 255)',
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('positive control: an everyday UI keeps its elements and attributes: forms and controls, tables, lists, details, media, an inline SVG icon with a gradient, a MathML formula, a custom element', async ({ sandbox, page, browserName }) => {
+            await sandbox.registerFiles({ 'logo.png': { base64: PNG_1X1 } });
+            expect(await sandbox.mount(inMode(mode))).toBe('ready');
+            const ui = '<header class="top"><h1 id="t">Title</h1><nav aria-label="main"><ul><li><a id="l" href="#x" rel="noopener">x</a></li></ul></nav></header>'
+                + '<main><form id="f" name="f" autocomplete="off"><fieldset><legend>L</legend><label for="n">Name</label><input id="n" name="n" type="text" placeholder="p" required maxlength="20">'
+                + '<select id="s" name="s"><optgroup label="g"><option value="1" selected>1</option></optgroup></select><textarea id="ta" name="ta" rows="2"></textarea>'
+                + '<input id="c" type="checkbox" name="c" checked><button id="b" type="submit" name="go" value="1">Go</button><output id="o" for="n">0</output></fieldset></form>'
+                + '<table><caption>c</caption><thead><tr><th scope="col" colspan="2">h</th></tr></thead><tbody><tr><td rowspan="1">1</td><td>2</td></tr></tbody></table>'
+                + '<details id="d" open><summary>s</summary><p>p</p></details><dialog id="dl" open>dlg</dialog><progress id="pr" value="1" max="2"></progress><meter id="me" value="1" min="0" max="2"></meter>'
+                + '<figure><picture><img id="logo" src="logo.png" alt="logo" width="1" height="1"></picture><figcaption>f</figcaption></figure><video id="v" controls muted width="10"></video>'
+                + '<svg id="icon" viewBox="0 0 10 10" width="10" height="10" role="img" aria-label="i"><defs><linearGradient id="lg"><stop offset="0" stop-color="#000"/></linearGradient></defs><g transform="scale(1)"><path d="M0 0L10 10" stroke="url(#lg)" stroke-width="2"/><circle cx="5" cy="5" r="2" fill="currentColor"/><text x="1" y="9">t</text></g></svg>'
+                + '<math display="block"><mfrac><mi>a</mi><mn>2</mn></mfrac></math><my-card id="card" class="k" data-id="7">card</my-card><style>.top { color: blue }</style></main>';
+            await render(sandbox, browserName, ui);
+            const read = await inView<any>(page, browserName, `(() => {
+                const names = Array.from(document.body.querySelectorAll('*')).map((e) => e.localName);
+                const attrs = (id) => { const e = document.getElementById(id); return e.getAttributeNames().sort().join(' '); };
+                return {
+                    names,
+                    n: attrs('n'), s: attrs('s'), c: attrs('c'), b: attrs('b'), f: attrs('f'), d: attrs('d'), dl: attrs('dl'), pr: attrs('pr'), card: attrs('card'), v: attrs('v'), icon: attrs('icon'),
+                    logo: document.getElementById('logo').getAttribute('src').startsWith('blob:'),
+                    decoded: document.getElementById('logo').complete && document.getElementById('logo').naturalWidth,
+                    styled: getComputedStyle(document.querySelector('.top')).color,
+                };
+            })()`);
+            expect(read.names).toEqual(['header', 'h1', 'nav', 'ul', 'li', 'a', 'main', 'form', 'fieldset', 'legend', 'label', 'input', 'select', 'optgroup', 'option', 'textarea', 'input', 'button', 'output',
+                'table', 'caption', 'thead', 'tr', 'th', 'tbody', 'tr', 'td', 'td', 'details', 'summary', 'p', 'dialog', 'progress', 'meter', 'figure', 'picture', 'img', 'figcaption', 'video',
+                'svg', 'defs', 'linearGradient', 'stop', 'g', 'path', 'circle', 'text', 'math', 'mfrac', 'mi', 'mn', 'my-card', 'style', 'p']);
+            expect(read).toMatchObject({
+                n: 'id maxlength name placeholder required type', s: 'id name', c: 'checked id name type', b: 'id name type value', f: 'autocomplete id name',
+                d: 'id open', dl: 'id open', pr: 'id max value', card: 'class data-id id', v: 'controls crossorigin id muted width', icon: 'aria-label height id role viewBox width',
+                logo: true, styled: 'rgb(0, 0, 255)',
+            });
+            await expect.poll(() => inView(page, browserName, `document.getElementById('logo').naturalWidth`)).toBe(1);
         });
-        await expect.poll(() => inView(page, browserName, `document.getElementById('logo').naturalWidth`)).toBe(1);
     });
 });
 
@@ -157,45 +165,47 @@ async function openInNewTab(page: import('@playwright/test').Page, url: string):
 }
 
 test.describe('ST1: nothing the strict view shows opens in a new tab as a document that runs script', () => {
-    test('every URL the view mints is of a type that is not a document: registered SVG and XML-typed files get none, and opening every minted URL runs nothing; a PNG renders (positive control)', async ({ sandbox, page, browserName }) => {
-        test.setTimeout(90000);
-        const doc = b64(DOCUMENT(recorder.blocked));
-        const files: Record<string, { base64: string; type?: string }> = {
-            'ok.png': { base64: PNG_1X1 },
-            'evil.svg': { base64: doc },
-            'x.css': { base64: b64('#styled { width: 7px }') },
-            'fonts.css': { base64: b64('@font-face { font-family: f; src: url(x.woff2) } #fonted { font-family: f }') },
-            'x.woff2': { base64: doc },
-            'x.jpg': { base64: doc }, 'x.gif': { base64: doc }, 'x.webp': { base64: doc }, 'x.ico': { base64: doc },
-            'x.mp3': { base64: doc }, 'x.mp4': { base64: doc }, 'x.vtt': { base64: doc },
-            // the prefix rules of the cooperative-mode table admit these types, and an engine renders a +xml type as XML
-            'xml.mp4': { base64: doc, type: 'video/x-st1+xml' },
-            'xml.png': { base64: doc, type: 'image/x-st1+xml' },
-            'html.mp3': { base64: doc, type: 'audio/x-st1+html' },
-        };
-        await sandbox.registerFiles(files);
-        expect(await sandbox.mount(strict())).toBe('ready');
-        const markup = '<img id="ok" src="ok.png"><img id="svg" src="evil.svg"><img src="x.jpg"><img src="x.gif"><img src="x.webp"><img src="x.ico"><img src="xml.png">'
-            + '<link rel="stylesheet" href="x.css"><link rel="stylesheet" href="fonts.css"><link rel="icon" href="evil.svg"><i id="styled" style="display:block"></i><i id="fonted">f</i>'
-            + '<audio src="x.mp3"></audio><audio src="html.mp3"></audio><video src="x.mp4" poster="evil.svg"><track src="x.vtt"></video><video src="xml.mp4"></video>';
-        await render(sandbox, browserName, markup);
-        await waitInView(page, browserName, `getComputedStyle(document.getElementById('styled')).width === '7px'`, 8000);
-        // every blob: URL the view holds, in attributes and in its stylesheets' text, read from outside
-        const minted = await inView<string[]>(page, browserName, `(() => {
-            const urls = new Set();
-            for (const e of document.querySelectorAll('*')) for (const n of e.getAttributeNames()) { const v = e.getAttribute(n); if (v.startsWith('blob:')) urls.add(v); }
-            for (const sheet of document.styleSheets) { try { for (const rule of sheet.cssRules) for (const m of rule.cssText.matchAll(/blob:[^"')\\s]+/g)) urls.add(m[0]); } catch {} }
-            return [...urls];
-        })()`);
-        expect(minted.length).toBeGreaterThanOrEqual(4); // positive control: ok.png, x.css, fonts.css and its font at least
-        const opened: Record<string, string> = {};
-        for (const url of minted) opened[url] = await openInNewTab(page, url);
-        await page.waitForTimeout(500);
-        expect(Object.values(opened).filter(outcome => outcome === 'ran')).toEqual([]);
-        expect(recorder.paths('blocked')).toEqual([]);
-        // the SVG and the +xml/+html types got no URL: their references stay as written
-        expect(await inView(page, browserName, `[document.getElementById('svg').getAttribute('src'), document.querySelector('video[poster]').getAttribute('poster')]`)).toEqual(['evil.svg', 'evil.svg']);
-        await expect.poll(() => inView(page, browserName, `document.getElementById('ok').naturalWidth`)).toBe(1);
+    for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+        test('every URL the view mints is of a type that is not a document: registered SVG and XML-typed files get none, and opening every minted URL runs nothing; a PNG renders (positive control)', async ({ sandbox, page, browserName }) => {
+            test.setTimeout(90000);
+            const doc = b64(DOCUMENT(recorder.blocked));
+            const files: Record<string, { base64: string; type?: string }> = {
+                'ok.png': { base64: PNG_1X1 },
+                'evil.svg': { base64: doc },
+                'x.css': { base64: b64('#styled { width: 7px }') },
+                'fonts.css': { base64: b64('@font-face { font-family: f; src: url(x.woff2) } #fonted { font-family: f }') },
+                'x.woff2': { base64: doc },
+                'x.jpg': { base64: doc }, 'x.gif': { base64: doc }, 'x.webp': { base64: doc }, 'x.ico': { base64: doc },
+                'x.mp3': { base64: doc }, 'x.mp4': { base64: doc }, 'x.vtt': { base64: doc },
+                // the prefix rules of the cooperative-mode table admit these types, and an engine renders a +xml type as XML
+                'xml.mp4': { base64: doc, type: 'video/x-st1+xml' },
+                'xml.png': { base64: doc, type: 'image/x-st1+xml' },
+                'html.mp3': { base64: doc, type: 'audio/x-st1+html' },
+            };
+            await sandbox.registerFiles(files);
+            expect(await sandbox.mount(inMode(mode))).toBe('ready');
+            const markup = '<img id="ok" src="ok.png"><img id="svg" src="evil.svg"><img src="x.jpg"><img src="x.gif"><img src="x.webp"><img src="x.ico"><img src="xml.png">'
+                + '<link rel="stylesheet" href="x.css"><link rel="stylesheet" href="fonts.css"><link rel="icon" href="evil.svg"><i id="styled" style="display:block"></i><i id="fonted">f</i>'
+                + '<audio src="x.mp3"></audio><audio src="html.mp3"></audio><video src="x.mp4" poster="evil.svg"><track src="x.vtt"></video><video src="xml.mp4"></video>';
+            await render(sandbox, browserName, markup);
+            await waitInView(page, browserName, `getComputedStyle(document.getElementById('styled')).width === '7px'`, 8000);
+            // every blob: URL the view holds, in attributes and in its stylesheets' text, read from outside
+            const minted = await inView<string[]>(page, browserName, `(() => {
+                const urls = new Set();
+                for (const e of document.querySelectorAll('*')) for (const n of e.getAttributeNames()) { const v = e.getAttribute(n); if (v.startsWith('blob:')) urls.add(v); }
+                for (const sheet of document.styleSheets) { try { for (const rule of sheet.cssRules) for (const m of rule.cssText.matchAll(/blob:[^"')\\s]+/g)) urls.add(m[0]); } catch {} }
+                return [...urls];
+            })()`);
+            expect(minted.length).toBeGreaterThanOrEqual(4); // positive control: ok.png, x.css, fonts.css and its font at least
+            const opened: Record<string, string> = {};
+            for (const url of minted) opened[url] = await openInNewTab(page, url);
+            await page.waitForTimeout(500);
+            expect(Object.values(opened).filter(outcome => outcome === 'ran')).toEqual([]);
+            expect(recorder.paths('blocked')).toEqual([]);
+            // the SVG and the +xml/+html types got no URL: their references stay as written
+            expect(await inView(page, browserName, `[document.getElementById('svg').getAttribute('src'), document.querySelector('video[poster]').getAttribute('poster')]`)).toEqual(['evil.svg', 'evil.svg']);
+            await expect.poll(() => inView(page, browserName, `document.getElementById('ok').naturalWidth`)).toBe(1);
+        });
     });
 
     test('a data: URL never reaches an image load: rendered data: sources are removed, data: is not an origin (dropped from origins.images, one warning), and opening what the image holds runs nothing; an allowed remote image loads (positive control)', async ({ sandbox, page, browserName }) => {
@@ -243,106 +253,108 @@ const MARKER_FANOUT = (() => {
     return s + `</defs>${path('m5')}</svg>`;
 })();
 
-test.describe('ST2: one render cannot stall the host by fan-out, and the view holds a bounded document', () => {
-    for (const [name, markup] of [['SVG <use>', USE_FANOUT], ['SVG markers', MARKER_FANOUT]] as const) {
-        test(`a ${markup.length}-character render that instances its content 10^5 times (${name}) does nothing: nothing instancing is left, and the host's longest stall stays under 500 ms`, async ({ sandbox, page, browserName }) => {
-            test.setTimeout(120000);
-            expect(await sandbox.mount(strict())).toBe('ready');
-            const quiet = await quietStall(page); // the machine's own stall now (./host-share.ts)
+for (const mode of VIEW_MODES) test.describe(`${mode} mode`, () => {
+    test.describe('ST2: one render cannot stall the host by fan-out, and the view holds a bounded document', () => {
+        for (const [name, markup] of [['SVG <use>', USE_FANOUT], ['SVG markers', MARKER_FANOUT]] as const) {
+            test(`a ${markup.length}-character render that instances its content 10^5 times (${name}) does nothing: nothing instancing is left, and the host's longest stall stays under 500 ms`, async ({ sandbox, page, browserName }) => {
+                test.setTimeout(120000);
+                expect(await sandbox.mount(inMode(mode))).toBe('ready');
+                const quiet = await quietStall(page); // the machine's own stall now (./host-share.ts)
+                await startLag(page);
+                await render(sandbox, browserName, markup, 'done', null, 90000);
+                await page.waitForTimeout(1000);
+                const stall = await lag(page);
+                console.log(`MEASURED ${browserName} ST2 ${name} lag ${stall} ms (the machine's own ${quiet} ms)`);
+                expect(await inView(page, browserName, `document.querySelectorAll('#fan use, #fan marker, #fan symbol').length`)).toBe(0);
+                // a 1.5 KB render costs a few milliseconds once nothing instances; 500 ms over the machine's own stall is far
+                // above that on every engine, and far below the stall of instancing (seconds, for <use> and for markers)
+                expect(stall).toBeLessThan(quiet + 500);
+            });
+        }
+
+        test(`the view refuses a render that would hold more than ${MAX_ELEMENTS} elements in all, counted over the resulting document, and still acknowledges it; a large render under the budget applies (positive control); replacing a target counts what it removes`, async ({ sandbox, page, browserName }) => {
+            test.setTimeout(90000);
+            expect(await sandbox.mount(inMode(mode, { html: '<div id="a"></div><div id="b"></div><div id="c"></div>' }))).toBe('ready');
+            await waitInView(page, browserName, `!!document.getElementById('c')`);
             await startLag(page);
-            await render(sandbox, browserName, markup, 'done', null, 90000);
-            await page.waitForTimeout(1000);
+            await render(sandbox, browserName, repeat('<p>', 45000), 'a-done', 'a', 30000); // 45 001 elements: applies
             const stall = await lag(page);
-            console.log(`MEASURED ${browserName} ST2 ${name} lag ${stall} ms (the machine's own ${quiet} ms)`);
-            expect(await inView(page, browserName, `document.querySelectorAll('#fan use, #fan marker, #fan symbol').length`)).toBe(0);
-            // a 1.5 KB render costs a few milliseconds once nothing instances; 500 ms over the machine's own stall is far
-            // above that on every engine, and far below the stall of instancing (seconds, for <use> and for markers)
-            expect(stall).toBeLessThan(quiet + 500);
+            console.log(`MEASURED ${browserName} ST2 45000-element render lag ${stall} ms`);
+            expect(await inView(page, browserName, `document.body.getElementsByTagName('*').length`)).toBe(45004);
+            await sandbox.clearLogs();
+            // 10 001 more into b: the document would hold 55 005: refused, b unchanged, and the next render still applies
+            await sandbox.run(`sandboxView.render(${JSON.stringify(repeat('<p>', 10000) + '<p id="b-done">x</p>')}, 'b'); sandboxView.render('<p id="c-done">c</p>', 'c');`);
+            await waitInView(page, browserName, `!!document.getElementById('c-done')`, 15000);
+            expect(await inView(page, browserName, `[document.getElementById('b').children.length, document.body.getElementsByTagName('*').length]`)).toEqual([0, 45005]);
+            await sandbox.waitForLog(/refused a render/, 5000);
+            // replacing a's 45 001 elements with 30 000 frees room: now b's 10 001 fit
+            await render(sandbox, browserName, repeat('<p>', 29999), 'a-done-2', 'a', 30000);
+            await render(sandbox, browserName, repeat('<p>', 10000), 'b-done', 'b', 30000);
+            expect(await inView(page, browserName, `document.body.getElementsByTagName('*').length`)).toBe(3 + 30000 + 10001 + 1);
         });
-    }
 
-    test(`the view refuses a render that would hold more than ${MAX_ELEMENTS} elements in all, counted over the resulting document, and still acknowledges it; a large render under the budget applies (positive control); replacing a target counts what it removes`, async ({ sandbox, page, browserName }) => {
-        test.setTimeout(90000);
-        expect(await sandbox.mount(strict({ html: '<div id="a"></div><div id="b"></div><div id="c"></div>' }))).toBe('ready');
-        await waitInView(page, browserName, `!!document.getElementById('c')`);
-        await startLag(page);
-        await render(sandbox, browserName, repeat('<p>', 45000), 'a-done', 'a', 30000); // 45 001 elements: applies
-        const stall = await lag(page);
-        console.log(`MEASURED ${browserName} ST2 45000-element render lag ${stall} ms`);
-        expect(await inView(page, browserName, `document.body.getElementsByTagName('*').length`)).toBe(45004);
-        await sandbox.clearLogs();
-        // 10 001 more into b: the document would hold 55 005: refused, b unchanged, and the next render still applies
-        await sandbox.run(`sandboxView.render(${JSON.stringify(repeat('<p>', 10000) + '<p id="b-done">x</p>')}, 'b'); sandboxView.render('<p id="c-done">c</p>', 'c');`);
-        await waitInView(page, browserName, `!!document.getElementById('c-done')`, 15000);
-        expect(await inView(page, browserName, `[document.getElementById('b').children.length, document.body.getElementsByTagName('*').length]`)).toEqual([0, 45005]);
-        await sandbox.waitForLog(/refused a render/, 5000);
-        // replacing a's 45 001 elements with 30 000 frees room: now b's 10 001 fit
-        await render(sandbox, browserName, repeat('<p>', 29999), 'a-done-2', 'a', 30000);
-        await render(sandbox, browserName, repeat('<p>', 10000), 'b-done', 'b', 30000);
-        expect(await inView(page, browserName, `document.body.getElementsByTagName('*').length`)).toBe(3 + 30000 + 10001 + 1);
+        test(`the view refuses a render that would nest elements deeper than ${MAX_DEPTH} below the body, counting the target's own depth; one exactly at the limit applies (positive control)`, async ({ sandbox, page, browserName }) => {
+            expect(await sandbox.mount(inMode(mode, { html: '<div id="x"></div><div id="y"></div>' }))).toBe('ready');
+            await waitInView(page, browserName, `!!document.getElementById('y')`);
+            const nested = (n: number, id: string) => repeat('<div>', n - 1) + `<div id="${id}">` + repeat('</div>', n);
+            const depthOf = (id: string) => `(() => { let d = 0; for (let n = document.getElementById(${JSON.stringify(id)}); n && n !== document.body; n = n.parentNode) d++; return d; })()`;
+            await render(sandbox, browserName, nested(199, 'deep'), 'done-1', 'x'); // #x is at depth 1: #deep at 200
+            expect(await inView(page, browserName, depthOf('deep'))).toBe(200);
+            // 57 more below #deep: 257, refused; the acknowledgement releases the next render (another target)
+            await sandbox.run(`sandboxView.render(${JSON.stringify(nested(57, 'deeper'))}, 'deep'); sandboxView.render('<p id="after-1">a</p>', 'y');`);
+            await waitInView(page, browserName, `!!document.getElementById('after-1')`);
+            expect(await inView(page, browserName, `[!!document.getElementById('deeper'), document.getElementById('deep').children.length]`)).toEqual([false, 0]);
+            // 56 more: exactly 256, applies
+            await sandbox.run(`sandboxView.render(${JSON.stringify(nested(56, 'deepest'))}, 'deep'); sandboxView.render('<p id="after-2">a</p>', 'y');`);
+            await waitInView(page, browserName, `!!document.getElementById('after-2') && !!document.getElementById('deepest')`);
+            expect(await inView(page, browserName, depthOf('deepest'))).toBe(MAX_DEPTH);
+            // a fresh 300-deep render into #x: refused as a whole, #x keeps what it had
+            await sandbox.run(`sandboxView.render(${JSON.stringify(nested(300, 'too-deep'))}, 'x'); sandboxView.render('<p id="after-3">a</p>', 'y');`);
+            await waitInView(page, browserName, `!!document.getElementById('after-3')`);
+            expect(await inView(page, browserName, `[!!document.getElementById('too-deep'), !!document.getElementById('deepest')]`)).toEqual([false, true]);
+        });
     });
 
-    test(`the view refuses a render that would nest elements deeper than ${MAX_DEPTH} below the body, counting the target's own depth; one exactly at the limit applies (positive control)`, async ({ sandbox, page, browserName }) => {
-        expect(await sandbox.mount(strict({ html: '<div id="x"></div><div id="y"></div>' }))).toBe('ready');
-        await waitInView(page, browserName, `!!document.getElementById('y')`);
-        const nested = (n: number, id: string) => repeat('<div>', n - 1) + `<div id="${id}">` + repeat('</div>', n);
-        const depthOf = (id: string) => `(() => { let d = 0; for (let n = document.getElementById(${JSON.stringify(id)}); n && n !== document.body; n = n.parentNode) d++; return d; })()`;
-        await render(sandbox, browserName, nested(199, 'deep'), 'done-1', 'x'); // #x is at depth 1: #deep at 200
-        expect(await inView(page, browserName, depthOf('deep'))).toBe(200);
-        // 57 more below #deep: 257, refused; the acknowledgement releases the next render (another target)
-        await sandbox.run(`sandboxView.render(${JSON.stringify(nested(57, 'deeper'))}, 'deep'); sandboxView.render('<p id="after-1">a</p>', 'y');`);
-        await waitInView(page, browserName, `!!document.getElementById('after-1')`);
-        expect(await inView(page, browserName, `[!!document.getElementById('deeper'), document.getElementById('deep').children.length]`)).toEqual([false, 0]);
-        // 56 more: exactly 256, applies
-        await sandbox.run(`sandboxView.render(${JSON.stringify(nested(56, 'deepest'))}, 'deep'); sandboxView.render('<p id="after-2">a</p>', 'y');`);
-        await waitInView(page, browserName, `!!document.getElementById('after-2') && !!document.getElementById('deepest')`);
-        expect(await inView(page, browserName, depthOf('deepest'))).toBe(MAX_DEPTH);
-        // a fresh 300-deep render into #x: refused as a whole, #x keeps what it had
-        await sandbox.run(`sandboxView.render(${JSON.stringify(nested(300, 'too-deep'))}, 'x'); sandboxView.render('<p id="after-3">a</p>', 'y');`);
-        await waitInView(page, browserName, `!!document.getElementById('after-3')`);
-        expect(await inView(page, browserName, `[!!document.getElementById('too-deep'), !!document.getElementById('deepest')]`)).toEqual([false, true]);
+    // ---- ST3: one budget per event detail ----------------------------------------------------------------------------
+
+    test(`ST3: a submitted form's detail carries at most ${MAX_DETAIL} characters in all and says it was cut; a small form's detail is whole (positive control)`, async ({ sandbox, page, browserName }) => {
+        test.setTimeout(60000);
+        await sandbox.page.evaluate(() => { (window as any).details = []; });
+        await sandbox.exposeHost('report', `(d) => { const strings = [d.target.tag, d.target.id, d.target.name, d.target.value, ...d.ids, ...(d.form || []).flat()]; window.details.push({ chars: strings.join('').length, fields: (d.form || []).length, truncated: d.truncated === true, keys: Object.keys(d).sort().join(' ') }); return true; }`);
+        // 15 fields of 60 000 characters: past the detail's budget, within the view's (VIEW_MAX_CHARACTERS, R1:R1-1)
+        const slots = Array.from({ length: 15 }, (_, i) => `<span id="slot-${i}"></span>`).join('');
+        await sandbox.registerFiles({ 'main.js': `
+            sandboxView.render('<form id="big">${slots}<button id="send" style="position:absolute;left:0;top:0;width:80px;height:30px">send</button></form><form id="small" style="position:absolute;left:0;top:60px"><button id="send2" style="width:80px;height:30px">send</button><input name="q" value="hello"></form><span id="tail"></span>');
+            for (let i = 0; i < 15; i++) sandboxView.render('<input name="f' + i + '" value="' + 'v'.repeat(60000) + '">', 'slot-' + i);
+            sandboxView.render('<i id="filled"></i>', 'tail');
+            sandboxView.on('submit', null, (d) => bridge.call('report', d));
+        ` });
+        expect(await sandbox.mount(inMode(mode, { entry: 'main.js' }))).toBe('ready');
+        await waitInView(page, browserName, `!!document.getElementById('filled') && document.querySelectorAll('#big input').length === 15`, 20000);
+        await clickInSandbox(page, 40, 15);
+        await expect.poll(() => page.evaluate(() => (window as any).details.length), { timeout: 10000 }).toBe(1);
+        await clickInSandbox(page, 40, 75);
+        await expect.poll(() => page.evaluate(() => (window as any).details.length), { timeout: 10000 }).toBe(2);
+        const [big, small] = await page.evaluate(() => (window as any).details);
+        expect(big.chars).toBeLessThanOrEqual(MAX_DETAIL);
+        expect(big.truncated).toBe(true);
+        expect(small).toEqual({ chars: 'formsmall'.length + 'q'.length + 'hello'.length + 'small'.length, fields: 1, truncated: false, keys: 'form ids target type' });
     });
-});
 
-// ---- ST3: one budget per event detail ----------------------------------------------------------------------------
+    // ---- ST4: the entry-phase marker cannot be shadowed ---------------------------------------------------------------
 
-test(`ST3: a submitted form's detail carries at most ${MAX_DETAIL} characters in all and says it was cut; a small form's detail is whole (positive control)`, async ({ sandbox, page, browserName }) => {
-    test.setTimeout(60000);
-    await sandbox.page.evaluate(() => { (window as any).details = []; });
-    await sandbox.exposeHost('report', `(d) => { const strings = [d.target.tag, d.target.id, d.target.name, d.target.value, ...d.ids, ...(d.form || []).flat()]; window.details.push({ chars: strings.join('').length, fields: (d.form || []).length, truncated: d.truncated === true, keys: Object.keys(d).sort().join(' ') }); return true; }`);
-    // 15 fields of 60 000 characters: past the detail's budget, within the view's (VIEW_MAX_CHARACTERS, R1:R1-1)
-    const slots = Array.from({ length: 15 }, (_, i) => `<span id="slot-${i}"></span>`).join('');
-    await sandbox.registerFiles({ 'main.js': `
-        sandboxView.render('<form id="big">${slots}<button id="send" style="position:absolute;left:0;top:0;width:80px;height:30px">send</button></form><form id="small" style="position:absolute;left:0;top:60px"><button id="send2" style="width:80px;height:30px">send</button><input name="q" value="hello"></form><span id="tail"></span>');
-        for (let i = 0; i < 15; i++) sandboxView.render('<input name="f' + i + '" value="' + 'v'.repeat(60000) + '">', 'slot-' + i);
-        sandboxView.render('<i id="filled"></i>', 'tail');
-        sandboxView.on('submit', null, (d) => bridge.call('report', d));
-    ` });
-    expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
-    await waitInView(page, browserName, `!!document.getElementById('filled') && document.querySelectorAll('#big input').length === 15`, 20000);
-    await clickInSandbox(page, 40, 15);
-    await expect.poll(() => page.evaluate(() => (window as any).details.length), { timeout: 10000 }).toBe(1);
-    await clickInSandbox(page, 40, 75);
-    await expect.poll(() => page.evaluate(() => (window as any).details.length), { timeout: 10000 }).toBe(2);
-    const [big, small] = await page.evaluate(() => (window as any).details);
-    expect(big.chars).toBeLessThanOrEqual(MAX_DETAIL);
-    expect(big.truncated).toBe(true);
-    expect(small).toEqual({ chars: 'formsmall'.length + 'q'.length + 'hello'.length + 'small'.length, fields: 1, truncated: false, keys: 'form ids target type' });
-});
-
-// ---- ST4: the entry-phase marker cannot be shadowed ---------------------------------------------------------------
-
-test('ST4: an entry that closes its own scope and declares a lexical binding named like the marker does not take the marker over: the real marker runs, a later error is logged and does not end the sandbox; a plain entry the same (positive control)', async ({ sandbox, page }) => {
-    await exposeMark(sandbox);
-    const entry = `bridge.call('mark', 'entry');
-}).call(this);
-let __sandboxEntryRan = () => { bridge.call('mark', 'hijacked'); };
-(function () {
-setTimeout(() => { throw new Error('later'); }, 50);`;
-    await sandbox.registerFiles({ 'main.js': entry });
-    expect(await sandbox.mount(strict({ entry: 'main.js' }))).toBe('ready');
-    await sandbox.waitForLog('later', 8000);
-    await page.waitForTimeout(500);
-    expect(await marks(sandbox)).toEqual(['entry']);
-    expect(await sandbox.state()).toBe('ready');
+    test('ST4: an entry that closes its own scope and declares a lexical binding named like the marker does not take the marker over: the real marker runs, a later error is logged and does not end the sandbox; a plain entry the same (positive control)', async ({ sandbox, page }) => {
+        await exposeMark(sandbox);
+        const entry = `bridge.call('mark', 'entry');
+    }).call(this);
+    let __sandboxEntryRan = () => { bridge.call('mark', 'hijacked'); };
+    (function () {
+    setTimeout(() => { throw new Error('later'); }, 50);`;
+        await sandbox.registerFiles({ 'main.js': entry });
+        expect(await sandbox.mount(inMode(mode, { entry: 'main.js' }))).toBe('ready');
+        await sandbox.waitForLog('later', 8000);
+        await page.waitForTimeout(500);
+        expect(await marks(sandbox)).toEqual(['entry']);
+        expect(await sandbox.state()).toBe('ready');
+    });
 });
