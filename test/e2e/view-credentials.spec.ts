@@ -40,6 +40,10 @@ import { startNameProxy } from './name-proxy';
  * gate refuses every WebSocket, so each attempt is a SecurityError with the gate's report, and no handshake reaches the
  * listener, which records one (the positive control: a plain sandboxed frame's handshakes reach it).
  *
+ * CSS makes no load by any route, in each world: a string in a custom property read by image-set(var()), `content`,
+ * `cursor`, `list-style-image`, src(), an escaped scheme, a style attribute and set({ css }) all name a listed origin,
+ * and nothing reaches the listener (BD4:LIM-2).
+ *
  * And the costs of the construction, on every engine: an origin that answers CORS still renders (images, media, and a
  * seek in a 7 MB video through Range requests); one that does not fails, and each failed load is reported as a
  * `violation` of its directive.
@@ -307,6 +311,49 @@ for (const worldName of ['cross-site', 'opaque-host'] as const) {
                 }
             }
             expect(warnings.filter(text => text.includes('registered stylesheet "own.css"'))).toHaveLength(1);
+        });
+
+        // BD4:LIM-2 (refuted after #75): a string in CSS is a load the browser makes when a property reads it (a custom property
+        // through var() in image-set(), the `content`, `cursor` and `list-style-image` strings, src()), so the view drops every
+        // string that is an absolute http(s) URL, wherever CSS holds it, and no route reaches a listed origin. The positive
+        // control is the same jar and origins through a plain frame, which loads and carries cookies.
+        test('CSS makes no load by any route: a string in a custom property read through var(), content, cursor, list-style-image, src(), an escaped scheme, a style attribute, set({ css }); each is dropped and reported', async ({ sandbox, page, browserName }) => {
+            test.setTimeout(60000);
+            const tag = `${worldName}-${browserName}-css`;
+            await controlFrame(page, world.targets, tag);
+            for (const name of Object.keys(world.targets)) await expect.poll(() => seen(listener, `${tag}.${name}.control`).length, `control ${name}`).toBeGreaterThan(0);
+            for (const name of Object.keys(world.targets)) expect(seen(listener, `${tag}.${name}.control`)[0]!.cookies.length, `control ${name} carries cookies`).toBeGreaterThan(0);
+
+            let html = '';
+            const reported: string[] = [];
+            const setting: [string, string][] = [];
+            for (const [name, origin] of Object.entries(world.targets)) {
+                const k = (route: string) => `${tag}.${name}.${route}`;
+                const u = (route: string, file = 'a.png') => `${origin}/cors/${file}?k=${k(route)}`;
+                const escaped = `${origin.replace('https', 'htt\\70s')}/cors/a.png?k=${k('escape')}`; // htt\70s://…: the scheme as an escape
+                html += `<style>@import src("${u('importsrc', 's.css')}"); @import "${u('importstr', 's.css')}";
+#${name}-v{width:9px;height:9px;--u:"${u('custom')}"} #${name}-v{background-image:image-set(var(--u) 1x)}
+#${name}-d{background-image:image-set("${u('imageset')}" 1x)}
+#${name}-c::before{content:"${u('content')}"}
+#${name}-cur{cursor:"${u('cursor')}"}
+#${name}-li{list-style-image:"${u('liststyle')}"}
+#${name}-esc{background-image:image-set("${escaped}" 1x)}
+@font-face{font-family:FS${name};src:src("${u('fontsrc', 'f.ttf')}")} #${name}-ffs{font-family:FS${name}}</style>
+<div id="${name}-v"></div><div id="${name}-d"></div><p id="${name}-c">c</p><div id="${name}-cur">cur</div><ul id="${name}-li"><li>x</li></ul><p id="${name}-ffs">font</p><div id="${name}-esc"></div>
+<div id="${name}-sa" style="background-image:url('${u('styleattr')}')"></div>\n`;
+                reported.push(...['custom', 'imageset', 'content', 'cursor', 'liststyle', 'escape', 'styleattr', 'importsrc', 'importstr', 'fontsrc'].map(route => k(route)));
+                setting.push([`${name}-v`, u('set')]);
+            }
+            await sandbox.registerFiles({ 'main.js': `sandboxView.render(${JSON.stringify(html)});
+                let n = 0;
+                const timer = setInterval(() => { for (const [id, url] of ${JSON.stringify(setting)}) sandboxView.set(id, { css: { '--u': '"' + url + n + '"' } }); if (++n >= 5) clearInterval(timer); }, 60);` });
+            const origins = Object.values(world.targets);
+            expect(await sandbox.mount({ mode: 'strict', entry: 'main.js', origins: { images: origins, media: origins, styles: origins, fonts: origins } })).toBe('ready');
+            await page.waitForTimeout(2500); // the loads CSS would make once styled, and the later sets
+            expect(listener.hits.filter(hit => hit.k.startsWith(tag) && !hit.k.endsWith('.control')).map(hit => hit.k)).toEqual([]);
+            const violations = (await sandbox.violations()).map(v => new URL(v.blockedURI).searchParams.get('k') ?? '');
+            for (const route of reported) expect(violations, route).toContain(route);
+            for (const name of Object.keys(world.targets)) expect(violations.some(k => k.startsWith(`${tag}.${name}.set`)), `${name} set`).toBe(true);
         });
 
         test('the worker opens no WebSocket: each one, to every target and the host page\'s own origin, is refused and reported, and no handshake leaves', async ({ sandbox, page, browserName }) => {

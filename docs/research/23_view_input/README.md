@@ -7,11 +7,12 @@ sliders and virtual scrolling, with no guest code in the view and no guarantee w
 pointer, wheel, scroll and focus events to the worker's `sandboxView.on` handlers, trusted only, as numbers and constants,
 their coordinates clamped to the view's box; it coalesces the continuous ones per animation frame and holds them while
 the worker has not acknowledged the last frame; and the worker answers with `set(id, { css, scroll })`, from closed
-lists. What the guest learns is about its own view only, and less than any cross-origin iframe gets.
+lists. What the guest learns is about its own view and its rendering environment, and no more than any cross-origin
+iframe gets (less where it counts: coordinates past the view's edge are clamped, and no `relatedTarget` is forwarded).
 
 - **The events** (`VIEW_EVENT_TYPES`), each behind a subscription, with no config flag:
-  - `pointerdown`, `pointerup`, `pointercancel` and `focusin`, `focusout`: discrete, posted at once, as the user raises
-    them;
+  - `pointerdown`, `pointerup`, `pointercancel` and `focusin`, `focusout`: discrete, posted at once, as they are raised
+    (the user's, and for focus also the guest's own `set({ focus })`);
   - `pointermove`, `wheel` and `scroll`: continuous (`VIEW_CONTINUOUS_EVENT_TYPES`), coalesced.
 - **Off**, and a later opt-in at most:
   - native drag-and-drop with data (`dragstart`, `dragover`, `drop`): the one surface that would bring host-page or OS
@@ -61,8 +62,9 @@ The view keeps one outbox per environment (`viewInputOutbox`, `src/lib/in-sandbo
 function, which `test/unit/view-input.test.ts` runs, a property test of the in-flight rule included):
 
 1. **Discrete events** are posted at once, as the user raises them, whatever is in flight, behind whatever the outbox
-   holds, in one `VIEW_EVENT` frame: a `pointerup` never overtakes the last `pointermove`. They are bounded by the user's
-   own input.
+   holds, in one `VIEW_EVENT` frame: a `pointerup` never overtakes the last `pointermove`. The user's own input bounds
+   them, except `focusin` and `focusout`, which `set({ focus })` raises as well (BD4:LIM-4): at most one `set` a flush, so
+   about two events a frame, each charged to the time budget.
 2. **Continuous events** wait in one slot per key, the latest winning: a move per pointer id, a wheel per element and
    unit (its deltas summed), a scroll per scrolled element.
 3. **One frame unacknowledged** (`VIEW_INPUT_IN_FLIGHT`). The worker's prelude answers each `VIEW_EVENT` with
@@ -140,12 +142,13 @@ cost statement.
 | Information | About | Already available to | What the view does |
 | :--- | :--- | :--- | :--- |
 | Pointer position over the view, buttons, pointer id, primary | the user's interaction with the view | cooperative guests; any cross-origin iframe | forwarded, clamped |
-| Pointer position **outside** the view during a press that began in it | the pointer's path over the host page | any iframe: every engine goes on delivering moves to the view past its edges while the press lasts, with or without `setPointerCapture`, and none after the release | **clamped** to the view's box, and a move outside it forwarded only while such a press is held (a button down), so a move outside the box with `buttons: 0` (Firefox delivers some after a release outside the browser's viewport) is dropped too. `test/e2e/strict-pointer-events.spec.ts` drags past the view's edges on every engine: the guest gets coordinates at the edge, none past it, and nothing after the release. So strict mode gives less than an iframe here: the guest learns only the projection onto its own edge, during a drag the user started on its content |
+| Pointer position **outside** the view during a press that began in it, and the modifier keys held on that move | the pointer's path over the host page, and the Shift, Ctrl, Alt and Meta state of the user's keyboard during a drag the user started on the guest's content | any iframe (the moves arrive with their modifier state, BD4:NEW-1): every engine goes on delivering moves to the view past its edges while the press lasts, with or without `setPointerCapture`, and none after the release | **clamped** to the view's box, and a move outside it forwarded only while such a press is held (a button down), so a move outside the box with `buttons: 0` (Firefox delivers some after a release outside the browser's viewport) is dropped too. `test/e2e/strict-pointer-events.spec.ts` drags past the view's edges on every engine: the guest gets coordinates at the edge, none past it, and nothing after the release. So strict mode gives less than an iframe here: the guest learns only the projection onto its own edge, during a drag the user started on its content |
 | `kind` (`pointerType`), `pressure` | the device class: pen or touch present | iframes, cooperative guests | forwarded; tilt, twist and contact size are not (biometric, and not needed) |
-| Event timing, whole ms | input dynamics in the view (mouse dynamics are a known biometric) | every page and iframe, at a finer resolution | forwarded; nothing of the host page's input reaches the view |
+| Event timing, whole ms | input dynamics in the view (mouse dynamics are a known biometric) | every page and iframe, at a finer resolution | forwarded; no keystroke, coordinate or element of the host page's reaches the view, only what an iframe's document gets (the moves of a press that began in it, with their modifiers; a focus change) |
 | Wheel deltas and unit | the OS's scroll settings | every page | forwarded |
-| Layout readback: `rect`, scroll extents | the guest's own layout: font metrics, zoom, the view's size | the worker has `OffscreenCanvas` `measureText`; the embedder sets the element's size | forwarded |
-| `focusin`, `focusout` | when the user enters or leaves the view's controls | iframes (the window's `blur` and `focus`); cooperative guests | forwarded without `relatedTarget` |
+| Layout readback: `rect`, scroll extents | the guest's own layout: font metrics, zoom, the view's size | font metrics: the worker's `OffscreenCanvas` `measureText`; the embedder sets the element's size | forwarded |
+| Media features through layout readback (BD4:DOC-5): colour scheme, reduced motion, contrast, forced colours, `hover` and `pointer`, resolution (display scaling and zoom), screen size | the user's display and accessibility settings, which the view's rendering follows | any iframe, opaque ones included, and cooperative guests, with `matchMedia`; **not** the worker, which has no `matchMedia`, `screen` or `devicePixelRatio` (`measureText` gives font metrics, not these); in the strict view before this input path only after a click, through the id of the clicked element | forwarded as layout: a `@media` rule in the guest's CSS changes an element's size, and `rect` or `set({ scroll })` reads it, with no input. The guest reads what an opaque iframe reads, not more; these settings are not among the assets of the threat model |
+| `focusin`, `focusout` | when the user enters or leaves the view's controls; a `focusout` with no `focusin` after it says that focus left the view (a click or Tab on your page) | iframes (the window's `blur` and `focus`); cooperative guests | forwarded without `relatedTarget`; the guest raises them as well with `set({ focus })` |
 | Native drag-and-drop data (`text/html` of a host-page selection, `text/uri-list`, files) | **host-page content or the user's files**, dragged in | iframes, cooperative guests | **not forwarded**: no drag event is subscribable. File inputs give the worker no `File` either (`FormData` drops what is not a string) |
 
 **Nothing of the host page or of other origins.** The view hears only events dispatched in its own document: capture
@@ -155,10 +158,11 @@ reaches the guest through `keydown`, as before.
 
 **Two residuals**, documented ([THREAT-MODEL](../../THREAT-MODEL.md#accepted-risks-and-open-items)):
 
-- **Trusted is not user-caused for `scroll`.** `set({ scroll })` raises a trusted `scroll` event, and `rect` and the
-  scroll extents read layout, so a guest can make readback events itself: at most one frame of them per animation frame,
-  bounded by the outbox and by the time budget. No bound depends on an event being the user's
-  (`test/e2e/strict-scroll-and-wheel.spec.ts` drives such a loop).
+- **Trusted is not user-caused for `scroll` and focus.** `set({ scroll })` raises a trusted `scroll` event, and `rect`
+  and the scroll extents read layout, so a guest can make readback events itself: at most one frame of them per
+  animation frame, bounded by the outbox and by the time budget. `set({ focus })` raises `focusin` and `focusout` the
+  same way (discrete, so posted at once, but one `set` a flush and charged to the time budget). No bound depends on an
+  event being the user's (`test/e2e/strict-scroll-and-wheel.spec.ts` drives such a loop).
 - **Find-in-page scrolls the view.** The browser's find bar scrolls the view to a match, and the `scroll` event tells
   the guest that the user searched for text it shows. Iframes and cooperative guests learn the same.
 

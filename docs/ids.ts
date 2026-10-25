@@ -26,6 +26,7 @@ export const PREFIXED_SOURCES = [
     { prefix: 'BD1', file: 'docs/archive/reviews/BOARD-PASS-1-2026-10-20.md', title: 'The S74 review board, pass 1', example: 'BD1:ISO-1' },
     { prefix: 'BD2', file: 'docs/archive/reviews/BOARD-PASS-2-2026-10-21.md', title: 'The S74 review board, pass 2', example: 'BD2:ISO-2' },
     { prefix: 'BD3', file: 'docs/archive/reviews/BOARD-PASS-3-2026-10-23.md', title: 'The S74 review board, pass 3', example: 'BD3:ISO-2' },
+    { prefix: 'BD4', file: 'docs/archive/reviews/BOARD-PASS-4-2026-10-24.md', title: 'The S74 review board, pass 4', example: 'BD4:ISO-2' },
     { prefix: 'AR', file: 'docs/archive/reviews/ADVERSARIAL-REVIEW-2026-10.md', title: 'The adversarial review', example: 'AR:B1' },
     { prefix: 'BR', file: 'docs/archive/reviews/BROAD-REVIEW-2026-10-14.md', title: 'The broad review', example: 'BR:CB1' },
     { prefix: 'FR', file: 'docs/archive/reviews/FOCUSED-REVIEW-2026-10-14.md', title: 'The focused review', example: 'FR:W1' },
@@ -43,7 +44,7 @@ export const BACKLOG_ARCHIVE_FILE = 'docs/archive/backlog/BACKLOG-done.md';
  * (test/unit/doc-links.test.ts) compares the list with the anchors of docs/BACKLOG.md.
  */
 export const OPEN_BACKLOG_ITEMS: readonly string[] = [
-    'S8', 'S25', 'S36', 'S44', 'S49', 'S60', 'S69', 'S70', 'S74', 'S76', 'S79', 'S80', 'S81', 'S82', 'S83', 'BL:D1', 'BL:H5',
+    'S8', 'S25', 'S36', 'S44', 'S49', 'S60', 'S69', 'S70', 'S74', 'S76', 'S79', 'S80', 'S81', 'S82', 'S83', 'S84', 'S85', 'BL:D1', 'BL:H5',
 ];
 
 /** The file that holds a backlog item: the backlog while it is open, the archive once it is done. */

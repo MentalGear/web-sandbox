@@ -247,6 +247,49 @@ describe("the view's event path (inSandboxView, run as stringified)", () => {
         }
     });
 
+    // BD4:TST-7: the view runs no guest script, so no untrusted event reaches these listeners; the guards are defence in depth
+    // (class B, "trusted" is not "user-caused"), and an event a script dispatches must not cancel a scroll, a drag or a selection.
+    it('a wheel is cancelled inside an element with a preventDefault mark, anywhere for a null id, and only by a trusted event', async () => {
+        const { render, fire } = await startView();
+        const cancelled = (init: Record<string, unknown>) => {
+            let prevented = 0;
+            fire('wheel', { deltaX: 0, deltaY: 40, deltaZ: 0, deltaMode: 0, preventDefault: () => { prevented++; }, ...init });
+            return prevented;
+        };
+        render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel'], marks: [['wheel', 'pad', 4]] });
+        await settle();
+        expect(cancelled({})).toBe(1); // the target is inside #pad
+        expect(cancelled({ isTrusted: false })).toBe(0);
+        expect(cancelled({ target: document.body })).toBe(0); // outside it
+        render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel'], marks: [['wheel', null, 4]] });
+        await settle();
+        expect(cancelled({ target: document.body })).toBe(1); // anywhere
+        expect(cancelled({ target: document.body, isTrusted: false })).toBe(0);
+    });
+
+    it('a drag or a selection is cancelled inside a captured element, and only when the event is trusted', async () => {
+        (Element.prototype as any).setPointerCapture = function () {};
+        try {
+            const { render, fire, events } = await startView();
+            render.postMessage({ type: 'VIEW_LISTEN', types: ['pointerdown'], marks: [['pointerdown', 'pad', 1]] });
+            await settle();
+            fire('pointerdown', { pointerId: 4, buttons: 1 });
+            await until(() => events().length === 1);
+            const inner = document.getElementById('inner')!;
+            let prevented = 0;
+            const preventDefault = () => { prevented++; };
+            for (const type of ['dragstart', 'selectstart']) {
+                fire(type, { target: inner, isTrusted: false, preventDefault });
+                expect(prevented, `${type} by a script`).toBe(0);
+                fire(type, { target: inner, preventDefault });
+                expect(prevented, `${type} by the user`).toBe(1);
+                prevented = 0;
+            }
+        } finally {
+            delete (Element.prototype as any).setPointerCapture;
+        }
+    });
+
     it("sums a wheel's deltas per element and unit, the pointer where it last was (clamped); a scroll carries the scrolled element's position and extent", async () => {
         const { render, fire, events } = await startView();
         render.postMessage({ type: 'VIEW_LISTEN', types: ['wheel', 'scroll'] });
@@ -376,6 +419,33 @@ describe('set({ css }): the closed list of style properties and its limits', () 
         view.set('t', { css: { get transform() { reads++; return 'translate(1px, 2px)'; }, opacity: null, '--x': '3' } });
         expect(reads).toBe(1);
         expect(sent()).toEqual([{ type: 'VIEW_SET', id: 't', css: { transform: 'translate(1px, 2px)', opacity: null, '--x': '3' } }]);
+    });
+
+    it('the keys of the css object are read once (BD4:LIM-1): a Proxy cannot answer a short list to the count and a long one to the copy', () => {
+        const { view, sent, render } = startPrelude();
+        const answering = (lists: string[][]) => {
+            let asked = 0;
+            const proxy = new Proxy({}, {
+                ownKeys: () => lists[Math.min(asked++, lists.length - 1)]!,
+                getOwnPropertyDescriptor: () => ({ value: '1', enumerable: true, configurable: true }),
+                get: () => '1',
+            });
+            return { proxy, asked: () => asked };
+        };
+        const longer = Array.from({ length: 20000 }, (_, i) => '--p' + i);
+        const short = answering([['--p0'], longer]);
+        view.set('t', { css: short.proxy });
+        expect(short.asked()).toBe(1);
+        expect(sent()).toEqual([{ type: 'VIEW_SET', id: 't', css: { '--p0': '1' } }]); // the one answer, in the count and in the copy
+        const over = answering([longer.slice(0, VIEW_SET_STYLE_LIMITS.maxProperties + 1), ['--p0']]);
+        expect(() => view.set('u', { css: over.proxy })).toThrow(RangeError);
+        expect(over.asked()).toBe(1);
+        expect(sent().length).toBe(1);
+        const exact = answering([longer.slice(0, VIEW_SET_STYLE_LIMITS.maxProperties), longer]);
+        view.set('v', { css: exact.proxy });
+        render.deliver({ type: 'VIEW_ACK' }); // the first set was in flight: the next one goes out
+        expect(exact.asked()).toBe(1);
+        expect(Object.keys((sent()[1] as { css: object }).css).length).toBe(VIEW_SET_STYLE_LIMITS.maxProperties);
     });
 
     it('consecutive sets of one id merge their css key by key, unless together they would name more than maxProperties', () => {

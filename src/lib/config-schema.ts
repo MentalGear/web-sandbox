@@ -295,8 +295,17 @@ const asList = <T>(value: T[] | undefined): T[] => value ?? [];
 /** Only a literal true enables a switch: each one is interpolated into a bootstrap as a literal. */
 const literalTrue = ({ given }: OptionInput) => given === true;
 
-/** A delay in ms: a finite number > 0, else 0, off (watchdog.ts, watchdogBudget). */
-const delay = ({ given }: OptionInput) => watchdogBudget(given);
+/**
+ * A delay in ms: a finite number > 0, else 0, off (watchdog.ts, watchdogBudget). Anything else than 0 or a left-out option
+ * that gives off says so once (BD4:NEW-3), as a refused `callLimits` field does, unless the mode ignores the option.
+ */
+const delay = (name: 'watchdogTimeout' | 'workerExecutionTimeout', off: string) => ({ given, mode, warn }: OptionInput): number => {
+    const ms = watchdogBudget(given);
+    if (ms === 0 && given !== undefined && given !== 0 && !ignoredIn(name, mode)) {
+        warn(`[Sandbox] ${name} must be a finite number > 0 (milliseconds), or 0 for off; ${typeof given === 'number' ? String(given) : shown(given)} was ignored: ${off}.`);
+    }
+    return ms;
+};
 
 /** One of the view's switches (strict mode): its default when left out, the boolean it is, else false with a warning. */
 const viewSwitch = (name: ViewSwitch) => ({ given, mode, warn }: OptionInput): boolean => {
@@ -486,8 +495,8 @@ export const CONFIG_SCHEMA = {
         notice: (_, read) => (read === true ? ["[Sandbox] scriptUnsafe is enabled: the guest policy allows 'unsafe-eval', so guest code can run strings as code (eval, new Function) and execute() runs code in the guest. It exists for testing; leave it off for untrusted content."] : []),
     },
     // not in cooperative mode: the guest document can share the host's thread, so no timer could fire meanwhile
-    workerExecutionTimeout: { default: 0, documented: '`0` (off)', modes: ['strict', 'sealed', 'worker'], ignoredIn: (mode) => mode === 'cooperative', read: delay },
-    watchdogTimeout: { default: 0, documented: '`0` (off)', modes: ALL_MODES, read: delay },
+    workerExecutionTimeout: { default: 0, documented: '`0` (off)', modes: ['strict', 'sealed', 'worker'], ignoredIn: (mode) => mode === 'cooperative', read: delay('workerExecutionTimeout', 'no execute() deadline applies') },
+    watchdogTimeout: { default: 0, documented: '`0` (off)', modes: ALL_MODES, read: delay('watchdogTimeout', 'no watchdog runs') },
     guestWrites: { default: false, documented: '`false`', modes: ALL_MODES, read: literalTrue },
 } satisfies Record<string, OptionRule>;
 
